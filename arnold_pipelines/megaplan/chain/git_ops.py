@@ -579,6 +579,33 @@ def _remote_branch_exists(root: Path, branch: str, *, writer) -> bool:
     )
 
 
+def _clear_megaplan_index_safety_bits(root: Path, writer) -> bool:
+    """Make tracked .megaplan runtime files resettable before branch checkout."""
+    proc = subprocess.run(
+        ["git", "ls-files", "-z", ".megaplan"],
+        cwd=str(root),
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        return False
+    paths = [path.decode("utf-8", errors="surrogateescape") for path in proc.stdout.split(b"\0") if path]
+    if not paths:
+        return False
+    writer("[chain] clearing .megaplan skip-worktree/assume-unchanged bits before cleanup\n")
+    for offset in range(0, len(paths), 100):
+        batch = paths[offset : offset + 100]
+        for flag in ("--no-skip-worktree", "--no-assume-unchanged"):
+            _compat()._run_command(
+                root,
+                ["git", "update-index", flag, "--", *batch],
+                writer=writer,
+                error_code="git_clean_failed",
+            )
+    return True
+
+
 def _clean_worktree_for_chain(root: Path, writer) -> None:
     """Reset tracked changes and remove megaplan-generated untracked files.
 
@@ -588,6 +615,7 @@ def _clean_worktree_for_chain(root: Path, writer) -> None:
     """
     _require_git_worktree_root(root, operation="chain worktree cleanup")
     writer("[chain] cleaning worktree for automated branch checkout\n")
+    _clear_megaplan_index_safety_bits(root, writer)
     _compat()._run_command(
         root,
         ["git", "reset", "--hard", "HEAD"],
