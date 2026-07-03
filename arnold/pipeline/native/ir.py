@@ -9,7 +9,17 @@ logic lives here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, FrozenSet, Tuple
+from typing import Any, Callable, FrozenSet, Mapping, Protocol, runtime_checkable
+
+
+@runtime_checkable
+class NativeInvocable(Protocol):
+    """Structural metadata shared by native steps and workflows."""
+
+    name: str
+    stable_id: str | None
+    inputs_schema: Mapping[str, Any] | None
+    outputs_schema: Mapping[str, Any] | None
 
 
 @dataclass(frozen=True)
@@ -28,6 +38,15 @@ class NativePhase:
 
     func: Callable[..., Any] = field(compare=False, hash=False)
     """The wrapped callable (excluded from equality/hash)."""
+
+    stable_id: str | None = None
+    """Stable semantic identity declared on the decorator, if any."""
+
+    inputs_schema: Mapping[str, Any] | None = field(default=None, compare=False, hash=False)
+    """Declared input schema metadata, if any."""
+
+    outputs_schema: Mapping[str, Any] | None = field(default=None, compare=False, hash=False)
+    """Declared output schema metadata, if any."""
 
     produces: tuple = ()
     """Typed ports this phase produces (Port instances)."""
@@ -129,6 +148,15 @@ class NativePipeline:
     func: Callable[..., Any] = field(compare=False, hash=False)
     """The top-level pipeline callable (excluded from equality/hash)."""
 
+    stable_id: str | None = None
+    """Stable semantic identity declared on the decorator, if any."""
+
+    inputs_schema: Mapping[str, Any] | None = field(default=None, compare=False, hash=False)
+    """Declared workflow input schema metadata, if any."""
+
+    outputs_schema: Mapping[str, Any] | None = field(default=None, compare=False, hash=False)
+    """Declared workflow output schema metadata, if any."""
+
     phases: tuple[NativePhase, ...] = ()
     """Phases in declaration order."""
 
@@ -180,6 +208,58 @@ class ParallelInstruction:
     the reducer runs.  ``None`` means halt after the parallel block."""
 
 
+@dataclass(frozen=True)
+class ParallelMapInstruction:
+    """Metadata for a dynamic ``parallel_map`` fan-out block.
+
+    Declares a runtime-list fan-out where a *mapper* callable is
+    applied to each item of a collection resolved at runtime.  Results
+    are collected and (optionally) reduced before advancing to the
+    merge point.
+
+    This is a **distinct** IR shape from :class:`ParallelInstruction`:
+    ``ParallelInstruction`` models statically-bounded branches known at
+    compile time, while ``ParallelMapInstruction`` models a dynamic
+    fan-out over a runtime list whose cardinality is not known until
+    execution.
+
+    The actual instruction stream uses
+    ``NativeInstruction(op="parallel_map", ...)`` to reference a
+    ``parallel_map`` block by index into
+    :attr:`NativeProgram.parallel_map_blocks`.
+    """
+
+    name: str = ""
+    """Human-readable label for this parallel_map block."""
+
+    items_ref: str = ""
+    """Reference to the runtime collection — a parameter name or
+    state key that resolves to an iterable at execution time."""
+
+    mapper: Callable[..., Any] | None = field(
+        default=None, compare=False, hash=False
+    )
+    """The callable applied to each item of the runtime collection."""
+
+    mapper_name: str = ""
+    """Name of the mapper callable (for diagnostics and trace emission)."""
+
+    reducer: Callable[..., Any] | None = field(
+        default=None, compare=False, hash=False
+    )
+    """Optional reducer callable for fan-in.  When ``None``, per-item
+    results are collected into a list keyed by the block name."""
+
+    path_template: str = ""
+    """Path template for per-item call-site paths
+    (e.g. ``'critique/{item_id}'``).  Variables are resolved from
+    item attributes at execution time."""
+
+    merge_pc: int | None = None
+    """Program counter to advance to after all items complete and the
+    reducer runs.  ``None`` means halt after the parallel_map block."""
+
+
 # ── Native instruction set (produced by compiler, consumed by runtime/graph) ──
 
 @dataclass(frozen=True)
@@ -197,7 +277,7 @@ class NativeInstruction:
 
     op: str
     """Operation code: ``'phase'``, ``'decision'``, ``'jump'``, ``'halt'``,
-    ``'subpipeline'``, or ``'parallel'``."""
+    ``'subpipeline'``, ``'parallel'``, or ``'parallel_map'``."""
 
     name: str = ""
     """Human-readable label for the instruction (phase/decision name)."""
@@ -208,7 +288,14 @@ class NativeInstruction:
     subprogram: Any = field(default=None, compare=False, hash=False)
     """For ``subpipeline`` ops: the child :class:`NativeProgram` to execute.
     For ``parallel`` ops: the :class:`ParallelInstruction` metadata block.
+    For ``parallel_map`` ops: the :class:`ParallelMapInstruction` metadata block.
     Excluded from equality/hash; ignored for other ops."""
+
+    input_mapping: dict[str, str] = field(default_factory=dict)
+    """For ``subpipeline`` ops: maps child input names to parent bindings."""
+
+    output_mapping: dict[str, str] = field(default_factory=dict)
+    """For ``subpipeline`` ops: maps child output names to parent bindings."""
 
     parallel_index: int | None = None
     """For ``parallel`` ops: index into :attr:`NativeProgram.parallel_blocks`."""
@@ -243,6 +330,15 @@ class NativeProgram:
     name: str
     """Pipeline name."""
 
+    stable_id: str | None = None
+    """Stable semantic identity declared on the decorator, if any."""
+
+    inputs_schema: Mapping[str, Any] | None = field(default=None, compare=False, hash=False)
+    """Declared workflow input schema metadata, if any."""
+
+    outputs_schema: Mapping[str, Any] | None = field(default=None, compare=False, hash=False)
+    """Declared workflow output schema metadata, if any."""
+
     instructions: tuple[NativeInstruction, ...] = ()
     """Instructions in PC order."""
 
@@ -257,6 +353,9 @@ class NativeProgram:
 
     parallel_blocks: tuple[ParallelInstruction, ...] = ()
     """Parallel fan-out / fan-in blocks referenced by ``parallel`` ops."""
+
+    parallel_map_blocks: tuple[ParallelMapInstruction, ...] = ()
+    """Dynamic ``parallel_map`` fan-out blocks referenced by ``parallel_map`` ops."""
 
     description: str = ""
     """Optional human-readable description."""

@@ -354,6 +354,7 @@ from .git_ops import (
     _remote_branch_head,
     _reset_staged_paths,
     _run_command,
+    _run_git_push_command,
     _should_retry_gh_without_env,
 )
 
@@ -1858,6 +1859,34 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                         overlaid_finalize_records.append(merged)
                     authoritative_finalize_records = overlaid_finalize_records
 
+    if authoritative_finalize_records:
+        finalize_decisions: dict[str, AuthorityDecision] = {}
+        finalize_completed = effective_execute_completed_task_ids(
+            authoritative_finalize_records,
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            state=state_payload,
+            evidence_nucleus=evidence_nucleus,
+            current_head=current_head,
+            decisions=finalize_decisions,
+        )
+        pending = _non_authoritative_task_reasons(
+            authoritative_finalize_records,
+            finalize_completed,
+            finalize_decisions,
+        )
+        pending.extend(
+            _finalize_records_missing_authority_fields(
+                authoritative_finalize_records
+            )
+        )
+        if pending:
+            return (
+                False,
+                f"finalize.json has non-authoritative tasks: {', '.join(pending)}",
+            )
+        return True, "finalize.json"
+
     task_records: list[dict[str, Any]] = []
     for key in ("task_updates", "tasks"):
         raw_records = payload.get(key)
@@ -1892,33 +1921,6 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
             return (
                 False,
                 f"{latest.name} has non-authoritative tasks: {', '.join(incomplete)}",
-            )
-
-    if authoritative_finalize_records:
-        finalize_decisions: dict[str, AuthorityDecision] = {}
-        finalize_completed = effective_execute_completed_task_ids(
-            authoritative_finalize_records,
-            plan_dir=plan_dir,
-            project_dir=project_dir,
-            state=state_payload,
-            evidence_nucleus=evidence_nucleus,
-            current_head=current_head,
-            decisions=finalize_decisions,
-        )
-        pending = _non_authoritative_task_reasons(
-            authoritative_finalize_records,
-            finalize_completed,
-            finalize_decisions,
-        )
-        pending.extend(
-            _finalize_records_missing_authority_fields(
-                authoritative_finalize_records
-            )
-        )
-        if pending:
-            return (
-                False,
-                f"finalize.json has non-authoritative tasks: {', '.join(pending)}",
             )
     return True, latest.name
 
@@ -4789,6 +4791,37 @@ def run_chain(
                     pr_number=state.pr_number,
                 )
             else:
+                pending_merge_record = {
+                    "label": milestone.label,
+                    "plan": plan_name,
+                    "status": outcome.status,
+                    "pr_number": state.pr_number,
+                    "pr_state": current_pr_state,
+                }
+                premerge_ok, premerge_reason = _chain_completion_guard(
+                    root,
+                    pending_merge_record,
+                    implementation_milestone=True,
+                    chain_state=state,
+                )
+                if not premerge_ok:
+                    writer(
+                        f"[chain] completion guard blocked {milestone.label} before "
+                        f"PR merge: {premerge_reason}\n"
+                    )
+                    state.last_state = STATE_BLOCKED
+                    state.pr_state = current_pr_state
+                    chain_spec.save_chain_state(spec_path, state)
+                    return _result(
+                        "stopped",
+                        state,
+                        events,
+                        spec=spec,
+                        reason=(
+                            f"milestone {milestone.label} completion guard blocked "
+                            f"before PR merge: {premerge_reason}"
+                        ),
+                    )
                 _mark_pr_ready(root, state.pr_number, writer=writer)
                 if spec.merge_policy == "review":
                     state.last_state = STATE_AWAITING_PR_MERGE

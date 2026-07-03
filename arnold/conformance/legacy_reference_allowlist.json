@@ -391,6 +391,12 @@
       "reason": "Historical path-authority report references the pre-migration source path."
     },
     {
+      "path": "docs/arnold/megaplan-composition-doctrine-proof.md",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "scanner-target",
+      "reason": "Composition doctrine intentionally names the deleted legacy source path as a forbidden implementation surface."
+    },
+    {
       "path": "docs/arnold/package-disposition.md",
       "pattern": "arnold/pipelines/megaplan",
       "category": "historical-non-shipped",
@@ -539,6 +545,18 @@
       "pattern": "arnold.pipelines.megaplan",
       "category": "scanner-target",
       "reason": "Canonical-package import-boundary test intentionally names the deleted legacy package root."
+    },
+    {
+      "path": "tests/arnold_pipelines/megaplan/test_source_path_reconciliation.py",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "Source-path reconciliation tests intentionally assert the deleted legacy package root remains unavailable."
+    },
+    {
+      "path": "tests/arnold_pipelines/megaplan/test_source_path_reconciliation.py",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "scanner-target",
+      "reason": "Source-path reconciliation tests intentionally name the deleted legacy source path as a negative-path fixture."
     },
     {
       "path": "tests/arnold_pipelines/megaplan/test_import_smoke.py",

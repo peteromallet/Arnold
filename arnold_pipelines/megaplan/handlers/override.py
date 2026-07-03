@@ -1770,13 +1770,18 @@ def _infer_phase_agent(phase: str, state: PlanState, root: Path) -> str | None:
 def _override_resume_clarify(
     root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
 ) -> StepResponse:
-    if state["current_state"] != STATE_AWAITING_HUMAN:
+    clarification = state.get("clarification")
+    has_prep_clarification = (
+        isinstance(clarification, dict)
+        and clarification.get("source") == "prep"
+    )
+    if state["current_state"] not in {STATE_AWAITING_HUMAN, STATE_BLOCKED}:
         raise CliError(
             "invalid_transition",
             f"resume-clarify requires state '{STATE_AWAITING_HUMAN}', got '{state['current_state']}'",
             valid_next=infer_next_steps(state),
         )
-    if state.get("clarification", {}).get("source") != "prep":
+    if not has_prep_clarification:
         raise CliError(
             "invalid_transition",
             "resume-clarify can only resume a prep-sourced clarification halt; "
