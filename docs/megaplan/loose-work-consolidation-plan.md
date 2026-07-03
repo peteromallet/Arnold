@@ -124,7 +124,7 @@ Arnold cloud workspaces:
 | `/workspace/tiered-repair-hardening/Arnold` | clean `main` at `origin/main`; watchdog says chain complete | no source cleanup; keep/archive logs |
 | `/workspace/arnold` | `editible-install` at `origin/editible-install`; dirty `arnold_pipelines/megaplan/chain/__init__.py` | highest priority cloud-only source work; checkpoint/port before any cloud cleanup |
 | `/workspace/native-python-pipelines-completion-parent-22937539/arnold` | branch `megaplan/m7-megaplan-relocation-and-20260702-0856`, ahead 1 because of audit-only commit `6bf9330c`; actual M7 payload is already pushed as `3fa94fe3` | preserve `6bf9330c` only for audit/history if desired; evaluate `3fa94fe3` as the useful code/doc/test payload |
-| `/workspace/native-composition-followup/Arnold` | branch `megaplan/m0-composition-contract-and-20260702-1541`; dirty source/docs/tests plus untracked docs/tests | checkpoint/port into composition follow-up PR; watchdog says needs human review |
+| `/workspace/native-composition-followup/Arnold` | branch `megaplan/m0-composition-contract-and-20260702-1541`; dirty source/docs/tests plus untracked docs/tests; user confirmed this is active in-progress work | checkpoint/preserve only; do not merge, clean, delete, or retarget as part of this cleanup |
 
 Other cloud repos exist for VibeComfy and Reigh. They have their own dirty state
 and active sessions, but they are out of scope for Arnold branch cleanup.
@@ -141,7 +141,7 @@ and `preview-picker`. Of the Arnold workspaces considered by this plan:
 | `/workspace/arnold` / `editable-install` | watchdog actively syncs this editable install; no chain tmux, but it is live infrastructure source | checkpoint before touching; do not assume the dirty file is stable until a fresh diff hash is recorded |
 | `megaplan-chain-native-python-pipelines-completion-child` | watchdog says `complete` | child chain is complete |
 | `megaplan-chain-native-python-pipelines-completion-parent-22937539` | watchdog says `needs_human`; reason says child survived and re-driving parent would duplicate coordinator work | preserve audit state if desired, but do not treat parent coordination state as completed cleanup until the human decision is recorded |
-| `native-composition-followup` | watchdog says `needs_human`; blocked on prerequisite/waiver evidence | in progress/blocked. Checkpoint its dirty code, but do not merge it as finished product work until the blocker is resolved or explicitly waived |
+| `native-composition-followup` | watchdog says `needs_human`; blocked on prerequisite/waiver evidence; user confirmed this is active in-progress work | checkpoint/preserve only. Leave the workspace and branch alone; do not merge it as finished product work or clean its state during this cleanup |
 
 Completion rule: no cloud payload may be called "landed" just because it was
 copied locally. The relevant cloud session must be `complete`, or the plan must
@@ -157,7 +157,7 @@ without treating it as finished.
 | Cloud-only prerequisite/completion authority changes | `/workspace/arnold` dirty `chain/__init__.py` | same repair follow-up branch, reconciled against local dirty `chain/__init__.py` |
 | M7 native-python relocation payload | pushed branch commit `3fa94fe3` on `origin/megaplan/m7-megaplan-relocation-and-20260702-0856` | evaluate as real code/doc/test work; PR/merge or deliberately supersede after conflict review |
 | M7 audit-only tail commit | `/workspace/native-python-pipelines-completion-parent-22937539/arnold` unpushed commit `6bf9330c` | preserve only if exact cloud audit history is needed; do not merge as useful code |
-| Native composition follow-up | `origin/megaplan/m0-composition-contract-and-20260702-1541` and `/workspace/native-composition-followup/Arnold` dirty payload | composition follow-up PR after checkpointing cloud dirty files |
+| Native composition follow-up | `origin/megaplan/m0-composition-contract-and-20260702-1541` and `/workspace/native-composition-followup/Arnold` dirty payload | already checkpointed to preservation branches; leave active in-progress work untouched |
 | `engine-watchdog-runner` ref | `refs/temporary/engine-watchdog-runner` | small cherry-pick into repair follow-up if still relevant |
 | `live-watchdog-supervisor` ref | `refs/temporary/live-watchdog-supervisor` | separate prototype/archive decision; do not blend blindly into repair follow-up |
 | Snapshot refs | `refs/snapshots/*` | archive/extract useful source/docs; generated plan DB/log artifacts likely excluded |
@@ -179,7 +179,7 @@ items alike.
 | Low | `refs/temporary/live-watchdog-supervisor` | leave open for review | large prototype requires inspect/archive/drop decision; do not default-delete |
 | Low | `refs/snapshots/arnold-m1-m6-wip` | leave open for review | snapshot may contain source/docs/provenance; extract/archive decision required |
 | Low | `refs/snapshots/arnold-m7-m8-wip` | leave open for review | larger migration snapshot may contain source/docs/provenance; extract/archive decision required |
-| Low | Dirty cloud work in `/workspace/native-composition-followup/Arnold` | leave open for review | blocked `needs_human` state and prerequisite/waiver issue must be resolved before merge/delete |
+| Low | Dirty cloud work in `/workspace/native-composition-followup/Arnold` | leave open for active owner | user confirmed this is in progress; no merge/delete/cleanup action in this cleanup |
 | Low | Any branch carrying useful M7 payload `3fa94fe3` | leave open until PR/supersession decision | evaluate code/doc/test payload; either PR/merge or document that another landed change supersedes it |
 
 End-state rule: the cleanup pass should delete high-confidence redundant items
@@ -243,12 +243,11 @@ grab, review, archive, or explicitly drop.
      - `tests/arnold_pipelines/megaplan/test_chain_awaiting_human_retry.py`
      - `tests/arnold_pipelines/megaplan/test_chain_milestone_validation.py`
 
-5. Build or update the composition follow-up PR.
-   - Start from `origin/megaplan/m0-composition-contract-and-20260702-1541`.
-   - Add useful source/docs/tests from
-     `/workspace/native-composition-followup/Arnold`.
-   - Keep generated cloud logs/state out unless intentionally archived.
-   - Resolve the watchdog-reported prerequisite/manual-review issue explicitly.
+5. Leave native composition alone.
+   - The source/docs/tests and evidence state were checkpointed for safety.
+   - Do not build/update a composition PR, merge composition work, clean its
+     cloud workspace, delete its refs, or resolve its `needs_human` state as
+     part of this cleanup. It is active in-progress work.
 
 6. Decide the prototype/snapshot refs.
    - Inspect `refs/temporary/live-watchdog-supervisor` as its own prototype.
@@ -258,7 +257,8 @@ grab, review, archive, or explicitly drop.
 
 7. Push preservation branches and open draft PRs.
    - One repair/watchdog tail PR.
-   - One composition follow-up PR if still needed.
+   - No composition follow-up PR as part of this cleanup; that work is active
+     and stays with its owner.
    - One archive branch only if the snapshot/prototype material should be kept
      outside `main`.
 
