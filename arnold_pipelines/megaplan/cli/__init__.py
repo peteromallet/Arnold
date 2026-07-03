@@ -2834,6 +2834,21 @@ def main(argv: list[str] | None = None) -> int:
             return run_bakeoff_cli(root, bakeoff_args)
         except CliError as error:
             return error_response(error, root=root)
+    if argv and argv[0] == "incident":
+        from arnold_pipelines.megaplan.incident.cli import (
+            register_incident_subcommands,
+            run_incident_cli,
+        )
+
+        incident_parser = argparse.ArgumentParser(prog="megaplan incident")
+        register_incident_subcommands(incident_parser)
+        incident_args = incident_parser.parse_args(argv[1:])
+        root = _find_megaplan_root(Path.cwd())
+        ensure_runtime_layout(root)
+        try:
+            return run_incident_cli(root, incident_args)
+        except CliError as error:
+            return error_response(error, root=root)
 
     parser = build_parser()
     args, remaining = parser.parse_known_args(argv)
