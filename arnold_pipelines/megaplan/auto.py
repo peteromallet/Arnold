@@ -3148,6 +3148,19 @@ def drive(
 
         return code, out, err, result
 
+    def _clear_completed_phase_active_step(next_step: str, result: object | None) -> None:
+        if plan_dir is None or result is None or getattr(result, "phase", None) != next_step:
+            return
+        try:
+            write_plan_state(
+                plan_dir,
+                mode="patch-many",
+                patch={"active_step": None},
+                mutation=lambda current: (current.pop("active_step", None), True)[1],
+            )
+        except Exception:
+            return
+
     def _outcome(
         status: str,
         *,
@@ -4127,6 +4140,7 @@ def drive(
                     event_kind="phase_start",
                 )
         code, out, err, result = _run_phase(cmd, next_step)
+        _clear_completed_phase_active_step(next_step, result)
         if next_step == "override add-note" and last_phase == "override add-note":
             add_note_attempts += 1
         # Context-exhaustion retry loop: detect via PhaseResult.exit_kind,
@@ -4188,6 +4202,7 @@ def drive(
                 if "--fresh" not in cmd:
                     cmd = [*cmd, "--fresh"]
                 code, out, err, result = _run_phase(cmd, next_step)
+                _clear_completed_phase_active_step(next_step, result)
 
         while (
             max_external_retries > 0
@@ -4266,6 +4281,7 @@ def drive(
                         },
                     )
             code, out, err, result = _run_phase(cmd, next_step)
+            _clear_completed_phase_active_step(next_step, result)
 
         # Timeout detection: read from PhaseResult.exit_kind, not exit code.
         if result is not None and getattr(result, "exit_kind", None) == ExitKind.timeout.value:
