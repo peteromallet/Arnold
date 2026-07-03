@@ -672,9 +672,37 @@ def _meta_repair_summary(session, repair_data, meta_refs):
         for item in (repair_payload.get("attempts") if isinstance(repair_payload.get("attempts"), list) else [])[-5:]
         if isinstance(item, dict)
     ]
+    recent_iterations = [
+        item
+        for item in (repair_payload.get("iterations") if isinstance(repair_payload.get("iterations"), list) else [])[-5:]
+        if isinstance(item, dict)
+    ]
     current_attempt_id = str(repair_payload.get("current_attempt_id") or "").strip()
     current_recurrence = repair_payload.get("current_recurrence") if isinstance(repair_payload.get("current_recurrence"), dict) else {}
     current_signature = repair_payload.get("current_signature") if isinstance(repair_payload.get("current_signature"), dict) else {}
+    if (
+        repair_outcome == "running"
+        and not current_attempt_id
+        and not current_recurrence
+        and not current_signature
+        and not recent_iterations
+        and recent_attempts
+    ):
+        return {
+            "should_dispatch": False,
+            "trigger": "",
+            "rationale": [
+                "repair-data reports running but no active attempt/iteration context is present; "
+                "historical attempts alone are insufficient to demand meta-repair"
+            ],
+            "repair_outcome": _redact_scalar(repair_outcome),
+            "attempt_outcomes": [_redact_scalar(item) for item in attempt_outcomes[-5:]],
+            "failure_kinds": [_redact_scalar(item) for item in failure_kinds[-5:]],
+            "meta_record_count": len(meta_refs or []),
+            "meta_run_log_count": 0,
+            "meta_run_refs": [],
+            "missing_meta_run_evidence": False,
+        }
     if (
         not current_attempt_id
         and not current_recurrence

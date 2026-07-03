@@ -1271,6 +1271,75 @@ class TestLiveSignalFiltering:
         assert meta["missing_meta_run_evidence"] is False
         assert not any("meta-repair trigger" in reason for reason in finding["reasons"])
 
+    def test_meta_repair_summary_ignores_running_history_without_active_iteration_context(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "executing",
+                    "iteration": 1,
+                    "latest_failure": {
+                        "kind": "phase_failed",
+                        "message": "boom",
+                        "recorded_at": "2026-07-03T16:00:00+00:00",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir(parents=True, exist_ok=True)
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "attempts": [
+                        {
+                            "attempt_id": idx,
+                            "iteration": idx,
+                            "failure_classification": "timeout_or_hang",
+                            "dispatched_at": f"2026-07-03T16:0{idx}:00+00:00",
+                            "outcome": "running",
+                        }
+                        for idx in range(1, 6)
+                    ],
+                    "iterations": [],
+                    "current_attempt_id": None,
+                    "current_signature": {},
+                    "current_recurrence": {},
+                    "outcome": "running",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "plan",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        finding = findings["findings"][0]
+        meta = finding["meta_repair_summary"]
+        assert meta["should_dispatch"] is False
+        assert meta["trigger"] == ""
+        assert meta["missing_meta_run_evidence"] is False
+        assert "no active attempt/iteration context" in meta["rationale"][0]
+        assert not any("meta-repair trigger" in reason for reason in finding["reasons"])
+
 
 class TestRootCausePatternsJsonSchema:
     """Verify root_cause_patterns JSON payload shape invariants and stable keys."""
