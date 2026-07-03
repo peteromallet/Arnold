@@ -4778,10 +4778,18 @@ def iter_chain_states() -> list[pathlib.Path]:
     paths: list[pathlib.Path] = []
     if chain_dir.exists():
         digest = hashlib.sha1(str(remote_spec.resolve()).encode("utf-8")).hexdigest()[:12]
+        expected_paths = [
+            chain_dir / f"{remote_spec.stem}-{digest}.json",
+            chain_dir / f"chain-{digest}.json",
+        ]
+        paths.extend(path for path in expected_paths if path.exists())
+        if paths:
+            return paths
         paths.extend(
             [
-                chain_dir / f"{remote_spec.stem}-{digest}.json",
-                chain_dir / f"chain-{digest}.json",
+                path
+                for path in expected_paths
+                if path not in paths
             ]
         )
         paths.extend(sorted(chain_dir.glob("*.json")))
