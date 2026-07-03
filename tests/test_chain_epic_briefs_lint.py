@@ -1,9 +1,9 @@
 """W8 — chain↔EPIC↔briefs 1:1:1 lint.
 
-Asserts that briefs/epic-pipeline-unification/chain.yaml, the PROGRAM.md
+Asserts that .megaplan/initiatives/epic-pipeline-unification/chain.yaml, the PROGRAM.md
 milestone list, and the brief files on disk are in strict 1:1:1 alignment:
 - Each chain.yaml label maps to exactly one PROGRAM.md milestone (by normalized
-  mN id prefix) and exactly one brief file under briefs/epic-pipeline-unification/.
+  mN id prefix) and exactly one brief file under the initiative briefs directory.
 - Count and ordering match between chain.yaml and PROGRAM.md.
 - No orphan brief, no dangling idea path, no absolute /Users/... idea paths.
 - chain.yaml must be present and non-empty; fails loud otherwise.
@@ -15,8 +15,9 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
-CHAIN_YAML = REPO_ROOT / "briefs" / "epic-pipeline-unification" / "chain.yaml"
-BRIEFS_DIR = REPO_ROOT / "briefs" / "epic-pipeline-unification"
+INITIATIVE_DIR = REPO_ROOT / ".megaplan" / "initiatives" / "epic-pipeline-unification"
+CHAIN_YAML = INITIATIVE_DIR / "chain.yaml"
+BRIEFS_DIR = INITIATIVE_DIR / "briefs"
 
 
 def _load_chain() -> dict:
@@ -43,7 +44,7 @@ def _normalize_milestone_id(label: str) -> str:
 
 def _parse_program_milestone_ids() -> list[str]:
     """Return ordered normalized mN ids from PROGRAM.md milestone headers."""
-    program_path = REPO_ROOT / "briefs" / "validation" / "sequencing" / "PROGRAM.md"
+    program_path = REPO_ROOT / ".megaplan" / "initiatives" / "validation" / "notes" / "sequencing" / "PROGRAM.md"
     if not program_path.exists():
         pytest.fail(f"PROGRAM.md not found at {program_path}")
     text = program_path.read_text(encoding="utf-8")
@@ -140,7 +141,7 @@ def test_chain_to_program_1to1_count_and_order():
 
 
 def test_no_orphan_briefs():
-    """Every .md file directly under briefs/epic-pipeline-unification/ that is referenced
+    """Every .md file directly under the initiative briefs dir that is referenced
     by chain.yaml idea: must exist; no referenced path may be missing."""
     data = _load_chain()
     idea_paths = {ms.get("idea", "") for ms in data["milestones"] if ms.get("idea")}
@@ -164,7 +165,7 @@ def test_no_dangling_chain_labels():
 def test_chain_fail_loud_absent():
     """Simulate absent chain.yaml -> test infrastructure raises, not silently passes."""
     # This test verifies our load helper raises on a missing file.
-    fake_path = REPO_ROOT / "briefs" / "epic-pipeline-unification" / "_nonexistent_chain.yaml"
+    fake_path = BRIEFS_DIR / "_nonexistent_chain.yaml"
     assert not fake_path.exists(), "This file should not exist"
     # The real chain.yaml IS present; this test just documents the contract.
     data = _load_chain()
