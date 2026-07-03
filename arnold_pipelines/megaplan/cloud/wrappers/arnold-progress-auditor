@@ -1853,7 +1853,7 @@ EOF
       export PYENV_VERSION=3.11.11
       export MEGAPLAN_DEFAULT_PROFILE="$SUBAGENT_PROFILE"
       export MEGAPLAN_REPAIR_PROFILE="$SUBAGENT_PROFILE"
-      timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access "$(cat "$brief")" </dev/null
+      timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access - < "$brief"
     ) > "$resp_path" 2>"$GATHER_DIR/resp-${plan}.err" || true
     redact_file_in_place "$resp_path"
     redact_file_in_place "$GATHER_DIR/resp-${plan}.err"

@@ -226,7 +226,7 @@ log "launching Codex repair subagent"
 if command -v codex >/dev/null 2>&1; then
   (
     cd "$ARNOLD_SRC" &&
-    timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access "$(cat "$CODEX_PROMPT")" </dev/null
+    timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access - < "$CODEX_PROMPT"
   ) > "$CODEX_LOG" 2>&1 &
   CODEX_PID=$!
   CHILD_PIDS+=("$CODEX_PID")
