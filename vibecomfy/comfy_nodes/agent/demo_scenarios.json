@@ -1,0 +1,91 @@
+{
+  "$schema": "../agent_demo_scenarios_schema.json",
+  "description": "Curated, deterministic demo scenarios for the VibeComfy preview-query picker. Each record points to a saved agentic run under out/agentic/agentic-100-20260630-021138/ but is intentionally usable even when that directory is not present (routes read artifacts at runtime only).",
+  "source_run_tree": "out/agentic/agentic-100-20260630-021138",
+  "scenarios": [
+    {
+      "id": "tts_emotion_injection",
+      "title": "TTS emotion injection",
+      "query": "Make the TTS narrator sound excited and emotional instead of flat.",
+      "description": "Adds emotion and emphasis parameters to a text-to-speech workflow without changing the script text.",
+      "category": "audio / TTS",
+      "required_node_packs": ["ComfyUI-Qwen3-TTS", "ComfyUI-QwenTTS"],
+      "run_location": {
+        "run_dir": "tts_emotion_injection",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "qwen_face_distortion_wrong_slot",
+      "title": "Qwen face distortion / wrong output slot",
+      "query": "Fix the Qwen image-edit node so the face doesn't distort and it uses the correct output slot.",
+      "description": "Corrects a wiring/output-slot mistake in a Qwen image-editing graph that was causing facial distortion.",
+      "category": "image / edit",
+      "required_node_packs": ["ComfyUI-Qwen-Image"],
+      "run_location": {
+        "run_dir": "qwen_face_distortion_wrong_slot",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "vace_identity_padded_reference",
+      "title": "VACE identity / padded reference",
+      "query": "Keep the character's face consistent in the VACE video generation; pad the reference image so it fits the model's expected aspect ratio.",
+      "description": "Preserves character identity in a VACE-driven video generation workflow by padding the reference image to the expected resolution.",
+      "category": "video / identity",
+      "required_node_packs": ["ComfyUI-VACE"],
+      "run_location": {
+        "run_dir": "vace_identity_padded_reference",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "triporefine_stage_add",
+      "title": "3D TripoRefine stage add",
+      "query": "Add a refinement stage to the 3D Tripo workflow so the mesh comes out cleaner.",
+      "description": "Inserts a TripoRefine refinement stage into a 3D-generation workflow to improve output mesh quality.",
+      "category": "3D / mesh",
+      "required_node_packs": ["ComfyUI-Tripo"],
+      "run_location": {
+        "run_dir": "triporefine_stage_add",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "av_fps_desync",
+      "title": "Audio/video fps desync",
+      "query": "Fix the audio/video fps mismatch so the generated clip stays in sync.",
+      "description": "Aligns frame-rate and audio-sample-rate settings in a video workflow to eliminate lipsync drift.",
+      "category": "video / timing",
+      "required_node_packs": [],
+      "run_location": {
+        "run_dir": "av_fps_desync",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "sdxl_plastic_fabric",
+      "title": "SDXL plastic → fabric",
+      "query": "Change the SDXL material from shiny plastic to woven fabric.",
+      "description": "Updates prompts and conditioning in an SDXL image-generation workflow to render a woven fabric material instead of plastic.",
+      "category": "image / material",
+      "required_node_packs": ["ComfyUI-SDXL"],
+      "run_location": {
+        "run_dir": "sdxl_plastic_fabric",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    }
+  ]
+}
