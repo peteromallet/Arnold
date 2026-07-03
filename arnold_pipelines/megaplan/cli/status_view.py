@@ -996,6 +996,17 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
             response["suggested_recovery_commands"] = blocker_recovery[
                 "suggested_commands"
             ]
+            if (
+                state.get("current_state") == STATE_BLOCKED
+                and response.get("next_step") == "recover-blocked"
+                and blocker_recovery.get("has_terminal_blockers") is True
+            ):
+                # Keep status pinned on the blocked state until an operator
+                # explicitly records non-terminal resolutions. Advertising
+                # recover-blocked here only causes auto loops to dispatch a
+                # helper that must fail immediately.
+                response["next_step"] = None
+                response["valid_next"] = []
     external_resume_command = _external_error_resume_command(state)
     if external_resume_command is not None:
         response["external_error_recovery"] = {
