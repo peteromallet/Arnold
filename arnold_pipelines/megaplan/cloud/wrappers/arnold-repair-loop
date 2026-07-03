@@ -601,6 +601,106 @@ chain_process_is_alive() {
   return 1
 }
 
+kill_matching_runner_processes() {
+  require_repair_lock_held
+  local session="$1"
+  local remote_spec="$2"
+  local run_kind="${3:-chain}"
+  local plan_name="${4:-}"
+  python3 - "$$" "$session" "$remote_spec" "$run_kind" "$plan_name" <<'PY' 2>>"$LOG" || true
+import os
+import signal
+import subprocess
+import sys
+import time
+
+own_pid = int(sys.argv[1])
+session = sys.argv[2]
+remote_spec = sys.argv[3]
+run_kind = sys.argv[4]
+plan_name = sys.argv[5]
+
+try:
+    proc = subprocess.run(
+        ["ps", "-eww", "-o", "pid=", "-o", "pgid=", "-o", "args="],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+except Exception:
+    raise SystemExit(0)
+if proc.returncode != 0:
+    raise SystemExit(0)
+
+needles: list[str] = []
+if run_kind == "chain" and remote_spec:
+    needles.append("arnold_pipelines.megaplan chain start")
+elif run_kind == "epic_chain" and remote_spec:
+    needles.append("arnold_pipelines.megaplan epic-chain start")
+elif plan_name:
+    needles.append("arnold_pipelines.megaplan auto")
+
+targets: set[int] = set()
+ignored = {os.getpid(), os.getppid(), own_pid}
+for line in proc.stdout.splitlines():
+    stripped = line.strip()
+    if not stripped:
+        continue
+    try:
+        pid_text, pgid_text, args = stripped.split(None, 2)
+        pid = int(pid_text)
+        pgid = int(pgid_text)
+    except Exception:
+        continue
+    if pid in ignored:
+        continue
+    if session and f"arnold-repair-loop {session}" in args:
+        continue
+    if remote_spec and any(needle in args for needle in needles) and "--spec" in args and remote_spec in args:
+        targets.add(pgid if pgid > 0 else pid)
+    elif plan_name and any(needle in args for needle in needles) and f"--plan {plan_name}" in args:
+        targets.add(pgid if pgid > 0 else pid)
+
+for pgid in sorted(targets):
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+        print(f"killed stale runner process group pgid={pgid}", file=sys.stderr)
+    except ProcessLookupError:
+        pass
+    except Exception as exc:
+        print(f"failed SIGTERM stale runner pgid={pgid}: {exc}", file=sys.stderr)
+
+if targets:
+    time.sleep(2)
+for pgid in sorted(targets):
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+        print(f"force-killed stale runner process group pgid={pgid}", file=sys.stderr)
+    except ProcessLookupError:
+        pass
+    except Exception:
+        pass
+PY
+}
+
+marker_requires_repair_despite_alive() {
+  python3 - "$MARKER_PATH" <<'PY' 2>/dev/null
+import json
+import pathlib
+import sys
+
+try:
+    payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    payload = {}
+text = json.dumps(payload, sort_keys=True)
+if "workspace_drift:" in text or "sandbox_refused_outside_project_root" in text:
+    print("workspace_drift")
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 session_health_status() {
   local session="$1"
   local workspace="$2"
@@ -3321,6 +3421,7 @@ mechanical_launch_step() {
     return 1
   }
   kill_tmux_session_if_present "$session"
+  kill_matching_runner_processes "$session" "$remote_spec" "$run_kind" "$plan_name"
   safe="$(safe_name "$session")"
   launch_script="$(mktemp)"
   cat > "$launch_script" <<EOF
@@ -4070,10 +4171,15 @@ exit_if_repair_target_complete "start"
 INITIAL_HEALTH="$(session_health_status "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME")"
 repair_data_init "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" "$INITIAL_HEALTH"
 if [[ "$INITIAL_HEALTH" == "alive" ]]; then
+  forced_repair_reason="$(marker_requires_repair_despite_alive || true)"
+  if [[ -n "$forced_repair_reason" ]]; then
+    log "repair target is alive but marker requires repair session=$SESSION reason=$forced_repair_reason"
+  else
   repair_data_set_outcome "running"
   clear_repair_markers
   log "repair target already running; no dev-fix needed session=$SESSION"
   exit 0
+  fi
 fi
 
 
