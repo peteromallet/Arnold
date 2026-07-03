@@ -6,6 +6,10 @@ from pathlib import Path
 import pytest
 
 from arnold_pipelines.megaplan.incident import IncidentLedger
+from arnold_pipelines.megaplan.incident.schema import (
+    MAX_COMMITTED_OUTPUT_BYTES,
+    cap_committed_output_text,
+)
 
 
 def _event(**overrides: object) -> dict[str, object]:
@@ -76,3 +80,79 @@ def test_incident_ledger_rejects_invalid_events_before_writing(tmp_path: Path) -
         ledger.append_event(_event(summary="x" * 2049))
 
     assert not ledger.events_path.exists()
+
+
+def test_incident_ledger_redacts_secret_shaped_strings_before_persisting(tmp_path: Path) -> None:
+    ledger = IncidentLedger(tmp_path)
+    private_key = (
+        "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+        "private-material\n"
+        "-----END OPENSSH PRIVATE KEY-----"
+    )
+
+    appended = ledger.append_event(
+        _event(
+            summary="Authorization: Bearer bearer-secret-token-value sk-proj-secretsecretsecretsecret",
+            evidence=[
+                "ghp_secretgithubpat1234567890",
+                {
+                    "kind": "log",
+                    "detail": "aws_access_key_id = AKIAIOSFODNN7EXAMPLE",
+                },
+            ],
+            links={
+                "dashboard": "https://example.test/hook?access_token=ghu_secretgithubpat1234567890",
+            },
+            decision={
+                "why": "Authorization: Bearer bearer-secret-token-value",
+            },
+            actions=[
+                {
+                    "kind": "command",
+                    "command": private_key,
+                }
+            ],
+        )
+    )
+
+    raw_text = ledger.events_path.read_text(encoding="utf-8")
+
+    for secret in (
+        "bearer-secret-token-value",
+        "sk-proj-secretsecretsecretsecret",
+        "ghp_secretgithubpat1234567890",
+        "ghu_secretgithubpat1234567890",
+        "AKIAIOSFODNN7EXAMPLE",
+        "OPENSSH PRIVATE KEY",
+    ):
+        assert secret not in raw_text
+
+    payload = appended["payload"]
+    assert "***REDACTED***" in payload["summary"]
+    assert "***REDACTED***" in json.dumps(payload["evidence"])
+    assert "***REDACTED***" in json.dumps(payload["links"])
+    assert "***REDACTED***" in json.dumps(payload["decision"])
+    assert "***REDACTED***" in json.dumps(payload["actions"])
+
+
+def test_incident_ledger_validates_summary_length_after_redaction(tmp_path: Path) -> None:
+    ledger = IncidentLedger(tmp_path)
+
+    appended = ledger.append_event(
+        _event(
+            summary="Authorization: Bearer " + ("x" * 3000),
+        )
+    )
+
+    assert len(appended["payload"]["summary"]) <= 2048
+    assert appended["payload"]["summary"] == "Authorization: Bearer ***REDACTED***"
+
+
+def test_cap_committed_output_text_enforces_50kb_utf8_limit() -> None:
+    text = "a" * (MAX_COMMITTED_OUTPUT_BYTES + 128)
+
+    capped = cap_committed_output_text(text)
+
+    assert len(capped.encode("utf-8")) <= MAX_COMMITTED_OUTPUT_BYTES
+    assert capped.endswith("50KB committed-output cap]")
+    assert capped != text

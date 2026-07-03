@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from arnold_pipelines.megaplan.cloud.redact import redact_payload, redact_text
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -50,6 +52,11 @@ OPTIONAL_NULLABLE_STRING_FIELDS: tuple[str, ...] = (
 )
 
 MAX_SUMMARY_LENGTH: int = 2048
+MAX_COMMITTED_OUTPUT_BYTES: int = 50 * 1024
+_ALWAYS_ON_REDACTION_ENV: dict[str, str] = {}
+_COMMITTED_OUTPUT_TRUNCATION_TEMPLATE = (
+    "\n[truncated {omitted} bytes to satisfy the 50KB committed-output cap]"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +155,52 @@ def _check_timestamp(value: str, field: str) -> None:
         )
 
 
+def redact_incident_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy with write-path/publication fields redacted.
+
+    Redaction is intentionally always-on for ledger/publication paths, even when
+    cloud log redaction has been disabled via environment flags.
+    """
+    redacted = dict(event)
+    if "summary" in redacted:
+        redacted["summary"] = redact_text(
+            redacted["summary"],
+            env=_ALWAYS_ON_REDACTION_ENV,
+        )
+    for field in ("evidence", "links", "decision", "actions"):
+        if field in redacted:
+            redacted[field] = redact_payload(
+                redacted[field],
+                env=_ALWAYS_ON_REDACTION_ENV,
+            )
+    return redacted
+
+
+def cap_committed_output_text(
+    text: str,
+    *,
+    limit_bytes: int = MAX_COMMITTED_OUTPUT_BYTES,
+) -> str:
+    """Return *text* capped to *limit_bytes* UTF-8 bytes with a marker."""
+    if limit_bytes <= 0:
+        raise ValueError("limit_bytes must be positive")
+    if not isinstance(text, str):
+        raise ValueError("committed output must be a string")
+    encoded = text.encode("utf-8")
+    if len(encoded) <= limit_bytes:
+        return text
+    omitted = len(encoded) - limit_bytes
+    suffix = _COMMITTED_OUTPUT_TRUNCATION_TEMPLATE.format(omitted=omitted)
+    suffix_bytes = suffix.encode("utf-8")
+    if len(suffix_bytes) >= limit_bytes:
+        return suffix_bytes[:limit_bytes].decode("utf-8", errors="ignore")
+    allowed = limit_bytes - len(suffix_bytes)
+    truncated = encoded[:allowed].decode("utf-8", errors="ignore")
+    while len((truncated + suffix).encode("utf-8")) > limit_bytes and truncated:
+        truncated = truncated[:-1]
+    return truncated + suffix
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -187,6 +240,7 @@ def validate_incident_event(event: dict[str, Any]) -> dict[str, Any]:
     """
     if not isinstance(event, dict):
         raise ValueError("incident event must be a dict")
+    event = redact_incident_event(event)
 
     # ── schema_version ──────────────────────────────────────────────
     sv = event.get("schema_version")
