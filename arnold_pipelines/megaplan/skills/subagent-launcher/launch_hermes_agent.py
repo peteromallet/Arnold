@@ -205,7 +205,7 @@ def _import_runtime():
         if current_exc.name not in {"arnold", "arnold.agent", "arnold.agent.run_agent", "arnold.agent.hermes_state"}:
             raise
         pass
-    # Try 3: arnold.pipelines.megaplan (old vendored layout)
+    # Try 3: current Arnold checkout with legacy vendored-agent path on sys.path.
     try:
         vendored_agent = Path.cwd() / "arnold" / "pipelines" / "megaplan" / "agent"
         if vendored_agent.exists():
@@ -213,11 +213,11 @@ def _import_runtime():
             if vendored_agent_str not in sys.path:
                 sys.path.insert(0, vendored_agent_str)
         from arnold.agent.run_agent import AIAgent
-        from arnold.pipelines.megaplan.agent.hermes_state import SessionDB
-        from arnold.pipelines.megaplan.runtime.key_pool import resolve_model
+        from arnold.agent.hermes_state import SessionDB
+        from arnold_pipelines.megaplan.runtime.key_pool import resolve_model
         return AIAgent, SessionDB, resolve_model
     except ModuleNotFoundError as vendored_exc:
-        if vendored_exc.name not in {"arnold.pipelines", "arnold.pipelines.megaplan"}:
+        if vendored_exc.name not in {"arnold", "arnold.agent", "arnold.agent.run_agent", "arnold.agent.hermes_state"}:
             raise
         pass
     # Try 4: historical product-local layout.

@@ -78,14 +78,14 @@ PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "migrated": True,
     },
     "arnold/pipelines/folder_audit": {
-        "status": "migrate",
+        "status": "archive",
         "registry_id": "arnold.folder_audit",
-        "migrated": True,
+        "migrated": False,
     },
     "arnold/pipelines/deliberation": {
-        "status": "migrate",
+        "status": "archive",
         "registry_id": "arnold.deliberation",
-        "migrated": True,
+        "migrated": False,
     },
     # Archives
     "arnold_pipelines/megaplan/pipelines/epic_blitz.py": {
