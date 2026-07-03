@@ -124,6 +124,12 @@ class TestBackendBranchSelection:
         backend = MegaplanManifestBackend(plan_dir=tmp_path / "plan")
         assert backend._branch_edge_id("gate", {"recommendation": "PROCEED"}) == "gate:finalize"
 
+    def test_branch_edge_from_route_signal(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.runtime.manifest_backend import MegaplanManifestBackend
+
+        backend = MegaplanManifestBackend(plan_dir=tmp_path / "plan")
+        assert backend._branch_edge_id("gate", {"route_signal": "blocked_preflight"}) == "gate:blocked"
+
     def test_suspension_route_for_human_state(self, tmp_path: Path) -> None:
         from arnold_pipelines.megaplan.runtime.manifest_backend import MegaplanManifestBackend
 

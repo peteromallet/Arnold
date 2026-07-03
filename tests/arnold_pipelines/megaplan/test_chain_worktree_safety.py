@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -9,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 import arnold_pipelines.megaplan.chain as chain_module
+import arnold_pipelines.megaplan.chain.git_ops as git_ops
 from arnold_pipelines.megaplan.auto import DriverOutcome
 from arnold_pipelines.megaplan.chain import (
     _drive_plan,
@@ -115,6 +117,12 @@ def test_chain_marks_between_milestones_until_final_completion(tmp_path: Path) -
 
     assert state.current_milestone_index == 2
     assert state.last_state == "done"
+
+
+def test_chain_facade_reexports_git_push_helper() -> None:
+    assert (
+        chain_module._run_git_push_command is git_ops._run_git_push_command
+    )
 
 
 def test_chain_fresh_refuses_to_delete_unregistered_spec_directory(tmp_path: Path) -> None:
@@ -655,6 +663,7 @@ def test_commit_and_push_phase_continues_when_rebase_abort_has_no_rebase(
                 TimeoutExpired=subprocess.TimeoutExpired,
             ),
             _run_command=fake_run_command,
+            _run_git_push_command=git_ops._run_git_push_command,
         ),
     )
 
@@ -701,6 +710,7 @@ def test_commit_and_push_phase_pushes_cleanup_only_commit(
                 TimeoutExpired=subprocess.TimeoutExpired,
             ),
             _run_command=fake_run_command,
+            _run_git_push_command=git_ops._run_git_push_command,
         ),
     )
 
@@ -708,6 +718,46 @@ def test_commit_and_push_phase_pushes_cleanup_only_commit(
 
     assert ["git", "fetch", "origin", "branch-x"] in subprocess_calls
     assert ["git", "push", "--no-verify", "origin", "HEAD:branch-x"] in run_command_calls
+
+
+def test_commit_and_push_phase_uses_extended_timeout_for_push(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    push_timeouts: list[float | None] = []
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._commit_phase",
+        lambda *_args, **_kwargs: "abc123",
+    )
+
+    def fake_run(cmd, **_kwargs):
+        if cmd[:3] == ["git", "fetch", "origin"]:
+            return subprocess.CompletedProcess(cmd, 1, "", "missing remote branch")
+        raise AssertionError(f"unexpected subprocess call: {cmd}")
+
+    def fake_run_command(_root, cmd, **kwargs):
+        if cmd[:2] == ["git", "push"]:
+            push_timeouts.append(kwargs.get("timeout"))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            subprocess=SimpleNamespace(
+                run=fake_run,
+                TimeoutExpired=subprocess.TimeoutExpired,
+            ),
+            _run_command=fake_run_command,
+            _run_git_push_command=git_ops._run_git_push_command,
+        ),
+    )
+
+    _commit_and_push_phase(root, "branch-x", "plan-x", "finalize", writer=lambda _msg: None)
+
+    assert push_timeouts == [git_ops._GIT_PUSH_TIMEOUT_SECONDS]
 
 
 def test_run_chain_resume_refreshes_milestone_branch_and_pr_context(
@@ -820,3 +870,115 @@ def test_drive_plan_restores_process_cwd_after_auto_driver(tmp_path: Path, monke
 
     assert outcome.status == "done"
     assert Path.cwd() == root
+
+
+def test_run_chain_blocks_pr_merge_when_completion_guard_fails_before_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    _init_repo(root)
+    spec_path = _write_chain_spec(root)
+    _git(root, "add", "NORTHSTAR.md", "chain.yaml", "idea.md")
+    _git(root, "commit", "-m", "add chain spec")
+
+    plan_dir = root / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "plan-m1", "current_state": "done"}),
+        encoding="utf-8",
+    )
+
+    ready_calls: list[int] = []
+    merge_calls: list[int] = []
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._preflight_agent_backends",
+        lambda spec, *, writer: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.resolve_execution_environment",
+        lambda **_kwargs: SimpleNamespace(to_dict=lambda: {}),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._refresh_base_branch",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._init_plan",
+        lambda *args, **kwargs: "plan-m1",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._write_chain_policy_into_plan_meta",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._attach_chain_anchors_to_plan",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._commit_and_push_phase",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._capture_sync_state",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._ensure_milestone_pr",
+        lambda *args, **kwargs: 80,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+        lambda *args, **kwargs: DriverOutcome(
+            status="done",
+            plan="plan-m1",
+            final_state="done",
+            iterations=1,
+            reason="ok",
+        ),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._record_chain_last_state_after_plan_run",
+        lambda _root, _spec_path, state, outcome, *, writer: state,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._handle_outcome",
+        lambda *args, **kwargs: "advance",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._plan_terminal_completion_is_authoritative",
+        lambda *args, **kwargs: (True, "authoritative"),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._chain_completion_guard",
+        lambda *args, **kwargs: (False, "no typed no-op completion waiver found"),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._pr_state",
+        lambda *args, **kwargs: "open",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._mark_pr_ready",
+        lambda *args, **kwargs: ready_calls.append(1),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._enable_auto_merge",
+        lambda *args, **kwargs: merge_calls.append(1) or "merged",
+    )
+
+    result = run_chain(spec_path, root, writer=lambda _message: None)
+
+    assert result["status"] == "stopped"
+    assert "completion guard blocked before PR merge" in result["reason"]
+    assert ready_calls == []
+    assert merge_calls == []
+
+    saved = load_chain_state(spec_path)
+    assert saved.last_state == "blocked"
+    assert saved.pr_number == 80
+    assert saved.pr_state == "open"

@@ -4169,7 +4169,7 @@ repair_unhealthy_session demo-session /workspace/example .megaplan/initiatives/d
     assert "DISPATCH" in result.stderr
 
 
-def test_repair_unhealthy_session_retries_root_cause_repair_after_timeout(tmp_path: Path) -> None:
+def test_repair_unhealthy_session_preserves_direct_relaunch_after_timeout(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     repair_data_dir = tmp_path / "repair-data"
     marker_dir.mkdir()
@@ -4206,9 +4206,51 @@ repair_unhealthy_session demo-session /workspace/example .megaplan/initiatives/d
         ]
     )
     result = _run_watchdog_shell(script)
-    assert result.returncode == 0, result.stderr
-    assert "outcome=repair_timeout" in result.stderr
-    assert "DISPATCH" in result.stderr
+    assert result.returncode == 1, result.stderr
+    assert "repair loop tried and exited without recovery -> direct relaunch" in result.stderr
+    assert "DISPATCH" not in result.stderr
+
+
+def test_repair_unhealthy_session_preserves_direct_relaunch_after_repair_exhausted(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = tmp_path / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    session = "demo-session"
+    (marker_dir / f"{session}.kimi-dispatch").write_text("2026-07-02T00:00:00Z\n", encoding="utf-8")
+    (marker_dir / f"{session}.kimi-pgid").write_text("12345\n", encoding="utf-8")
+    (repair_data_dir / f"{session}.repair-data.json").write_text(
+        json.dumps({"outcome": "repair_exhausted"}),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_clear"),
+            _extract_wrapper_function("kimi_dispatch_failed_previously"),
+            _extract_wrapper_function("repair_data_outcome_for_session"),
+            _extract_wrapper_function("repair_outcome_wants_repair_retry"),
+            _extract_wrapper_function("mechanical_relaunch_attempted_previously"),
+            _extract_wrapper_function("repair_unhealthy_session"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            """
+log() { echo "LOG $*" >&2; }
+kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
+dispatch_kimi_repair() { echo DISPATCH >&2; REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+tmux() { echo "TMUX $*" >&2; return 0; }
+repair_unhealthy_session demo-session /workspace/example .megaplan/initiatives/demo/briefs/demo.md stopped
+""".strip(),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 1, result.stderr
+    assert "repair loop tried and exited without recovery -> direct relaunch" in result.stderr
+    assert "DISPATCH" not in result.stderr
 
 
 def test_repair_unhealthy_session_preserves_direct_relaunch_for_non_retry_repair_outcome(tmp_path: Path) -> None:
@@ -4434,6 +4476,91 @@ tmux() { echo TMUX >&2; return 1; }
     assert "RELAUNCH" not in result.stderr
     assert "TMUX" not in result.stderr
     assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
+
+
+def test_watchdog_awaiting_human_verify_chain_state_dispatches_repair_before_relaunch(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "demo-plan"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "iteration": 1,
+            "current_state": "awaiting_human_verify",
+            "clarification": {
+                "intent_summary": "prep surfaced 2 blocking ambiguities; answer and resume",
+                "questions": ["Q1", "Q2"],
+                "source": "prep",
+            },
+        },
+        events_body="{}\n",
+    )
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True, exist_ok=True)
+    import hashlib
+
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    (chain_dir / f"{spec_path.stem}-{digest}.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": plan_name,
+                "last_state": "awaiting_human_verify",
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_attention_status_env"),
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            _extract_wrapper_function("repair_needs_human_path"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+chain_health_status() {
+  CHAIN_HEALTH_STATUS=ok
+  CHAIN_HEALTH_SUMMARY=
+  CHAIN_HEALTH_ARTIFACT_PATH=
+  CHAIN_HEALTH_LOG_MESSAGE=
+}
+""".strip(),
+            f"launch_chain_tick demo-session {str(workspace)!r} {str(spec_path)!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\trepair\trepair_dispatched\tawaiting_human repair loop dispatched before needs_human\t" in report
+    assert "\trestart\trestarted\tstopped session relaunched\t" not in report
+    assert "DISPATCH" in result.stderr
+    assert "RELAUNCH" not in result.stderr
+    assert "TMUX" not in result.stderr
+    assert "REPAIR" not in result.stderr
 
 
 def test_watchdog_completed_chain_state_reports_complete_without_repair(tmp_path: Path) -> None:
@@ -6377,10 +6504,13 @@ def _run_launch_chain_tick_meta_repair_script(paths: dict[str, Path]) -> subproc
     script = "\n\n".join(
         [
             _extract_wrapper_function("json_field"),
+            _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
+            _extract_wrapper_function_until("write_partial_liveness_tick", "clear_session_tracking_artifacts"),
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(paths['marker_dir'])!r}",
             f"REPAIR_DATA_DIR={str(paths['repair_data_dir'])!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
             f"LOG={str(paths['log_path'])!r}",
             """
 report_item() {
@@ -6390,7 +6520,7 @@ log() { printf '%s\\n' "$*" >> "$LOG"; }
 plan_attention_status_env() { return 0; }
 plan_terminal_status() { return 1; }
 repair_needs_human_path() { printf '%s\\n' "$REPAIR_DATA_DIR/$1.needs-human.json"; }
-session_health_status() { echo dead; }
+session_health_status() { echo "${WATCHDOG_TEST_HEALTH:-dead}"; }
 plan_phase_health_status() { echo ok; }
 plan_progress_stall_status() { echo ok; }
 chain_health_status() {
@@ -6501,6 +6631,72 @@ def test_launch_chain_tick_dispatches_meta_repair_on_partial_liveness_trigger(tm
     assert "trigger=partial_liveness_recurrence" in paths["log_path"].read_text(encoding="utf-8")
 
 
+def test_launch_chain_tick_dispatches_meta_repair_while_session_alive(tmp_path: Path) -> None:
+    paths = _prepare_meta_repair_launch_chain_tick_fixture(
+        tmp_path,
+        payload_overrides={"outcome": "repair_exhausted"},
+    )
+    result = _run_watchdog_shell(
+        "\n\n".join(
+                [
+                    _extract_wrapper_function("json_field"),
+                    _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
+                    _extract_wrapper_function_until("write_partial_liveness_tick", "clear_session_tracking_artifacts"),
+                    _extract_wrapper_function("launch_chain_tick"),
+                f"MARKER_DIR={str(paths['marker_dir'])!r}",
+                f"REPAIR_DATA_DIR={str(paths['repair_data_dir'])!r}",
+                f"SRC_DIR={str(REPO_ROOT)!r}",
+                f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+                f"LOG={str(paths['log_path'])!r}",
+                """
+report_item() {
+  printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\\n' "$*" >> "$LOG"; }
+plan_attention_status_env() { return 0; }
+plan_terminal_status() { return 1; }
+repair_needs_human_path() { printf '%s\\n' "$REPAIR_DATA_DIR/$1.needs-human.json"; }
+session_health_status() { echo alive; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+chain_health_status() {
+  CHAIN_HEALTH_STATUS=ok
+  CHAIN_HEALTH_SUMMARY=
+  CHAIN_HEALTH_ARTIFACT_PATH=
+  CHAIN_HEALTH_LOG_MESSAGE=
+}
+repair_loop_busy_state() { echo none; }
+repair_unhealthy_session() { echo SHOULD_NOT_REPAIR_UNHEALTHY >&2; return 1; }
+dispatch_meta_repair() { echo META_DISPATCH >&2; REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+dispatch_kimi_repair() { echo SHOULD_NOT_DISPATCH_KIMI >&2; return 0; }
+kimi_dispatch_marker_set() { :; }
+kimi_dispatch_marker_clear() { :; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo "echo relaunched"; }
+safe_name() { printf '%s\\n' "$1"; }
+tmux() {
+  if [[ "${1:-}" == "has-session" ]]; then
+    return 1
+  fi
+  echo "TMUX $*" >&2
+  return 0
+}
+""".strip(),
+                (
+                    f"launch_chain_tick demo-session {str(paths['workspace'])!r} "
+                    f"{str(paths['spec_path'])!r} {str(paths['report_path'])!r} chain '' ''"
+                ),
+            ]
+        )
+    )
+    assert result.returncode == 0, result.stderr
+    assert "META_DISPATCH" in result.stderr
+    assert "TMUX" not in result.stderr
+    assert "session alive after repair failure; meta-repair background-dispatched" in paths["log_path"].read_text(encoding="utf-8")
+    events_path = paths["repair_data_dir"].with_name("repair-data.d") / "events" / "events.jsonl"
+    assert not events_path.exists(), "alive-path meta dispatch should short-circuit before writing partial liveness"
+
+
 def test_launch_chain_tick_dispatches_meta_repair_on_true_blocker_discord_failure(tmp_path: Path) -> None:
     paths = _prepare_meta_repair_launch_chain_tick_fixture(
         tmp_path,
@@ -6585,6 +6781,98 @@ def test_plan_phase_health_detects_workspace_drift_without_latest_failure(tmp_pa
 
     assert result.startswith("workspace_drift:m2-demo:")
     assert "sandbox_refused_outside_project_root" in result
+
+
+def test_plan_phase_health_ignores_sandbox_refusal_after_later_progress(tmp_path: Path) -> None:
+    workspace = tmp_path / "project"
+    plan = workspace / ".megaplan" / "plans" / "m2-demo"
+    plan.mkdir(parents=True)
+    (plan / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "finalized",
+                "active_step": {"phase": "execute", "worker_pid": 1234},
+                "history": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / ".megaplan" / "cloud-chain-demo.log").write_text(
+        "\n".join(
+            [
+                "sandbox refused terminal: refusing terminal command: leading `cd /workspace/arnold` "
+                "targets /workspace/arnold, which is outside the sandbox root/project directory "
+                "/workspace/native-composition-followup/Arnold. Run commands relative to the project "
+                "directory; do not `cd` to an absolute path outside the worktree.",
+                "  [done] ┊ 💻 $         cd /workspace/arnold && python -c \"...\"  0.0s (0.0s)",
+                "  [tool] (◕ᴗ◕✿) 💻 python -m pytest tests/arnold/pipeline/native/test_decorators.py",
+                "  [done] ┊ 💻 $         python -m pytest tests/arnold/pipeline/native/test_decorators.py  1.4s (1.6s)",
+                "[auto m2-demo] iter 2 state=critiqued next=gate valid_next=['gate', 'step']",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = _run_phase(workspace)
+
+    assert result == "ok"
+
+
+def test_plan_phase_health_ignores_sandbox_refusal_with_recent_active_step(tmp_path: Path) -> None:
+    workspace = tmp_path / "project"
+    plan = workspace / ".megaplan" / "plans" / "m2-demo"
+    plan.mkdir(parents=True)
+    (plan / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "finalized",
+                "active_step": {
+                    "phase": "execute",
+                    "worker_pid": 1234,
+                    "last_activity_at": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+                },
+                "history": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / ".megaplan" / "cloud-chain-demo.log").write_text(
+        "sandbox refused terminal: refusing terminal command: leading `cd /workspace/arnold` "
+        "targets /workspace/arnold, which is outside the sandbox root/project directory "
+        "/workspace/native-composition-followup/Arnold\n",
+        encoding="utf-8",
+    )
+
+    result = _run_phase(workspace)
+
+    assert result == "ok"
+
+
+def test_plan_phase_health_ignores_sandbox_refusal_with_recent_events_only(tmp_path: Path) -> None:
+    workspace = tmp_path / "project"
+    plan = workspace / ".megaplan" / "plans" / "m2-demo"
+    plan.mkdir(parents=True)
+    (plan / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "finalized",
+                "history": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan / "events.ndjson").write_text('{"event":"llm_stream"}\n', encoding="utf-8")
+    (workspace / ".megaplan" / "cloud-chain-demo.log").write_text(
+        "sandbox refused terminal: refusing terminal command: leading `cd /workspace/arnold` "
+        "targets /workspace/arnold, which is outside the sandbox root/project directory "
+        "/workspace/native-composition-followup/Arnold\n",
+        encoding="utf-8",
+    )
+
+    result = _run_phase(workspace)
+
+    assert result == "ok"
 
 
 def _extract_stall_program() -> str:
@@ -7268,6 +7556,54 @@ def test_chain_health_status_detects_stuck_nonterminal_across_ticks() -> None:
     assert artifact["issue_kind"] == "chain_stuck_nonterminal"
     assert artifact["details"]["stuck_ticks"] == 2
     assert artifact["chain_state_summary"]["last_state"] == "authority_divergence"
+
+
+def test_chain_health_status_ignores_stuck_nonterminal_while_plan_step_is_active() -> None:
+    tmp = Path(tempfile.mkdtemp())
+    ws = tmp / "ws"
+    marker = tmp / "markers"
+    repair_dir = tmp / "repair-data"
+    _write_chain_state(
+        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        {
+            "current_milestone_index": 1,
+            "current_plan_name": "m1-demo-plan",
+            "last_state": "between_milestones",
+            "pr_state": "",
+            "completed": [{"label": "m0"}],
+        },
+    )
+    _write_plan(
+        ws / ".megaplan" / "plans" / "m1-demo-plan",
+        {
+            "current_state": "finalized",
+            "active_step": {"phase": "execute", "started_at": "2026-07-03T16:31:05Z"},
+        },
+    )
+    (ws / ".megaplan" / "cloud-chain-demo.log").parent.mkdir(parents=True, exist_ok=True)
+    (ws / ".megaplan" / "cloud-chain-demo.log").write_text(
+        "[chain] milestone m1 starting\n",
+        encoding="utf-8",
+    )
+
+    first = _run_chain_health(
+        ws,
+        marker,
+        repair_dir,
+        health="alive",
+        env_overrides={"CLOUD_WATCHDOG_CHAIN_STUCK_TICKS": "2"},
+    )
+    second = _run_chain_health(
+        ws,
+        marker,
+        repair_dir,
+        health="alive",
+        env_overrides={"CLOUD_WATCHDOG_CHAIN_STUCK_TICKS": "2"},
+    )
+
+    assert first["CHAIN_HEALTH_STATUS"] == "ok"
+    assert second["CHAIN_HEALTH_STATUS"] == "ok"
+    assert second["CHAIN_HEALTH_ARTIFACT_PATH"] == ""
 
 
 def test_chain_health_status_classifies_unclean_base_before_generic_stuck() -> None:

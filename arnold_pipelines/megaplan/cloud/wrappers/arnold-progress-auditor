@@ -373,6 +373,7 @@ import datetime as dt
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -649,12 +650,78 @@ def _repair_attempt_signals(repair_payload):
     ]
     return repair_outcome, [item for item in attempt_outcomes if item], failure_kinds
 
+def _attempt_has_runtime_context(item):
+    if not isinstance(item, dict):
+        return False
+    for key in ("recorded_at", "started_at", "finished_at", "dispatched_at", "run_dir", "outcome"):
+        if str(item.get(key) or "").strip():
+            return True
+    for key in ("resolver_output", "target", "verification"):
+        if isinstance(item.get(key), dict) and item.get(key):
+            return True
+    return False
+
 def _meta_repair_summary(session, repair_data, meta_refs):
     repair_root = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_REPAIR_DATA_DIR", "/workspace/.megaplan/cloud-sessions/repair-data"))
     repair_payload = _load_json(repair_root / f"{session}.repair-data.json")
     if not isinstance(repair_payload, dict):
         repair_payload = {}
     repair_outcome, attempt_outcomes, failure_kinds = _repair_attempt_signals(repair_payload)
+    recent_attempts = [
+        item
+        for item in (repair_payload.get("attempts") if isinstance(repair_payload.get("attempts"), list) else [])[-5:]
+        if isinstance(item, dict)
+    ]
+    recent_iterations = [
+        item
+        for item in (repair_payload.get("iterations") if isinstance(repair_payload.get("iterations"), list) else [])[-5:]
+        if isinstance(item, dict)
+    ]
+    current_attempt_id = str(repair_payload.get("current_attempt_id") or "").strip()
+    current_recurrence = repair_payload.get("current_recurrence") if isinstance(repair_payload.get("current_recurrence"), dict) else {}
+    current_signature = repair_payload.get("current_signature") if isinstance(repair_payload.get("current_signature"), dict) else {}
+    if (
+        repair_outcome == "running"
+        and not current_attempt_id
+        and not current_recurrence
+        and not current_signature
+        and not recent_iterations
+        and recent_attempts
+    ):
+        return {
+            "should_dispatch": False,
+            "trigger": "",
+            "rationale": [
+                "repair-data reports running but no active attempt/iteration context is present; "
+                "historical attempts alone are insufficient to demand meta-repair"
+            ],
+            "repair_outcome": _redact_scalar(repair_outcome),
+            "attempt_outcomes": [_redact_scalar(item) for item in attempt_outcomes[-5:]],
+            "failure_kinds": [_redact_scalar(item) for item in failure_kinds[-5:]],
+            "meta_record_count": len(meta_refs or []),
+            "meta_run_log_count": 0,
+            "meta_run_refs": [],
+            "missing_meta_run_evidence": False,
+        }
+    if (
+        not current_attempt_id
+        and not current_recurrence
+        and not current_signature
+        and recent_attempts
+        and not any(_attempt_has_runtime_context(item) for item in recent_attempts)
+    ):
+        return {
+            "should_dispatch": False,
+            "trigger": "",
+            "rationale": ["repair-data only contains legacy attempt summaries; no active recurring repair context is present"],
+            "repair_outcome": _redact_scalar(repair_outcome),
+            "attempt_outcomes": [_redact_scalar(item) for item in attempt_outcomes[-5:]],
+            "failure_kinds": [_redact_scalar(item) for item in failure_kinds[-5:]],
+            "meta_record_count": len(meta_refs or []),
+            "meta_run_log_count": 0,
+            "meta_run_refs": [],
+            "missing_meta_run_evidence": False,
+        }
     try:
         classification, _ = evaluate_meta_repair_triggers(
             session,
@@ -844,9 +911,14 @@ def _chain_log_candidates(workspace, session, entry):
             unique.append(path)
     return unique
 
+_AWAITING_HUMAN_TOKEN = re.compile(r"(?<![A-Za-z0-9_])awaiting_human(?:_verify)?(?![A-Za-z0-9_])")
+
+def _has_awaiting_human_token(line):
+    return bool(_AWAITING_HUMAN_TOKEN.search(line.lower()))
+
 def _normalize_stop_signature(line):
     lower = line.lower()
-    if "awaiting_human" in lower:
+    if _has_awaiting_human_token(lower):
         return "awaiting_human"
     if "pr #" in lower and "closed" in lower:
         return "pr_closed"
@@ -894,7 +966,7 @@ def _chain_log_summary(workspace, session, entry):
         if (
             "status: stopped" in lower
             or '"status": "stopped"' in lower
-            or "awaiting_human" in lower
+            or _has_awaiting_human_token(lower)
             or ("pr #" in lower and "closed" in lower)
             or "repair loop exhausted" in lower
             or "all milestones complete" in lower

@@ -170,6 +170,24 @@ class MegaplanManifestBackend(LocalJournalBackend):
     # Outcome translation
     # ------------------------------------------------------------------
 
+    def _route_binding_for_signal(self, node_id: str, route_signal: object) -> tuple[str, str] | None:
+        if not isinstance(route_signal, str) or not route_signal:
+            return None
+        try:
+            from arnold_pipelines.megaplan.workflows.components import STEP_COMPONENTS_BY_ID
+
+            component = STEP_COMPONENTS_BY_ID[node_id]
+        except Exception:
+            return None
+        for binding in component.metadata.get("route_bindings", ()):
+            if not isinstance(binding, Mapping) or binding.get("label") != route_signal:
+                continue
+            route_id = binding.get("id")
+            target_ref = binding.get("target_ref")
+            if isinstance(route_id, str) and route_id and isinstance(target_ref, str) and target_ref:
+                return route_id, target_ref
+        return None
+
     def _response_to_outcome(
         self,
         node_id: str,
@@ -219,12 +237,19 @@ class MegaplanManifestBackend(LocalJournalBackend):
         override_action = response.get("override_action")
         decision = response.get("decision")
         review_verdict = response.get("review_verdict")
+        route_signal = response.get("route_signal")
+
+        binding = self._route_binding_for_signal(node_id, route_signal)
+        if binding is not None:
+            return binding[0]
 
         if node_id == "gate":
             if isinstance(next_step, str):
                 key = {
                     "finalize": "gate:finalize",
                     "revise": "gate:revise",
+                    "override": "gate:override",
+                    "tiebreaker_run": "gate:tiebreaker",
                     "tiebreaker": "gate:tiebreaker",
                     "override add-note": "gate:override",
                     "override force-proceed": "gate:force_proceed",
@@ -315,6 +340,23 @@ class MegaplanManifestBackend(LocalJournalBackend):
 
         signals: list[Mapping[str, Any] | ControlTransition] = []
         recommendation = response.get("recommendation")
+        route_signal = response.get("route_signal")
+        binding = self._route_binding_for_signal(node_id, route_signal)
+        if binding is not None:
+            _, target = binding
+            signals.append(
+                ControlTransition(
+                    transition_type=ControlTransitionType.OVERRIDE,
+                    source=KernelControlTarget(node_ref=node_id),
+                    target=KernelControlTarget(node_ref=target),
+                    trigger=f"{node_id}:{route_signal}",
+                    payload_schema_hash="",
+                    policy_ref=f"megaplan:{node_id}",
+                    idempotency_key=f"{node_id}:{route_signal}",
+                    payload={"route_signal": route_signal},
+                )
+            )
+            return signals
         if recommendation in {"PROCEED", "ITERATE", "ESCALATE", "TIEBREAKER", "ABORT"}:
             target = {
                 "PROCEED": "finalize",
