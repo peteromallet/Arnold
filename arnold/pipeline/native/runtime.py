@@ -323,6 +323,8 @@ def run_native_pipeline(
         if resume_cursor_data is not None:
             start_pc = resume_cursor_data["native"]["pc"]
             stages = list(resume_cursor_data.get("stages", []))
+            if isinstance(_hooks, NativeTraceHooks):
+                _hooks.seed_stage_sequence(stages)
             loops = dict(resume_cursor_data.get("loops", {}))
             frames = dict(resume_cursor_data.get("frames", {}))
             # Restore working state from cursor if present

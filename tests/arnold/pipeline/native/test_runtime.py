@@ -15,6 +15,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -545,6 +546,99 @@ class TestMaxPhasesAndResume:
         assert not r3.suspended
         assert r3.state == {"a": 1, "b": 2, "c": 3, "d": 4}
         assert len(r3.stages) == 4
+
+    def test_resumed_traced_run_seeds_stage_sequence_from_cursor(
+        self, tmp_path: Path
+    ) -> None:
+        @phase
+        def a(ctx: dict) -> dict:
+            return {"a": 1}
+
+        @phase
+        def b(ctx: dict) -> dict:
+            return {"b": 2}
+
+        @phase
+        def c(ctx: dict) -> dict:
+            return {"c": 3}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield a(ctx)
+            state = yield b(ctx)
+            state = yield c(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        trace_dir = tmp_path / "trace"
+
+        first = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            max_phases=1,
+            trace_dir=trace_dir,
+        )
+        assert first.suspended is True
+        assert json.loads((trace_dir / "stages.json").read_text(encoding="utf-8")) == [
+            "a__pc0"
+        ]
+
+        resumed = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            resume=True,
+            trace_dir=trace_dir,
+        )
+
+        assert resumed.suspended is False
+        assert resumed.stages == [
+            "my_pipe__a__pc0",
+            "my_pipe__b__pc1",
+            "my_pipe__c__pc2",
+        ]
+        assert json.loads((trace_dir / "stages.json").read_text(encoding="utf-8")) == [
+            "a__pc0",
+            "b__pc1",
+            "c__pc2",
+        ]
+        checkpoint = json.loads(
+            (trace_dir / "checkpoint.json").read_text(encoding="utf-8")
+        )
+        assert checkpoint["stage_sequence"] == ["a__pc0", "b__pc1", "c__pc2"]
+        assert checkpoint["cursor_stage"] == "my_pipe__c__pc2"
+
+    def test_fresh_traced_run_keeps_existing_short_stage_sequence(
+        self, tmp_path: Path
+    ) -> None:
+        @phase
+        def a(ctx: dict) -> dict:
+            return {"a": 1}
+
+        @phase
+        def b(ctx: dict) -> dict:
+            return {"b": 2}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield a(ctx)
+            state = yield b(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        trace_dir = tmp_path / "trace"
+
+        result = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            trace_dir=trace_dir,
+        )
+
+        assert result.suspended is False
+        assert result.stages == ["my_pipe__a__pc0", "my_pipe__b__pc1"]
+        assert json.loads((trace_dir / "stages.json").read_text(encoding="utf-8")) == [
+            "a__pc0",
+            "b__pc1",
+        ]
 
 
 # ── decision branching ────────────────────────────────────────────────

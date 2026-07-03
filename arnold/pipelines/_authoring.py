@@ -26,6 +26,8 @@ import inspect
 from typing import Any, Mapping, Sequence
 
 from arnold.pipeline import Pipeline
+from arnold.pipeline.native import validate_pipeline_purity
+from arnold.pipeline.native.ir import NativeProgram
 
 # ---------------------------------------------------------------------------
 # Contract constants
@@ -88,6 +90,10 @@ class _MissingNativeModeError(_AuthoringError):
 class _BuildPipelineError(_AuthoringError):
     """Raised when ``build_pipeline()`` is missing, not callable, or returns
     a pipeline with a null ``native_program``."""
+
+
+class _RoutingPurityError(_AuthoringError):
+    """Raised when a native program's routing decisions contain impure code."""
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +195,9 @@ def validate_package_module(pkg: object) -> Pipeline:
     4. ``build_pipeline()`` exists, is callable, returns a
        :class:`arnold.pipeline.Pipeline`, and that pipeline has a
        non-null ``native_program``.
+    5. When ``native_program`` is a :class:`~arnold.pipeline.native.ir.NativeProgram`
+       instance, routing-purity validation is performed on its decision bodies
+       and static topology.
 
     Returns the :class:`~arnold.pipeline.Pipeline` produced by
     ``build_pipeline()`` (already validated).
@@ -198,11 +207,34 @@ def validate_package_module(pkg: object) -> Pipeline:
         _InvalidDriverError: ``driver`` does not start with ``'native'``.
         _MissingNativeModeError: ``'native'`` not in ``supported_modes``.
         _BuildPipelineError: ``build_pipeline`` contract violation.
+        _RoutingPurityError: native program routing decisions contain impure
+            code or invalid static topology.
     """
     _check_required_metadata(pkg)
     _check_driver(getattr(pkg, "driver"))
     _check_supported_modes(getattr(pkg, "supported_modes"))
     pipeline = _check_build_pipeline(pkg)
+
+    # Routing-purity validation for real NativeProgram instances only.
+    # Non-NativeProgram sentinels (e.g. object() used in test fakes) are
+    # silently skipped to preserve sentinel compatibility.
+    if isinstance(pipeline.native_program, NativeProgram):
+        report = validate_pipeline_purity(pipeline.native_program)
+        if not report.ok:
+            raise _RoutingPurityError(
+                f"Native program '{pipeline.native_program.name}' has "
+                f"{len(report.diagnostics)} routing-purity violation(s): "
+                + "; ".join(
+                    f"[{d.code}] {d.message}"
+                    for d in report.diagnostics[:5]
+                )
+                + (
+                    f" (+{len(report.diagnostics) - 5} more)"
+                    if len(report.diagnostics) > 5
+                    else ""
+                )
+            )
+
     return pipeline
 
 
@@ -212,6 +244,7 @@ __all__ = [
     "_InvalidDriverError",
     "_MissingMetadataError",
     "_MissingNativeModeError",
+    "_RoutingPurityError",
     "CONTRACT_TEXT",
     "NATIVE_DRIVER_PREFIX",
     "NATIVE_MODE_LITERAL",

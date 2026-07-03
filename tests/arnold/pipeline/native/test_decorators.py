@@ -17,6 +17,7 @@ from arnold.pipeline.native import (
     NativeLoopGuard,
     NativePhase,
     NativePipeline,
+    NativeProgram,
     NativeInvocable,
     decision,
     get_decision_meta,
@@ -1293,3 +1294,172 @@ class TestDecisionHumanGateMetadata:
             nd.resume_input_schema = {"x": 1}  # type: ignore[misc]
         with pytest.raises(Exception):
             nd.override_routes = {"ok": "halt"}  # type: ignore[misc]
+
+
+# ── Decision source-location and routing-body marker tests ─────────────
+
+
+class TestDecisionSourceLocation:
+    """``@decision`` exposes source_file, first_lineno, and routing_body
+    via dunders and :func:`get_decision_meta` without breaking existing
+    metadata keys.
+    """
+
+    def test_source_file_exposed(self) -> None:
+        @decision(vocabulary={"pass", "fail"})
+        def check(ctx: object) -> str:
+            return "pass"
+
+        meta = get_decision_meta(check)
+        assert meta is not None
+        assert "source_file" in meta
+        # The source file should end with this test file's name
+        assert meta["source_file"] is not None
+        assert meta["source_file"].endswith("test_decorators.py")
+
+    def test_first_lineno_exposed(self) -> None:
+        @decision(vocabulary={"pass", "fail"})
+        def check(ctx: object) -> str:
+            return "pass"
+
+        meta = get_decision_meta(check)
+        assert meta is not None
+        assert "first_lineno" in meta
+        assert isinstance(meta["first_lineno"], int)
+        assert meta["first_lineno"] > 0
+
+    def test_routing_body_exposed(self) -> None:
+        @decision(vocabulary={"pass", "fail"})
+        def check(ctx: object) -> str:
+            return "pass"
+
+        meta = get_decision_meta(check)
+        assert meta is not None
+        assert "routing_body" in meta
+        assert meta["routing_body"] is True
+
+    def test_dunder_attributes_present(self) -> None:
+        @decision(vocabulary={"pass", "fail"})
+        def check(ctx: object) -> str:
+            return "pass"
+
+        assert check.__decision_source_file__ is not None  # type: ignore[attr-defined]
+        assert isinstance(check.__decision_first_lineno__, int)  # type: ignore[attr-defined]
+        assert check.__decision_routing_body__ is True  # type: ignore[attr-defined]
+
+    def test_existing_metadata_keys_preserved(self) -> None:
+        """The new source-location keys do not displace existing keys."""
+        @decision(
+            name="gate",
+            vocabulary={"continue", "stop"},
+            human_gate=True,
+            artifact_stage="writer",
+            choices=("continue", "stop"),
+        )
+        def gate(ctx: object) -> str:
+            return "continue"
+
+        meta = get_decision_meta(gate)
+        assert meta is not None
+        # All existing keys are still present
+        assert meta["name"] == "gate"
+        assert meta["vocabulary"] == frozenset({"continue", "stop"})
+        assert meta["human_gate"] is True
+        assert meta["artifact_stage"] == "writer"
+        assert meta["choices"] == ("continue", "stop")
+        # New keys are also present
+        assert meta["source_file"] is not None
+        assert isinstance(meta["first_lineno"], int)
+        assert meta["routing_body"] is True
+
+    def test_ordinary_decision_still_has_routing_body(self) -> None:
+        """Even an ordinary @decision (no human_gate) is a routing body."""
+        @decision(vocabulary={"yes", "no"})
+        def plain(ctx: object) -> str:
+            return "yes"
+
+        meta = get_decision_meta(plain)
+        assert meta is not None
+        # Existing defaults are intact
+        assert meta["human_gate"] is False
+        # New keys are present
+        assert meta["routing_body"] is True
+        assert meta["source_file"] is not None
+        assert isinstance(meta["first_lineno"], int)
+
+    def test_not_decision_has_no_source_location(self) -> None:
+        """get_decision_meta returns None for non-decision callables."""
+        def plain() -> str:
+            return "x"
+
+        assert get_decision_meta(plain) is None
+
+
+# ── NativeProgram.routing_topology backward-compatibility tests ───────
+
+
+class TestNativeProgramRoutingTopology:
+    """``NativeProgram.routing_topology`` is defaulted so existing
+    construction sites remain compatible.
+    """
+
+    def test_default_routing_topology_empty_dict(self) -> None:
+        """Constructing NativeProgram without routing_topology defaults
+        to an empty dict."""
+        prog = NativeProgram(name="test")
+        assert prog.routing_topology == {}
+
+    def test_explicit_routing_topology(self) -> None:
+        """NativeProgram accepts an explicit routing_topology dict."""
+        topo = {"edges": [("a", "b")], "entry": "a"}
+        prog = NativeProgram(name="test", routing_topology=topo)
+        assert prog.routing_topology == topo
+        assert prog.routing_topology["edges"] == [("a", "b")]
+
+    def test_routing_topology_does_not_break_existing_fields(self) -> None:
+        """All existing NativeProgram fields work as before when
+        routing_topology is omitted."""
+        prog = NativeProgram(
+            name="full",
+            stable_id="wf.stable",
+            inputs_schema={"type": "object"},
+            outputs_schema={"type": "object"},
+            instructions=(),
+            phases=(),
+            decisions=(),
+            loop_guards=(),
+            parallel_blocks=(),
+            description="A full program",
+        )
+        assert prog.name == "full"
+        assert prog.stable_id == "wf.stable"
+        assert prog.inputs_schema == {"type": "object"}
+        assert prog.outputs_schema == {"type": "object"}
+        assert prog.instructions == ()
+        assert prog.phases == ()
+        assert prog.decisions == ()
+        assert prog.loop_guards == ()
+        assert prog.parallel_blocks == ()
+        assert prog.description == "A full program"
+        assert prog.routing_topology == {}
+
+    def test_routing_topology_frozen(self) -> None:
+        """routing_topology is on a frozen dataclass and the field
+        itself cannot be reassigned."""
+        prog = NativeProgram(name="test")
+        with pytest.raises(Exception):
+            prog.routing_topology = {"x": 1}  # type: ignore[misc]
+
+    def test_routing_topology_with_instructions(self) -> None:
+        """routing_topology works alongside instructions (common
+        compiler output pattern)."""
+        from arnold.pipeline.native import NativeInstruction
+
+        instr = NativeInstruction(pc=0, op="halt")
+        prog = NativeProgram(
+            name="compiled",
+            instructions=(instr,),
+            routing_topology={"entry": "start"},
+        )
+        assert prog.instructions == (instr,)
+        assert prog.routing_topology == {"entry": "start"}

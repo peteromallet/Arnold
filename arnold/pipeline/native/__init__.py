@@ -65,6 +65,12 @@ from arnold.pipeline.native.runtime import (
     run_native_pipeline,
 )
 from arnold.pipeline.native.trace import NativeTraceHooks
+from arnold.pipeline.native.validator import (
+    RoutingPurityDiagnostic,
+    RoutingPurityReport,
+    validate_decision_body,
+    validate_pipeline_purity,
+)
 
 __all__ = [
     "NATIVE_CURSOR_VERSION",
@@ -84,6 +90,8 @@ __all__ = [
     "NativeRuntimeError",
     "NativeRuntimeHooks",
     "NativeTraceHooks",
+    "RoutingPurityDiagnostic",
+    "RoutingPurityReport",
     "NullNativeRuntimeHooks",
     "ParallelInstruction",
     "compile_pipeline",
@@ -111,5 +119,7 @@ __all__ = [
     "run_native_pipeline",
     "step",
     "upgrade_graph_cursor_to_native",
+    "validate_decision_body",
+    "validate_pipeline_purity",
     "workflow",
 ]

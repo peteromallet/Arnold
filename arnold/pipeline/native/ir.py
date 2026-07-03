@@ -295,5 +295,14 @@ class NativeProgram:
     parallel_blocks: tuple[ParallelInstruction, ...] = ()
     """Parallel fan-out / fan-in blocks referenced by ``parallel`` ops."""
 
+    routing_topology: dict = field(default_factory=dict)
+    """Product-neutral routing topology metadata.
+
+    A dictionary that downstream tooling (replay, inspection, compatibility
+    bridges) can populate with route artifacts.  Defaults to an empty dict
+    so callers constructing ``NativeProgram(...)`` remain compatible without
+    supplying this field.
+    """
+
     description: str = ""
     """Optional human-readable description."""
