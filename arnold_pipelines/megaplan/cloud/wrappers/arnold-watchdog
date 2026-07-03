@@ -4360,6 +4360,7 @@ plan_phase_health_status() {
   local run_kind="${2:-chain}"
   local plan_name="${3:-}"
   python3 - "$workspace" "$run_kind" "$plan_name" <<'PY'
+import datetime as dt
 import json
 import pathlib
 import sys
@@ -4390,6 +4391,43 @@ except Exception as exc:
     print(f"state_unreadable:{state_path.parent.name}:{exc}")
     raise SystemExit(0)
 
+
+def _parse_timestamp(value: str) -> dt.datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+now = dt.datetime.now(dt.timezone.utc)
+active = state.get("active_step") or {}
+active_phase = str(active.get("phase") or "").strip()
+active_last_activity = (
+    _parse_timestamp(active.get("last_activity_at"))
+    or _parse_timestamp(active.get("started_at"))
+)
+recent_active_state = False
+if active_phase:
+    if active_last_activity is not None and (now - active_last_activity) <= dt.timedelta(minutes=5):
+        recent_active_state = True
+    else:
+        events_path = state_path.parent / "events.ndjson"
+        if events_path.exists():
+            try:
+                events_mtime = dt.datetime.fromtimestamp(events_path.stat().st_mtime, tz=dt.timezone.utc)
+            except OSError:
+                events_mtime = None
+            if events_mtime is not None and (now - events_mtime) <= dt.timedelta(minutes=5):
+                recent_active_state = True
+
 log_candidates = []
 for pattern in ("cloud-chain*.log", "cloud-logs/*.log"):
     log_candidates.extend((workspace / ".megaplan").glob(pattern))
@@ -4418,7 +4456,7 @@ for log_path in log_candidates[:3]:
             for line in recent[last_sandbox_refusal + 1 :]
             for marker in ("[tool]", "[auto ", "[chain]")
         )
-        if later_progress:
+        if later_progress or recent_active_state:
             continue
         print(
             "workspace_drift:"
