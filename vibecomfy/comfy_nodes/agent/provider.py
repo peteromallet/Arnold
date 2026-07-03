@@ -509,6 +509,9 @@ def build_batch_messages(
             graph_report_block = (
                 f"\n\nDetailed graph inspection:\n{graph_report}"
             )
+        report_block = ""
+        if report:
+            report_block = f"\n\nInitial edit guidance:\n{report}"
         precedent_adaptation_block = ""
         if precedent_adaptation_plan:
             precedent_adaptation_block = (
@@ -543,6 +546,7 @@ def build_batch_messages(
             f"{research_block}"
             f"{precedent_adaptation_block}"
             f"{revision_evidence_block}"
+            f"{report_block}"
             f"{graph_report_block}"
         )
     else:

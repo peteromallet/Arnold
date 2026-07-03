@@ -464,7 +464,16 @@ def _stage_agent_batch_repl(
 
     current_render = initial_render
     last_diff = ""
-    last_report = ""
+    initial_report_notes = [
+        note
+        for note in (
+            _direct_existing_parameter_tweak_feedback(state),
+            _edit_noop_requires_graph_evidence_feedback(state),
+            _targeted_edit_hardening_feedback(state),
+        )
+        if note
+    ]
+    last_report = "\n\n".join(initial_report_notes)
     last_landed_count: int | None = None
     previous_model_message = ""
     consecutive_errors = 0

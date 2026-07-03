@@ -538,14 +538,50 @@ def _task_looks_like_parameter_tweak(state: Any) -> bool:
 
 
 def _existing_parameter_tweak_targets(state: Any, *, max_targets: int = 4) -> list[str]:
+    graphs: list[Mapping[str, Any]] = []
     graph = getattr(state, "graph", None)
-    nodes: Any = None
     if isinstance(graph, Mapping):
-        nodes = graph.get("nodes")
-        if not isinstance(nodes, (Mapping, list)):
-            nodes = graph.get("compiled_api")
-    else:
+        graphs.append(graph)
+    request_payload = getattr(state, "request_payload", None)
+    if isinstance(request_payload, Mapping):
+        request_graph = request_payload.get("graph")
+        if isinstance(request_graph, Mapping) and request_graph is not graph:
+            graphs.append(request_graph)
+    if not graphs and graph is not None:
         nodes = getattr(graph, "nodes", None)
+        if isinstance(nodes, (Mapping, list)):
+            graphs.append({"nodes": nodes})
+
+    if not graphs:
+        return []
+
+    query_text = (
+        f"{getattr(state, 'task', '')} {getattr(state, 'request_payload', {}).get('query', '')}"
+    ).casefold()
+    ranked_targets: list[tuple[int, str]] = []
+    seen_targets: set[str] = set()
+    for graph_payload in graphs:
+        ranked_targets.extend(
+            _existing_parameter_tweak_targets_from_graph(
+                graph_payload,
+                query_text=query_text,
+                seen_targets=seen_targets,
+            )
+        )
+
+    ranked_targets.sort(key=lambda item: (-item[0], item[1]))
+    return [target for _score, target in ranked_targets[:max_targets]]
+
+
+def _existing_parameter_tweak_targets_from_graph(
+    graph: Mapping[str, Any],
+    *,
+    query_text: str,
+    seen_targets: set[str],
+) -> list[tuple[int, str]]:
+    nodes: Any = graph.get("nodes")
+    if not isinstance(nodes, (Mapping, list)):
+        nodes = graph.get("compiled_api")
     if isinstance(nodes, Mapping):
         node_items = list(nodes.items())
     elif isinstance(nodes, list):
@@ -560,23 +596,14 @@ def _existing_parameter_tweak_targets(state: Any, *, max_targets: int = 4) -> li
     else:
         return []
 
-    query_text = (
-        f"{getattr(state, 'task', '')} {getattr(state, 'request_payload', {}).get('query', '')}"
-    ).casefold()
     ranked_targets: list[tuple[int, str]] = []
     for node_id, node in node_items:
-        if isinstance(node, Mapping):
-            class_type = str(node.get("class_type") or node.get("type") or "").strip()
-            inputs = node.get("inputs")
-            widgets = node.get("widgets")
-            raw_widgets = node.get("raw_widgets")
-        else:
-            class_type = str(
-                getattr(node, "class_type", None) or getattr(node, "type", None) or ""
-            ).strip()
-            inputs = getattr(node, "inputs", None)
-            widgets = getattr(node, "widgets", None)
-            raw_widgets = getattr(node, "raw_widgets", None)
+        if not isinstance(node, Mapping):
+            continue
+        class_type = str(node.get("class_type") or node.get("type") or "").strip()
+        inputs = node.get("inputs")
+        widgets = node.get("widgets")
+        raw_widgets = node.get("raw_widgets")
         if not class_type:
             continue
         input_fields = [
@@ -596,6 +623,12 @@ def _existing_parameter_tweak_targets(state: Any, *, max_targets: int = 4) -> li
         widget_fields: list[str] = []
         if isinstance(widgets, Mapping):
             widget_fields = [str(name) for name in sorted(widgets, key=str)]
+        elif isinstance(widgets, list):
+            widget_fields = [
+                str(widget.get("name") or f"widget_{index}")
+                for index, widget in enumerate(widgets)
+                if isinstance(widget, Mapping)
+            ]
         widget_values = node.get("widgets_values") if isinstance(node, Mapping) else None
         if not widget_fields and isinstance(widget_values, list):
             widget_fields = [f"widget_{index}" for index in range(min(len(widget_values), 4))]
@@ -631,12 +664,16 @@ def _existing_parameter_tweak_targets(state: Any, *, max_targets: int = 4) -> li
             score += 3
         if widget_fields or raw_widget_count:
             score += 3
+        if class_type == "ACN_AdvancedControlNetApply" and "controlnet" in query_text:
+            score += 8
         if class_type in {"MarkdownNote", "Preview3D", "SaveVideo", "LoadImage"}:
             score -= 6
-        ranked_targets.append((score, f"{class_type} [{node_id}] ({preview})"))
-
-    ranked_targets.sort(key=lambda item: (-item[0], item[1]))
-    return [target for _score, target in ranked_targets[:max_targets]]
+        target = f"{class_type} [{node_id}] ({preview})"
+        if target in seen_targets:
+            continue
+        seen_targets.add(target)
+        ranked_targets.append((score, target))
+    return ranked_targets
 
 
 def _direct_existing_parameter_tweak_feedback(
@@ -665,17 +702,80 @@ def _direct_existing_parameter_tweak_feedback(
     )
 
 
-def _targeted_edit_hardening_feedback(state: Any) -> str:
-    """Nudge read-only turns back to concrete edits when a local target is clear."""
-    targets = _existing_parameter_tweak_targets(state, max_targets=2)
-    if not targets:
+def _edit_noop_requires_graph_evidence_feedback(state: Any) -> str:
+    route = _canonical_agent_edit_route(getattr(state, "route", None))
+    if route not in {"revise", "adapt", "dev"}:
         return ""
-    target_text = "; ".join(targets)
+    text = (
+        f"{getattr(state, 'task', '')} "
+        f"{getattr(state, 'request_payload', {}).get('query', '')} "
+        f"{_executor_classification_text(state)}"
+    ).casefold()
+    if not any(
+        term in text
+        for term in (
+            "edit",
+            "change",
+            "replace",
+            "rewire",
+            "connect",
+            "increase",
+            "decrease",
+            "adjust",
+            "set",
+            "save",
+            "extract",
+        )
+    ):
+        return ""
     return (
-        "Targeted edit hardening: this was a read-only turn, but the current canvas already exposes "
-        f"concrete editable targets ({target_text}). On the next turn, make a minimal local edit against "
-        "one of those existing nodes instead of continuing analysis."
+        "No-op proof requirement: this is an edit route. Do not answer that the graph already satisfies "
+        "the request unless you can cite the exact current node ids, fields/widgets, and/or link endpoints "
+        "that prove the requested state already exists. If that proof is not explicit in the rendered graph "
+        "or graph facts, land the smallest safe local edit instead of using done() as a no-op."
     )
+
+
+def _targeted_edit_hardening_feedback(state: Any) -> str:
+    """Return narrow deterministic guidance for known ambiguous edit intents."""
+    text = (
+        f"{getattr(state, 'task', '')} "
+        f"{getattr(state, 'request_payload', {}).get('query', '')} "
+        f"{_executor_classification_text(state)}"
+    ).casefold()
+    notes: list[str] = []
+    if (
+        "first frame" in text
+        and "save" in text
+        and ("png" in text or "image" in text)
+    ):
+        notes.append(
+            "First-frame extraction hardening: if a video-producing node is already wired directly "
+            "to SaveImage for the requested static PNG/image output, do not no-op just because the "
+            "video node's custom class is unknown. Insert a minimal local `vibecomfy.exec` frame "
+            "extractor (`image[0:1]`) between the video output and SaveImage, then rewire SaveImage "
+            "to that extractor. This is a localized additive edit; do not replace the video node."
+        )
+    if (
+        "controlnet" in text
+        and ("strength" in text or "pose" in text or "conditioning" in text)
+        and ("increase" in text or "raise" in text or "boost" in text or "stronger" in text)
+    ):
+        notes.append(
+            "ACN ControlNet strength hardening: when editing an existing "
+            "`ACN_AdvancedControlNetApply` node for stronger pose/conditioning and the rendered graph "
+            "shows a concrete strength-like field/widget, increase that existing knob first. Do not "
+            "prefer ambiguous override fields unless the user explicitly asks for that override."
+        )
+    targets = _existing_parameter_tweak_targets(state, max_targets=2)
+    if targets:
+        target_text = "; ".join(targets)
+        notes.append(
+            "Targeted edit hardening: this was a read-only turn, but the current canvas already exposes "
+            f"concrete editable targets ({target_text}). On the next turn, make a minimal local edit against "
+            "one of those existing nodes instead of continuing analysis."
+        )
+    return "\n\n".join(notes)
 
 
 '''
