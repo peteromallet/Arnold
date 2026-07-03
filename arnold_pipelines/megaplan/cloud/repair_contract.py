@@ -163,13 +163,34 @@ def save_repair_data(
     payload: Mapping[str, Any],
     *,
     redactor: Callable[[str], str] | None = None,
+    root: Path | str | None = None,
 ) -> dict[str, Any]:
-    """Validate, optionally redact, and atomically persist repair-data JSON."""
+    """Validate, optionally redact, and atomically persist repair-data JSON.
+
+    When the repair-data outcome has changed meaningfully (or this is the
+    first write), an incident-ledger event is appended via
+    :mod:`arnold_pipelines.megaplan.cloud.incident_bridge`.  No-op saves
+    (same outcome as the previous payload) do **not** produce duplicate
+    events.
+    """
 
     prepared = redact_repair_data(payload, redactor=redactor)
     target = Path(path)
+
+    # ------------------------------------------------------------------
+    # Snapshot the previous payload *before* overwriting so we can
+    # decide whether this is a meaningful transition.
+    # ------------------------------------------------------------------
+    previous_outcome = _read_previous_outcome(target)
+
     atomic_write_json(target, prepared)
     _update_session_index_from_repair_data(target, prepared, redactor=redactor)
+
+    # Only emit an incident event when the outcome actually changed.
+    current_outcome = str(prepared.get("outcome") or REPAIRING).strip() or REPAIRING
+    if previous_outcome is None or previous_outcome != current_outcome:
+        _emit_incident_bridge_event(prepared, root=root)
+
     return prepared
 
 
@@ -974,6 +995,100 @@ def _active_sessions_from_index(index_payload: Mapping[str, Any]) -> set[str]:
                 if str(latest_outcome.get("outcome", "")).strip().lower() == REPAIRING:
                     active.add(str(session_id))
     return active
+
+
+def _read_previous_outcome(target: Path) -> str | None:
+    """Return the outcome string from a previous repair-data file, or *None*."""
+    try:
+        if not target.exists():
+            return None
+        previous = json.loads(target.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(previous, dict):
+        return None
+    outcome = previous.get("outcome")
+    if isinstance(outcome, str) and outcome.strip():
+        return outcome.strip()
+    return None
+
+
+def _emit_incident_bridge_event(
+    payload: Mapping[str, Any],
+    *,
+    root: Path | str | None = None,
+) -> None:
+    """Map the repair-data outcome to an incident-bridge event and append it.
+
+    This is intentionally a best-effort side effect: if the bridge or
+    ledger is unavailable the repair-data save still succeeds.
+    """
+    session_id = str(payload.get("session") or "").strip() or None
+    incident_id = str(payload.get("incident_id") or "").strip() or None
+    if not incident_id:
+        return
+
+    outcome = str(payload.get("outcome") or REPAIRING).strip() or REPAIRING
+    summary = str(payload.get("summary") or "").strip()
+    if not summary:
+        plan_name = str(payload.get("plan_name") or "").strip()
+        run_kind = str(payload.get("run_kind") or "").strip()
+        workspace = str(payload.get("workspace") or "").strip()
+        summary = f"repair-data outcome={outcome}"
+        if plan_name:
+            summary += f" plan={plan_name}"
+        if run_kind:
+            summary += f" kind={run_kind}"
+        if workspace:
+            summary += f" workspace={workspace}"
+
+    evidence: list[Any] = []
+    verification = payload.get("verification")
+    if isinstance(verification, dict):
+        evidence.append({"kind": "verification_record", "data": verification})
+    attempt_ids = payload.get("attempt_ids")
+    if isinstance(attempt_ids, list) and attempt_ids:
+        evidence.append({"kind": "attempt_ids", "ids": list(attempt_ids)})
+
+    try:
+        from arnold_pipelines.megaplan.cloud.incident_bridge import (
+            append_meta_repair_attempt,
+            append_verified_recovered,
+        )
+
+        if outcome == REPAIRING:
+            append_meta_repair_attempt(
+                incident_id=incident_id,
+                summary=summary,
+                attempt_id=f"{session_id or 'unknown'}-{outcome}",
+                outcome="attempted",
+                evidence=evidence,
+                session_id=session_id,
+                root=root,
+            )
+        elif is_success_outcome(outcome):
+            append_verified_recovered(
+                incident_id=incident_id,
+                summary=summary,
+                evidence=evidence,
+                session_id=session_id,
+                root=root,
+            )
+        else:
+            # Terminal non-success outcomes (repair_timeout, repair_exhausted,
+            # needs_human, partial_liveness, discord_escalated, etc.)
+            append_meta_repair_attempt(
+                incident_id=incident_id,
+                summary=summary,
+                attempt_id=f"{session_id or 'unknown'}-{outcome}",
+                outcome=outcome,
+                evidence=evidence,
+                session_id=session_id,
+                root=root,
+            )
+    except Exception:
+        # Bridge event emission is best-effort; never let it fail the save.
+        pass
 
 
 def _update_session_index_from_repair_data(

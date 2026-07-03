@@ -186,6 +186,7 @@ def _fold_projection_records(
     incidents: dict[str, dict[str, Any]] = {}
     problems: dict[str, dict[str, Any]] = {}
     known_event_refs: set[str] = set()
+    problem_events: dict[str, list[dict[str, Any]]] = {}
 
     for event in incident_events:
         payload = event["payload"]
@@ -274,6 +275,13 @@ def _fold_projection_records(
 
         problem_id = _problem_id_for_payload(payload)
         problem = problems.setdefault(problem_id, _new_problem_record(problem_id, payload))
+        problem_events.setdefault(problem_id, []).append(
+            {
+                "incident_id": incident_id,
+                "payload": payload,
+                "seq": compact_event["seq"],
+            }
+        )
         problem["linked_incident_ids"].add(incident_id)
         problem["occurrence_count"] += 1
         problem["last_seen_ts"] = event_ts
@@ -288,13 +296,6 @@ def _fold_projection_records(
             commit_ref = _extract_fix_commit(payload)
             if commit_ref is not None and commit_ref not in problem["fix_commits"]:
                 problem["fix_commits"].append(commit_ref)
-                problem["status"] = "mitigated"
-        if payload["type"] == "verified_recovered" or payload.get("outcome") == "recovered":
-            if problem["fix_commits"]:
-                problem["status"] = "fixed"
-        elif problem["status"] == "fixed":
-            problem["recurred_after_fix"] = True
-            problem["status"] = "open"
 
     for incident in incidents.values():
         incident["session_ids"] = sorted(incident["session_ids"])
@@ -322,10 +323,15 @@ def _fold_projection_records(
             incident["attempts"][attempt_id]
             for attempt_id in sorted(incident["attempts"])
         ]
+        _populate_incident_placeholders(incident, findings)
 
     for problem in problems.values():
         problem["linked_incident_ids"] = sorted(problem["linked_incident_ids"])
         problem["fix_commits"] = sorted(problem["fix_commits"])
+        _populate_problem_status(
+            problem,
+            problem_events.get(problem["problem_id"], []),
+        )
 
     return incidents, problems, findings
 
@@ -380,6 +386,275 @@ def _new_problem_record(problem_id: str, payload: dict[str, Any]) -> dict[str, A
         "owner_actor": None,
         "next_review_ts": payload.get("deadline_ts"),
     }
+
+
+def _populate_incident_placeholders(
+    incident: dict[str, Any],
+    findings: list[dict[str, Any]],
+) -> None:
+    events = sorted(incident["events"], key=lambda item: item["seq"])
+    source_fix_seq: int | None = None
+    install_sync_applied_seq: int | None = None
+    install_sync_applied_has_runtime_identity = False
+    install_sync_failed_seq: int | None = None
+    repair_retriggered_seq: int | None = None
+    full_chain_verified_seq: int | None = None
+    repeated_attempt_detected = False
+    recovery_without_full_chain = False
+    install_activity_without_source_fix = False
+    last_attempt_fingerprint: str | None = None
+    repeated_attempt_streak = 0
+
+    for event in events:
+        event_type = event["type"]
+        seq = event["seq"]
+
+        if event_type == "repair_attempt":
+            attempt_fingerprint = _attempt_fingerprint(event)
+            if attempt_fingerprint == last_attempt_fingerprint:
+                repeated_attempt_streak += 1
+            else:
+                last_attempt_fingerprint = attempt_fingerprint
+                repeated_attempt_streak = 1
+            if repeated_attempt_streak >= 3 and not repeated_attempt_detected:
+                repeated_attempt_detected = True
+                findings.append(
+                    _finding(
+                        "loop_break_repeated_attempt_no_new_evidence",
+                        message="Repeated repair_attempt events did not add a new hypothesis or state change",
+                        incident_id=incident["incident_id"],
+                        seq=seq,
+                    )
+                )
+        else:
+            last_attempt_fingerprint = None
+            repeated_attempt_streak = 0
+
+        if event_type == "source_fix_committed":
+            source_fix_seq = seq
+            install_sync_applied_seq = None
+            install_sync_applied_has_runtime_identity = False
+            install_sync_failed_seq = None
+            repair_retriggered_seq = None
+            full_chain_verified_seq = None
+            continue
+
+        if event_type == "install_sync_applied":
+            if source_fix_seq is None or seq <= source_fix_seq:
+                install_activity_without_source_fix = True
+                continue
+            install_sync_applied_seq = seq
+            install_sync_failed_seq = None
+            repair_retriggered_seq = None
+            full_chain_verified_seq = None
+            install_sync_applied_has_runtime_identity = _has_runtime_identity_evidence(
+                event["evidence"]
+            )
+            if not install_sync_applied_has_runtime_identity:
+                findings.append(
+                    _finding(
+                        "install_sync_missing_runtime_identity",
+                        message="install_sync_applied is missing runtime identity evidence",
+                        incident_id=incident["incident_id"],
+                        seq=seq,
+                    )
+                )
+            continue
+
+        if event_type == "install_sync_failed":
+            if source_fix_seq is None or seq <= source_fix_seq:
+                install_activity_without_source_fix = True
+                continue
+            install_sync_failed_seq = seq
+            install_sync_applied_seq = None
+            install_sync_applied_has_runtime_identity = False
+            repair_retriggered_seq = None
+            full_chain_verified_seq = None
+            if not _has_runtime_identity_evidence(event["evidence"]):
+                findings.append(
+                    _finding(
+                        "install_sync_missing_runtime_identity",
+                        message="install_sync_failed is missing runtime identity evidence",
+                        incident_id=incident["incident_id"],
+                        seq=seq,
+                    )
+                )
+            continue
+
+        if event_type == "repair_retriggered":
+            if source_fix_seq is None:
+                install_activity_without_source_fix = True
+                continue
+            if install_sync_applied_seq is not None and seq > install_sync_applied_seq:
+                repair_retriggered_seq = seq
+            continue
+
+        if event_type == "verified_recovered" or event["outcome"] == "recovered":
+            if source_fix_seq is None:
+                if install_sync_applied_seq is not None or install_sync_failed_seq is not None:
+                    install_activity_without_source_fix = True
+                continue
+            if (
+                install_sync_applied_seq is not None
+                and repair_retriggered_seq is not None
+                and seq > repair_retriggered_seq
+            ):
+                full_chain_verified_seq = seq
+            else:
+                recovery_without_full_chain = True
+
+    recurred_after_fix = any(
+        full_chain_verified_seq is not None
+        and event["seq"] > full_chain_verified_seq
+        and not _is_terminal_incident_event(event["type"], event["outcome"])
+        for event in events
+    )
+
+    if install_activity_without_source_fix:
+        findings.append(
+            _finding(
+                "shipped_fix_missing_source_commit",
+                message="Shipped-fix evidence exists without a prior source_fix_committed event",
+                incident_id=incident["incident_id"],
+                seq=incident["last_seq"],
+            )
+        )
+    if recovery_without_full_chain:
+        findings.append(
+            _finding(
+                "shipped_fix_chain_incomplete",
+                message="verified_recovered was recorded before the full shipped-fix chain was proven",
+                incident_id=incident["incident_id"],
+                seq=incident["last_seq"],
+            )
+        )
+
+    placeholders = incident["placeholders"]
+    if source_fix_seq is None and not install_activity_without_source_fix:
+        placeholders["install_freshness"] = "unknown"
+        placeholders["shipped_fix"] = "unknown"
+    elif install_sync_failed_seq is not None:
+        placeholders["install_freshness"] = "failed"
+        placeholders["shipped_fix"] = "install_failed"
+    elif install_sync_applied_seq is not None:
+        placeholders["install_freshness"] = (
+            "fresh" if install_sync_applied_has_runtime_identity else "unverified"
+        )
+        if full_chain_verified_seq is not None:
+            placeholders["shipped_fix"] = "shipped"
+        elif repair_retriggered_seq is not None:
+            placeholders["shipped_fix"] = "pending_verification"
+        else:
+            placeholders["shipped_fix"] = "pending_retrigger"
+    elif source_fix_seq is not None:
+        placeholders["install_freshness"] = "stale"
+        placeholders["shipped_fix"] = "pending_install"
+    else:
+        placeholders["install_freshness"] = "unknown"
+        placeholders["shipped_fix"] = "broken_chain"
+
+    if recurred_after_fix:
+        placeholders["recurrence"] = "recurred_after_fix"
+    elif repeated_attempt_detected:
+        placeholders["recurrence"] = "repeated_attempts_without_new_evidence"
+    elif full_chain_verified_seq is not None:
+        placeholders["recurrence"] = "none"
+    else:
+        placeholders["recurrence"] = "unknown"
+
+
+def _populate_problem_status(
+    problem: dict[str, Any],
+    events: list[dict[str, Any]],
+) -> None:
+    sorted_events = sorted(events, key=lambda item: item["seq"])
+    source_fix_seq: int | None = None
+    install_sync_applied_seq: int | None = None
+    repair_retriggered_seq: int | None = None
+    source_fix_chain_activity = False
+    status = "open"
+    recurred_after_fix = False
+
+    for event in sorted_events:
+        payload = event["payload"]
+        event_type = payload["type"]
+        seq = event["seq"]
+        recovered = event_type == "verified_recovered" or payload.get("outcome") == "recovered"
+
+        if recovered:
+            if source_fix_seq is None and not source_fix_chain_activity:
+                status = "fixed"
+                continue
+            if (
+                source_fix_seq is not None
+                and install_sync_applied_seq is not None
+                and repair_retriggered_seq is not None
+                and seq > repair_retriggered_seq
+            ):
+                status = "fixed"
+            elif source_fix_seq is not None:
+                status = "mitigated"
+            else:
+                status = "open"
+            continue
+
+        if status == "fixed":
+            recurred_after_fix = True
+            status = "open"
+
+        if event_type == "source_fix_committed":
+            source_fix_chain_activity = True
+            source_fix_seq = seq
+            install_sync_applied_seq = None
+            repair_retriggered_seq = None
+            status = "mitigated" if problem["fix_commits"] else "open"
+        elif event_type == "install_sync_applied":
+            source_fix_chain_activity = True
+            if source_fix_seq is not None and seq > source_fix_seq:
+                install_sync_applied_seq = seq
+                repair_retriggered_seq = None
+                status = "mitigated"
+        elif event_type == "install_sync_failed":
+            source_fix_chain_activity = True
+            if source_fix_seq is not None and seq > source_fix_seq:
+                install_sync_applied_seq = None
+                repair_retriggered_seq = None
+                status = "mitigated"
+        elif event_type == "repair_retriggered":
+            source_fix_chain_activity = True
+            if install_sync_applied_seq is not None and seq > install_sync_applied_seq:
+                repair_retriggered_seq = seq
+                status = "mitigated"
+
+    problem["recurred_after_fix"] = recurred_after_fix
+    problem["status"] = status
+
+
+def _attempt_fingerprint(event: dict[str, Any]) -> str:
+    return json.dumps(
+        {
+            "actor": event["actor"],
+            "summary": event["summary"],
+            "outcome": event["outcome"],
+            "decision": event.get("decision"),
+            "actions": event.get("actions"),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _has_runtime_identity_evidence(evidence: list[Any]) -> bool:
+    for item in evidence:
+        if not isinstance(item, dict):
+            continue
+        if item.get("kind") == "runtime_identity":
+            return True
+    return False
+
+
+def _is_terminal_incident_event(event_type: str, outcome: str) -> bool:
+    return event_type in _TERMINAL_STATES or outcome == "recovered"
 
 
 def _compact_event(event: dict[str, Any]) -> dict[str, Any]:

@@ -325,6 +325,86 @@ else
   log "verdict=UNKNOWN (first line: ${VERDICT:0:80})"
 fi
 
+# ---- install sync after FIXED verdict with source commit --------------------
+INSTALL_SYNC_STATUS=""
+INSTALL_SYNC_EVENT_ID=""
+INSTALL_SYNC_EVENT_TYPE=""
+export INSTALL_SYNC_JSON="{}"
+
+if [[ "$VERDICT" == FIXED* ]]; then
+  log "verdict=FIXED; checking for source commits before install sync"
+
+  INSTALL_SYNC_RESULT="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$ARNOLD_SRC" "$WRAPPER_REPO_ROOT" <<'PY'
+import json, subprocess, sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud.install_sync import apply_install_sync
+
+session = sys.argv[1]
+arnold_src = Path(sys.argv[2])
+workspace_root = Path(sys.argv[3])
+
+incident_id = f"inc-{session}"
+
+# Check for recent commits (verify Codex actually made changes)
+has_commits = False
+try:
+    git_log = subprocess.run(
+        ["git", "log", "--oneline", "-1"],
+        cwd=str(arnold_src),
+        capture_output=True, text=True, check=False,
+    )
+    has_commits = git_log.returncode == 0 and bool(git_log.stdout.strip())
+except Exception:
+    pass
+
+if not has_commits:
+    print("NO_SOURCE_COMMIT")
+    sys.exit(0)
+
+result = apply_install_sync(
+    source_root=arnold_src,
+    incident_id=incident_id,
+    session_id=session,
+    root=workspace_root,
+)
+
+event = result.get("event", {})
+print(f"STATUS={result['status']}")
+print(f"EVENT_ID={event.get('event_id', '')}")
+print(f"EVENT_TYPE={event.get('type', '')}")
+print(f"RETURNCODE={result['returncode']}")
+print("INSTALL_SYNC_JSON=" + json.dumps({
+    "status": result["status"],
+    "command": result["command_text"],
+    "returncode": result["returncode"],
+    "verification": result.get("verification", {}),
+    "event_id": event.get("event_id", ""),
+    "event_type": event.get("type", ""),
+}, default=str))
+PY
+)" || true
+
+  if [[ "$INSTALL_SYNC_RESULT" == NO_SOURCE_COMMIT* ]]; then
+    log "no source commit detected; skipping install sync"
+    INSTALL_SYNC_STATUS="no_source_commit"
+    export INSTALL_SYNC_JSON="{}"
+  else
+    INSTALL_SYNC_STATUS="$(echo "$INSTALL_SYNC_RESULT" | sed -n 's/^STATUS=//p')"
+    INSTALL_SYNC_EVENT_ID="$(echo "$INSTALL_SYNC_RESULT" | sed -n 's/^EVENT_ID=//p')"
+    INSTALL_SYNC_EVENT_TYPE="$(echo "$INSTALL_SYNC_RESULT" | sed -n 's/^EVENT_TYPE=//p')"
+    export INSTALL_SYNC_JSON="$(echo "$INSTALL_SYNC_RESULT" | sed -n 's/^INSTALL_SYNC_JSON=//p')"
+
+    if [[ "$INSTALL_SYNC_STATUS" == "failed" ]]; then
+      log "install sync FAILED event_id=$INSTALL_SYNC_EVENT_ID; will NOT retrigger ordinary repair"
+    elif [[ "$INSTALL_SYNC_STATUS" == "applied" ]]; then
+      log "install sync applied successfully event_id=$INSTALL_SYNC_EVENT_ID"
+    fi
+  fi
+else
+  export INSTALL_SYNC_JSON="{}"
+fi
+
 # ---- persist meta-repair record ---------------------------------------------
 persist_record() {
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$TRIGGER_TYPE" "$VERDICT" "$RESP_PATH" "$BRIEF_PATH" "$REPAIR_DATA_DIR" <<'PY'
@@ -361,6 +441,21 @@ except Exception:
 
 meta_repair_id = str(uuid.uuid4())
 
+install_sync_raw = os.environ.get("INSTALL_SYNC_JSON", "{}")
+install_sync_info = {}
+try:
+    install_sync_info = json.loads(install_sync_raw)
+except Exception:
+    pass
+
+post_retrigger_verification = {"verdict": verdict}
+if install_sync_info:
+    post_retrigger_verification["install_sync"] = install_sync_info
+
+effective_outcome = verdict
+if install_sync_info.get("status") == "failed":
+    effective_outcome = "FIXED:install_sync_failed"
+
 record = MetaRepairRecord(
     meta_repair_id=meta_repair_id,
     session=session,
@@ -370,8 +465,8 @@ record = MetaRepairRecord(
     changes=[],
     tests=[],
     retrigger_command="redacted",
-    post_retrigger_verification={"verdict": verdict},
-    outcome=verdict,
+    post_retrigger_verification=post_retrigger_verification,
+    outcome=effective_outcome,
 )
 record_path = persist_meta_repair_record(record, repair_data_dir=repair_data_dir)
 print(f"RECORD_PATH={record_path}")
@@ -383,5 +478,88 @@ RECORD_INFO="$(persist_record 2>&1)" || true
 RECORD_PATH="$(echo "$RECORD_INFO" | sed -n 's/^RECORD_PATH=//p')"
 META_REPAIR_ID="$(echo "$RECORD_INFO" | sed -n 's/^META_REPAIR_ID=//p')"
 log "record persisted meta_repair_id=$META_REPAIR_ID path=$RECORD_PATH"
+
+# ---- retrigger ordinary repair after successful install sync ----------------
+if [[ "$VERDICT" == FIXED* ]]; then
+  if [[ "$INSTALL_SYNC_STATUS" == "failed" ]]; then
+    log "skipping retrigger: install sync failed"
+  else
+    log "emitting repair_retriggered and retriggering ordinary repair session=$SESSION"
+
+    RETRIGGER_RESULT="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_LOOP_BIN" "$WRAPPER_REPO_ROOT" "$INSTALL_SYNC_EVENT_ID" <<'PY'
+import json, os, subprocess, sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud.incident_bridge import (
+    append_repair_retriggered,
+    append_verified_recovered,
+)
+
+session = sys.argv[1]
+repair_loop_bin = sys.argv[2]
+workspace_root = Path(sys.argv[3])
+install_sync_event_id = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else ""
+
+incident_id = f"inc-{session}"
+
+# Emit repair_retriggered
+parent_ids = []
+if install_sync_event_id:
+    parent_ids.append(install_sync_event_id)
+
+retrigger_event = append_repair_retriggered(
+    incident_id=incident_id,
+    summary=f"Meta-repair retriggering ordinary repair for session={session}",
+    session_id=session,
+    parent_event_ids=parent_ids if parent_ids else None,
+    root=workspace_root,
+)
+print(f"RETRIGGER_EVENT_ID={retrigger_event.get('event_id', '')}")
+
+# Retrigger ordinary repair
+completed = subprocess.run(
+    [repair_loop_bin, session],
+    cwd=str(workspace_root),
+    capture_output=True, text=True, check=False,
+    timeout=3600,
+)
+
+# Verify retrigger result
+retrigger_ok = completed.returncode == 0
+summary = (
+    f"Ordinary repair retrigger completed with returncode={completed.returncode}"
+    if retrigger_ok
+    else f"Ordinary repair retrigger FAILED with returncode={completed.returncode}"
+)
+
+verification_event = append_verified_recovered(
+    incident_id=incident_id,
+    summary=summary,
+    evidence=[{
+        "kind": "retrigger_result",
+        "returncode": completed.returncode,
+        "stdout_tail": (completed.stdout or "")[-500:],
+        "stderr_tail": (completed.stderr or "")[-500:],
+    }] if not retrigger_ok else [{
+        "kind": "retrigger_result",
+        "returncode": completed.returncode,
+    }],
+    session_id=session,
+    parent_event_ids=[retrigger_event.get("event_id", "")],
+    root=workspace_root,
+)
+print(f"VERIFICATION_EVENT_ID={verification_event.get('event_id', '')}")
+print(f"RETRIGGER_RETURNCODE={completed.returncode}")
+print(f"RETRIGGER_OK={'true' if retrigger_ok else 'false'}")
+PY
+)" || true
+
+    RETRIGGER_EVENT_ID="$(echo "$RETRIGGER_RESULT" | sed -n 's/^RETRIGGER_EVENT_ID=//p')"
+    VERIFICATION_EVENT_ID="$(echo "$RETRIGGER_RESULT" | sed -n 's/^VERIFICATION_EVENT_ID=//p')"
+    RETRIGGER_RETURNCODE="$(echo "$RETRIGGER_RESULT" | sed -n 's/^RETRIGGER_RETURNCODE=//p')"
+
+    log "retrigger complete returncode=$RETRIGGER_RETURNCODE retrigger_event_id=$RETRIGGER_EVENT_ID verification_event_id=$VERIFICATION_EVENT_ID"
+  fi
+fi
 
 log "meta-repair complete session=$SESSION verdict=$VERDICT"
