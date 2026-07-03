@@ -2642,6 +2642,45 @@ if status in {"chain_cycle", "chain_completion_guard_rejections"}:
         recurring_lines = []
         details = {}
 
+unclean_base_lines = [
+    line
+    for line in log_lines[-120:]
+    if (
+        '"error": "unclean_base"' in line
+        or "require_clean_base:" in line
+        or "working base carries uncommitted WIP" in line
+        or "clean base" in line.lower()
+        and "uncommitted" in line.lower()
+        and "wip" in line.lower()
+    )
+]
+if (
+    status == "ok"
+    and not completion_guard_repair_eligible
+    and last_state in NONTERMINAL_STATES
+    and unclean_base_lines
+):
+    status = "chain_unclean_base"
+    issue_kind = "chain_unclean_base"
+    recurring_lines = unclean_base_lines[-6:]
+    summary = (
+        "chain retry/relaunch cannot start because require_clean_base found carried WIP; "
+        "preserve the abandoned attempt output before re-initializing the milestone"
+    )
+    details = {
+        "stuck_ticks": stuck_ticks,
+        "dirty_base_signal": True,
+        "unclean_base_line_count": len(unclean_base_lines),
+    }
+    chain_health_log_message = (
+        "CHAIN HEALTH EVIDENCE: require_clean_base reported carried WIP during chain retry; "
+        "this is a chain-driver retry-preservation issue, not a plan-level repair target"
+    )
+    evidence_extra_lines.append(
+        "- Unclean-base evidence: require_clean_base reported carried WIP while the chain was retrying/relaunching. "
+        "Preserve or stash the abandoned attempt output before re-initializing the milestone."
+    )
+
 if (
     status == "ok"
     and not completion_guard_repair_eligible
