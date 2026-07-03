@@ -3232,6 +3232,23 @@ def test_watchdog_relaunch_runs_editable_install_code_against_active_workspace()
     assert 'sleep 0.2' in text
     assert "relaunch raced with existing tmux session" in text
     assert "session exists after relaunch race" in text
+    assert "export ARNOLD_SUPERVISE_SESSION=" in text
+    assert "export ARNOLD_SUPERVISE_WORKSPACE=" in text
+    assert "export ARNOLD_SUPERVISE_REMOTE_SPEC=" in text
+    assert "export ARNOLD_SUPERVISE_RUN_KIND=" in text
+
+
+def test_supervise_exhaustion_queues_repair_request() -> None:
+    text = _wrapper("arnold-supervise")
+
+    assert "queue_repair_request()" in text
+    assert 'source="arnold_supervise_exit"' in text
+    assert '"failure_kind": "supervised_run_exhausted"' in text
+    assert "non-quota retries exhausted" in text
+    assert "exit_with_repair_request" in text
+    assert "SUPERVISE_SESSION" in text
+    assert "SUPERVISE_WORKSPACE" in text
+    assert "SUPERVISE_REMOTE_SPEC" in text
 
 
 def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
