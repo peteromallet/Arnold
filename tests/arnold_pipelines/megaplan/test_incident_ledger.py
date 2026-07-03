@@ -11,13 +11,19 @@ from arnold_pipelines.megaplan.incident import IncidentLedger
 def _event(**overrides: object) -> dict[str, object]:
     event: dict[str, object] = {
         "schema_version": 1,
+        "event_id": "evt-1",
+        "ts": "2026-07-03T19:19:00Z",
+        "scope": "repair_system",
+        "outcome": "started",
         "incident_id": "inc-123",
         "type": "opened",
         "actor": "system",
-        "timestamp": "2026-07-03T19:19:00Z",
         "summary": "incident created",
         "evidence": ["logs/app.log"],
-        "parent": [],
+        "next_expected_event": None,
+        "deadline_ts": None,
+        "parent_event_ids": [],
+        "trigger_event_id": None,
     }
     event.update(overrides)
     return event
@@ -48,7 +54,15 @@ def test_incident_ledger_preserves_runtime_seq_assignment_across_appends(tmp_pat
     ledger = IncidentLedger(tmp_path)
 
     first = ledger.append_event(_event())
-    second = ledger.append_event(_event(type="updated", summary="incident updated"))
+    second = ledger.append_event(
+        _event(
+            event_id="evt-2",
+            type="updated",
+            summary="incident updated",
+            outcome="verified",
+            parent_event_ids=["evt-1"],
+        )
+    )
 
     assert [first["seq"], second["seq"]] == [0, 1]
     assert (ledger.ledger_dir / ".events.seq").read_text(encoding="utf-8") == "1"
@@ -62,4 +76,3 @@ def test_incident_ledger_rejects_invalid_events_before_writing(tmp_path: Path) -
         ledger.append_event(_event(summary="x" * 2049))
 
     assert not ledger.events_path.exists()
-

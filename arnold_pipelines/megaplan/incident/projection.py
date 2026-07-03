@@ -163,7 +163,7 @@ def _validate_incident_events(
                     message=str(exc),
                     seq=seq,
                     kind=kind,
-                    incident_id=payload.get("incident_id"),
+                    incident_id=_payload_incident_id(payload),
                 )
             )
             continue
@@ -189,15 +189,16 @@ def _fold_projection_records(
 
     for event in incident_events:
         payload = event["payload"]
-        incident_id = payload["incident_id"]
+        incident_id = _payload_incident_id(payload)
         incident = incidents.setdefault(incident_id, _new_incident_record(incident_id))
         compact_event = _compact_event(event)
         incident["events"].append(compact_event)
         incident["event_count"] += 1
         incident["first_seq"] = compact_event["seq"] if incident["first_seq"] is None else incident["first_seq"]
         incident["last_seq"] = compact_event["seq"]
-        incident["first_timestamp"] = incident["first_timestamp"] or payload["timestamp"]
-        incident["last_timestamp"] = payload["timestamp"]
+        event_ts = _payload_ts(payload)
+        incident["first_timestamp"] = incident["first_timestamp"] or event_ts
+        incident["last_timestamp"] = event_ts
         incident["state"] = payload["type"]
         incident["outcome"] = payload.get("outcome", "unknown")
         incident["summary"] = payload["summary"]
@@ -275,10 +276,10 @@ def _fold_projection_records(
         problem = problems.setdefault(problem_id, _new_problem_record(problem_id, payload))
         problem["linked_incident_ids"].add(incident_id)
         problem["occurrence_count"] += 1
-        problem["last_seen_ts"] = payload["timestamp"]
+        problem["last_seen_ts"] = event_ts
         problem["last_seen_seq"] = compact_event["seq"]
         if problem["first_seen_ts"] is None:
-            problem["first_seen_ts"] = payload["timestamp"]
+            problem["first_seen_ts"] = event_ts
         if problem["first_seen_seq"] is None:
             problem["first_seen_seq"] = compact_event["seq"]
         problem["title"] = problem["title"] or payload["summary"]
@@ -301,7 +302,7 @@ def _fold_projection_records(
             {
                 _problem_id_for_payload(event["payload"])
                 for event in incident_events
-                if event["payload"]["incident_id"] == incident["incident_id"]
+                if _payload_incident_id(event["payload"]) == incident["incident_id"]
             }
         )
         incident["evidence_refs"] = _stable_sort_json_values(incident["evidence_refs"])
@@ -388,11 +389,11 @@ def _compact_event(event: dict[str, Any]) -> dict[str, Any]:
         "kind": event["kind"],
         "actor": payload["actor"],
         "type": payload["type"],
-        "timestamp": payload["timestamp"],
+        "timestamp": _payload_ts(payload),
         "summary": payload["summary"],
         "outcome": payload.get("outcome", "unknown"),
         "evidence": payload.get("evidence", []),
-        "parent": payload.get("parent", payload.get("parent_event_ids", [])),
+        "parent": payload.get("parent_event_ids", payload.get("parent", [])),
         "trigger": payload.get("trigger_event_id", payload.get("trigger")),
         "next_expected_event": payload.get("next_expected_event"),
         "deadline_ts": payload.get("deadline_ts"),
@@ -455,6 +456,27 @@ def _event_ref(payload: dict[str, Any], seq: int | None) -> str:
     if isinstance(event_id, str) and event_id:
         return event_id
     return f"seq:{seq}"
+
+
+def _payload_incident_id(payload: dict[str, Any]) -> str:
+    incident_id = payload.get("incident_id")
+    if isinstance(incident_id, str) and incident_id:
+        return incident_id
+
+    session_id = payload.get("session_id")
+    if isinstance(session_id, str) and session_id:
+        return f"session:{session_id}"
+
+    event_id = payload.get("event_id")
+    if isinstance(event_id, str) and event_id:
+        return f"event:{event_id}"
+
+    return "incident:unknown"
+
+
+def _payload_ts(payload: dict[str, Any]) -> str:
+    value = payload.get("ts", payload.get("timestamp"))
+    return value if isinstance(value, str) else ""
 
 
 def _problem_id_for_payload(payload: dict[str, Any]) -> str:

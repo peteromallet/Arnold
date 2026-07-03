@@ -6,8 +6,8 @@ Exports
   shallow copy.  Preserves unknown fields, rejects missing or malformed
   required fields with field-specific ``ValueError``, and enforces
   ``schema_version == 1``, ISO-8601-like timestamps, string IDs,
-  list-shaped ``evidence`` and ``parent`` fields, and a ``summary``
-  length cap of 2048 characters.
+  list-shaped ``evidence`` and ``parent_event_ids`` fields, and a
+  ``summary`` length cap of 2048 characters.
 """
 
 from __future__ import annotations
@@ -19,16 +19,34 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 REQUIRED_M1_FIELDS: tuple[str, ...] = (
-    "incident_id",
+    "event_id",
+    "ts",
     "type",
     "actor",
-    "timestamp",
+    "scope",
+    "outcome",
     "summary",
 )
 
 REQUIRED_LIST_FIELDS: tuple[str, ...] = (
     "evidence",
-    "parent",
+    "parent_event_ids",
+)
+
+REQUIRED_NULLABLE_STRING_FIELDS: tuple[str, ...] = (
+    "next_expected_event",
+    "deadline_ts",
+    "trigger_event_id",
+)
+
+OPTIONAL_NULLABLE_STRING_FIELDS: tuple[str, ...] = (
+    "incident_id",
+    "session_id",
+    "initiative",
+    "plan",
+    "problem_id",
+    "supersedes_event_id",
+    "attempt_id",
 )
 
 MAX_SUMMARY_LENGTH: int = 2048
@@ -65,6 +83,41 @@ def _check_list_field(
         raise ValueError(
             f"incident event '{field}' must be a list"
         )
+
+
+def _check_string_or_none_field(
+    event: dict[str, Any],
+    field: str,
+    *,
+    required: bool,
+) -> None:
+    """Raise ``ValueError`` if *field* is missing or malformed."""
+    if field not in event:
+        if required:
+            raise ValueError(f"incident event requires '{field}'")
+        return
+    value = event[field]
+    if value is None:
+        return
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            f"incident event '{field}' must be a non-empty string or null"
+        )
+
+
+def _check_object_or_none_field(
+    event: dict[str, Any],
+    field: str,
+) -> None:
+    """Raise ``ValueError`` if an optional field is present but malformed."""
+    if field not in event:
+        return
+    value = event[field]
+    if value is None or isinstance(value, dict):
+        return
+    raise ValueError(
+        f"incident event '{field}' must be an object or null"
+    )
 
 
 def _check_timestamp(value: str, field: str) -> None:
@@ -107,11 +160,14 @@ def validate_incident_event(event: dict[str, Any]) -> dict[str, Any]:
     ----------------------
     * *event* must be a ``dict``.
     * ``schema_version`` must be exactly ``1``.
-    * Required string fields: ``incident_id``, ``type``, ``actor``,
-      ``timestamp``, ``summary``.
-    * ``timestamp`` must be ISO-8601-like (``YYYY-MM-DD...``).
+    * Required string fields: ``event_id``, ``ts``, ``type``, ``actor``,
+      ``scope``, ``outcome``, ``summary``.
+    * Required nullable string fields: ``next_expected_event``,
+      ``deadline_ts``, ``trigger_event_id``.
+    * ``ts`` and present ``deadline_ts`` values must be ISO-8601-like
+      (``YYYY-MM-DD...``).
     * ``summary`` length must be <= 2048 characters.
-    * Required list fields: ``evidence``, ``parent``.
+    * Required list fields: ``evidence``, ``parent_event_ids``.
 
     Forward compatibility
     ---------------------
@@ -151,8 +207,20 @@ def validate_incident_event(event: dict[str, Any]) -> dict[str, Any]:
             f"characters (got {len(summary)})"
         )
 
-    # ── timestamp ───────────────────────────────────────────────────
-    _check_timestamp(event["timestamp"], "timestamp")
+    # ── required nullable string fields ─────────────────────────────
+    for field in REQUIRED_NULLABLE_STRING_FIELDS:
+        _check_string_or_none_field(event, field, required=True)
+
+    for field in OPTIONAL_NULLABLE_STRING_FIELDS:
+        _check_string_or_none_field(event, field, required=False)
+
+    _check_object_or_none_field(event, "links")
+
+    # ── timestamps ──────────────────────────────────────────────────
+    _check_timestamp(event["ts"], "ts")
+    deadline_ts = event["deadline_ts"]
+    if deadline_ts is not None:
+        _check_timestamp(deadline_ts, "deadline_ts")
 
     # ── required list fields ────────────────────────────────────────
     for field in REQUIRED_LIST_FIELDS:
