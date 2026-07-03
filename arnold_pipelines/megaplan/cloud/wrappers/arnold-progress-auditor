@@ -612,14 +612,45 @@ def _collect_meta_run_refs(session):
         ordered.append((_mtime(path), path))
     ordered.sort(reverse=True)
     for mtime, path in ordered[:5]:
+        tail = _tail_with_line_numbers(path, lines=12)
+        launch_failure = _text_has_meta_launch_failure(tail)
         refs.append(
             {
                 "path": _redact_scalar(path),
                 "mtime_age_min": int((now.timestamp() - mtime) // 60) if mtime else None,
-                "tail": _redact_scalar(_tail_with_line_numbers(path, lines=12)),
+                "tail": _redact_scalar(tail),
+                "launch_failure": launch_failure,
             }
         )
     return refs
+
+def _text_has_meta_launch_failure(text):
+    if not isinstance(text, str):
+        return False
+    needles = (
+        "Codex meta-repair orchestrator returned no output",
+        "Not inside a trusted directory",
+        "--skip-git-repo-check was not specified",
+        "codex CLI missing; no automated meta-repair",
+        "failed to launch DeepSeek/Hermes subagents",
+    )
+    return any(needle in text for needle in needles)
+
+def _meta_record_is_launch_failure(path):
+    payload = _load_json(path)
+    if not isinstance(payload, dict):
+        return False
+    outcome = str(payload.get("outcome") or "")
+    if outcome and outcome not in {"UNKNOWN", "NO_FIX"} and not outcome.startswith("Codex meta-repair orchestrator returned no output"):
+        return False
+    haystacks = [
+        str(payload.get("diagnosis") or ""),
+        str(payload.get("reason") or ""),
+    ]
+    subagent_results = payload.get("subagent_results")
+    if isinstance(subagent_results, dict):
+        haystacks.extend(str(value or "") for value in subagent_results.values())
+    return _text_has_meta_launch_failure("\n".join(haystacks))
 
 def _repair_attempt_signals(repair_payload):
     attempts = repair_payload.get("attempts") if isinstance(repair_payload, dict) else []
@@ -740,6 +771,12 @@ def _meta_repair_summary(session, repair_data, meta_refs):
         trigger = "classification_error"
         rationale = [_redact_scalar(exc)]
     run_refs = _collect_meta_run_refs(session)
+    failed_run_refs = [item for item in run_refs if item.get("launch_failure")]
+    failed_meta_records = []
+    for item in meta_refs or []:
+        path = item.get("path") if isinstance(item, dict) else ""
+        if path and _meta_record_is_launch_failure(pathlib.Path(str(path))):
+            failed_meta_records.append(item)
     return {
         "should_dispatch": should_dispatch,
         "trigger": trigger,
@@ -750,7 +787,10 @@ def _meta_repair_summary(session, repair_data, meta_refs):
         "meta_record_count": len(meta_refs or []),
         "meta_run_log_count": len(run_refs),
         "meta_run_refs": run_refs,
+        "failed_meta_run_count": len(failed_run_refs),
+        "failed_meta_record_count": len(failed_meta_records),
         "missing_meta_run_evidence": bool(should_dispatch and not meta_refs and not run_refs),
+        "failed_meta_run_evidence": bool(should_dispatch and (failed_run_refs or failed_meta_records)),
     }
 
 def _collect_watchdog_report_refs(session, plan, workspace):
@@ -1741,6 +1781,11 @@ for entry in plans:
     meta_summary = ev.get("meta_repair_summary") or {}
     if meta_summary.get("missing_meta_run_evidence"):
         reasons.append(f"meta-repair trigger {meta_summary.get('trigger')} has no meta record or run log")
+    if meta_summary.get("failed_meta_run_evidence"):
+        reasons.append(
+            f"meta-repair trigger {meta_summary.get('trigger')} has only failed launch/no-output evidence "
+            f"(bad_records={meta_summary.get('failed_meta_record_count')} bad_run_logs={meta_summary.get('failed_meta_run_count')})"
+        )
     unresolved_actions = (ev.get("user_action_context") or {}).get("unresolved_user_actions") or []
     if (run_kind == "plan" or chain_last_state == "awaiting_human") and unresolved_actions:
         ids = ",".join(str(item.get("id")) for item in unresolved_actions[:5])
@@ -1968,6 +2013,17 @@ Evaluate these questions in order:
   delegated subagents, wrote a meta record, committed/pushed when allowed, and
   retriggered ordinary repair. If any of those did not happen, classify
   META_REPAIR_FAILURE and fix the meta-repairer/watchdog dispatch path first.
+- Treat meta-repair artifacts as negative evidence when they contain only
+  launch/trust/no-output failures such as "Not inside a trusted directory",
+  "--skip-git-repo-check was not specified", "Codex meta-repair orchestrator
+  returned no output", "codex CLI missing", or no `FIXED`/`ESCALATE`/`NO_FIX`
+  verdict. The existence of a meta record or run log is not success; it must
+  prove a real verdict, subagent/deep diagnosis, and ordinary-repair retrigger.
+- If watchdog dispatched meta-repair while the target process was still alive,
+  compare the watchdog trigger, the meta-loop persisted trigger, repair-data
+  outcome timestamps, chain state advancement, and active-step heartbeat. Any
+  mismatch or stale repair-data trigger is pipeline friction, even if the user
+  chain is still progressing.
 - When META_REPAIR_FAILURE is present, deploy Codex/DeepSeek/Hermes subagents
   through the subagent-launcher skill for independent log review, wrapper/source
   tracing, and a bounded fix proposal. Pass each subagent the concrete paths
