@@ -60,6 +60,23 @@ def classify_external_error_payload(
 
     status_code = _extract_status_code(exc, message)
     code = getattr(exc, "code", None)
+    if code in {"quota_exceeded", "quota", "billing"} or re.search(
+        r"\b(usage limit|quota_exceeded|quota limit|quota reached)\b",
+        combined,
+    ):
+        inferred_provider = provider
+        if inferred_provider == "unknown" and "codex" in combined:
+            inferred_provider = "codex"
+        return {
+            "provider": inferred_provider,
+            "error_kind": "quota",
+            "message": message[:500],
+            "status_code": status_code,
+            "retry_after_s": _extract_retry_after(combined),
+            "request_id": _extract_request_id(combined),
+            "provider_error_code": str(code or "quota_exceeded"),
+            "error_layer": "provider_quota",
+        }
     if code == "worker_stall" or "stalled stream" in combined:
         inferred_provider = provider
         if inferred_provider == "unknown":

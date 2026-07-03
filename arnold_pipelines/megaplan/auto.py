@@ -185,28 +185,9 @@ PHASE_TIMEOUT_EXIT_CODE = 124  # conventional; matches GNU `timeout`
 PHASE_NAMES = frozenset(
     {"plan", "prep", "critique", "revise", "gate", "finalize", "execute", "review"}
 )
-
-# Stable-ID → flat-name resolution for canonical dispatch surfaces.
-# When the auto-driver receives a stable component ID (e.g. "megaplan:prep"),
-# it resolves to the flat phase name the native program expects.  Flat names
-# pass through unchanged so existing callers are not broken.
-_STABLE_ID_TO_PHASE: dict[str, str] = {
-    "megaplan:prep": "prep",
-    "megaplan:plan": "plan",
-    "megaplan:critique": "critique",
-    "megaplan:gate": "gate",
-    "megaplan:revise": "revise",
-    "megaplan:tiebreaker_run": "tiebreaker_run",
-    "megaplan:tiebreaker_decide": "tiebreaker_decide",
-    "megaplan:finalize": "finalize",
-    "megaplan:execute": "execute",
-    "megaplan:review": "review",
-}
-
-
-def _resolve_phase_name(raw: str) -> str:
-    """Return the flat phase name for *raw*, resolving any stable-ID prefix."""
-    return _STABLE_ID_TO_PHASE.get(raw, raw)
+REQUIRES_STATE_RE = re.compile(
+    r"requires state ['\"](?P<required>[^'\"]+)['\"], got ['\"](?P<got>[^'\"]+)['\"]"
+)
 
 
 @dataclass
@@ -668,8 +649,7 @@ def _run_native_planning_phase(
 ) -> tuple[int, str, str] | None:
     """Run a canonical phase through the compiled shell's native program."""
 
-    raw_phase = args[0] if args else ""
-    phase = _resolve_phase_name(raw_phase)
+    phase = args[0] if args else ""
     if phase not in PHASE_NAMES:
         return None
     try:
@@ -1097,7 +1077,7 @@ def _control_action_state_mismatch(
     next_step: str,
     state: str,
 ) -> dict[str, Any] | None:
-    if _resolve_phase_name(next_step) in PHASE_NAMES:
+    if next_step in PHASE_NAMES:
         return None
     required_state = _required_state_for_control_action(next_step)
     if required_state is None or state == required_state:
@@ -1143,7 +1123,7 @@ def _control_invalid_transition_failure(
     stdout: str,
     stderr: str,
 ) -> dict[str, Any] | None:
-    if _resolve_phase_name(next_step) in PHASE_NAMES:
+    if next_step in PHASE_NAMES:
         return None
     action = _control_action_label(next_step)
     payload = _extract_cli_error_payload(stdout, stderr)
@@ -3084,6 +3064,7 @@ def drive(
     status_timeout: float = DEFAULT_STATUS_TIMEOUT_SECONDS,
     push: bool = True,
     publish_branch: str | None = None,
+    phase_model: list[str] | None = None,
     on_phase_complete: Callable[[str, int, str, str], None] | None = None,
     progress_env: dict[str, str] | None = None,
     writer=sys.stdout.write,
@@ -3161,6 +3142,20 @@ def drive(
         events.append({"msg": msg, **fields})
         writer(f"[auto {plan}] {msg}\n")
 
+    live_phase_models = [
+        item for item in (phase_model or []) if isinstance(item, str) and "=" in item
+    ]
+
+    def _append_live_phase_models(cmd: list[str], phase: str) -> list[str]:
+        if not live_phase_models or phase not in PHASE_NAMES:
+            return cmd
+        next_cmd = list(cmd)
+        for item in live_phase_models:
+            item_phase = item.split("=", 1)[0]
+            if item_phase == phase:
+                next_cmd.extend(["--phase-model", item])
+        return next_cmd
+
     def _phase_failure_detail(next_step: str, stdout: str, stderr: str) -> str:
         state_data = _read_state_data(plan_dir)
         latest_failure = state_data.get("latest_failure") if isinstance(state_data, dict) else None
@@ -3229,7 +3224,7 @@ def drive(
                 invocation_id="synthesized",
                 exit_kind=ExitKind.context_exhausted.value,
             )
-        elif _resolve_phase_name(next_step) not in PHASE_NAMES:
+        elif next_step not in PHASE_NAMES:
             # Non-phase commands (e.g. 'override add-note') — no synthesis
             result = None
         elif code == 0:
@@ -4218,6 +4213,7 @@ def drive(
             # Any non-add-note dispatch resets the add-note attempt counter.
             add_note_attempts = 0
             cmd = _phase_command(next_step) + ["--plan", plan]
+            cmd = _append_live_phase_models(cmd, str(next_step))
             last_phase = next_step
             # Apply an active execute-tier escalation pin. The pin overrides
             # tier_models.execute via --phase-model and forces a *fresh*
@@ -5095,7 +5091,7 @@ def drive(
                         # on the stronger model before we consider climbing more.
                         execute_fail_streak = 0
             last_execute_progress = progress_sig
-        elif _resolve_phase_name(next_step) in PHASE_NAMES:
+        elif next_step in PHASE_NAMES:
             # Moving off execute to another phase — the execute failure streak
             # is per-execute and must not leak across phases.
             execute_fail_streak = 0
@@ -5203,6 +5199,15 @@ def build_auto_parser(subparsers: Any) -> None:
             f"Fresh non-execute phase retries to allow after retryable external "
             f"stream stalls or timeout-shaped network errors (default "
             f"{DEFAULT_MAX_EXTERNAL_RETRIES}; 0 disables)."
+        ),
+    )
+    auto_parser.add_argument(
+        "--phase-model",
+        action="append",
+        default=None,
+        help=(
+            "Live phase routing override forwarded to phase subprocesses, "
+            "for example --phase-model execute=hermes:deepseek:deepseek-v4-pro."
         ),
     )
     auto_parser.add_argument(
@@ -5424,6 +5429,7 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
             status_timeout=args.status_timeout,
             push=not getattr(args, "no_push", False),
             publish_branch=getattr(args, "publish_branch", None),
+            phase_model=getattr(args, "phase_model", None),
             progress_env=progress_env,
         )
     finally:

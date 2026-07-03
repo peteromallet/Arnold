@@ -16,6 +16,11 @@ from pathlib import Path
 import pytest
 
 from arnold.conformance.workflow_manifest_runtime import GoldenRegressionRule
+from tests.arnold_pipelines.megaplan.fixtures.golden_artifacts import (
+    ARTIFACT_PATH_NAMES,
+    load_all_artifact_path_fixtures,
+    load_artifact_path_fixture,
+)
 from tests.arnold_pipelines.megaplan.fixtures.native_goldens import (
     TRACE_FILE_NAMES,
     _canonical_json,
@@ -683,6 +688,8 @@ class TestArtifactObligations:
         """Warrant source refs must be well-formed project-relative paths
         pointing to either existing files or planned migration targets
         (e.g. handlers/ files created during M3 handler extraction)."""
+        # MANIFEST_PATH is …/tests/arnold_pipelines/megaplan/fixtures/native_goldens/manifest.json
+        # → parents[5] reaches the repo root.
         repo_root = MANIFEST_PATH.resolve().parents[5]
         for scenario in _obligated_scenarios():
             for ref in scenario["obligations"]["warrant_source_refs"]:
@@ -801,3 +808,289 @@ class TestArtifactObligations:
         assert renamed == {}, (
             f"D1 renamed_equivalents should be empty (paths stable from M1), got {renamed}"
         )
+
+
+# ── golden artifact path fixture validation ─────────────────────────────────
+
+# All D1-D15 scenario IDs relevant to artifact-path coverage.
+_ALL_ARTIFACT_SCENARIO_IDS = {
+    "D1-prep-plan", "D2-critique", "D3-gate-preflight", "D4-gate-revise",
+    "D5-tiebreaker", "D6-finalize", "D7-execute-dag", "D8-execute-gates",
+    "D9-review-fanout", "D10-review-caps", "D11-human-control",
+    "D12-runtime-trace", "D13-policy-platform", "D14-compiler-authoring",
+    "D15-handler-extraction",
+}
+
+# Per the artifact-manifest doc, these are the five obligated scenarios.
+_GOLDEN_OBLIGATED = {"D1-prep-plan", "D5-tiebreaker", "D6-finalize",
+                      "D8-execute-gates", "D10-review-caps"}
+
+
+class TestGoldenArtifactFixtures:
+    """Validate the three golden artifact path fixtures
+    (proceed, review-needs-rework, execute-failure-resume) against
+    docs/arnold/megaplan-artifact-manifest.md.
+    """
+
+    # ── fixture loading ──────────────────────────────────────────────────
+
+    def test_all_three_artifact_path_fixtures_load(self) -> None:
+        fixtures = load_all_artifact_path_fixtures()
+        names = {f["artifact_path"] for f in fixtures}
+        expected = {"proceed", "review-needs-rework", "execute-failure-resume"}
+        assert names == expected, f"Missing paths: {expected - names}"
+
+    def test_each_fixture_has_valid_schema(self) -> None:
+        for fixture in load_all_artifact_path_fixtures():
+            assert fixture["schema"] == "arnold.megaplan.golden_artifacts.path.v1", (
+                f"{fixture['artifact_path']}: wrong schema {fixture['schema']!r}"
+            )
+
+    # ── structure ────────────────────────────────────────────────────────
+
+    def test_each_fixture_has_all_required_keys(self) -> None:
+        required = {"schema", "artifact_path", "description", "stages",
+                     "native_trace_files", "obligated_scenarios"}
+        for fixture in load_all_artifact_path_fixtures():
+            missing = required - set(fixture.keys())
+            assert not missing, (
+                f"{fixture['artifact_path']}: missing keys {missing}"
+            )
+
+    def test_stages_is_nonempty_list(self) -> None:
+        for fixture in load_all_artifact_path_fixtures():
+            stages = fixture["stages"]
+            assert isinstance(stages, list) and len(stages) > 0, (
+                f"{fixture['artifact_path']}: stages must be non-empty list"
+            )
+
+    def test_each_stage_has_required_keys(self) -> None:
+        stage_required = {"stage", "artifacts", "content_type",
+                          "schema_keys", "warrant_source_ref"}
+        for fixture in load_all_artifact_path_fixtures():
+            for stage in fixture["stages"]:
+                missing = stage_required - set(stage.keys())
+                assert not missing, (
+                    f"{fixture['artifact_path']}/{stage.get('stage', '?')}: "
+                    f"missing keys {missing}"
+                )
+
+    def test_stage_artifacts_is_nonempty_list_of_strings(self) -> None:
+        for fixture in load_all_artifact_path_fixtures():
+            for stage in fixture["stages"]:
+                arts = stage["artifacts"]
+                assert isinstance(arts, list) and len(arts) > 0, (
+                    f"{fixture['artifact_path']}/{stage['stage']}: "
+                    f"artifacts must be non-empty list"
+                )
+                for a in arts:
+                    assert isinstance(a, str) and a, (
+                        f"{fixture['artifact_path']}/{stage['stage']}: "
+                        f"artifact entry must be non-empty str, got {a!r}"
+                    )
+
+    # ── schema_keys ──────────────────────────────────────────────────────
+
+    def test_schema_keys_are_nonempty_list_of_strings(self) -> None:
+        for fixture in load_all_artifact_path_fixtures():
+            for stage in fixture["stages"]:
+                keys = stage["schema_keys"]
+                assert isinstance(keys, list), (
+                    f"{fixture['artifact_path']}/{stage['stage']}: "
+                    f"schema_keys must be a list"
+                )
+                for k in keys:
+                    assert isinstance(k, str) and k, (
+                        f"{fixture['artifact_path']}/{stage['stage']}: "
+                        f"schema key must be non-empty str, got {k!r}"
+                    )
+
+    def test_all_schema_keys_reference_known_content_types(self) -> None:
+        for fixture in load_all_artifact_path_fixtures():
+            for stage in fixture["stages"]:
+                keys = set(stage["schema_keys"])
+                unrecognized = keys - _KNOWN_CONTENT_TYPE_SCHEMA_KEYS
+                assert not unrecognized, (
+                    f"{fixture['artifact_path']}/{stage['stage']}: "
+                    f"unrecognized schema keys: {unrecognized}"
+                )
+
+    # ── warrant_source_refs ──────────────────────────────────────────────
+
+    def test_warrant_source_refs_are_well_formed_paths(self) -> None:
+        """Warrant source refs must be well-formed project-relative paths
+        pointing to either existing files or planned migration targets."""
+        # MANIFEST_PATH is …/tests/arnold_pipelines/megaplan/fixtures/native_goldens/manifest.json
+        # → parents[5] reaches the repo root.
+        repo_root = MANIFEST_PATH.resolve().parents[5]
+        for fixture in load_all_artifact_path_fixtures():
+            for stage in fixture["stages"]:
+                ref = stage["warrant_source_ref"]
+                target = repo_root / ref
+                assert ".." not in ref, (
+                    f"{fixture['artifact_path']}/{stage['stage']}: "
+                    f"warrant_source_ref must not contain '..': {ref}"
+                )
+                if target.exists():
+                    continue
+                # Allow planned paths under arnold_pipelines/ that
+                # will be created during M3 handler extraction.
+                assert str(target).startswith(str(repo_root / "arnold_pipelines")) or \
+                       str(target).startswith(str(repo_root / "arnold" / "pipeline")), (
+                    f"{fixture['artifact_path']}/{stage['stage']}: "
+                    f"warrant_source_ref {ref} does not exist "
+                    f"and is not under arnold_pipelines or arnold/pipeline: {target}"
+                )
+
+    # ── native_trace_files ───────────────────────────────────────────────
+
+    def test_native_trace_files_match_canonical_set(self) -> None:
+        for fixture in load_all_artifact_path_fixtures():
+            trace_files = set(fixture["native_trace_files"])
+            assert trace_files == set(TRACE_FILE_NAMES), (
+                f"{fixture['artifact_path']}: native_trace_files "
+                f"{trace_files} != canonical {set(TRACE_FILE_NAMES)}"
+            )
+
+    # ── obligated_scenarios coverage ─────────────────────────────────────
+
+    def test_obligated_scenarios_has_committed_and_deferred(self) -> None:
+        for fixture in load_all_artifact_path_fixtures():
+            obl = fixture["obligated_scenarios"]
+            assert "committed" in obl, (
+                f"{fixture['artifact_path']}: missing 'committed' in obligated_scenarios"
+            )
+            assert "deferred" in obl, (
+                f"{fixture['artifact_path']}: missing 'deferred' in obligated_scenarios"
+            )
+
+    def test_committed_scenario_ids_are_valid_D_references(self) -> None:
+        for fixture in load_all_artifact_path_fixtures():
+            for entry in fixture["obligated_scenarios"]["committed"]:
+                sid = entry["scenario_id"]
+                assert sid in _ALL_ARTIFACT_SCENARIO_IDS, (
+                    f"{fixture['artifact_path']}: unknown committed scenario_id {sid}"
+                )
+                assert isinstance(entry.get("covers"), str) and entry["covers"], (
+                    f"{fixture['artifact_path']}/{sid}: committed entry must have 'covers' description"
+                )
+
+    def test_deferred_scenario_ids_are_valid_D_references(self) -> None:
+        for fixture in load_all_artifact_path_fixtures():
+            for entry in fixture["obligated_scenarios"]["deferred"]:
+                sid = entry["scenario_id"]
+                assert sid in _ALL_ARTIFACT_SCENARIO_IDS, (
+                    f"{fixture['artifact_path']}: unknown deferred scenario_id {sid}"
+                )
+                assert isinstance(entry.get("owner"), str) and entry["owner"], (
+                    f"{fixture['artifact_path']}/{sid}: deferred entry must have 'owner'"
+                )
+                assert isinstance(entry.get("reason"), str) and entry["reason"], (
+                    f"{fixture['artifact_path']}/{sid}: deferred entry must have 'reason'"
+                )
+
+    def test_D1_D5_D6_D8_D10_all_covered_across_fixtures(self) -> None:
+        """Every obligated scenario must appear as committed or deferred
+        in at least one golden artifact fixture."""
+        covered: set[str] = set()
+        fixtures = load_all_artifact_path_fixtures()
+        for fixture in fixtures:
+            for entry in fixture["obligated_scenarios"]["committed"]:
+                covered.add(entry["scenario_id"])
+            for entry in fixture["obligated_scenarios"]["deferred"]:
+                covered.add(entry["scenario_id"])
+        missing = _GOLDEN_OBLIGATED - covered
+        assert not missing, (
+            f"Obligated scenarios not covered by any golden artifact fixture: {missing}"
+        )
+
+    def test_D10_is_deferred_in_all_fixtures(self) -> None:
+        """D10-review-caps is always deferred because it requires LLM inference."""
+        for fixture in load_all_artifact_path_fixtures():
+            deferred_ids = {e["scenario_id"] for e in fixture["obligated_scenarios"]["deferred"]}
+            committed_ids = {e["scenario_id"] for e in fixture["obligated_scenarios"]["committed"]}
+            assert "D10-review-caps" not in committed_ids, (
+                f"{fixture['artifact_path']}: D10-review-caps must NOT be committed"
+            )
+            assert "D10-review-caps" in deferred_ids, (
+                f"{fixture['artifact_path']}: D10-review-caps must be deferred"
+            )
+
+    # ── path-specific content checks ─────────────────────────────────────
+
+    def test_proceed_path_covers_prep_through_review(self) -> None:
+        proceed = load_artifact_path_fixture("proceed")
+        stage_names = {s["stage"] for s in proceed["stages"]}
+        expected = {"prep", "plan", "critique", "gate", "finalize", "execute", "review"}
+        assert stage_names == expected, (
+            f"proceed stages {stage_names} != expected {expected}"
+        )
+
+    def test_proceed_path_includes_route_description(self) -> None:
+        proceed = load_artifact_path_fixture("proceed")
+        assert "route" in proceed, "proceed fixture must have 'route'"
+        route = proceed["route"]
+        assert "proceed" in route.lower(), f"proceed route must mention proceed: {route}"
+        assert "done" in route.lower(), f"proceed route must end with done: {route}"
+
+    def test_review_needs_rework_has_loop_config(self) -> None:
+        rework = load_artifact_path_fixture("review_needs_rework")
+        assert "loop_config" in rework, "review_needs_rework must have loop_config"
+        lc = rework["loop_config"]
+        assert lc["max_iterations"] == 4
+        assert "M4_LOOP_MAX_ITERATIONS" in lc.get("policy_constant", "")
+        assert "exhaustion_outcome" in lc
+
+    def test_review_needs_rework_has_cap_exhaustion_artifacts(self) -> None:
+        rework = load_artifact_path_fixture("review_needs_rework")
+        assert "cap_exhaustion_artifacts" in rework, (
+            "review_needs_rework must have cap_exhaustion_artifacts"
+        )
+        cap = rework["cap_exhaustion_artifacts"]
+        assert isinstance(cap, list) and len(cap) > 0
+
+    def test_review_needs_rework_covers_review_and_revise(self) -> None:
+        rework = load_artifact_path_fixture("review_needs_rework")
+        stage_names = {s["stage"] for s in rework["stages"]}
+        assert "review" in stage_names, "review_needs_rework must include review stage"
+        assert "revise" in stage_names, "review_needs_rework must include revise stage"
+
+    def test_execute_failure_resume_has_checkpoint_stage(self) -> None:
+        ef_resume = load_artifact_path_fixture("execute_failure_resume")
+        stage_names = {s["stage"] for s in ef_resume["stages"]}
+        assert "checkpoint" in stage_names, (
+            "execute_failure_resume must have checkpoint stage"
+        )
+        assert "resume" in stage_names, (
+            "execute_failure_resume must have resume stage"
+        )
+
+    def test_execute_failure_resume_has_trace_events_section(self) -> None:
+        ef_resume = load_artifact_path_fixture("execute_failure_resume")
+        assert "native_trace_events" in ef_resume, (
+            "execute_failure_resume must have native_trace_events"
+        )
+        events = ef_resume["native_trace_events"]
+        assert "checkpoint" in events.get("expected_event_kinds", []), (
+            "execute_failure_resume native_trace_events must include checkpoint kind"
+        )
+
+    # ── receipt_metrics coverage ─────────────────────────────────────────
+
+    def test_proceed_path_has_receipt_metrics_on_key_stages(self) -> None:
+        """plan, gate, finalize, execute, and review must carry receipt_metrics."""
+        proceed = load_artifact_path_fixture("proceed")
+        metric_stages = {"plan", "gate", "finalize", "execute", "review"}
+        for stage in proceed["stages"]:
+            if stage["stage"] in metric_stages:
+                metrics = stage.get("receipt_metrics", [])
+                assert len(metrics) > 0, (
+                    f"proceed/{stage['stage']}: must have non-empty receipt_metrics"
+                )
+
+    def test_execute_failure_resume_committed_covers_D7_D8_D12(self) -> None:
+        ef_resume = load_artifact_path_fixture("execute_failure_resume")
+        committed_ids = {e["scenario_id"] for e in ef_resume["obligated_scenarios"]["committed"]}
+        assert "D7-execute-dag" in committed_ids
+        assert "D8-execute-gates" in committed_ids
+        assert "D12-runtime-trace" in committed_ids
