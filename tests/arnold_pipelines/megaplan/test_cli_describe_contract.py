@@ -25,8 +25,10 @@ def test_m1_dispatch_substrate_proof_describe_surfaces_match(
     from arnold_pipelines.megaplan.cli import handle_describe
     from arnold_pipelines.megaplan.cli.run import _describe_pipeline
     from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline
+    from arnold_pipelines.megaplan.workflows import planning as workflow_planning
 
     facade_path = Path(importlib.import_module("arnold_pipelines.megaplan.pipeline").__file__).resolve()
+    authored_path = workflow_planning.AUTHORING_SOURCE_PATH.resolve()
     response = handle_describe(argparse.Namespace(pipeline_name="megaplan"))
     handle_output = capsys.readouterr().out
 
@@ -40,6 +42,7 @@ def test_m1_dispatch_substrate_proof_describe_surfaces_match(
         "Pipeline: megaplan",
         f"Manifest: {compiled.manifest_hash}",
         f"Source:   {facade_path}",
+        f"Authored: {authored_path}",
         "Driver:   native / megaplan",
         "Registration: native",
         "Contract: M1 dispatch substrate proof only; not final Megaplan report conformance.",
@@ -58,18 +61,21 @@ def test_m1_dispatch_substrate_proof_describe_surfaces_match(
 def test_canonical_metadata_comes_from_native_backed_compile_path() -> None:
     from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline
     from arnold_pipelines.megaplan.planning.operations import SUPPORTED_OPERATIONS, canonical_metadata
+    from arnold_pipelines.megaplan.registry import pipeline_metadata
+    from arnold_pipelines.megaplan.workflows import planning as workflow_planning
 
     compiled = build_and_compile_pipeline()
     metadata = canonical_metadata()
+    registered = pipeline_metadata("megaplan")
 
     assert metadata["manifest_hash"] == compiled.manifest_hash
     assert metadata["topology_hash"] == compiled.topology_hash
     assert metadata["registration_kind"] == "native"
     assert metadata["compatibility_classification"] == "native"
     assert metadata["source_path"].endswith("/arnold_pipelines/megaplan/pipeline.py")
-    assert metadata["authored_source_path"].endswith(
-        "/arnold_pipelines/megaplan/workflows/planning.py"
-    )
+    assert metadata["authored_source_path"] == str(workflow_planning.AUTHORING_SOURCE_PATH.resolve())
+    assert registered["source_path"] == metadata["source_path"]
+    assert registered["authored_source_path"] == metadata["authored_source_path"]
     assert metadata["supported_operations"] == tuple(
         kind.value for kind in sorted(SUPPORTED_OPERATIONS, key=lambda item: item.value)
     )

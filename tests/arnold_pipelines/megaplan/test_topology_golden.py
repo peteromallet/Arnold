@@ -16,7 +16,9 @@ import pytest
 import yaml
 
 from arnold.workflow.compiler import compile_pipeline
+from arnold.workflow.source_compiler import lower_workflow_file
 from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline, build_pipeline
+from arnold_pipelines.megaplan.registry import pipeline_metadata
 from arnold_pipelines.megaplan.workflows import planning as workflow_planning
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_topology.yaml"
@@ -25,6 +27,25 @@ NORMALIZED_SHAPE_PATH = Path(__file__).parent / "fixtures" / "normalized_pipelin
 AMENDMENT_PATH = Path(__file__).parents[3] / "docs" / "arnold" / "workflow-manifest-amendments.md"
 LOCKED_MANIFEST_HASH = "sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba"
 LOCKED_TOPOLOGY_HASH = "sha256:2705e157e12fc074301afa8f5aec4e48d9820814ebaaa77535d152a8cc381fd4"
+LOWERED_WRAPPER_NODE_IDS = {
+    "review_revise",
+    "review_halt",
+    "tiebreaker_finalize",
+    "tiebreaker_execute",
+    "tiebreaker_override",
+    "override_halt",
+    "override_finalize",
+    "override_execute",
+    "override_revise",
+    "override_unknown",
+    "gate_abort",
+    "gate_suspend",
+    "blocked_override",
+    "force_finalize",
+    "force_execute",
+    "fallback_finalize",
+    "fallback_execute",
+}
 
 
 @pytest.fixture
@@ -174,6 +195,12 @@ def _manifest_policy_contract(policy: Any | None) -> dict[str, Any] | None:
 
 
 class TestTopologyFixtureLock:
+    def test_registered_package_and_authored_source_paths_stay_aligned(self) -> None:
+        metadata = pipeline_metadata("megaplan")
+
+        assert metadata["source_path"].endswith("/arnold_pipelines/megaplan/pipeline.py")
+        assert metadata["authored_source_path"] == str(workflow_planning.AUTHORING_SOURCE_PATH.resolve())
+
     def test_compiled_manifest_matches_locked_manifest_golden_bytes(self) -> None:
         manifest = build_and_compile_pipeline()
         assert manifest.manifest_hash == LOCKED_MANIFEST_HASH
@@ -334,6 +361,24 @@ class TestTopologyFixtureLock:
                 "condition_ref": edge.condition_ref,
                 "metadata": edge.metadata,
             } == expected_route
+
+    def test_authored_lowering_accepts_nested_wrapper_nodes_without_moving_entry_path(self) -> None:
+        authored = lower_workflow_file(workflow_planning.AUTHORING_SOURCE_PATH)
+
+        lowered_ids = {step.id for step in authored.steps}
+        assert LOWERED_WRAPPER_NODE_IDS.issubset(lowered_ids)
+        assert [step.id for step in authored.steps[:4]] == ["prep", "plan", "critique", "gate"]
+
+    def test_authored_lowering_remains_non_conformant_while_branch_wrappers_exist(
+        self,
+        fixture: dict,
+    ) -> None:
+        authored = lower_workflow_file(workflow_planning.AUTHORING_SOURCE_PATH)
+        manifest = compile_pipeline(authored)
+
+        authored_node_ids = {node.id for node in manifest.nodes}
+        assert LOWERED_WRAPPER_NODE_IDS.issubset(authored_node_ids)
+        assert authored_node_ids != set(fixture["nodes"])
 
 
 class TestAmendmentEnforcement:

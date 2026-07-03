@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -97,33 +98,60 @@ _ROUTED_OVERRIDE_ACTIONS = frozenset(
 )
 
 
-def _routed_override_response(
+@dataclass(frozen=True)
+class UnknownOverrideActionError(ValueError):
+    action: str
+
+    def __str__(self) -> str:
+        return f"Unknown override action: {self.action}"
+
+
+@dataclass(frozen=True)
+class OverrideActionOutput:
+    summary: str
+    state: str
+    route_signal: str | None = None
+    next_step: str | None = None
+    extras: tuple[tuple[str, Any], ...] = ()
+
+
+_OVERRIDE_ROUTE_SIGNALS = {
+    "abort": "abort",
+    "force-proceed": "force_proceed",
+    "replan": "replan",
+    "recover-blocked": "recover_blocked",
+    "resume-clarify": "resume_clarify",
+    "add-note": "add_note",
+    "set-robustness": "set_robustness",
+    "set-profile": "set_profile",
+    "set-model": "set_model",
+    "set-vendor": "set_vendor",
+}
+
+
+def _build_override_action_output(
     action: str,
     *,
     plan_dir: Path,
     state: PlanState,
     args: argparse.Namespace,
     artifacts: dict[str, Any] | None = None,
-) -> StepResponse:
+) -> OverrideActionOutput:
     next_steps = infer_next_steps(state)
+    route_signal = _OVERRIDE_ROUTE_SIGNALS.get(action)
     if action == "add-note":
-        response: StepResponse = {
-            "success": True,
-            "step": "override",
-            "summary": "Attached note to the plan.",
-            "next_step": next_steps[0] if next_steps else None,
-            "state": state["current_state"],
-        }
-        _attach_next_step_runtime(response)
-        return response
+        return OverrideActionOutput(
+            summary="Attached note to the plan.",
+            state=state["current_state"],
+            route_signal=route_signal,
+            next_step=next_steps[0] if next_steps else None,
+        )
     if action == "abort":
-        return {
-            "success": True,
-            "step": "override",
-            "summary": "Plan aborted.",
-            "next_step": None,
-            "state": STATE_ABORTED,
-        }
+        return OverrideActionOutput(
+            summary="Plan aborted.",
+            state=STATE_ABORTED,
+            route_signal=route_signal,
+        )
     if action == "force-proceed":
         meta = state.get("meta")
         overrides = meta.get("overrides", []) if isinstance(meta, dict) else []
@@ -136,29 +164,33 @@ def _routed_override_response(
             {},
         )
         if state["current_state"] == STATE_DONE:
-            return {
-                "success": True,
-                "step": "override",
-                "summary": "Force-proceeded past review into done state.",
-                "next_step": None,
-                "state": STATE_DONE,
-            }
-        response: StepResponse = {
-            "success": True,
-            "step": "override",
-            "summary": "Force-proceeded past gate judgment into gated state.",
-            "next_step": "finalize",
-            "state": STATE_GATED,
-            "orchestrator_guidance": (
-                artifacts or {}
-            ).get("orchestrator_guidance", "Force-proceed override applied. Proceed to finalize."),
-            "debt_entries_added": (artifacts or {}).get(
-                "debt_entries_added",
-                latest_override.get("debt_entries_added", 0),
+            return OverrideActionOutput(
+                summary="Force-proceeded past review into done state.",
+                state=STATE_DONE,
+                route_signal=route_signal,
+            )
+        return OverrideActionOutput(
+            summary="Force-proceeded past gate judgment into gated state.",
+            state=STATE_GATED,
+            route_signal=route_signal,
+            next_step="finalize",
+            extras=(
+                (
+                    "orchestrator_guidance",
+                    (artifacts or {}).get(
+                        "orchestrator_guidance",
+                        "Force-proceed override applied. Proceed to finalize.",
+                    ),
+                ),
+                (
+                    "debt_entries_added",
+                    (artifacts or {}).get(
+                        "debt_entries_added",
+                        latest_override.get("debt_entries_added", 0),
+                    ),
+                ),
             ),
-        }
-        _attach_next_step_runtime(response)
-        return response
+        )
     if action == "set-robustness":
         previous_level = "standard"
         meta = state.get("meta")
@@ -173,17 +205,13 @@ def _routed_override_response(
             if previous_level == new_level
             else f"Robustness changed from '{previous_level}' to '{new_level}'. Takes effect on the next phase."
         )
-        response = {
-            "success": True,
-            "step": "override",
-            "summary": summary,
-            "next_step": next_steps[0] if next_steps else None,
-            "state": state["current_state"],
-            "previous_robustness": previous_level,
-            "robustness": new_level,
-        }
-        _attach_next_step_runtime(response)
-        return response
+        return OverrideActionOutput(
+            summary=summary,
+            state=state["current_state"],
+            route_signal=route_signal,
+            next_step=next_steps[0] if next_steps else None,
+            extras=(("previous_robustness", previous_level), ("robustness", new_level)),
+        )
     if action == "recover-blocked":
         meta = state.get("meta")
         overrides = meta.get("overrides", []) if isinstance(meta, dict) else []
@@ -198,53 +226,49 @@ def _routed_override_response(
             if isinstance(resume_cursor, dict)
             else latest_override.get("phase")
         )
-        recovered_state = state["current_state"]
-        response: StepResponse = {
-            "success": True,
-            "step": "override",
-            "action": "recover-blocked",
-            "summary": (
-                f"Recovered blocked plan to state '{recovered_state}' for phase "
+        return OverrideActionOutput(
+            summary=(
+                f"Recovered blocked plan to state '{state['current_state']}' for phase "
                 f"{phase!r}. Reason: {latest_override.get('reason')}"
             ),
-            "state": recovered_state,
-            "previous_state": latest_override.get("from_state"),
-            "phase": phase,
-            "next_step": next_steps[0] if next_steps else None,
-            "resume_cursor": resume_cursor,
-            "blockers": (artifacts or {}).get("blockers", []),
-        }
-        _attach_next_step_runtime(response)
-        return response
+            state=state["current_state"],
+            route_signal=route_signal,
+            next_step=next_steps[0] if next_steps else None,
+            extras=(
+                ("action", "recover-blocked"),
+                ("previous_state", latest_override.get("from_state")),
+                ("phase", phase),
+                ("resume_cursor", resume_cursor),
+                ("blockers", (artifacts or {}).get("blockers", [])),
+            ),
+        )
     if action == "resume-clarify":
         warnings = (artifacts or {}).get("warnings", [])
-        response = {
-            "success": True,
-            "step": "override",
-            "summary": "Prep clarification resolved; plan phase is now ready to run.",
-            "next_step": next_steps[0] if next_steps else None,
-            "state": STATE_PREPPED,
-        }
+        extras: list[tuple[str, Any]] = []
         if warnings:
-            response["warnings"] = warnings
-        _attach_next_step_runtime(response)
-        return response
+            extras.append(("warnings", warnings))
+        return OverrideActionOutput(
+            summary="Prep clarification resolved; plan phase is now ready to run.",
+            state=STATE_PREPPED,
+            route_signal=route_signal,
+            next_step=next_steps[0] if next_steps else None,
+            extras=tuple(extras),
+        )
     if action == "replan":
         reason = getattr(args, "reason", None) or getattr(args, "note", None) or "Re-entering planning loop"
         plan_file_raw = (artifacts or {}).get("plan_file")
         plan_file = Path(plan_file_raw) if isinstance(plan_file_raw, str) and plan_file_raw else latest_plan_path(plan_dir, state)
-        next_steps = workflow_next(state)
-        response = {
-            "success": True,
-            "step": "override",
-            "summary": f"Re-entered planning loop at iteration {state['iteration']}. Reason: {reason}",
-            "next_step": next_steps[0] if next_steps else None,
-            "state": STATE_PLANNED,
-            "plan_file": str(plan_file),
-            "message": f"Edit {plan_file.name} to incorporate your changes, then run the next step.",
-        }
-        _attach_next_step_runtime(response)
-        return response
+        workflow_steps = workflow_next(state)
+        return OverrideActionOutput(
+            summary=f"Re-entered planning loop at iteration {state['iteration']}. Reason: {reason}",
+            state=STATE_PLANNED,
+            route_signal=route_signal,
+            next_step=workflow_steps[0] if workflow_steps else None,
+            extras=(
+                ("plan_file", str(plan_file)),
+                ("message", f"Edit {plan_file.name} to incorporate your changes, then run the next step."),
+            ),
+        )
     if action == "set-profile":
         previous_profile = None
         meta = state.get("meta")
@@ -259,17 +283,13 @@ def _routed_override_response(
             if previous_profile == new_profile
             else f"Profile changed from '{previous_profile}' to '{new_profile}'. Takes effect on the next phase."
         )
-        response = {
-            "success": True,
-            "step": "override",
-            "summary": summary,
-            "next_step": next_steps[0] if next_steps else None,
-            "state": state["current_state"],
-            "previous_profile": previous_profile,
-            "profile": new_profile,
-        }
-        _attach_next_step_runtime(response)
-        return response
+        return OverrideActionOutput(
+            summary=summary,
+            state=state["current_state"],
+            route_signal=route_signal,
+            next_step=next_steps[0] if next_steps else None,
+            extras=(("previous_profile", previous_profile), ("profile", new_profile)),
+        )
     if action in {"set-model", "set-vendor"}:
         meta = state.get("meta")
         overrides = meta.get("overrides", []) if isinstance(meta, dict) else []
@@ -285,19 +305,48 @@ def _routed_override_response(
             f"{'Model' if action == 'set-model' else 'Vendor'} for phase '{phase}' "
             f"changed from '{previous_spec}' to '{new_spec}'. Takes effect on the next phase."
         )
-        response = {
-            "success": True,
-            "step": "override",
-            "summary": summary,
-            "next_step": next_steps[0] if next_steps else None,
-            "state": state["current_state"],
-            "phase": phase,
-            "previous_spec": previous_spec,
-            "new_spec": new_spec,
-        }
-        _attach_next_step_runtime(response)
-        return response
-    raise CliError("invalid_override", f"Unknown routed override action: {action}")
+        return OverrideActionOutput(
+            summary=summary,
+            state=state["current_state"],
+            route_signal=route_signal,
+            next_step=next_steps[0] if next_steps else None,
+            extras=(("phase", phase), ("previous_spec", previous_spec), ("new_spec", new_spec)),
+        )
+    raise UnknownOverrideActionError(action)
+
+
+def _routed_override_response(
+    action: str,
+    *,
+    plan_dir: Path,
+    state: PlanState,
+    args: argparse.Namespace,
+    artifacts: dict[str, Any] | None = None,
+) -> StepResponse:
+    try:
+        action_output = _build_override_action_output(
+            action,
+            plan_dir=plan_dir,
+            state=state,
+            args=args,
+            artifacts=artifacts,
+        )
+    except UnknownOverrideActionError as error:
+        raise CliError("invalid_override", str(error)) from error
+    response: StepResponse = {
+        "success": True,
+        "step": "override",
+        "override_action": action,
+        "summary": action_output.summary,
+        "next_step": action_output.next_step,
+        "state": action_output.state,
+    }
+    if action_output.route_signal is not None:
+        response["route_signal"] = action_output.route_signal
+    for key, value in action_output.extras:
+        response[key] = value
+    _attach_next_step_runtime(response)
+    return response
 
 
 def _emit_routed_override_events(
@@ -439,6 +488,15 @@ def _emit_routed_override_events(
                 event_kind="override_applied",
             )
             return
+
+
+def _normalize_override_response(action: str, response: StepResponse) -> StepResponse:
+    normalized = dict(response)
+    normalized.setdefault("override_action", action)
+    route_signal = _OVERRIDE_ROUTE_SIGNALS.get(action)
+    if route_signal is not None:
+        normalized.setdefault("route_signal", route_signal)
+    return normalized
 
 
 def _handle_routed_override(
@@ -1849,4 +1907,4 @@ def handle_override(root: Path, args: argparse.Namespace) -> StepResponse:
     handler = _OVERRIDE_ACTIONS.get(action)
     if handler is None:
         raise CliError("invalid_override", f"Unknown override action: {action}")
-    return handler(root, plan_dir, state, args)
+    return _normalize_override_response(action, handler(root, plan_dir, state, args))

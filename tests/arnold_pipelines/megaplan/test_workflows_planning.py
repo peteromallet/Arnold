@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib
 import sys
 from pathlib import Path
@@ -18,6 +19,47 @@ from arnold_pipelines.megaplan.workflows import planning
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_topology.yaml"
+
+
+def _workflow_tree() -> ast.Module:
+    return ast.parse(planning.AUTHORING_SOURCE_PATH.read_text(encoding="utf-8"))
+
+
+def _function_node(name: str) -> ast.FunctionDef:
+    for node in _workflow_tree().body:
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    raise AssertionError(f"{name} not found in {planning.AUTHORING_SOURCE_PATH}")
+
+
+def _called_names(node: ast.AST) -> set[str]:
+    calls: set[str] = set()
+    for child in ast.walk(node):
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
+            calls.add(child.func.id)
+    return calls
+
+
+def _branch_names(node: ast.AST) -> set[str]:
+    names: set[str] = set()
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Compare) or not isinstance(child.left, ast.Name):
+            continue
+        names.add(child.left.id)
+    return names
+
+
+def _call_ids(node: ast.AST, call_name: str) -> set[str]:
+    ids: set[str] = set()
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call) or not isinstance(child.func, ast.Name):
+            continue
+        if child.func.id != call_name:
+            continue
+        for keyword in child.keywords:
+            if keyword.arg == "id" and isinstance(keyword.value, ast.Constant):
+                ids.add(str(keyword.value.value))
+    return ids
 
 
 class TestAuthoredWorkflow:
@@ -148,3 +190,94 @@ class TestAuthoredWorkflow:
         component_ids = {c.id.removeprefix("megaplan:") for c in workflows.ALL_STEP_COMPONENTS}
         step_ids = {step.id for step in pipeline.steps}
         assert step_ids == component_ids
+
+    def test_tiebreaker_component_declares_visible_iterate_proceed_escalate_routes(self) -> None:
+        bindings = {
+            binding["label"]: binding["target_ref"]
+            for binding in planning.AUTHOR_TIEBREAKER_DECIDE.metadata["route_bindings"]
+        }
+        assert bindings == {"iterate": "critique"}
+        compiled = next(
+            step for step in workflows.ALL_STEP_COMPONENTS if step.id == "megaplan:tiebreaker_decide"
+        )
+        route_labels = {binding["label"] for binding in compiled.metadata["route_bindings"]}
+        assert {"iterate", "proceed", "escalate"} <= route_labels
+
+
+class TestPlanningSubworkflowSourceShape:
+    def test_planning_prep_subworkflow_names_declared_interfaces(self) -> None:
+        func = _function_node("planning_prep_subworkflow")
+        assert {"SOURCE_PREP", "SOURCE_PLAN"} <= _called_names(func)
+
+    def test_critique_gate_revise_subworkflow_keeps_loop_cursor_visible(self) -> None:
+        func = _function_node("critique_gate_revise_subworkflow")
+        assert {"SOURCE_CRITIQUE", "SOURCE_GATE", "AUTHOR_REVISE", "loop"} <= _called_names(func)
+        loop_calls = [
+            call
+            for call in ast.walk(func)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "loop"
+        ]
+        assert len(loop_calls) == 1
+        keywords = {keyword.arg: keyword.value for keyword in loop_calls[0].keywords}
+        assert isinstance(keywords["reentry_id"], ast.Constant)
+        assert keywords["reentry_id"].value == "critique"
+
+    def test_workflow_branches_on_route_signal_outputs_not_payload_objects(self) -> None:
+        func = _function_node("planning_workflow")
+        branch_names = _branch_names(func)
+        assert {"gate_route_signal", "review_route_signal", "decision", "override_result"} <= branch_names
+        assert "gate_payload" not in branch_names
+        assert "review_payload" not in branch_names
+
+    def test_tiebreaker_subworkflow_names_declared_interfaces_and_loop_policy(self) -> None:
+        func = _function_node("tiebreaker_subworkflow")
+        assert {"SOURCE_TIEBREAKER_RUN", "AUTHOR_TIEBREAKER_DECIDE", "loop"} <= _called_names(func)
+        assert _branch_names(func) == {"decision"}
+        loop_calls = [
+            call
+            for call in ast.walk(func)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "loop"
+        ]
+        assert len(loop_calls) == 1
+        keywords = {keyword.arg: keyword.value for keyword in loop_calls[0].keywords}
+        assert isinstance(keywords["policy"], ast.Name)
+        assert keywords["policy"].id == "TIEBREAKER_POLICY"
+        assert isinstance(keywords["reentry_id"], ast.Constant)
+        assert keywords["reentry_id"].value == "critique"
+
+    def test_finalize_execute_review_subworkflow_names_declared_interfaces(self) -> None:
+        func = _function_node("finalize_execute_review_subworkflow")
+        assert {
+            "SOURCE_FINALIZE",
+            "SOURCE_EXECUTE",
+            "SOURCE_REVIEW",
+            "SOURCE_HALT",
+            "SOURCE_REVISE",
+        } <= _called_names(func)
+        assert _branch_names(func) == {"review_route_signal"}
+        assert _call_ids(func, "SOURCE_HALT") == {"halt", "review_halt"}
+        assert _call_ids(func, "SOURCE_REVISE") == {"review_revise"}
+
+    def test_override_escalation_subworkflow_names_declared_interfaces(self) -> None:
+        func = _function_node("override_escalation_subworkflow")
+        assert {
+            "SOURCE_OVERRIDE",
+            "SOURCE_HALT",
+            "SOURCE_FINALIZE",
+            "SOURCE_EXECUTE",
+            "SOURCE_REVISE",
+        } <= _called_names(func)
+        assert _branch_names(func) == {"override_result"}
+        assert _call_ids(func, "SOURCE_HALT") == {"override_halt", "override_unknown"}
+        assert _call_ids(func, "SOURCE_REVISE") == {"override_revise"}
+
+    def test_parent_visible_suspension_points_remain_on_top_level_spine(self) -> None:
+        func = _function_node("planning_workflow")
+        assert "gate_suspend" in _call_ids(func, "SOURCE_HALT")
+        assert "SOURCE_SUSPEND" not in _called_names(func)
+        source = planning.AUTHORING_SOURCE_PATH.read_text(encoding="utf-8")
+        assert "V1 source compiler lowers only the decorated workflow body" in source

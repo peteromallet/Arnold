@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -14,7 +13,7 @@ from arnold.manifest import (
     WorkflowPolicy,
 )
 from arnold.workflow.authoring import ComponentProvenance, StepComponent
-from arnold.workflow.dsl import Capability, Input, Output, Pipeline
+from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
 from arnold.workflow.source_compiler import lower_workflow_file
 from arnold_pipelines.megaplan.workflows.components import (
     ALL_STEP_COMPONENTS,
@@ -68,40 +67,6 @@ AUTHOR_TIEBREAKER_DECIDE = StepComponent(
             },
         ),
     },
-)
-
-
-_CANONICAL_ROUTE_SPECS = (
-    ("prep:plan", "prep", "plan", "default", None, "default"),
-    ("plan:critique", "plan", "critique", "default", None, "default"),
-    ("critique:gate", "critique", "gate", "default", None, "default"),
-    ("gate:finalize", "gate", "finalize", "proceed", "proceed", "proceed"),
-    ("gate:revise", "gate", "revise", "iterate", "iterate", "iterate"),
-    ("gate:tiebreaker", "gate", "tiebreaker_run", "tiebreaker", "tiebreaker", "tiebreaker"),
-    ("gate:override", "gate", "override", "escalate", "escalate", "escalate"),
-    ("gate:halt", "gate", "halt", "abort", "abort", "abort"),
-    ("gate:suspend", "gate", "halt", "suspend", "suspend", "suspend"),
-    ("gate:blocked", "gate", "override", "blocked_preflight", "blocked", "blocked_preflight"),
-    ("gate:force_proceed", "gate", "finalize", "force_proceed", "force_proceed", "force_proceed"),
-    ("revise:critique", "revise", "critique", "default", "revise:loop", "default"),
-    ("tiebreaker_run:decide", "tiebreaker_run", "tiebreaker_decide", "default", None, "default"),
-    (
-        "tiebreaker_decide:critique",
-        "tiebreaker_decide",
-        "critique",
-        "iterate",
-        "tiebreaker:loop",
-        "iterate",
-    ),
-    ("tiebreaker_decide:finalize", "tiebreaker_decide", "finalize", "proceed", "proceed", "proceed"),
-    ("tiebreaker_decide:override", "tiebreaker_decide", "override", "escalate", "escalate", "escalate"),
-    ("finalize:execute", "finalize", "execute", "default", None, "default"),
-    ("execute:review", "execute", "review", "default", None, "default"),
-    ("review:halt", "review", "halt", "default", "pass", "pass"),
-    ("review:revise", "review", "revise", "rework", "rework", "rework"),
-    ("override:halt", "override", "halt", "abort", "abort", "abort"),
-    ("override:finalize", "override", "finalize", "force_proceed", "force_proceed", "force_proceed"),
-    ("override:revise", "override", "revise", "replan", "replan", "replan"),
 )
 
 
@@ -166,50 +131,42 @@ def _metadata_for_step(step_id: str) -> dict[str, Any]:
     return metadata
 
 
-def _canonical_steps(lowered: Pipeline, *, timeout_seconds: float | None) -> tuple[Any, ...]:
-    lowered_by_id = {}
-    for step in lowered.steps:
-        lowered_by_id.setdefault(step.id, step)
-
+def _canonical_steps(*, timeout_seconds: float | None) -> tuple[Step, ...]:
     steps = []
     for component in ALL_STEP_COMPONENTS:
         step_id = component.id.removeprefix("megaplan:")
-        lowered_step = lowered_by_id[step_id]
         steps.append(
-            replace(
-                lowered_step,
-                label=None,
+            Step(
+                id=step_id,
+                kind=component.step_type,
                 inputs=_component_io(component.metadata.get("inputs", ()), Input),
                 outputs=_component_io(component.metadata.get("outputs", ()), Output),
-                capabilities=(),
                 policy=_policy_for_step(step_id, timeout_seconds=timeout_seconds),
-                source_span=None,
                 metadata=_metadata_for_step(step_id),
             )
         )
     return tuple(steps)
 
 
-def _canonical_routes(lowered: Pipeline) -> tuple[Any, ...]:
-    routes_by_source_label: dict[tuple[str, str], list[Any]] = {}
-    for route in lowered.routes:
-        routes_by_source_label.setdefault((route.source, route.label), []).append(route)
-
-    routes = []
-    for route_id, source, target, label, condition_ref, source_label in _CANONICAL_ROUTE_SPECS:
-        candidates = routes_by_source_label[(source, source_label)]
-        route = candidates[0]
-        routes.append(
-            replace(
-                route,
-                id=route_id,
-                target=target,
-                label=label,
-                condition_ref=condition_ref,
-                source_span=None,
-                metadata={},
+def _canonical_routes() -> tuple[Route, ...]:
+    routes: list[Route] = []
+    for component in ALL_STEP_COMPONENTS:
+        source = component.id.removeprefix("megaplan:")
+        for binding in component.metadata.get("route_bindings", ()):
+            routes.append(
+                Route(
+                    id=str(binding["id"]),
+                    source=source,
+                    target=str(binding["target_ref"]),
+                    label=str(binding.get("label", "default")),
+                    condition_ref=(
+                        str(binding["condition_ref"])
+                        if binding.get("condition_ref") is not None
+                        else None
+                    ),
+                    metadata={},
+                )
             )
-        )
     return tuple(routes)
 
 
@@ -232,13 +189,13 @@ def build_pipeline(
     """Return the canonical Megaplan planning workflow as a DSL pipeline."""
 
     lowered = lower_workflow_file(AUTHORING_SOURCE_PATH)
-    return replace(
-        lowered,
-        steps=_canonical_steps(lowered, timeout_seconds=timeout_seconds),
-        routes=_canonical_routes(lowered),
+    return Pipeline(
+        id=lowered.id,
+        version=lowered.version,
+        steps=_canonical_steps(timeout_seconds=timeout_seconds),
+        routes=_canonical_routes(),
         capabilities=_canonical_capabilities(),
         policy=_policy_from_config(DEFAULT_POLICY.config, timeout_seconds=timeout_seconds),
-        source_span=None,
         metadata={
             "product": "megaplan",
             "max_critique_iterations": max_critique_iterations,

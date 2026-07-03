@@ -11,7 +11,7 @@ from arnold.pipeline.native.ir import NativeProgram
 
 from arnold_pipelines.megaplan import auto
 from arnold_pipelines.megaplan._compatibility import build_compatibility_shell
-from arnold_pipelines.megaplan.workflows.planning import build_pipeline
+from arnold_pipelines.megaplan.pipeline import build_pipeline
 
 
 def test_run_planning_phase_prefers_compiled_native_program_for_canonical_phase(
@@ -188,3 +188,90 @@ def test_compiled_native_phase_functions_execute_handler_payload(
     assert seen[0][1].user_approved is True
     assert seen[0][1].retry_blocked_tasks is True
     assert seen[0][1].batch == 2
+
+
+# ── Stable ID dispatch ───────────────────────────────────────────────────
+
+
+def test_stable_id_resolution_resolves_megaplan_prefixed_ids(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """_resolve_phase_name maps stable IDs to flat phase names."""
+    from arnold_pipelines.megaplan.auto import _resolve_phase_name
+
+    assert _resolve_phase_name("megaplan:prep") == "prep"
+    assert _resolve_phase_name("megaplan:plan") == "plan"
+    assert _resolve_phase_name("megaplan:critique") == "critique"
+    assert _resolve_phase_name("megaplan:gate") == "gate"
+    assert _resolve_phase_name("megaplan:revise") == "revise"
+    assert _resolve_phase_name("megaplan:finalize") == "finalize"
+    assert _resolve_phase_name("megaplan:execute") == "execute"
+    assert _resolve_phase_name("megaplan:review") == "review"
+
+
+def test_stable_id_resolution_passes_through_flat_names() -> None:
+    """Flat phase names pass through _resolve_phase_name unchanged."""
+    from arnold_pipelines.megaplan.auto import _resolve_phase_name
+
+    assert _resolve_phase_name("prep") == "prep"
+    assert _resolve_phase_name("plan") == "plan"
+    assert _resolve_phase_name("execute") == "execute"
+
+
+def test_stable_id_resolution_passes_through_unknown() -> None:
+    """Unknown strings pass through unchanged."""
+    from arnold_pipelines.megaplan.auto import _resolve_phase_name
+
+    assert _resolve_phase_name("override") == "override"
+    assert _resolve_phase_name("") == ""
+
+
+def test_stable_id_resolution_passes_through_non_megaplan_prefixed() -> None:
+    """Non-megaplan prefixed IDs pass through unchanged."""
+    from arnold_pipelines.megaplan.auto import _resolve_phase_name
+
+    assert _resolve_phase_name("something:prep") == "something:prep"
+    assert _resolve_phase_name("other:plan") == "other:plan"
+
+
+def test_native_planning_phase_accepts_stable_id(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """_run_native_planning_phase accepts stable IDs like 'megaplan:execute'."""
+    import arnold_pipelines.megaplan.cli as cli
+
+    seen: list[tuple[Path, object]] = []
+
+    def fake_execute(root: Path, args: object) -> dict[str, Any]:
+        seen.append((root, args))
+        return {"success": True, "step": "execute"}
+
+    monkeypatch.setitem(cli.COMMAND_HANDLERS, "execute", fake_execute)
+
+    from arnold_pipelines.megaplan.auto import _run_native_planning_phase
+
+    result = _run_native_planning_phase(
+        ["megaplan:execute", "--plan", "demo"],
+        plan="demo",
+        cwd=tmp_path,
+        progress_env=None,
+        liveness_plan_dir=tmp_path / ".megaplan" / "plans" / "demo",
+    )
+
+    assert result is not None
+    exit_code, stdout, _stderr = result
+    assert exit_code == 0
+    assert "execute" in json.loads(stdout)["step"]
+
+
+def test_phase_names_stable_id_mapping_is_complete() -> None:
+    """Every flat phase in PHASE_NAMES has a corresponding stable ID mapping."""
+    from arnold_pipelines.megaplan.auto import PHASE_NAMES, _STABLE_ID_TO_PHASE
+
+    resolved_flat_names = set(_STABLE_ID_TO_PHASE.values())
+    for phase_name in PHASE_NAMES:
+        assert phase_name in resolved_flat_names, (
+            f"PHASE_NAME {phase_name!r} has no stable ID mapping"
+        )

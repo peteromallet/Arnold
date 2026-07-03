@@ -6,7 +6,7 @@ implementation.  Registry discovery scans ``arnold/pipelines`` before
 
 Modules:
 
-* ``workflows/planning.py`` — canonical authored workflow source.
+* ``workflows/workflow.py`` — canonical authored workflow source.
 * ``pipeline.py`` — thin public facade for ``build_pipeline()`` and the
   native-backed ``build_and_compile_pipeline()`` compatibility shell.
 * ``routing.py`` — planning decision literals and routing helpers.

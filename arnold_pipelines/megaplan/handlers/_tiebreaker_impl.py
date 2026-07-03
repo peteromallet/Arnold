@@ -12,6 +12,7 @@ from arnold_pipelines.megaplan.types import (
 )
 from arnold_pipelines.megaplan.planning.state import (
     STATE_AWAITING_HUMAN_VERIFY,
+    STATE_CRITIQUED,
     STATE_PLANNED,
     STATE_TIEBREAKER_PENDING,
     STATE_TIEBREAKER_READY,
@@ -33,6 +34,22 @@ def _build_tiebreaker_reprompt(
         "Either identify specific flag(s) with iteration history or pick ITERATE."
     )
     return f"{base_prompt}\n\n{addendum}"
+
+
+def _normalize_tiebreaker_action(args: argparse.Namespace) -> str:
+    if getattr(args, "escalate", False):
+        return "escalate"
+    if getattr(args, "replan", False):
+        return "replan"
+    return "pick"
+
+
+def _route_signal_for_tiebreaker_action(action: str) -> str:
+    return {
+        "pick": "proceed",
+        "replan": "iterate",
+        "escalate": "escalate",
+    }.get(action, "escalate")
 
 def handle_tiebreaker_run(root: Path, args: argparse.Namespace) -> StepResponse:
     from arnold_pipelines.megaplan._core import workflow_transition
@@ -74,20 +91,12 @@ def handle_tiebreaker_run(root: Path, args: argparse.Namespace) -> StepResponse:
         }
 
 def handle_tiebreaker_decide(root: Path, args: argparse.Namespace) -> StepResponse:
-    from arnold_pipelines.megaplan._core import workflow_transition
     with load_plan_locked(root, args.plan, step="tiebreaker-decide") as (plan_dir, state):
         require_state(state, "tiebreaker-decide", {STATE_TIEBREAKER_READY})
-        action = getattr(args, "tiebreaker_decide_action", "pick")
+        action = _normalize_tiebreaker_action(args)
         pick = getattr(args, "pick", None)
-        escalate = getattr(args, "escalate", False)
-        replan = getattr(args, "replan", False)
         rationale = getattr(args, "rationale", "")
-        if escalate:
-            action = "escalate"
-        elif replan:
-            action = "replan"
-        else:
-            action = "pick"
+        route_signal = _route_signal_for_tiebreaker_action(action)
 
         gate_data = read_json(plan_dir / "gate.json")
         flag_ids = gate_data.get("tiebreaker_flag_ids", [])
@@ -135,9 +144,8 @@ def handle_tiebreaker_decide(root: Path, args: argparse.Namespace) -> StepRespon
             state["current_state"] = STATE_PLANNED
             next_step_val = "critique"
         else:
-            transition = workflow_transition(state, "tiebreaker-decide")
-            state["current_state"] = transition.next_state
-            next_step_val = "revise"
+            state["current_state"] = STATE_CRITIQUED
+            next_step_val = "finalize"
 
         return {
             "success": True,
@@ -146,6 +154,8 @@ def handle_tiebreaker_decide(root: Path, args: argparse.Namespace) -> StepRespon
             "state": state["current_state"],
             "plan": state["name"],
             "next_step": next_step_val,
+            "route_signal": route_signal,
+            "decision": route_signal.upper(),
             "details": {
                 "action": action,
                 "pick": pick,
