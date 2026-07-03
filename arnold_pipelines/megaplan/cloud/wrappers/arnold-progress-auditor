@@ -382,6 +382,7 @@ sys.path.insert(0, arnold_src)
 sys.path.insert(0, str(pathlib.Path.cwd()))
 
 from arnold_pipelines.megaplan.cloud.redact import redact_text
+from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
 from arnold_pipelines.megaplan.cloud.repair_contract import read_jsonl_records
 
 MAX_CROSS_REF_ITEMS = 3
@@ -390,6 +391,7 @@ WATCHDOG_REPORT_PATH = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_WATCHDOG_REPO
 WATCHDOG_REPORT_ARCHIVE_DIR = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_WATCHDOG_REPORT_ARCHIVE_DIR", "/workspace/watchdog-reports"))
 AUDIT_REPORT_DIR = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_REPORT_DIR", "/workspace/audit-reports"))
 PERSISTENT_FINDINGS_DOC = pathlib.Path(os.environ.get("CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC", "/workspace/findings/persistent-problems.md"))
+META_RUN_DIR = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_META_RUN_DIR", "/workspace/.megaplan/meta-runs"))
 COMMIT_SOURCE_DIR = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_COMMIT_SOURCE_DIR", arnold_src))
 COMMIT_SOURCE_PATHS = (
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog",
@@ -589,6 +591,97 @@ def _collect_related_artifact_refs(workspace, plan, session, repair_data):
         "meta_repair_refs": _bounded_refs(meta_refs, key_fields=("meta_repair_id", "path")),
         "escalation_refs": _bounded_refs(escalation_refs, key_fields=("escalation_id", "path", "sequence")),
         "source_refs": source_refs,
+    }
+
+def _collect_meta_run_refs(session):
+    refs = []
+    if not META_RUN_DIR.exists():
+        return refs
+    safe_session = "".join(ch if ch.isalnum() or ch in "_.-" else "-" for ch in str(session))
+    candidates = list(META_RUN_DIR.glob(f"*{safe_session}*")) + list(META_RUN_DIR.glob(f"*{session}*"))
+    seen = set()
+    ordered = []
+    for path in candidates:
+        key = str(path)
+        if key in seen or not path.is_file():
+            continue
+        seen.add(key)
+        ordered.append((_mtime(path), path))
+    ordered.sort(reverse=True)
+    for mtime, path in ordered[:5]:
+        refs.append(
+            {
+                "path": _redact_scalar(path),
+                "mtime_age_min": int((now.timestamp() - mtime) // 60) if mtime else None,
+                "tail": _redact_scalar(_tail_with_line_numbers(path, lines=12)),
+            }
+        )
+    return refs
+
+def _repair_attempt_signals(repair_payload):
+    attempts = repair_payload.get("attempts") if isinstance(repair_payload, dict) else []
+    iterations = repair_payload.get("iterations") if isinstance(repair_payload, dict) else []
+    if not isinstance(attempts, list):
+        attempts = []
+    if not isinstance(iterations, list):
+        iterations = []
+    recent_attempts = [item for item in attempts[-5:] if isinstance(item, dict)]
+    recent_iterations = [item for item in iterations[-5:] if isinstance(item, dict)]
+    failure_kinds = []
+    for item in recent_attempts + recent_iterations:
+        for candidate in (
+            item.get("failure_classification"),
+            (item.get("failure_context") or {}).get("failure_classification") if isinstance(item.get("failure_context"), dict) else None,
+            (item.get("post_launch_failure_context") or {}).get("failure_classification") if isinstance(item.get("post_launch_failure_context"), dict) else None,
+            (item.get("plan_latest_failure") or {}).get("kind") if isinstance(item.get("plan_latest_failure"), dict) else None,
+            item.get("latest_failure_kind"),
+        ):
+            if isinstance(candidate, str) and candidate.strip():
+                failure_kinds.append(candidate.strip())
+                break
+    repair_outcome = str(repair_payload.get("outcome") or "") if isinstance(repair_payload, dict) else ""
+    attempt_outcomes = [
+        str(item.get("outcome") or repair_outcome or "").strip()
+        for item in recent_attempts + recent_iterations
+        if isinstance(item, dict)
+    ]
+    return repair_outcome, [item for item in attempt_outcomes if item], failure_kinds
+
+def _meta_repair_summary(session, repair_data, meta_refs):
+    repair_root = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_REPAIR_DATA_DIR", "/workspace/.megaplan/cloud-sessions/repair-data"))
+    repair_payload = _load_json(repair_root / f"{session}.repair-data.json")
+    if not isinstance(repair_payload, dict):
+        repair_payload = {}
+    repair_outcome, attempt_outcomes, failure_kinds = _repair_attempt_signals(repair_payload)
+    try:
+        classification, _ = evaluate_meta_repair_triggers(
+            session,
+            repair_data_dir=repair_root,
+            repair_outcome=repair_outcome,
+            attempt_outcomes=attempt_outcomes,
+            failure_kinds=failure_kinds,
+            repair_budget_exhausted=repair_outcome in {"repair_timeout", "repair_exhausted"},
+            load_evidence=True,
+        )
+        should_dispatch = bool(classification.should_dispatch)
+        trigger = classification.trigger_label
+        rationale = [_redact_scalar(item) for item in classification.rationale]
+    except Exception as exc:
+        should_dispatch = False
+        trigger = "classification_error"
+        rationale = [_redact_scalar(exc)]
+    run_refs = _collect_meta_run_refs(session)
+    return {
+        "should_dispatch": should_dispatch,
+        "trigger": trigger,
+        "rationale": rationale,
+        "repair_outcome": _redact_scalar(repair_outcome),
+        "attempt_outcomes": [_redact_scalar(item) for item in attempt_outcomes[-5:]],
+        "failure_kinds": [_redact_scalar(item) for item in failure_kinds[-5:]],
+        "meta_record_count": len(meta_refs or []),
+        "meta_run_log_count": len(run_refs),
+        "meta_run_refs": run_refs,
+        "missing_meta_run_evidence": bool(should_dispatch and not meta_refs and not run_refs),
     }
 
 def _collect_watchdog_report_refs(session, plan, workspace):
@@ -1386,6 +1479,7 @@ def _plan_evidence(entry):
     chain_state = _chain_state_summary(workspace_path, plan)
     repair_data = _repair_data_summary(session)
     cross_refs = _collect_related_artifact_refs(workspace_path, plan, session, repair_data)
+    meta_repair_summary = _meta_repair_summary(session, repair_data, cross_refs.get("meta_repair_refs") or [])
     prior_incident_ids = [item.get("incident_id") for item in cross_refs.get("prior_incident_refs", []) if item.get("incident_id")]
     prior_watchdog_report_refs = _collect_watchdog_report_refs(session, plan, workspace_path)
     prior_audit_refs = _collect_audit_report_refs(session, plan)
@@ -1499,6 +1593,7 @@ def _plan_evidence(entry):
         "ticket_refs": ticket_refs,
         "commit_refs": commit_refs,
         "meta_repair_refs": cross_refs.get("meta_repair_refs") or [],
+        "meta_repair_summary": meta_repair_summary,
         "attempt_refs": cross_refs.get("attempt_refs") or [],
         "escalation_refs": cross_refs.get("escalation_refs") or [],
         "source_refs": {
@@ -1507,6 +1602,7 @@ def _plan_evidence(entry):
             "audit_report_paths": [item.get("path") for item in prior_audit_refs if item.get("path")],
             "persistent_finding_paths": [item.get("path") for item in persistent_finding_refs if item.get("path")],
             "ticket_paths": [item.get("path") for item in ticket_refs if item.get("path")],
+            "meta_run_log_paths": [item.get("path") for item in (meta_repair_summary.get("meta_run_refs") or []) if item.get("path")],
         },
     }
 
@@ -1568,6 +1664,9 @@ for entry in plans:
         reasons.append(f"repair data has {repair_summary.get('iteration_count')} repair iterations")
     if repeated_failures:
         reasons.append(f"repair data repeats same failure signature {repeated_failures[0].get('count')}x")
+    meta_summary = ev.get("meta_repair_summary") or {}
+    if meta_summary.get("missing_meta_run_evidence"):
+        reasons.append(f"meta-repair trigger {meta_summary.get('trigger')} has no meta record or run log")
     unresolved_actions = (ev.get("user_action_context") or {}).get("unresolved_user_actions") or []
     if (run_kind == "plan" or chain_last_state == "awaiting_human") and unresolved_actions:
         ids = ",".join(str(item.get("id")) for item in unresolved_actions[:5])
@@ -2069,12 +2168,20 @@ for f in findings:
     source_refs = f.get("source_refs") or {}
     if source_refs:
         bits = []
-        for key in ("audit_report_paths", "watchdog_report_paths", "persistent_finding_paths", "ticket_paths", "meta_record_paths"):
+        for key in ("audit_report_paths", "watchdog_report_paths", "persistent_finding_paths", "ticket_paths", "meta_record_paths", "meta_run_log_paths"):
             value = source_refs.get(key)
             if isinstance(value, list) and value:
                 bits.append(f"{key}={', '.join(str(item) for item in value[:2])}")
         if bits:
             lines.append(f"- source refs: {'; '.join(bits)}")
+    meta_summary = f.get("meta_repair_summary") or {}
+    if meta_summary:
+        lines.append(
+            f"- meta-repair: trigger `{meta_summary.get('trigger')}` · "
+            f"should_dispatch `{meta_summary.get('should_dispatch')}` · "
+            f"records `{meta_summary.get('meta_record_count')}` · "
+            f"run_logs `{meta_summary.get('meta_run_log_count')}`"
+        )
     if f.get("latest_failure_message"):
         lines.append(f"- latest_failure: {f.get('latest_failure_kind')} — {f.get('latest_failure_message')}")
     stale = f.get("stale_state_evidence") or {}
