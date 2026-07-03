@@ -4381,6 +4381,35 @@ except Exception as exc:
     print(f"state_unreadable:{state_path.parent.name}:{exc}")
     raise SystemExit(0)
 
+log_candidates = []
+for pattern in ("cloud-chain*.log", "cloud-logs/*.log"):
+    log_candidates.extend((workspace / ".megaplan").glob(pattern))
+log_candidates = sorted(
+    [path for path in log_candidates if path.is_file()],
+    key=lambda path: path.stat().st_mtime,
+    reverse=True,
+)
+for log_path in log_candidates[:3]:
+    try:
+        recent = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-240:]
+    except Exception:
+        continue
+    joined = "\n".join(recent)
+    if (
+        "sandbox refused terminal" in joined
+        and (
+            "outside the sandbox root/project directory" in joined
+            or "outside the worktree" in joined
+        )
+    ):
+        print(
+            "workspace_drift:"
+            f"{state_path.parent.name}:"
+            f"log={log_path.name}:"
+            "sandbox_refused_outside_project_root"
+        )
+        raise SystemExit(0)
+
 latest_failure = state.get("latest_failure") or {}
 if latest_failure.get("kind") != "phase_failed":
     print("ok")
