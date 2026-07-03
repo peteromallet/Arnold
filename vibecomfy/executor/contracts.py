@@ -664,6 +664,10 @@ class ExecutorRequest:
         session_id = payload.get("session_id")
         if session_id is not None and not isinstance(session_id, str):
             raise ValueError("ExecutorRequest `session_id` must be a string or null.")
+        if session_id is not None:
+            from vibecomfy.comfy_nodes.agent.session import normalize_session_id  # noqa: PLC0415
+
+            session_id = normalize_session_id(session_id)
         profile = payload.get("profile")
         if profile is not None and not isinstance(profile, str):
             raise ValueError("ExecutorRequest `profile` must be a string or null.")

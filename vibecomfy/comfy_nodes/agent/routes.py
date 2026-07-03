@@ -1349,7 +1349,17 @@ def _utc_now_iso() -> str:
 
 
 def _handle_vibecomfy_submit_rating(payload: Any) -> tuple[dict[str, Any], int]:
-    result, status = submit_hivemind_feedback(payload)
+    safe_payload = dict(payload) if isinstance(payload, dict) else payload
+    if isinstance(safe_payload, dict):
+        raw_session_id = safe_payload.get("session_id")
+        raw_turn_id = safe_payload.get("turn_id")
+        if isinstance(raw_session_id, str):
+            safe_payload["session_id"] = normalize_session_id(raw_session_id)
+        if isinstance(raw_turn_id, str):
+            safe_payload["turn_id"] = normalize_path_component(raw_turn_id)
+        if isinstance(safe_payload.get("session_id"), str) and isinstance(safe_payload.get("turn_id"), str):
+            safe_payload["response_id"] = f"{safe_payload['session_id']}/{safe_payload['turn_id']}"
+    result, status = submit_hivemind_feedback(safe_payload)
     if result.get("ok") is True and 200 <= status < 300:
         return result, 201
     return result, status

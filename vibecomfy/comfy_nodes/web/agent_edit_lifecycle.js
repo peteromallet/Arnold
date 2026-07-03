@@ -1590,7 +1590,6 @@ function _handleScopeSwitch(panel, payload) {
     clearUndoAffordance: true,
     queueGuardClear: true,
     refreshQueueGuard: true,
-    persistScope: scopeId,
     rehydrateChat: Boolean(scopeId),
     // ── T7: Flag indicating a draft prompt exists for the arriving scope ──
     // The obligation fulfiller reads the DOM prompt element and restores the

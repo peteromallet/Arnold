@@ -13684,6 +13684,10 @@ def test_read_session_chat_sanitized_session_enforcement(tmp_path: Path) -> None
     # Must succeed — the sanitized id maps to the same directory we wrote
     assert result["ok"] is True
     assert result["session_id"] == safe_id
+    assert result["session_path"] == str(session_dir_for(tmp_path, safe_id))
+    assert result["session_path_resolved"] == str(session_dir_for(tmp_path, safe_id).resolve())
+    assert malicious_id not in result["session_path"]
+    assert ".." not in result["session_path"]
     assert len(result["messages"]) == 2
 
 
@@ -14753,6 +14757,29 @@ def test_read_session_bundle_missing_session_returns_empty(tmp_path: Path) -> No
     assert result["ok"] is True
     assert result["exists"] is False
     assert result["files"] == []
+
+
+def test_read_session_bundle_sanitized_session_enforcement(tmp_path: Path) -> None:
+    from vibecomfy.comfy_nodes.agent.edit import read_session_bundle
+
+    malicious_id = "../../bundle-session"
+    safe_id = _safe_session_id(malicious_id)
+    turn_dir = session_dir_for(tmp_path, safe_id) / "turns" / "0001"
+    turn_dir.mkdir(parents=True)
+    (turn_dir / "response.json").write_text(
+        json.dumps({"ok": True, "message": "contained bundle"}) + "\n",
+        encoding="utf-8",
+    )
+
+    result = read_session_bundle(tmp_path, malicious_id)
+
+    assert result["ok"] is True
+    assert result["exists"] is True
+    assert result["session_id"] == safe_id
+    assert result["session_path"] == str(session_dir_for(tmp_path, safe_id))
+    assert malicious_id not in result["session_path"]
+    assert ".." not in result["session_path"]
+    assert {entry["name"] for entry in result["files"]} == {"turns/0001/response.json"}
 
 
 def test_read_session_bundle_records_oversize_skips(tmp_path: Path) -> None:

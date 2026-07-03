@@ -2011,7 +2011,7 @@ async function attemptScopedCanvasRollback(preApplyGraph, deltaOps, scopedVerifi
   try {
     const restoreGraph = clonePlainData(preApplyGraph);
     if (typeof app?.loadGraphData === "function") {
-      await app.loadGraphData(restoreGraph);
+      await loadGraphDataWithoutScopeSwitch(restoreGraph);
     } else {
       applyGraphCandidateInPlace(app, restoreGraph);
     }
@@ -2039,6 +2039,56 @@ async function attemptScopedCanvasRollback(preApplyGraph, deltaOps, scopedVerifi
   return rollback;
 }
 
+let graphLoadScopeSwitchSuppressionDepth = 0;
+
+function loadGraphDataWithoutScopeSwitch(graph, ...args) {
+  graphLoadScopeSwitchSuppressionDepth += 1;
+  const finish = () => {
+    graphLoadScopeSwitchSuppressionDepth = Math.max(0, graphLoadScopeSwitchSuppressionDepth - 1);
+  };
+  try {
+    const result = app.loadGraphData(graph, ...args);
+    if (result && typeof result.then === "function") {
+      return Promise.resolve(result).finally(finish);
+    }
+    finish();
+    return result;
+  } catch (error) {
+    finish();
+    throw error;
+  }
+}
+
+function syncPanelScopeAfterGraphLoad() {
+  if (graphLoadScopeSwitchSuppressionDepth > 0) {
+    return;
+  }
+  const panel = currentAgentPanel();
+  if (!panel?.state) {
+    return;
+  }
+  const canvasScope = resolveActiveCanvasScope();
+  const scopeId = canvasScope?.scopeId || null;
+  const fingerprint = canvasScope?.fingerprint || null;
+  if ((panel.state.chatScopeId || null) === scopeId
+      && (panel.state.chatScopeFingerprint || null) === fingerprint) {
+    return;
+  }
+  const obligations = transition(panel, "SCOPE_SWITCH", {
+    scopeId,
+    fingerprint,
+    debugPayload: {
+      reason: "load_graph_data_scope_switch",
+      previousScopeId: panel.state.chatScopeId || null,
+      previousFingerprint: panel.state.chatScopeFingerprint || null,
+      newScopeId: scopeId,
+      newFingerprint: fingerprint,
+    },
+  });
+  fulfillLifecycleTransitionObligations(panel, obligations);
+  renderLifecycleTransition(panel, obligations);
+}
+
 function installIntentNodeFallback() {
   if (app.__vibecomfyIntentFallbackInstalled) {
     return;
@@ -2054,10 +2104,12 @@ function installIntentNodeFallback() {
     if (result && typeof result.then === "function") {
       return result.then((value) => {
         repairLiveNodes(repairCandidate);
+        syncPanelScopeAfterGraphLoad();
         return value;
       });
     }
     repairLiveNodes(repairCandidate);
+    syncPanelScopeAfterGraphLoad();
     return result;
   };
   app.__vibecomfyIntentFallbackInstalled = true;
@@ -4073,19 +4125,21 @@ async function _rehydrateChat(panel) {
 }
 
 // ── T9: Scope-aware session persistence ──────────────────────────────────
-// Persists to both localStorage (legacy migration source) and the scoped
-// sessionStorage map so the binding survives across panel reopens within
-// the same workflow scope.
+// Scoped sessions live only in sessionStorage. The legacy localStorage scalar
+// remains a no-scope compatibility fallback and is never refreshed once a
+// workflow scope is known.
 function _persistActiveSession(sessionId, scopeId = null) {
-  if (typeof sessionId === "string" && sessionId) {
-    _lsSet(LS_ACTIVE_SESSION_KEY, sessionId);
-  }
-  // ── T9: Also bind session → scope in sessionStorage ────────────────────
   const resolvedScopeId = scopeId || _activeScopeId();
   if (resolvedScopeId) {
     if (typeof sessionId === "string" && sessionId) {
       setScopedSessionId(resolvedScopeId, sessionId);
+    } else {
+      forgetScopedSessionId(resolvedScopeId);
     }
+    return;
+  }
+  if (typeof sessionId === "string" && sessionId) {
+    _lsSet(LS_ACTIVE_SESSION_KEY, sessionId);
   }
 }
 
@@ -4215,13 +4269,15 @@ function _activeScopeId() {
 }
 
 // ── T9: Scope-aware session forget ───────────────────────────────────────
-// Clears both localStorage legacy key and the scoped sessionStorage binding.
+// Clear only the scoped sessionStorage binding when a scope is active. The
+// legacy localStorage scalar is cleared only in no-scope compatibility mode.
 function forgetActiveSession(scopeId = null) {
-  _lsRemove(LS_ACTIVE_SESSION_KEY);
   const resolvedScopeId = scopeId || _activeScopeId();
   if (resolvedScopeId) {
     forgetScopedSessionId(resolvedScopeId);
+    return;
   }
+  _lsRemove(LS_ACTIVE_SESSION_KEY);
 }
 
 function fulfillAgentPanelCommitObligations(panel, obligations = {}, commitKind) {
@@ -5773,6 +5829,9 @@ function shouldAcceptAgentTurnEvent(panel, payload) {
     if (!eventSessionMatchesActiveScope(panel.state, payloadSessionId, scopedSession)) {
       return false;
     }
+    if (scopedSession && scopedSession === payloadSessionId) {
+      return true;
+    }
   }
 
   if (currentSessionId) {
@@ -5815,17 +5874,20 @@ function handleAgentTurnEvent(event) {
   // active and sessionId is null, a stale event for scope B's session must
   // not bind the wrong session.  Also persist the scope→session mapping so
   // subsequent events for this scope can use the scoped session key.
-  if (!panel.state.sessionId && typeof payload.session_id === "string" && payload.session_id) {
+  if (typeof payload.session_id === "string" && payload.session_id) {
     if (panel.state.chatScopeId) {
       const scopedSession = resolveScopeSessionId(panel.state.chatScopeId);
-      if (eventSessionMatchesActiveScope(panel.state, payload.session_id, scopedSession)) {
+      if (
+        (!panel.state.sessionId || panel.state.sessionId !== payload.session_id)
+        && eventSessionMatchesActiveScope(panel.state, payload.session_id, scopedSession)
+      ) {
         panel.state.sessionId = payload.session_id;
         setScopedSessionId(panel.state.chatScopeId, payload.session_id);
       }
       // else: event belongs to a different scope — silently drop.
       // shouldAcceptAgentTurnEvent already validated this, so this is
       // defense-in-depth.
-    } else {
+    } else if (!panel.state.sessionId) {
       panel.state.sessionId = payload.session_id;
     }
   }
@@ -9004,7 +9066,7 @@ export function fulfillLifecycleTransitionObligations(panel, obligations = {}) {
     clearChangedNodeFeedbackVisuals();
   }
   if (obligations.persistSession !== undefined) {
-    _persistActiveSession(obligations.persistSession || null);
+    _persistActiveSession(obligations.persistSession || null, panel?.state?.chatScopeId || null);
   }
   // ── T7: Persist scope → session mapping ──────────────────────────────
   if (obligations.persistScope !== undefined) {
@@ -9015,7 +9077,7 @@ export function fulfillLifecycleTransitionObligations(panel, obligations = {}) {
     }
   }
   if (obligations.forgetSession) {
-    forgetActiveSession();
+    forgetActiveSession(panel?.state?.chatScopeId || null);
   }
   // ── T7: Forget scope snapshot (new conversation, workflow closed) ─────
   if (obligations.forgetScope) {
@@ -9455,7 +9517,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       if (typeof submitIdentity?.sessionId === "string" && submitIdentity.sessionId) {
         // Persisting the value remains a side effect, but sessionId itself is
         // committed through the terminal submit transition below.
-        _persistActiveSession(submitIdentity.sessionId);
+        _persistActiveSession(submitIdentity.sessionId, panel?.state?.chatScopeId || null);
       }
       commitSessionArtifactPathsFromResponse(panel, result);
       if (!res.ok || result?.ok === false || result.raw?.error) {
@@ -10886,7 +10948,7 @@ async function undoLastApply(panel) {
   if (panel.state.inFlightRebaseline) {
     return panel.state.inFlightRebaseline;
   }
-  await app.loadGraphData(previous.graph);
+  await loadGraphDataWithoutScopeSwitch(previous.graph);
   const restoreObligations = transition(panel, "UNDO_LOCAL_RESTORE", {
     previous,
     undoStackDepth: panel.state.undoStack.length,
@@ -11758,7 +11820,7 @@ function doApply(graph, overlay, applyBtn, needsConfirm, removedCount, schemaLes
     applyBtn.textContent = `${removedCount} nodes will be removed and ${schemaLessCount} are schema-less; apply anyway?`;
     return;
   }
-  app.loadGraphData(graph);
+  loadGraphDataWithoutScopeSwitch(graph);
   overlay.remove();
   toast("Round-trip applied");
 }

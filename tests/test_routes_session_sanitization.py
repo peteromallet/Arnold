@@ -6,13 +6,10 @@ durable allocation, accept_turn()/reject_turn(), or response-writer paths.
 
 from __future__ import annotations
 
-import importlib
+import asyncio
 import sys
 import types
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from vibecomfy.comfy_nodes.agent.routes import (
     _handle_agent_edit_accept,
@@ -22,7 +19,8 @@ from vibecomfy.comfy_nodes.agent.routes import (
     _handle_agent_edit_reject,
     _handle_agent_executor_submit,
 )
-from vibecomfy.comfy_nodes.agent.session import normalize_session_id
+from vibecomfy.comfy_nodes.agent.session import normalize_path_component, normalize_session_id
+from vibecomfy.executor.contracts import ExecutorRequest
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -134,6 +132,24 @@ class TestExecutorSubmitSanitization:
         assert re.fullmatch(r"[0-9a-f]{32}", safe)
 
 
+# ── ExecutorRequest.from_payload: direct contract sanitization ───────────────
+
+class TestExecutorRequestContractSanitization:
+    """Contract construction must not preserve traversal-capable session ids."""
+
+    def test_from_payload_normalises_traversal_session_id(self):
+        request = ExecutorRequest.from_payload({
+            "query": "x",
+            "session_id": "../../evil",
+        })
+
+        assert request.session_id is not None
+        assert "/" not in request.session_id
+        assert "\\" not in request.session_id
+        assert ".." not in request.session_id
+        assert all(part not in {"", ".", ".."} for part in request.session_id.split("/"))
+
+
 # ── _maybe_write_executor_only_durable_turn: session_id in allocation ────────
 
 class TestExecutorDurableTurnSanitization:
@@ -174,6 +190,35 @@ class TestExecutorDurableTurnSanitization:
         assert ".." not in safe_id
         assert "/" not in safe_id
         assert safe_id != "../../evil"
+
+    def test_raw_session_id_normalised_in_returned_session_paths(self, tmp_path, monkeypatch):
+        """Executor-only durable turn response paths are built from the safe id."""
+        _mock_routes_module(monkeypatch)
+        from vibecomfy.comfy_nodes.agent import routes as routes_mod
+
+        monkeypatch.setattr(routes_mod, "_SESSION_ROOT", tmp_path)
+
+        payload = {
+            "query": "explain this",
+            "session_id": "../../evil",
+        }
+        request = MagicMock()
+        request.query = "explain this"
+        request.graph = None
+
+        result = routes_mod._maybe_write_executor_only_durable_turn(
+            response={"ok": True, "route": "respond", "message": "Explanation."},
+            result=MagicMock(),
+            payload=payload,
+            request=request,
+        )
+
+        safe_id = normalize_session_id("../../evil")
+        assert result["session_id"] == safe_id
+        assert result["session_path"].endswith(f"/{safe_id}")
+        assert result["session_path_resolved"] == str((tmp_path / safe_id).resolve())
+        assert ".." not in result["session_path"]
+        assert "../../evil" not in result["session_path"]
 
 
 # ── accept/reject: session_id and turn_id in response-writer paths ────────────
@@ -342,3 +387,88 @@ class TestChatSanitization:
         if safe_id is not None:
             assert ".." not in safe_id
             assert "/" not in safe_id
+
+
+# ── registered routes: session bundle and rating sanitization ────────────────
+
+class TestRegisteredRouteSanitization:
+    """Registered aiohttp route adapters must normalise ids before helper calls."""
+
+    def test_session_bundle_route_normalises_query_session_id(self, monkeypatch):
+        _mock_routes_module(monkeypatch)
+        from vibecomfy.comfy_nodes.agent import edit as edit_mod
+        from vibecomfy.comfy_nodes.agent import routes as routes_mod
+
+        captured = {}
+
+        def fake_read_session_bundle(_root, session_id):
+            captured["session_id"] = session_id
+            return {"ok": True, "exists": False, "files": []}
+
+        monkeypatch.setattr(edit_mod, "read_session_bundle", fake_read_session_bundle)
+
+        registered = {}
+
+        class _Routes:
+            def post(self, path):
+                def _decorator(fn):
+                    registered[("POST", path)] = fn
+                    return fn
+                return _decorator
+
+            def get(self, path):
+                def _decorator(fn):
+                    registered[("GET", path)] = fn
+                    return fn
+                return _decorator
+
+        routes_mod.register_agent_edit_routes(types.SimpleNamespace(routes=_Routes()))
+        route = registered[("GET", "/vibecomfy/agent-edit/session-bundle")]
+
+        class _Request:
+            query = {"session_id": "../../bundle-session"}
+
+        response = asyncio.run(route(_Request()))
+
+        safe_id = normalize_session_id("../../bundle-session")
+        assert response is not None
+        assert captured["session_id"] == safe_id
+        assert ".." not in captured["session_id"]
+        assert "/" not in captured["session_id"]
+
+    def test_rating_route_normalises_ids_before_feedback_helper(self, monkeypatch):
+        _mock_routes_module(monkeypatch)
+        from vibecomfy.comfy_nodes.agent import routes as routes_mod
+
+        captured = {}
+
+        def fake_submit_hivemind_feedback(payload):
+            captured["payload"] = dict(payload)
+            return {"ok": True}, 200
+
+        monkeypatch.setattr(routes_mod, "submit_hivemind_feedback", fake_submit_hivemind_feedback)
+
+        raw_session_id = "../../rating-session"
+        raw_turn_id = "../turn-001"
+        result, status = routes_mod._handle_vibecomfy_submit_rating(
+            {
+                "response_id": f"{raw_session_id}/{raw_turn_id}",
+                "session_id": raw_session_id,
+                "turn_id": raw_turn_id,
+                "rating": 7,
+                "pack_shared": False,
+            }
+        )
+
+        safe_session_id = normalize_session_id(raw_session_id)
+        safe_turn_id = normalize_path_component(raw_turn_id)
+        forwarded = captured["payload"]
+        assert status == 201
+        assert result["ok"] is True
+        assert forwarded["session_id"] == safe_session_id
+        assert forwarded["turn_id"] == safe_turn_id
+        assert forwarded["response_id"] == f"{safe_session_id}/{safe_turn_id}"
+        assert ".." not in forwarded["session_id"]
+        assert "/" not in forwarded["session_id"]
+        assert ".." not in forwarded["turn_id"]
+        assert "/" not in forwarded["turn_id"]

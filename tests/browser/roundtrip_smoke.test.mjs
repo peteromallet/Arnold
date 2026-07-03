@@ -10651,6 +10651,605 @@ test("VibeComfy agent panel re-fetches chat on reopen and localStorage persists 
   }
 });
 
+test("VibeComfy scoped session persistence writes sessionStorage without refreshing legacy localStorage", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+          },
+        },
+      },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    const panel = extensionModule.ensureAgentPanel();
+    panel.state.chatScopeId = "scope-smoke";
+    panel.state.sessionId = "scoped-session-1";
+    globalThis.localStorage.setItem("vibecomfy_active_session_id", "legacy-read-only");
+
+    extensionModule.fulfillLifecycleTransitionObligations(panel, { persistSession: "scoped-session-1" });
+
+    assert.equal(globalThis.sessionStorage.getItem("vibecomfy_scope_session:scope-smoke"), "scoped-session-1");
+    assert.equal(globalThis.localStorage.getItem("vibecomfy_active_session_id"), "legacy-read-only");
+
+    extensionModule.fulfillLifecycleTransitionObligations(panel, { forgetSession: true });
+
+    assert.equal(globalThis.sessionStorage.getItem("vibecomfy_scope_session:scope-smoke"), null);
+    assert.equal(globalThis.localStorage.getItem("vibecomfy_active_session_id"), "legacy-read-only");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy scoped workflow chats keep distinct sessions, rehydrate URLs, and rendered messages", async () => {
+  const graphA = {
+    nodes: [
+      { id: 1, type: "LoadImage", properties: { vibecomfy_uid: "scope-a-load" } },
+      { id: 2, type: "PreviewImage", properties: { vibecomfy_uid: "scope-a-preview" } },
+    ],
+    links: [[1, 1, 0, 2, 0, "IMAGE"]],
+  };
+  const graphB = {
+    nodes: [
+      { id: 10, type: "CheckpointLoaderSimple", properties: { vibecomfy_uid: "scope-b-loader" } },
+      { id: 11, type: "KSampler", properties: { vibecomfy_uid: "scope-b-sampler" } },
+    ],
+    links: [[1, 10, 0, 11, 0, "MODEL"]],
+  };
+  const sessionA = "session-scope-a";
+  const sessionB = "session-scope-b";
+  const chatUrlA = `/vibecomfy/agent-edit/chat?session_id=${sessionA}`;
+  const chatUrlB = `/vibecomfy/agent-edit/chat?session_id=${sessionB}`;
+  const submitBodies = [];
+
+  const harness = await createBrowserHarness({
+    graph: graphA,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+          },
+        },
+      },
+      [chatUrlA]: {
+        status: 200,
+        body: {
+          ok: true,
+          session_id: sessionA,
+          latest_turn_id: "0001",
+          messages: [
+            { role: "user", text: "scope A rehydrated user", turn_id: "0001" },
+            { role: "agent", text: "scope A rehydrated answer", turn_id: "0001" },
+          ],
+        },
+      },
+      [chatUrlB]: {
+        status: 200,
+        body: {
+          ok: true,
+          session_id: sessionB,
+          latest_turn_id: "0001",
+          messages: [
+            { role: "user", text: "scope B rehydrated user", turn_id: "0001" },
+            { role: "agent", text: "scope B rehydrated answer", turn_id: "0001" },
+          ],
+        },
+      },
+      "/vibecomfy/agent-executor": async ({ options }) => {
+        const body = JSON.parse(options.body);
+        submitBodies.push(body);
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            session_id: body.session_id,
+            turn_id: body.session_id === sessionA ? "0002" : "0002",
+            baseline_turn_id: "0001",
+            outcome: { kind: "noop", reason: `${body.session_id} submit rendered` },
+            graph_unchanged: true,
+            canvas_apply_allowed: false,
+            apply_allowed: false,
+            queue_allowed: false,
+            message: `${body.session_id} submit rendered`,
+          },
+        };
+      },
+    },
+  });
+
+  const submitPromises = [];
+  const originalGlobalApp = globalThis.app;
+  try {
+    globalThis.app = harness.app;
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+
+    const bindActiveScope = () => {
+      const panel = extensionModule.ensureAgentPanel();
+      const liveGraph = harness.getCurrentGraph();
+      const scope = extensionModule.resolveActiveCanvasScope() || {
+        scopeId: extensionModule.computeScopeId(liveGraph),
+        fingerprint: extensionModule.computeStructuralGraphFingerprint(liveGraph),
+      };
+      assert.ok(scope?.scopeId, "active graph should resolve a chat scope");
+      panel.state.chatScopeId = scope.scopeId;
+      panel.state.chatScopeFingerprint = scope.fingerprint;
+      return { panel, scope };
+    };
+
+    const { panel: panelA, scope: scopeA } = bindActiveScope();
+    extensionModule.setScopedSessionId(scopeA.scopeId, sessionA);
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((entry) => entry.url === chatUrlA));
+    await waitFor(() => /scope A rehydrated answer/.test(harness.textDump()));
+    assert.doesNotMatch(harness.textDump(), /scope B rehydrated/);
+
+    harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "submit from scope A";
+    await waitFor(() => harness.document.getElementById("vibecomfy-agent-panel-submit")?.disabled === false);
+    let submitPromise = harness.clickButton("Submit");
+    submitPromises.push(submitPromise);
+    await submitPromise;
+    assert.equal(submitBodies[0].session_id, sessionA);
+    assert.notEqual(submitBodies[0].session_id, sessionB);
+
+    const scopeB = {
+      scopeId: extensionModule.computeScopeId(graphB),
+      fingerprint: extensionModule.computeStructuralGraphFingerprint(graphB),
+    };
+    assert.notEqual(scopeB.scopeId, scopeA.scopeId, "synthetic workflow scopes must be distinct");
+    extensionModule.setScopedSessionId(scopeB.scopeId, sessionB);
+    harness.app.loadGraphData(graphB);
+    await waitFor(() => panelA.state.chatScopeId === scopeB.scopeId);
+    assert.equal(panelA.state.chatScopeFingerprint, scopeB.fingerprint);
+    await waitFor(() => harness.requests.some((entry) => entry.url === chatUrlB));
+    await waitFor(() => /scope B rehydrated answer/.test(harness.textDump()));
+    assert.doesNotMatch(harness.textDump(), /scope A rehydrated/);
+
+    harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "submit from scope B";
+    await waitFor(() => harness.document.getElementById("vibecomfy-agent-panel-submit")?.disabled === false);
+    submitPromise = harness.clickButton("Submit");
+    submitPromises.push(submitPromise);
+    await submitPromise;
+    assert.equal(submitBodies[1].session_id, sessionB);
+    assert.notEqual(submitBodies[1].session_id, sessionA);
+
+    harness.app.loadGraphData(graphA);
+    await waitFor(() => panelA.state.chatScopeId === scopeA.scopeId);
+    assert.equal(panelA.state.chatScopeFingerprint, scopeA.fingerprint);
+    await waitFor(() => harness.requests.filter((entry) => entry.url === chatUrlA).length >= 2);
+    await waitFor(() => /scope A rehydrated answer/.test(harness.textDump()));
+    assert.doesNotMatch(harness.textDump(), /scope B rehydrated/);
+  } finally {
+    if (originalGlobalApp === undefined) {
+      delete globalThis.app;
+    } else {
+      globalThis.app = originalGlobalApp;
+    }
+    await Promise.allSettled(submitPromises.filter(Boolean));
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy scoped workflow rehydrate ignores stale latest candidates after scope switch", async () => {
+  const graphA = {
+    nodes: [
+      { id: 1, type: "LoadImage", properties: { vibecomfy_uid: "scope-stale-a-load" } },
+      { id: 2, type: "PreviewImage", properties: { vibecomfy_uid: "scope-stale-a-preview" } },
+    ],
+    links: [[1, 1, 0, 2, 0, "IMAGE"]],
+  };
+  const graphB = {
+    nodes: [
+      { id: 10, type: "CheckpointLoaderSimple", properties: { vibecomfy_uid: "scope-stale-b-loader" } },
+      { id: 11, type: "KSampler", properties: { vibecomfy_uid: "scope-stale-b-sampler" } },
+    ],
+    links: [[1, 10, 0, 11, 0, "MODEL"]],
+  };
+  const candidateGraphA = {
+    nodes: [{ id: 3, type: "SaveImage", properties: { vibecomfy_uid: "scope-stale-a-save" } }],
+    links: [],
+  };
+  const candidateGraphB = {
+    nodes: [{ id: 12, type: "VAEDecode", properties: { vibecomfy_uid: "scope-stale-b-decode" } }],
+    links: [],
+  };
+  const sessionA = "session-stale-rehydrate-a";
+  const sessionB = "session-stale-rehydrate-b";
+  const chatUrlA = `/vibecomfy/agent-edit/chat?session_id=${sessionA}`;
+  const chatUrlB = `/vibecomfy/agent-edit/chat?session_id=${sessionB}`;
+  let chatRequestCountA = 0;
+  let chatRequestCountB = 0;
+  let resolveChatA;
+  let resolveChatB;
+  const chatPromiseA = new Promise((resolve) => {
+    resolveChatA = resolve;
+  });
+  const chatPromiseB = new Promise((resolve) => {
+    resolveChatB = resolve;
+  });
+
+  const harness = await createBrowserHarness({
+    graph: graphA,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+          },
+        },
+      },
+      [chatUrlA]: async () => {
+        chatRequestCountA += 1;
+        return await chatPromiseA;
+      },
+      [chatUrlB]: async () => {
+        chatRequestCountB += 1;
+        return await chatPromiseB;
+      },
+    },
+  });
+
+  const originalGlobalApp = globalThis.app;
+  try {
+    globalThis.app = harness.app;
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+
+    const panel = extensionModule.ensureAgentPanel();
+    const scopeA = extensionModule.resolveActiveCanvasScope() || {
+      scopeId: extensionModule.computeScopeId(graphA),
+      fingerprint: extensionModule.computeStructuralGraphFingerprint(graphA),
+    };
+    extensionModule.setScopedSessionId(scopeA.scopeId, sessionA);
+    panel.state.chatScopeId = scopeA.scopeId;
+    panel.state.chatScopeFingerprint = scopeA.fingerprint;
+
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => chatRequestCountA === 1);
+
+    const scopeB = {
+      scopeId: extensionModule.computeScopeId(graphB),
+      fingerprint: extensionModule.computeStructuralGraphFingerprint(graphB),
+    };
+    assert.notEqual(scopeB.scopeId, scopeA.scopeId, "synthetic workflow scopes must be distinct");
+    extensionModule.setScopedSessionId(scopeB.scopeId, sessionB);
+    harness.app.loadGraphData(graphB);
+    await waitFor(() => panel.state.chatScopeId === scopeB.scopeId);
+    await waitFor(() => chatRequestCountB === 1);
+
+    resolveChatA({
+      status: 200,
+      body: {
+        ok: true,
+        exists: true,
+        session_id: sessionA,
+        latest_turn_id: "0004",
+        messages: [
+          { role: "user", text: "scope A stale candidate user", turn_id: "0004" },
+          { role: "agent", text: "Scope A stale candidate restored.", turn_id: "0004" },
+        ],
+        latest_candidate: {
+          session_id: sessionA,
+          turn_id: "0004",
+          outcome: { kind: "candidate", changes: [] },
+          candidate: { state: "candidate", graph: candidateGraphA, graph_hash: "scope-a-stale-candidate-hash" },
+          graph: candidateGraphA,
+          candidate_graph_hash: "scope-a-stale-candidate-hash",
+          message: "Scope A stale candidate restored.",
+          report: { change: { content_edits: { edited: ["scope-stale-a-save"] } }, recovery: [] },
+          canvas_apply_allowed: true,
+          apply_allowed: true,
+          queue_allowed: true,
+          apply_eligibility: {
+            applyable: true,
+            reason: "applyable",
+            message: "Scope A stale candidate should not appear.",
+            warnings: [],
+          },
+        },
+      },
+    });
+    await waitFor(() => harness.requests.some((entry) => entry.url === chatUrlA));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(panel.state.chatScopeId, scopeB.scopeId);
+    assert.equal(panel.state.sessionId, null);
+    assert.equal(panel.state.candidateGraph, null);
+    assert.equal(panel.state.candidateGraphHash, null);
+    assert.doesNotMatch(harness.textDump(), /Scope A stale candidate restored/);
+    assert.doesNotMatch(harness.textDump(), /scope A stale candidate user/);
+
+    resolveChatB({
+      status: 200,
+      body: {
+        ok: true,
+        exists: true,
+        session_id: sessionB,
+        latest_turn_id: "0007",
+        messages: [
+          { role: "user", text: "scope B current candidate user", turn_id: "0007" },
+          { role: "agent", text: "Scope B current candidate restored.", turn_id: "0007" },
+        ],
+        latest_candidate: {
+          session_id: sessionB,
+          turn_id: "0007",
+          outcome: { kind: "candidate", changes: [] },
+          candidate: { state: "candidate", graph: candidateGraphB, graph_hash: "scope-b-current-candidate-hash" },
+          graph: candidateGraphB,
+          candidate_graph_hash: "scope-b-current-candidate-hash",
+          message: "Scope B current candidate restored.",
+          report: { change: { content_edits: { edited: ["scope-stale-b-decode"] } }, recovery: [] },
+          canvas_apply_allowed: true,
+          apply_allowed: true,
+          queue_allowed: true,
+          apply_eligibility: {
+            applyable: true,
+            reason: "applyable",
+            message: "Scope B current candidate is ready.",
+            warnings: [],
+          },
+        },
+      },
+    });
+    await waitFor(() => /Scope B current candidate restored\./.test(harness.textDump()));
+
+    assert.equal(panel.state.chatScopeId, scopeB.scopeId);
+    assert.equal(panel.state.sessionId, sessionB);
+    assert.equal(panel.state.turnId, "0007");
+    assert.equal(panel.state.candidateGraphHash, "scope-b-current-candidate-hash");
+    assert.deepEqual(panel.state.candidateGraph, candidateGraphB);
+    assert.match(harness.textDump(), /Scope B current candidate restored\./);
+    assert.match(harness.textDump(), /scope B current candidate user/);
+    assert.doesNotMatch(harness.textDump(), /Scope A stale candidate restored/);
+    assert.doesNotMatch(harness.textDump(), /scope A stale candidate user/);
+  } finally {
+    resolveChatA?.({
+      status: 200,
+      body: { ok: true, exists: true, session_id: sessionA, messages: [] },
+    });
+    resolveChatB?.({
+      status: 200,
+      body: { ok: true, exists: true, session_id: sessionB, messages: [] },
+    });
+    if (originalGlobalApp === undefined) {
+      delete globalThis.app;
+    } else {
+      globalThis.app = originalGlobalApp;
+    }
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy scoped workflow event handlers ignore inactive session events and accept active scope events", async () => {
+  const graphA = {
+    nodes: [
+      { id: 1, type: "LoadImage", properties: { vibecomfy_uid: "scope-event-a-load" } },
+      { id: 2, type: "PreviewImage", properties: { vibecomfy_uid: "scope-event-a-preview" } },
+    ],
+    links: [[1, 1, 0, 2, 0, "IMAGE"]],
+  };
+  const graphB = {
+    nodes: [
+      { id: 10, type: "CheckpointLoaderSimple", properties: { vibecomfy_uid: "scope-event-b-loader" } },
+      { id: 11, type: "KSampler", properties: { vibecomfy_uid: "scope-event-b-sampler" } },
+    ],
+    links: [[1, 10, 0, 11, 0, "MODEL"]],
+  };
+  const sessionA = "session-event-scope-a";
+  const sessionB = "session-event-scope-b";
+  const chatUrlA = `/vibecomfy/agent-edit/chat?session_id=${sessionA}`;
+  const chatUrlB = `/vibecomfy/agent-edit/chat?session_id=${sessionB}`;
+  let resolveSubmit;
+  let submitPromise;
+
+  const harness = await createBrowserHarness({
+    graph: graphA,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+          },
+        },
+      },
+      [chatUrlA]: {
+        status: 200,
+        body: {
+          ok: true,
+          session_id: sessionA,
+          latest_turn_id: "0001",
+          messages: [
+            { role: "user", text: "scope A event user", turn_id: "0001" },
+            { role: "agent", text: "scope A event answer", turn_id: "0001" },
+          ],
+        },
+      },
+      [chatUrlB]: {
+        status: 200,
+        body: {
+          ok: true,
+          session_id: sessionB,
+          latest_turn_id: "0001",
+          messages: [
+            { role: "user", text: "scope B event user", turn_id: "0001" },
+            { role: "agent", text: "scope B event answer", turn_id: "0001" },
+          ],
+        },
+      },
+      "/vibecomfy/agent-executor": async () => {
+        await new Promise((resolve) => {
+          resolveSubmit = resolve;
+        });
+        return {
+          status: 200,
+          body: {
+            ok: true,
+            session_id: sessionB,
+            turn_id: "0002",
+            baseline_turn_id: "0001",
+            outcome: { kind: "noop", reason: "scope B held submit completed" },
+            graph_unchanged: true,
+            canvas_apply_allowed: false,
+            apply_allowed: false,
+            queue_allowed: false,
+            message: "scope B held submit completed",
+          },
+        };
+      },
+    },
+  });
+
+  const originalGlobalApp = globalThis.app;
+  try {
+    globalThis.app = harness.app;
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    const panel = extensionModule.ensureAgentPanel();
+    const scopeA = extensionModule.resolveActiveCanvasScope() || {
+      scopeId: extensionModule.computeScopeId(graphA),
+      fingerprint: extensionModule.computeStructuralGraphFingerprint(graphA),
+    };
+    extensionModule.setScopedSessionId(scopeA.scopeId, sessionA);
+    panel.state.chatScopeId = scopeA.scopeId;
+    panel.state.chatScopeFingerprint = scopeA.fingerprint;
+    panel.state.sessionId = sessionA;
+
+    const scopeB = {
+      scopeId: extensionModule.computeScopeId(graphB),
+      fingerprint: extensionModule.computeStructuralGraphFingerprint(graphB),
+    };
+    extensionModule.setScopedSessionId(scopeB.scopeId, sessionB);
+    harness.app.loadGraphData(graphB);
+    await waitFor(() => panel.state.chatScopeId === scopeB.scopeId);
+    await waitFor(() => harness.requests.some((entry) => entry.url === chatUrlB));
+    await waitFor(() => /scope B event answer/.test(harness.textDump()));
+
+    harness.document.getElementById("vibecomfy-agent-panel-prompt").value = "scope B pending prompt";
+    await waitFor(() => harness.document.getElementById("vibecomfy-agent-panel-submit")?.disabled === false);
+    submitPromise = harness.clickButton("Submit");
+    await waitFor(() => typeof resolveSubmit === "function");
+    await waitFor(() => /scope B pending prompt/.test(harness.textDump()));
+
+    const executorStage = (stage) => harness.document.body.querySelectorAll(
+      (node) => node.dataset?.vibecomfyExecutorStage === stage,
+    )[0];
+    assert.equal(executorStage("decide")?.dataset?.vibecomfyExecutorStatus, "active");
+    assert.equal(executorStage("execute")?.dataset?.vibecomfyExecutorStatus, "pending");
+
+    const beforeInactiveText = harness.textDump();
+    const beforeInactiveTurns = JSON.stringify(panel.state.turns);
+    const beforeInactiveProgress = JSON.stringify(panel.state.executorProgress);
+    const beforeInactiveSession = panel.state.sessionId;
+    const beforeInactiveScope = panel.state.chatScopeId;
+
+    harness.dispatchApiEvent("vibecomfy.agent_edit.turn", {
+      session_id: sessionA,
+      turn_id: "0002",
+      turn_number: 2,
+      status: "progress",
+      message: "inactive scope A turn must not render",
+      statement_count: 1,
+    });
+    harness.dispatchApiEvent("vibecomfy.executor.phase", {
+      session_id: sessionA,
+      phase: "implement",
+      status: "start",
+      executor_id: "executor-scope-a",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(panel.state.chatScopeId, beforeInactiveScope);
+    assert.equal(panel.state.sessionId, beforeInactiveSession);
+    assert.equal(JSON.stringify(panel.state.turns), beforeInactiveTurns);
+    assert.equal(JSON.stringify(panel.state.executorProgress), beforeInactiveProgress);
+    assert.equal(harness.textDump(), beforeInactiveText);
+    assert.doesNotMatch(harness.textDump(), /inactive scope A turn must not render/);
+    assert.equal(executorStage("execute")?.dataset?.vibecomfyExecutorStatus, "pending");
+
+    harness.dispatchApiEvent("vibecomfy.agent_edit.turn", {
+      session_id: sessionB,
+      turn_id: "0002",
+      turn_number: 2,
+      status: "in_progress",
+      message: "active scope B turn dispatched",
+      statement_count: 2,
+    });
+    harness.dispatchApiEvent("vibecomfy.executor.phase", {
+      session_id: sessionB,
+      phase: "implement",
+      status: "start",
+      executor_id: "executor-scope-b",
+    });
+    await waitFor(() => executorStage("execute")?.dataset?.vibecomfyExecutorStatus === "active");
+
+    assert.equal(panel.state.chatScopeId, scopeB.scopeId);
+    assert.equal(panel.state.sessionId, sessionB);
+    assert.equal(panel.state.turns.filter((entry) => entry?.entry_type === "batch").length, 1);
+    assert.equal(executorStage("research")?.dataset?.vibecomfyExecutorStatus, "done");
+    assert.doesNotMatch(harness.textDump(), /inactive scope A turn must not render/);
+  } finally {
+    resolveSubmit?.();
+    if (submitPromise) {
+      await submitPromise;
+    }
+    if (originalGlobalApp === undefined) {
+      delete globalThis.app;
+    } else {
+      globalThis.app = originalGlobalApp;
+    }
+    await harness.dispose();
+  }
+});
+
 // ── Lifecycle Contract: C2 New conversation + stale submit cleanup ────────
 // NOTE: The submit flow internally calls _rehydrateChat which triggers
 // the async .then(renderAgentPanel) path. These tests verify the critical
