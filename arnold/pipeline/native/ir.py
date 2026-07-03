@@ -208,6 +208,58 @@ class ParallelInstruction:
     the reducer runs.  ``None`` means halt after the parallel block."""
 
 
+@dataclass(frozen=True)
+class ParallelMapInstruction:
+    """Metadata for a dynamic ``parallel_map`` fan-out block.
+
+    Declares a runtime-list fan-out where a *mapper* callable is
+    applied to each item of a collection resolved at runtime.  Results
+    are collected and (optionally) reduced before advancing to the
+    merge point.
+
+    This is a **distinct** IR shape from :class:`ParallelInstruction`:
+    ``ParallelInstruction`` models statically-bounded branches known at
+    compile time, while ``ParallelMapInstruction`` models a dynamic
+    fan-out over a runtime list whose cardinality is not known until
+    execution.
+
+    The actual instruction stream uses
+    ``NativeInstruction(op="parallel_map", ...)`` to reference a
+    ``parallel_map`` block by index into
+    :attr:`NativeProgram.parallel_map_blocks`.
+    """
+
+    name: str = ""
+    """Human-readable label for this parallel_map block."""
+
+    items_ref: str = ""
+    """Reference to the runtime collection — a parameter name or
+    state key that resolves to an iterable at execution time."""
+
+    mapper: Callable[..., Any] | None = field(
+        default=None, compare=False, hash=False
+    )
+    """The callable applied to each item of the runtime collection."""
+
+    mapper_name: str = ""
+    """Name of the mapper callable (for diagnostics and trace emission)."""
+
+    reducer: Callable[..., Any] | None = field(
+        default=None, compare=False, hash=False
+    )
+    """Optional reducer callable for fan-in.  When ``None``, per-item
+    results are collected into a list keyed by the block name."""
+
+    path_template: str = ""
+    """Path template for per-item call-site paths
+    (e.g. ``'critique/{item_id}'``).  Variables are resolved from
+    item attributes at execution time."""
+
+    merge_pc: int | None = None
+    """Program counter to advance to after all items complete and the
+    reducer runs.  ``None`` means halt after the parallel_map block."""
+
+
 # ── Native instruction set (produced by compiler, consumed by runtime/graph) ──
 
 @dataclass(frozen=True)
@@ -225,7 +277,7 @@ class NativeInstruction:
 
     op: str
     """Operation code: ``'phase'``, ``'decision'``, ``'jump'``, ``'halt'``,
-    ``'subpipeline'``, or ``'parallel'``."""
+    ``'subpipeline'``, ``'parallel'``, or ``'parallel_map'``."""
 
     name: str = ""
     """Human-readable label for the instruction (phase/decision name)."""
@@ -236,6 +288,7 @@ class NativeInstruction:
     subprogram: Any = field(default=None, compare=False, hash=False)
     """For ``subpipeline`` ops: the child :class:`NativeProgram` to execute.
     For ``parallel`` ops: the :class:`ParallelInstruction` metadata block.
+    For ``parallel_map`` ops: the :class:`ParallelMapInstruction` metadata block.
     Excluded from equality/hash; ignored for other ops."""
 
     input_mapping: dict[str, str] = field(default_factory=dict)
@@ -300,6 +353,9 @@ class NativeProgram:
 
     parallel_blocks: tuple[ParallelInstruction, ...] = ()
     """Parallel fan-out / fan-in blocks referenced by ``parallel`` ops."""
+
+    parallel_map_blocks: tuple[ParallelMapInstruction, ...] = ()
+    """Dynamic ``parallel_map`` fan-out blocks referenced by ``parallel_map`` ops."""
 
     description: str = ""
     """Optional human-readable description."""
