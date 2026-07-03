@@ -32,7 +32,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 if TYPE_CHECKING:
     from arnold_pipelines.megaplan.drivers import Substrate
@@ -160,6 +160,10 @@ DEFAULT_MAX_ADD_NOTE_ATTEMPTS = 2
 # low so cloud repair receives a concrete failure instead of waiting for the
 # broad max_iterations limit.
 DEFAULT_MAX_REPEATED_FAILURE_SIGNATURES = 3
+# Control actions that are invalid for the current state are deterministic:
+# retrying the same binding cannot make progress and should not spend the
+# global max_iterations budget.
+DEFAULT_MAX_INVALID_TRANSITION_ATTEMPTS = 2
 # Auto-ESCALATE-up: after this many consecutive execute failures with no
 # forward progress, the driver pins execute to the next *more capable* tier
 # model and retries with a fresh session. It keeps climbing on further
@@ -179,6 +183,9 @@ ESCALATE_ACTIONS = ("force-proceed", "abort", "fail")
 PHASE_TIMEOUT_EXIT_CODE = 124  # conventional; matches GNU `timeout`
 PHASE_NAMES = frozenset(
     {"plan", "prep", "critique", "revise", "gate", "finalize", "execute", "review"}
+)
+REQUIRES_STATE_RE = re.compile(
+    r"requires state ['\"](?P<required>[^'\"]+)['\"], got ['\"](?P<got>[^'\"]+)['\"]"
 )
 
 
@@ -1049,6 +1056,114 @@ def _has_valid_next(status: dict[str, Any], action: str) -> bool:
     return action in (status.get("valid_next") or [])
 
 
+def _control_action_label(next_step: str) -> str:
+    parts = shlex.split(next_step)
+    if len(parts) >= 2 and parts[0] == "override":
+        return parts[1]
+    return next_step
+
+
+def _required_state_for_control_action(next_step: str) -> str | None:
+    action = _control_action_label(next_step)
+    if action == "resume-clarify":
+        return STATE_AWAITING_HUMAN_VERIFY
+    if action == "recover-blocked":
+        return STATE_BLOCKED
+    return None
+
+
+def _control_action_state_mismatch(
+    next_step: str,
+    state: str,
+) -> dict[str, Any] | None:
+    if next_step in PHASE_NAMES:
+        return None
+    required_state = _required_state_for_control_action(next_step)
+    if required_state is None or state == required_state:
+        return None
+    action = _control_action_label(next_step)
+    return {
+        "action": action,
+        "next_step": next_step,
+        "required_state": required_state,
+        "actual_state": state,
+        "message": f"{action} requires state '{required_state}', got '{state}'",
+        "signature": _invalid_transition_signature(
+            action=action,
+            state=state,
+            error="invalid_transition",
+            message=f"{action} requires state '{required_state}', got '{state}'",
+        ),
+    }
+
+
+def _invalid_transition_signature(
+    *,
+    action: str,
+    state: str,
+    error: str,
+    message: str,
+) -> str:
+    raw = json.dumps(
+        {
+            "action": action,
+            "state": state,
+            "error": error,
+            "message": _normalize_failure_message(message),
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _control_invalid_transition_failure(
+    next_step: str,
+    state: str,
+    stdout: str,
+    stderr: str,
+) -> dict[str, Any] | None:
+    if next_step in PHASE_NAMES:
+        return None
+    action = _control_action_label(next_step)
+    payload = _extract_cli_error_payload(stdout, stderr)
+    combined = f"{stderr}\n{stdout}".strip()
+    error = (
+        str(payload.get("error") or "")
+        if isinstance(payload, dict)
+        else ("invalid_transition" if "invalid_transition" in combined else "")
+    )
+    message = (
+        str(payload.get("message") or "")
+        if isinstance(payload, dict)
+        else (_filtered_failure_stderr(stderr) or stdout.strip()[-400:])
+    ).strip()
+    requires_match = REQUIRES_STATE_RE.search(message)
+    if error != "invalid_transition" and requires_match is None:
+        return None
+    required_state = requires_match.group("required") if requires_match else None
+    actual_state = requires_match.group("got") if requires_match else state
+    if not message:
+        message = f"{action} returned invalid_transition"
+    return {
+        "action": action,
+        "next_step": next_step,
+        "error": error or "invalid_transition",
+        "message": message,
+        "required_state": required_state,
+        "actual_state": actual_state,
+        "requires_state_mismatch": bool(
+            required_state is not None and actual_state != required_state
+        ),
+        "signature": _invalid_transition_signature(
+            action=action,
+            state=actual_state or state,
+            error=error or "invalid_transition",
+            message=message,
+        ),
+        "cli_error": payload if isinstance(payload, dict) else None,
+    }
+
+
 def _phase_command(
     next_step: str,
     substrate: "Substrate" = "subprocess_isolated",
@@ -1096,13 +1211,6 @@ def _phase_command(
             "recover-blocked",
             "--reason",
             "megaplan auto: recover blocked plan after blocker resolution",
-        ]
-    if next_step == "resume-clarify":
-        return [
-            "override",
-            "resume-clarify",
-            "--reason",
-            "megaplan auto: resume prep clarification after answers provided",
         ]
     return shlex.split(next_step)
 
@@ -2906,6 +3014,8 @@ def drive(
     add_note_attempts = 0
     repeated_failure_signature: str | None = None
     repeated_failure_signature_count = 0
+    invalid_transition_signature: str | None = None
+    invalid_transition_signature_count = 0
 
     # ── Auto-ESCALATE-up state ─────────────────────────────────────────
     # Consecutive execute failures (timeout / internal_error / quality-block)
@@ -3905,6 +4015,49 @@ def drive(
             )
 
         # Run the next phase.
+        control_mismatch = _control_action_state_mismatch(str(next_step), str(state))
+        if control_mismatch is not None:
+            reason = str(control_mismatch["message"])
+            log(
+                "control action is not admissible from current state — bailing to repair",
+                action=control_mismatch["action"],
+                current_state=control_mismatch["actual_state"],
+                required_state=control_mismatch["required_state"],
+                next_step=next_step,
+            )
+            _record_failure(
+                plan_dir=plan_dir,
+                kind="control_binding_mismatch",
+                message=reason,
+                current_state=STATE_BLOCKED,
+                phase=str(control_mismatch["action"]),
+                resume_cursor={
+                    "phase": str(control_mismatch["action"]),
+                    "retry_strategy": "repair_control_binding",
+                },
+                last_artifact=_latest_artifact_name(plan_dir),
+                suggested_action=(
+                    "Repair the auto-driver/control binding: the selected control "
+                    "action is not valid for the current plan state."
+                ),
+                metadata={
+                    "action": control_mismatch["action"],
+                    "next_step": next_step,
+                    "required_state": control_mismatch["required_state"],
+                    "actual_state": control_mismatch["actual_state"],
+                    "iteration": iteration,
+                    "signature": control_mismatch["signature"],
+                },
+            )
+            return _outcome(
+                "blocked",
+                final_state=STATE_BLOCKED,
+                iterations=iteration,
+                reason=reason,
+                last_phase=str(control_mismatch["action"]),
+                blocking_reasons=["control_binding_mismatch"],
+            )
+
         # Special-case `override add-note`: the CLI requires a non-empty
         # ``--note`` argument, so we synthesize one from the latest gate
         # signals / critique flags. After ``max_add_note_attempts``
@@ -4311,6 +4464,89 @@ def drive(
             # Non-phase commands (e.g. 'override add-note') that failed —
             # preserve existing exit-code-based handling.
             log(f"command '{next_step}' exited {code}: {err.strip() or out.strip()[-400:]}")
+            invalid_transition = _control_invalid_transition_failure(
+                next_step,
+                str(state),
+                out,
+                err,
+            )
+            if invalid_transition is not None:
+                signature = str(invalid_transition["signature"])
+                if signature == invalid_transition_signature:
+                    invalid_transition_signature_count += 1
+                else:
+                    invalid_transition_signature = signature
+                    invalid_transition_signature_count = 1
+                should_break = (
+                    bool(invalid_transition.get("requires_state_mismatch"))
+                    or invalid_transition_signature_count >= DEFAULT_MAX_INVALID_TRANSITION_ATTEMPTS
+                )
+                if should_break:
+                    kind = (
+                        "control_binding_mismatch"
+                        if invalid_transition.get("requires_state_mismatch")
+                        else "invalid_transition_loop"
+                    )
+                    action = str(invalid_transition.get("action") or next_step)
+                    message = str(
+                        invalid_transition.get("message")
+                        or f"{action} returned invalid_transition"
+                    )
+                    reason = (
+                        f"{action} invalid transition from state "
+                        f"'{invalid_transition.get('actual_state') or state}': {message}"
+                    )
+                    log(
+                        "invalid control transition is deterministic — bailing to repair",
+                        action=action,
+                        current_state=invalid_transition.get("actual_state") or state,
+                        required_state=invalid_transition.get("required_state"),
+                        invalid_transition_count=invalid_transition_signature_count,
+                        max_invalid_transition_attempts=DEFAULT_MAX_INVALID_TRANSITION_ATTEMPTS,
+                    )
+                    _record_failure(
+                        plan_dir=plan_dir,
+                        kind=kind,
+                        message=reason,
+                        current_state=STATE_BLOCKED,
+                        phase=action,
+                        resume_cursor={
+                            "phase": action,
+                            "retry_strategy": "repair_control_binding",
+                        },
+                        last_artifact=_latest_artifact_name(plan_dir),
+                        suggested_action=(
+                            "Repair the auto-driver/control binding before resuming; "
+                            "repeating the same control action in the same state "
+                            "will keep returning invalid_transition."
+                        ),
+                        metadata={
+                            "action": action,
+                            "next_step": next_step,
+                            "required_state": invalid_transition.get("required_state"),
+                            "actual_state": invalid_transition.get("actual_state") or state,
+                            "error": invalid_transition.get("error"),
+                            "cli_error": invalid_transition.get("cli_error"),
+                            "signature": signature,
+                            "count": invalid_transition_signature_count,
+                            "max_attempts": DEFAULT_MAX_INVALID_TRANSITION_ATTEMPTS,
+                            "exit_code": code,
+                            "stderr": err.strip(),
+                            "stdout": out.strip()[-400:],
+                            "iteration": iteration,
+                        },
+                    )
+                    return _outcome(
+                        "blocked",
+                        final_state=STATE_BLOCKED,
+                        iterations=iteration,
+                        reason=reason,
+                        last_phase=action,
+                        blocking_reasons=[kind],
+                    )
+            else:
+                invalid_transition_signature = None
+                invalid_transition_signature_count = 0
             recover_blocked_payload = (
                 _non_retryable_recover_blocked_error_payload(out, err)
                 if next_step == "recover-blocked"
