@@ -192,6 +192,7 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--profile", default=None)
     init_parser.add_argument("--robustness", choices=ROBUSTNESS_ACCEPTED, default=None)
     init_parser.add_argument("--with-prep", action="store_true", default=False)
+    init_parser.add_argument("--prep-direction", default=None)
     init_parser.add_argument("--with-feedback", action="store_true", default=False)
     init_parser.add_argument("--no-prep-clarify", dest="prep_clarify", action="store_false", default=True)
     _add_vendor_critic_args(init_parser)
