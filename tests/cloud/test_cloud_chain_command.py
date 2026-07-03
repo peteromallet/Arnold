@@ -73,7 +73,7 @@ def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
     )
 
     assert "if [ -f /workspace/.cloud-hot-env ]; then set -a; . /workspace/.cloud-hot-env; set +a; fi;" in command
-    assert "cd /workspace/arnold &&" in command
+    assert "cd /workspace/project && PYTHONSAFEPATH=1 PYTHONPATH=/workspace/arnold:${PYTHONPATH:-}" in command
     assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start" in command
 
 
@@ -90,6 +90,66 @@ def test_tmux_chain_launch_default_marker_records_run_kind() -> None:
     assert marker_json is not None
     marker = json.loads(marker_json.group(1))
     assert marker["run_kind"] == "chain"
+
+
+def test_preflight_phase_model_materialization_preserves_profile_tier_routing() -> None:
+    result = _phase_model_by_label_from_preflight(
+        {
+            "milestones": [
+                {
+                    "label": "m1",
+                    "profile": "premium",
+                    "explicit_phase_model": [],
+                    "resolved_phase_map": {
+                        "execute": "codex:gpt-5.4",
+                        "plan": "codex:high",
+                    },
+                }
+            ]
+        }
+    )
+
+    assert result == {}
+
+
+def test_preflight_phase_model_materialization_keeps_explicit_profile_pins() -> None:
+    result = _phase_model_by_label_from_preflight(
+        {
+            "milestones": [
+                {
+                    "label": "m1",
+                    "profile": "premium",
+                    "explicit_phase_model": ["prep=hermes:deepseek:deepseek-v4-pro"],
+                    "resolved_phase_map": {
+                        "execute": "codex:gpt-5.4",
+                        "prep": "hermes:deepseek:deepseek-v4-pro",
+                    },
+                }
+            ]
+        }
+    )
+
+    assert result == {"m1": ["prep=hermes:deepseek:deepseek-v4-pro"]}
+
+
+def test_preflight_phase_model_materialization_keeps_cloud_default_without_profile() -> None:
+    result = _phase_model_by_label_from_preflight(
+        {
+            "milestones": [
+                {
+                    "label": "m1",
+                    "profile": None,
+                    "explicit_phase_model": [],
+                    "resolved_phase_map": {
+                        "execute": "codex:medium",
+                        "plan": "codex:high",
+                    },
+                }
+            ]
+        }
+    )
+
+    assert result == {"m1": ["execute=codex:medium", "plan=codex:high"]}
 
 
 def test_launch_epic_rejects_missing_north_star(tmp_path: Path) -> None:
@@ -239,6 +299,7 @@ def test_launch_epic_end_to_end_uploads_canonical_spec_and_tracks_watchdog(
     assert "/workspace/demo-" in remote_spec
     marker = next(marker for marker in provider.markers.values() if marker["remote_spec"] == remote_spec)
     assert marker["run_kind"] == "chain"
+    assert marker["allow_human_gates"] is False
     assert "python -P -m arnold_pipelines.megaplan chain start" in marker["relaunch_command"]
     assert f"--spec {remote_spec}" in marker["relaunch_command"]
     assert remote_spec in provider.remote_files
@@ -960,6 +1021,21 @@ def test_cloud_chains_command_includes_should_run_and_watchdog_repair_state() ->
     assert "def _should_be_running(payload):" in script
     assert "should_be_running_count" in script
     assert "watchdog_repairing_count" in script
+
+
+def test_cloud_chains_command_explains_policy_and_user_action_blocks() -> None:
+    script = _cloud_chains_command()
+
+    assert "def _policy_evidence(remote_spec):" in script
+    assert '"merge_policy"' in script
+    assert '"driver_auto_approve"' in script
+    assert "def _operator_status(payload):" in script
+    assert "blocked_prep_clarification" in script
+    assert "clarification_question_count" in script
+    assert '"operator_summary"' in script
+    assert '"next_action"' in script
+    assert "human_gate_misconfigured" in script
+    assert "not payload.get(\"allow_human_gates\")" in script
 
 
 # ── T11: sidecar classification & evidence field tests ──────────────────

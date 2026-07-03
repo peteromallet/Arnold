@@ -89,12 +89,28 @@ def _parse_milestone(raw: str) -> tuple[str, str]:
     return label, title or label.replace("-", " ").title()
 
 
+def default_initiative_description(slug: str) -> str:
+    """Return an explicit template marker for a new initiative description."""
+    title = slug.replace("-", " ").title()
+    return (
+        f"TODO_INITIATIVE_DESCRIPTION: Describe the outcome for {title}, "
+        "why it matters, and the boundary of the work."
+    )
+
+
 def scaffold_epic(
     repo_root: str | Path,
     slug: str,
     milestones: Sequence[str],
     *,
     base_branch: str = "main",
+    merge_policy: str = "auto",
+    branch_prefix: str | None = None,
+    profile: str = "partnered-5",
+    vendor: str = "codex",
+    robustness: str = "full",
+    depth: str = "high",
+    with_prep: bool = True,
     force: bool = False,
 ) -> tuple[Path, list[Path]]:
     """Create ``.megaplan/initiatives/<epic>/chain.yaml`` and milestone stubs."""
@@ -120,7 +136,9 @@ def scaffold_epic(
         },
     )
     written.append(north_star_path)
-    chain_milestones: list[dict[str, str]] = []
+    normalized_slug = directory.name
+    prefix = (branch_prefix or f"megaplan/{normalized_slug}").strip().rstrip("/")
+    chain_milestones: list[dict[str, Any]] = []
     for label, title in parsed:
         path = directory / "briefs" / f"{label}.md"
         if path.exists() and not force:
@@ -150,7 +168,18 @@ def scaffold_epic(
             },
         )
         written.append(path)
-        chain_milestones.append({"label": label, "idea": str(path.relative_to(repo_root))})
+        milestone: dict[str, Any] = {
+            "label": label,
+            "idea": str(path.relative_to(repo_root)),
+            "branch": f"{prefix}/{label}",
+            "profile": profile,
+            "vendor": vendor,
+            "robustness": robustness,
+            "depth": depth,
+        }
+        if with_prep:
+            milestone["with_prep"] = True
+        chain_milestones.append(milestone)
 
     chain_path = directory / "chain.yaml"
     if chain_path.exists() and not force:
@@ -163,14 +192,70 @@ def scaffold_epic(
                 "milestones": chain_milestones,
                 "on_failure": {"abort": "stop_chain"},
                 "on_escalate": {"abort": "stop_chain"},
-                "merge_policy": "auto",
-                "driver": {"robustness": "standard", "auto_approve": True},
+                "merge_policy": merge_policy,
+                "driver": {
+                    "robustness": robustness,
+                    "phase_timeout": 10800,
+                    "auto_approve": merge_policy == "auto",
+                    "on_escalate": "abort",
+                    "max_iterations": 60,
+                    "poll_sleep": 8.0,
+                },
             },
             sort_keys=False,
         ),
         encoding="utf-8",
     )
     return chain_path, written
+
+
+def write_initiative_cloud_yaml(
+    repo_root: str | Path,
+    slug: str,
+    *,
+    base_branch: str = "main",
+    force: bool = False,
+    repo_url: str | None = None,
+    chain_session: str | None = None,
+    provider: str = "ssh",
+) -> Path:
+    """Write an initiative-local cloud.yaml with explicit edit-before-launch markers."""
+    directory = epic_dir(repo_root, slug)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "cloud.yaml"
+    if path.exists() and not force:
+        raise FileExistsError(path)
+    normalized_slug = directory.name
+    payload = {
+        "provider": provider,
+        "repo": {
+            "url": repo_url or "TODO_REPO_URL",
+            "branch": base_branch,
+        },
+        "agents": {"default": "codex"},
+        "codex": {"model": "gpt-5.4", "reasoning": "high"},
+        "mode": "idle",
+        "chain": {"spec": f"/workspace/{normalized_slug}/chain.yaml"},
+        "megaplan": {
+            "ref": "editible-install",
+            "codex_auth": "chatgpt",
+            "repo": "https://github.com/peteromallet/Arnold.git",
+            "src_path": "/workspace/arnold",
+        },
+        "resources": {"volume": "agent-volume", "port": 8080},
+        "ssh": {
+            "host": "TODO_SSH_HOST",
+            "user": "root",
+            "port": 22,
+            "remote_dir": "/opt/megaplan-cloud/deploy",
+            "workspace_dir": "/opt/megaplan-cloud/workspace",
+            "container": "megaplan-cloud-agent",
+        },
+        "chain_session": chain_session or normalized_slug,
+        "secrets": [],
+    }
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    return path
 
 
 def _default_north_star_template(slug: str) -> str:
@@ -181,13 +266,23 @@ def _default_north_star_template(slug: str) -> str:
             "",
             "## End State",
             "",
+            "TODO_NORTH_STAR_END_STATE: Describe the durable destination every milestone must preserve.",
+            "",
             "## Non-Negotiables",
+            "",
+            "TODO_NORTH_STAR_NON_NEGOTIABLES: List invariants the chain must not violate.",
             "",
             "## Explicit Non-Goals",
             "",
+            "TODO_NORTH_STAR_NON_GOALS: Name tempting work that is intentionally out of scope.",
+            "",
             "## Allowed Temporary Bridges",
             "",
+            "TODO_NORTH_STAR_TEMPORARY_BRIDGES: Describe any acceptable short-lived compromises.",
+            "",
             "## Drift Signals",
+            "",
+            "TODO_NORTH_STAR_DRIFT_SIGNALS: List signs the chain is solving the wrong problem.",
             "",
         ]
     )
