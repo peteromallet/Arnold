@@ -478,6 +478,98 @@ class TestDecisionCompilation:
         assert jumps[0].next_pc is not None
         assert jumps[0].next_pc > else_phase_pc
 
+
+class TestSubpipelineCompilation:
+    """Compiler lowers child workflow calls into subpipeline instructions."""
+
+    def test_child_workflow_call_lowers_to_subpipeline_instruction(self) -> None:
+        @phase
+        def summarize(ctx: object) -> dict:
+            return {"score": 1}
+
+        @_workflow(
+            name="review_child",
+            id="review.child",
+            inputs={"draft": {"type": "string"}},
+            outputs={"score": {"type": "number"}},
+        )
+        def review_child(draft: str) -> dict:
+            state = yield summarize(draft)
+            return state
+
+        @_workflow(
+            name="parent_review",
+            id="parent.review",
+            inputs={"plan_doc": {"type": "string"}},
+            outputs={"child_score": {"type": "number"}},
+        )
+        def parent_review(plan_doc: str) -> dict:
+            child_score = review_child(draft=plan_doc)
+            return child_score
+
+        prog = compile_pipeline(parent_review)
+        assert prog.stable_id == "parent.review"
+        assert prog.inputs_schema == {"plan_doc": {"type": "string"}}
+        assert prog.outputs_schema == {"child_score": {"type": "number"}}
+        assert [instr.op for instr in prog.instructions] == ["subpipeline", "halt"]
+
+        instr = prog.instructions[0]
+        assert instr.name == "review.child[0]"
+        assert instr.subprogram is not None
+        assert instr.subprogram.name == "review_child"
+        assert instr.subprogram.stable_id == "review.child"
+        assert instr.input_mapping == {"draft": "plan_doc"}
+        assert instr.output_mapping == {"score": "child_score"}
+        assert instr.next_pc == 1
+
+    def test_repeated_child_workflow_calls_get_stable_unique_callsite_ids(self) -> None:
+        @phase
+        def summarize(ctx: object) -> dict:
+            return {"score": 1}
+
+        @_workflow(
+            id="review.child",
+            inputs={"draft": {"type": "string"}},
+            outputs={"score": {"type": "number"}},
+        )
+        def review_child(draft: str) -> dict:
+            state = yield summarize(draft)
+            return state
+
+        @_workflow
+        def parent(draft_a: str, draft_b: str) -> dict:
+            first_score = review_child(draft=draft_a)
+            second_score = review_child(draft=draft_b)
+            return {"first": first_score, "second": second_score}
+
+        prog = compile_pipeline(parent)
+        subpipelines = [instr for instr in prog.instructions if instr.op == "subpipeline"]
+        assert [instr.name for instr in subpipelines] == ["review.child[0]", "review.child[1]"]
+        assert subpipelines[0].output_mapping == {"score": "first_score"}
+        assert subpipelines[1].output_mapping == {"score": "second_score"}
+
+    def test_child_workflow_rejects_ambient_state_reach_through(self) -> None:
+        @phase
+        def summarize(ctx: object) -> dict:
+            return {"score": 1}
+
+        @_workflow(
+            id="review.child",
+            inputs={"draft": {"type": "string"}},
+            outputs={"score": {"type": "number"}},
+        )
+        def review_child(draft: str) -> dict:
+            state = yield summarize(draft)
+            return state
+
+        @_workflow
+        def parent(ctx: dict) -> dict:
+            child_score = review_child(ctx)
+            return child_score
+
+        with pytest.raises(NativeCompileError, match="ambient state"):
+            compile_pipeline(parent)
+
     def test_decision_instruction_has_branches_not_next_pc(self) -> None:
         @phase
         def step(ctx: object) -> dict:
