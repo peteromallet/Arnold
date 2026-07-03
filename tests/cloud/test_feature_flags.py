@@ -100,10 +100,10 @@ class TestM1Defaults:
             assert repair_request_queue_enabled() is True
             assert repair_request_queue_on() is True
 
-    def test_repair_trigger_defaults_off(self) -> None:
+    def test_repair_trigger_defaults_on(self) -> None:
         with _clear_env():
-            assert repair_trigger_enabled() is False
-            assert repair_trigger_on() is False
+            assert repair_trigger_enabled() is True
+            assert repair_trigger_on() is True
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ class TestRedactionOptOut:
 
 
 class TestExplicitOptIn:
-    """Behaviour-changing flags default OFF and require explicit '1' to enable."""
+    """Most behaviour-changing flags still require opt-in; repair dispatch defaults on."""
 
     @pytest.mark.parametrize(
         "env_var,flag_func",
@@ -157,12 +157,15 @@ class TestExplicitOptIn:
             ("ARNOLD_RESOLVER_ENFORCEMENT", resolver_enforcement_enabled),
             ("ARNOLD_ESCALATION_LEDGER", escalation_ledger_enabled),
             ("ARNOLD_AUTONOMY", autonomy_enabled),
-            ("ARNOLD_REPAIR_TRIGGER_ENABLED", repair_trigger_enabled),
         ],
     )
     def test_flag_off_by_default(self, env_var: str, flag_func) -> None:
         with _clear_env():
             assert flag_func() is False
+
+    def test_repair_trigger_on_by_default(self) -> None:
+        with _clear_env():
+            assert repair_trigger_enabled() is True
 
     @pytest.mark.parametrize(
         "env_var,flag_func",
@@ -228,8 +231,9 @@ class TestExplicitOptIn:
     )
     def test_flag_off_when_env_empty(self, env_var: str, flag_func) -> None:
         with _set_env(**{env_var: ""}):
-            # Empty string → falls through to default (False for these flags)
-            assert flag_func() is False
+            # Empty string falls through to the flag's default.
+            expected = env_var == "ARNOLD_REPAIR_TRIGGER_ENABLED"
+            assert flag_func() is expected
 
 
 # ---------------------------------------------------------------------------
@@ -384,36 +388,36 @@ class TestResolverObserveIntegration:
 
 
 # ---------------------------------------------------------------------------
-# M5 meta-repair and auditor feature flags (default OFF)
+# M5 meta-repair and auditor feature flags (default ON)
 # ---------------------------------------------------------------------------
 
 
 class TestM5Defaults:
-    """All M5 meta-repair and auditor flags are off by default."""
+    """All M5 meta-repair and auditor flags are on by default."""
 
-    def test_meta_repair_defaults_off(self) -> None:
+    def test_meta_repair_defaults_on(self) -> None:
         with _clear_env():
-            assert meta_repair_enabled() is False
-            assert meta_repair_on() is False
+            assert meta_repair_enabled() is True
+            assert meta_repair_on() is True
 
-    def test_audit_autofix_defaults_off(self) -> None:
+    def test_audit_autofix_defaults_on(self) -> None:
         with _clear_env():
-            assert audit_autofix_enabled() is False
-            assert audit_autofix_on() is False
+            assert audit_autofix_enabled() is True
+            assert audit_autofix_on() is True
 
-    def test_meta_repair_commit_defaults_off(self) -> None:
+    def test_meta_repair_commit_defaults_on(self) -> None:
         with _clear_env():
-            assert meta_repair_commit_enabled() is False
-            assert meta_repair_commit_on() is False
+            assert meta_repair_commit_enabled() is True
+            assert meta_repair_commit_on() is True
 
-    def test_audit_autofix_commit_defaults_off(self) -> None:
+    def test_audit_autofix_commit_defaults_on(self) -> None:
         with _clear_env():
-            assert audit_autofix_commit_enabled() is False
-            assert audit_autofix_commit_on() is False
+            assert audit_autofix_commit_enabled() is True
+            assert audit_autofix_commit_on() is True
 
 
 class TestM5ExplicitOptIn:
-    """M5 flags default OFF and require explicit enabling."""
+    """M5 flags default ON and support explicit disabling."""
 
     @pytest.mark.parametrize(
         "env_var,flag_func",
@@ -424,9 +428,9 @@ class TestM5ExplicitOptIn:
             ("ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED", audit_autofix_commit_enabled),
         ],
     )
-    def test_flag_off_by_default(self, env_var: str, flag_func) -> None:
+    def test_flag_on_by_default(self, env_var: str, flag_func) -> None:
         with _clear_env():
-            assert flag_func() is False
+            assert flag_func() is True
 
     @pytest.mark.parametrize(
         "env_var,flag_func",
@@ -492,8 +496,8 @@ class TestM5ExplicitOptIn:
     )
     def test_flag_off_when_env_empty(self, env_var: str, flag_func) -> None:
         with _set_env(**{env_var: ""}):
-            # Empty string → falls through to default (False for these flags)
-            assert flag_func() is False
+            # Empty string falls through to default ON for these flags.
+            assert flag_func() is True
 
 
 class TestM5FlagIndependence:
@@ -501,15 +505,15 @@ class TestM5FlagIndependence:
 
     def test_meta_repair_independent_of_commits(self) -> None:
         with _set_env(ARNOLD_META_REPAIR_COMMIT_ENABLED="1"):
-            assert meta_repair_enabled() is False
+            assert meta_repair_enabled() is True
 
     def test_audit_autofix_independent_of_commits(self) -> None:
         with _set_env(ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED="1"):
-            assert audit_autofix_enabled() is False
+            assert audit_autofix_enabled() is True
 
     def test_m5_flags_independent_of_autonomy(self) -> None:
         with _set_env(ARNOLD_AUTONOMY="1"):
-            assert meta_repair_enabled() is False
-            assert audit_autofix_enabled() is False
-            assert meta_repair_commit_enabled() is False
-            assert audit_autofix_commit_enabled() is False
+            assert meta_repair_enabled() is True
+            assert audit_autofix_enabled() is True
+            assert meta_repair_commit_enabled() is True
+            assert audit_autofix_commit_enabled() is True

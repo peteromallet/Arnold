@@ -7,9 +7,9 @@
 # trigger pass.  If the path unit is not installed or systemd is unavailable,
 # the watchdog still processes the queue on its next poll interval.
 #
-# Dispatch is always gated by ARNOLD_REPAIR_TRIGGER_ENABLED (default 0/off).
-# Without that env var set to "1" the trigger only emits observe-only reports
-# and NEVER launches repair work — even when systemd fires this unit.
+# Dispatch is gated by ARNOLD_REPAIR_TRIGGER_ENABLED (default 1/on).
+# With that env var explicitly set to 0/false/no/off the trigger only emits
+# observe-only reports and does not launch repair work.
 # ---------------------------------------------------------------------------
 
 [Unit]

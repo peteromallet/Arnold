@@ -31,7 +31,7 @@ REPORT_WEBHOOK="${CLOUD_WATCHDOG_REPORT_WEBHOOK:-}"
 INTERVAL="${CLOUD_WATCHDOG_INTERVAL_SECS:-3600}"
 MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
-REPAIR_ENABLED="${ARNOLD_REPAIR_TRIGGER_ENABLED:-0}"
+REPAIR_ENABLED="${ARNOLD_REPAIR_TRIGGER_ENABLED:-1}"
 PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-0}"
 CODEX_TIMEOUT="${CLOUD_WATCHDOG_CODEX_TIMEOUT_SECS:-7200}"
 REAP_AGE_SECS="${CLOUD_WATCHDOG_REAP_AGE_SECS:-7200}"
@@ -3082,7 +3082,7 @@ dispatch_kimi_repair() {
 
 # ---- meta-repair dispatch ----------------------------------------------------
 # Meta-repair diagnoses and fixes repair-system failures when ordinary repair
-# has proven insufficient.  It is gated behind META_REPAIR_ENABLED (default-off),
+# has proven insufficient.  It is gated behind META_REPAIR_ENABLED (default-on),
 # guarded against recursion, and tracked with dedicated marker/pgid sidecars so
 # the watchdog can observe its lifecycle independently of ordinary repair.
 
@@ -3110,15 +3110,17 @@ dispatch_meta_repair() {
   local pgid_path repair_busy recursion_result
   REPAIR_DISPATCH_RESULT="unavailable"
 
-  # Feature-flag gate: META_REPAIR_ENABLED must be explicitly set to "1"
-  if [[ "${META_REPAIR_ENABLED_FLAG:-0}" != "1" ]]; then
+  # Feature-flag gate: META_REPAIR_ENABLED defaults on; explicit "0"/"false"/"no"/"off" disables it.
+  case "${META_REPAIR_ENABLED_FLAG:-1}" in
+    0|false|False|FALSE|no|No|NO|off|Off|OFF)
     log "meta-repair disabled by feature flag; skipping dispatch session=$session"
     REPAIR_DISPATCH_RESULT="disabled"
     if [[ -n "$report_items" ]]; then
       report_item "$report_items" "$session" "meta_repair" "disabled" "meta-repair disabled by feature flag" "$workspace" "$remote_spec"
     fi
     return 0
-  fi
+    ;;
+  esac
 
   # Binary must exist and be executable
   if [[ ! -x "$META_REPAIR_BIN" ]]; then

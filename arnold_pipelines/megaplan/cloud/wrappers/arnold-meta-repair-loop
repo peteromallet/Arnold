@@ -8,15 +8,15 @@
 #   2. Classifies the failure via Python handoff to meta_repair.py and
 #      builds a redacted diagnosis prompt.
 #   3. Checks feature flags and recursion guard — exits early when
-#      META_REPAIR_ENABLED is off or recursion is detected.
+#      META_REPAIR_ENABLED is explicitly off or recursion is detected.
 #   4. Dispatches Codex as the top-level orchestrator with
 #      --sandbox danger-full-access.  Codex is instructed to read the
 #      subagent-launcher skill and delegate DeepSeek/Hermes research
 #      subagents (provider=deepseek, model=deepseek:deepseek-v4-pro,
 #      profile=partnered-5) for broad mapping, log/history review,
 #      independent root-cause probes, and bounded fix investigations.
-#   5. Applies only patch-level changes by default; commit and push
-#      require META_REPAIR_COMMIT_ENABLED.
+#   5. May commit and push by default where policy permits; operators can
+#      explicitly disable this with META_REPAIR_COMMIT_ENABLED=0.
 #   6. Retriggers the ordinary repair loop for the same session after
 #      applying any fix, then verifies terminal success.
 #   7. Persists a redacted meta-repair record under repair-data/meta/.
@@ -46,10 +46,10 @@ SUBAGENT_SKILL="${MEGAPLAN_META_SUBAGENT_SKILL:-$ARNOLD_SRC/arnold_pipelines/meg
 DEEPSEEK_MODEL="${MEGAPLAN_META_MODEL:-deepseek:deepseek-v4-pro}"
 SUBAGENT_PROFILE="${MEGAPLAN_META_SUBAGENT_PROFILE:-partnered-5}"
 SUBAGENT_TIMEOUT="${MEGAPLAN_META_SUBAGENT_TIMEOUT_SECS:-900}"
-CODEX_TIMEOUT="${MEGAPLAN_META_CODEX_TIMEOUT_SECS:-3600}"
-META_REPAIR_BUDGET="${MEGAPLAN_META_BUDGET_SECS:-5400}"
-META_REPAIR_ENABLED_VAR="${ARNOLD_META_REPAIR_ENABLED:-0}"
-META_REPAIR_COMMIT_ENABLED_VAR="${ARNOLD_META_REPAIR_COMMIT_ENABLED:-0}"
+CODEX_TIMEOUT="${MEGAPLAN_META_CODEX_TIMEOUT_SECS:-5400}"
+META_REPAIR_BUDGET="${MEGAPLAN_META_BUDGET_SECS:-7200}"
+META_REPAIR_ENABLED_VAR="${ARNOLD_META_REPAIR_ENABLED:-1}"
+META_REPAIR_COMMIT_ENABLED_VAR="${ARNOLD_META_REPAIR_COMMIT_ENABLED:-1}"
 SYNC_BRANCH="${MEGAPLAN_META_SYNC_BRANCH:-editible-install}"
 REPAIR_LOOP_BIN="${MEGAPLAN_META_REPAIR_LOOP_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop}"
 REPAIR_DATA_PATH="$REPAIR_DATA_DIR/${SESSION}.repair-data.json"
@@ -93,10 +93,12 @@ PY
 }
 
 # ---- early gate: feature flag -----------------------------------------------
-if [[ "$META_REPAIR_ENABLED_VAR" != "1" ]]; then
+case "$META_REPAIR_ENABLED_VAR" in
+  0|false|False|FALSE|no|No|NO|off|Off|OFF)
   log "meta-repair disabled (ARNOLD_META_REPAIR_ENABLED=$META_REPAIR_ENABLED_VAR); exiting"
   exit 0
-fi
+  ;;
+esac
 
 log "meta-repair starting session=$SESSION"
 
@@ -227,11 +229,10 @@ ordinary repair can succeed.
 - Each subagent gets a focused query, project directory, and a bounded
   scope.
 
-### Patch-only default
-- By default you MAY propose and apply patches but MUST NOT commit or
-  push them.
-- Commits are permitted ONLY when ARNOLD_META_REPAIR_COMMIT_ENABLED=1
-  is explicitly set in the environment.
+### Commit/push policy
+- You may commit and push fixes when ARNOLD_META_REPAIR_COMMIT_ENABLED is not
+  explicitly disabled.
+- Do not commit or push when ARNOLD_META_REPAIR_COMMIT_ENABLED=0/false/no/off.
 - Pushes require the same gate as commits.
 
 ### Fix constraints

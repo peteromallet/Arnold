@@ -8,9 +8,10 @@ These guards enforce two key safety invariants:
    another meta-repair attempt.
 
 2. **Commit/push gating** — Commit and push paths through meta-repair
-   are IMPOSSIBLE unless ``META_REPAIR_COMMIT_ENABLED`` is explicitly
-   enabled.  This is a separate gate from ``META_REPAIR_ENABLED`` so
-   that meta-repair can evaluate and report without committing.
+   honor ``META_REPAIR_COMMIT_ENABLED``.  The gate defaults on for
+   autonomous cloud repair, but remains a separate explicit opt-out from
+   ``META_REPAIR_ENABLED`` so operators can disable persistence without
+   disabling diagnosis.
 
 These guards are intentionally separate from the core ``meta_repair``
 module so they can be tested in isolation and invoked at every layer
@@ -146,9 +147,8 @@ def can_commit_changes(
     """Check whether meta-repair is permitted to commit changes.
 
     Returns a :class:`CommitGateResult` with ``allowed=False`` when
-    ``META_REPAIR_COMMIT_ENABLED`` is off.  Even when meta-repair itself
-    is enabled, commits require the separate commit flag to be
-    explicitly set.
+    ``META_REPAIR_COMMIT_ENABLED`` is explicitly off.  Even when meta-repair
+    itself is enabled, commits honor this separate opt-out gate.
 
     Args:
         session: Optional session for context (included in the reason string).
