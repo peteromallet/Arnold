@@ -77,6 +77,31 @@ export const COMPOSITION_DIAGNOSTIC_CODE = {
 
   /** A target keyframe/live-binding interpolation policy cannot be satisfied. */
   TARGET_INTERPOLATION_GAP: 'composition/target-interpolation-gap',
+
+  // ---------------------------------------------------------------------------
+  // Material (M3a) diagnostic codes
+  // ---------------------------------------------------------------------------
+
+  /** A material status/detail combination is structurally invalid. */
+  MATERIAL_STATUS_INVALID: 'composition/material-status-invalid',
+
+  /** A material is missing required provenance evidence. */
+  MATERIAL_MISSING_PROVENANCE: 'composition/material-missing-provenance',
+
+  /** A material exists only as live runtime data with no baked asset. */
+  MATERIAL_LIVE_ONLY: 'composition/material-live-only',
+
+  /** A previously baked material is now out of date. */
+  MATERIAL_STALE: 'composition/material-stale',
+
+  /** Materialization has definitively failed. */
+  MATERIAL_FAILED: 'composition/material-failed',
+
+  /** A resolved material carries weaker provenance than required. */
+  MATERIAL_WEAKER_PROVENANCE: 'composition/material-weaker-provenance',
+
+  /** A resolved material is incompatible with the selected render route. */
+  MATERIAL_ROUTE_INCOMPATIBLE: 'composition/material-route-incompatible',
 } as const;
 
 export type CompositionDiagnosticCode =
@@ -125,6 +150,22 @@ export interface CompositionDiagnosticDetail {
   actualValueType?: string;
   /** Interpolation mode or policy involved in a target diagnostic. */
   interpolation?: string;
+  /** Material ref ID when the diagnostic relates to a material. */
+  materialRefId?: string;
+  /** Render route scope when the diagnostic is route-sensitive. */
+  routeScope?: string;
+  /** Resolved material status state. */
+  materialStatus?: string;
+  /** Material status detail phase. */
+  detailPhase?: string;
+  /** Material status detail quality. */
+  detailQuality?: string;
+  /** Provenance evidence attached to the material ref. */
+  provenance?: Record<string, unknown>;
+  /** Structured description of the provenance gap when validation fails. */
+  provenanceGap?: string;
+  /** Planner next action associated with this diagnostic, when applicable. */
+  nextAction?: Record<string, unknown>;
 }
 
 const BLOCKING_TARGET_COMPOSITION_DIAGNOSTIC_CODES = new Set<CompositionDiagnosticCode>([
@@ -135,6 +176,32 @@ const BLOCKING_TARGET_COMPOSITION_DIAGNOSTIC_CODES = new Set<CompositionDiagnost
   COMPOSITION_DIAGNOSTIC_CODE.NON_BINDABLE_TARGET,
   COMPOSITION_DIAGNOSTIC_CODE.TARGET_VALUE_TYPE_ERROR,
   COMPOSITION_DIAGNOSTIC_CODE.TARGET_INTERPOLATION_GAP,
+]);
+
+/** Material diagnostic codes that carry warning severity. */
+const MATERIAL_WARNING_DIAGNOSTIC_CODES = new Set<CompositionDiagnosticCode>([
+  COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_MISSING_PROVENANCE,
+  COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_LIVE_ONLY,
+  COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_STALE,
+  COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_WEAKER_PROVENANCE,
+]);
+
+/** Material diagnostic codes that carry error severity. */
+const MATERIAL_ERROR_DIAGNOSTIC_CODES = new Set<CompositionDiagnosticCode>([
+  COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_STATUS_INVALID,
+  COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_FAILED,
+  COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_ROUTE_INCOMPATIBLE,
+]);
+
+/** All material diagnostic codes (M3a). */
+const MATERIAL_DIAGNOSTIC_CODES: ReadonlySet<CompositionDiagnosticCode> = new Set([
+  COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_MISSING_PROVENANCE,
+  COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_LIVE_ONLY,
+  COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_STALE,
+  COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_WEAKER_PROVENANCE,
+  COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_STATUS_INVALID,
+  COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_FAILED,
+  COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_ROUTE_INCOMPATIBLE,
 ]);
 
 // ---------------------------------------------------------------------------
@@ -199,6 +266,30 @@ export function isBlockingTargetCompositionDiagnosticCode(code: string): code is
 }
 
 /**
+ * Type guard: returns `true` when `code` is a material (M3a) diagnostic code.
+ */
+export function isMaterialDiagnosticCode(code: string): code is CompositionDiagnosticCode {
+  return MATERIAL_DIAGNOSTIC_CODES.has(code as CompositionDiagnosticCode);
+}
+
+/**
+ * Severity for material (M3a) diagnostic codes.
+ *
+ * Invalid status, failed materialization, and route-incompatible materials
+ * produce errors; missing provenance, live-only, stale, and weaker-provenance
+ * produce warnings.
+ */
+export function materialDiagnosticSeverity(code: CompositionDiagnosticCode): DiagnosticSeverity {
+  if (MATERIAL_ERROR_DIAGNOSTIC_CODES.has(code)) {
+    return 'error';
+  }
+  if (MATERIAL_WARNING_DIAGNOSTIC_CODES.has(code)) {
+    return 'warning';
+  }
+  return 'error';
+}
+
+/**
  * Build a canonical composition diagnostic payload.
  *
  * The returned object conforms to {@link ExtensionDiagnostic} and can be
@@ -210,11 +301,20 @@ export function buildCompositionDiagnostic(
   message: string,
   detail: CompositionDiagnosticDetail,
 ): ExtensionDiagnostic {
+  let severity: DiagnosticSeverity;
+  if (isMaterialDiagnosticCode(code)) {
+    severity = materialDiagnosticSeverity(code);
+  } else if (
+    code === COMPOSITION_DIAGNOSTIC_CODE.MISSING_REF
+    || code === COMPOSITION_DIAGNOSTIC_CODE.INACTIVE_RESERVED_REF
+  ) {
+    severity = 'warning';
+  } else {
+    severity = 'error';
+  }
+
   return {
-    severity: code === COMPOSITION_DIAGNOSTIC_CODE.MISSING_REF
-      || code === COMPOSITION_DIAGNOSTIC_CODE.INACTIVE_RESERVED_REF
-      ? 'warning'
-      : 'error',
+    severity,
     code,
     message,
     detail: detail as Record<string, unknown>,

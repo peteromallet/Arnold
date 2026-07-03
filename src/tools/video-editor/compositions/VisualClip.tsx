@@ -277,11 +277,15 @@ function materialRefsForClip(
 
 function statusForMaterial(material: RenderMaterialRef, statuses: readonly RenderPlannerMaterialStatus[] | undefined): RenderPlannerMaterialStatus {
   return statuses?.find((status) => status.materialRefId === material.id)
-    ?? { materialRefId: material.id, state: material.determinism === 'deterministic' ? 'resolved' : 'unbaked' };
+    ?? {
+      materialRefId: material.id,
+      state: material.determinism === 'deterministic' ? 'resolved' : 'pending',
+      detail: material.determinism === 'deterministic' ? undefined : { phase: 'queued' },
+    };
 }
 
 function shouldRenderMaterialPlaceholder(status: RenderPlannerMaterialStatus): boolean {
-  return status.state === 'missing' || status.state === 'stale' || status.state === 'unbaked';
+  return status.state === 'missing' || status.state === 'pending' || status.state === 'stale' || status.state === 'failed';
 }
 
 const VisualAsset: FC<VisualClipProps> = ({ clip, track, fps }) => {

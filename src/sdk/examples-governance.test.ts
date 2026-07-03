@@ -447,6 +447,23 @@ describe('Extension example import governance', () => {
       'getVideoFamilyDefinition',
       'getVideoFamilyConformanceReport',
       'getVideoFamilyLegacyBridgeStatus',
+      // Material planner helpers are public, but example usage will land with M3a consumers.
+      'RENDER_MATERIAL_STATUSES',
+      'RENDER_MATERIAL_STATUS_PHASES',
+      'RENDER_MATERIAL_STATUS_QUALITIES',
+      'RenderMaterialStatus',
+      'RenderMaterialStatusDetail',
+      'RenderMaterialStatusPhase',
+      'RenderMaterialStatusQuality',
+      'RenderMaterialStatusState',
+      'isActiveBake',
+      'isLiveOnly',
+      'isRouteIncompatible',
+      'isWeakerProvenance',
+      // Provenance validation helpers (M3a T8) — public, examples pending
+      'hasProvenance',
+      'describeProvenanceGap',
+      'ProvenanceGap',
       // Legacy compatibility exports remain public, but examples should prefer
       // the registry-derived family helpers over milestone-oriented APIs.
       'CONTRIBUTION_KIND_MILESTONE',

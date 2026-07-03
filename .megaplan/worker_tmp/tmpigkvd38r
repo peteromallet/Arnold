@@ -1,0 +1,115 @@
+Execute the approved plan in the repository.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M3a: Material Status And Planner Matrix
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Batch framing:
+        - Execute batch 1 of 17.
+        - Actionable task IDs for this batch: ['T1']
+        - Already completed task IDs available as dependency context: []
+
+        Actionable tasks for this batch:
+        [
+  {
+    "id": "T1",
+    "depends_on": [],
+    "status": "pending",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 1: Replace the host material status contract with `missing | pending | resolved | stale | failed`, add status detail fields (`phase`, `quality`), add/export helper predicates, add optional `provenance?: Record<string, unknown>` to SDK material ref/material types, and mechanically migrate legacy `unbaked` fallback semantics to `pending` with `detail.phase = queued` in `src/tools/video-editor/runtime/renderPlanner.ts`, `src/sdk/video/rendering/artifacts.ts`, and `src/sdk/index.ts`.",
+    "complexity_justification": "This changes the public material status/type contract consumed by SDK and planner callers, so a subtle mismatch can propagate non-locally through compile-time consumers and runtime status handling. The concrete risk is accidentally preserving `unbaked` or exposing helper predicates from the wrong...",
+    "executor_notes": "",
+    "files_changed": [],
+    "commands_run": []
+  }
+]
+
+        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
+        []
+
+        Prior batch deviations (address if applicable):
+        None
+
+        User action prerequisites:
+        No user_action prerequisites for this batch.
+
+
+        Batch-scoped sense checks:
+        [
+  {
+    "id": "SC1",
+    "task_id": "T1",
+    "verdict": "",
+    "question": "Does the code expose exactly the five public material statuses, add detail/provenance fields and helper predicates, and remove `unbaked` from TypeScript material planner state while preserving queued fallback behavior?"
+  }
+]
+
+
+        ## Execution context (settled - DO NOT re-litigate)
+
+        - SD1: Public material status vocabulary is exactly five values: missing, pending, resolved, stale, failed. The old 'unbaked' state is mechanically migrated to pending + phase: queued. - Locked in the idea brief and upheld through two plan iterations. Keeps the contract small and normative while preserving backward compatibility through detail fields.
+- SD2: Detail phase values are queued, active, live-only. Detail quality values are weaker-provenance, route-incompatible. These are qualities/refinements on statuses, not independent... - Prevents status vocabulary inflation. Distinguishes active bake from queued bake, live-only data from missing packages, and weak provenance/route mismatch from generic failures — all without adding public statuses.
+- SD3: V1 planner next-action kinds are select-route, materialize, bake, invoke-agent, open-settings, install-extension, enable-extension. start-process is removed as a V1 action. - Process execution belongs to later milestones (M4/M6). The compatibility bridge for old resolve-blocker consumers lives in detail.specificKind, not as a first-class V1 action.
+
+        ## Plan execution order rationale
+
+        1. Land types and action vocabulary before projection logic so downstream compile errors identify all migration points.
+2. Encode the matrix before planner wiring; planner code should consume matrix output, not duplicate status branching.
+3. Add diagnostics and provenance validation inside projection before UI migration so consumers receive one normalized shape.
+4. Migrate planner before UI, because UI action/status behavior depends on planner output.
+5. Update tests alongside each implementation step; keep the full suite for the end.
+
+        ## Inter-task guidance from finalize
+
+        Execute in the settled order: contract and action vocabulary first, matrix/projection/diagnostics next, planner wiring before UI, docs after code behavior stabilizes, then tests and gates. Do not re-open strategy decisions or invoke nested megaplan tooling. The open questions from the plan are executable decisions now: use `materialization-error` for failed unless the repo has a conflicting stable blocker convention, and accept direct or derivable provenance only from the explicit fields named in the plan. Keep route scope and process facts conservative: no browser-export defaults for generic materials, and no executable process lifecycle in M3a.
+
+        Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations.
+        Robustness level: thorough.
+
+        Requirements:
+        - Execute only the actionable tasks in this batch.
+        - Treat completed tasks as dependency context, not new work.
+        - Return structured JSON only.
+        - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
+        - Template file already written for reference: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3a-material-status-and-20260703-2036/execute_batch_1_output.json
+        - Only produce `task_updates` for these tasks: [T1]
+        - `task_updates[].status` must be one of `done`, `skipped`, `completed`, or `blocked`; never `pending` or `in_progress`.
+        - Only produce `sense_check_acknowledgments` for these sense checks: [SC1]
+        - Do not include updates for tasks or sense checks outside this batch.
+        - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+        - Keep `executor_notes` verification-focused.
+        - Best-effort progress checkpointing: if `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3a-material-status-and-20260703-2036/execution_batch_1.json` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
+        - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
+        - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
+        - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
+
+        Batch JSON response template:
+        ```json
+        {
+  "output": "",
+  "files_changed": [],
+  "commands_run": [],
+  "deviations": [],
+  "task_updates": [
+    {
+      "task_id": "T1",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC1",
+      "executor_note": ""
+    }
+  ]
+}
+        ```

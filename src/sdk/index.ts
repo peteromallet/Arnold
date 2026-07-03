@@ -141,7 +141,36 @@ export { DETERMINISM_STATUSES, RENDER_BLOCKER_REASONS, RENDER_ROUTES } from './v
 export type { CapabilityFinding, CapabilityFindingSeverity, ContributionRenderability, DeterminismStatus, RenderBlocker, RenderBlockerReason, RenderCapability, RenderCapabilityStatus, RenderRoute } from './video/rendering/renderability';
 export { shaderMissingMaterializerBlockerMessage, describeShaderMaterializerRequirementScope } from './video/rendering/capabilities';
 export type { ShaderMaterializerRequirementScope } from './video/rendering/capabilities';
-export type { ArtifactBoundary, BakeContract, RenderArtifact, RenderArtifactManifest, RenderArtifactSidecarDescriptor, RenderArtifactSidecarKind, RenderLocatorKind, RenderMaterial, RenderMaterialMediaKind, RenderMaterialRef, RenderStorageLocator } from './video/rendering/artifacts';
+export {
+  RENDER_MATERIAL_STATUSES,
+  RENDER_MATERIAL_STATUS_PHASES,
+  RENDER_MATERIAL_STATUS_QUALITIES,
+  hasProvenance,
+  describeProvenanceGap,
+  isActiveBake,
+  isLiveOnly,
+  isRouteIncompatible,
+  isWeakerProvenance,
+} from './video/rendering/artifacts';
+export type {
+  ArtifactBoundary,
+  BakeContract,
+  ProvenanceGap,
+  RenderArtifact,
+  RenderArtifactManifest,
+  RenderArtifactSidecarDescriptor,
+  RenderArtifactSidecarKind,
+  RenderLocatorKind,
+  RenderMaterial,
+  RenderMaterialMediaKind,
+  RenderMaterialRef,
+  RenderMaterialStatus,
+  RenderMaterialStatusDetail,
+  RenderMaterialStatusPhase,
+  RenderMaterialStatusQuality,
+  RenderMaterialStatusState,
+  RenderStorageLocator,
+} from './video/rendering/artifacts';
 
 // ===========================================================================
 // Video: Timeline

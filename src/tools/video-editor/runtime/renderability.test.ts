@@ -122,6 +122,7 @@ describe('shared renderability contracts', () => {
       'process-dependent',
       'missing-material',
       'materialization-failed',
+      'materialization-error',
       'inactive-extension',
       'unknown',
     ]);

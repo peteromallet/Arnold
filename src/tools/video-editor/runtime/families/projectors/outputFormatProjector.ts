@@ -104,9 +104,12 @@ function buildOutputFormatBlockers(
   if (!contribution.requiresRender || renderDescriptor) return Object.freeze([]);
 
   const nextAction: VideoEditorPlannerNextActionDescriptor = freezeDescriptor({
-    kind: 'resolve-blocker',
+    kind: 'open-settings',
     label: 'Add render route requirements',
     message: 'Render-dependent output formats must declare render routes before planning can execute them.',
+    detail: {
+      specificKind: 'resolve-blocker',
+    },
   });
 
   return Object.freeze([
@@ -130,16 +133,6 @@ function buildOutputFormatNextActions(
   if (blockers[0]?.nextAction) return Object.freeze([blockers[0].nextAction]);
 
   const actions: VideoEditorPlannerNextActionDescriptor[] = [];
-  if (renderDescriptor?.processId) {
-    actions.push(freezeDescriptor({
-      kind: 'start-process',
-      label: `Start process ${renderDescriptor.processId}`,
-      processId: renderDescriptor.processId,
-      operationId: renderDescriptor.operationId,
-      message: renderDescriptor.unavailableMessage,
-    }));
-  }
-
   for (const route of renderDescriptor?.routes ?? []) {
     actions.push(freezeDescriptor({
       kind: 'select-route',

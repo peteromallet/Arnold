@@ -30,13 +30,6 @@ export function buildProcessDescriptors(
     const id = contribution.id as string;
     const label = processContrib.label ?? spec.label ?? spec.id;
 
-    const nextAction: VideoEditorPlannerNextActionDescriptor = freezeDescriptor({
-      kind: 'start-process',
-      label: `Start ${label}`,
-      processId: spec.id,
-      message: 'Process execution is host-owned and must be activated before route planning can dispatch operations.',
-    });
-
     return freezeDescriptor({
       id,
       extensionId,
@@ -51,7 +44,7 @@ export function buildProcessDescriptors(
       capabilities: spec.capabilities,
       requiredBy: Object.freeze([...(spec.requiredBy ?? [])]),
       blockers: Object.freeze([]),
-      nextActions: Object.freeze([nextAction]),
+      nextActions: Object.freeze([] as VideoEditorPlannerNextActionDescriptor[]),
     });
   });
 }

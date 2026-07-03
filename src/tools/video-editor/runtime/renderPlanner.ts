@@ -6,6 +6,8 @@ import {
   type DeterminismStatus,
   type ProcessStatus,
   type RenderBlocker,
+  type RenderMaterialStatus as SdkRenderMaterialStatus,
+  type RenderMaterialStatusState,
   type RenderBlockerReason,
   type RenderMaterialRef,
   type RenderRoute,
@@ -19,6 +21,11 @@ import {
   COMPOSITION_DIAGNOSTIC_CODE,
   isBlockingTargetCompositionDiagnosticCode,
 } from '@/tools/video-editor/runtime/composition/diagnostics.ts';
+import {
+  projectHostMaterialRuntime,
+  type HostMaterialRuntimeEntry,
+  type HostMaterialRuntimeProjection,
+} from '@/tools/video-editor/runtime/composition/materialRuntime.ts';
 import {
   projectShaderRefs,
   validateShaderComposition,
@@ -42,14 +49,9 @@ export interface RenderPlannerRequest {
   readonly requiredCapabilities?: readonly string[];
 }
 
-export type RenderPlannerMaterialState = 'missing' | 'stale' | 'resolved' | 'unbaked';
+export type RenderPlannerMaterialState = RenderMaterialStatusState;
 
-export interface RenderPlannerMaterialStatus {
-  readonly materialRefId: string;
-  readonly state: RenderPlannerMaterialState;
-  readonly message?: string;
-  readonly updatedAt?: string;
-}
+export type RenderPlannerMaterialStatus = SdkRenderMaterialStatus;
 
 export interface RenderPlannerInput {
   readonly snapshot?: TimelineSnapshot | null;
@@ -65,6 +67,7 @@ export interface RenderPlannerInput {
   readonly processStatuses?: readonly ProcessStatus[];
   readonly materialRefs?: readonly RenderMaterialRef[];
   readonly materialStatuses?: readonly RenderPlannerMaterialStatus[];
+  readonly materialRuntime?: HostMaterialRuntimeProjection;
   readonly request?: RenderPlannerRequest;
   readonly diagnostics?: readonly CapabilityFinding[];
 }
@@ -543,12 +546,15 @@ function shaderMaterializationAction(
   message: string,
 ): VideoEditorPlannerNextActionDescriptor {
   return {
-    kind: 'resolve-blocker',
+    kind: 'materialize',
     label: `Materialize shader ${descriptor.shaderId}`,
     route: requirement.route,
     processId: descriptor.materializer?.processId,
     operationId: descriptor.materializer?.operationId,
     message,
+    detail: {
+      specificKind: 'resolve-blocker',
+    },
   };
 }
 
@@ -994,77 +1000,183 @@ function createProcessStatusMap(statuses: readonly ProcessStatus[] | undefined):
   return new Map((statuses ?? []).map((status) => [status.processId, status]));
 }
 
-function createMaterialStatusMap(
-  statuses: readonly RenderPlannerMaterialStatus[] | undefined,
-): ReadonlyMap<string, RenderPlannerMaterialStatus> {
-  return new Map((statuses ?? []).map((status) => [status.materialRefId, status]));
+function materialActionLabel(
+  material: HostMaterialRuntimeEntry,
+  routeScope?: HostMaterialRuntimeEntry['routeScopes'][number],
+): string {
+  const kind = routeScope?.nextAction?.kind ?? material.nextAction?.kind;
+  // Only annotate with route when the action comes from explicit route evidence,
+  // not when falling back to the entry-level action in the absence of routes.
+  const routeLabel = routeScope?.route && routeScope.nextAction
+    ? ` for ${routeScope.route}`
+    : '';
+  switch (kind) {
+    case 'bake':
+      return `Bake ${material.materialRef.id}${routeLabel}`;
+    case 'open-settings':
+      return `Open settings for ${material.materialRef.id}${routeLabel}`;
+    case 'select-route':
+      return `Select route for ${material.materialRef.id}${routeLabel}`;
+    case 'materialize':
+    default:
+      return `Materialize ${material.materialRef.id}${routeLabel}`;
+  }
 }
 
-function materializeAction(
+function materialPlannerMessage(material: HostMaterialRuntimeEntry): string {
+  return material.status.message ?? `Material "${material.materialRef.id}" must be materialized before browser export.`;
+}
+
+function buildResolveBlockerAction(
+  kind: VideoEditorPlannerNextActionDescriptor['kind'],
   label: string,
   message: string,
+  route?: RenderRoute,
 ): VideoEditorPlannerNextActionDescriptor {
   return {
-    kind: 'resolve-blocker',
+    kind,
     label,
-    route: 'browser-export',
+    ...(route ? { route } : {}),
     message,
+    detail: {
+      specificKind: 'resolve-blocker',
+    },
   };
 }
 
-function materialBlockerReason(
-  materialRef: RenderMaterialRef,
-  status: RenderPlannerMaterialStatus | undefined,
-): RenderBlockerReason | undefined {
-  if (status?.state === 'missing') return 'missing-material';
-  if (status?.state === 'stale') return 'materialization-failed';
-  if (status?.state === 'resolved') return undefined;
-  if (status?.state === 'unbaked') return materialRef.determinism;
-  if (materialRef.determinism === 'live-unbaked' || materialRef.determinism === 'process-dependent') {
-    return materialRef.determinism;
+function buildMaterialPlannerAction(
+  material: HostMaterialRuntimeEntry,
+  routeScope?: HostMaterialRuntimeEntry['routeScopes'][number],
+): VideoEditorPlannerNextActionDescriptor | undefined {
+  const action = routeScope?.nextAction ?? material.nextAction;
+  if (!action) {
+    return undefined;
   }
-  return undefined;
+
+  return buildResolveBlockerAction(
+    action.kind,
+    materialActionLabel(material, routeScope),
+    materialPlannerMessage(material),
+    action.route,
+  );
+}
+
+function plannerRequestedRoutes(
+  request: RenderPlannerRequest | undefined,
+): readonly RenderRoute[] {
+  if (!request) {
+    return Object.freeze([]);
+  }
+
+  return Object.freeze(
+    Array.from(new Set([
+      ...(request.routes ?? []),
+      ...(request.route ? [request.route] : []),
+    ])),
+  );
+}
+
+function buildMaterialRuntimeProjection(
+  input: RenderPlannerInput,
+  outputFormats: readonly VideoEditorOutputFormatDescriptor[],
+  processes: readonly VideoEditorProcessDescriptor[],
+  shaders: readonly VideoEditorShaderDescriptor[],
+): HostMaterialRuntimeProjection {
+  if (input.materialRuntime) {
+    return input.materialRuntime;
+  }
+
+  const requestedOutputFormat = input.request?.outputFormatId
+    ? outputFormats.find((format) => format.id === input.request?.outputFormatId)
+    : undefined;
+
+  return projectHostMaterialRuntime({
+    materialRefs: input.materialRefs,
+    materialStatuses: input.materialStatuses,
+    contributionIndex: input.extensionRuntime?.contributionIndex,
+    shaders,
+    processes,
+    processStatuses: input.processStatuses,
+    requestedRoutes: plannerRequestedRoutes(input.request),
+    canonicalRoutes: requestedOutputFormat?.availableRoutes,
+  });
 }
 
 function collectMaterialRef(
   acc: PlanAccumulator,
-  materialRef: RenderMaterialRef,
-  materialStatusById: ReadonlyMap<string, RenderPlannerMaterialStatus>,
+  material: HostMaterialRuntimeEntry,
 ): void {
-  addRouteValue(acc.routeDeterminism, 'browser-export', materialRef.determinism);
+  const materialRef = material.materialRef;
+
+  // Add determinism for every route the material has evidence for, or
+  // fall back to browser-export when no route evidence is available.
+  const scopes = material.routeScopes.length > 0
+    ? material.routeScopes
+    : [{ route: 'browser-export' as RenderRoute, fit: 'blocked' as const, sensitivity: 'route-agnostic' as const, blocker: material.blocker }];
+
+  for (const routeScope of scopes) {
+    addRouteValue(acc.routeDeterminism, routeScope.route, materialRef.determinism);
+  }
+
   if (materialRef.replacementPolicy !== 'materialize-on-export') return;
 
-  const status = materialStatusById.get(materialRef.id);
-  const reason = materialBlockerReason(materialRef, status);
-  if (!reason) return;
-  const message = status?.message ?? `Material "${materialRef.id}" must be materialized before browser export.`;
-  const blocker: RenderBlocker = {
-    id: `planner.material.${materialRef.id}.browser-export.${reason}`,
-    severity: 'error',
-    route: 'browser-export',
-    reason,
-    message,
-    materialRefId: materialRef.id,
-    extensionId: materialRef.producerExtensionId,
-    detail: {
-      source: 'material-ref',
-      mediaKind: materialRef.mediaKind,
-      locatorKind: materialRef.locator.kind,
-      replacementPolicy: materialRef.replacementPolicy,
-      determinism: materialRef.determinism,
-      materialState: status?.state ?? 'unbaked',
-    },
-  };
-  acc.findings.push(blocker);
-  acc.blockers.push(blocker);
-  acc.nextActions.push(materializeAction(`Materialize ${materialRef.id}`, message));
+  // Emit route-scoped blockers and actions from the projection.
+  for (const routeScope of scopes) {
+    const routeBlocker = routeScope.blocker;
+    if (!routeBlocker) continue;
+
+    const reason = routeBlocker.reason;
+    const message = materialPlannerMessage(material);
+    const blocker: RenderBlocker = {
+      id: `planner.material.${materialRef.id}.${routeScope.route}.${reason}`,
+      severity: routeBlocker.severity,
+      route: routeScope.route,
+      reason,
+      message,
+      materialRefId: materialRef.id,
+      extensionId: materialRef.producerExtensionId,
+      detail: {
+        source: 'material-ref',
+        mediaKind: materialRef.mediaKind,
+        locatorKind: materialRef.locator.kind,
+        replacementPolicy: materialRef.replacementPolicy,
+        determinism: materialRef.determinism,
+        materialState: material.status.state,
+        materialPhase: material.status.detail?.phase,
+        materialQuality: material.status.detail?.quality,
+        ...(material.descriptorFacts.process
+          ? {
+              materializerProcessId: material.descriptorFacts.process.processId,
+              materializerSupportsMaterialOutput:
+                material.descriptorFacts.process.supportsMaterialOutput,
+            }
+          : {}),
+      },
+    };
+    acc.findings.push(blocker);
+    acc.blockers.push(blocker);
+
+    const nextAction = buildMaterialPlannerAction(material, routeScope);
+    if (nextAction) {
+      acc.nextActions.push(nextAction);
+    }
+  }
 }
 
-function collectRenderGroups(acc: PlanAccumulator, snapshot: TimelineSnapshot | null | undefined): void {
+function collectRenderGroups(
+  acc: PlanAccumulator,
+  snapshot: TimelineSnapshot | null | undefined,
+  materialProjection?: HostMaterialRuntimeProjection,
+): void {
   for (const group of snapshot?.renderGroups ?? []) {
     for (const pass of group.passes ?? []) {
       if (!pass.required) continue;
       if (pass.status !== 'missing' && pass.status !== 'stale') continue;
+
+      // Cross-reference with the material projection for status/detail enrichment.
+      const projectedMaterial = pass.materialRefId
+        ? materialProjection?.byMaterialRefId.get(pass.materialRefId)
+        : undefined;
 
       const reason: RenderBlockerReason = pass.status === 'missing'
         ? 'missing-material'
@@ -1085,13 +1197,33 @@ function collectRenderGroups(acc: PlanAccumulator, snapshot: TimelineSnapshot | 
           passStatus: pass.status,
           composable: pass.composable,
           required: pass.required,
+          ...(projectedMaterial
+            ? {
+                materialState: projectedMaterial.status.state,
+                materialPhase: projectedMaterial.status.detail?.phase,
+                materialQuality: projectedMaterial.status.detail?.quality,
+                ...(projectedMaterial.descriptorFacts.process
+                  ? {
+                      materializerProcessId:
+                        projectedMaterial.descriptorFacts.process.processId,
+                      materializerSupportsMaterialOutput:
+                        projectedMaterial.descriptorFacts.process.supportsMaterialOutput,
+                    }
+                  : {}),
+              }
+            : {}),
         },
       };
       addRouteSetValue(acc.routeCapabilities, 'browser-export', 'render-groups');
       addRouteValue(acc.routeDeterminism, 'browser-export', 'process-dependent');
       acc.findings.push(blocker);
       acc.blockers.push(blocker);
-      acc.nextActions.push(materializeAction(`Materialize ${group.id}:${pass.passName}`, message));
+      acc.nextActions.push(buildResolveBlockerAction(
+        'materialize',
+        `Materialize ${group.id}:${pass.passName}`,
+        message,
+        'browser-export',
+      ));
     }
   }
 }
@@ -1195,7 +1327,6 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
   const processStatusById = createProcessStatusMap(input.processStatuses);
   const processById = createProcessDescriptorMap(processes);
   const shaderBySourceRef = createShaderDescriptorMap(shaders);
-  const materialStatusById = createMaterialStatusMap(input.materialStatuses);
   const legacyCompatibilityWarning = legacyGraphCompatibilityWarning(
     input.snapshot,
     requirements,
@@ -1204,6 +1335,12 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
   const requestedOutputFormat = input.request?.outputFormatId
     ? outputFormats.find((format) => format.id === input.request?.outputFormatId)
     : undefined;
+  const materialRuntime = buildMaterialRuntimeProjection(
+    input,
+    outputFormats,
+    processes,
+    shaders,
+  );
 
   for (const requirement of requirements) {
     const shaderDescriptor = isShaderMaterializerRequirement(requirement)
@@ -1230,10 +1367,10 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
   for (const process of processes) {
     collectProcess(acc, process);
   }
-  for (const materialRef of input.materialRefs ?? []) {
-    collectMaterialRef(acc, materialRef, materialStatusById);
+  for (const material of materialRuntime.materials) {
+    collectMaterialRef(acc, material);
   }
-  collectRenderGroups(acc, input.snapshot);
+  collectRenderGroups(acc, input.snapshot, materialRuntime);
   acc.findings.push(...shaderComposition.findings);
   if (legacyCompatibilityWarning) {
     acc.findings.push(legacyCompatibilityWarning);
@@ -1272,13 +1409,31 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
   const browserRoute = routePlans.find((route) => route.route === 'browser-export');
   const workerRoute = routePlans.find((route) => route.route === 'worker-export');
 
+  // Convert projection diagnostics into CapabilityFinding format for the
+  // diagnostics field while keeping findings as the deduplicated planner set.
+  const projectionFindings: CapabilityFinding[] = materialRuntime.diagnostics.map(
+    (diag): CapabilityFinding => ({
+      id: `planner.materialRuntime.${diag.code}`,
+      severity: diag.severity === 'error' ? 'error' : 'warning',
+      route: (diag.detail as Record<string, unknown> | undefined)?.routeScope as RenderRoute | undefined,
+      message: diag.message,
+      extensionId: diag.extensionId,
+      contributionId: diag.contributionId,
+      materialRefId: (diag.detail as Record<string, unknown> | undefined)?.materialRefId as string | undefined,
+      detail: diag.detail as Record<string, unknown> | undefined,
+    }),
+  );
+
   return Object.freeze({
     guard: emptyGuard(findings, blockers),
     findings,
     blockers,
     routes,
     routePlans,
-    diagnostics: findings,
+    diagnostics: [
+      ...findings,
+      ...projectionFindings,
+    ],
     nextActions: sortedActions(acc.nextActions),
     canBrowserExport: !browserRoute?.blocked,
     canWorkerExport: !workerRoute?.blocked,

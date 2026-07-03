@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { planRender } from '@/tools/video-editor/runtime/renderPlanner.ts';
+import { projectHostMaterialRuntime } from '@/tools/video-editor/runtime/composition/materialRuntime.ts';
 import {
   blockerToRouteFitMetadata,
   findingToRouteFitMetadata,
@@ -156,8 +157,8 @@ function renderDependentOutput(): VideoEditorOutputFormatDescriptor {
     blockers: [],
     nextActions: [
       {
-        kind: 'start-process',
-        label: 'Start dataset process',
+        kind: 'select-route',
+        label: 'Plan sidecar-export',
         route: 'sidecar-export',
         processId: 'dataset-process',
         operationId: 'exportDataset',
@@ -224,13 +225,7 @@ function processDescriptor(): VideoEditorProcessDescriptor {
       { source: 'extension', extensionId: 'ext.dataset', contributionId: 'dataset.zip' },
     ],
     blockers: [],
-    nextActions: [
-      {
-        kind: 'start-process',
-        label: 'Start Dataset process',
-        processId: 'dataset-process',
-      },
-    ],
+    nextActions: [],
   };
 }
 
@@ -804,20 +799,26 @@ describe('planRender', () => {
     ]));
     expect(result.nextActions).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        kind: 'resolve-blocker',
+        kind: 'materialize',
         route: 'browser-export',
         label: 'Materialize shader shader.preview.clip',
         processId: 'shader-materializer',
         operationId: 'materializeClipShader',
+        detail: expect.objectContaining({
+          specificKind: 'resolve-blocker',
+        }),
       }),
     ]));
     expect(result.routePlans.find((routePlan) => routePlan.route === 'browser-export')?.nextActions)
       .toEqual(expect.arrayContaining([
         expect.objectContaining({
-          kind: 'resolve-blocker',
+          kind: 'materialize',
           route: 'browser-export',
           processId: 'shader-materializer',
           operationId: 'materializeClipShader',
+          detail: expect.objectContaining({
+            specificKind: 'resolve-blocker',
+          }),
         }),
       ]));
     expect(result.routePlans.find((routePlan) => routePlan.route === 'worker-export')?.nextActions)
@@ -848,8 +849,11 @@ describe('planRender', () => {
         },
       ],
       nextActions: [
-        expect.objectContaining({ kind: 'start-process', processId: 'dataset-process' }),
-        expect.objectContaining({ kind: 'start-process', processId: 'dataset-process', route: 'sidecar-export' }),
+        expect.objectContaining({
+          kind: 'select-route',
+          processId: 'dataset-process',
+          route: 'sidecar-export',
+        }),
       ],
     });
     expect(result.blockers).toEqual([
@@ -931,6 +935,10 @@ describe('planRender', () => {
         route: 'browser-export',
         reason: 'live-unbaked',
         materialRefId: 'mat-live-1',
+        detail: expect.objectContaining({
+          materialState: 'pending',
+          materialPhase: 'queued',
+        }),
       }),
     ]);
   });
@@ -965,14 +973,119 @@ describe('planRender', () => {
     expect(result.blockers.some((blocker) => blocker.materialRefId === 'mat-resolved')).toBe(false);
     expect(result.nextActions).toEqual([
       expect.objectContaining({
-        kind: 'resolve-blocker',
+        kind: 'materialize',
         label: 'Materialize mat-missing',
         message: 'Material bytes are unavailable.',
+        detail: expect.objectContaining({
+          specificKind: 'resolve-blocker',
+        }),
       }),
       expect.objectContaining({
-        kind: 'resolve-blocker',
+        kind: 'materialize',
         label: 'Materialize mat-stale',
         message: 'Material was produced from an older source hash.',
+        detail: expect.objectContaining({
+          specificKind: 'resolve-blocker',
+        }),
+      }),
+    ]);
+  });
+
+  it('derives matrix-backed material repair actions from legacy material refs and statuses', () => {
+    const result = planRender({
+      materialRefs: [
+        materialRef('mat-baking'),
+        materialRef('mat-failed'),
+      ],
+      materialStatuses: [
+        {
+          materialRefId: 'mat-baking',
+          state: 'pending',
+          detail: { phase: 'active' },
+          message: 'Materialization is already running.',
+        },
+        {
+          materialRefId: 'mat-failed',
+          state: 'failed',
+          message: 'Materialization crashed.',
+        },
+      ],
+    });
+
+    expect(result.blockers).toEqual([
+      expect.objectContaining({
+        id: 'planner.material.mat-baking.browser-export.process-dependent',
+        reason: 'process-dependent',
+        materialRefId: 'mat-baking',
+        detail: expect.objectContaining({
+          materialState: 'pending',
+          materialPhase: 'active',
+        }),
+      }),
+      expect.objectContaining({
+        id: 'planner.material.mat-failed.browser-export.materialization-error',
+        reason: 'materialization-error',
+        materialRefId: 'mat-failed',
+        detail: expect.objectContaining({
+          materialState: 'failed',
+        }),
+      }),
+    ]);
+    expect(result.nextActions).toEqual([
+      expect.objectContaining({
+        kind: 'bake',
+        label: 'Bake mat-baking',
+        message: 'Materialization is already running.',
+        detail: expect.objectContaining({
+          specificKind: 'resolve-blocker',
+        }),
+      }),
+      expect.objectContaining({
+        kind: 'open-settings',
+        label: 'Open settings for mat-failed',
+        message: 'Materialization crashed.',
+        detail: expect.objectContaining({
+          specificKind: 'resolve-blocker',
+        }),
+      }),
+    ]);
+  });
+
+  it('accepts a prebuilt material projection without re-deriving planner material status logic', () => {
+    const prebuiltMaterialRuntime = projectHostMaterialRuntime({
+      materialRefs: [materialRef('mat-projected')],
+      materialStatuses: [
+        {
+          materialRefId: 'mat-projected',
+          state: 'failed',
+          message: 'Use the prebuilt material runtime.',
+        },
+      ],
+    });
+
+    const result = planRender({
+      materialRefs: [materialRef('mat-projected')],
+      materialStatuses: [
+        {
+          materialRefId: 'mat-projected',
+          state: 'resolved',
+        },
+      ],
+      materialRuntime: prebuiltMaterialRuntime,
+    });
+
+    expect(result.blockers).toEqual([
+      expect.objectContaining({
+        id: 'planner.material.mat-projected.browser-export.materialization-error',
+        reason: 'materialization-error',
+        materialRefId: 'mat-projected',
+      }),
+    ]);
+    expect(result.nextActions).toEqual([
+      expect.objectContaining({
+        kind: 'open-settings',
+        label: 'Open settings for mat-projected',
+        message: 'Use the prebuilt material runtime.',
       }),
     ]);
   });

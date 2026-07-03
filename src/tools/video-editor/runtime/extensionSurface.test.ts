@@ -1539,7 +1539,6 @@ describe('normalizeExtensionRuntime — M6 output format contributions', () => {
     ]);
     expect(of.blockers).toEqual([]);
     expect(of.nextActions.map((action) => action.kind)).toEqual([
-      'start-process',
       'select-route',
       'select-route',
     ]);
@@ -1692,6 +1691,12 @@ describe('normalizeExtensionRuntime — M6 output format contributions', () => {
       reason: 'route-unsupported',
     });
     expect(of.nextActions).toEqual([of.blockers[0].nextAction]);
+    expect(of.nextActions[0]).toMatchObject({
+      kind: 'open-settings',
+      detail: {
+        specificKind: 'resolve-blocker',
+      },
+    });
     expect(of.capabilities?.anyBlocked).toBe(true);
   });
 });
@@ -1770,14 +1775,7 @@ describe('normalizeExtensionRuntime — M12 process contributions', () => {
       },
     ]);
     expect(process.blockers).toEqual([]);
-    expect(process.nextActions).toEqual([
-      {
-        kind: 'start-process',
-        label: 'Start FFmpeg',
-        processId: 'ffmpeg-local',
-        message: 'Process execution is host-owned and must be activated before route planning can dispatch operations.',
-      },
-    ]);
+    expect(process.nextActions).toEqual([]);
     expect(rt.inactiveReserved.filter((item) => item.kind === 'process')).toHaveLength(1);
   });
 });

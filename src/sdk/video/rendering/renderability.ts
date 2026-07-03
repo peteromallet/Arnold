@@ -45,6 +45,7 @@ export type RenderBlockerReason =
   | 'process-dependent'
   | 'missing-material'
   | 'materialization-failed'
+  | 'materialization-error'
   | 'inactive-extension'
   | 'unknown';
 
@@ -57,6 +58,7 @@ export const RENDER_BLOCKER_REASONS = [
   'process-dependent',
   'missing-material',
   'materialization-failed',
+  'materialization-error',
   'inactive-extension',
   'unknown',
 ] as const satisfies readonly RenderBlockerReason[];

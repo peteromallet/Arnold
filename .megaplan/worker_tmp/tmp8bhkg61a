@@ -1,0 +1,821 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `critique_evaluator`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3a-material-status-and-20260703-2036`
+Current milestone: `m3a-material-status-matrix`
+
+### Phase Instruction
+Select critique checks that can catch North Star violations, scope substitution, or unsupported claims of alignment.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are the Critique Evaluator. Your job is to decide which critique
+        lenses to fire and to rate each selected lens's difficulty on a 1–5
+        complexity scale. The profile will map your complexity scores to
+        models — you do NOT name models or vendors.
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M3a: Material Status And Planner Matrix
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Finished plan:
+        # Implementation Plan: M3a Material Status And Planner Matrix
+
+## Overview
+The goal is to lock the V1 material status/action contract without expanding the public status vocabulary beyond `missing`, `pending`, `resolved`, `stale`, and `failed`. Current repo shape matches the brief: `renderPlanner.ts` still owns a four-state material contract with `unbaked`, `extensionSurface.ts` still exposes `start-process`, material blockers are hardcoded to browser export, and there is no host material runtime projection. This plan narrows execution to contract, projection, planner, diagnostics, provenance validation, and direct UI/test consumers. That narrowing is a bridge, not a contradiction: live bake execution, process execution, agent promotion, graph-projected `requires` edges, and output-format sidecars remain outside M3a per the North Star and local scope.
+
+The gate finding targets the verification contract, not the code target or root cause. The plan still points at the right implementation surfaces; the revision makes the scoped baseline test contract machine-readable with path-only selectors and moves broad commands into explicit final gates.
+
+Conservative assumptions for the missing v8 material matrix are encoded as an implementation artifact and tested. The plan should not silently add executable process behavior; process-backed materializer requirements remain declarative facts only.
+
+## Phase 1: Contract Foundation
+
+### Step 1: Add material status/detail types and SDK provenance fields (`src/tools/video-editor/runtime/renderPlanner.ts`, `src/sdk/video/rendering/artifacts.ts`, `src/sdk/index.ts`)
+**Complexity: 2**
+1. Replace `RenderPlannerMaterialState` with `missing | pending | resolved | stale | failed`.
+2. Add material detail fields with `phase?: 'queued' | 'active' | 'live-only'` and `quality?: 'weaker-provenance' | 'route-incompatible'`.
+3. Add pure helper predicates `isActiveBake`, `isLiveOnly`, `isWeakerProvenance`, and `isRouteIncompatible`, exported from the host runtime surface where callers can use them without importing projection internals.
+4. Add optional `provenance?: Record<string, unknown>` to `RenderMaterialRef`/`RenderMaterial` to match the existing artifact manifest and sidecar provenance shape.
+5. Keep old `unbaked` out of the TypeScript contract; migrate fallback behavior to `pending + phase: queued`.
+
+### Step 2: Replace planner next-action vocabulary (`src/tools/video-editor/runtime/extensionSurface.ts`, `src/tools/video-editor/runtime/families/projectors/processProjector.ts`, `src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts`)
+**Complexity: 3**
+1. Change `VideoEditorPlannerNextActionDescriptor.kind` to `select-route | materialize | bake | invoke-agent | open-settings | install-extension | enable-extension`.
+2. Remove `start-process` from V1 planner actions.
+3. Preserve compatibility for old `resolve-blocker` consumers through `detail.specificKind` only where existing projections still need a bridge; do not keep `resolve-blocker` as a first-class V1 action unless a compile-time dependency proves it is still required.
+4. Convert process projector output to declarative requirement/blocker metadata instead of executable `start-process` actions.
+5. Convert output-format repair actions to the closest V1 action, typically `select-route`, `open-settings`, `install-extension`, or `enable-extension`.
+
+### Step 3: Decide and encode the failed blocker vocabulary (`src/sdk/video/rendering/renderability.ts`, `src/tools/video-editor/runtime/renderPlanner.ts`)
+**Complexity: 3**
+1. Add a failed-specific `RenderBlockerReason`, tentatively `materialization-error`, because the done criteria require `stale` and `failed` to produce distinct blockers and repair actions.
+2. Update `RENDER_BLOCKER_REASONS` and affected tests.
+3. Keep `materialization-failed` mapped to stale material records for compatibility with existing behavior.
+4. If review rejects adding a public SDK blocker value, fall back only by explicit decision to `materialization-failed` plus detail differentiation; do not silently collapse stale and failed in implementation.
+
+## Phase 2: Material Matrix And Projection
+
+### Step 4: Create the v8 material planner matrix artifact (`src/tools/video-editor/runtime/composition/materialRuntime.ts`, `src/tools/video-editor/runtime/composition/materialRuntime.test.ts`)
+**Complexity: 4**
+1. Define a typed matrix for `5 statuses x 3 phases x 2 qualities`, plus no-detail/default rows, mapping each valid row to blocker reason, severity, determinism posture, route fit, diagnostic codes, and next-action kind.
+2. Mark invalid combinations explicitly, including resolved records with blocking phase/quality and missing records with durable-candidate-only quality unless the matrix justifies them.
+3. Encode mechanical migrations: old `unbaked` scenarios become `pending + queued`; active work is `pending + active`; live/runtime-only is `missing + live-only`; degraded material scenarios become `stale`.
+4. Ensure `pending + active` remains distinct from install/retry flows and maps to a bake/materialization-in-progress posture.
+5. Derive route-incompatible blockers from route facts instead of hardcoded browser export assumptions.
+
+### Step 5: Build host material runtime projection (`src/tools/video-editor/runtime/composition/materialRuntime.ts`)
+**Complexity: 4**
+1. Add `projectHostMaterialRuntime(input)` following `graphProjector.ts` and `referenceResolver.ts`: typed input, deterministic ordering, frozen result, diagnostics array, and `ReadonlyMap` keyed by material ref id.
+2. Input should include `materialRefs`, `materialStatuses`, contribution index/runtime descriptors where available, process statuses as non-executable facts, and requested/canonical routes.
+3. Output each material projection with status, detail, predicates, determinism, provenance posture, per-route fit, blocker info, next actions, and diagnostics.
+4. Include route scope on blockers/actions and never default generic material refs to `browser-export` without route evidence.
+5. Emit invalid status/detail diagnostics and block authoritative export rows through the matrix.
+
+### Step 6: Add material diagnostics (`src/tools/video-editor/runtime/composition/diagnostics.ts`, `src/tools/video-editor/runtime/composition/materialRuntime.ts`)
+**Complexity: 3**
+1. Add diagnostic codes: `composition/material-status-invalid`, `composition/material-missing-provenance`, `composition/material-live-only`, `composition/material-stale`, `composition/material-failed`, `composition/material-weaker-provenance`, and `composition/material-route-incompatible`.
+2. Extend `CompositionDiagnosticDetail` with material fields: `materialRefId`, `routeScope`, `materialStatus`, `detailPhase`, `detailQuality`, `provenanceGap`, and `nextAction`.
+3. Add a focused material diagnostic builder or helper if it reduces repeated detail assembly.
+4. Set severities so invalid status/detail, failed, and route-incompatible rows block authoritative export; live-only and weak provenance remain route-sensitive according to the matrix.
+
+### Step 7: Validate provenance for created artifacts/materials (`src/tools/video-editor/runtime/composition/materialRuntime.ts`, `src/sdk/video/rendering/artifacts.ts`)
+**Complexity: 3**
+1. Treat missing provenance on manifests and sidecars as absent or empty `provenance` records.
+2. Treat missing material provenance as absent/empty `materialRef.provenance` unless derivable origin metadata exists via `producerExtensionId`, `producerVersion`, and determinism.
+3. Emit `composition/material-missing-provenance` with `materialRefId`, route scope, and `provenanceGap` details.
+4. Keep validation declarative; do not introduce material creation, bake execution, capture execution, or agent promotion.
+
+## Phase 3: Planner And Consumer Migration
+
+### Step 8: Wire projection into the render planner (`src/tools/video-editor/runtime/renderPlanner.ts`)
+**Complexity: 4**
+1. Replace ad hoc `createMaterialStatusMap`, `materialBlockerReason`, and `materializeAction` behavior with `projectHostMaterialRuntime` output.
+2. Update `RenderPlannerInput` to accept the projection directly or enough fields to build it once, while preserving existing `materialRefs`/`materialStatuses` input compatibility for callers.
+3. Update `collectMaterialRef` and `collectRenderGroups` to consume matrix-projected blockers/actions and include material status/detail in blocker detail.
+4. Update route summaries, route plans, diagnostics, and next actions to include projection diagnostics and route-scoped material repair actions.
+5. Preserve process-backed materializer requirements as facts; do not invoke or schedule processes.
+
+### Step 9: Migrate UI consumers (`src/tools/video-editor/components/PendingMaterialPlaceholder.tsx`, `src/tools/video-editor/components/MaterialBrowser.tsx`, `src/tools/video-editor/compositions/VisualClip.tsx`)
+**Complexity: 2**
+1. Replace `unbaked` display logic with `pending`, using `detail.phase` to distinguish queued, active, and live-only copy where applicable.
+2. Add `failed` UI treatment and keep `resolved` as non-placeholder.
+3. Update `MaterialBrowser` filters and action lookup to recognize the new V1 action kinds and `detail.specificKind` compatibility data where present.
+4. Update `VisualClip` fallback status for nondeterministic materials to `pending + phase: queued` and render placeholders for `missing`, `pending`, `stale`, and `failed`.
+
+### Step 10: Update contract documentation (`docs/extensions/material-status-planner-matrix.md`)
+**Complexity: 2**
+1. Document the five public statuses, detail phase/quality values, helper predicates, and seven V1 action kinds.
+2. Include the matrix table or a generated summary from the typed matrix.
+3. Call out out-of-scope execution behavior: live bake execution, deterministic capture execution, agent promotion, process execution, graph-projected requires edges, and output-format sidecars.
+
+## Phase 4: Verification
+
+### Step 11: Add projection and diagnostic unit tests (`src/tools/video-editor/runtime/composition/materialRuntime.test.ts`, `src/tools/video-editor/runtime/composition/diagnostics.test.ts`)
+**Complexity: 3**
+1. Cover all status/phase/quality matrix rows, including invalid combinations.
+2. Verify helper predicates, route fit, blocker reason, next action, and diagnostic generation.
+3. Verify provenance diagnostics for material refs, artifact manifests, and sidecars.
+4. Assert the projection result and nested collections are immutable/frozen where the local projection pattern expects that.
+
+### Step 12: Update existing planner/action/UI tests (`src/tools/video-editor/runtime/renderPlanner.test.ts`, `src/tools/video-editor/runtime/extensionSurface.test.ts`, `src/tools/video-editor/components/MaterialBrowser.test.tsx`, `src/tools/video-editor/compositions/VisualClip.test.tsx`, `src/tools/video-editor/runtime/renderability.test.ts`)
+**Complexity: 3**
+1. Replace `unbaked` expectations with `pending + phase: queued`.
+2. Add stale vs failed blocker/action assertions.
+3. Update next-action kind snapshots and projector expectations to remove `start-process`.
+4. Verify planner material routes are descriptor/graph-derived, not hardcoded to browser export.
+5. Keep existing missing/stale/resolved behavior covered to prevent regressions.
+
+### Step 13: Run scoped baseline and broad gates
+**Complexity: 2**
+1. Use the machine-readable `test_blast_radius` metadata as the finalize baseline contract. Its selectors are path-only and point at the focused Vitest files changed or created by this plan.
+2. Run the focused baseline command first:
+   ```sh
+   npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/composition/diagnostics.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/compositions/VisualClip.test.tsx
+   ```
+3. Run typecheck/build-level validation after the focused baseline passes:
+   ```sh
+   npm run build
+   ```
+4. Run lint for touched TypeScript/TSX surfaces:
+   ```sh
+   npm run lint
+   ```
+5. Run the full unit suite as the final broad gate, or earlier if import graph fallout is unclear:
+   ```sh
+   npm test
+   ```
+
+## Execution Order
+1. Land types and action vocabulary before projection logic so downstream compile errors identify all migration points.
+2. Encode the matrix before planner wiring; planner code should consume matrix output, not duplicate status branching.
+3. Add diagnostics and provenance validation inside projection before UI migration so consumers receive one normalized shape.
+4. Migrate planner before UI, because UI action/status behavior depends on planner output.
+5. Update tests alongside each implementation step; keep the full suite for the end.
+
+## Validation Order
+1. Start with `materialRuntime.test.ts` and `diagnostics.test.ts` because they prove the contract and matrix cheaply.
+2. Run planner, renderability, and extension-surface tests next to catch action/blocker regressions.
+3. Run UI tests after planner outputs are stable.
+4. Finish with `npm run build`, `npm run lint`, and `npm test` as broad gates.
+
+## Ticket Notes
+No open ticket should be auto-linked from this plan. Ticket `01KS384XKZNEWQRSXN2NXQ0DTJ` is adjacent extensibility planning but broader than this M3a contract, so linking it with `resolves_on_complete=true` would be misleading. Ticket `01KV8XVYW2EYDDDY30V48YX520` is unrelated to this repo change.
+
+
+        Task graph (plan metadata):
+        {
+  "version": 2,
+  "timestamp": "2026-07-03T21:01:29Z",
+  "hash": "sha256:24d40f9070907be235a1d3d20d1c8da7876228e3bd4051f900bc8aa99ff5d175",
+  "changes_summary": "Addressed the finalize gate by treating the issue as a verification-contract failure rather than a wrong-code/root-cause problem. The revised plan keeps the implementation scope intact, adds an explicit scoped baseline step, and provides machine-readable path-only test selectors while leaving build, lint, and full test suite as broad gates.",
+  "flags_addressed": [
+    {
+      "id": "finalize-baseline-test-scope",
+      "resolution": "addressed",
+      "reason": "Replaced mixed script/path selector intent with path-only scoped test selectors in `test_blast_radius` and moved build/lint/full-suite commands into `always_run` plus Phase 4 Step 13 broad gates.",
+      "where": "Phase 4 \u2014 Step 13; structured `test_blast_radius`"
+    }
+  ],
+  "questions": [
+    "Should the new failed-specific SDK blocker reason be named `materialization-error`, or should reviewers choose another stable name before implementation?",
+    "Should material provenance be required directly on `RenderMaterialRef.provenance`, or is derived provenance from producer metadata sufficient for existing material refs?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "The public material status contract uses exactly `missing`, `pending`, `resolved`, `stale`, and `failed`; no source or test uses `unbaked` as a material planner state.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Planner next actions expose the seven V1 action kinds and no longer emit `start-process`; any compatibility bridge carries the specific action in detail rather than as a public action kind.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The material runtime projection is keyed by material ref id, derives helper predicates, route fit, blockers, actions, and diagnostics from the typed matrix, and freezes projection outputs consistently with existing composition projectors.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The v8 material matrix distinguishes active bake, queued bake, live-only, weak provenance, and route incompatibility through status detail and predicate behavior.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`stale` and `failed` material states produce distinct blocker reasons or an explicitly documented failed-specific SDK blocker value, plus distinct repair actions.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Invalid status/detail combinations emit `composition/material-status-invalid` and block authoritative export.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Material diagnostics include material ref id, route scope, status/detail, provenance gap where applicable, and next action detail.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Planner route fit for material actions is derived from descriptors, projection input, or graph/runtime facts and does not hardcode generic material refs to `browser-export`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Created artifact/material provenance validation emits `composition/material-missing-provenance` for absent or empty provenance records where no derivable origin metadata exists.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The scoped finalize baseline is machine-readable through `test_blast_radius`, uses only concrete path selectors, and can run the focused Vitest files before broad checks.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`npm run build`, `npm run lint`, and `npm test` pass after the migration.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "run_linter",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Matrix implementation remains table-driven or otherwise centralized, avoiding duplicated status/phase/quality branching across planner and UI consumers.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Contract documentation is concise and matches the implemented matrix/action vocabulary.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The scope narrowing is a bridge: M3a locks material contracts and planner projection, while execution features stay in later milestones per the North Star.",
+    "Because the original v8 matrix artifact is missing, implementation will create the matrix from the M3a taxonomy and locked decisions, then make every row explicit and test-covered.",
+    "A new failed-specific `RenderBlockerReason` is acceptable because the done criteria require stale and failed blockers to be distinct; the plan assumes `materialization-error` unless review requests another name.",
+    "`materialization-failed` remains the stale-material blocker for compatibility with existing tests and semantics.",
+    "`RenderMaterialRef.provenance?: Record<string, unknown>` is the least invasive material provenance extension because artifacts and sidecars already use that shape.",
+    "For legacy/nondeterministic fallback behavior, old `unbaked` maps to `pending` with `detail.phase = queued`.",
+    "Process-backed materializer requirements are preserved only as declarative facts; no process lifecycle or execution vocabulary is introduced.",
+    "Route fit can be derived from existing route descriptors, planner request routes, material determinism, and runtime graph facts available to the projection without adding M4 graph-projected `requires` edges.",
+    "The gate feedback does not require changing the North Star or implementation scope; it only requires a deterministic test-selection contract for finalize."
+  ],
+  "delta_from_previous_percent": 4.25,
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "reason": "Covers planner blocker/action migration and material route behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "reason": "Covers the V1 next-action vocabulary and compatibility detail behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderability.test.ts",
+        "reason": "Covers RenderBlockerReason vocabulary changes for stale versus failed materials."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+        "reason": "Covers material status filters and action UI consumption."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/compositions/VisualClip.test.tsx",
+        "reason": "Covers fallback material status rendering and placeholder behavior."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/index.ts",
+      "src/sdk/video/rendering/artifacts.ts",
+      "src/sdk/video/rendering/renderability.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/extensionSurface.ts",
+      "src/tools/video-editor/runtime/families/projectors/processProjector.ts",
+      "src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+      "src/tools/video-editor/components/PendingMaterialPlaceholder.tsx",
+      "src/tools/video-editor/components/MaterialBrowser.tsx",
+      "src/tools/video-editor/compositions/VisualClip.tsx",
+      "docs/extensions/material-status-planner-matrix.md",
+      "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.test.ts",
+      "src/tools/video-editor/runtime/extensionSurface.test.ts",
+      "src/tools/video-editor/runtime/renderability.test.ts",
+      "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+      "src/tools/video-editor/compositions/VisualClip.test.tsx"
+    ],
+    "always_run": [
+      "npm run build",
+      "npm run lint",
+      "npm test"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/sdk/index.ts, src/sdk/video/rendering/artifacts.ts, src/sdk/video/rendering/renderability.ts, src/tools/video-editor/components/MaterialBrowser.test.tsx, src/tools/video-editor/components/MaterialBrowser.tsx, src/tools/video-editor/components/PendingMaterialPlaceholder.tsx, src/tools/video-editor/compositions/VisualClip.test.tsx, src/tools/video-editor/compositions/VisualClip.tsx, src/tools/video-editor/runtime/composition/diagnostics.test.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/materialRuntime.test.ts, src/tools/video-editor/runtime/composition/materialRuntime.ts, src/tools/video-editor/runtime/extensionSurface.test.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts, src/tools/video-editor/runtime/families/projectors/processProjector.ts, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/renderPlanner.ts, src/tools/video-editor/runtime/renderability.test.ts. Ignored documentation-only change(s) for selector derivation: docs/extensions/material-status-planner-matrix.md. Candidate: The scoped baseline is intentionally path-only so finalize can resolve a deterministic focused test command. These selectors cover the newly introduced projection/matrix tests plus the planner, action vocabulary, renderability, and UI consumers directly affected by the status/action contract migration. Build, lint, and full unit tests remain explicit broad gates because SDK and action vocabulary changes can affect consumers outside the focused tests. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/tools/video-editor/runtime/composition/materialRuntime.test.ts, src/tools/video-editor/runtime/composition/diagnostics.test.ts.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.test.ts"
+    ]
+  },
+  "structure_warnings": []
+}
+
+        Idea:
+# M3a: Material Status And Planner Matrix
+
+## Outcome
+
+Lock the V1 material status/action contract, planner blocking matrix, provenance validation, and host material runtime projection.
+
+## Execution Posture
+
+Keep the public status vocabulary small and normative. Preserve planner/UI distinctions through detail fields and helper predicates rather than expanding statuses.
+
+## Scope
+
+IN:
+- Add SDK material statuses `missing`, `pending`, `resolved`, `stale`, and `failed`.
+- Add standardized `detail.phase` values `queued`, `active`, `live-only` and `detail.quality` values `weaker-provenance`, `route-incompatible`.
+- Add helper predicates `isActiveBake`, `isLiveOnly`, `isWeakerProvenance`, and `isRouteIncompatible`.
+- Implement the material planner blocking matrix from v8.
+- Add host material runtime projection keyed by `MaterialRef`.
+- Add diagnostics for invalid status/detail combinations, missing provenance, live-only status, stale records, failed records, weaker provenance, and route incompatibility.
+- Add planner next actions `select-route`, `materialize`, `bake`, `invoke-agent`, `open-settings`, `install-extension`, and `enable-extension`.
+- Validate provenance manifest requirements for created artifacts/materials.
+- Preserve declarative process-backed materializer requirement payloads as non-executable facts.
+
+OUT:
+- Live bake execution.
+- Deterministic capture execution.
+- Agent material promotion.
+- Graph-projected `requires` edges.
+- Process execution or lifecycle vocabulary.
+- Output-format sidecars.
+
+## Locked Decisions
+
+- Active work is `pending`; live/runtime-only state is `missing` with `phase: live-only`.
+- Weak provenance and route mismatch are qualities on durable candidates or failures, not public statuses.
+- Old `baking`, `unbaked`, and `degraded` scenarios map mechanically into the five-status-plus-detail model.
+- Old consumers may receive `resolve-blocker`, but the specific action must appear as `detail.specificKind`.
+- M3a may preserve process-backed requirements, but M4/M6 own graph edges and execution.
+
+## Constraints
+
+- Do not re-expand to the original eight-status set.
+- Do not convert `pending + active` to generic retry/install.
+- Do not treat `missing + live-only` as an absent package.
+- Do not hardcode generic material refs to browser export.
+- Do not introduce `start-process` as a V1 action.
+
+## Done Criteria
+
+- Active bake, queued bake, live-only data, weak provenance, and route incompatibility are distinguishable through status detail.
+- `stale` and `failed` produce distinct blockers and repair actions.
+- Material diagnostics include material ref, route scope, status/detail, provenance gap where applicable, and next action.
+- Planner route fit comes from descriptors and graph-derived facts.
+- Invalid status/detail combinations emit `composition/material-status-invalid` and block authoritative export.
+
+## Touchpoints
+
+- `src/sdk/index.ts`
+- `src/sdk/video/rendering/artifacts.ts`
+- `src/sdk/video/composition/graph.ts`
+- `src/tools/video-editor/runtime/composition/materialRuntime.ts`
+- `src/tools/video-editor/runtime/composition/**`
+- `src/tools/video-editor/lib/renderRouter.ts`
+- `src/tools/video-editor/components/**`
+- `tests/**/video-editor/**`
+- `docs/extensions/**`
+
+User notes and answers:
+- Unattended auto-approve run: prep clarification halt was converted into planner assumptions so the cloud chain can continue. Questions:
+- [blocking] The v8 material planner blocking matrix specification does not exist as a discrete artifact. The original v8 architecture brief was never transferred to the repository (v8-architecture-baseline.md:6-17). The M3a brief defines the taxonomy (5 statuses × 3 phases × 2 qualities) and Locked Decisions provide partial row mappings (pending+active, missing+live-only, stale+degraded, pending+queued), but the full 30-row cross-product matrix — mapping each combination to a canonical RenderBlockerReason, severity, determinism posture, and next-action kind — must be produced before implementation. Without it, the correct blocker reason for combinations like 'failed+live-only', 'pending+weaker-provenance', or 'stale+route-incompatible' is undefined.
+- [blocking] The Done Criteria require 'stale and failed produce distinct blockers and repair actions,' but the current 9 RenderBlockerReason values (renderability.ts:40-49) do not include a distinct reason for 'failed' — 'materialization-failed' is already mapped to 'stale'. Either a new blocker reason (e.g., 'materialization-errored') must be added to the SDK RenderBlockerReason union, or 'failed' must reuse an existing reason with detail-only distinction. Adding a new SDK value changes the public contract surface and must be reconciled with the constraint that renderability.ts is a 'locked' vocabulary.
+Planner/executor must make conservative repo-backed assumptions, encode them in artifacts, and let normal critique/gate/review phases reject unsafe choices.
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3a-material-status-and-20260703-2036/critique_evaluator_output.json
+        Read this file first by calling `read_file` with `path` exactly `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3a-material-status-and-20260703-2036/critique_evaluator_output.json` — it contains the expected JSON structure with all known check IDs pre-populated in `skipped`.
+        If you cannot supply that exact non-empty path, do not call `read_file`.
+        Move checks you are firing to `selections`, fill `why` for the rest, and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        ## Prep that preceded this plan
+
+This plan was produced after a multi-step prep phase (triage -> research
+fan-out -> distill). Use the prep record below when deciding which lenses
+to fire: areas prep researched thoroughly may need less scrutiny, while
+areas prep flagged as gaps, contradictions, or timed-out research warrant
+extra attention from the critics.
+
+**Prep coverage:** area_count=3, fanout_count=3, completed_count=2, partial_count=1, timed_out_count=0, error_count=0
+
+**Gaps prep could not close:**
+- v8-blocking-matrix-spec: research returned partial coverage.
+- Referenced files missing during bounded cross-reference: src/tools/video-editor/runtime/composition/materialRuntime.ts
+
+**Contradictions surfaced in research:**
+- file .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m3a-material-status-matrix.md appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, v8-blocking-matrix-spec=partial
+- file docs/extensions/composition-spine/m0-decisions.md appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, Provenance validation requirements and host material runtime projection design=complete
+- file docs/extensions/composition-spine/v8-architecture-baseline.md appears in multiple areas with differing evidence/status: Provenance validation requirements and host material runtime projection design=complete, v8-blocking-matrix-spec=partial
+- file src/sdk/video/composition/graph.ts appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, Provenance validation requirements and host material runtime projection design=complete, v8-blocking-matrix-spec=partial
+- file src/sdk/video/rendering/artifacts.ts appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, Provenance validation requirements and host material runtime projection design=complete
+- file src/sdk/video/rendering/renderability.ts appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, Provenance validation requirements and host material runtime projection design=complete, v8-blocking-matrix-spec=partial
+- file src/tools/video-editor/components/PendingMaterialPlaceholder.tsx appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, Provenance validation requirements and host material runtime projection design=complete
+- file src/tools/video-editor/runtime/composition/diagnostics.ts appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, Provenance validation requirements and host material runtime projection design=complete
+- file src/tools/video-editor/runtime/composition/graphProjector.ts appears in multiple areas with differing evidence/status: Provenance validation requirements and host material runtime projection design=complete, v8-blocking-matrix-spec=partial
+- file src/tools/video-editor/runtime/extensionSurface.ts appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, Provenance validation requirements and host material runtime projection design=complete, v8-blocking-matrix-spec=partial
+- file src/tools/video-editor/runtime/renderPlanner.test.ts appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, v8-blocking-matrix-spec=partial
+- file src/tools/video-editor/runtime/renderPlanner.ts appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, Provenance validation requirements and host material runtime projection design=complete, v8-blocking-matrix-spec=partial
+
+**Prep dossier:**
+
+# Prep Research Dossier
+
+## Triage
+
+M3a locks the V1 material status/action contract with a 5-status vocabulary (missing, pending, resolved, stale, failed) plus detail fields (phase, quality) and helper predicates, replacing the current 4-status model (missing, stale, resolved, unbaked). The task also adds 7 planner next-actions replacing 3, implements the v8 material planner blocking matrix, adds host material runtime projection keyed by MaterialRef, validates provenance, and emits diagnostics for invalid status/detail combinations. The mechanical mappings (old statuses→new, old actions→new) are well-described, but three areas remain uncertain: (1) the v8 blocking matrix specification is referenced but not inlined—it must be produced from existing v8 artifacts; (2) provenance validation requirements are underspecified given sparse optional provenance fields; (3) the host material runtime projection is entirely new with no precedent file.
+
+## Research Areas
+
+1. status-action-vocabulary-audit: Catalog all current material status usages (RenderPlannerMaterialState 'missing'|'stale'|'resolved'|'unbaked' plus 'baking'/'degraded' references across planner, export guard, UI, and tests) and all current next-action usages (VideoEditorPlannerNextActionDescriptor with kinds 'select-route'|'start-process'|'resolve-blocker'). Confirm the mechanical mapping: 'baking'→pending+phase:active, 'unbaked'→pending+phase:queued, 'degraded'→stale. Identify every caller that touches material statuses or planner actions to bound the change radius. Produce the full old→new mapping table and caller inventory.
+2. v8-blocking-matrix-spec: The task requires implementing 'the material planner blocking matrix from v8.' The current 4-status blocking logic lives in renderPlanner.ts::materialBlockerReason() (lines 1015-1027). The v8 reference likely ties to the v8 resolver precedence documented in graph.ts (line 75) but the full 5-status × detail.phase × detail.quality → blocker-reason + next-action + determinism matrix must be produced as an explicit spec artifact. Produce the complete cross-product matrix covering all 5 statuses, 3 phases (queued/active/live-only), 2 qualities (weaker-provenance/route-incompatible), and their blocker reasons, severities, determinism postures, and next-action mappings.
+3. provenance-and-projection-design: Two tightly-related production-of-artifact items: (a) Catalog existing provenance fields across RenderArtifactManifest.provenance, RenderArtifactSidecarDescriptor.provenance, and AssetProvenanceMetadata to define what 'missing provenance' means for created artifacts/materials, and what validation rules emit the new diagnostics for missing provenance, weaker-provenance quality, and route-incompatible quality. (b) Design the host material runtime projection (materialRuntime.ts, which does not exist) keyed by MaterialRef, modeling it after the existing graphProjector.ts and referenceResolver.ts patterns. Produce the projection interface shape, its data sources, and its relationship to the planner input contract.
+
+## Findings
+
+### Material status and next-action vocabulary migration audit (complete)
+
+Catalog all current material status usages and next-action usages, confirm the mechanical mapping, and identify every caller that touches material statuses or planner actions.
+
+- Current RenderPlannerMaterialState (renderPlanner.ts:45) has exactly 4 statuses: 'missing', 'stale', 'resolved', 'unbaked'. The target V1 five-status set ('missing', 'pending', 'resolved', 'stale', 'failed') from prep.md:42 and m3a brief is NOT yet implemented — 'pending' and 'failed' are absent.
+- Current VideoEditorPlannerNextActionDescriptor.kind (extensionSurface.ts:251) has exactly 3 kinds: 'select-route', 'start-process', 'resolve-blocker'. The target V1 seven-kind set from prep.md:43 ('select-route', 'materialize', 'bake', 'invoke-agent', 'open-settings', 'install-extension', 'enable-extension') is NOT yet implemented — 'materialize', 'bake', 'invoke-agent', 'open-settings', 'install-extension', 'enable-extension' are absent. 'start-process' is present but the m3a brief constraint says 'Do not introduce start-process as a V1 action'.
+- Mechanical mapping 'baking → pending + phase:active' is confirmed by m3a brief:34 and m0-decisions.md:60-64. However, 'baking' is NOT found anywhere in the current source code — it is a pre-existing concept from the old model that no caller currently uses. The mapping is forward-looking.
+- Mechanical mapping 'unbaked → pending + phase:queued' is confirmed. 'unbaked' IS currently used as a fallback material state in MaterialBrowser.tsx:48 ('material.determinism === 'deterministic' ? 'resolved' : 'unbaked''), VisualClip.tsx:280 (same pattern), PendingMaterialPlaceholder.tsx:25-30 (UI copy for unbaked), and VisualClip.test.tsx:311.
+- Mechanical mapping 'degraded → stale' is confirmed by m3a brief:36. 'degraded' in the current codebase is exclusively a ProcessStatus state (renderPlanner.ts:860,864) and extension loading state (extensionLoader.ts:212,470), NOT a material status. No caller currently uses 'degraded' as a material state.
+- detail.phase and detail.quality fields do NOT exist on RenderPlannerMaterialStatus (renderPlanner.ts:47-52 has only materialRefId, state, message, updatedAt). No helper predicates (isActiveBake, isLiveOnly, isWeakerProvenance, isRouteIncompatible) exist.
+- The callers of material statuses are: renderPlanner.ts:45 (type definition), renderPlanner.ts:1015-1061 (materialBlockerReason, collectMaterialRef), MaterialBrowser.tsx:43-48,55-56 (statusFor, matches filter), PendingMaterialPlaceholder.tsx:12-37 (STATE_COPY renders), VisualClip.tsx:278-285 (statusForMaterial, shouldRenderMaterialPlaceholder), VisualClip.test.tsx:311, renderPlanner.test.tsx:938-977 (missing/stale/resolved tests), MaterialBrowser.test.tsx:34-35,55,62.
+- The callers of planner next actions are: extensionSurface.ts:251 (type definition), renderPlanner.ts:540-553 (shaderMaterializationAction), renderPlanner.ts:1003-1013 (materializeAction), processProjector.ts:33-35 (start-process), outputFormatProjector.ts:106-108 (resolve-blocker), MaterialBrowser.tsx:64-73 (actionFor filters for 'resolve-blocker'), extensionSurface.test.tsx:1541-1545 (nextActions kinds), renderPlanner.test.tsx:966-977 (verifies resolve-blocker actions).
+- No host material runtime projection (materialRuntime.ts) exists — the file referenced in m3a touchpoints does not exist yet.
+- No diagnostics for invalid status/detail combinations exist; no composition/material-status-invalid error code is defined in the diagnostics module (composition/diagnostics.ts).
+- Provenance validation for created artifacts/materials is absent from the codebase — no provenance field on RenderPlannerMaterialStatus and no provenance-check logic in material processing.
+- All current next-action kind usages in callsites consistently use only 'resolve-blocker' and 'start-process'. 'select-route' is defined in the type union but primarily used in test expectations (extensionSurface.test.ts:1542-1543).
+- The planner blocking matrix from v8 is partially implemented: material refs block on missing→missing-material, stale→materialization-failed, unbaked→materialRef.determinism (renderPlanner.ts:1015-1027), but 'failed' status and its distinct blocker reason do not exist.
+
+### v8-blocking-matrix-spec (partial)
+
+The task requires implementing 'the material planner blocking matrix from v8.' The current 4-status blocking logic lives in renderPlanner.ts::materialBlockerReason() (lines 1015-1027). The v8 reference likely ties to the v8 resolver precedence documented in graph.ts (line 75) but the full 5-status × detail.phase × detail.quality → blocker-reason + next-action + determinism matrix must be produced as an explicit spec artifact. Produce the complete cross-product matrix covering all 5 statuses, 3 phases (queued/active/live-only), 2 qualities (weaker-provenance/route-incompatible), and their blocker reasons, severities, determinism postures, and next-action mappings.
+
+- The original v8 architecture brief is ABSENT from the repository. v8-architecture-baseline.md (line 6-17) states: 'The original v8 architecture brief for this epic is absent ... This file was authored in a private workspace and was not transferred to the target repository.' There is no discrete v8 blocking matrix spec artifact anywhere in the repo.
+- The current planner blocking logic in renderPlanner.ts::materialBlockerReason() (lines 1015-1027) operates on a 4-status model: `missing` → `missing-material`, `stale` → `materialization-failed`, `resolved` → undefined (no blocker), `unbaked` → falls through to `materialRef.determinism` (live-unbaked/process-dependent). There is NO mapping for `pending` or `failed` statuses, and NO phase/quality axis.
+- The M3a brief requires 5 statuses (`missing`, `pending`, `resolved`, `stale`, `failed`) but current `RenderPlannerMaterialState` type (renderPlanner.ts line 45) is `'missing' | 'stale' | 'resolved' | 'unbaked'` — `pending` and `failed` are absent, `unbaked` must be retired.
+- The M3a detail taxonomy (`detail.phase`: `queued`, `active`, `live-only`; `detail.quality`: `weaker-provenance`, `route-incompatible`) does not exist anywhere in the codebase. Searches for `detail.phase`, `detail.quality`, `isActiveBake`, `isLiveOnly`, `isWeakerProvenance`, `isRouteIncompatible` all return zero results.
+- Current `VideoEditorPlannerNextActionDescriptor.kind` (extensionSurface.ts line 251) is `'select-route' | 'start-process' | 'resolve-blocker'`. M3a requires adding `materialize`, `bake`, `invoke-agent`, `open-settings`, `install-extension`, `enable-extension` — none exist yet.
+- The diagnostic code `composition/material-status-invalid` required by M3a Done Criteria does not exist. No material-specific diagnostics exist in the codebase.
+- No `materialRuntime.ts` or host material runtime projection exists in `src/tools/video-editor/runtime/composition/`. The directory contains: diagnostics.ts, referenceResolver.ts, patchPreview.ts, shaderValidation.ts, graphProjector.ts and their test files — but no material runtime.
+- The v8-architecture-baseline.md documents the current 9 RenderBlockerReason values (renderability.ts lines 40-49): `missing-contribution`, `route-unsupported`, `preview-only`, `live-unbaked`, `process-dependent`, `missing-material`, `materialization-failed`, `inactive-extension`, `unknown`. These are the fixed vocabulary the matrix must map into.
+- The current `materializeAction` helper (renderPlanner.ts lines 1003-1013) always produces `kind: 'resolve-blocker'` with `route: 'browser-export'` — this hardcodes material refs to browser export, contradicting the M3a constraint 'Do not hardcode generic material refs to browser export.'
+- The test at renderPlanner.test.ts lines 938-977 confirms the current 4-status behavior: `missing` and `stale` produce blockers with `resolve-blocker` next actions, `resolved` passes through, and there are no tests for `pending`, `failed`, phases, or qualities.
+
+Error: The v8 blocking matrix specification does not exist as a discrete artifact anywhere in the repository. The v8-architecture-baseline.md explicitly documents that the original v8 brief was never transferred. The current codebase has a 4-status blocking model with no phase/quality axes, and the M3a brief defines the target 5-status × 3-phase × 2-quality taxonomy but does not provide the full cross-product matrix. The matrix must be produced as a new spec artifact derived from: (a) the M3a brief's status/phase/quality taxonomy, (b) the 9 canonical blocker reasons in renderability.ts, (c) the 7 required next-action kinds from the M3a brief, and (d) the Locked Decisions that map active work to `pending` and live/runtime-only to `missing` with `phase: live-only`.
+
+### Provenance validation requirements and host material runtime projection design (complete)
+
+Catalog existing provenance fields to define 'missing provenance' and design host material runtime projection keyed by MaterialRef, modeled after graphProjector.ts and referenceResolver.ts patterns.
+
+- **Provenance Fields Catalog**: Three distinct provenance surfaces exist: (a) AssetProvenanceMetadata (src/sdk/video/assets/metadata.ts:65-76) with origin, derivedFromAssetId, generated, capturedAt, importedAt — the only strongly-typed provenance shape; (b) RenderArtifactManifest.provenance as Record<string,unknown> (artifacts.ts:121); (c) RenderArtifactSidecarDescriptor.provenance as Record<string,unknown> (artifacts.ts:96). RenderMaterialRef and RenderMaterial carry NO provenance field at all — only producerExtensionId, producerVersion, determinism, and replacementPolicy.
+- **'Missing Provenance' Definition**: For artifacts and sidecars, missing provenance means the optional Record<string,unknown> field is absent or empty. For material refs, there is no provenance field to validate — material provenance would require a new field or derivation from producer extension/process metadata (producerExtensionId, determinism). AssetProvenanceMetadata exists on asset registry entries but material refs are not guaranteed to point to an asset with metadata.
+- **Existing Validation Pattern**: The only existing provenance validation is in liveSteering.ts (validateProvenance, lines 418-448), which checks SteeringProvenance for prompt/model/seed fields and emits 'live/steering-missing-provenance' and 'live/steering-incomplete-provenance' diagnostics. This pattern can serve as a template for material/artifact provenance diagnostics but operates in a different domain (live steering, not render materials).
+- **Weaker-Provenance Quality**: Defined in m0-decisions.md (line 61-62) as a detail.quality value alongside route-incompatible, but has zero implementation. Would apply to durable material candidates or failures where provenance is present but weaker than expected (e.g., generated=true without deterministic capture, or unknown origin). No existing predicate or diagnostic for this.
+- **Route-Incompatible Quality**: Also defined as detail.quality in m0-decisions.md but unimplemented. Would capture cases where a material's determinism status or producer route constraints make it incompatible with the target render route. The planner already checks determinism-to-blocker mapping (renderPlanner.ts:227-236) but does not expose route incompatibility as a quality flag.
+- **MaterialRuntime.ts Does Not Exist**: Confirmed by filesystem search — no file matching '*materialRuntime*' exists. The planner currently receives material refs and statuses as flat arrays (RenderPlannerInput:66-67) and maps them via createMaterialStatusMap (lines 997-1001) for O(1) lookup during collectMaterialRef (lines 1029-1061).
+- **Projection Pattern Reference**: graphProjector.ts (projectCompositionGraph, line 269) demonstrates the canonical pattern: typed input with multiple data sources → projection function → frozen result with nodes, edges, referenceStates, diagnostics. referenceResolver.ts (resolveCompositionReferences, line 144) shows the by-ref-key pattern: Map<string, ResolvedCompositionReference> with state, nodeIds, and diagnostics per ref. Both return read-only frozen objects.
+- **Projection Interface Shape**: Should follow the graphProjector pattern with: (a) input: materialRefs (from timeline/graph), materialStatuses (from provider), contributionIndex, shader descriptors, process statuses; (b) output keyed by materialRef.id (string) containing: materialRef, status (missing|pending|resolved|stale|failed), detail.phase (queued|active|live-only), detail.quality (weaker-provenance|route-incompatible), derived predicates (isActiveBake, isLiveOnly, isWeakerProvenance, isRouteIncompatible), route fit per canonical route, determinism, blocker info, nextActions, and diagnostics.
+- **Data Source Integration**: Five data sources feed the projection: (1) RenderMaterialRef[] from snapshot/graph edges; (2) RenderPlannerMaterialStatus[] from provider state; (3) ContributionIndex for producer extension lookup; (4) VideoEditorShaderDescriptor[] for materializer route compatibility; (5) ProcessStatus[] for process-backed material readiness. The existing planner already consumes all of these but does so through ad-hoc maps rather than a unified projection.
+- **Planner Contract Impact**: After projection, the planner would receive HostMaterialRuntimeProjection instead of separate materialRefs + materialStatuses arrays. This pre-computes status+detail derivation, predicate evaluations, and diagnostic generation — aligning with M3a done criteria: 'Material diagnostics include material ref, route scope, status/detail, provenance gap where applicable, and next action.'
+- **Gap — RenderPlannerMaterialState vs Five-Status Model**: The current planner material state vocabulary is missing|stale|resolved|unbaked (line 45), while the M3a target is missing|pending|resolved|stale|failed. The 'unbaked' planner state must be mapped into the five-status model — likely as 'pending' with a specific detail.phase, since 'unbaked' means the material exists conceptually but hasn't been materialized yet. The 'failed' status is absent from the planner entirely.
+- **Gap — VideoEditorPlannerNextActionDescriptor**: The current next action kind union (extensionSurface.ts:251) is select-route|start-process|resolve-blocker. M3a requires select-route|materialize|bake|invoke-agent|open-settings|install-extension|enable-extension. materialize, bake, invoke-agent, open-settings, install-extension, enable-extension are not in the current type. Additionally, start-process must NOT be a V1 action per constraints.
+- **Existing Material Diagnostics**: Material blockers currently emit only CapabilityFinding/RenderBlocker records through collectMaterialRef (renderPlanner.ts:1029-1061) with reasons missing-material or materialization-failed. There is no composition/material-status-invalid diagnostic code, no missing-provenance diagnostic, and no live-only/stale/failed-specific diagnostic. All must be added to diagnostics.ts following the composition/ prefix pattern.
+- **Contradiction**: The m0-decisions.md (line 60) specifies five core statuses (missing, pending, resolved, stale, failed), but the renderPlanner.ts (line 45) uses four (missing, stale, resolved, unbaked). The 'unbaked' state is correctly marked as 'a derived state' in m0-decisions.md, meaning it must be derivable from the five-status model, not added as a sixth status. This confirms the mapping constraint in the task: 'Old baking, unbaked, and degraded scenarios map mechanically into the five-status-plus-detail model.'
+
+## Adjudication
+
+### Gap Notes
+
+- v8-blocking-matrix-spec: research returned partial coverage.
+- Referenced files missing during bounded cross-reference: src/tools/video-editor/runtime/composition/materialRuntime.ts
+
+### Contradiction Notes
+
+- file .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m3a-material-status-matrix.md appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, v8-blocking-matrix-spec=partial
+- file docs/extensions/composition-spine/m0-decisions.md appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, Provenance validation requirements and host material runtime projection design=complete
+- file docs/extensions/composition-spine/v8-architecture-baseline.md appears in multiple areas with differing evidence/status: Provenance validation requirements and host material runtime projection design=complete, v8-blocking-matrix-spec=partial
+- file src/sdk/video/composition/graph.ts appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, Provenance validation requirements and host material runtime projection design=complete, v8-blocking-matrix-spec=partial
+- file src/sdk/video/rendering/artifacts.ts appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, Provenance validation requirements and host material runtime projection design=complete
+- file src/sdk/video/rendering/renderability.ts appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, Provenance validation requirements and host material runtime projection design=complete, v8-blocking-matrix-spec=partial
+- file src/tools/video-editor/components/PendingMaterialPlaceholder.tsx appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, Provenance validation requirements and host material runtime projection design=complete
+- file src/tools/video-editor/runtime/composition/diagnostics.ts appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, Provenance validation requirements and host material runtime projection design=complete
+- file src/tools/video-editor/runtime/composition/graphProjector.ts appears in multiple areas with differing evidence/status: Provenance validation requirements and host material runtime projection design=complete, v8-blocking-matrix-spec=partial
+- file src/tools/video-editor/runtime/extensionSurface.ts appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, Provenance validation requirements and host material runtime projection design=complete, v8-blocking-matrix-spec=partial
+- file src/tools/video-editor/runtime/renderPlanner.test.ts appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, v8-blocking-matrix-spec=partial
+- file src/tools/video-editor/runtime/renderPlanner.ts appears in multiple areas with differing evidence/status: Material status and next-action vocabulary migration audit=complete, Provenance validation requirements and host material runtime projection design=complete, v8-blocking-matrix-spec=partial
+
+### Overlap Groups
+
+- file: .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m3a-material-status-matrix.md [Material status and next-action vocabulary migration audit, v8-blocking-matrix-spec]
+- file: docs/extensions/composition-spine/m0-decisions.md [Material status and next-action vocabulary migration audit, Provenance validation requirements and host material runtime projection design]
+- file: docs/extensions/composition-spine/v8-architecture-baseline.md [Provenance validation requirements and host material runtime projection design, v8-blocking-matrix-spec]
+- file: src/sdk/video/composition/graph.ts [Material status and next-action vocabulary migration audit, Provenance validation requirements and host material runtime projection design, v8-blocking-matrix-spec]
+- file: src/sdk/video/rendering/artifacts.ts [Material status and next-action vocabulary migration audit, Provenance validation requirements and host material runtime projection design]
+- file: src/sdk/video/rendering/renderability.ts [Material status and next-action vocabulary migration audit, Provenance validation requirements and host material runtime projection design, v8-blocking-matrix-spec]
+- file: src/tools/video-editor/components/PendingMaterialPlaceholder.tsx [Material status and next-action vocabulary migration audit, Provenance validation requirements and host material runtime projection design]
+- file: src/tools/video-editor/runtime/composition/diagnostics.ts [Material status and next-action vocabulary migration audit, Provenance validation requirements and host material runtime projection design]
+- file: src/tools/video-editor/runtime/composition/graphProjector.ts [Provenance validation requirements and host material runtime projection design, v8-blocking-matrix-spec]
+- file: src/tools/video-editor/runtime/extensionSurface.ts [Material status and next-action vocabulary migration audit, Provenance validation requirements and host material runtime projection design, v8-blocking-matrix-spec]
+- file: src/tools/video-editor/runtime/renderPlanner.test.ts [Material status and next-action vocabulary migration audit, v8-blocking-matrix-spec]
+- file: src/tools/video-editor/runtime/renderPlanner.ts [Material status and next-action vocabulary migration audit, Provenance validation requirements and host material runtime projection design, v8-blocking-matrix-spec]
+
+### Bounded Cross-Reference
+
+- Performed: yes
+- Shared files: src/sdk/video/rendering/artifacts.ts, src/sdk/video/rendering/renderability.ts, src/tools/video-editor/components/MaterialBrowser.tsx, src/tools/video-editor/components/PendingMaterialPlaceholder.tsx, src/tools/video-editor/compositions/VisualClip.tsx, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/graphProjector.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/renderPlanner.ts
+- Missing files: src/tools/video-editor/runtime/composition/materialRuntime.ts
+
+## Metrics
+
+- Areas triaged: 3
+- Fan-out units run: 3
+- Complete: 2
+- Partial: 1
+- Timed out: 0
+- Errors: 0
+- Missed units: (none)
+
+
+## Revise-Loop Differential Context (Iteration 2)
+
+This is a revise iteration. Use the signals below to assign lenses
+differentially. Do NOT produce a per-section plan diff — use only
+flag-centric signals. Scalar plan delta from previous: **4.2%**.
+
+### Iteration Pressure Summary
+
+```
+Iteration Pressure Analysis:
+Group      Flags  Iters  Reopened  Concern
+------------------------------------------------------------------------
+FG-001     2      1      0         Criterion 11: requires human verification (subject
+```
+
+### Loop Trajectory
+
+Iteration 2. Weighted score trajectory: 0 -> 0. Plan deltas: 4.2%. Recurring critiques: 0. Addressed-unverified flags: 0. Resolved flags: 0. Open significant flags: 0.
+
+### Differential Assignment Rules
+
+1. **Escalate for recurring/reopened**: For any lens touching a concern
+   resembling an addressed-then-reopened or recurring flag group above,
+   rate the complexity **higher**.
+2. **Verify just-addressed flags**: Fire lenses that can confirm whether
+   flags from the prior critique were genuinely resolved in this revision.
+3. **Skip verified flags**: Lenses whose sole purpose is to re-examine an
+   already-`verified` flag should be skipped (cite the flag id in `why`).
+4. **Flag-centric only**: No per-section plan diff. Reason only from the
+   flag lifecycle and pressure signals above.
+5. **Keep distinct from gate**: This differential assignment is NOT the
+   gate's loop/no-loop decision. Assign lenses based on what needs fresh
+   scrutiny, independent of whether the loop will continue.
+
+
+## Critique Lens Catalog (9 lenses)
+
+        ### Lens: `issue_hints` (tier: core, category: completeness)
+**Question:** Did the work fully address the issue hints, user notes, and approved plan requirements?
+**Guidance:** Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.
+
+### Lens: `correctness` (tier: core, category: correctness)
+**Question:** Are the proposed changes technically correct?
+**Guidance:** Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases — not just the one reported in the issue.
+
+### Lens: `scope` (tier: core, category: completeness)
+**Question:** Search for related code that handles the same concept. Is the reported issue a symptom of something broader — and is any single step sized to fit one worker turn?
+**Guidance:** Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes. Also audit step SIZING: each step/task is executed in ONE worker turn (~15 min, one conversation) and must be fully implemented AND verified there. A single step that bundles multiple concerns — e.g. 'extract this 2000-line file into modules AND write tests', or 'consolidate the roots AND migrate N registries AND add parity tests' — is a god-task: it cannot finish in one turn and the worker will run out of time mid-implementation. Raising complexity does not buy more time, only a stronger model for the same single turn. Flag any such step and recommend splitting along the natural seam (one step to add the abstraction + its unit tests, then one step per consumer/module to migrate, parity tests on the last).
+
+### Lens: `all_locations` (tier: core, category: completeness)
+**Question:** Does the change touch all locations AND supporting infrastructure?
+**Guidance:** Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.
+
+### Lens: `callers` (tier: core, category: correctness)
+**Question:** Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?
+**Guidance:** Grep for call sites. For each caller, check what values it passes — especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?
+
+### Lens: `conventions` (tier: extended, category: maintainability)
+**Question:** Does the approach match how the codebase solves similar problems?
+**Guidance:** Check not just naming/style but how similar PROBLEMS are solved in this codebase. If the codebase adds new methods for similar cases, the plan should too. Do not spend findings on trivial stylistic preferences.
+
+### Lens: `verification` (tier: extended, category: completeness)
+**Question:** Is there convincing verification for the change?
+**Guidance:** Flag missing tests or weak validation. If verification tests exist, trace the test's execution path through your patch — does every branch it exercises produce the expected result? A patch can look correct but fail because it misses one code path the test covers. If you manually verify an edge case because existing tests don't cover it, also test the cases next to it.
+
+### Lens: `criteria_quality` (tier: extended, category: completeness)
+**Question:** Are the success criteria well-prioritized and verifiable?
+**Guidance:** Check that each `must` criterion has a clear yes/no answer verifiable from code, tests, or git diff. Subjective goals, numeric guidelines, and aspirational targets should be `should`, not `must`. Criteria requiring manual testing or human judgment should be `info`. Flag any `must` criterion that is ambiguous, subjective, or unverifiable in the review pipeline.
+
+### Lens: `prerequisite_ordering` (tier: core, category: correctness)
+**Question:** Do tasks that depend on a precondition gracefully handle that precondition only partially holding?
+**Guidance:** Walk the task graph. For each task that depends on a precondition produced by an earlier task (e.g. 'after T5 regen, remove ref()'), check what happens if the precondition only partially holds — some inputs fail, some succeed. Then re-read the brief: does it lock a graceful-fallback policy for the earlier task (e.g. 'failed templates get skipped with a diagnostic') AND simultaneously demand absolute completion for the dependent task (e.g. 'zero callers remain', 'all migrated')? That's a brief contradiction the planner will transcribe faithfully and the executor will hit at runtime. Flag the conflicting paragraphs and recommend conditionalizing the dependent task, or specifying explicit deferral behavior.
+
+
+        ## Complexity Rubric (1–5)
+
+        Rate each selected lens on its **hardest realistic** aspect, not a
+        worst-case imagining. When genuinely torn between two tiers, choose the
+        LOWER one UNLESS you can name the specific cascading, test-evading
+        failure that earns the higher tier in the justification.
+
+        - **1 = trivial, mechanical check.** The lens's question can be
+          answered by pattern-matching a single file or a grep hit. A weak
+          model cannot get it wrong.
+        - **2 = simple, localized check.** The lens touches one or two
+          files, the question has a linear answer, and the failure mode
+          (missing something) is obvious.
+        - **3 = multi-step check with non-trivial reasoning.** The lens
+          requires holding multiple files or a dataflow in your head;
+          correctness is not self-evident from a quick skim.
+        - **4 = cross-cutting or high-stakes check.** A defect this lens would
+          miss is **non-local and not caught by an obvious test** — it
+          propagates through a shared contract or invariant that code the plan
+          does NOT touch relies on. Spanning several modules is NOT sufficient
+          on its own; a lens whose failure is local and obvious is tier 2-3.
+        - **5 = fundamental system-level check.** The lens probes a
+          security-sensitive path, a schema migration, an auth boundary, or
+          a contract relied on by the whole system, where a subtle error would
+          pass the full suite and corrupt state. Only assign tier 5 when the
+          lens genuinely requires system-level reasoning — not merely
+          "important" or central code.
+
+        **FLOOR rules (hard minimum) — these two lenses ONLY:**
+        - `correctness` — NEVER below tier 4. A correctness defect that
+          slips through is the most expensive failure mode.
+        - `prerequisite_ordering` — NEVER below tier 4. Partial-precondition
+          contradictions are subtle and cascade into runtime failures; a
+          weak model will miss them.
+        Every OTHER lens must EARN tier 4-5 under the rubric above; the
+        expected home for an ordinary, locally-verifiable check is tier 2-3.
+        Do not let "this plan is large" inflate a lens whose own question is
+        answerable by a focused read.
+
+        ## Assignment Contract
+
+        Select the FEWEST lenses that cover the real risk; keep the set lean
+        rather than firing broad, overlapping checks. If a check's verification
+        would likely depend on things outside this project root (external or
+        sibling repos), files the plan only creates later, or runtime-only
+        behavior, either scope the lens to what is statically checkable in this
+        repo or name that dependency in its justification so the worker and gate
+        expect a partial or `unverifiable` result.
+
+        - **Select deliberately**: a lens fires only when it covers a concrete
+          risk in this plan.
+        - **Justify to skip**: every skipped lens must include a concrete, specific
+          `why` — a reason grounded in the plan's content, not a generic dismissal.
+        - **Every lens is assigned exactly once**: the union of `selections` and
+          `skipped` must cover all 9 lens ids with no overlap
+          and no omission.
+        - **At least one lens must be selected** — an all-skip verdict is rejected.
+        - **Every selected catalog lens** must emit a `complexity` (int 1–5) and
+          a `complexity_justification` (one or two sentences citing why this
+          lens sits at exactly that tier — reference the lens's question, the
+          plan's concrete files/interfaces/risks). The justification must be
+          defensible against a reviewer who disagrees. A bare restatement of the
+          rubric ("this is complex") is not acceptable.
+        - **`other` custom areas**: an `other` selection is additive (does not
+          replace a catalog lens). It requires `area` (a non-empty name for the
+          custom critique area), `why` (the probe question for the critic),
+          `complexity`, and `complexity_justification`. At most 2
+          `other` areas.
+        - **Do not invent check IDs**: North Star, anchor, product, or project-
+          specific concerns must either use one of the catalog lens IDs above
+          or `check_id: "other"` with the specific concern named in `area`.
+          Values such as `north_star_alignment`, `compatibility_shim_risk`, or
+          `behavior_preservation` are invalid as `check_id`s.
+
+        Your output must be a JSON object with these keys:
+        - `selections`: list of objects. For catalog lenses:
+          {check_id, complexity (int 1–5), complexity_justification, why?}
+          For `other` custom areas:
+          {check_id: "other", area, why, complexity (int 1–5), complexity_justification}
+        - `skipped`: list of {check_id, why} objects
+        - `evaluator_model`: your own model identifier string
+        - `flag_verifications`: list of
+          {flag_id, lens, outcome, rationale} objects where outcome is
+          one of "verified" / "open" / "accepted_tradeoff"; use [] when the
+          Flag Resolution Verification section is absent. `lens` must be
+          exactly one catalog lens id; combined lens strings such as
+          `correctness/all_locations` are invalid.
+
+        Remember: prefer the smallest selected set that still covers the real
+        risk.  Skipping requires a justification.  When you skip, explain *why
+        this specific lens is unnecessary for this specific plan* — do not
+        write generic cop-outs.

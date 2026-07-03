@@ -246,14 +246,28 @@ export interface VideoEditorPlannerBlockerDescriptor {
   nextAction?: VideoEditorPlannerNextActionDescriptor;
 }
 
+export type VideoEditorPlannerNextActionKind =
+  | 'select-route'
+  | 'materialize'
+  | 'bake'
+  | 'invoke-agent'
+  | 'open-settings'
+  | 'install-extension'
+  | 'enable-extension';
+
+export interface VideoEditorPlannerNextActionDetail {
+  specificKind?: 'resolve-blocker';
+}
+
 /** Planner next-action metadata for resolving route/process/material blockers. */
 export interface VideoEditorPlannerNextActionDescriptor {
-  kind: 'select-route' | 'start-process' | 'resolve-blocker';
+  kind: VideoEditorPlannerNextActionKind;
   label: string;
   route?: RenderRoute;
   processId?: string;
   operationId?: string;
   message?: string;
+  detail?: VideoEditorPlannerNextActionDetail;
 }
 
 /** A normalized trusted-local process descriptor produced by runtime normalization. */

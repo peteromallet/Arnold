@@ -21,11 +21,18 @@ import {
   DEFAULT_DIAGNOSTIC_PER_EXTENSION_CAPACITY,
   createExtensionSettingsService,
   DETERMINISM_STATUSES,
+  RENDER_MATERIAL_STATUSES,
+  RENDER_MATERIAL_STATUS_PHASES,
+  RENDER_MATERIAL_STATUS_QUALITIES,
   RENDER_BLOCKER_REASONS,
   RENDER_ROUTES,
   COMPOSITION_NODE_KINDS,
   COMPOSITION_EDGE_KINDS,
   REFERENCE_STATES,
+  isActiveBake,
+  isLiveOnly,
+  isRouteIncompatible,
+  isWeakerProvenance,
 } from '@/sdk/index';
 import { createExtensionContext, setEditorShellRoot, getEditorShellRoot } from '@/tools/video-editor/runtime/extensionContextFactory';
 import type {
@@ -4212,6 +4219,17 @@ describe('semver-sensitive SDK exports (index)', () => {
     expect(Array.isArray(DETERMINISM_STATUSES)).toBe(true);
     expect(Array.isArray(RENDER_BLOCKER_REASONS)).toBe(true);
     expect(Array.isArray(RENDER_ROUTES)).toBe(true);
+  });
+
+  it('SDK exports material status constants and predicates via re-exports', () => {
+    expect(RENDER_MATERIAL_STATUSES).toEqual(['missing', 'pending', 'resolved', 'stale', 'failed']);
+    expect(RENDER_MATERIAL_STATUS_PHASES).toEqual(['queued', 'active', 'live-only']);
+    expect(RENDER_MATERIAL_STATUS_QUALITIES).toEqual(['weaker-provenance', 'route-incompatible']);
+    expect(isActiveBake({ state: 'pending', detail: { phase: 'active' } })).toBe(true);
+    expect(isLiveOnly({ state: 'missing', detail: { phase: 'live-only' } })).toBe(true);
+    expect(isWeakerProvenance({ state: 'resolved', detail: { quality: 'weaker-provenance' } })).toBe(true);
+    expect(isRouteIncompatible({ state: 'failed', detail: { quality: 'route-incompatible' } })).toBe(true);
+    expect(isActiveBake({ state: 'pending', detail: { phase: 'queued' } })).toBe(false);
   });
 
   it('SDK exports contribution kind bridging gate (registry-derived)', () => {

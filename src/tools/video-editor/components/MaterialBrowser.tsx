@@ -45,7 +45,11 @@ function statusFor(
   statuses: readonly RenderPlannerMaterialStatus[],
 ): RenderPlannerMaterialStatus {
   return statuses.find((status) => status.materialRefId === material.id)
-    ?? { materialRefId: material.id, state: material.determinism === 'deterministic' ? 'resolved' : 'unbaked' };
+    ?? {
+      materialRefId: material.id,
+      state: material.determinism === 'deterministic' ? 'resolved' : 'pending',
+      detail: material.determinism === 'deterministic' ? undefined : { phase: 'queued' },
+    };
 }
 
 function matches(material: RenderMaterialRef, status: RenderPlannerMaterialStatus, filters: MaterialBrowserFilters): boolean {
@@ -65,9 +69,15 @@ function actionFor(
   material: RenderMaterialRef,
   actions: readonly VideoEditorPlannerNextActionDescriptor[],
 ): VideoEditorPlannerNextActionDescriptor | undefined {
+  const isMaterialRepairAction = (action: VideoEditorPlannerNextActionDescriptor) =>
+    action.kind === 'materialize'
+    || action.kind === 'bake'
+    || (
+      action.detail?.specificKind === 'resolve-blocker'
+      && (action.label.toLowerCase().includes('materialize') || action.message?.toLowerCase().includes('material'))
+    );
   const materialActions = actions.filter((action) =>
-    action.kind === 'resolve-blocker'
-    && (action.label.toLowerCase().includes('materialize') || action.message?.toLowerCase().includes('material')));
+    isMaterialRepairAction(action));
   return materialActions.find((action) => action.message?.includes(material.id) || action.label.includes(material.id))
     ?? materialActions[0];
 }
@@ -128,7 +138,7 @@ export function MaterialBrowser({
               <dl>
                 <dt>Producer</dt><dd>{selected.material.producerExtensionId ?? 'unknown'}</dd>
                 <dt>Locator</dt><dd>{selected.material.locator.kind}: {selected.material.locator.uri}</dd>
-                <dt>State</dt><dd>{selected.status.state}</dd>
+                <dt>State</dt><dd>{selected.status.state}{selected.status.detail?.phase ? ` (${selected.status.detail.phase})` : ''}{selected.status.detail?.quality ? ` [${selected.status.detail.quality}]` : ''}</dd>
                 <dt>Pass</dt><dd>{detailValue(selected.material, 'passName') || 'none'}</dd>
                 <dt>Group</dt><dd>{detailValue(selected.material, 'renderGroupId') || 'none'}</dd>
                 <dt>Provenance</dt><dd>{text((selected.material as unknown as Record<string, unknown>).provenance) || 'none'}</dd>

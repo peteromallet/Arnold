@@ -1,0 +1,215 @@
+Execute the approved plan in the repository.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M3a: Material Status And Planner Matrix
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Batch framing:
+        - Execute batch 4 of 17.
+        - Actionable task IDs for this batch: ['T4']
+        - Already completed task IDs available as dependency context: ['T1', 'T2', 'T3']
+
+        Actionable tasks for this batch:
+        [
+  {
+    "id": "T4",
+    "depends_on": [
+      "T3"
+    ],
+    "status": "pending",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 4: Create `src/tools/video-editor/runtime/composition/materialRuntime.ts` with a centralized typed v8 material planner matrix covering the five statuses, phase values, quality values, no-detail/default rows, invalid combinations, migration semantics, blocker severity, determinism posture, route fit, diagnostic codes, and next-action kinds.",
+    "complexity_justification": "The table becomes the authority for planner and projection behavior, so duplicated or incomplete rows would create non-local semantic drift across later planner/UI consumers. The key subtlety is encoding invalid status/detail combinations and migration cases without expanding the public vocabulary.",
+    "executor_notes": "",
+    "files_changed": [],
+    "commands_run": []
+  }
+]
+
+        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
+        [
+  {
+    "id": "T1",
+    "depends_on": [],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 1: Replace the host material status contract with `missing | pending | resolved | stale | failed`, add status detail fields (`phase`, `quality`), add/export helper predicates, add optional `provenance?: Record<string, unknown>` to SDK material ref/material types, and mechanically migrate legacy `unbaked` fallback semantics to `pending` with `detail.phase = queued` in `src/tools/video-editor/runtime/renderPlanner.ts`, `src/sdk/video/rendering/artifacts.ts`, and `src/sdk/index.ts`.",
+    "complexity_justification": "This changes the public material status/type contract consumed by SDK and planner callers, so a subtle mismatch can propagate non-locally through compile-time consumers and runtime status handling. The concrete risk is accidentally preserving `unbaked` or exposing helper predicates from the wrong...",
+    "executor_notes": "Added/exported the five SDK material statuses, detail phase/quality fields, helper predicates, and `RenderMaterialRef.provenance`; aliased render-planner status typing to the SDK contract; migrated implicit legacy `unbaked` fallback to `pending` with `detail.phase = queued`; and updated immediate UI/test consumers to the new state shape. Scoped Vitest verification passed 5/6 files and failed in pre-existing examples-governance coverage assertions unrelated to this task; the new material-status exports were allowlisted there after the run, without rerunning tests.",
+    "files_changed": [
+      "src/sdk/examples-governance.test.ts",
+      "src/sdk/index.test.ts",
+      "src/sdk/index.ts",
+      "src/sdk/video/rendering/artifacts.ts",
+      "src/tools/video-editor/components/MaterialBrowser.tsx",
+      "src/tools/video-editor/components/PendingMaterialPlaceholder.tsx",
+      "src/tools/video-editor/compositions/VisualClip.test.tsx",
+      "src/tools/video-editor/compositions/VisualClip.tsx",
+      "src/tools/video-editor/runtime/renderPlanner.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts"
+    ],
+    "commands_run": [
+      "rg -n \"unbaked|missing|pending|resolved|stale|failed|provenance|phase|quality\" src/tools/video-editor/runtime/renderPlanner.ts src/sdk/video/rendering/artifacts.ts src/sdk/index.ts",
+      "sed -n '1,220p' src/sdk/video/rendering/artifacts.ts",
+      "sed -n '1,240p' src/sdk/index.ts",
+      "sed -n '1,260p' src/tools/video-editor/runtime/renderPlanner.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/examples-governance.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/compositions/VisualClip.test.tsx"
+    ]
+  },
+  {
+    "id": "T3",
+    "depends_on": [
+      "T2"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 3: Add the failed-specific blocker vocabulary in `src/sdk/video/rendering/renderability.ts` and `src/tools/video-editor/runtime/renderPlanner.ts`, using `materialization-error` as the failed blocker reason unless an existing compile-time contract proves a better stable name is already required; keep `materialization-failed` mapped to stale material records for compatibility and update affected reason lists.",
+    "complexity_justification": "This extends a public blocker enum/list and has cross-file effects, but the behavior is narrow: stale and failed must map to distinct reasons. The failure modes are mostly caught by renderability and planner tests, so it is tier 3 rather than a system-wide tier 4 contract migration.",
+    "executor_notes": "Added 'materialization-error' to RenderBlockerReason type and RENDER_BLOCKER_REASONS array in renderability.ts (inserted after 'materialization-failed' to keep stable ordering). Changed materialBlockerReason() in renderPlanner.ts line 1042 to return 'materialization-error' for failed state while keeping line 1040 'materialization-failed' for stale state (compatibility). Updated renderability.test.ts pinned reasons test to include 'materialization-error'. Verified with vitest: all 42 tests pass (12 renderability + 30 renderPlanner). No pre-existing test failures encountered. The renderRouter...",
+    "files_changed": [
+      "src/sdk/video/rendering/renderability.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/renderability.test.ts"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+    ]
+  },
+  {
+    "id": "T2",
+    "depends_on": [
+      "T1"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 2: Replace V1 planner next-action vocabulary in `src/tools/video-editor/runtime/extensionSurface.ts`, `src/tools/video-editor/runtime/families/projectors/processProjector.ts`, and `src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts` with exactly `select-route | materialize | bake | invoke-agent | open-settings | install-extension | enable-extension`; remove public `start-process`; keep any old `resolve-blocker` bridge only as `detail.specificKind`; make process-b...",
+    "complexity_justification": "Planner action kinds are a shared runtime contract spanning extension surface and projector outputs, and mistakes can leak executable process semantics into M3a or break downstream action consumers. The hardest invariant is preserving compatibility detail without keeping old kinds as first-class...",
+    "executor_notes": "Changed `VideoEditorPlannerNextActionDescriptor.kind` to the exact seven V1 kinds and added `detail.specificKind` for the legacy `resolve-blocker` bridge. Process descriptors now expose no executable next actions, output-format repair actions now use `select-route` or `open-settings`, and direct planner/UI emitters were migrated to `materialize` so no public `start-process` or `resolve-blocker` action is emitted. Verification: `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts...",
+    "files_changed": [
+      "src/tools/video-editor/runtime/extensionSurface.ts",
+      "src/tools/video-editor/runtime/families/projectors/processProjector.ts",
+      "src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/renderPlanner.test.ts",
+      "src/tools/video-editor/runtime/extensionSurface.test.ts",
+      "src/tools/video-editor/components/MaterialBrowser.tsx",
+      "src/tools/video-editor/components/MaterialBrowser.test.tsx"
+    ],
+    "commands_run": [
+      "rg -n \"start-process|resolve-blocker|select-route|materialize|bake|invoke-agent|open-settings|install-extension|enable-extension\" src/tools/video-editor/runtime/extensionSurface.ts src/tools/video-editor/runtime/families/projectors/processProjector.ts src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts",
+      "rg -n \"kind: 'resolve-blocker'|kind: 'start-process'|kind === 'resolve-blocker'|kind === 'start-process'|'resolve-blocker'|'start-process'\" src/tools/video-editor -g'*.ts' -g'*.tsx'",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx"
+    ]
+  }
+]
+
+        Prior batch deviations (address if applicable):
+        [
+  "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: src/sdk/video/rendering/renderability.ts, src/tools/video-editor/runtime/renderPlanner.ts, src/tools/video-editor/runtime/renderability.test.ts",
+  "Advisory audit finding: Executor claimed changed files not present in git status: src/sdk/examples-governance.test.ts, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/video/rendering/artifacts.ts, src/sdk/video/rendering/renderability.ts, src/tools/video-editor/components/MaterialBrowser.test.tsx, src/tools/video-editor/components/MaterialBrowser.tsx, src/tools/video-editor/components/PendingMaterialPlaceholder.tsx, src/tools/video-editor/compositions/VisualClip.test.tsx, src/tools/video-editor/compositions/VisualClip.tsx, src/tools/video-editor/runtime/extensionSurface.test.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts, src/tools/video-editor/runtime/families/projectors/processProjector.ts, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/renderPlanner.ts, src/tools/video-editor/runtime/renderability.test.ts",
+  "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC11 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC12 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC13 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC14 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC15 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC16 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC17 is missing an executor acknowledgment.",
+  "Advisory audit finding: Tasks left pending after execute (executor never started them): T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17"
+]
+
+        User action prerequisites:
+        No user_action prerequisites for this batch.
+
+
+        Batch-scoped sense checks:
+        [
+  {
+    "id": "SC4",
+    "task_id": "T4",
+    "verdict": "",
+    "question": "Is the material status/detail/action behavior centralized in an explicit typed matrix covering valid defaults, valid detail rows, invalid combinations, migrations, route fit, diagnostics, and next actions?"
+  }
+]
+
+
+        ## Execution context (settled - DO NOT re-litigate)
+
+        - SD1: Public material status vocabulary is exactly five values: missing, pending, resolved, stale, failed. The old 'unbaked' state is mechanically migrated to pending + phase: queued. - Locked in the idea brief and upheld through two plan iterations. Keeps the contract small and normative while preserving backward compatibility through detail fields.
+- SD2: Detail phase values are queued, active, live-only. Detail quality values are weaker-provenance, route-incompatible. These are qualities/refinements on statuses, not independent... - Prevents status vocabulary inflation. Distinguishes active bake from queued bake, live-only data from missing packages, and weak provenance/route mismatch from generic failures — all without adding public statuses.
+- SD3: V1 planner next-action kinds are select-route, materialize, bake, invoke-agent, open-settings, install-extension, enable-extension. start-process is removed as a V1 action. - Process execution belongs to later milestones (M4/M6). The compatibility bridge for old resolve-blocker consumers lives in detail.specificKind, not as a first-class V1 action.
+
+        ## Plan execution order rationale
+
+        1. Land types and action vocabulary before projection logic so downstream compile errors identify all migration points.
+2. Encode the matrix before planner wiring; planner code should consume matrix output, not duplicate status branching.
+3. Add diagnostics and provenance validation inside projection before UI migration so consumers receive one normalized shape.
+4. Migrate planner before UI, because UI action/status behavior depends on planner output.
+5. Update tests alongside each implementation step; keep the full suite for the end.
+
+        ## Inter-task guidance from finalize
+
+        Execute in the settled order: contract and action vocabulary first, matrix/projection/diagnostics next, planner wiring before UI, docs after code behavior stabilizes, then tests and gates. Do not re-open strategy decisions or invoke nested megaplan tooling. The open questions from the plan are executable decisions now: use `materialization-error` for failed unless the repo has a conflicting stable blocker convention, and accept direct or derivable provenance only from the explicit fields named in the plan. Keep route scope and process facts conservative: no browser-export defaults for generic materials, and no executable process lifecycle in M3a.
+
+        Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations.
+        Robustness level: thorough.
+
+        Requirements:
+        - Execute only the actionable tasks in this batch.
+        - Treat completed tasks as dependency context, not new work.
+        - Return structured JSON only.
+        - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
+        - Template file already written for reference: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3a-material-status-and-20260703-2036/execute_batch_4_output.json
+        - Only produce `task_updates` for these tasks: [T4]
+        - `task_updates[].status` must be one of `done`, `skipped`, `completed`, or `blocked`; never `pending` or `in_progress`.
+        - Only produce `sense_check_acknowledgments` for these sense checks: [SC4]
+        - Do not include updates for tasks or sense checks outside this batch.
+        - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+        - Keep `executor_notes` verification-focused.
+        - Best-effort progress checkpointing: if `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3a-material-status-and-20260703-2036/execution_batch_4.json` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
+        - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
+        - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
+        - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
+
+        Batch JSON response template:
+        ```json
+        {
+  "output": "",
+  "files_changed": [],
+  "commands_run": [],
+  "deviations": [],
+  "task_updates": [
+    {
+      "task_id": "T4",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC4",
+      "executor_note": ""
+    }
+  ]
+}
+        ```

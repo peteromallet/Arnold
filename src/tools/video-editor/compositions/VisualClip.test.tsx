@@ -300,7 +300,7 @@ describe('VisualClip transition rendering', () => {
     );
   });
 
-  it('renders pending, materializing, and failed material placeholders with diagnostics', () => {
+  it('renders pending, materializing, stale, missing, and failed material placeholders with diagnostics', () => {
     const ref = materialRef();
     const { rerender } = render(
       <VisualClip
@@ -308,25 +308,57 @@ describe('VisualClip transition rendering', () => {
         track={track}
         fps={30}
         materialRefs={[ref]}
-        materialStatuses={[{ materialRefId: 'mat-1', state: 'unbaked', message: 'Queued for materialization' }]}
+        materialStatuses={[{ materialRefId: 'mat-1', state: 'pending', message: 'Queued for materialization', detail: { phase: 'queued' } }]}
       />,
     );
 
-    expect(screen.getByTestId('pending-material-placeholder')).toHaveAttribute('data-material-state', 'unbaked');
+    const placeholder = screen.getByTestId('pending-material-placeholder');
+    expect(placeholder).toHaveAttribute('data-material-state', 'pending');
+    expect(placeholder).toHaveAttribute('data-material-phase', 'queued');
+    expect(placeholder).not.toHaveAttribute('data-material-quality');
     expect(screen.getByText(/pending materialization: mat-1/)).toBeInTheDocument();
 
+    // active phase → materializing label
     rerender(
       <VisualClip
         clip={mediaClip()}
         track={track}
         fps={30}
         materialRefs={[ref]}
-        materialStatuses={[{ materialRefId: 'mat-1', state: 'stale', message: 'Refreshing bytes' }]}
+        materialStatuses={[{ materialRefId: 'mat-1', state: 'pending', detail: { phase: 'active' } }]}
+      />,
+    );
+    expect(screen.getByTestId('pending-material-placeholder')).toHaveAttribute('data-material-phase', 'active');
+    expect(screen.getByText(/materializing…: mat-1/)).toBeInTheDocument();
+
+    // pending + live-only phase
+    rerender(
+      <VisualClip
+        clip={mediaClip()}
+        track={track}
+        fps={30}
+        materialRefs={[ref]}
+        materialStatuses={[{ materialRefId: 'mat-1', state: 'pending', detail: { phase: 'live-only' } }]}
+      />,
+    );
+    expect(screen.getByTestId('pending-material-placeholder')).toHaveAttribute('data-material-phase', 'live-only');
+    expect(screen.getByText(/live-only preview: mat-1/)).toBeInTheDocument();
+
+    // stale state with quality
+    rerender(
+      <VisualClip
+        clip={mediaClip()}
+        track={track}
+        fps={30}
+        materialRefs={[ref]}
+        materialStatuses={[{ materialRefId: 'mat-1', state: 'stale', message: 'Refreshing bytes', detail: { quality: 'weaker-provenance' } }]}
       />,
     );
     expect(screen.getByTestId('pending-material-placeholder')).toHaveAttribute('data-material-state', 'stale');
+    expect(screen.getByTestId('pending-material-placeholder')).toHaveAttribute('data-material-quality', 'weaker-provenance');
     expect(screen.getByText('Refreshing bytes')).toBeInTheDocument();
 
+    // missing state
     rerender(
       <VisualClip
         clip={mediaClip()}
@@ -339,6 +371,20 @@ describe('VisualClip transition rendering', () => {
     );
     expect(screen.getByTestId('pending-material-placeholder')).toHaveAttribute('data-material-state', 'missing');
     expect(screen.getByText('Materialization failed')).toBeInTheDocument();
+
+    // failed state with route-incompatible quality
+    rerender(
+      <VisualClip
+        clip={mediaClip()}
+        track={track}
+        fps={30}
+        materialRefs={[ref]}
+        materialStatuses={[{ materialRefId: 'mat-1', state: 'failed', message: 'Render processor crashed', detail: { quality: 'route-incompatible' } }]}
+      />,
+    );
+    expect(screen.getByTestId('pending-material-placeholder')).toHaveAttribute('data-material-state', 'failed');
+    expect(screen.getByTestId('pending-material-placeholder')).toHaveAttribute('data-material-quality', 'route-incompatible');
+    expect(screen.getByText('Render processor crashed')).toBeInTheDocument();
   });
 
   it('renders concrete material-backed clips normally when material is resolved', async () => {
@@ -354,6 +400,22 @@ describe('VisualClip transition rendering', () => {
 
     await waitFor(() => expect(screen.getByTestId('image-asset')).toBeInTheDocument());
     expect(screen.queryByTestId('pending-material-placeholder')).not.toBeInTheDocument();
+  });
+
+  it('falls back nondeterministic material to pending+queued placeholder when no status provided', () => {
+    render(
+      <VisualClip
+        clip={mediaClip()}
+        track={track}
+        fps={30}
+        materialRefs={[materialRef({ determinism: 'live-unbaked' })]}
+      />,
+    );
+
+    const placeholder = screen.getByTestId('pending-material-placeholder');
+    expect(placeholder).toHaveAttribute('data-material-state', 'pending');
+    expect(placeholder).toHaveAttribute('data-material-phase', 'queued');
+    expect(screen.getByText(/pending materialization: mat-1/)).toBeInTheDocument();
   });
 
   // -- Built-in transitions -------------------------------------------------

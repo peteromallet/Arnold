@@ -1,0 +1,1960 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+Review the implementation against the success criteria.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M3a: Material Status And Planner Matrix
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: M3a Material Status And Planner Matrix
+
+## Overview
+The goal is to lock the V1 material status/action contract without expanding the public status vocabulary beyond `missing`, `pending`, `resolved`, `stale`, and `failed`. Current repo shape matches the brief: `renderPlanner.ts` still owns a four-state material contract with `unbaked`, `extensionSurface.ts` still exposes `start-process`, material blockers are hardcoded to browser export, and there is no host material runtime projection. This plan narrows execution to contract, projection, planner, diagnostics, provenance validation, and direct UI/test consumers. That narrowing is a bridge, not a contradiction: live bake execution, process execution, agent promotion, graph-projected `requires` edges, and output-format sidecars remain outside M3a per the North Star and local scope.
+
+The gate finding targets the verification contract, not the code target or root cause. The plan still points at the right implementation surfaces; the revision makes the scoped baseline test contract machine-readable with path-only selectors and moves broad commands into explicit final gates.
+
+Conservative assumptions for the missing v8 material matrix are encoded as an implementation artifact and tested. The plan should not silently add executable process behavior; process-backed materializer requirements remain declarative facts only.
+
+## Phase 1: Contract Foundation
+
+### Step 1: Add material status/detail types and SDK provenance fields (`src/tools/video-editor/runtime/renderPlanner.ts`, `src/sdk/video/rendering/artifacts.ts`, `src/sdk/index.ts`)
+**Complexity: 2**
+1. Replace `RenderPlannerMaterialState` with `missing | pending | resolved | stale | failed`.
+2. Add material detail fields with `phase?: 'queued' | 'active' | 'live-only'` and `quality?: 'weaker-provenance' | 'route-incompatible'`.
+3. Add pure helper predicates `isActiveBake`, `isLiveOnly`, `isWeakerProvenance`, and `isRouteIncompatible`, exported from the host runtime surface where callers can use them without importing projection internals.
+4. Add optional `provenance?: Record<string, unknown>` to `RenderMaterialRef`/`RenderMaterial` to match the existing artifact manifest and sidecar provenance shape.
+5. Keep old `unbaked` out of the TypeScript contract; migrate fallback behavior to `pending + phase: queued`.
+
+### Step 2: Replace planner next-action vocabulary (`src/tools/video-editor/runtime/extensionSurface.ts`, `src/tools/video-editor/runtime/families/projectors/processProjector.ts`, `src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts`)
+**Complexity: 3**
+1. Change `VideoEditorPlannerNextActionDescriptor.kind` to `select-route | materialize | bake | invoke-agent | open-settings | install-extension | enable-extension`.
+2. Remove `start-process` from V1 planner actions.
+3. Preserve compatibility for old `resolve-blocker` consumers through `detail.specificKind` only where existing projections still need a bridge; do not keep `resolve-blocker` as a first-class V1 action unless a compile-time dependency proves it is still required.
+4. Convert process projector output to declarative requirement/blocker metadata instead of executable `start-process` actions.
+5. Convert output-format repair actions to the closest V1 action, typically `select-route`, `open-settings`, `install-extension`, or `enable-extension`.
+
+### Step 3: Decide and encode the failed blocker vocabulary (`src/sdk/video/rendering/renderability.ts`, `src/tools/video-editor/runtime/renderPlanner.ts`)
+**Complexity: 3**
+1. Add a failed-specific `RenderBlockerReason`, tentatively `materialization-error`, because the done criteria require `stale` and `failed` to produce distinct blockers and repair actions.
+2. Update `RENDER_BLOCKER_REASONS` and affected tests.
+3. Keep `materialization-failed` mapped to stale material records for compatibility with existing behavior.
+4. If review rejects adding a public SDK blocker value, fall back only by explicit decision to `materialization-failed` plus detail differentiation; do not silently collapse stale and failed in implementation.
+
+## Phase 2: Material Matrix And Projection
+
+### Step 4: Create the v8 material planner matrix artifact (`src/tools/video-editor/runtime/composition/materialRuntime.ts`, `src/tools/video-editor/runtime/composition/materialRuntime.test.ts`)
+**Complexity: 4**
+1. Define a typed matrix for `5 statuses x 3 phases x 2 qualities`, plus no-detail/default rows, mapping each valid row to blocker reason, severity, determinism posture, route fit, diagnostic codes, and next-action kind.
+2. Mark invalid combinations explicitly, including resolved records with blocking phase/quality and missing records with durable-candidate-only quality unless the matrix justifies them.
+3. Encode mechanical migrations: old `unbaked` scenarios become `pending + queued`; active work is `pending + active`; live/runtime-only is `missing + live-only`; degraded material scenarios become `stale`.
+4. Ensure `pending + active` remains distinct from install/retry flows and maps to a bake/materialization-in-progress posture.
+5. Derive route-incompatible blockers from route facts instead of hardcoded browser export assumptions.
+
+### Step 5: Build host material runtime projection (`src/tools/video-editor/runtime/composition/materialRuntime.ts`)
+**Complexity: 4**
+1. Add `projectHostMaterialRuntime(input)` following `graphProjector.ts` and `referenceResolver.ts`: typed input, deterministic ordering, frozen result, diagnostics array, and `ReadonlyMap` keyed by material ref id.
+2. Input should include `materialRefs`, `materialStatuses`, contribution index/runtime descriptors where available, process statuses as non-executable facts, and requested/canonical routes.
+3. Output each material projection with status, detail, predicates, determinism, provenance posture, per-route fit, blocker info, next actions, and diagnostics.
+4. Include route scope on blockers/actions and never default generic material refs to `browser-export` without route evidence.
+5. Emit invalid status/detail diagnostics and block authoritative export rows through the matrix.
+
+### Step 6: Add material diagnostics (`src/tools/video-editor/runtime/composition/diagnostics.ts`, `src/tools/video-editor/runtime/composition/materialRuntime.ts`)
+**Complexity: 3**
+1. Add diagnostic codes: `composition/material-status-invalid`, `composition/material-missing-provenance`, `composition/material-live-only`, `composition/material-stale`, `composition/material-failed`, `composition/material-weaker-provenance`, and `composition/material-route-incompatible`.
+2. Extend `CompositionDiagnosticDetail` with material fields: `materialRefId`, `routeScope`, `materialStatus`, `detailPhase`, `detailQuality`, `provenanceGap`, and `nextAction`.
+3. Add a focused material diagnostic builder or helper if it reduces repeated detail assembly.
+4. Set severities so invalid status/detail, failed, and route-incompatible rows block authoritative export; live-only and weak provenance remain route-sensitive according to the matrix.
+
+### Step 7: Validate provenance for created artifacts/materials (`src/tools/video-editor/runtime/composition/materialRuntime.ts`, `src/sdk/video/rendering/artifacts.ts`)
+**Complexity: 3**
+1. Treat missing provenance on manifests and sidecars as absent or empty `provenance` records.
+2. Treat missing material provenance as absent/empty `materialRef.provenance` unless derivable origin metadata exists via `producerExtensionId`, `producerVersion`, and determinism.
+3. Emit `composition/material-missing-provenance` with `materialRefId`, route scope, and `provenanceGap` details.
+4. Keep validation declarative; do not introduce material creation, bake execution, capture execution, or agent promotion.
+
+## Phase 3: Planner And Consumer Migration
+
+### Step 8: Wire projection into the render planner (`src/tools/video-editor/runtime/renderPlanner.ts`)
+**Complexity: 4**
+1. Replace ad hoc `createMaterialStatusMap`, `materialBlockerReason`, and `materializeAction` behavior with `projectHostMaterialRuntime` output.
+2. Update `RenderPlannerInput` to accept the projection directly or enough fields to build it once, while preserving existing `materialRefs`/`materialStatuses` input compatibility for callers.
+3. Update `collectMaterialRef` and `collectRenderGroups` to consume matrix-projected blockers/actions and include material status/detail in blocker detail.
+4. Update route summaries, route plans, diagnostics, and next actions to include projection diagnostics and route-scoped material repair actions.
+5. Preserve process-backed materializer requirements as facts; do not invoke or schedule processes.
+
+### Step 9: Migrate UI consumers (`src/tools/video-editor/components/PendingMaterialPlaceholder.tsx`, `src/tools/video-editor/components/MaterialBrowser.tsx`, `src/tools/video-editor/compositions/VisualClip.tsx`)
+**Complexity: 2**
+1. Replace `unbaked` display logic with `pending`, using `detail.phase` to distinguish queued, active, and live-only copy where applicable.
+2. Add `failed` UI treatment and keep `resolved` as non-placeholder.
+3. Update `MaterialBrowser` filters and action lookup to recognize the new V1 action kinds and `detail.specificKind` compatibility data where present.
+4. Update `VisualClip` fallback status for nondeterministic materials to `pending + phase: queued` and render placeholders for `missing`, `pending`, `stale`, and `failed`.
+
+### Step 10: Update contract documentation (`docs/extensions/material-status-planner-matrix.md`)
+**Complexity: 2**
+1. Document the five public statuses, detail phase/quality values, helper predicates, and seven V1 action kinds.
+2. Include the matrix table or a generated summary from the typed matrix.
+3. Call out out-of-scope execution behavior: live bake execution, deterministic capture execution, agent promotion, process execution, graph-projected requires edges, and output-format sidecars.
+
+## Phase 4: Verification
+
+### Step 11: Add projection and diagnostic unit tests (`src/tools/video-editor/runtime/composition/materialRuntime.test.ts`, `src/tools/video-editor/runtime/composition/diagnostics.test.ts`)
+**Complexity: 3**
+1. Cover all status/phase/quality matrix rows, including invalid combinations.
+2. Verify helper predicates, route fit, blocker reason, next action, and diagnostic generation.
+3. Verify provenance diagnostics for material refs, artifact manifests, and sidecars.
+4. Assert the projection result and nested collections are immutable/frozen where the local projection pattern expects that.
+
+### Step 12: Update existing planner/action/UI tests (`src/tools/video-editor/runtime/renderPlanner.test.ts`, `src/tools/video-editor/runtime/extensionSurface.test.ts`, `src/tools/video-editor/components/MaterialBrowser.test.tsx`, `src/tools/video-editor/compositions/VisualClip.test.tsx`, `src/tools/video-editor/runtime/renderability.test.ts`)
+**Complexity: 3**
+1. Replace `unbaked` expectations with `pending + phase: queued`.
+2. Add stale vs failed blocker/action assertions.
+3. Update next-action kind snapshots and projector expectations to remove `start-process`.
+4. Verify planner material routes are descriptor/graph-derived, not hardcoded to browser export.
+5. Keep existing missing/stale/resolved behavior covered to prevent regressions.
+
+### Step 13: Run scoped baseline and broad gates
+**Complexity: 2**
+1. Use the machine-readable `test_blast_radius` metadata as the finalize baseline contract. Its selectors are path-only and point at the focused Vitest files changed or created by this plan.
+2. Run the focused baseline command first:
+   ```sh
+   npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/composition/diagnostics.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/compositions/VisualClip.test.tsx
+   ```
+3. Run typecheck/build-level validation after the focused baseline passes:
+   ```sh
+   npm run build
+   ```
+4. Run lint for touched TypeScript/TSX surfaces:
+   ```sh
+   npm run lint
+   ```
+5. Run the full unit suite as the final broad gate, or earlier if import graph fallout is unclear:
+   ```sh
+   npm test
+   ```
+
+## Execution Order
+1. Land types and action vocabulary before projection logic so downstream compile errors identify all migration points.
+2. Encode the matrix before planner wiring; planner code should consume matrix output, not duplicate status branching.
+3. Add diagnostics and provenance validation inside projection before UI migration so consumers receive one normalized shape.
+4. Migrate planner before UI, because UI action/status behavior depends on planner output.
+5. Update tests alongside each implementation step; keep the full suite for the end.
+
+## Validation Order
+1. Start with `materialRuntime.test.ts` and `diagnostics.test.ts` because they prove the contract and matrix cheaply.
+2. Run planner, renderability, and extension-surface tests next to catch action/blocker regressions.
+3. Run UI tests after planner outputs are stable.
+4. Finish with `npm run build`, `npm run lint`, and `npm test` as broad gates.
+
+## Ticket Notes
+No open ticket should be auto-linked from this plan. Ticket `01KS384XKZNEWQRSXN2NXQ0DTJ` is adjacent extensibility planning but broader than this M3a contract, so linking it with `resolves_on_complete=true` would be misleading. Ticket `01KV8XVYW2EYDDDY30V48YX520` is unrelated to this repo change.
+
+
+        Review execution context (`finalize.json` + `execution.json`, prompt projection only):
+        {
+  "tasks": [
+    {
+      "id": "T1",
+      "depends_on": [],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 1: Replace the host material status contract with `missing | pending | resolved | stale | failed`, add status detail fields (`phase`, `quality`), add/export helper predicates, add optional `provenance?: Record<string, unknown>` to SDK material ref/material types, and mechanically migrate legacy `unbaked` fallback semantics to `pending` with `detail.phase = queued` in `src/tools/video-editor/runtime/renderPlanner.ts`, `src/sdk/video/rendering/artifacts.ts`, and `src/sdk/index.ts`.",
+      "complexity_justification": "This changes the public material status/type contract consumed by SDK and planner callers, so a subtle mismatch can propagate non-locally through compile-time consumers and runtime status handling. The concrete risk is accidentally preserving `unbaked` or exposing helper predicates from the wrong...",
+      "executor_notes": "Added/exported the five SDK material statuses, detail phase/quality fields, helper predicates, and `RenderMaterialRef.provenance`; aliased render-planner status typing to the SDK contract; migrated implicit legacy `unbaked` fallback to `pending` with `detail.phase = queued`; and updated immediate UI/test consumers to the new state shape. Scoped Vitest verification passed 5/6 files and failed in pre-existing examples-governance coverage assertions unrelated to this task; the new material-status exports were allowlisted there after the run, without rerunning tests.",
+      "files_changed": [
+        "src/sdk/examples-governance.test.ts",
+        "src/sdk/index.test.ts",
+        "src/sdk/index.ts",
+        "src/sdk/video/rendering/artifacts.ts",
+        "src/tools/video-editor/components/MaterialBrowser.tsx",
+        "src/tools/video-editor/components/PendingMaterialPlaceholder.tsx",
+        "src/tools/video-editor/compositions/VisualClip.test.tsx",
+        "src/tools/video-editor/compositions/VisualClip.tsx",
+        "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "src/tools/video-editor/runtime/renderPlanner.ts"
+      ],
+      "commands_run": [
+        "rg -n \"unbaked|missing|pending|resolved|stale|failed|provenance|phase|quality\" src/tools/video-editor/runtime/renderPlanner.ts src/sdk/video/rendering/artifacts.ts src/sdk/index.ts",
+        "sed -n '1,220p' src/sdk/video/rendering/artifacts.ts",
+        "sed -n '1,240p' src/sdk/index.ts",
+        "sed -n '1,260p' src/tools/video-editor/runtime/renderPlanner.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/examples-governance.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/compositions/VisualClip.test.tsx"
+      ]
+    },
+    {
+      "id": "T2",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 2: Replace V1 planner next-action vocabulary in `src/tools/video-editor/runtime/extensionSurface.ts`, `src/tools/video-editor/runtime/families/projectors/processProjector.ts`, and `src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts` with exactly `select-route | materialize | bake | invoke-agent | open-settings | install-extension | enable-extension`; remove public `start-process`; keep any old `resolve-blocker` bridge only as `detail.specificKind`; make process-b...",
+      "complexity_justification": "Planner action kinds are a shared runtime contract spanning extension surface and projector outputs, and mistakes can leak executable process semantics into M3a or break downstream action consumers. The hardest invariant is preserving compatibility detail without keeping old kinds as first-class...",
+      "executor_notes": "Changed `VideoEditorPlannerNextActionDescriptor.kind` to the exact seven V1 kinds and added `detail.specificKind` for the legacy `resolve-blocker` bridge. Process descriptors now expose no executable next actions, output-format repair actions now use `select-route` or `open-settings`, and direct planner/UI emitters were migrated to `materialize` so no public `start-process` or `resolve-blocker` action is emitted. Verification: `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/extensionSurface.ts",
+        "src/tools/video-editor/runtime/families/projectors/processProjector.ts",
+        "src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts",
+        "src/tools/video-editor/runtime/renderPlanner.ts",
+        "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "src/tools/video-editor/components/MaterialBrowser.tsx",
+        "src/tools/video-editor/components/MaterialBrowser.test.tsx"
+      ],
+      "commands_run": [
+        "rg -n \"start-process|resolve-blocker|select-route|materialize|bake|invoke-agent|open-settings|install-extension|enable-extension\" src/tools/video-editor/runtime/extensionSurface.ts src/tools/video-editor/runtime/families/projectors/processProjector.ts src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts",
+        "rg -n \"kind: 'resolve-blocker'|kind: 'start-process'|kind === 'resolve-blocker'|kind === 'start-process'|'resolve-blocker'|'start-process'\" src/tools/video-editor -g'*.ts' -g'*.tsx'",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx"
+      ]
+    },
+    {
+      "id": "T3",
+      "depends_on": [
+        "T2"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 3: Add the failed-specific blocker vocabulary in `src/sdk/video/rendering/renderability.ts` and `src/tools/video-editor/runtime/renderPlanner.ts`, using `materialization-error` as the failed blocker reason unless an existing compile-time contract proves a better stable name is already required; keep `materialization-failed` mapped to stale material records for compatibility and update affected reason lists.",
+      "complexity_justification": "This extends a public blocker enum/list and has cross-file effects, but the behavior is narrow: stale and failed must map to distinct reasons. The failure modes are mostly caught by renderability and planner tests, so it is tier 3 rather than a system-wide tier 4 contract migration.",
+      "executor_notes": "Added 'materialization-error' to RenderBlockerReason type and RENDER_BLOCKER_REASONS array in renderability.ts (inserted after 'materialization-failed' to keep stable ordering). Changed materialBlockerReason() in renderPlanner.ts line 1042 to return 'materialization-error' for failed state while keeping line 1040 'materialization-failed' for stale state (compatibility). Updated renderability.test.ts pinned reasons test to include 'materialization-error'. Verified with vitest: all 42 tests pass (12 renderability + 30 renderPlanner). No pre-existing test failures encountered. The renderRouter...",
+      "files_changed": [
+        "src/sdk/video/rendering/renderability.ts",
+        "src/tools/video-editor/runtime/renderPlanner.ts",
+        "src/tools/video-editor/runtime/renderability.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+      ]
+    },
+    {
+      "id": "T4",
+      "depends_on": [
+        "T3"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 4: Create `src/tools/video-editor/runtime/composition/materialRuntime.ts` with a centralized typed v8 material planner matrix covering the five statuses, phase values, quality values, no-detail/default rows, invalid combinations, migration semantics, blocker severity, determinism posture, route fit, diagnostic codes, and next-action kinds.",
+      "complexity_justification": "The table becomes the authority for planner and projection behavior, so duplicated or incomplete rows would create non-local semantic drift across later planner/UI consumers. The key subtlety is encoding invalid status/detail combinations and migration cases without expanding the public vocabulary.",
+      "executor_notes": "Added `materialRuntime.ts` as the centralized M3a authority for material status/detail semantics: a typed 60-row matrix covering the five statuses across phase/quality combinations, default rows, explicit invalid combinations, route-fit posture, blocker policy, diagnostic code sets, next-action kinds, and legacy `unbaked`/`baking`/`degraded`/live-runtime-only migrations. Added a focused `materialRuntime.test.ts` module asserting the matrix size, queued vs active pending posture, live-only handling, stale vs failed distinctions, invalid combinations, route-incompatible route selection, and l...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.test.ts"
+      ],
+      "commands_run": [
+        "sed -n '34,70p' .megaplan/plans/m3a-material-status-and-20260703-2036/plan_v1.md",
+        "sed -n '8,88p' .megaplan/plans/m3a-material-status-and-20260703-2036/prep_dossier.md",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts"
+      ]
+    },
+    {
+      "id": "T5",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 5: Build the first host material runtime projection shape in `src/tools/video-editor/runtime/composition/materialRuntime.ts`: typed input/output, deterministic ordering, frozen projection result, `ReadonlyMap` keyed by material ref id, per-material predicates, blocker/action placeholders from the matrix, and route-scope fields without defaulting generic material refs to `browser-export`.",
+      "complexity_justification": "This introduces the shared projection contract that render planner and tests will consume, and errors in immutability, keying, or route defaults can propagate beyond the edited file. It is not a tier 5 state machine, but it is a non-local runtime invariant.",
+      "executor_notes": "Added `projectHostMaterialRuntime(input)` and supporting projection types to produce a deterministic, frozen runtime view keyed by material ref id, with normalized status detail, per-material predicates, matrix-derived blocker/action placeholders, and route evidence fields that stay unset when no requested/canonical route is provided. Expanded `materialRuntime.test.ts` to cover deterministic ordering, readonly map keying, route-scoped placeholders, and the no-browser-export-default invariant. Verification: `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runti...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts"
+      ]
+    },
+    {
+      "id": "T6",
+      "depends_on": [
+        "T5"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 6: Extend `src/tools/video-editor/runtime/composition/diagnostics.ts` and material runtime helpers with material diagnostic codes and detail fields: `composition/material-status-invalid`, `composition/material-missing-provenance`, `composition/material-live-only`, `composition/material-stale`, `composition/material-failed`, `composition/material-weaker-provenance`, `composition/material-route-incompatible`, plus `materialRefId`, `routeScope`, `materialStatus`, `detailPhase`, `detailQuali...",
+      "complexity_justification": "This is a multi-file diagnostic schema extension with route-sensitive severity choices, but the behavior is localized to diagnostics and material runtime assembly. Tests should catch missing codes or malformed details, so the realistic risk is tier 3.",
+      "executor_notes": "Added 7 material diagnostic codes (MATERIAL_STATUS_INVALID, MATERIAL_MISSING_PROVENANCE, MATERIAL_LIVE_ONLY, MATERIAL_STALE, MATERIAL_FAILED, MATERIAL_WEAKER_PROVENANCE, MATERIAL_ROUTE_INCOMPATIBLE) to COMPOSITION_DIAGNOSTIC_CODE in diagnostics.ts. Extended CompositionDiagnosticDetail with materialRefId, routeScope, materialStatus, detailPhase, detailQuality, provenance fields. Added isMaterialDiagnosticCode type guard, materialDiagnosticSeverity function with correct severity alignment (invalid/failed/route-incompatible \u2192 error; missing-provenance/live-only/stale/weaker-provenance \u2192 warnin...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/diagnostics.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/exportGuard.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts"
+      ]
+    },
+    {
+      "id": "T7",
+      "depends_on": [
+        "T6"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 5/6: Complete `projectHostMaterialRuntime(input)` so projection input includes material refs/statuses, contribution/runtime descriptors where available, process statuses as declarative facts, and requested/canonical routes; output per-material status/detail, predicates, determinism/provenance posture, per-route fit, blockers, next actions, and diagnostics, with invalid rows blocking authoritative export through the matrix.",
+      "complexity_justification": "This is the main projection algorithm tying the matrix, diagnostics, route facts, and process facts together. A subtle route-scope or blocker/action derivation bug would affect planner behavior non-locally and may not be obvious from a single call site.",
+      "executor_notes": "Completed `projectHostMaterialRuntime(input)` so it accepts optional contribution-index, shader, process, and process-status facts; derives per-material determinism/provenance posture, route-fit posture, authoritative-export blocking, and route-sensitive blockers/actions from the centralized matrix; and emits frozen per-entry plus aggregate material diagnostics without introducing process execution behavior. Added next-action detail to material diagnostics and expanded `materialRuntime.test.ts` coverage for preview-vs-authoritative route scoping, invalid-row export blocking, and declarative...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/diagnostics.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.ts"
+      ],
+      "commands_run": [
+        "sed -n '45,60p' .megaplan/plans/m3a-material-status-and-20260703-2036/plan_v2.md",
+        "sed -n '1,320p' src/tools/video-editor/runtime/composition/materialRuntime.ts",
+        "sed -n '1,320p' src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts"
+      ]
+    },
+    {
+      "id": "T8",
+      "depends_on": [
+        "T7"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 7: Add declarative provenance validation for created artifacts/materials in `src/tools/video-editor/runtime/composition/materialRuntime.ts` and `src/sdk/video/rendering/artifacts.ts`: treat absent/empty provenance records consistently, derive material origin only from existing producer metadata plus determinism where available, and emit `composition/material-missing-provenance` with material ref id, route scope, and `provenanceGap` details without introducing bake/capture/agent/process e...",
+      "complexity_justification": "The validation spans SDK artifact shape and projection behavior, but it remains declarative and data-only. The main risk is over-requiring provenance or silently deriving it from unsupported fields, which focused material runtime tests can cover.",
+      "executor_notes": "Added declarative provenance validation for created artifacts/materials. In artifacts.ts: added ProvenanceGap interface, hasProvenance() (treats absent/empty records consistently), and describeProvenanceGap() (derives origin from producer metadata only \u2014 no bake/capture/agent/process). In materialRuntime.ts: added buildProvenanceGapForEntry() deriving gap from producerExtensionId/producerVersion/determinism, updated buildMaterialDiagnosticDetail() to populate provenanceGap, updated projectHostMaterialRuntime() to emit composition/material-missing-provenance when provenancePosture is 'unattr...",
+      "files_changed": [
+        "src/sdk/video/rendering/artifacts.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+        "src/sdk/index.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "src/sdk/examples-governance.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/sdk/index.test.ts"
+      ]
+    },
+    {
+      "id": "T9",
+      "depends_on": [
+        "T8"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 8: Wire the material projection into `src/tools/video-editor/runtime/renderPlanner.ts` by replacing ad hoc `createMaterialStatusMap`, `materialBlockerReason`, and `materializeAction` behavior with `projectHostMaterialRuntime` output while preserving existing `materialRefs`/`materialStatuses` input compatibility.",
+      "complexity_justification": "Render planner is the central consumer of the new projection, and an integration mistake can alter route plans, blockers, diagnostics, and UI-facing next actions. The task is tier 4 because the contract consumed by existing callers must keep working while the implementation source of truth changes.",
+      "executor_notes": "renderPlanner now consumes HostMaterialRuntimeProjection as the source of truth: it accepts an optional prebuilt projection or builds one once from the existing materialRefs/materialStatuses inputs, replaces local material status/blocker/action branching with projection-derived blocker/action placeholders, and preserves legacy browser-export material blocker compatibility. Added tests covering matrix-derived bake/open-settings actions plus prebuilt projection precedence. Verification: `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test....",
+      "files_changed": [
+        "src/tools/video-editor/runtime/renderPlanner.ts",
+        "src/tools/video-editor/runtime/renderPlanner.test.ts"
+      ],
+      "commands_run": [
+        "rg -n \"createMaterialStatusMap|materialBlockerReason|materializeAction|projectHostMaterialRuntime|materialStatuses|materialRefs\" src/tools/video-editor/runtime/renderPlanner.ts src/tools/video-editor/runtime/composition/materialRuntime.ts src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts"
+      ]
+    },
+    {
+      "id": "T10",
+      "depends_on": [
+        "T9"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 8: Finish render planner consumer migration by updating `collectMaterialRef`, `collectRenderGroups`, route summaries, route plans, diagnostics, and route-scoped material repair actions to include projection status/detail and process-backed materializer facts without invoking or scheduling processes.",
+      "complexity_justification": "This is non-trivial planner plumbing across several collections, but it follows the projection contract established in T9. The hardest correctness point is route-scoped blocker/action propagation rather than inventing new status branching.",
+      "executor_notes": "Updated collectMaterialRef to iterate over material.routeScopes (with browser-export fallback when no route evidence exists), emitting route-scoped blockers/actions with projection-derived material status/detail and process-backed materializer facts (materializerProcessId, materializerSupportsMaterialOutput) in blocker detail. Updated collectRenderGroups to accept the material projection and cross-reference render group passes with projected entries, enriching blocker detail with materialState/materialPhase/materialQuality and materializer facts. Updated materialActionLabel and buildMateria...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/renderPlanner.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/compositions/VisualClip.test.tsx"
+      ]
+    },
+    {
+      "id": "T11",
+      "depends_on": [
+        "T10"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 9: Migrate `src/tools/video-editor/components/MaterialBrowser.tsx` to the five material statuses, the seven V1 action kinds, and `detail.specificKind` compatibility lookup where present; remove `unbaked` and public `start-process` assumptions from filters/actions.",
+      "complexity_justification": "This UI consumer depends on both status and action contracts and can break user-facing filtering/action lookup if it drifts. The logic is bounded to one component but has enough contract branching to require tier 3.",
+      "executor_notes": "Added action.kind === 'bake' to isMaterialRepairAction in actionFor() so bake actions are recognized alongside materialize. Enhanced material detail State display to show phase (in parentheses) and quality (in brackets) from RenderMaterialStatusDetail. No unbaked status assumptions remain (removed in T1). No start-process action assumptions remain (removed in T2). detail.specificKind compatibility lookup preserved. Added test covering bake action recognition and phase/quality display. Verified: 233 tests pass across 7 suites including MaterialBrowser (3 tests), renderPlanner (32), renderPla...",
+      "files_changed": [
+        "src/tools/video-editor/components/MaterialBrowser.tsx",
+        "src/tools/video-editor/components/MaterialBrowser.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/MaterialBrowser.test.tsx",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/compositions/VisualClip.test.tsx"
+      ]
+    },
+    {
+      "id": "T12",
+      "depends_on": [
+        "T11"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Step 9: Migrate `src/tools/video-editor/components/PendingMaterialPlaceholder.tsx` and `src/tools/video-editor/compositions/VisualClip.tsx` so placeholder rendering uses `missing`, `pending`, `stale`, and `failed`; resolved stays non-placeholder; queued/active/live-only copy is derived from `detail.phase`; nondeterministic fallback becomes `pending` with `detail.phase = queued`.",
+      "complexity_justification": "This is a localized UI status migration across two nearby consumers with straightforward display behavior. The main failure mode is leaving `unbaked` copy or failing to render failed/stale placeholders, which component tests should catch.",
+      "executor_notes": "Migrated PendingMaterialPlaceholder.tsx: replaced static STATE_COPY with separate STATE_STYLES (colors only) + statusLabel(status) that derives label from detail.phase (pending: 'pending materialization' for queued/default, 'materializing\u2026' for active, 'live-only preview' for live-only; stale\u2192'stale material'; missing\u2192'material missing'; failed\u2192'materialization failed'; resolved\u2192'material ready'); added statusSubtitle() that prefers message\u2192diagnostic error\u2192phase/quality detail fallback; added data-material-phase and data-material-quality DOM attributes. VisualClip.tsx was already properly...",
+      "files_changed": [
+        "src/tools/video-editor/components/PendingMaterialPlaceholder.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/compositions/VisualClip.test.tsx",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/compositions/VisualClip.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx"
+      ]
+    },
+    {
+      "id": "T13",
+      "depends_on": [
+        "T12"
+      ],
+      "status": "done",
+      "kind": "docs",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Step 10: Write `docs/extensions/material-status-planner-matrix.md` documenting the five public statuses, detail phase/quality values, helper predicates, seven V1 action kinds, matrix summary, and explicit out-of-scope execution behavior: live bake execution, deterministic capture execution, agent promotion, process execution, graph-projected requires edges, and output-format sidecars.",
+      "complexity_justification": "This is documentation of the implemented contract and matrix with no runtime logic. It is tier 2 because the executor must align terms with code, but the task is confined to one docs file.",
+      "executor_notes": "Created docs/extensions/material-status-planner-matrix.md (260 lines, 16,646 bytes) documenting all M3a contracts: the five public statuses with meanings and migration semantics; detail phase (queued/active/live-only) and quality (weaker-provenance/route-incompatible) values; four status predicates plus two provenance helpers; the seven V1 next-action kinds with legacy compatibility bridge; the 60-row centralized planner matrix with row-by-row field descriptions and per-status summary; the legacy migration table (unbaked\u2192pending+queued, baking\u2192pending+active, degraded\u2192stale, live-runtime-on...",
+      "files_changed": [
+        "docs/extensions/material-status-planner-matrix.md"
+      ],
+      "commands_run": []
+    },
+    {
+      "id": "T14",
+      "depends_on": [
+        "T13"
+      ],
+      "status": "skipped",
+      "kind": "test",
+      "complexity": 3,
+      "reviewer_verdict": "deferred_baseline_unavailable",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "These tests exercise a new table-driven projection surface with many rows and detail combinations. The work is test-only, but it requires understanding the matrix and projection invariants well enough to avoid shallow snapshot coverage.",
+      "executor_notes": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative.",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": []
+    },
+    {
+      "id": "T15",
+      "depends_on": [
+        "T14"
+      ],
+      "status": "skipped",
+      "kind": "test",
+      "complexity": 3,
+      "reviewer_verdict": "deferred_baseline_unavailable",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This updates several existing tests against the migrated contract and planner behavior. The complexity is tier 3 because the assertions span three contract surfaces, but each expected behavior is concrete and already defined by earlier tasks.",
+      "executor_notes": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative.",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": []
+    },
+    {
+      "id": "T16",
+      "depends_on": [
+        "T15"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Step 12: Update UI tests in `src/tools/video-editor/components/MaterialBrowser.test.tsx` and `src/tools/video-editor/compositions/VisualClip.test.tsx` for new material status filters, action lookup behavior, nondeterministic fallback as `pending + queued`, placeholders for `missing`, `pending`, `stale`, and `failed`, and resolved non-placeholder behavior.",
+      "complexity_justification": "This is a focused component-test migration for already-updated UI consumers. The logic is visible in rendered status/action behavior, so failure modes are local and test-evident.",
+      "executor_notes": "MaterialBrowser.test.tsx: Added 3 tests \u2014 (1) nondeterministic fallback verifies live-unbaked\u2192pending+queued vs deterministic\u2192resolved when no statuses provided, (2) individual state filter iterates through all five statuses (missing/pending/resolved/stale/failed) using aria-label='Material results' scoping to avoid multi-element match, (3) missing-or-stale composite filter confirms both missing and stale are shown while pending and resolved are excluded. VisualClip.test.tsx: Enhanced existing placeholder test to cover all four non-resolved states: pending with queued/active/live-only phase...",
+      "files_changed": [
+        "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+        "src/tools/video-editor/compositions/VisualClip.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/compositions/VisualClip.test.tsx",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/compositions/VisualClip.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts"
+      ]
+    },
+    {
+      "id": "T17",
+      "depends_on": [
+        "T16"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This task runs the plan's explicit verification contract and records outcomes. It is tier 2 because command execution and failure triage are mechanical, with no implementation changes expected unless a directly caused failure is found and scoped by the harness.",
+      "executor_notes": "All four commands executed. Scoped Vitest: 6 files, 233 tests, 0 failures (diagnostics.test.ts does not exist \u2014 skipped silently). Build: passed with increased heap (OOM is pre-existing). Lint: 1 pre-existing error in patchPreview.ts:181 (untouched by M3a). Full npm test: times out due to pre-existing infra constraints; partial background run shows only pre-existing failures (headlessRender.test.ts \u2014 3 rendering-infra failures; runtimeErrorAliasGovernance.contract.test.ts \u2014 1 contract governance failure). Zero new failures attributable to M3a changes. All M3a-scoped test files pass green.",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts [7 paths] \u2192 6 files, 233 passed, 0 failed",
+        "NODE_OPTIONS=--max-old-space-size=4096 npm run build \u2192 passed",
+        "npm run lint \u2192 1 pre-existing error (patchPreview.ts:181, not M3a)",
+        "npm test \u2192 timed out (pre-existing infra); partial run shows only pre-existing failures"
+      ]
+    }
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "verdict": "",
+      "question": "Does the code expose exactly the five public material statuses, add detail/provenance fields and helper predicates, and remove `unbaked` from TypeScript material planner state while preserving queued fallback behavior?",
+      "executor_note": "Yes. The SDK now exports exactly `missing | pending | resolved | stale | failed` plus `detail.phase`, `detail.quality`, and the four helper predicates from the rendering artifacts surface; `RenderMaterialRef` now carries optional `provenance`; and render-planner status typing no longer includes `unbaked`, with the legacy unstated fallback normalized to `pending` plus `detail.phase = queued`."
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "verdict": "",
+      "question": "Do all public planner next actions use only the seven V1 kinds, with no emitted `start-process` action and any legacy bridge confined to `detail.specificKind`?",
+      "executor_note": "Yes. The public action kind union is now exactly `select-route | materialize | bake | invoke-agent | open-settings | install-extension | enable-extension`; neither process descriptors, output formats, render planner actions, nor MaterialBrowser expectations emit `start-process`; and the only remaining legacy bridge is `detail.specificKind = 'resolve-blocker'` on migrated repair actions."
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "verdict": "",
+      "question": "Are stale and failed material blockers distinct, with stale still using compatibility `materialization-failed` semantics and failed using the chosen failed-specific reason?",
+      "executor_note": "Yes. Stale and failed material blockers are now distinct. The materialBlockerReason() function at renderPlanner.ts:1040 returns 'materialization-failed' for stale state (compatibility), while line 1042 returns 'materialization-error' for failed state (new vocabulary). The collectRenderGroups() stale pass at line 1110 also correctly uses 'materialization-failed'. The renderRouter.ts usage of 'materialization-failed' at line 355 is a separate Remotion module concept and unchanged. The RENDER_BLOCKER_REASONS array now includes both values, with 'materialization-failed' first (stale/compat) and..."
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "verdict": "",
+      "question": "Is the material status/detail/action behavior centralized in an explicit typed matrix covering valid defaults, valid detail rows, invalid combinations, migrations, route fit, diagnostics, and next actions?",
+      "executor_note": "Yes. `materialRuntime.ts` now centralizes the material planner behavior in an explicit typed matrix with default rows, valid detail rows, explicit invalid combinations, legacy migration mappings, blocker policy, determinism posture, route-fit posture, diagnostic code sets, and next-action kinds; the focused Vitest module exercises those authority rows directly."
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "verdict": "",
+      "question": "Does the initial projection return a deterministic, frozen structure keyed by material ref id and avoid assigning generic material refs to `browser-export` without route evidence?",
+      "executor_note": "Yes. The new `projectHostMaterialRuntime` returns deterministic frozen material projections keyed by ref id, derives blocker/action placeholders from the matrix, and only attaches route-scoped fields when requested/canonical route evidence exists, so generic material refs are not implicitly assigned `browser-export`."
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "verdict": "",
+      "question": "Do material diagnostics include all required codes and detail fields, with severities aligned to invalid, failed, live-only, weak-provenance, stale, and route-incompatible rows?",
+      "executor_note": "Confirmed: All 7 required material diagnostic codes (composition/material-status-invalid, composition/material-missing-provenance, composition/material-live-only, composition/material-stale, composition/material-failed, composition/material-weaker-provenance, composition/material-route-incompatible) are present in COMPOSITION_DIAGNOSTIC_CODE. All 6 detail fields (materialRefId, routeScope, materialStatus, detailPhase, detailQuality, provenance) are present in CompositionDiagnosticDetail. Severities are correctly aligned: invalid/failed/route-incompatible \u2192 error; missing-provenance/live-onl..."
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "verdict": "",
+      "question": "Does `projectHostMaterialRuntime` derive predicates, determinism, provenance posture, per-route fit, blockers, actions, and diagnostics from the matrix without introducing process execution behavior?",
+      "executor_note": "Yes. `projectHostMaterialRuntime` now derives per-material predicates, determinism posture, provenance posture, route-fit posture, blockers, next actions, and diagnostics from the matrix while keeping process metadata declarative only. Route-scoped blockers/actions are emitted only for blocked routes, preview-compatible routes stay unblocked, invalid rows are surfaced through `composition/material-status-invalid`, and authoritative export blocking is recorded on the projection without scheduling or invoking any processes."
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "verdict": "",
+      "question": "Does provenance validation emit `composition/material-missing-provenance` only for absent/empty or non-derivable provenance and keep bake/capture/agent/process behavior declarative only?",
+      "executor_note": "CONFIRMED. Provenance validation emits composition/material-missing-provenance only when provenancePosture is 'unattributed' \u2014 which occurs when (a) provenance record is absent/empty AND (b) no producerExtensionId/producerVersion AND (c) no contribution/shader descriptor facts are available. The buildProvenanceGapForEntry() function derives material origin exclusively from producerExtensionId, producerVersion, and descriptor facts (contribution, shader). It does NOT inspect bake/capture/agent/process execution state \u2014 process facts are only used to populate descriptorFacts for shader matchi..."
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "verdict": "",
+      "question": "Does render planner build or accept the material projection once and replace ad hoc material status/blocker/action logic while preserving existing input compatibility?",
+      "executor_note": "Yes. renderPlanner now builds the host material projection once from the legacy materialRefs/materialStatuses contract or accepts a prebuilt HostMaterialRuntimeProjection directly, and material blockers plus repair actions are derived from projectHostMaterialRuntime output rather than local createMaterialStatusMap/materialBlockerReason/materializeAction branching."
+    },
+    {
+      "id": "SC10",
+      "task_id": "T10",
+      "verdict": "",
+      "question": "Do planner render groups, route summaries, diagnostics, and next actions carry projection-derived material status/detail and route-scoped blockers/actions, with process requirements preserved only as facts?",
+      "executor_note": "Confirmed. collectMaterialRef now iterates over routeScopes from the projection (with browser-export fallback only when no route evidence exists). Each route-scoped blocker carries materialState/materialPhase/materialQuality plus process-backed materializer facts (materializerProcessId, materializerSupportsMaterialOutput) in blocker detail. collectRenderGroups cross-references projection entries to enrich render-group blocker details with the same status/detail and process facts. Projection diagnostics are converted to CapabilityFinding format and included in route plans via the diagnostics..."
+    },
+    {
+      "id": "SC11",
+      "task_id": "T11",
+      "verdict": "",
+      "question": "Does MaterialBrowser consume the five statuses and seven action kinds correctly, including `detail.specificKind` compatibility lookup where present?",
+      "executor_note": "MaterialBrowser correctly consumes the five statuses (missing|pending|resolved|stale|failed) through RenderPlannerMaterialStatus['state'] typed to RenderMaterialStatusState. It consumes the seven V1 action kinds through VideoEditorPlannerNextActionKind type, with actionFor() recognizing materialize and bake directly as material-repair action kinds, plus detail.specificKind === 'resolve-blocker' compatibility lookup for planner-emitted actions that carry the legacy bridge. The filter supports all five individual states plus the composite 'missing-or-stale'. Status detail phase/quality are di..."
+    },
+    {
+      "id": "SC12",
+      "task_id": "T12",
+      "verdict": "",
+      "question": "Do placeholders render for missing, pending, stale, and failed materials; stay hidden for resolved materials; and use detail phase for queued/active/live-only distinctions?",
+      "executor_note": "CONFIRMED. Placeholders render for missing, pending, stale, and failed materials via shouldRenderMaterialPlaceholder() in VisualClip.tsx. Resolved materials stay hidden. Detail phase drives copy: pending+queued shows 'pending materialization', pending+active shows 'materializing\u2026', pending+live-only shows 'live-only preview'. Phase and quality appear as DOM data attributes and as subtitle fallback. Nondeterministic fallback correctly becomes pending with phase: queued. Verified by 233 passing tests."
+    },
+    {
+      "id": "SC13",
+      "task_id": "T13",
+      "verdict": "",
+      "question": "Does the documentation match the implemented status/detail/action/matrix vocabulary and explicitly exclude execution features outside M3a scope?"
+    },
+    {
+      "id": "SC14",
+      "task_id": "T14",
+      "verdict": "",
+      "question": "Do the new projection and diagnostic tests cover the full matrix, invalid rows, helper predicates, route fit, blockers, actions, provenance diagnostics, and immutability expectations?",
+      "executor_note": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative."
+    },
+    {
+      "id": "SC15",
+      "task_id": "T15",
+      "verdict": "",
+      "question": "Do existing planner/action/renderability tests assert the migrated status/action contracts, stale-vs-failed differences, and route-derived material behavior without hardcoded browser-export assumptions?",
+      "executor_note": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative."
+    },
+    {
+      "id": "SC16",
+      "task_id": "T16",
+      "verdict": "",
+      "question": "Do UI tests verify new filters, action lookup, nondeterministic queued fallback, placeholder coverage, and resolved non-placeholder behavior?",
+      "executor_note": "Confirmed. MaterialBrowser.test.tsx now verifies: (a) new filters \u2014 all five individual statuses plus missing-or-stale composite; (b) action lookup \u2014 materialize and bake actions with specificKind compatibility; (c) nondeterministic queued fallback \u2014 live-unbaked\u2192pending+queued, deterministic\u2192resolved; (d) placeholder coverage \u2014 VisualClip.test.tsx covers pending (all three phases), stale, missing, and failed states with data-material-phase/data-material-quality attributes; (e) resolved non-placeholder \u2014 existing test confirms no placeholder rendered for resolved state."
+    },
+    {
+      "id": "SC17",
+      "task_id": "T17",
+      "verdict": "",
+      "question": "Did the scoped Vitest baseline run before `npm run build`, `npm run lint`, and `npm test`, and are any failures clearly classified as new versus pre-existing baseline issues?",
+      "executor_note": "Yes. The scoped Vitest baseline ran first (before build/lint/npm test) and passed all 233 tests across 6 files with 0 failures. diagnostics.test.ts does not exist and was silently skipped; the watch_items note about creating it was for earlier code tasks, not for T17 verification. Build passed (with heap increase for pre-existing OOM constraint). The lint failure (patchPreview.ts:181 unused 'input') is pre-existing \u2014 the file was last modified in commit 5c1b97432 for milestone m1b-shader-graph-authority, completely unrelated to M3a. The full npm test suite timed out due to pre-existing infr..."
+    }
+  ],
+  "task_updates": [
+    {
+      "task_id": "T1",
+      "status": "done",
+      "executor_notes": "Added/exported the five SDK material statuses, detail phase/quality fields, helper predicates, and `RenderMaterialRef.provenance`; aliased render-planner status typing to the SDK contract; migrated implicit legacy `unbaked` fallback to `pending` with `detail.phase = queued`; and updated immediate UI/test consumers to the new state shape. Scoped Vitest verification passed 5/6 files and failed in pre-existing examples-governance coverage assertions unrelated to this task; the new material-status exports were allowlisted there after the run, without rerunning tests.",
+      "files_changed": [
+        "src/sdk/examples-governance.test.ts",
+        "src/sdk/index.test.ts",
+        "src/sdk/index.ts",
+        "src/sdk/video/rendering/artifacts.ts",
+        "src/tools/video-editor/components/MaterialBrowser.tsx",
+        "src/tools/video-editor/components/PendingMaterialPlaceholder.tsx",
+        "src/tools/video-editor/compositions/VisualClip.test.tsx",
+        "src/tools/video-editor/compositions/VisualClip.tsx",
+        "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "src/tools/video-editor/runtime/renderPlanner.ts"
+      ],
+      "commands_run": [
+        "rg -n \"unbaked|missing|pending|resolved|stale|failed|provenance|phase|quality\" src/tools/video-editor/runtime/renderPlanner.ts src/sdk/video/rendering/artifacts.ts src/sdk/index.ts",
+        "sed -n '1,220p' src/sdk/video/rendering/artifacts.ts",
+        "sed -n '1,240p' src/sdk/index.ts",
+        "sed -n '1,260p' src/tools/video-editor/runtime/renderPlanner.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/examples-governance.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/compositions/VisualClip.test.tsx"
+      ]
+    },
+    {
+      "task_id": "T2",
+      "status": "done",
+      "executor_notes": "Changed `VideoEditorPlannerNextActionDescriptor.kind` to the exact seven V1 kinds and added `detail.specificKind` for the legacy `resolve-blocker` bridge. Process descriptors now expose no executable next actions, output-format repair actions now use `select-route` or `open-settings`, and direct planner/UI emitters were migrated to `materialize` so no public `start-process` or `resolve-blocker` action is emitted. Verification: `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/extensionSurface.ts",
+        "src/tools/video-editor/runtime/families/projectors/processProjector.ts",
+        "src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts",
+        "src/tools/video-editor/runtime/renderPlanner.ts",
+        "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "src/tools/video-editor/components/MaterialBrowser.tsx",
+        "src/tools/video-editor/components/MaterialBrowser.test.tsx"
+      ],
+      "commands_run": [
+        "rg -n \"start-process|resolve-blocker|select-route|materialize|bake|invoke-agent|open-settings|install-extension|enable-extension\" src/tools/video-editor/runtime/extensionSurface.ts src/tools/video-editor/runtime/families/projectors/processProjector.ts src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts",
+        "rg -n \"kind: 'resolve-blocker'|kind: 'start-process'|kind === 'resolve-blocker'|kind === 'start-process'|'resolve-blocker'|'start-process'\" src/tools/video-editor -g'*.ts' -g'*.tsx'",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx"
+      ]
+    },
+    {
+      "task_id": "T3",
+      "status": "done",
+      "executor_notes": "Added 'materialization-error' to RenderBlockerReason type and RENDER_BLOCKER_REASONS array in renderability.ts (inserted after 'materialization-failed' to keep stable ordering). Changed materialBlockerReason() in renderPlanner.ts line 1042 to return 'materialization-error' for failed state while keeping line 1040 'materialization-failed' for stale state (compatibility). Updated renderability.test.ts pinned reasons test to include 'materialization-error'. Verified with vitest: all 42 tests pass (12 renderability + 30 renderPlanner). No pre-existing test failures encountered. The renderRouter...",
+      "files_changed": [
+        "src/sdk/video/rendering/renderability.ts",
+        "src/tools/video-editor/runtime/renderPlanner.ts",
+        "src/tools/video-editor/runtime/renderability.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+      ]
+    },
+    {
+      "task_id": "T4",
+      "status": "done",
+      "executor_notes": "Added `materialRuntime.ts` as the centralized M3a authority for material status/detail semantics: a typed 60-row matrix covering the five statuses across phase/quality combinations, default rows, explicit invalid combinations, route-fit posture, blocker policy, diagnostic code sets, next-action kinds, and legacy `unbaked`/`baking`/`degraded`/live-runtime-only migrations. Added a focused `materialRuntime.test.ts` module asserting the matrix size, queued vs active pending posture, live-only handling, stale vs failed distinctions, invalid combinations, route-incompatible route selection, and l...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.test.ts"
+      ],
+      "commands_run": [
+        "sed -n '34,70p' .megaplan/plans/m3a-material-status-and-20260703-2036/plan_v1.md",
+        "sed -n '8,88p' .megaplan/plans/m3a-material-status-and-20260703-2036/prep_dossier.md",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts"
+      ]
+    },
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "Added `projectHostMaterialRuntime(input)` and supporting projection types to produce a deterministic, frozen runtime view keyed by material ref id, with normalized status detail, per-material predicates, matrix-derived blocker/action placeholders, and route evidence fields that stay unset when no requested/canonical route is provided. Expanded `materialRuntime.test.ts` to cover deterministic ordering, readonly map keying, route-scoped placeholders, and the no-browser-export-default invariant. Verification: `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runti...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "Added 7 material diagnostic codes (MATERIAL_STATUS_INVALID, MATERIAL_MISSING_PROVENANCE, MATERIAL_LIVE_ONLY, MATERIAL_STALE, MATERIAL_FAILED, MATERIAL_WEAKER_PROVENANCE, MATERIAL_ROUTE_INCOMPATIBLE) to COMPOSITION_DIAGNOSTIC_CODE in diagnostics.ts. Extended CompositionDiagnosticDetail with materialRefId, routeScope, materialStatus, detailPhase, detailQuality, provenance fields. Added isMaterialDiagnosticCode type guard, materialDiagnosticSeverity function with correct severity alignment (invalid/failed/route-incompatible \u2192 error; missing-provenance/live-only/stale/weaker-provenance \u2192 warnin...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/diagnostics.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/exportGuard.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts"
+      ]
+    },
+    {
+      "task_id": "T7",
+      "status": "done",
+      "executor_notes": "Completed `projectHostMaterialRuntime(input)` so it accepts optional contribution-index, shader, process, and process-status facts; derives per-material determinism/provenance posture, route-fit posture, authoritative-export blocking, and route-sensitive blockers/actions from the centralized matrix; and emits frozen per-entry plus aggregate material diagnostics without introducing process execution behavior. Added next-action detail to material diagnostics and expanded `materialRuntime.test.ts` coverage for preview-vs-authoritative route scoping, invalid-row export blocking, and declarative...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/diagnostics.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.ts"
+      ],
+      "commands_run": [
+        "sed -n '45,60p' .megaplan/plans/m3a-material-status-and-20260703-2036/plan_v2.md",
+        "sed -n '1,320p' src/tools/video-editor/runtime/composition/materialRuntime.ts",
+        "sed -n '1,320p' src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts"
+      ]
+    },
+    {
+      "task_id": "T8",
+      "status": "done",
+      "executor_notes": "Added declarative provenance validation for created artifacts/materials. In artifacts.ts: added ProvenanceGap interface, hasProvenance() (treats absent/empty records consistently), and describeProvenanceGap() (derives origin from producer metadata only \u2014 no bake/capture/agent/process). In materialRuntime.ts: added buildProvenanceGapForEntry() deriving gap from producerExtensionId/producerVersion/determinism, updated buildMaterialDiagnosticDetail() to populate provenanceGap, updated projectHostMaterialRuntime() to emit composition/material-missing-provenance when provenancePosture is 'unattr...",
+      "files_changed": [
+        "src/sdk/video/rendering/artifacts.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+        "src/sdk/index.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "src/sdk/examples-governance.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/sdk/index.test.ts"
+      ]
+    },
+    {
+      "task_id": "T9",
+      "status": "done",
+      "executor_notes": "renderPlanner now consumes HostMaterialRuntimeProjection as the source of truth: it accepts an optional prebuilt projection or builds one once from the existing materialRefs/materialStatuses inputs, replaces local material status/blocker/action branching with projection-derived blocker/action placeholders, and preserves legacy browser-export material blocker compatibility. Added tests covering matrix-derived bake/open-settings actions plus prebuilt projection precedence. Verification: `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test....",
+      "files_changed": [
+        "src/tools/video-editor/runtime/renderPlanner.ts",
+        "src/tools/video-editor/runtime/renderPlanner.test.ts"
+      ],
+      "commands_run": [
+        "rg -n \"createMaterialStatusMap|materialBlockerReason|materializeAction|projectHostMaterialRuntime|materialStatuses|materialRefs\" src/tools/video-editor/runtime/renderPlanner.ts src/tools/video-editor/runtime/composition/materialRuntime.ts src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts"
+      ]
+    },
+    {
+      "task_id": "T10",
+      "status": "done",
+      "executor_notes": "Updated collectMaterialRef to iterate over material.routeScopes (with browser-export fallback when no route evidence exists), emitting route-scoped blockers/actions with projection-derived material status/detail and process-backed materializer facts (materializerProcessId, materializerSupportsMaterialOutput) in blocker detail. Updated collectRenderGroups to accept the material projection and cross-reference render group passes with projected entries, enriching blocker detail with materialState/materialPhase/materialQuality and materializer facts. Updated materialActionLabel and buildMateria...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/renderPlanner.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/compositions/VisualClip.test.tsx"
+      ]
+    },
+    {
+      "task_id": "T11",
+      "status": "done",
+      "executor_notes": "Added action.kind === 'bake' to isMaterialRepairAction in actionFor() so bake actions are recognized alongside materialize. Enhanced material detail State display to show phase (in parentheses) and quality (in brackets) from RenderMaterialStatusDetail. No unbaked status assumptions remain (removed in T1). No start-process action assumptions remain (removed in T2). detail.specificKind compatibility lookup preserved. Added test covering bake action recognition and phase/quality display. Verified: 233 tests pass across 7 suites including MaterialBrowser (3 tests), renderPlanner (32), renderPla...",
+      "files_changed": [
+        "src/tools/video-editor/components/MaterialBrowser.tsx",
+        "src/tools/video-editor/components/MaterialBrowser.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/MaterialBrowser.test.tsx",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/compositions/VisualClip.test.tsx"
+      ]
+    },
+    {
+      "task_id": "T12",
+      "status": "done",
+      "executor_notes": "Migrated PendingMaterialPlaceholder.tsx: replaced static STATE_COPY with separate STATE_STYLES (colors only) + statusLabel(status) that derives label from detail.phase (pending: 'pending materialization' for queued/default, 'materializing\u2026' for active, 'live-only preview' for live-only; stale\u2192'stale material'; missing\u2192'material missing'; failed\u2192'materialization failed'; resolved\u2192'material ready'); added statusSubtitle() that prefers message\u2192diagnostic error\u2192phase/quality detail fallback; added data-material-phase and data-material-quality DOM attributes. VisualClip.tsx was already properly...",
+      "files_changed": [
+        "src/tools/video-editor/components/PendingMaterialPlaceholder.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/compositions/VisualClip.test.tsx",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/compositions/VisualClip.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx"
+      ]
+    },
+    {
+      "task_id": "T9",
+      "status": "done",
+      "executor_notes": "renderPlanner now consumes HostMaterialRuntimeProjection as the source of truth: it accepts an optional prebuilt projection or builds one once from the existing materialRefs/materialStatuses inputs, replaces local material status/blocker/action branching with projection-derived blocker/action placeholders, and preserves legacy browser-export material blocker compatibility. Added tests covering matrix-derived bake/open-settings actions plus prebuilt projection precedence. Verification: `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test....",
+      "files_changed": [
+        "src/tools/video-editor/runtime/renderPlanner.ts",
+        "src/tools/video-editor/runtime/renderPlanner.test.ts"
+      ],
+      "commands_run": [
+        "rg -n \"createMaterialStatusMap|materialBlockerReason|materializeAction|projectHostMaterialRuntime|materialStatuses|materialRefs\" src/tools/video-editor/runtime/renderPlanner.ts src/tools/video-editor/runtime/composition/materialRuntime.ts src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts"
+      ]
+    },
+    {
+      "task_id": "T8",
+      "status": "done",
+      "executor_notes": "Added declarative provenance validation for created artifacts/materials. In artifacts.ts: added ProvenanceGap interface, hasProvenance() (treats absent/empty records consistently), and describeProvenanceGap() (derives origin from producer metadata only \u2014 no bake/capture/agent/process). In materialRuntime.ts: added buildProvenanceGapForEntry() deriving gap from producerExtensionId/producerVersion/determinism, updated buildMaterialDiagnosticDetail() to populate provenanceGap, updated projectHostMaterialRuntime() to emit composition/material-missing-provenance when provenancePosture is 'unattr...",
+      "files_changed": [
+        "src/sdk/video/rendering/artifacts.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+        "src/sdk/index.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "src/sdk/examples-governance.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/sdk/index.test.ts"
+      ]
+    },
+    {
+      "task_id": "T7",
+      "status": "done",
+      "executor_notes": "Completed `projectHostMaterialRuntime(input)` so it accepts optional contribution-index, shader, process, and process-status facts; derives per-material determinism/provenance posture, route-fit posture, authoritative-export blocking, and route-sensitive blockers/actions from the centralized matrix; and emits frozen per-entry plus aggregate material diagnostics without introducing process execution behavior. Added next-action detail to material diagnostics and expanded `materialRuntime.test.ts` coverage for preview-vs-authoritative route scoping, invalid-row export blocking, and declarative...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/diagnostics.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.ts"
+      ],
+      "commands_run": [
+        "sed -n '45,60p' .megaplan/plans/m3a-material-status-and-20260703-2036/plan_v2.md",
+        "sed -n '1,320p' src/tools/video-editor/runtime/composition/materialRuntime.ts",
+        "sed -n '1,320p' src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "Added 7 material diagnostic codes (MATERIAL_STATUS_INVALID, MATERIAL_MISSING_PROVENANCE, MATERIAL_LIVE_ONLY, MATERIAL_STALE, MATERIAL_FAILED, MATERIAL_WEAKER_PROVENANCE, MATERIAL_ROUTE_INCOMPATIBLE) to COMPOSITION_DIAGNOSTIC_CODE in diagnostics.ts. Extended CompositionDiagnosticDetail with materialRefId, routeScope, materialStatus, detailPhase, detailQuality, provenance fields. Added isMaterialDiagnosticCode type guard, materialDiagnosticSeverity function with correct severity alignment (invalid/failed/route-incompatible \u2192 error; missing-provenance/live-only/stale/weaker-provenance \u2192 warnin...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/diagnostics.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/exportGuard.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts"
+      ]
+    },
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "Added `projectHostMaterialRuntime(input)` and supporting projection types to produce a deterministic, frozen runtime view keyed by material ref id, with normalized status detail, per-material predicates, matrix-derived blocker/action placeholders, and route evidence fields that stay unset when no requested/canonical route is provided. Expanded `materialRuntime.test.ts` to cover deterministic ordering, readonly map keying, route-scoped placeholders, and the no-browser-export-default invariant. Verification: `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runti...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts"
+      ]
+    },
+    {
+      "task_id": "T4",
+      "status": "done",
+      "executor_notes": "Added `materialRuntime.ts` as the centralized M3a authority for material status/detail semantics: a typed 60-row matrix covering the five statuses across phase/quality combinations, default rows, explicit invalid combinations, route-fit posture, blocker policy, diagnostic code sets, next-action kinds, and legacy `unbaked`/`baking`/`degraded`/live-runtime-only migrations. Added a focused `materialRuntime.test.ts` module asserting the matrix size, queued vs active pending posture, live-only handling, stale vs failed distinctions, invalid combinations, route-incompatible route selection, and l...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.test.ts"
+      ],
+      "commands_run": [
+        "sed -n '34,70p' .megaplan/plans/m3a-material-status-and-20260703-2036/plan_v1.md",
+        "sed -n '8,88p' .megaplan/plans/m3a-material-status-and-20260703-2036/prep_dossier.md",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts"
+      ]
+    },
+    {
+      "task_id": "T3",
+      "status": "done",
+      "executor_notes": "Added 'materialization-error' to RenderBlockerReason type and RENDER_BLOCKER_REASONS array in renderability.ts (inserted after 'materialization-failed' to keep stable ordering). Changed materialBlockerReason() in renderPlanner.ts line 1042 to return 'materialization-error' for failed state while keeping line 1040 'materialization-failed' for stale state (compatibility). Updated renderability.test.ts pinned reasons test to include 'materialization-error'. Verified with vitest: all 42 tests pass (12 renderability + 30 renderPlanner). No pre-existing test failures encountered. The renderRouter...",
+      "files_changed": [
+        "src/sdk/video/rendering/renderability.ts",
+        "src/tools/video-editor/runtime/renderPlanner.ts",
+        "src/tools/video-editor/runtime/renderability.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+      ]
+    },
+    {
+      "task_id": "T2",
+      "status": "done",
+      "executor_notes": "Changed `VideoEditorPlannerNextActionDescriptor.kind` to the exact seven V1 kinds and added `detail.specificKind` for the legacy `resolve-blocker` bridge. Process descriptors now expose no executable next actions, output-format repair actions now use `select-route` or `open-settings`, and direct planner/UI emitters were migrated to `materialize` so no public `start-process` or `resolve-blocker` action is emitted. Verification: `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/extensionSurface.ts",
+        "src/tools/video-editor/runtime/families/projectors/processProjector.ts",
+        "src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts",
+        "src/tools/video-editor/runtime/renderPlanner.ts",
+        "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "src/tools/video-editor/components/MaterialBrowser.tsx",
+        "src/tools/video-editor/components/MaterialBrowser.test.tsx"
+      ],
+      "commands_run": [
+        "rg -n \"start-process|resolve-blocker|select-route|materialize|bake|invoke-agent|open-settings|install-extension|enable-extension\" src/tools/video-editor/runtime/extensionSurface.ts src/tools/video-editor/runtime/families/projectors/processProjector.ts src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts",
+        "rg -n \"kind: 'resolve-blocker'|kind: 'start-process'|kind === 'resolve-blocker'|kind === 'start-process'|'resolve-blocker'|'start-process'\" src/tools/video-editor -g'*.ts' -g'*.tsx'",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx"
+      ]
+    },
+    {
+      "task_id": "T13",
+      "status": "done",
+      "executor_notes": "Created docs/extensions/material-status-planner-matrix.md (260 lines, 16,646 bytes) documenting all M3a contracts: the five public statuses with meanings and migration semantics; detail phase (queued/active/live-only) and quality (weaker-provenance/route-incompatible) values; four status predicates plus two provenance helpers; the seven V1 next-action kinds with legacy compatibility bridge; the 60-row centralized planner matrix with row-by-row field descriptions and per-status summary; the legacy migration table (unbaked\u2192pending+queued, baking\u2192pending+active, degraded\u2192stale, live-runtime-on...",
+      "files_changed": [
+        "docs/extensions/material-status-planner-matrix.md"
+      ],
+      "commands_run": []
+    },
+    {
+      "task_id": "T12",
+      "status": "done",
+      "executor_notes": "Migrated PendingMaterialPlaceholder.tsx: replaced static STATE_COPY with separate STATE_STYLES (colors only) + statusLabel(status) that derives label from detail.phase (pending: 'pending materialization' for queued/default, 'materializing\u2026' for active, 'live-only preview' for live-only; stale\u2192'stale material'; missing\u2192'material missing'; failed\u2192'materialization failed'; resolved\u2192'material ready'); added statusSubtitle() that prefers message\u2192diagnostic error\u2192phase/quality detail fallback; added data-material-phase and data-material-quality DOM attributes. VisualClip.tsx was already properly...",
+      "files_changed": [
+        "src/tools/video-editor/components/PendingMaterialPlaceholder.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/compositions/VisualClip.test.tsx",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/compositions/VisualClip.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx"
+      ]
+    },
+    {
+      "task_id": "T11",
+      "status": "done",
+      "executor_notes": "Added action.kind === 'bake' to isMaterialRepairAction in actionFor() so bake actions are recognized alongside materialize. Enhanced material detail State display to show phase (in parentheses) and quality (in brackets) from RenderMaterialStatusDetail. No unbaked status assumptions remain (removed in T1). No start-process action assumptions remain (removed in T2). detail.specificKind compatibility lookup preserved. Added test covering bake action recognition and phase/quality display. Verified: 233 tests pass across 7 suites including MaterialBrowser (3 tests), renderPlanner (32), renderPla...",
+      "files_changed": [
+        "src/tools/video-editor/components/MaterialBrowser.tsx",
+        "src/tools/video-editor/components/MaterialBrowser.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/MaterialBrowser.test.tsx",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/compositions/VisualClip.test.tsx"
+      ]
+    },
+    {
+      "task_id": "T10",
+      "status": "done",
+      "executor_notes": "Updated collectMaterialRef to iterate over material.routeScopes (with browser-export fallback when no route evidence exists), emitting route-scoped blockers/actions with projection-derived material status/detail and process-backed materializer facts (materializerProcessId, materializerSupportsMaterialOutput) in blocker detail. Updated collectRenderGroups to accept the material projection and cross-reference render group passes with projected entries, enriching blocker detail with materialState/materialPhase/materialQuality and materializer facts. Updated materialActionLabel and buildMateria...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/renderPlanner.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/compositions/VisualClip.test.tsx"
+      ]
+    },
+    {
+      "task_id": "T1",
+      "status": "done",
+      "executor_notes": "Added/exported the five SDK material statuses, detail phase/quality fields, helper predicates, and `RenderMaterialRef.provenance`; aliased render-planner status typing to the SDK contract; migrated implicit legacy `unbaked` fallback to `pending` with `detail.phase = queued`; and updated immediate UI/test consumers to the new state shape. Scoped Vitest verification passed 5/6 files and failed in pre-existing examples-governance coverage assertions unrelated to this task; the new material-status exports were allowlisted there after the run, without rerunning tests.",
+      "files_changed": [
+        "src/sdk/examples-governance.test.ts",
+        "src/sdk/index.test.ts",
+        "src/sdk/index.ts",
+        "src/sdk/video/rendering/artifacts.ts",
+        "src/tools/video-editor/components/MaterialBrowser.tsx",
+        "src/tools/video-editor/components/PendingMaterialPlaceholder.tsx",
+        "src/tools/video-editor/compositions/VisualClip.test.tsx",
+        "src/tools/video-editor/compositions/VisualClip.tsx",
+        "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "src/tools/video-editor/runtime/renderPlanner.ts"
+      ],
+      "commands_run": [
+        "rg -n \"unbaked|missing|pending|resolved|stale|failed|provenance|phase|quality\" src/tools/video-editor/runtime/renderPlanner.ts src/sdk/video/rendering/artifacts.ts src/sdk/index.ts",
+        "sed -n '1,220p' src/sdk/video/rendering/artifacts.ts",
+        "sed -n '1,240p' src/sdk/index.ts",
+        "sed -n '1,260p' src/tools/video-editor/runtime/renderPlanner.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/examples-governance.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/compositions/VisualClip.test.tsx"
+      ]
+    },
+    {
+      "task_id": "T16",
+      "status": "done",
+      "executor_notes": "MaterialBrowser.test.tsx: Added 3 tests \u2014 (1) nondeterministic fallback verifies live-unbaked\u2192pending+queued vs deterministic\u2192resolved when no statuses provided, (2) individual state filter iterates through all five statuses (missing/pending/resolved/stale/failed) using aria-label='Material results' scoping to avoid multi-element match, (3) missing-or-stale composite filter confirms both missing and stale are shown while pending and resolved are excluded. VisualClip.test.tsx: Enhanced existing placeholder test to cover all four non-resolved states: pending with queued/active/live-only phase...",
+      "files_changed": [
+        "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+        "src/tools/video-editor/compositions/VisualClip.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/compositions/VisualClip.test.tsx",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/compositions/VisualClip.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts"
+      ]
+    },
+    {
+      "task_id": "T17",
+      "status": "done",
+      "executor_notes": "All four commands executed. Scoped Vitest: 6 files, 233 tests, 0 failures (diagnostics.test.ts does not exist \u2014 skipped silently). Build: passed with increased heap (OOM is pre-existing). Lint: 1 pre-existing error in patchPreview.ts:181 (untouched by M3a). Full npm test: times out due to pre-existing infra constraints; partial background run shows only pre-existing failures (headlessRender.test.ts \u2014 3 rendering-infra failures; runtimeErrorAliasGovernance.contract.test.ts \u2014 1 contract governance failure). Zero new failures attributable to M3a changes. All M3a-scoped test files pass green.",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts [7 paths] \u2192 6 files, 233 passed, 0 failed",
+        "NODE_OPTIONS=--max-old-space-size=4096 npm run build \u2192 passed",
+        "npm run lint \u2192 1 pre-existing error (patchPreview.ts:181, not M3a)",
+        "npm test \u2192 timed out (pre-existing infra); partial run shows only pre-existing failures"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC1",
+      "executor_note": "Yes. The SDK now exports exactly `missing | pending | resolved | stale | failed` plus `detail.phase`, `detail.quality`, and the four helper predicates from the rendering artifacts surface; `RenderMaterialRef` now carries optional `provenance`; and render-planner status typing no longer includes `unbaked`, with the legacy unstated fallback normalized to `pending` plus `detail.phase = queued`."
+    },
+    {
+      "sense_check_id": "SC2",
+      "executor_note": "Yes. The public action kind union is now exactly `select-route | materialize | bake | invoke-agent | open-settings | install-extension | enable-extension`; neither process descriptors, output formats, render planner actions, nor MaterialBrowser expectations emit `start-process`; and the only remaining legacy bridge is `detail.specificKind = 'resolve-blocker'` on migrated repair actions."
+    },
+    {
+      "sense_check_id": "SC3",
+      "executor_note": "Yes. Stale and failed material blockers are now distinct. The materialBlockerReason() function at renderPlanner.ts:1040 returns 'materialization-failed' for stale state (compatibility), while line 1042 returns 'materialization-error' for failed state (new vocabulary). The collectRenderGroups() stale pass at line 1110 also correctly uses 'materialization-failed'. The renderRouter.ts usage of 'materialization-failed' at line 355 is a separate Remotion module concept and unchanged. The RENDER_BLOCKER_REASONS array now includes both values, with 'materialization-failed' first (stale/compat) and..."
+    },
+    {
+      "sense_check_id": "SC4",
+      "executor_note": "Yes. `materialRuntime.ts` now centralizes the material planner behavior in an explicit typed matrix with default rows, valid detail rows, explicit invalid combinations, legacy migration mappings, blocker policy, determinism posture, route-fit posture, diagnostic code sets, and next-action kinds; the focused Vitest module exercises those authority rows directly."
+    },
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "Yes. The new `projectHostMaterialRuntime` returns deterministic frozen material projections keyed by ref id, derives blocker/action placeholders from the matrix, and only attaches route-scoped fields when requested/canonical route evidence exists, so generic material refs are not implicitly assigned `browser-export`."
+    },
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "Confirmed: All 7 required material diagnostic codes (composition/material-status-invalid, composition/material-missing-provenance, composition/material-live-only, composition/material-stale, composition/material-failed, composition/material-weaker-provenance, composition/material-route-incompatible) are present in COMPOSITION_DIAGNOSTIC_CODE. All 6 detail fields (materialRefId, routeScope, materialStatus, detailPhase, detailQuality, provenance) are present in CompositionDiagnosticDetail. Severities are correctly aligned: invalid/failed/route-incompatible \u2192 error; missing-provenance/live-onl..."
+    },
+    {
+      "sense_check_id": "SC7",
+      "executor_note": "Yes. `projectHostMaterialRuntime` now derives per-material predicates, determinism posture, provenance posture, route-fit posture, blockers, next actions, and diagnostics from the matrix while keeping process metadata declarative only. Route-scoped blockers/actions are emitted only for blocked routes, preview-compatible routes stay unblocked, invalid rows are surfaced through `composition/material-status-invalid`, and authoritative export blocking is recorded on the projection without scheduling or invoking any processes."
+    },
+    {
+      "sense_check_id": "SC8",
+      "executor_note": "CONFIRMED. Provenance validation emits composition/material-missing-provenance only when provenancePosture is 'unattributed' \u2014 which occurs when (a) provenance record is absent/empty AND (b) no producerExtensionId/producerVersion AND (c) no contribution/shader descriptor facts are available. The buildProvenanceGapForEntry() function derives material origin exclusively from producerExtensionId, producerVersion, and descriptor facts (contribution, shader). It does NOT inspect bake/capture/agent/process execution state \u2014 process facts are only used to populate descriptorFacts for shader matchi..."
+    },
+    {
+      "sense_check_id": "SC9",
+      "executor_note": "Yes. renderPlanner now builds the host material projection once from the legacy materialRefs/materialStatuses contract or accepts a prebuilt HostMaterialRuntimeProjection directly, and material blockers plus repair actions are derived from projectHostMaterialRuntime output rather than local createMaterialStatusMap/materialBlockerReason/materializeAction branching."
+    },
+    {
+      "sense_check_id": "SC10",
+      "executor_note": "Confirmed. collectMaterialRef now iterates over routeScopes from the projection (with browser-export fallback only when no route evidence exists). Each route-scoped blocker carries materialState/materialPhase/materialQuality plus process-backed materializer facts (materializerProcessId, materializerSupportsMaterialOutput) in blocker detail. collectRenderGroups cross-references projection entries to enrich render-group blocker details with the same status/detail and process facts. Projection diagnostics are converted to CapabilityFinding format and included in route plans via the diagnostics..."
+    },
+    {
+      "sense_check_id": "SC11",
+      "executor_note": "MaterialBrowser correctly consumes the five statuses (missing|pending|resolved|stale|failed) through RenderPlannerMaterialStatus['state'] typed to RenderMaterialStatusState. It consumes the seven V1 action kinds through VideoEditorPlannerNextActionKind type, with actionFor() recognizing materialize and bake directly as material-repair action kinds, plus detail.specificKind === 'resolve-blocker' compatibility lookup for planner-emitted actions that carry the legacy bridge. The filter supports all five individual states plus the composite 'missing-or-stale'. Status detail phase/quality are di..."
+    },
+    {
+      "sense_check_id": "SC12",
+      "executor_note": "CONFIRMED. Placeholders render for missing, pending, stale, and failed materials via shouldRenderMaterialPlaceholder() in VisualClip.tsx. Resolved materials stay hidden. Detail phase drives copy: pending+queued shows 'pending materialization', pending+active shows 'materializing\u2026', pending+live-only shows 'live-only preview'. Phase and quality appear as DOM data attributes and as subtitle fallback. Nondeterministic fallback correctly becomes pending with phase: queued. Verified by 233 passing tests."
+    },
+    {
+      "sense_check_id": "SC16",
+      "executor_note": "Confirmed. MaterialBrowser.test.tsx now verifies: (a) new filters \u2014 all five individual statuses plus missing-or-stale composite; (b) action lookup \u2014 materialize and bake actions with specificKind compatibility; (c) nondeterministic queued fallback \u2014 live-unbaked\u2192pending+queued, deterministic\u2192resolved; (d) placeholder coverage \u2014 VisualClip.test.tsx covers pending (all three phases), stale, missing, and failed states with data-material-phase/data-material-quality attributes; (e) resolved non-placeholder \u2014 existing test confirms no placeholder rendered for resolved state."
+    },
+    {
+      "sense_check_id": "SC17",
+      "executor_note": "Yes. The scoped Vitest baseline ran first (before build/lint/npm test) and passed all 233 tests across 6 files with 0 failures. diagnostics.test.ts does not exist and was silently skipped; the watch_items note about creating it was for earlier code tasks, not for T17 verification. Build passed (with heap increase for pre-existing OOM constraint). The lint failure (patchPreview.ts:181 unused 'input') is pre-existing \u2014 the file was last modified in commit 5c1b97432 for milestone m1b-shader-graph-authority, completely unrelated to M3a. The full npm test suite timed out due to pre-existing infr..."
+    }
+  ],
+  "output": "Aggregated execute batches: completed 15/2. Batch 1: Implemented the batch-1 material status contract migration by adding the five-state SDK material status surface, detail phase/quality fields, helper predicates, material provenance, and queued pending fallback semantics in the planner and its immediate consumers. Batch 2: Replaced the public planner next-action contract with the seven V1 kinds, removed emitted `start-process`, converted process projector output to declarative metadata only, and confined the legacy `resolve-blocker` bridge to `detail.specificKind`. Updated direct planner/UI consumers and expectations so the runtime still emits only V1 kinds, then verified the change with a scoped Vitest run. Batch 3: Batch 4: Created the centralized material runtime planner matrix artifact with explicit valid/default/invalid rows, legacy migration mappings, route-fit and blocker posture typing, and a focused Vitest module to lock the semantics. Batch 5: Implemented T5 by adding the first host material runtime projection contract in materialRuntime.ts with deterministic material ordering, frozen readonly projection entries, a readonly map keyed by material ref id, matrix-derived blocker/action placeholders, predicate flags, and route evidence handling that does not default generic refs to browser-export. Verified with the scoped materialRuntime Vitest module. Batch 6: Successfully extended diagnostics.ts with 7 material diagnostic codes and 6 material detail fields, added...",
+  "deviations": [
+    "Expanded the edit set beyond the three named implementation files to update immediate type consumers/tests and the SDK examples-governance allowlist so removing `unbaked` from the shared planner status type would not leave compile-time drift.",
+    "The single scoped Vitest run surfaced unrelated existing failures in `src/sdk/examples-governance.test.ts` (for exports such as `ContributionRef`, `CompositionGraph`, and `TimelineAutomationSummary`); I patched the newly added material-status exports into that file's internal-export allowlist afterward but did not rerun the heavy test command to comply with the single-run instruction.",
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: src/sdk/examples-governance.test.ts, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/video/rendering/artifacts.ts, src/tools/video-editor/components/MaterialBrowser.tsx, src/tools/video-editor/components/PendingMaterialPlaceholder.tsx, src/tools/video-editor/compositions/VisualClip.test.tsx, src/tools/video-editor/compositions/VisualClip.tsx, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/renderPlanner.ts",
+    "Advisory audit finding: Executor claimed changed files not present in git status: src/sdk/examples-governance.test.ts, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/video/rendering/artifacts.ts, src/tools/video-editor/components/MaterialBrowser.tsx, src/tools/video-editor/components/PendingMaterialPlaceholder.tsx, src/tools/video-editor/compositions/VisualClip.test.tsx, src/tools/video-editor/compositions/VisualClip.tsx, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/renderPlanner.ts",
+    "Advisory audit finding: Sense check SC2 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC3 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC11 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC12 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC13 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC14 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC15 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC16 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC17 is missing an executor acknowledgment.",
+    {
+      "omitted_count": 173,
+      "reason": "prompt projection"
+    }
+  ],
+  "files_changed": [
+    "src/sdk/examples-governance.test.ts",
+    "src/sdk/index.test.ts",
+    "src/sdk/index.ts",
+    "src/sdk/video/rendering/artifacts.ts",
+    "src/tools/video-editor/components/MaterialBrowser.tsx",
+    "src/tools/video-editor/components/PendingMaterialPlaceholder.tsx",
+    "src/tools/video-editor/compositions/VisualClip.test.tsx",
+    "src/tools/video-editor/compositions/VisualClip.tsx",
+    "src/tools/video-editor/runtime/renderPlanner.test.ts",
+    "src/tools/video-editor/runtime/renderPlanner.ts",
+    "src/tools/video-editor/runtime/extensionSurface.ts",
+    "src/tools/video-editor/runtime/families/projectors/processProjector.ts",
+    "src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts",
+    "src/tools/video-editor/runtime/extensionSurface.test.ts",
+    "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+    "src/sdk/video/rendering/renderability.ts",
+    "src/tools/video-editor/runtime/renderability.test.ts",
+    "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+    "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+    "src/tools/video-editor/runtime/composition/diagnostics.ts"
+  ],
+  "commands_run": [
+    "rg -n \"unbaked|missing|pending|resolved|stale|failed|provenance|phase|quality\" src/tools/video-editor/runtime/renderPlanner.ts src/sdk/video/rendering/artifacts.ts src/sdk/index.ts",
+    "sed -n '1,220p' src/sdk/video/rendering/artifacts.ts",
+    "sed -n '1,240p' src/sdk/index.ts",
+    "sed -n '1,260p' src/tools/video-editor/runtime/renderPlanner.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/examples-governance.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx s...",
+    "rg -n \"start-process|resolve-blocker|select-route|materialize|bake|invoke-agent|open-settings|install-extension|enable-extension\" src/tools/video-editor/runtime/extensionSurface.ts src/tools/video-editor/runtime/families/projectors/processProjector.ts src/tools/video-editor/runtime/families/proje...",
+    "rg -n \"kind: 'resolve-blocker'|kind: 'start-process'|kind === 'resolve-blocker'|kind === 'start-process'|'resolve-blocker'|'start-process'\" src/tools/video-editor -g'*.ts' -g'*.tsx'",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts",
+    "sed -n '34,70p' .megaplan/plans/m3a-material-status-and-20260703-2036/plan_v1.md",
+    "sed -n '8,88p' .megaplan/plans/m3a-material-status-and-20260703-2036/prep_dossier.md",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/exportGuard.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts",
+    "sed -n '45,60p' .megaplan/plans/m3a-material-status-and-20260703-2036/plan_v2.md",
+    "sed -n '1,320p' src/tools/video-editor/runtime/composition/materialRuntime.ts",
+    "sed -n '1,320p' src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/vi...",
+    "git status --short",
+    {
+      "omitted_count": 16,
+      "reason": "prompt projection"
+    }
+  ],
+  "watch_items": [
+    "North Star scope: do not introduce live bake execution, process execution, agent promotion, graph-projected requires edges, output-format sidecars, sandboxing, WebGPU, generic texture routing, or arbitrary material graphs in M3a.",
+    "Public status vocabulary must remain exactly `missing`, `pending`, `resolved`, `stale`, and `failed`; `unbaked` may only appear as removed legacy text in historical context, not as planner state.",
+    "Public next-action vocabulary must remain exactly `select-route`, `materialize`, `bake`, `invoke-agent`, `open-settings`, `install-extension`, and `enable-extension`; `start-process` must not be emitted as a V1 action.",
+    "Process-backed materializer requirements are declarative facts only. Any code that schedules, starts, or invokes a process is scope creep for this milestone.",
+    "Route fit for material blockers/actions must come from descriptors, projection input, requested/canonical routes, or graph/runtime facts; never assign generic materials to `browser-export` by default.",
+    "Keep the matrix centralized and table-driven. Planner and UI consumers should consume projection output rather than reimplement status/phase/quality branching.",
+    "Stale and failed material records must produce distinct blocker/action behavior; `materialization-failed` remains stale compatibility behavior while failed uses the failed-specific reason.",
+    "Invalid status/detail combinations must emit `composition/material-status-invalid` and block authoritative export through projection diagnostics.",
+    "Missing provenance means absent or empty provenance records unless existing producer metadata plus determinism can derive a defensible origin; validation must stay declarative.",
+    "Projection outputs and nested collections should be frozen/immutable consistently with existing composition projector patterns.",
+    "The focused baseline selectors are path-only and include newly created `materialRuntime.test.ts` and `diagnostics.test.ts`; create those tests before running the scoped Vitest command.",
+    "Broad gates remain mandatory after focused tests: `npm run build`, `npm run lint`, and `npm test`."
+  ],
+  "user_actions": [],
+  "meta_commentary": "Execute in the settled order: contract and action vocabulary first, matrix/projection/diagnostics next, planner wiring before UI, docs after code behavior stabilizes, then tests and gates. Do not re-open strategy decisions or invoke nested megaplan tooling. The open questions from the plan are executable decisions now: use `materialization-error` for failed unless the repo has a conflicting stable blocker convention, and accept direct or derivable provenance only from the explicit fields named in the plan. Keep route scope and process facts conservative: no browser-export defaults for generic materials, and no executable process lifecycle in M3a."
+}
+
+        Plan metadata:
+        {
+  "version": 2,
+  "timestamp": "2026-07-03T21:01:29Z",
+  "hash": "sha256:24d40f9070907be235a1d3d20d1c8da7876228e3bd4051f900bc8aa99ff5d175",
+  "changes_summary": "Addressed the finalize gate by treating the issue as a verification-contract failure rather than a wrong-code/root-cause problem. The revised plan keeps the implementation scope intact, adds an explicit scoped baseline step, and provides machine-readable path-only test selectors while leaving build, lint, and full test suite as broad gates.",
+  "flags_addressed": [
+    {
+      "id": "finalize-baseline-test-scope",
+      "resolution": "addressed",
+      "reason": "Replaced mixed script/path selector intent with path-only scoped test selectors in `test_blast_radius` and moved build/lint/full-suite commands into `always_run` plus Phase 4 Step 13 broad gates.",
+      "where": "Phase 4 \u2014 Step 13; structured `test_blast_radius`"
+    }
+  ],
+  "questions": [
+    "Should the new failed-specific SDK blocker reason be named `materialization-error`, or should reviewers choose another stable name before implementation?",
+    "Should material provenance be required directly on `RenderMaterialRef.provenance`, or is derived provenance from producer metadata sufficient for existing material refs?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "The public material status contract uses exactly `missing`, `pending`, `resolved`, `stale`, and `failed`; no source or test uses `unbaked` as a material planner state.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Planner next actions expose the seven V1 action kinds and no longer emit `start-process`; any compatibility bridge carries the specific action in detail rather than as a public action kind.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The material runtime projection is keyed by material ref id, derives helper predicates, route fit, blockers, actions, and diagnostics from the typed matrix, and freezes projection outputs consistently with existing composition projectors.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The v8 material matrix distinguishes active bake, queued bake, live-only, weak provenance, and route incompatibility through status detail and predicate behavior.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`stale` and `failed` material states produce distinct blocker reasons or an explicitly documented failed-specific SDK blocker value, plus distinct repair actions.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Invalid status/detail combinations emit `composition/material-status-invalid` and block authoritative export.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Material diagnostics include material ref id, route scope, status/detail, provenance gap where applicable, and next action detail.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Planner route fit for material actions is derived from descriptors, projection input, or graph/runtime facts and does not hardcode generic material refs to `browser-export`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Created artifact/material provenance validation emits `composition/material-missing-provenance` for absent or empty provenance records where no derivable origin metadata exists.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The scoped finalize baseline is machine-readable through `test_blast_radius`, uses only concrete path selectors, and can run the focused Vitest files before broad checks.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`npm run build`, `npm run lint`, and `npm test` pass after the migration.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "run_linter",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Matrix implementation remains table-driven or otherwise centralized, avoiding duplicated status/phase/quality branching across planner and UI consumers.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Contract documentation is concise and matches the implemented matrix/action vocabulary.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The scope narrowing is a bridge: M3a locks material contracts and planner projection, while execution features stay in later milestones per the North Star.",
+    "Because the original v8 matrix artifact is missing, implementation will create the matrix from the M3a taxonomy and locked decisions, then make every row explicit and test-covered.",
+    "A new failed-specific `RenderBlockerReason` is acceptable because the done criteria require stale and failed blockers to be distinct; the plan assumes `materialization-error` unless review requests another name.",
+    "`materialization-failed` remains the stale-material blocker for compatibility with existing tests and semantics.",
+    "`RenderMaterialRef.provenance?: Record<string, unknown>` is the least invasive material provenance extension because artifacts and sidecars already use that shape.",
+    "For legacy/nondeterministic fallback behavior, old `unbaked` maps to `pending` with `detail.phase = queued`.",
+    "Process-backed materializer requirements are preserved only as declarative facts; no process lifecycle or execution vocabulary is introduced.",
+    "Route fit can be derived from existing route descriptors, planner request routes, material determinism, and runtime graph facts available to the projection without adding M4 graph-projected `requires` edges.",
+    "The gate feedback does not require changing the North Star or implementation scope; it only requires a deterministic test-selection contract for finalize."
+  ],
+  "delta_from_previous_percent": 4.25,
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "reason": "Covers planner blocker/action migration and material route behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "reason": "Covers the V1 next-action vocabulary and compatibility detail behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderability.test.ts",
+        "reason": "Covers RenderBlockerReason vocabulary changes for stale versus failed materials."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+        "reason": "Covers material status filters and action UI consumption."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/compositions/VisualClip.test.tsx",
+        "reason": "Covers fallback material status rendering and placeholder behavior."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/index.ts",
+      "src/sdk/video/rendering/artifacts.ts",
+      "src/sdk/video/rendering/renderability.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/extensionSurface.ts",
+      "src/tools/video-editor/runtime/families/projectors/processProjector.ts",
+      "src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+      "src/tools/video-editor/components/PendingMaterialPlaceholder.tsx",
+      "src/tools/video-editor/components/MaterialBrowser.tsx",
+      "src/tools/video-editor/compositions/VisualClip.tsx",
+      "docs/extensions/material-status-planner-matrix.md",
+      "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.test.ts",
+      "src/tools/video-editor/runtime/extensionSurface.test.ts",
+      "src/tools/video-editor/runtime/renderability.test.ts",
+      "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+      "src/tools/video-editor/compositions/VisualClip.test.tsx"
+    ],
+    "always_run": [
+      "npm run build",
+      "npm run lint",
+      "npm test"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/sdk/index.ts, src/sdk/video/rendering/artifacts.ts, src/sdk/video/rendering/renderability.ts, src/tools/video-editor/components/MaterialBrowser.test.tsx, src/tools/video-editor/components/MaterialBrowser.tsx, src/tools/video-editor/components/PendingMaterialPlaceholder.tsx, src/tools/video-editor/compositions/VisualClip.test.tsx, src/tools/video-editor/compositions/VisualClip.tsx, src/tools/video-editor/runtime/composition/diagnostics.test.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/materialRuntime.test.ts, src/tools/video-editor/runtime/composition/materialRuntime.ts, src/tools/video-editor/runtime/extensionSurface.test.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts, src/tools/video-editor/runtime/families/projectors/processProjector.ts, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/renderPlanner.ts, src/tools/video-editor/runtime/renderability.test.ts. Ignored documentation-only change(s) for selector derivation: docs/extensions/material-status-planner-matrix.md. Candidate: The scoped baseline is intentionally path-only so finalize can resolve a deterministic focused test command. These selectors cover the newly introduced projection/matrix tests plus the planner, action vocabulary, renderability, and UI consumers directly affected by the status/action contract migration. Build, lint, and full unit tests remain explicit broad gates because SDK and action vocabulary changes can affect consumers outside the focused tests. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/tools/video-editor/runtime/composition/materialRuntime.test.ts, src/tools/video-editor/runtime/composition/diagnostics.test.ts.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.test.ts"
+    ]
+  },
+  "structure_warnings": []
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "PROCEED",
+  "passed": true,
+  "rationale_brief": "All gate dimensions are clear. Zero unresolved significant flags, zero addressed-but-unverified blocking flags, and no scope-creep signals. The plan has stabilized across two iterations (delta 4.25%) with a weighted score of 0.",
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "Public material status vocabulary is exactly five values: missing, pending, resolved, stale, failed. The old 'unbaked' state is mechanically migrated to pending + phase: queued.",
+      "rationale": "Locked in the idea brief and upheld through two plan iterations. Keeps the contract small and normative while preserving backward compatibility through detail fields."
+    },
+    {
+      "id": "SD2",
+      "decision": "Detail phase values are queued, active, live-only. Detail quality values are weaker-provenance, route-incompatible. These are qualities/refinements on statuses, not independent statuses.",
+      "rationale": "Prevents status vocabulary inflation. Distinguishes active bake from queued bake, live-only data from missing packages, and weak provenance/route mismatch from generic failures \u2014 all without adding public statuses."
+    },
+    {
+      "id": "SD3",
+      "decision": "V1 planner next-action kinds are select-route, materialize, bake, invoke-agent, open-settings, install-extension, enable-extension. start-process is removed as a V1 action.",
+      "rationale": "Process execution belongs to later milestones (M4/M6). The compatibility bridge for old resolve-blocker consumers lives in detail.specificKind, not as a first-class V1 action."
+    },
+    {
+      "id": "SD4",
+      "decision": "The failed-specific RenderBlockerReason is materialization-error (or reviewer-chosen alternative). stale retains materialization-failed for backward compatibility. The two states must produce distinct blockers and repair actions.",
+      "rationale": "Success criterion 5 requires stale and failed to be distinguishable. This decision is deferred to Phase 1 Step 3 for final naming but the architectural requirement is locked."
+    },
+    {
+      "id": "SD5",
+      "decision": "Process-backed materializer requirements are preserved as declarative facts only. No process lifecycle, scheduling, or execution vocabulary is introduced in M3a.",
+      "rationale": "North Star constraint: process runtime stays namespaced outside the V1 composition SDK. M3a records requirements without executing them."
+    },
+    {
+      "id": "SD6",
+      "decision": "Material route fit is derived from route descriptors, planner request routes, material determinism, and runtime graph facts \u2014 never hardcoded to browser-export for generic material refs.",
+      "rationale": "Success criterion 8 and the North Star both require route scope to come from evidence, not assumptions. Generic material refs without route evidence receive no default route."
+    },
+    {
+      "id": "SD7",
+      "decision": "Execution order: types and action vocabulary first (Phase 1), then matrix and projection (Phase 2), then planner wiring and UI migration (Phase 3), then verification (Phase 4).",
+      "rationale": "Downstream compile errors from type changes identify all migration points. Planner consumes matrix output rather than duplicating status branching. UI consumers receive one normalized shape from projection."
+    }
+  ],
+  "warnings": [
+    "Criteria 11 and 12 require subjective_judgment (matrix centralization and documentation conciseness). These are 'should'-priority and will need human review during or after implementation, but they do not block execution.",
+    "The two unresolved questions in plan metadata (failed blocker reason naming, provenance source preference) should be settled early in Phase 1 Step 3 before reaching the matrix encoding in Phase 2 Step 4.",
+    "The missing new test files (materialRuntime.test.ts, diagnostics.test.ts) noted in test_blast_radius.missing_test_selectors must be created during implementation \u2014 they do not exist yet in the repo and the scoped baseline will fail without them."
+  ],
+  "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize. Recurring critiques (criterion 11: requires human verification (subjective_judgment)., criterion 12: requires human verification (subjective_judgment).); the loop likely can't fix these, so judge if they are real blockers.",
+  "carried_flags": [],
+  "iteration": 2,
+  "produced_at": "2026-07-03T21:09:43Z"
+}
+
+        Settled decisions (verify the executor implemented these correctly):
+- SD1: Public material status vocabulary is exactly five values: missing, pending, resolved, stale, failed. The old 'unbaked' state is mechanically migrated to pending + phase: queued. (Locked in the idea brief and upheld through two plan iterations. Keeps the contract small and normative while preserving backward compatibility through detail fields.)
+- SD2: Detail phase values are queued, active, live-only. Detail quality values are weaker-provenance, route-incompatible. These are qualities/refinements on statuses, not independent statuses. (Prevents status vocabulary inflation. Distinguishes active bake from queued bake, live-only data from missing packages, and weak provenance/route mismatch from generic failures — all without adding public statuses.)
+- SD3: V1 planner next-action kinds are select-route, materialize, bake, invoke-agent, open-settings, install-extension, enable-extension. start-process is removed as a V1 action. (Process execution belongs to later milestones (M4/M6). The compatibility bridge for old resolve-blocker consumers lives in detail.specificKind, not as a first-class V1 action.)
+- SD4: The failed-specific RenderBlockerReason is materialization-error (or reviewer-chosen alternative). stale retains materialization-failed for backward compatibility. The two states must produce distinct blockers and repair actions. (Success criterion 5 requires stale and failed to be distinguishable. This decision is deferred to Phase 1 Step 3 for final naming but the architectural requirement is locked.)
+- SD5: Process-backed materializer requirements are preserved as declarative facts only. No process lifecycle, scheduling, or execution vocabulary is introduced in M3a. (North Star constraint: process runtime stays namespaced outside the V1 composition SDK. M3a records requirements without executing them.)
+- SD6: Material route fit is derived from route descriptors, planner request routes, material determinism, and runtime graph facts — never hardcoded to browser-export for generic material refs. (Success criterion 8 and the North Star both require route scope to come from evidence, not assumptions. Generic material refs without route evidence receive no default route.)
+- SD7: Execution order: types and action vocabulary first (Phase 1), then matrix and projection (Phase 2), then planner wiring and UI migration (Phase 3), then verification (Phase 4). (Downstream compile errors from type changes identify all migration points. Planner consumes matrix output rather than duplicating status branching. UI consumers receive one normalized shape from projection.)
+
+
+Critique flags to re-verify against the final diff:
+            [
+  {
+    "id": "verifiability-0",
+    "concern": "Criterion 11: requires human verification (subjective_judgment).",
+    "severity": "minor",
+    "status": "open"
+  },
+  {
+    "id": "verifiability-1",
+    "concern": "Criterion 12: requires human verification (subjective_judgment).",
+    "severity": "minor",
+    "status": "open"
+  }
+]
+
+            For each flag above that was raised during critique, verify whether the final diff actually addresses the concern.
+            A flag is resolved only if the final diff contains code that directly addresses the concern.
+            Do not trust pre-execute promises or plan claims; check the diff itself.
+            Add resolved flag IDs to `verified_flag_ids`.
+            Add flag IDs that are unresolved only by prose judgment, without a deterministic pre/post failing check, to `disputed_flag_ids`.
+            For any unresolved flag that is backed by a deterministic pre/post failing check, add a `rework_items` entry with a typed `target`, `issue`, `expected`, `actual`, `evidence_file`, `flag_id`, `source: "review_flag_reverify"`, and `deterministic_check`. Use `target.kind: "task"` with `task_id` for a single finalize task, `target.kind: "bulk"` with `task_ids` for a bulk operation that maps to multiple finalize tasks, or `target.kind: "manifest"` with `task_ids` for manifest-backed routes. Only use legacy `task_id: "REVIEW"` when the finding is a review blocker with no routable finalize target; execute treats that as telemetry/blocker compatibility, not runnable rework.
+
+Advisory mechanical pre-check flags:
+            [
+  {
+    "id": "PRECHECK-DIFF_SIZE_SANITY",
+    "check": "diff_size_sanity",
+    "detail": "Diff size looks larger than expected: changed_lines=3172, expected\u2248510, ratio=6.22, files=20, hunks=55.",
+    "severity": "minor",
+    "evidence_file": "src/sdk/examples-governance.test.ts"
+  }
+]
+
+            Copy this list verbatim into the output `pre_check_flags` field.
+
+        Historical execution audit context (`execution_audit.json`, prompt projection only):
+        {
+  "skipped": false,
+  "reason": "",
+  "findings": [
+    "Executor claimed changed files not present in git status: docs/extensions/material-status-planner-matrix.md",
+    "Sense check SC13 is missing an executor acknowledgment."
+  ],
+  "files_in_diff": [
+    "src/sdk/examples-governance.test.ts",
+    "src/sdk/index.test.ts",
+    "src/sdk/index.ts",
+    "src/sdk/video/rendering/artifacts.ts",
+    "src/sdk/video/rendering/renderability.ts",
+    "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+    "src/tools/video-editor/components/MaterialBrowser.tsx",
+    "src/tools/video-editor/components/PendingMaterialPlaceholder.tsx",
+    "src/tools/video-editor/compositions/VisualClip.test.tsx",
+    "src/tools/video-editor/compositions/VisualClip.tsx",
+    "src/tools/video-editor/runtime/composition/diagnostics.ts",
+    "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+    "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+    "src/tools/video-editor/runtime/extensionSurface.test.ts",
+    "src/tools/video-editor/runtime/extensionSurface.ts",
+    "src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts",
+    "src/tools/video-editor/runtime/families/projectors/processProjector.ts",
+    "src/tools/video-editor/runtime/renderPlanner.test.ts",
+    "src/tools/video-editor/runtime/renderPlanner.ts",
+    "src/tools/video-editor/runtime/renderability.test.ts"
+  ],
+  "files_claimed": [
+    "docs/extensions/material-status-planner-matrix.md",
+    "src/sdk/examples-governance.test.ts",
+    "src/sdk/index.test.ts",
+    "src/sdk/index.ts",
+    "src/sdk/video/rendering/artifacts.ts",
+    "src/sdk/video/rendering/renderability.ts",
+    "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+    "src/tools/video-editor/components/MaterialBrowser.tsx",
+    "src/tools/video-editor/components/PendingMaterialPlaceholder.tsx",
+    "src/tools/video-editor/compositions/VisualClip.test.tsx",
+    "src/tools/video-editor/compositions/VisualClip.tsx",
+    "src/tools/video-editor/runtime/composition/diagnostics.ts",
+    "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+    "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+    "src/tools/video-editor/runtime/extensionSurface.test.ts",
+    "src/tools/video-editor/runtime/extensionSurface.ts",
+    "src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts",
+    "src/tools/video-editor/runtime/families/projectors/processProjector.ts",
+    "src/tools/video-editor/runtime/renderPlanner.test.ts",
+    "src/tools/video-editor/runtime/renderPlanner.ts",
+    "src/tools/video-editor/runtime/renderability.test.ts"
+  ]
+}
+
+        Fresh review-time evidence (`review_evidence.json`):
+        {
+  "projection": "bounded_prompt_summary",
+  "full_artifact": "review_evidence.json",
+  "schema": "megaplan.review_evidence",
+  "schema_version": 1,
+  "evidence_contract_version": 1,
+  "mode": "shadow",
+  "subject": {
+    "kind": "plan",
+    "name": "plan",
+    "to_state": "done",
+    "from_state": "executed",
+    "phase": "review",
+    "plan_name": "plan",
+    "milestone_label": null
+  },
+  "accepted": false,
+  "would_block": false,
+  "failures": [
+    "landed_diff: execution evidence findings: Executor claimed changed files not present in git status: docs/extensions/material-status-planner-matrix.md; Sense check SC13 is missing an executor acknowledgment.",
+    "green_suite: verification suite ran but delta is not computable (collection parse failure in baseline or verification)"
+  ],
+  "providers_used": [
+    "phase_coverage",
+    "landed_diff",
+    "worker_did_work",
+    "green_suite",
+    "execution_acceptance_contract",
+    "review_disposition",
+    "declared_noop"
+  ],
+  "legacy_evidence_count": 0,
+  "unknown_evidence_count": 1,
+  "would_block_reasons": [
+    "landed_diff: execution evidence findings: Executor claimed changed files not present in git status: docs/extensions/material-status-planner-matrix.md; Sense check SC13 is missing an executor acknowledgment.",
+    "green_suite: verification suite ran but delta is not computable (collection parse failure in baseline or verification)"
+  ],
+  "artifact": "review_evidence.json",
+  "generated_at": "2026-07-03T23:38:37Z",
+  "phase": "review",
+  "iteration": 2,
+  "base_sha": "500b66568c41ee9d4bbb709f55d3851b9f177ade",
+  "head_sha": "f7f8b3da6386f34bef0e3dc7b3b60111956a3f99",
+  "invocation_id": "e37ace4a3b5044b9",
+  "provider_diagnostics": {
+    "phase_coverage": {
+      "ok": true
+    },
+    "landed_diff": {
+      "ok": true
+    },
+    "worker_did_work": {
+      "ok": true
+    },
+    "green_suite": {
+      "ok": true
+    },
+    "execution_acceptance_contract": {
+      "ok": true
+    },
+    "review_disposition": {
+      "ok": true
+    },
+    "declared_noop": {
+      "ok": true
+    }
+  },
+  "diagnostics": {
+    "base_sha": {
+      "ok": true,
+      "source": "state.meta.chain_policy.milestone_base_sha"
+    },
+    "head_sha": {
+      "ok": true,
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "source": "git_rev_parse_head"
+    },
+    "invocation_id": {
+      "ok": true,
+      "source": "state.meta.current_invocation_id"
+    }
+  },
+  "evidence": [
+    {
+      "kind": "phase_coverage",
+      "status": "satisfied",
+      "summary": "all batch tasks done",
+      "trust_class": "judgment",
+      "provider": "PhaseCoverageProvider",
+      "provider_version": "1",
+      "source": "phase_result.json",
+      "subject": "plan",
+      "artifact": {
+        "path": "phase_result.json",
+        "sha256": "sha256:a679a576984ac168adfea27782460c79e6710c3ef67a66895ba95799d8c9c893",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "phase": "execute",
+        "exit_kind": "success",
+        "reason": "finalize.json",
+        "evidence_id": "sha256:236392032075892141d77a8a9383177557216d354d56927191e751b2906f9caa"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "landed_diff",
+      "status": "unsatisfied",
+      "summary": "execution evidence findings: Executor claimed changed files not present in git status: docs/extensions/material-status-planner-matrix.md; Sense check SC13 is missing an executor acknowledgment.",
+      "trust_class": "judgment",
+      "provider": "LandedDiffProvider",
+      "provider_version": "1",
+      "source": "execution_evidence.validate_execution_evidence",
+      "subject": "plan",
+      "artifact": {
+        "path": "finalize.json",
+        "sha256": "sha256:2e4eca2574067f95c0c6b35254c5886e9dad1629ae79a287260ef94c0a2a7353",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "preview": "{\n  \"findings\": [\n    \"Executor claimed changed files not present in git status: docs/extensions/material-status-planner-matrix.md\",\n    \"Sense check SC13 is missing an executor acknowledgment.\"\n  ],\n  \"files_in_diff\": [\n    \"src/sdk/examples-governance.test.ts\",\n    \"src/sdk/index.test.ts\",\n    \"src/sdk/index.ts\",\n    \"src/sdk/video/rendering/artifacts.ts\",\n    \"src/sdk/video/rendering/renderability.ts\",\n    \"src/tools/video-editor/components/MaterialBrowser.test.tsx\",\n    \"src/tools/video-editor/components/MaterialBrowser.tsx\",\n    \"src/tools/video-editor/components/PendingMaterialPlaceholder.tsx\",\n    \"src/tools/video-editor/compositions/VisualClip.test.tsx\",\n    \"src/tools/video-editor/compositions/VisualClip.tsx\",\n    \"src/tools/video-editor/runtime/composition/diagnostics.ts\",\n    \"src/tools/video-editor/runtime/composition/materialRuntime.test.ts\",\n    \"src/tools/video-editor/runtime/composition/materialRuntime.ts\",\n    \"src/tools/video-editor/runtime/extensionSurface.test.ts\",\n    \"src/tools/video-editor/runtime/extensionSurface.ts\",\n    \"src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts\",\n    \"src/tools/video-editor/runtime/families/projectors/pro\n\n[truncated 1,847 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "worker_did_work",
+      "status": "satisfied",
+      "summary": "worker activity present",
+      "trust_class": "evidence",
+      "provider": "WorkerDidWorkProvider",
+      "provider_version": "1",
+      "source": "execution_batch_*.json",
+      "subject": "plan",
+      "artifacts": [
+        {
+          "path": "execution_batch_1.json",
+          "sha256": "sha256:d4d8fc65e7d89254ac127ef20663b30385fe80dadd52def7a2eef8d560e0317d",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_10.json",
+          "sha256": "sha256:f1f426cddcbe526bd8a97d400f4669ded02814def4b5254e5b7c927e9b1b9e45",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_11.json",
+          "sha256": "sha256:2396c8e7bf02f9772b9eadc426860a603e4efbcf97b9956845fcfe5c1eed7cda",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_12.json",
+          "sha256": "sha256:fc6a8ec3c410916a9c0e6cbf57830b022cb5cf927d34fc108d62f44409a97dcd",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_13.json",
+          "sha256": "sha256:e3c794da2fb314d83e46b5f74e1fdb7d034bff9e23676d74082b6cb72758b98f",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_16.json",
+          "sha256": "sha256:257c8deec4bbb1d551394ba181b7b57481e112ea90f1c480dbf25a09fef96a62",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_17.json",
+          "sha256": "sha256:f37179c9aff2354169f7ed7e0ca5c06189c36790db4bb2c5abe3cd506f9dbef6",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_2.json",
+          "sha256": "sha256:c92b79c5f6c778fdf4f9c5f3bfb97d7d5648e69d49de32385bf0efba27bcaaf2",
+          "artifact_type": "application/json"
+        }
+      ],
+      "artifacts_omitted": 7,
+      "details_preview": {
+        "files_changed": 149,
+        "commands_run": 114,
+        "sections_written": 0,
+        "batches": 15,
+        "batch_artifacts": [
+          "execution_batch_1.json",
+          "execution_batch_10.json",
+          "execution_batch_11.json",
+          "execution_batch_12.json",
+          "execution_batch_13.json",
+          "execution_batch_16.json",
+          "execution_batch_17.json",
+          "execution_batch_2.json",
+          "execution_batch_3.json",
+          "execution_batch_4.json",
+          "execution_batch_5.json",
+          "execution_batch_6.json",
+          "execution_batch_7.json",
+          "execution_batch_8.json",
+          "execution_batch_9.json"
+        ],
+        "activity_source": "execution_batch_records",
+        "evidence_id": "sha256:d69f6cf2922c312595123bee22f710666cda533273d4e751f933908268e5ce6f"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "green_suite",
+      "status": "unsatisfied",
+      "summary": "verification suite ran but delta is not computable (collection parse failure in baseline or verification)",
+      "trust_class": "evidence",
+      "provider": "GreenSuiteProvider",
+      "provider_version": "1",
+      "source": "verification:3d92ae10b458",
+      "subject": "plan:plan",
+      "observed_at": "1783121917.6693046",
+      "code_hash": "sha256:05dae8691907d2f50382d14c7ff8c81483f74007373d18014f306799def487ff",
+      "artifact": {
+        "path": "verification/raw_3d92ae10b458.log",
+        "sha256": "sha256:1398dfc4f5739b777295a250b47d0a4356e814dfa7f979909d630453a6614385",
+        "artifact_type": "text/plain"
+      },
+      "artifacts": [
+        {
+          "path": "verification/raw_3d92ae10b458.log",
+          "sha256": "sha256:1398dfc4f5739b777295a250b47d0a4356e814dfa7f979909d630453a6614385",
+          "artifact_type": "text/plain"
+        },
+        {
+          "path": "verification/suite_runs.ndjson",
+          "sha256": "sha256:98660bf7cb2797e2998486cd9497a00d49dd84808547b16d11851f00d45769b1",
+          "artifact_type": "application/x-ndjson"
+        }
+      ],
+      "details_preview": {
+        "preview": "{\n  \"run_id\": \"3d92ae10b458\",\n  \"phase\": \"verification\",\n  \"command\": \"/root/.pyenv/versions/3.11.11/bin/python3 -m pytest src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/compositions/VisualClip.test.tsx --tb=no -q --no-header -rA\",\n  \"duration\": 0.3162325139855966,\n  \"collected\": 0,\n  \"collected_ids\": [],\n  \"failure_count\": 0,\n  \"failures\": [\n    \"runner_error\"\n  ],\n  \"pass_count\": 0,\n  \"status\": \"runner_error\",\n  \"exit_code\": 4,\n  \"code_hash\": \"sha256:05dae8691907d2f50382d14c7ff8c81483f74007373d18014f306799def487ff\",\n  \"collections_parse_ok\": false,\n  \"collection_errors\": [],\n  \"raw_log_path\": \"/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3a-material-status-and-20260703-2036/verification/raw_3d92ae10b458.log\",\n  \"freshness_cache_hit\": false,\n  \"baseline_test_command\": null,\n  \"baseline_test_note\": \"Baseline capture failed: runner error (exit code: 4)\",\n  \"delta\": {\n    \"computable\": false,\n    \"newly_failing\": [],\n    \"newly_passing\": [],\n    \"sti\n\n[truncated 1,062 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "execution_acceptance_contract",
+      "status": "unknown",
+      "summary": "execute acceptance contract could not be verified because suite evidence is runner_error",
+      "trust_class": "evidence",
+      "provider": "ExecuteAcceptanceContractProvider",
+      "provider_version": "1",
+      "source": "gate.json|gate_signals_v*.json + verification/suite_runs.ndjson",
+      "subject": "plan",
+      "details_preview": {
+        "preview": "{\n  \"contract\": {\n    \"scope\": \"execute\",\n    \"verification_mode\": \"verification_suite\",\n    \"required_checks\": [\n      {\n        \"id\": \"issue_hints\",\n        \"question\": \"Did the work fully address the issue hints, user notes, and approved plan requirements?\",\n        \"reason\": \"extensionSurface.ts:250-257 \\u2014 descriptor interface has only kind, label, route?, processId?, operationId?, message?. Zero grep matches for 'specificKind' in src/. Plan Step 2.3 says 'Preserve compatibility for old resolve-blocker consumers through detail.specificKind'.\",\n        \"complexity\": 3\n      },\n      {\n        \"id\": \"correctness\",\n        \"question\": \"Are the proposed changes technically correct?\",\n        \"reason\": \"`src/tools/video-editor/runtime/renderPlanner.ts:1168-1191` still consumes `getCapabilityRequirements(snapshot)`, and `src/sdk/capabilities.ts:449-463` still creates `browser-export` requirements for all `snapshot.materialRefs`, but no plan step targets either location.\",\n        \"complexity\": 4,\n        \"attention\": \"high_complexity_unverifiable\"\n      },\n      {\n        \"id\": \"scope\",\n        \"question\": \"Search for related code that handles the same concept. Is the reported is\n\n[truncated 2,157 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "review_disposition",
+      "status": "not_applicable",
+      "summary": "no review.json (review may have been skipped)",
+      "trust_class": "judgment",
+      "provider": "ReviewDispositionProvider",
+      "provider_version": "1",
+      "subject": "plan",
+      "details_preview": {
+        "evidence_id": "sha256:519e446830e0c539cd39205827fa57231e722b8cf892a97834d8200a3ebfdc63"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "declared_noop",
+      "status": "not_applicable",
+      "summary": "no declared no-op/waiver artifact (absence is not a failure)",
+      "trust_class": "claim",
+      "provider": "DeclaredNoopProvider",
+      "provider_version": "1",
+      "source": "completion/noop.json|completion_noop.json",
+      "subject": "plan",
+      "details_preview": {
+        "evidence_id": "sha256:c5a9ab90387234220c35d0514efb5fab48bd80d5d3066b982919aa7d976625c8"
+      },
+      "details_full_location": "review_evidence.json"
+    }
+  ],
+  "evidence_count": 7,
+  "green_suite": {
+    "delta": {
+      "computable": false,
+      "newly_failing": 0,
+      "newly_passing": 0,
+      "still_red": 0,
+      "still_green": 0,
+      "deleted_tests": 0,
+      "added_tests": 0,
+      "flakes": 0,
+      "tests_collected": 0,
+      "duration": 0.3162325139855966,
+      "flake_retry_skipped": false,
+      "flake_retry_reason": ""
+    }
+  }
+}
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3a-material-status-and-20260703-2036/review_output.json
+        Read this file first — it contains the expected JSON structure with pre-populated `task_verdicts`, `sense_check_verdicts`, and `criteria`.
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Git diff summary:
+        ?? .megaplan/epics/m3a-material-status-and-20260703-2036/
+?? .megaplan/system_logs/log_40ffc7b2a7ca.json
+?? .megaplan/system_logs/log_9ff30ffbb1c0.json
+
+        Requirements:
+        - Verify each success criterion explicitly.
+        - Fresh repository inspection and `review_evidence.json` outrank stale execution-time claims from `execution_audit.json`, `finalize.json`, and executor notes.
+        - Use repository tools to inspect relevant files and run focused verification commands when behavior or tests are part of a criterion; include concrete repository-backed evidence for every criterion verdict.
+        - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
+          - `must` criteria are hard gates only when backed by a deterministic runnable check that failed on the pre-execute baseline and still fails after execution. Ungrounded prose concerns are advisory.
+          - `should` criteria are quality targets. If the spirit is met but the letter is not, mark `pass` with evidence explaining the gap. Only mark `fail` if the intent was clearly missed. A `should` failure alone does NOT require `needs_rework`.
+          - `info` criteria are for human reference. Mark them `waived` with a note — do not evaluate them.
+          - If a criterion has `requires` capabilities that are not satisfiable by container workers (e.g., `drive_browser`, `subjective_judgment`), mark it `deferred_human` — NOT `fail` or `waived`. Deferred-human criteria do NOT count toward `needs_rework`.
+          - If a criterion (any priority) cannot be verified in this context (e.g., requires manual testing or runtime observation), mark it `waived` with an explanation.
+        - Set `review_verdict` to `needs_rework` only for a rework item with `deterministic_check: {"command": "...", "baseline_status": "failed", "post_status": "failed"}`. Use `approved` for prose-only concerns; record those as advisory issues instead.
+        - Set `review_completion_status` to `"incomplete"` when you could not inspect the repository or run verification commands; otherwise set it to `"complete"`.
+        - The decisions listed above were settled at the gate stage. Verify that the executor implemented each settled decision correctly. Flag deviations from these decisions, but do not question the decisions themselves.
+        - baseline_test_failures in finalize.json lists tests that were already failing before execution. Do not flag these as rework items unless the executor introduced new failures in those same tests.
+        - Cross-reference each task's `files_changed` and `commands_run` against the git diff and any audit findings.
+        - Review every `sense_check` explicitly and treat perfunctory acknowledgments as a reason to dig deeper.
+        - Follow this JSON shape exactly:
+        ```json
+        {
+          "review_verdict": "approved",
+          "review_completion_status": "complete",
+          "criteria": [
+            {
+              "name": "All existing tests pass",
+              "priority": "must",
+              "pass": "pass",
+              "evidence": "Test suite ran green — 42 passed, 0 failed."
+            },
+            {
+              "name": "File under ~300 lines",
+              "priority": "should",
+              "pass": "pass",
+              "evidence": "File is 375 lines — above the target but reasonable given the component's responsibilities. Spirit met."
+            },
+            {
+              "name": "Manual smoke tests pass",
+              "priority": "info",
+              "pass": "waived",
+              "evidence": "Cannot be verified in automated review. Noted for manual QA."
+            }
+          ],
+          "issues": [],
+          "rework_items": [],
+          "summary": "Approved. All must criteria pass. The should criterion on line count is close enough given the component scope.",
+          "task_verdicts": [
+            {
+              "task_id": "T6",
+              "reviewer_verdict": "Pass. Claimed handler changes and command evidence match the repo state.",
+              "evidence_files": ["megaplan/handlers.py", "megaplan/evaluation.py"]
+            }
+          ],
+          "sense_check_verdicts": [
+            {
+              "sense_check_id": "SC6",
+              "verdict": "Confirmed. The execute blocker only fires when both evidence arrays are empty."
+            }
+          ]
+        }
+        ```
+        - `rework_items` must be an array of structured rework directives. When `review_verdict` is `needs_rework`, populate one entry per issue with:
+          - `target`: typed route for the rework. Use `{"kind": "task", "task_id": "T6"}` for one finalize task, `{"kind": "bulk", "id": "bulk-1", "task_ids": ["T6", "T7"]}` for bulk-operation findings, or `{"kind": "manifest", "id": "manifest-path-or-ref", "task_ids": ["T6"]}` for manifest-backed findings.
+          - `task_id`: legacy compatibility only. It may mirror the single task target, or be `"REVIEW"` only for review blockers with no runnable finalize target.
+          - `issue`: what is wrong
+          - `expected`: what correct behavior looks like
+          - `actual`: what was observed
+          - `evidence_file`: file path supporting the finding
+          - `flag_id`: critique/review flag ID when applicable, otherwise `null`
+          - `source`: short machine-readable source tag when applicable, otherwise `null`
+          - `deterministic_check` (required for blocking rework): object with `command`, `baseline_status`, and `post_status`
+        - `issues` must still be populated as a flat one-line-per-item summary derived from `rework_items` (for backward compatibility). When approved, blocking `rework_items` should be empty; prose-only concerns may be summarized in `issues`.
+        - When the work needs another execute pass, keep the same shape and change only `review_verdict` to `needs_rework`; make `issues`, `rework_items`, `summary`, and task verdicts specific enough for the executor to act on directly.
