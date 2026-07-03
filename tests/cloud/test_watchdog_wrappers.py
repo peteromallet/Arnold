@@ -9953,6 +9953,7 @@ def test_meta_repair_dispatch_defaults_structural() -> None:
     assert "meta-repair skipped; repair loop already active" in watchdog_text
     assert "meta-repair recursion guard blocked dispatch" in watchdog_text
     assert "meta-repair background-dispatched" in watchdog_text
+    assert "load_evidence=False" in watchdog_text
 
     # Partial-liveness tick tracking
     assert "write_partial_liveness_tick() {" in watchdog_text
