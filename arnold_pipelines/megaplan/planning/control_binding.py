@@ -1169,7 +1169,10 @@ class PlanningControlBinding:
                 accepted=True,
                 mutated=True,
                 reason="resume-clarify",
-                artifacts={"warnings": warnings},
+                artifacts={
+                    "warnings": warnings,
+                    "remove_state_keys": ("clarification",),
+                },
                 state_deltas=(
                     _replace_delta(state, "current_state", STATE_PREPPED),
                     _replace_delta(

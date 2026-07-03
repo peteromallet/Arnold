@@ -62,6 +62,70 @@ DEFAULT_MILESTONE_RETRY_CAP = 2
 APEX_EXTREME_RETRY_CAP = 1
 
 
+def _project_root_for_chain_spec(spec_path: Path) -> Path:
+    resolved = spec_path.resolve(strict=False)
+    for parent in resolved.parents:
+        if parent.name == ".megaplan":
+            return parent.parent
+    return resolved.parent
+
+
+def _storage_identity_for_chain_spec(spec_path: Path) -> Path:
+    resolved = spec_path.resolve(strict=False)
+    project_root = _project_root_for_chain_spec(spec_path)
+    project_chain = project_root / spec_path.name
+    try:
+        if project_chain.exists() and project_chain.samefile(resolved):
+            return project_chain
+    except OSError:
+        pass
+    return resolved
+
+
+def _state_path_candidates_for(spec_path: Path) -> list[Path]:
+    resolved = spec_path.resolve(strict=False)
+    resolved_digest = hashlib.sha1(str(resolved).encode("utf-8")).hexdigest()[:12]
+    resolved_state_path = (
+        resolved.parent
+        / ".megaplan"
+        / "plans"
+        / ".chains"
+        / f"{resolved.stem}-{resolved_digest}.json"
+    )
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in (
+        _state_path_for(spec_path),
+        resolved_state_path,
+        _legacy_state_path_for(spec_path),
+    ):
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        candidates.append(candidate)
+    return candidates
+
+
+def _load_chain_state_file(path: Path) -> ChainState:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise CliError("invalid_chain_state", f"chain_state.json is invalid JSON: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise CliError("invalid_chain_state", "chain_state.json must be an object")
+    return ChainState.from_dict(raw)
+
+
+def _state_progress_key(state: "ChainState", *, path: Path) -> tuple[int, int, int, int, float]:
+    return (
+        int(state.current_milestone_index),
+        len(state.completed),
+        1 if state.current_plan_name else 0,
+        1 if state.last_state else 0,
+        path.stat().st_mtime,
+    )
+
+
 def _bump_one_tier(current: str | None, order: tuple[str, ...]) -> tuple[str | None, bool]:
     """Return (next_tier, bumped). At/above the top tier this is a no-op.
 
@@ -934,19 +998,20 @@ class ChainState:
 
 
 def _state_path_for(spec_path: Path) -> Path:
-    spec_resolved = spec_path.resolve()
-    digest = hashlib.sha1(str(spec_resolved).encode("utf-8")).hexdigest()[:12]
+    identity = _storage_identity_for_chain_spec(spec_path)
+    project_root = _project_root_for_chain_spec(spec_path)
+    digest = hashlib.sha1(str(identity).encode("utf-8")).hexdigest()[:12]
     return (
-        spec_resolved.parent
+        project_root
         / ".megaplan"
         / "plans"
         / ".chains"
-        / f"{spec_resolved.stem}-{digest}.json"
+        / f"{identity.stem}-{digest}.json"
     )
 
 
 def _legacy_state_path_for(spec_path: Path) -> Path:
-    return spec_path.with_name("chain_state.json")
+    return _storage_identity_for_chain_spec(spec_path).with_name("chain_state.json")
 
 
 def load_spec(spec_path: Path) -> ChainSpec:
@@ -960,32 +1025,30 @@ def load_spec(spec_path: Path) -> ChainSpec:
 
 
 def load_chain_state(spec_path: Path) -> ChainState:
-    state_path = _state_path_for(spec_path)
-    if not state_path.exists():
-        legacy_path = _legacy_state_path_for(spec_path)
-        if legacy_path.exists():
-            state_path = legacy_path
-    if not state_path.exists():
+    candidates = [path for path in _state_path_candidates_for(spec_path) if path.exists()]
+    if not candidates:
         return ChainState()
-    try:
-        raw = json.loads(state_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise CliError("invalid_chain_state", f"chain_state.json is invalid JSON: {exc}") from exc
-    if not isinstance(raw, dict):
-        raise CliError("invalid_chain_state", "chain_state.json must be an object")
-    return ChainState.from_dict(raw)
+    loaded: list[tuple[Path, ChainState]] = [
+        (path, _load_chain_state_file(path)) for path in candidates
+    ]
+    best_path, best_state = max(
+        loaded,
+        key=lambda item: _state_progress_key(item[1], path=item[0]),
+    )
+    canonical_path = _state_path_for(spec_path)
+    if best_path != canonical_path:
+        save_chain_state(spec_path, best_state)
+    return best_state
 
 
 def save_chain_state(spec_path: Path, state: ChainState) -> None:
     state_path = _state_path_for(spec_path)
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    spec_resolved = spec_path.resolve(strict=False)
+    spec_identity = _storage_identity_for_chain_spec(spec_path)
     metadata = dict(state.metadata)
-    metadata["chain_spec_path"] = str(spec_resolved)
-    if spec_resolved.exists():
-        metadata["chain_spec_sha256"] = hashlib.sha256(
-            spec_resolved.read_bytes()
-        ).hexdigest()
+    metadata["chain_spec_path"] = str(spec_identity)
+    if spec_identity.exists():
+        metadata["chain_spec_sha256"] = hashlib.sha256(spec_identity.read_bytes()).hexdigest()
     state.metadata = metadata
     tmp = state_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(state.to_dict(), indent=2) + "\n", encoding="utf-8")
@@ -993,14 +1056,15 @@ def save_chain_state(spec_path: Path, state: ChainState) -> None:
 
 
 def _runtime_policy_path_for(spec_path: Path) -> Path:
-    spec_resolved = spec_path.resolve()
-    digest = hashlib.sha1(str(spec_resolved).encode("utf-8")).hexdigest()[:12]
+    identity = _storage_identity_for_chain_spec(spec_path)
+    project_root = _project_root_for_chain_spec(spec_path)
+    digest = hashlib.sha1(str(identity).encode("utf-8")).hexdigest()[:12]
     return (
-        spec_resolved.parent
+        project_root
         / ".megaplan"
         / "plans"
         / ".chains"
-        / f"{spec_resolved.stem}-{digest}.runtime_policy.json"
+        / f"{identity.stem}-{digest}.runtime_policy.json"
     )
 
 
@@ -1706,17 +1770,33 @@ def _validate_completion_manifest(
                 f"{label} failed for {spec_path}: completion manifest plan mismatch for {spec_milestone.label!r}",
             )
         if prereq_spec.merge_policy == "review":
-            if manifest_milestone.get("pr_number") != record.get("pr_number") or manifest_milestone.get("pr_state") != "merged":
-                raise CliError(
-                    "launch_precondition_failed",
-                    f"{label} failed for {spec_path}: completion manifest merged PR evidence mismatch for {spec_milestone.label!r}",
-                )
-            pr_merge_sha = manifest_milestone.get("pr_merge_sha")
-            if not isinstance(pr_merge_sha, str) or not pr_merge_sha.strip():
-                raise CliError(
-                    "launch_precondition_failed",
-                    f"{label} failed for {spec_path}: completion manifest milestone {spec_milestone.label!r} missing pr_merge_sha",
-                )
+            record_pr_number = record.get("pr_number")
+            record_pr_state = record.get("pr_state")
+            record_local_commit = record.get("local_commit_sha")
+            if isinstance(record_pr_number, int) and record_pr_state == "merged":
+                if manifest_milestone.get("pr_number") != record_pr_number or manifest_milestone.get("pr_state") != "merged":
+                    raise CliError(
+                        "launch_precondition_failed",
+                        f"{label} failed for {spec_path}: completion manifest merged PR evidence mismatch for {spec_milestone.label!r}",
+                    )
+                pr_merge_sha = manifest_milestone.get("pr_merge_sha")
+                if not isinstance(pr_merge_sha, str) or not pr_merge_sha.strip():
+                    raise CliError(
+                        "launch_precondition_failed",
+                        f"{label} failed for {spec_path}: completion manifest milestone {spec_milestone.label!r} missing pr_merge_sha",
+                    )
+            elif isinstance(record_local_commit, str) and record_local_commit.strip():
+                if manifest_milestone.get("local_commit_sha") != record_local_commit:
+                    raise CliError(
+                        "launch_precondition_failed",
+                        f"{label} failed for {spec_path}: completion manifest local commit evidence mismatch for {spec_milestone.label!r}",
+                    )
+            else:
+                if manifest_milestone.get("publication_evidence") != "chain_state_only":
+                    raise CliError(
+                        "launch_precondition_failed",
+                        f"{label} failed for {spec_path}: completion manifest publication evidence mismatch for {spec_milestone.label!r}",
+                    )
         proof_artifacts = manifest_milestone.get("proof_artifacts")
         if not isinstance(proof_artifacts, list):
             raise CliError(

@@ -173,6 +173,89 @@ def test_handle_outcome_retries_finalized_plan_when_execute_finds_satisfied_gate
     assert state.retry_counts == {"m7": 1}
 
 
+def test_handle_outcome_stops_finalized_plan_before_pr_progression(
+    tmp_path: Path,
+) -> None:
+    spec = SimpleNamespace(
+        on_failure_policy=SimpleNamespace(
+            retry="retry_milestone",
+            escalate="bump_profile",
+            abort="stop_chain",
+        ),
+        on_escalate_policy=SimpleNamespace(
+            retry="retry_milestone",
+            escalate="bump_profile",
+            abort="stop_chain",
+        ),
+        robustness="standard",
+    )
+    milestone = SimpleNamespace(label="m7", profile=None, robustness=None)
+    state = ChainState()
+    messages: list[str] = []
+
+    decision = _handle_outcome(
+        DriverOutcome(
+            status="finalized",
+            plan="finalized-plan",
+            final_state="finalized",
+            iterations=1,
+            reason="stopped after finalize",
+        ),
+        spec=spec,
+        writer=messages.append,
+        milestone=milestone,
+        state=state,
+        root=tmp_path,
+    )
+
+    assert decision == "stop"
+    assert state.retry_counts == {}
+    assert any("finalized but not executed" in message for message in messages)
+
+
+def test_handle_outcome_stops_unresolved_prerequisite_block_without_retry(
+    tmp_path: Path,
+) -> None:
+    spec = SimpleNamespace(
+        on_failure_policy=SimpleNamespace(
+            retry="retry_milestone",
+            escalate="bump_profile",
+            abort="stop_chain",
+        ),
+        on_escalate_policy=SimpleNamespace(
+            retry="retry_milestone",
+            escalate="bump_profile",
+            abort="stop_chain",
+        ),
+        robustness="extreme",
+    )
+    milestone = SimpleNamespace(label="m1", profile=None, robustness="extreme")
+    state = ChainState()
+    messages: list[str] = []
+
+    decision = _handle_outcome(
+        DriverOutcome(
+            status="blocked",
+            plan="m1-plan",
+            final_state="blocked",
+            iterations=1,
+            reason=(
+                "execute reported prerequisite-blocked tasks: T11 "
+                "(M7 prerequisite is not satisfied)"
+            ),
+        ),
+        spec=spec,
+        writer=messages.append,
+        milestone=milestone,
+        state=state,
+        root=tmp_path,
+    )
+
+    assert decision == "stop"
+    assert state.retry_counts == {}
+    assert any("unresolved explicit blocker" in message for message in messages)
+
+
 def test_sync_chain_last_state_refreshes_from_current_plan_state(tmp_path: Path) -> None:
     spec_path = tmp_path / "chain.yaml"
     spec_path.write_text("milestones: []\n", encoding="utf-8")
@@ -238,7 +321,7 @@ def test_record_chain_last_state_after_plan_run_prefers_live_plan_state(
     assert any("awaiting_human -> finalized" in message for message in messages)
 
 
-def test_reconcile_maps_finalized_open_pr_to_awaiting_pr_merge(
+def test_reconcile_leaves_finalized_open_pr_for_execute_resume(
     tmp_path: Path,
 ) -> None:
     spec_path = _write_chain_spec(tmp_path)
@@ -264,15 +347,15 @@ def test_reconcile_maps_finalized_open_pr_to_awaiting_pr_merge(
         )
 
     saved = load_chain_state(spec_path)
-    assert reconciled.last_state == STATE_AWAITING_PR_MERGE
+    assert reconciled.last_state == "finalized"
     assert reconciled.pr_state == "open"
-    assert saved.last_state == STATE_AWAITING_PR_MERGE
+    assert saved.last_state == "finalized"
     assert saved.pr_state == "open"
     audit = saved.metadata["ground_truth_reconciliation"]
     assert audit["current_state"] == "finalized"
     assert audit["pr_number"] == 122
     assert audit["pr_state"] == "open"
-    assert any("waiting for merge" in message for message in messages)
+    assert not any("waiting for merge" in message for message in messages)
 
 
 def test_reconcile_revalidates_completed_prs_from_live_github(
@@ -309,7 +392,7 @@ def test_reconcile_revalidates_completed_prs_from_live_github(
     assert load_chain_state(spec_path).completed[0]["pr_state"] == "merged"
 
 
-def test_run_chain_waits_when_reconciled_finalized_pr_is_open(
+def test_run_chain_resumes_when_reconciled_finalized_pr_is_open(
     tmp_path: Path,
 ) -> None:
     spec_path = _write_chain_spec(tmp_path)
@@ -328,8 +411,27 @@ def test_run_chain_waits_when_reconciled_finalized_pr_is_open(
     with (
         patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
         patch("arnold_pipelines.megaplan.chain._dirty_worktree_paths", return_value=[]),
+        patch(
+            "arnold_pipelines.megaplan.chain._refresh_base_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch("arnold_pipelines.megaplan.chain._capture_sync_state"),
+        patch("arnold_pipelines.megaplan.chain._plan_state", return_value="finalized"),
         patch("arnold_pipelines.megaplan.chain._pr_state", return_value="open"),
-        patch("arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery") as drive,
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+            return_value=DriverOutcome(
+                status="awaiting_human",
+                plan="m7-plan",
+                final_state="awaiting_human",
+                iterations=1,
+                reason="test stop after resume",
+            ),
+        ) as drive,
     ):
         result = run_chain(
             spec_path,
@@ -339,8 +441,8 @@ def test_run_chain_waits_when_reconciled_finalized_pr_is_open(
             missing_anchor_ack_override="unit test uses a minimal chain spec",
         )
 
-    drive.assert_not_called()
-    assert result["status"] == STATE_AWAITING_PR_MERGE
+    drive.assert_called_once()
+    assert result["status"] == "stopped"
     saved = load_chain_state(spec_path)
-    assert saved.last_state == STATE_AWAITING_PR_MERGE
+    assert saved.last_state == "finalized"
     assert saved.pr_state == "open"

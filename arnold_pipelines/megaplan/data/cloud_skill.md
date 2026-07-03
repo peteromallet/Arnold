@@ -108,7 +108,7 @@ state.
 
 ## Subcommands
 
-`init`, `build`, `deploy`, `chain`, `sync-megaplan`, `status`, `attach`, `logs`, `exec`, `resume`, `down`, `destroy`.
+`init`, `build`, `deploy`, `preflight`, `chain`, `sync-megaplan`, `launch-epic`, `epic-chain`, `status`, `attach`, `logs`, `exec`, `resume`, `down`, `destroy`.
 
 Typical flow:
 
@@ -116,8 +116,9 @@ Typical flow:
 2. Edit it (set the provider, primary `repo:`, any `extra_repos:`, the secret names, etc.).
 3. Export the secret values into your local env (the names listed under `secrets:` in `cloud.yaml`).
 4. `megaplan cloud deploy` to build the image and start the runner.
-5. `megaplan cloud launch-epic <spec-or-dir>` for a multi-milestone run, or `megaplan cloud bootstrap <idea.md>` for a single plan. Use `sync-megaplan` + `chain` only for lower-level/manual runs.
-6. Use `status`, `logs`, `attach` to observe; `down` to pause, `destroy` to tear the volume.
+5. `megaplan cloud preflight .megaplan/initiatives/<initiative>/chain.yaml` to check the canonical spec, North Star, resolved profile routing, local secrets, worker import path, and remote command availability.
+6. `megaplan cloud launch-epic <spec-or-dir>` for a multi-milestone run, or `megaplan cloud bootstrap <idea.md>` for a single plan. Use `sync-megaplan` + `chain` only for lower-level/manual runs.
+7. Use `status`, `logs`, `attach` to observe; `down` to pause, `destroy` to tear the volume.
 
 See `docs/cloud.md` for the full reference, including `cloud.yaml` fields, mode behavior (`auto`/`chain`/`idle`), and provider-specific troubleshooting.
 
@@ -241,9 +242,9 @@ An operator loop should **not** silently decide product or architecture question
 
 Two always-on supervisors run the recovery loop; the operator watches *them*, not the chain.
 
-**1h watchdog** (`/usr/local/bin/arnold-watchdog`, `megaplan-watchdog-ensure.timer` keep-alive): syncs the editable install; per session detects **stopped/flap/`retrying_failure`** → **Kimi→Codex repair**, falling back to **direct relaunch**; auto-merges `awaiting_pr_merge` milestone PRs only when the chain declares `merge_policy: auto`; flags **`progress_stall`** (alive but not progressing). Report: `/workspace/watchdog-report.json` (archived `/workspace/watchdog-reports/`).
+**1h watchdog** (`/usr/local/bin/arnold-watchdog`, `megaplan-watchdog-ensure.timer` keep-alive): syncs the editable install; per session treats any unintended nonterminal condition — stopped/flap/`retrying_failure`, missing workspace/spec, chain-health failures, and `progress_stall` — as repairable and **background-dispatches Kimi→Codex repair**, falling back to **direct relaunch** only when repair is unavailable or already failed. It auto-merges `awaiting_pr_merge` milestone PRs only when the chain declares `merge_policy: auto`; expected manual/review PR waits remain passive. Report: `/workspace/watchdog-report.json` (archived `/workspace/watchdog-reports/`). Repair dispatch requires `ARNOLD_REPAIR_TRIGGER_ENABLED=1`.
 
-**6h progress auditor** (`/usr/local/bin/arnold-progress-auditor`, `megaplan-progress-audit.timer`): reviews the last 6h per plan; for suspicious ones dispatches **Codex** (may deploy DeepSeek) to **judge** — confident fixable deadlock/inefficiency → **fix + push to `editible-install`** (watchdog relaunches); else → document. Verdicts `FIXED <sha>` / `PASSIVE`. Report: `/workspace/audit-reports/`.
+**6h progress auditor** (`/usr/local/bin/arnold-progress-auditor`, `megaplan-progress-audit.timer`): reviews the last 6h per plan and the watchdog report. If a session has been in an unintended stop/stall for >1h with no active or recent repair attempt, that is a **superfixer failure**: dispatch **Codex** (may deploy DeepSeek) to fix the watchdog/repair trigger/auditor on `editible-install`, push, refresh, and let the watchdog relaunch. Otherwise, genuine plan deadlock/inefficiency → **fix + push to `editible-install`**; expected manual/product decisions → document. Verdicts `FIXED <sha>` / `PASSIVE`. Report: `/workspace/audit-reports/`.
 
 Recovery path: watchdog fixes hard stops; auditor fixes inefficiency/deadlocks the liveness check can't see. Operator job = **meta-loop** (hourly): watchdog alive + reporting, plan progressing, `blocked_recovery_not_resolved` not climbing, auditor verdicts landing. See `docs/hetzner-watchdog-meta-loop.md`.
 
@@ -253,7 +254,7 @@ Recovery path: watchdog fixes hard stops; auditor fixes inefficiency/deadlocks t
 
 2. **Profile-name gap between the decision skill and the loaded registry.** The decision skill documents `basic`/`led`/`thoughtful`/`premium`/`super-premium`. The registry only loads `solo`/`directed`/`partnered`/`premium`/`apex`, with `basic`→`solo` and `led`→`directed` as legacy aliases — `thoughtful` and `super-premium` are **not** aliased. Chain specs need canonical names or chain start fails preflight with "Unknown profile".
 
-3. **The `cloud preflight` resolver ignores milestone-level `vendor`/`depth`/`critic`.** `megaplan/cloud/preflight.py:_expanded_phase_models` hardcodes `vendor=None`, `depth=None`, `critic=None`. The local preflight will misreport phase routing for chains that override vendor per milestone — but the **runtime** phase invoker in `chain.py:_init_plan` DOES forward those fields, so the actual run uses the correct routing. Treat preflight's `resolved_phase_map` as advisory until that gap closes.
+3. **Run `cloud preflight` before launch when changing profiles.** It resolves milestone-level `profile`, `phase_model`, `vendor`, `depth`, `critic`, and provider settings the same way launch does, then reports whether the worker needs Codex-only setup or mixed Claude/Codex support.
 
 4. **`megaplan` CLI may use a separate Python venv** from `pip install --user`. After upgrading megaplan from a branch SHA, run `head -1 $(which megaplan)` to find which interpreter and `python -m pip install` into that one specifically — otherwise local `cloud chain` runs against the old code while the remote pulls the new SHA.
 

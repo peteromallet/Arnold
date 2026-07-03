@@ -1756,6 +1756,22 @@ Return one of:
 
 Evaluate these questions in order:
 
+0. Superfixer health / repair-the-repairer
+- First audit the repair system itself. The watchdog + repair loop + repair trigger
+  are the primary machine that should fix unintended stops.
+- If the evidence shows an unintended stop/stall/spec/workspace/chain-health
+  failure and there is no active or recent repair attempt, classify that as an
+  Arnold superfixer bug. Fix the watchdog/repair-trigger/auditor source in
+  $ARNOLD_SRC on editible-install; do not hand-unblock only this run.
+- If repair-data shows repeated failed iterations, repair_timeout,
+  recurring_retry_pending, a dead provider/auth path, an argument-size crash,
+  stale marker/spec inputs, or repair loops that diagnose without relaunching,
+  classify that as a repairer failure unless the issue is genuinely human-only.
+  Fix the repairer at root in $ARNOLD_SRC and return FIXED <commit-sha>.
+- The desired outcome is that the next watchdog/auditor cycle can repair the
+  class of failures automatically. Do not patch the running workspace merely to
+  make this one session green when the repairer is the broken component.
+
 1. Live failure vs stale state
 - Is this failure STALE (predates a success) or LIVE (no success since)? If stale, recommend clearing the state + re-driving, not a source fix.
 - Is latest_failure still live, or does stale_state_evidence.latest_failure_is_stale show a later successful event?
