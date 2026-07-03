@@ -13,6 +13,12 @@
       "reason": "Git-history inspection commands that reference the old deleted path for audit trail purposes."
     },
     {
+      "path": "scripts/render_package_disposition_md.py",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Package disposition renderer preserves the historical migration target path required by the generated disposition document."
+    },
+    {
       "path": "arnold_pipelines/megaplan/cloud/cli.py",
       "pattern": "arnold.pipelines.megaplan",
       "category": "scanner-target",
