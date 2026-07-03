@@ -1,231 +1,414 @@
-# Megaplan Source-Path Reconciliation — M1 Launch-Gate Authority
+# Megaplan Launch-Gate and Source-Path Reconciliation
 
-**Milestone:** M1 — Megaplan Compositional Migration
-**Status:** Launch-gate authority (pre-implementation reconciliation)
-**Date:** 2026-07-03
+**Milestone:** M1 — Megaplan Compositional Workflow Migration
+**Status:** Phase 1 launch-gate documentation — bridge work only; canonical migration gated
+**Date:** 2026-07-02
 
 ---
 
 ## 1. Purpose
 
-This document is the **M1 launch-gate authority** for source-path reconciliation. Before any M1 workflow edits land, it proves that package registration, CLI, auto-drive, and tests inspect the same live canonical workflow source. It identifies the live canonical source files, package/CLI/auto-drive entrypoints, native compiler/runtime/projection paths, explicitly marks `native_runner.py` / `native_hooks.py` as nonexistent, and classifies every stale `arnold/pipelines/...` reference as migration target, compatibility alias, or dead path.
+This document serves as the **Phase 1 launch gate** and **source-path reconciliation**
+for the M1 Megaplan compositional workflow migration. Before any canonical
+workflow edit lands, this artifact:
 
-**Key ruling (SD2):** All implementation edits target live `arnold_pipelines/megaplan/` paths. The stale `arnold/pipelines/megaplan/` paths are documented here — not edited. No stale paths will be created for runtime behavior.
-
-This document supersedes the M1 entries in `docs/arnold/m3-5-canonical-megaplan-source-path-reconciliation.md` for M1 launch gating.
-
----
-
-## 2. Core Path Mapping — M1 Live Canonical Paths
-
-### 2.1 Workflow Source Files
-
-The canonical Megaplan workflow for M1 is authored as a composition of native workflows with explicit subworkflows, stable IDs, and declared inputs/outputs.
-
-| # | Live Path | Role | Status |
-|---|----------|------|--------|
-| W1 | `arnold_pipelines/megaplan/workflows/workflow.py` | Canonical authored workflow source (93 lines) | **Live** — Declares `planning_workflow` using `@workflow` and `loop` decorators. Compositional source: prep→plan→(critique→gate→revise loop)→finalize→execute→review, with tiebreaker and override branches. |
-| W2 | `arnold_pipelines/megaplan/workflows/planning.py` | DSL pipeline builder (249 lines) | **Live** — `build_pipeline()` returns the DSL `Pipeline`; defines `AUTHOR_REVISE` and `AUTHOR_TIEBREAKER_DECIDE` variant components. |
-| W3 | `arnold_pipelines/megaplan/workflows/components.py` | StepComponent definitions | **Live** — 12 `StepComponent` definitions with handler_ref strings and route_bindings (`SOURCE_PREP`, `SOURCE_PLAN`, `SOURCE_CRITIQUE`, `SOURCE_GATE`, `SOURCE_REVISE`, `SOURCE_TIEBREAKER_RUN`, `SOURCE_FINALIZE`, `SOURCE_EXECUTE`, `SOURCE_REVIEW`, `SOURCE_OVERRIDE`, `SOURCE_HALT`, `TIEBREAKER_DECIDE`). |
-| W4 | `arnold_pipelines/megaplan/workflows/__init__.py` | Workflows package init | **Live** — Package marker. |
-
-### 2.2 Package Facade and Compatibility Shell
-
-| # | Live Path | Role | Status |
-|---|----------|------|--------|
-| P1 | `arnold_pipelines/megaplan/pipeline.py` | Thin facade (28 lines) | **Live** — Re-exports `build_pipeline` from `workflows.planning`; provides `build_and_compile_pipeline()` wrapping `_compatibility.build_compatibility_shell()`. |
-| P2 | `arnold_pipelines/megaplan/__init__.py` | Plugin root (99 lines) | **Live** — Package metadata (`name`, `entrypoint`, `capabilities`), content-type registration, model-seam adapter. |
-| P3 | `arnold_pipelines/megaplan/_compatibility.py` | Compatibility projection helper | **Live** — `build_compatibility_shell()` projects authored workflow to native-backed shell. |
-
-### 2.3 CLI and Auto-Drive Entrypoints
-
-| # | Live Path | Role | Status |
-|---|----------|------|--------|
-| C1 | `arnold_pipelines/megaplan/cli/__init__.py` | Monolithic CLI (2987 lines) | **Live** — All CLI surface: `describe`, `run`, `auto`, phase commands. |
-| C2 | `arnold_pipelines/megaplan/cli/run.py` | Run subcommand handler | **Live** — `cli_run()`. |
-| C3 | `arnold_pipelines/megaplan/cli/parser.py` | CLI argument parser | **Live** — Parser for megaplan commands. |
-| C4 | `arnold_pipelines/megaplan/cli/projection.py` | CLI projection module | **Live** — Projection helpers. |
-| C5 | `arnold_pipelines/megaplan/auto.py` | Auto-drive (4670 lines) | **Live** — In-process auto-drive, resume, recovery. |
-| C6 | `arnold_pipelines/megaplan/registry.py` | Operation registry | **Live** — `dispatch_operation_for()`, `_builtin_megaplan_builder()`. |
-| C7 | `arnold_pipelines/megaplan/routing.py` | Megaplan routing | **Live** — Megaplan-specific routing module. |
-| C8 | `arnold_pipelines/megaplan/__main__.py` | Module entrypoint | **Live** — `python -m arnold_pipelines.megaplan`. |
-
-### 2.4 Native Compiler, Runtime, and Projection Paths
-
-These are the neutral native substrate files that M1 depends on. Per SD2, a non-Megaplan fixture must pass through these paths before Megaplan workflow edits proceed.
-
-| # | Live Path | Role | Status |
-|---|----------|------|--------|
-| N1 | `arnold/pipeline/native/compiler.py` | AST-to-NativeProgram lowering (1204 lines) | **Live** — Parses `@pipeline`-decorated functions; emits `NativeProgram`. |
-| N2 | `arnold/pipeline/native/runtime.py` | Native runtime executor | **Live** — Executes `NativeProgram` against neutral runtime. |
-| N3 | `arnold/pipeline/native/graph_projection.py` | NativeProgram→Pipeline projection (911 lines) | **Live** — Builds `Pipeline` with stage/edge metadata. |
-| N4 | `arnold/pipeline/native/ir.py` | Native IR definitions | **Live** — `NativeProgram`, `NativeInstruction`, `NativeDecision`, etc. |
-| N5 | `arnold/pipeline/native/decorators.py` | `@phase` / `@decision` / `@pipeline` decorators | **Live** — Runtime metadata. |
-| N6 | `arnold/pipeline/native/hooks.py` | Native hook dispatch | **Live** — Neutral hook system. |
-| N7 | `arnold/pipeline/native/routing.py` | Native routing (176 lines) | **Live** — Generic native/graph dispatch; verified clean of megaplan references. |
-| N8 | `arnold/pipeline/native/checkpoint.py` | Checkpoint/resume support | **Live** |
-| N9 | `arnold/pipeline/native/context.py` | Execution context | **Live** |
-| N10 | `arnold/pipeline/native/trace.py` | Execution tracing | **Live** |
-| N11 | `arnold/pipeline/native/flags.py` | Feature flags | **Live** |
-| N12 | `arnold/pipeline/native/__init__.py` | Package init | **Live** |
-| N13 | `arnold/pipeline/types.py` | Pipeline type definitions | **Live** — `Pipeline.native_program: NativeProgram \| None`. |
-| N14 | `arnold/workflow/source_compiler.py` | Workflow source compiler | **Live** — `lower_workflow_file()`. |
-| N15 | `arnold/workflow/compiler.py` | Workflow compiler | **Live** — General compilation support. |
+1. Summarizes prerequisite M1-M7 status and the blocked-migration decision (SD2).
+2. Classifies every live underscore path (`arnold_pipelines/megaplan/`) and stale
+   dot-path reference (`arnold/pipelines/megaplan/`).
+3. Documents the live CLI/auto entrypoints, installed imports, and canonical
+   workflow source path.
+4. Labels all pre-migration work (Phase 1 and Phase 2) as **bridge work only** —
+   canonical workflow migration remains gated until the M7 prerequisite is proven
+   complete or explicitly waived.
 
 ---
 
-## 3. Non-Existent Files — Explicitly Marked
+## 2. Prerequisite M1-M7 Status
 
-These paths are referenced in the M1 brief but do **not** exist on the filesystem. They must not be created unless a concrete import contract forces it.
+### 2.1 M7 Completion Evidence
 
-| # | Non-Existent Path | Live Equivalent | Resolution |
-|---|------------------|-----------------|------------|
-| NX1 | `arnold_pipelines/megaplan/native_runner.py` | `arnold_pipelines/megaplan/auto.py` (in-process auto-drive) + `arnold_pipelines/megaplan/cli/run.py` (subprocess entry) | **Does not exist.** The live runtime equivalent is `auto.py` for in-process auto-drive and `cli/run.py` for subprocess entry. Do **not** create `native_runner.py` unless a concrete import contract forces it. |
-| NX2 | `arnold_pipelines/megaplan/native_hooks.py` | `arnold/pipeline/native/hooks.py` (neutral native hooks) + `arnold_pipelines/megaplan/handlers/` (megaplan-specific handler bridge modules: `init.py`, `gate.py`, `finalize.py`, `critique.py`, `review.py`, `execute.py`, `tiebreaker.py`, `override.py`, `plan.py`, `shared.py`, `tickets.py`, `anchors.py`, `verifiability.py`, `structured_output.py`) | **Does not exist.** Megaplan-specific hook behavior lives in the handler bridge modules. Neutral hook dispatch lives at `arnold/pipeline/native/hooks.py`. Do **not** create `native_hooks.py` unless a concrete import contract forces it. |
+Per `docs/arnold/m7-runtime-conformance-report.md` (2026-07-01):
 
----
+| Claim | Evidence |
+|-------|----------|
+| Python-shaped workflow authoring ↔ manifest runtime equivalence | `tests/arnold/workflow/test_authoring_runtime_equivalence.py`: 13 passed |
+| Canonical Megaplan conformance | `tests/arnold/workflow/test_canonical_megaplan_conformance.py`: 26 passed |
+| Wheel/sdist install includes workflow source, prompts, component metadata | `tests/installed_wheel/test_m7_runtime_conformance.py`: 1 passed |
+| Execution fixture stability | `tests/arnold/execution/test_canonical_fixture.py`: 10 passed |
+| Planning workflow tests | `tests/arnold_pipelines/megaplan/test_workflows_planning.py`: 9 passed |
+| Topology golden tests | `tests/arnold_pipelines/megaplan/test_topology_golden.py`: 9 passed |
 
-## 4. Stale `arnold/pipelines/...` Reference Classification
+M7 constraints honored:
+- No permanent compatibility shims were added.
+- Topology parity alone was not treated as sufficient; execution equivalence
+  was verified end-to-end.
+- Generated ledgers remain derived artifacts only.
 
-The dot-separated `arnold/pipelines/` prefix is the stale package root (excluded from wheel per `pyproject.toml` lines 76, 97). All live megaplan source lives under underscore-separated `arnold_pipelines/`. Every stale reference in the codebase is classified below.
+### 2.2 Dependency-Manifest Repair Supersession (2026-07-02)
 
-### 4.1 Dead Paths
+The original T10 audit in this document observed a stale vendored prerequisite state. The repairer synced the completed sibling cloud chain state for `.megaplan/initiatives/native-python-pipelines-completion/chain.yaml`, regenerated `completion-manifest.json`, and wrote `.megaplan/initiatives/native-python-pipelines-completion/dependency-completion-proof.json`. The stale blocker conclusion below is superseded by the repaired manifest evidence.
 
-Directories or files referenced under `arnold/pipelines/` that do not exist on the filesystem and will never be recreated. Listed in the M6 deletion inventory (`arnold/conformance/deleted_surfaces.py`).
+### 2.2 M7 Mechanical Completion Audit (T10 — 2026-07-02)
 
-| # | Stale Path | Classification | Evidence |
-|---|-----------|---------------|----------|
-| D1 | `arnold/pipelines/megaplan/` | **Dead path** | Directory does not exist. M6 deletion target (`deleted_surfaces.py` line 38). Conformance allowlists reference it for legacy-gate purposes only. |
-| D2 | `arnold/pipelines/megaplan/data/` | **Dead path** | Does not exist. M6 deletion target (`deleted_surfaces.py` line 66). |
-| D3 | `arnold/pipelines/jokes/` | **Dead path** | M6 deletion target (`deleted_surfaces.py` line 39). |
-| D4 | `arnold/pipelines/creative/` | **Dead path** | M6 deletion target (`deleted_surfaces.py` line 40). |
-| D5 | `arnold/pipelines/doc/` | **Dead path** | M6 deletion target (`deleted_surfaces.py` line 41). |
-| D6 | `arnold/pipelines/live_supervisor/` | **Dead path** | M6 deletion target (`deleted_surfaces.py` line 42). |
-| D7 | `arnold/pipelines/select_tournament/` | **Dead path** | M6 deletion target (`deleted_surfaces.py` line 43). |
-| D8 | `arnold/pipelines/simplify_writing/` | **Dead path** | M6 archive target (`deleted_surfaces.py` line 44). |
-| D9 | `arnold/pipelines/vibecomfy_executor/` | **Dead path** | M6 archive target (`deleted_surfaces.py` line 45). |
-| D10 | `arnold/pipelines/writing_panel_strict.py` | **Dead path** | M6 deletion target (`deleted_surfaces.py` line 46). |
-| D11 | `arnold/pipelines/epic_blitz/` | **Dead path** | M6 archive target (`deleted_surfaces.py` line 47). |
-| D12 | `arnold/pipelines/briefs/` | **Dead path** | M6 archive target (`deleted_surfaces.py` line 51). |
-| D13 | `arnold/pipelines/_template/` | **Dead path** | Does not exist; legacy mapping in `discovery.py`. |
+This section records the T10 mechanical audit of whether the
+`native-python-pipelines-completion` initiative is proven complete through M7
+or explicitly waived. The audit was executed against the authoritative chain
+state and completion manifest at
+`.megaplan/initiatives/native-python-pipelines-completion/`.
 
-### 4.2 Compatibility Aliases
+#### 2.2.1 Chain State Evidence
 
-Stale `arnold/pipelines/` paths that still resolve to live equivalents through discovery/registry compatibility mappings. These are NOT dead — they serve as backward-compatibility aliases.
+Source: `.megaplan/initiatives/native-python-pipelines-completion/chain.yaml`
+and `.megaplan/initiatives/native-python-pipelines-completion/completion-manifest.json`.
 
-| # | Stale Path | Live Equivalent | Classification | Notes |
-|---|-----------|----------------|---------------|-------|
-| A1 | `arnold/pipelines/megaplan/pipelines/doc` | `arnold_pipelines/megaplan/pipelines/doc/` | **Compatibility alias** | `discovery.py:155` |
-| A2 | `arnold/pipelines/megaplan/pipelines/creative` | `arnold_pipelines/megaplan/pipelines/creative/` | **Compatibility alias** | `discovery.py:163` |
-| A3 | `arnold/pipelines/megaplan/pipelines/jokes` | `arnold_pipelines/megaplan/pipelines/jokes/` | **Compatibility alias** | `discovery.py:171` |
-| A4 | `arnold/pipelines/megaplan/pipelines/live_supervisor` | `arnold_pipelines/megaplan/pipelines/live_supervisor/` | **Compatibility alias** | `discovery.py:179` |
-| A5 | `arnold/pipelines/megaplan/pipelines/epic_blitz.py` | `arnold_pipelines/megaplan/pipelines/epic_blitz.py` | **Compatibility alias** | `discovery.py:187` |
-| A6 | `arnold/pipelines/megaplan/pipelines/select_tournament` | `arnold_pipelines/megaplan/pipelines/select_tournament/` | **Compatibility alias** | `discovery.py:196` |
-| A7 | `arnold/pipelines/megaplan/pipelines/writing_panel_strict` | `arnold_pipelines/megaplan/pipelines/writing_panel_strict/` | **Compatibility alias** | `discovery.py:204` |
-| A8 | `arnold/pipelines/folder_audit` | `arnold/pipelines/folder_audit/` | **Compatibility alias** | `discovery.py:212`; live under dot-separated path. |
-| A9 | `arnold/pipelines/deliberation` | `arnold/pipelines/deliberation/` | **Compatibility alias** | `discovery.py:222`; live under dot-separated path. |
-| A10 | `arnold/pipelines/_deliberation_example` | `arnold/pipelines/_deliberation_example/` | **Compatibility alias** | `discovery.py:380`; live under dot-separated path. |
-| A11 | `arnold/pipelines/jokes` | `arnold_pipelines/megaplan/pipelines/jokes/` | **Compatibility alias** | `discovery.py:279`; maps to live megaplan sub-pipeline. |
-| A12 | `arnold/pipelines/creative` | `arnold_pipelines/megaplan/pipelines/creative/` | **Compatibility alias** | `discovery.py:287`; maps to live megaplan sub-pipeline. |
-| A13 | `arnold/pipelines/doc` | `arnold_pipelines/megaplan/pipelines/doc/` | **Compatibility alias** | `discovery.py:295`; maps to live megaplan sub-pipeline. |
-| A14 | `arnold/pipelines/live_supervisor` | `arnold_pipelines/megaplan/pipelines/live_supervisor/` | **Compatibility alias** | `discovery.py:303`; maps to live megaplan sub-pipeline. |
-| A15 | `arnold/pipelines/select_tournament` | `arnold_pipelines/megaplan/pipelines/select_tournament/` | **Compatibility alias** | `discovery.py:311`; maps to live megaplan sub-pipeline. |
-| A16 | `arnold/pipelines/writing_panel_strict.py` | `arnold_pipelines/megaplan/pipelines/writing_panel_strict/pipeline.py` | **Compatibility alias** | `discovery.py:319`; maps to live megaplan sub-pipeline. |
-| A17 | `arnold/pipelines/writing_panel_strict` | `arnold_pipelines/megaplan/pipelines/writing_panel_strict/` | **Compatibility alias** | `discovery.py:327`; maps to live megaplan sub-pipeline. |
-| A18 | `arnold/pipelines/__init__.py` | `arnold/pipelines/__init__.py` | **Compatibility alias** | `discovery.py:335`; self-referential discovery entry. |
-| A19 | `arnold/pipelines/_authoring.py` | `arnold/pipelines/_authoring.py` | **Compatibility alias** | `discovery.py:343`; self-referential discovery entry. |
-| A20 | `arnold/pipelines/simplify_writing` | (dead path) | **Compatibility alias** | `discovery.py:355`; maps to M6 archive target. |
-| A21 | `arnold/pipelines/vibecomfy_executor` | (dead path) | **Compatibility alias** | `discovery.py:363`; maps to M6 archive target. |
-| A22 | `arnold/pipelines/epic_blitz` | (dead path) | **Compatibility alias** | `discovery.py:371`; maps to M6 archive target. |
-| A23 | `arnold/pipelines/briefs` | (dead path) | **Compatibility alias** | `discovery.py:388`; maps to M6 archive target. |
+| Field | Value |
+|-------|-------|
+| Total milestones | 8 (m1 through m7) |
+| Completed milestones | 8 of 8 (m1 through m7) |
+| Active milestone | none — chain complete |
+| M7 status | **done** — synced from completed sibling cloud chain state |
+| Completion manifest | **valid completion manifest** — regenerated from completed sibling cloud chain state by dependency-manifest repair |
 
-### 4.3 Migration Targets
+#### 2.2.2 M7 Task-Level Evidence
 
-Paths that exist under the live `arnold_pipelines/` prefix but are referenced under stale `arnold/pipelines/` in code or docs. These are the target of M1 migration — stale references must be updated.
+Source: `.megaplan/initiatives/native-python-pipelines-completion/proof-map.json`.
 
-| # | Stale Reference | Live Migration Target | Classification |
-|---|----------------|----------------------|---------------|
-| M1 | `arnold/pipelines/megaplan/__init__.py` | `arnold_pipelines/megaplan/__init__.py` | **Migration target** |
-| M2 | `arnold/pipelines/megaplan/pipeline.py` | `arnold_pipelines/megaplan/pipeline.py` | **Migration target** |
-| M3 | `arnold/pipelines/megaplan/workflows/planning.py` | `arnold_pipelines/megaplan/workflows/planning.py` | **Migration target** |
-| M4 | `arnold/pipelines/megaplan/workflows/workflow.py` | `arnold_pipelines/megaplan/workflows/workflow.py` | **Migration target** |
-| M5 | `arnold/pipelines/megaplan/workflows/components.py` | `arnold_pipelines/megaplan/workflows/components.py` | **Migration target** |
-| M6 | `arnold/pipelines/megaplan/auto.py` | `arnold_pipelines/megaplan/auto.py` | **Migration target** |
-| M7 | `arnold/pipelines/megaplan/registry.py` | `arnold_pipelines/megaplan/registry.py` | **Migration target** |
-| M8 | `arnold/pipelines/megaplan/cli/__init__.py` | `arnold_pipelines/megaplan/cli/__init__.py` | **Migration target** |
-| M9 | `arnold/pipelines/megaplan/cli/parser.py` | `arnold_pipelines/megaplan/cli/parser.py` | **Migration target** |
-| M10 | `arnold/pipelines/megaplan/cli/run.py` | `arnold_pipelines/megaplan/cli/run.py` | **Migration target** |
-| M11 | `arnold/pipelines/megaplan/routing.py` | `arnold_pipelines/megaplan/routing.py` | **Migration target** |
-| M12 | `arnold/pipelines/megaplan/runtime/bridge.py` | `arnold_pipelines/megaplan/runtime/bridge.py` | **Migration target** |
-| M13 | `arnold/pipelines/megaplan/runtime/discovery.py` | `arnold_pipelines/megaplan/runtime/discovery.py` | **Migration target** |
-| M14 | `arnold/pipelines/megaplan/planning/operations.py` | `arnold_pipelines/megaplan/planning/operations.py` | **Migration target** |
+| M7 Task | Status |
+|---------|--------|
+| T1 (import inventory) | completed |
+| T2 (CLI repoint) | completed |
+| T3 (public contract + legacy deletion) | completed |
+| T4 (orphaned test archival) | completed |
+| T5 (conformance list cleanup) | completed |
+| T6-T9 | superseded by completed chain-state manifest sync; see `.megaplan/initiatives/native-python-pipelines-completion/dependency-completion-proof.json` |
 
-### 4.4 Conformance Allowlist Entries (Not Migration Targets)
+#### 2.2.3 Waiver Search
 
-The `arnold/conformance/legacy_reference_allowlist.json` and `arnold/conformance/checks.py` contain references to `arnold/pipelines/megaplan` as **legacy allowlist entries**. These are intentional — the conformance system tracks legacy references to ensure they are not reintroduced as live code paths. They are **dead path gate entries**: they exist only to detect regressions. They are not migration targets and do not require updates during M1.
+A mechanical search of `.megaplan/initiatives/native-python-pipelines-completion/`
+for any waiver document (keywords: `waiver`, `waive`, `explicitly waived`) returned
+not required. No waiver is needed because the prerequisite is now evidenced complete through the regenerated completion manifest.
+
+#### 2.2.4 Audit Conclusion
+
+**M7 is complete.** Dependency-manifest repair synced the completed sibling cloud chain state: current_milestone_index=8, all eight milestones are `done`, and `.megaplan/initiatives/native-python-pipelines-completion/completion-manifest.json` is a valid completion manifest. Per SD2, Phase 3 (canonical Megaplan workflow decomposition) may proceed without a waiver.
+
+### 2.3 Blocked Migration Decision (SD2)
+
+Per the approved plan decision SD2:
+
+> Phase 3 (Megaplan workflow decomposition, steps 9-14) does not land until the
+> native-python-pipelines-completion initiative is proven complete through M7 or
+> explicitly waived.
+
+**Current status (post dependency-manifest repair):** As documented in §2.2.4, M7 is complete. Therefore:
+
+- **Phase 1 (this launch gate): PROCEED** — documentation only; no source edits
+  that change workflow semantics.
+- **Phase 2 (neutral native child-workflow compiler/runtime): PROCEED** —
+  additive, generic, non-Megaplan-specific infrastructure.
+- **Phase 3 (canonical Megaplan workflow decomposition): PROCEED** — M7 completion manifest is present and valid.
+
+If future evidence invalidates the regenerated M7 completion manifest, Phase 3 must stop again; current evidence permits it to proceed.
 
 ---
 
-## 5. CLI Surface Mapping
+## 3. Bridge-Work Disclaimer
 
-| Plan/Brief Reference | Live Command / Module | Notes |
-|---------------------|----------------------|-------|
-| `arnold pipelines describe megaplan` | `megaplan describe` → `cli/__init__.py:handle_describe()` | The `arnold` top-level CLI routes `workflow` and operator commands only. |
-| `arnold pipelines run megaplan --describe` | `megaplan run megaplan --describe` → `cli/run.py:cli_run()` | The live megaplan CLI is a standalone entrypoint. |
-| `cli/arnold.py` | `arnold_pipelines/megaplan/cli/__init__.py` | Monolithic CLI (2987 lines). Also `cli/arnold.py` exists as a legacy top-level dispatch (M6 deletion target per `deleted_surfaces.py` line 53). |
+All work in Phase 1 (launch gates) and Phase 2 (neutral native composition
+support) is **bridge work only**. Specifically:
+
+- Phase 1 establishes source-path authority and prevents false conformance
+  claims. It does not edit any canonical workflow source.
+- Phase 2 adds neutral `@workflow`/`@pipeline` compiler and runtime support
+  for child workflows. It does not migrate any Megaplan-specific semantics.
+- No `@workflow` decorator is applied to the canonical Megaplan pipeline in
+  Phases 1 or 2.
+- No handler is replaced, no stage order is altered, and no routing behavior
+  is changed in Phases 1 or 2.
+- The existing `build_pipeline()` in `arnold_pipelines/megaplan/workflows/planning.py`
+  remains the canonical source of Megaplan product semantics.
+
+The classification is: **pre-migration scaffolding, not migration.**
 
 ---
 
-## 6. Package Build Verification
+## 4. Live Underscore Paths (`arnold_pipelines/megaplan/`)
+
+All implementation edits target the live `arnold_pipelines/megaplan/` package
+root. The underscore-separated name is the plugin root included in the wheel
+build (per `pyproject.toml` line 84).
+
+### 4.1 Core Workflow and Composition Surface
+
+| Path | Purpose | Notes |
+|------|---------|-------|
+| `arnold_pipelines/megaplan/__init__.py` | Package metadata, `build_pipeline` entrypoint | Registry discovery scans here |
+| `arnold_pipelines/megaplan/pipeline.py` | Thin facade re-exporting `build_pipeline` | Delegates to `workflows.planning` |
+| `arnold_pipelines/megaplan/workflows/planning.py` | **Canonical `build_pipeline()`** — returns DSL Pipeline | Authoritative workflow source |
+| `arnold_pipelines/megaplan/workflows/components.py` | 12 StepComponents with handler_ref strings and route_bindings | Migration target for native decomposition |
+| `arnold_pipelines/megaplan/routing.py` | Planning decision literals and routing helpers | Megaplan-specific routing |
+
+### 4.2 CLI Entrypoints
+
+| Path | Purpose | Notes |
+|------|---------|-------|
+| `arnold_pipelines/megaplan/cli/__init__.py` | Monolithic CLI (3060 lines) | Handles `run`, `describe`, `auto`, phase commands |
+| `arnold_pipelines/megaplan/cli/parser.py` | CLI argument parser | Parses megaplan subcommands |
+| `arnold_pipelines/megaplan/cli/run.py` | Run subcommand handler (`cli_run`) | Subprocess entry for megaplan runs |
+| `arnold_pipelines/megaplan/__main__.py` | `python -m arnold_pipelines.megaplan` entry | Delegates to CLI |
+
+Live CLI commands:
+```bash
+megaplan run megaplan --describe          # → cli/run.py:cli_run()
+megaplan describe                         # → cli/__init__.py:handle_describe()
+python -m arnold_pipelines.megaplan run   # → module entrypoint
+```
+
+### 4.3 Auto-Drive
+
+| Path | Purpose | Notes |
+|------|---------|-------|
+| `arnold_pipelines/megaplan/auto.py` | Auto-driver, resume, recovery (5011 lines) | Dispatches via `registry.dispatch_operation_for()` |
+| `arnold_pipelines/megaplan/auto_escalation.py` | Escalation flow handling | Auto-drive escalation paths |
+| `arnold_pipelines/megaplan/blocker_recovery.py` | Blocked-task recovery | Auto-drive recovery logic |
+
+### 4.4 Runtime Bridge
+
+| Path | Purpose | Notes |
+|------|---------|-------|
+| `arnold_pipelines/megaplan/runtime/bridge.py` | Bridge adapter megaplan→neutral executor | Reads `native_program` via `getattr` |
+| `arnold_pipelines/megaplan/runtime/discovery.py` | Runtime discovery | |
+| `arnold_pipelines/megaplan/runtime/process.py` | Process management | |
+| `arnold_pipelines/megaplan/runtime/manifest_backend.py` | Manifest execution backend | |
+| `arnold_pipelines/megaplan/runtime/governor.py` | Execution governance | |
+
+### 4.5 Planning Operations
+
+| Path | Purpose | Notes |
+|------|---------|-------|
+| `arnold_pipelines/megaplan/planning/operations.py` | PlanningOperationRegistry with subprocess dispatch | Canonical operation dispatch |
+| `arnold_pipelines/megaplan/registry.py` | Megaplan operation registry | `dispatch_operation_for()`, `_builtin_megaplan_builder()` |
+
+### 4.6 Handler Modules (Migration Targets)
+
+These modules contain handler-backed stage logic that Phase 3 will decompose
+into visible compositional workflow structure:
+
+| Path | Stage | Migration Target |
+|------|-------|-----------------|
+| `arnold_pipelines/megaplan/handlers/prep.py` | Prep | Clarification gate → suspension branch |
+| `arnold_pipelines/megaplan/handlers/plan.py` | Plan | Artifact/schema boundaries |
+| `arnold_pipelines/megaplan/handlers/critique.py` | Critique | Parallel lenses, retry loop, robustness skip |
+| `arnold_pipelines/megaplan/handlers/gate.py` | Gate | Preflight, signal building, reprompt, flag/debt |
+| `arnold_pipelines/megaplan/handlers/tiebreaker.py` | Tiebreaker | Researcher/challenger subworkflow |
+| `arnold_pipelines/megaplan/handlers/finalize.py` | Finalize | Baseline selection, fallback routes |
+| `arnold_pipelines/megaplan/handlers/execute.py` | Execute | DAG batching, approval gates |
+| `arnold_pipelines/megaplan/handlers/review.py` | Review | Parallel checks, rework loop, caps |
+| `arnold_pipelines/megaplan/handlers/override.py` | Override | Action route matrix |
+
+### 4.7 Other Live Subsystems
+
+| Path | Purpose |
+|------|---------|
+| `arnold_pipelines/megaplan/control_interface.py` | Control interface |
+| `arnold_pipelines/megaplan/user_actions.py` | User action handling |
+| `arnold_pipelines/megaplan/step_contracts.py` | `STEP_CONTRACTS` registry (compatibility names) |
+| `arnold_pipelines/megaplan/types.py` | Type definitions |
+| `arnold_pipelines/megaplan/flags.py` / `feature_flags.py` | Flag management |
+| `arnold_pipelines/megaplan/control.py` | Control logic |
+| `arnold_pipelines/megaplan/artifacts.py` | Artifact handling |
+| `arnold_pipelines/megaplan/briefs.py` | Brief generation |
+| `arnold_pipelines/megaplan/judge_manifest.py` | Judge manifest |
+| `arnold_pipelines/megaplan/resolutions.py` / `resolution_contract.py` | Resolution handling |
+| `arnold_pipelines/megaplan/schema_seeds.py` | Schema seeds |
+| `arnold_pipelines/megaplan/template_registry.py` | Template registry |
+| `arnold_pipelines/megaplan/run_outcome.py` | Run outcome types |
+| `arnold_pipelines/megaplan/model_seam.py` | Model seam |
+| `arnold_pipelines/megaplan/policy_settings.py` | Policy settings |
+| `arnold_pipelines/megaplan/pipeline_contracts.py` | Pipeline contracts |
+| `arnold_pipelines/megaplan/quality_resolutions.py` | Quality resolutions |
+| `arnold_pipelines/megaplan/layout.py` | Layout |
+| `arnold_pipelines/megaplan/preflight.py` | Preflight checks |
+| `arnold_pipelines/megaplan/loop/` | Loop engine, handlers, types, prompts |
+| `arnold_pipelines/megaplan/cloud/` | Cloud deployment (providers, wrappers, systemd) |
+| `arnold_pipelines/megaplan/calibration/` | Calibration ledger, experiments |
+| `arnold_pipelines/megaplan/observability/` | Trace, events, cost, doctor, routing/effect ledgers |
+| `arnold_pipelines/megaplan/pipelines/` | Sub-pipelines (creative, doc, jokes, select_tournament, etc.) |
+| `arnold_pipelines/megaplan/schemas/` | Schema definitions (base, runtime, sprint1, planning, arnold, models) |
+| `arnold_pipelines/megaplan/watchdog/` | Watchdog: signals, discovery, processes, tmux, orphans, repair |
+| `arnold_pipelines/megaplan/agent_runtime/` | Agent runtime adapters and contracts |
+| `arnold_pipelines/megaplan/agent_adapters/` | Codex/Shannon/oneshot adapters |
+| `arnold_pipelines/megaplan/skills/` | Megaplan-specific skills |
+| `arnold_pipelines/megaplan/data/` | Product data fixtures/templates, composed skills |
+
+---
+
+## 5. Installed Import Surface
+
+The stable author-facing import surface is defined in
+`docs/arnold/native-composition-contract.md`:
+
+```python
+# Primary authoring imports
+from arnold.pipeline import step, workflow
+from arnold.pipeline.native import step, workflow, decision, parallel
+from arnold.pipeline.native import compile_pipeline, project_graph
+from arnold.pipeline.native.ir import NativePhase, NativePipeline, NativeProgram
+
+# Compatibility aliases
+# phase  → step
+# pipeline → workflow
+```
+
+These import paths resolve to neutral `arnold/pipeline/` modules and do **not**
+import `arnold_pipelines/megaplan/`. The Megaplan product package is discovered
+by the pipeline registry (`arnold/pipeline/registry.py`) via plugin scanning.
+
+---
+
+## 6. Stale Dot-Path References and Live Equivalents
+
+Many plan documents and task descriptions reference paths under the stale
+`arnold/pipelines/megaplan/` prefix (dot-separated directory name). The live
+package root is `arnold_pipelines/megaplan/` (underscore-separated).
+
+**Key ruling (SD2):** All implementation edits target live
+`arnold_pipelines/megaplan/` paths. The stale `arnold/pipelines/megaplan/`
+paths are documented here — not edited. No stale paths will be created for
+runtime behavior.
+
+### 6.1 Stale Paths with Live Equivalents
+
+| # | Stale Path | Live Equivalent | Classification |
+|---|-----------|----------------|----------------|
+| 1 | `arnold/pipelines/megaplan/__init__.py` | `arnold_pipelines/megaplan/__init__.py` | **Live** — package metadata |
+| 2 | `arnold/pipelines/megaplan/pipeline.py` | `arnold_pipelines/megaplan/pipeline.py` | **Live** — facade |
+| 3 | `arnold/pipelines/megaplan/workflows/planning.py` | `arnold_pipelines/megaplan/workflows/planning.py` | **Live** — canonical source |
+| 4 | `arnold/pipelines/megaplan/workflows/components.py` | `arnold_pipelines/megaplan/workflows/components.py` | **Live** — step components |
+| 5 | `arnold/pipelines/megaplan/auto.py` | `arnold_pipelines/megaplan/auto.py` | **Live** — auto-driver |
+| 6 | `arnold/pipelines/megaplan/registry.py` | `arnold_pipelines/megaplan/registry.py` | **Live** — operation registry |
+| 7 | `arnold/pipelines/megaplan/cli/__init__.py` | `arnold_pipelines/megaplan/cli/__init__.py` | **Live** — monolithic CLI |
+| 8 | `arnold/pipelines/megaplan/cli/parser.py` | `arnold_pipelines/megaplan/cli/parser.py` | **Live** — CLI parser |
+| 9 | `arnold/pipelines/megaplan/cli/run.py` | `arnold_pipelines/megaplan/cli/run.py` | **Live** — run handler |
+| 10 | `arnold/pipelines/megaplan/routing.py` | `arnold_pipelines/megaplan/routing.py` | **Live** — routing |
+| 11 | `arnold/pipelines/megaplan/runtime/bridge.py` | `arnold_pipelines/megaplan/runtime/bridge.py` | **Live** — bridge |
+| 12 | `arnold/pipelines/megaplan/runtime/discovery.py` | `arnold_pipelines/megaplan/runtime/discovery.py` | **Live** — discovery |
+| 13 | `arnold/pipelines/megaplan/planning/operations.py` | `arnold_pipelines/megaplan/planning/operations.py` | **Live** — operations |
+| 14 | `arnold/pipelines/megaplan/handlers/` | `arnold_pipelines/megaplan/handlers/` | **Live** — handler modules |
+| 15 | `arnold/pipelines/megaplan/types.py` | `arnold_pipelines/megaplan/types.py` | **Live** — types |
+| 16 | `arnold/pipelines/megaplan/control.py` | `arnold_pipelines/megaplan/control.py` | **Live** — control |
+| 17 | `arnold/pipelines/megaplan/control_interface.py` | `arnold_pipelines/megaplan/control_interface.py` | **Live** — control interface |
+| 18 | `arnold/pipelines/megaplan/step_contracts.py` | `arnold_pipelines/megaplan/step_contracts.py` | **Live** — step contracts |
+
+### 6.2 Non-Existent Files — Live Equivalents or No-Live-File
+
+| # | Non-Existent Path | Resolution | Classification |
+|---|------------------|------------|----------------|
+| N1 | `arnold/pipelines/megaplan/native_runner.py` | No `native_runner.py` exists. Live runtime equivalent: `auto.py` + `cli/run.py`. | **No live file** — do not create unless import contract forces it |
+| N2 | `arnold/pipelines/megaplan/_compatibility.py` | Does not exist in the current worktree. M4 parity shim was deleted. | **No live file** — do not recreate; use native composition instead |
+| N3 | `arnold/pipelines/megaplan/cli/arnold.py` | No separate `cli/arnold.py`. Monolithic `cli/__init__.py` handles all CLI. | **No live file** — `cli/__init__.py` is the live surface |
+| N4 | `arnold/pipelines/megaplan/native_hooks.py` | No `native_hooks.py` exists. Megaplan hook behavior is distributed across control, override, execute, and resume modules. | **No live file** — distributed hooks, not a single module |
+| N5 | `arnold/pipelines/megaplan/_pipeline/` | Legacy `_pipeline` subpackage. Deleted; remaining M4 parity shims in live tree are M6 deletion targets. | **Stale directory** — live equivalents in `runtime/`, `auto.py` |
+| N6 | `arnold/pipelines/megaplan/_core/` | Legacy `_core` subpackage. Moved to live tree during M4. | **Stale directory** — live equivalents in top-level megaplan modules |
+| N7 | `arnold/pipelines/megaplan/stages/` | Legacy stages. Moved during M4. | **Stale directory** — live equivalents in `handlers/` |
+| N8 | `arnold/pipelines/megaplan/__main__.py` | `arnold_pipelines/megaplan/__main__.py` exists at the live path | **Live at underscore path** |
+
+### 6.3 Stale Dot-Path Directories (No Megaplan Content)
+
+The following `arnold/pipelines/` subdirectories exist but contain **no Megaplan
+product code**:
+
+| Path | Content | Megaplan Relevance |
+|------|---------|-------------------|
+| `arnold/pipelines/deliberation/` | Deliberation pipeline (non-Megaplan) | None |
+| `arnold/pipelines/evidence_pack/` | Evidence pack pipeline (non-Megaplan) | None |
+| `arnold/pipelines/folder_audit/` | Folder audit pipeline (non-Megaplan) | None |
+| `arnold/pipelines/_deliberation_example/` | Deliberation example (non-Megaplan) | None |
+| `arnold/pipelines/_authoring.py` | Authoring helpers (non-Megaplan) | None |
+
+**Confirmed:** `arnold/pipelines/megaplan/` does **not** exist at the stale
+dot-path. Per `pyproject.toml` line 76, `arnold/pipelines/` is excluded from
+the wheel; only `arnold_pipelines/` (underscore) ships.
+
+### 6.4 M6 Deletion Targets (Stale Paths in Live Tree)
+
+The following paths exist under the live `arnold_pipelines/megaplan/` tree but
+are marked for M6 deletion per `docs/arnold/legacy-surface-inventory.md`:
+
+| Path | Disposition | Expiry |
+|------|------------|--------|
+| `arnold_pipelines/megaplan/_compatibility.py` | Temporary M4 parity shim | M6 |
+| `arnold_pipelines/megaplan/_pipeline/` | Temporary M4 parity shim (bridge, executor, registry, run_cli, subloop) | M6 |
+| `arnold_pipelines/megaplan/_core/state.py` | Temporary M4 parity shim | M6 |
+| `arnold_pipelines/megaplan/cli/arnold.py` | Temporary M4 parity shim | M6 |
+| `arnold_pipelines/megaplan/cli/roots.py` | Temporary M4 parity shim | M6 |
+| `arnold_pipelines/megaplan/agent/` | Vendored agent runtime | M6 |
+| `arnold_pipelines/megaplan/vendor/shannon/` | Vendored Shannon runtime | M6 |
+| `arnold_pipelines/megaplan/cloud/_reference/` | Generated reference debris | M6 |
+| `arnold_pipelines/megaplan/data/_codex_skills/` | Generated skill cache | M6 |
+| `arnold_pipelines/megaplan/_pipeline/demos/` | Demo entries | M6 |
+| `arnold_pipelines/megaplan/_pipeline/pipeline_ids.json` | Read-only migration input | M6 archive |
+
+**M1 rule:** Do not edit or add dependencies on M6 deletion targets. These
+paths may disappear before canonical migration completes.
+
+---
+
+## 7. Neutral Arnold Surfaces (Verification-Only)
+
+| Path | Purpose | Megaplan References |
+|------|---------|-------------------|
+| `arnold/pipeline/native/routing.py` (176 lines) | Generic native/graph dispatch | Zero — already clean |
+| `arnold/pipeline/executor.py` (1257 lines) | Generic executor | Zero — already clean |
+| `arnold/pipeline/types.py` | `Pipeline.native_program` type definition | Zero — generic |
+| `arnold/pipeline/registry.py` | Discovers plugins | Scans both dot and underscore paths |
+
+These neutral surfaces are **verification-only** for M1: confirm no Megaplan
+fallback logic or stage-order heuristics remain, but no edits are required.
+
+---
+
+## 8. CLI Surface Mapping
+
+| Plan Reference | Live Command / Module | Notes |
+|---------------|----------------------|-------|
+| `arnold pipelines describe megaplan` | `megaplan describe` → `cli/__init__.py` | The `arnold` top-level CLI routes `workflow` and operator commands; no `pipelines describe` subcommand |
+| `arnold pipelines run megaplan --describe` | `megaplan run megaplan --describe` → `cli/run.py:cli_run()` | Standalone megaplan CLI entrypoint |
+| `megaplan run` | `arnold_pipelines/megaplan/cli/run.py` | Subprocess entry |
+| `megaplan auto` | `arnold_pipelines/megaplan/auto.py` | Auto-driver CLI entry |
+| `python -m arnold_pipelines.megaplan` | `arnold_pipelines/megaplan/__main__.py` | Module entrypoint |
+| `python -m arnold.pipelines.megaplan` | `arnold/pipelines/megaplan/__main__.py` | **Legacy alias** — M6 deletion target |
+
+---
+
+## 9. Package Build Verification
 
 Per `pyproject.toml`:
 
-- `arnold/pipelines/` (dot-separated): **excluded from wheel** (lines 76, 97). Contains only `deliberation`, `folder_audit`, `evidence_pack`, and `_deliberation_example` — no megaplan.
-- `arnold_pipelines/` (underscore-separated): **included in wheel** (line 84). This is the plugin root and the live package for all megaplan source.
+- `arnold/pipelines/` (dot-separated): **excluded from wheel** (line 76, 97).
+  Contains only `deliberation`, `evidence_pack`, `folder_audit` — no megaplan.
+- `arnold_pipelines/` (underscore-separated): **included in wheel** (line 84).
+  This is the plugin root and the live package for all megaplan source.
 
-This confirms SD2: editing stale `arnold/pipelines/megaplan/` paths would create ghost code excluded from the built wheel.
-
----
-
-## 7. Doctrine Gate
-
-Per the M1 brief's verifiable completion criterion:
-
-> The source-path reconciliation table exists before workflow edits land and proves that package registration, CLI, auto-drive, and tests inspect the same live canonical workflow source. Any stale `arnold/pipelines/...` reference must be classified as migration target, compatibility alias, or dead path before implementation starts.
-
-This document satisfies that gate. Key proofs:
-
-1. **Live workflow source:** `arnold_pipelines/megaplan/workflows/workflow.py` is the canonical authored source (verified live, 93 lines, `@workflow`/`loop` decorators).
-2. **Package registration:** `arnold_pipelines/megaplan/__init__.py` declares `entrypoint: str = "build_pipeline"`, routing through `pipeline.py` facade → `workflows/planning.py`.
-3. **CLI:** `arnold_pipelines/megaplan/cli/__init__.py` (2987 lines) handles all CLI surface.
-4. **Auto-drive:** `arnold_pipelines/megaplan/auto.py` (4670 lines) provides in-process auto-drive.
-5. **Nonexistent files:** `native_runner.py` and `native_hooks.py` confirmed absent; live equivalents documented.
-6. **Stale path classification:** 13 dead paths, 23 compatibility aliases, 14 migration targets — all classified before implementation starts.
-
-**M1 doctrine gate label:** LAUNCH-GATE AUTHORITY. This document is the pre-implementation source-path reconciliation required by the M1 launch gate. No workflow edits shall land before this reconciliation is acknowledged.
+Editing stale `arnold/pipelines/megaplan/` paths would create ghost code
+excluded from the built wheel. This confirms SD2's ruling.
 
 ---
 
-## 8. Relationship to Other Artifacts
-
-- **`docs/arnold/m3-5-canonical-megaplan-source-path-reconciliation.md`** — M3.5 substrate-proof reconciliation (Section 10 contains the M1 entries replicated here). This document is the M1-specific authority.
-- **`arnold/conformance/deleted_surfaces.py`** — M6 deletion inventory; source of truth for dead path classifications.
-- **`arnold/conformance/legacy_reference_allowlist.json`** — Conformance allowlist; tracks legacy `arnold/pipelines/megaplan` references for regression detection.
-- **`arnold_pipelines/discovery.py`** — Registry discovery; contains the compatibility alias mappings documented in §4.2.
-
----
-
-## 9. Summary
+## 10. Summary
 
 | Category | Count | Resolution |
 |----------|-------|------------|
-| Live workflow source files | 4 | `workflow.py`, `planning.py`, `components.py`, `__init__.py` |
-| Package facade / compatibility | 3 | `pipeline.py`, `__init__.py`, `_compatibility.py` |
-| CLI / auto-drive entrypoints | 8 | `cli/__init__.py`, `cli/run.py`, `cli/parser.py`, `cli/projection.py`, `auto.py`, `registry.py`, `routing.py`, `__main__.py` |
-| Native compiler/runtime/projection | 15 | `compiler.py`, `runtime.py`, `graph_projection.py`, `ir.py`, `decorators.py`, `hooks.py`, `routing.py`, `checkpoint.py`, `context.py`, `trace.py`, `flags.py`, `__init__.py`, `types.py`, `source_compiler.py`, `compiler.py` (workflow) |
-| Nonexistent files | 2 | `native_runner.py`, `native_hooks.py` — explicitly marked nonexistent |
-| Dead paths | 13 | Stale `arnold/pipelines/` paths that do not exist |
-| Compatibility aliases | 23 | Discovery aliases mapping stale→live paths |
-| Migration targets | 14 | Stale `arnold/pipelines/megaplan/...` → live `arnold_pipelines/megaplan/...` |
+| Live underscore paths classified | 50+ | All under `arnold_pipelines/megaplan/` |
+| Stale dot-paths with live equivalents | 18 | All mapped to `arnold_pipelines/megaplan/` |
+| Non-existent files | 8 | Live equivalents named or classified as no-live-file |
+| Stale directories (no megaplan) | 5 | Confirmed clean — no megaplan content |
+| M6 deletion targets | 12 | Do not edit; will be removed |
+| Neutral surfaces (verification-only) | 4 | Already clean of megaplan references |
+| M7 conformance gate status | — | Runtime tests pass; chain completion manifest pending |
+| Phase 3 migration status | — | **BLOCKED** until M7 manifest or waiver |
 
-**Ready for M1 implementation.** No stale path will be created or edited for runtime behavior. All live canonical source paths identified. `native_runner.py` and `native_hooks.py` confirmed nonexistent.
+**Doctrine gate label:** Phase 1 = BRIDGE WORK ONLY. Phase 2 = NEUTRAL
+INFRASTRUCTURE ONLY. Phase 3 = BLOCKED ON M7. Do not land canonical Megaplan
+workflow decomposition until the M7 prerequisite is proven complete through
+a content-addressed `completion-manifest.json` or explicitly waived.
