@@ -313,6 +313,7 @@ class _ParallelBranchList(list):
     __parallel_branches__: tuple[Callable[..., Any], ...] = ()
     __parallel_reducer__: Callable[..., Any] | None = None
     __parallel_name__: str | None = None
+    __parallel_id__: str | None = None
 
 
 def parallel(
@@ -320,6 +321,7 @@ def parallel(
     *,
     reducer: Callable[..., Any] | None = None,
     name: str | None = None,
+    id: str | None = None,
 ) -> _ParallelBranchList:
     """Declare a parallel fan-out block for use in native pipelines.
 
@@ -341,6 +343,10 @@ def parallel(
     name:
         Optional human-readable name for the parallel block (defaults to
         a generated name like ``parallel_0``).
+    id:
+        Optional stable call-site identity for this parallel block.
+        When set, this becomes the ``call_site_path`` in the compiled
+        instruction rather than an auto-generated name.
 
     Returns
     -------
@@ -375,7 +381,106 @@ def parallel(
     result.__parallel_branches__ = tuple(branches)
     result.__parallel_reducer__ = reducer
     result.__parallel_name__ = name
+    result.__parallel_id__ = id
     return result
+
+
+# ── Dynamic parallel_map helper ────────────────────────────────────────
+
+
+class _ParallelMapDeclaration:
+    """Carries ``parallel_map`` metadata for compiler introspection.
+
+    This is a lightweight marker object — not a list-like — because
+    ``parallel_map`` declares a runtime-list fan-out rather than a
+    compile-time-literal branch set.  The compiler inspects the
+    attributes to build a :class:`~arnold.pipeline.native.ir.ParallelMapInstruction`.
+    """
+
+    __parallel_map_items__: str = ""
+    __parallel_map_step__: Callable[..., Any] | None = None
+    __parallel_map_reducer__: Callable[..., Any] | None = None
+    __parallel_map_path_template__: str = ""
+    __parallel_map_name__: str | None = None
+    __parallel_map_id__: str | None = None
+
+
+def parallel_map(
+    *,
+    items: str,
+    step: Callable[..., Any],
+    reducer: Callable[..., Any] | None = None,
+    path_template: str = "",
+    name: str | None = None,
+    id: str | None = None,
+) -> _ParallelMapDeclaration:
+    """Declare a dynamic runtime-list fan-out for use in native pipelines.
+
+    Used inside a ``@pipeline``- or ``@workflow``-decorated function to
+    declare that a mapper callable should be applied to each item of a
+    collection resolved at runtime::
+
+        @workflow(id="batch_review")
+        def batch_review(checks: list[Check]):
+            parallel_map(
+                items="checks",
+                step=critique_lens,
+                reducer=merge_findings,
+                path_template="critique/{item_id}",
+            )
+
+    This is a **distinct** construct from :func:`parallel`: ``parallel``
+    declares statically-bounded branches known at compile time, while
+    ``parallel_map`` declares a dynamic fan-out whose cardinality is
+    resolved at execution time.
+
+    Parameters
+    ----------
+    items:
+        Reference to the runtime collection — a parameter name or state
+        key that resolves to an iterable at execution time.
+    step:
+        The ``@phase``- or ``@workflow``-decorated callable applied to
+        each item.
+    reducer:
+        Optional callable invoked after all items complete.  Receives
+        a list of per-item results (one per item, in iteration order)
+        and must return a dict to merge into working state.
+    path_template:
+        Optional template for per-item call-site paths
+        (e.g. ``'critique/{item_id}'``).  Variables in braces are
+        resolved from item attributes at execution time.
+    name:
+        Optional human-readable name for the parallel_map block
+        (defaults to a generated name like ``parallel_map_0``).
+    id:
+        Optional stable call-site identity for this parallel_map block.
+        When set, this becomes the ``call_site_path`` in the compiled
+        instruction rather than an auto-generated name.
+
+    Returns
+    -------
+    _ParallelMapDeclaration
+        A metadata-carrying object for compiler introspection.
+    """
+    if not isinstance(items, str) or not items:
+        raise TypeError(
+            f"parallel_map() 'items' must be a non-empty str, got {items!r}"
+        )
+    if not callable(step):
+        raise TypeError(
+            f"parallel_map() 'step' must be callable, got {type(step).__name__}"
+        )
+    result = _ParallelMapDeclaration()
+    result.__parallel_map_items__ = items
+    result.__parallel_map_step__ = step
+    result.__parallel_map_reducer__ = reducer
+    result.__parallel_map_path_template__ = path_template
+    result.__parallel_map_name__ = name
+    result.__parallel_map_id__ = id
+    return result
+
+
 # ── Native panel helper ────────────────────────────────────────────────
 
 

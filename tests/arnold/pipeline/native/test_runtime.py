@@ -27,6 +27,7 @@ from arnold.pipeline.native import (
     NativeRuntimeError,
     compile_pipeline,
     decision,
+    parallel_map,
     parallel,
     phase,
     pipeline,
@@ -242,14 +243,20 @@ class TestPcAndStageTracking:
     def test_subpipeline_instruction_executes_child_program(self) -> None:
         @phase
         def child_step(ctx: dict) -> dict:
+            seed = ctx["state"]["seed"]
             current = ctx["state"].get("visits", 0)
-            return {"visits": current + 1, "child": "done"}
+            return {
+                "seed": "child-only",
+                "visits": current + 1,
+                "child": f"{seed}-done",
+                "hidden": "ignored",
+            }
 
         @workflow(
             name="child_flow",
             id="workflow.child",
-            inputs={"type": "object", "required": ["seed"]},
-            outputs={"type": "object", "required": ["child"]},
+            inputs={"type": "object", "required": ["seed", "visits"]},
+            outputs={"type": "object", "required": ["child", "visits"]},
         )
         def child(ctx: dict) -> dict:
             state = yield child_step(ctx)
@@ -270,8 +277,14 @@ class TestPcAndStageTracking:
         assert subpipeline_instr.op == "subpipeline"
         assert subpipeline_instr.subprogram is not None
         assert subpipeline_instr.subprogram.stable_id == "workflow.child"
-        result = run_native_pipeline(prog)
-        assert result.state == {"visits": 2, "child": "done", "parent": "done"}
+        result = run_native_pipeline(prog, initial_state={"seed": "s1", "visits": 1, "ambient": "keep"})
+        assert result.state == {
+            "seed": "s1",
+            "visits": 3,
+            "ambient": "keep",
+            "child": "s1-done",
+            "parent": "s1-done",
+        }
         assert result.stages == ["parent__parent_step__pc1"]
         assert not result.suspended
 
@@ -288,7 +301,10 @@ class TestPcAndStageTracking:
             marker.write_text("child", encoding="utf-8")
             return {"child_root_name": captured_child_root.name}
 
-        @workflow(name="child_flow")
+        @workflow(
+            name="child_flow",
+            outputs={"type": "object", "required": ["child_root_name"]},
+        )
         def child(ctx: dict) -> dict:
             state = yield child_step(ctx)
             return state
@@ -307,6 +323,193 @@ class TestPcAndStageTracking:
             encoding="utf-8"
         ) == "child"
         assert not (tmp_path / "child.txt").exists()
+
+    def test_subpipeline_only_merges_declared_outputs(self) -> None:
+        @phase
+        def child_step(ctx: dict) -> dict:
+            return {"child": "done", "secret": "nope"}
+
+        @workflow(
+            name="child_flow",
+            outputs={"type": "object", "required": ["child"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield child(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        result = run_native_pipeline(prog, initial_state={"ambient": "keep"})
+
+        assert result.state == {"ambient": "keep", "child": "done"}
+
+    def test_subpipeline_explicit_output_bindings_rename_child_outputs(self) -> None:
+        @phase
+        def child_step(ctx: dict) -> dict:
+            return {"child": "done"}
+
+        @workflow(
+            name="child_flow",
+            outputs={"type": "object", "required": ["child"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield child(ctx, outputs={"child": "child_status"})
+            return state
+
+        prog = compile_pipeline(parent)
+        result = run_native_pipeline(prog)
+
+        assert result.state == {"child_status": "done"}
+
+    def test_parallel_map_uses_parameter_precedence_and_preserves_item_order(self) -> None:
+        seen_ids: list[str] = []
+
+        @phase
+        def mutate_checks(ctx: dict) -> dict:
+            return {"checks": [{"item_id": "later"}, {"item_id": "first"}]}
+
+        @phase
+        def mapper(ctx: dict) -> dict:
+            seen_ids.append(ctx["state"]["item_id"])
+            return {"item_id": ctx["state"]["item_id"]}
+
+        @pipeline(inputs={"type": "object", "required": ["checks"]})
+        def parent(ctx: dict) -> dict:
+            state = yield mutate_checks(ctx)
+            state = yield parallel_map(items="checks", step=mapper, name="batch")
+            return state
+
+        prog = compile_pipeline(parent)
+        result = run_native_pipeline(
+            prog,
+            initial_state={"checks": [{"item_id": "first"}, {"item_id": "later"}]},
+        )
+
+        assert seen_ids == ["first", "later"]
+        assert result.state["batch"] == [
+            {"item_id": "first"},
+            {"item_id": "later"},
+        ]
+
+    def test_parallel_map_reducer_receives_ordered_results_and_item_paths(self) -> None:
+        reducer_inputs: list[list[dict[str, str]]] = []
+
+        @phase
+        def mapper(ctx: dict) -> dict:
+            return {
+                "item_id": ctx["state"]["item_id"],
+                "path": "/".join(ctx["call_site_path"]),
+            }
+
+        def reduce_paths(results: list[dict[str, str]]) -> dict:
+            reducer_inputs.append(results)
+            return {"paths": [result["path"] for result in results]}
+
+        @pipeline(inputs={"type": "object", "required": ["checks"]})
+        def parent(ctx: dict) -> dict:
+            state = yield parallel_map(
+                items="checks",
+                step=mapper,
+                reducer=reduce_paths,
+                path_template="critique/{item_id}",
+                name="critique_batch",
+            )
+            return state
+
+        prog = compile_pipeline(parent)
+        result = run_native_pipeline(
+            prog,
+            initial_state={"checks": [{"item_id": "a"}, {"item_id": "b"}]},
+        )
+
+        assert reducer_inputs == [[
+            {"item_id": "a", "path": "critique_batch/critique/a"},
+            {"item_id": "b", "path": "critique_batch/critique/b"},
+        ]]
+        assert result.state["paths"] == [
+            "critique_batch/critique/a",
+            "critique_batch/critique/b",
+        ]
+
+    def test_parallel_map_workflow_mapper_collects_declared_outputs_only(self) -> None:
+        def reduce_children(results: list[dict[str, str]]) -> dict:
+            return {"children": results}
+
+        @phase
+        def child_step(ctx: dict) -> dict:
+            return {
+                "child": ctx["state"]["item_id"],
+                "hidden": "ignore-me",
+            }
+
+        @workflow(
+            name="child_flow",
+            inputs={"type": "object", "required": ["item_id"]},
+            outputs={"type": "object", "required": ["child"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline(inputs={"type": "object", "required": ["checks"]})
+        def parent(ctx: dict) -> dict:
+            state = yield parallel_map(
+                items="checks",
+                step=child,
+                reducer=reduce_children,
+                name="batch",
+            )
+            return state
+
+        prog = compile_pipeline(parent)
+        result = run_native_pipeline(
+            prog,
+            initial_state={"checks": [{"item_id": "x"}, {"item_id": "y"}]},
+        )
+
+        assert result.state["children"] == [
+            {"child": "x"},
+            {"child": "y"},
+        ]
+
+    def test_parallel_map_empty_collection_invokes_reducer_with_empty_results(self) -> None:
+        reducer_calls: list[list[dict[str, str]]] = []
+        mapper_calls: list[str] = []
+
+        @phase
+        def mapper(ctx: dict) -> dict:
+            mapper_calls.append("called")
+            return {"item_id": "unexpected"}
+
+        def reduce_empty(results: list[dict[str, str]]) -> dict:
+            reducer_calls.append(results)
+            return {"count": len(results)}
+
+        @pipeline(inputs={"type": "object", "required": ["checks"]})
+        def parent(ctx: dict) -> dict:
+            state = yield parallel_map(
+                items="checks",
+                step=mapper,
+                reducer=reduce_empty,
+                name="batch",
+            )
+            return state
+
+        prog = compile_pipeline(parent)
+        result = run_native_pipeline(prog, initial_state={"checks": []})
+
+        assert mapper_calls == []
+        assert reducer_calls == [[]]
+        assert result.state["count"] == 0
 
     def test_stages_have_correct_format(self) -> None:
         @phase
@@ -892,7 +1095,11 @@ class TestWhileLoopExecution:
             current = ctx["state"].get("count", 0)
             return {"count": current + 1}
 
-        @workflow(name="child_flow")
+        @workflow(
+            name="child_flow",
+            inputs={"type": "object", "required": ["count"]},
+            outputs={"type": "object", "required": ["count"]},
+        )
         def child(ctx: dict) -> dict:
             state = yield child_body(ctx)
             return state
@@ -918,6 +1125,29 @@ class TestWhileLoopExecution:
 
         assert result.state["count"] == 2
         assert recorded_iterations == [1, 2]
+
+    def test_runtime_subpipeline_cycle_guard_rejects_recursive_program(self) -> None:
+        recursive = NativeProgram(
+            name="recursive",
+            instructions=(
+                NativeInstruction(pc=0, op="subpipeline", name="recursive"),
+                NativeInstruction(pc=1, op="halt"),
+            ),
+            stable_id="workflow.recursive",
+        )
+        recursive_instr = NativeInstruction(
+            pc=0,
+            op="subpipeline",
+            name="recursive",
+            subprogram=recursive,
+        )
+        object.__setattr__(recursive, "instructions", (recursive_instr, recursive.instructions[1]))
+
+        with pytest.raises(
+            NativeRuntimeError,
+            match="Runtime subpipeline cycle detected: workflow.recursive -> workflow.recursive",
+        ):
+            run_native_pipeline(recursive)
 
 
 # ── NativeExecutionResult ─────────────────────────────────────────────

@@ -2,9 +2,6 @@
   "grammar_version": "arnold.workflow.authoring.v2",
   "source_path": "tests/fixtures/workflow_authoring/m0/deferred_m0_repeated_call_sites.py",
   "outcome": "valid",
-  "status": "deferred",
-  "deferred_until": "M3",
-  "description": "Same child @workflow invoked at two distinct call sites within a parent. Deferred until M3 repeated-call-site compilation is available.",
   "expected_provenance": {
     "source_form": "function",
     "grammar_version": "arnold.workflow.authoring.v2",
@@ -17,13 +14,13 @@
     "child_workflows": [
       {
         "id": "review",
-        "call_site_path": "multi_review/review[0]",
+        "call_site_path": "multi_review/first_review",
         "inputs_schema": ["draft"],
         "outputs_schema": ["verdict"]
       },
       {
         "id": "review",
-        "call_site_path": "multi_review/review[1]",
+        "call_site_path": "multi_review/second_review",
         "inputs_schema": ["draft"],
         "outputs_schema": ["verdict"]
       }

@@ -23,7 +23,7 @@ def review(output: str) -> str:
 
 @workflow(id="simple_pipeline", inputs={"brief"}, outputs={"verdict"})
 def simple_pipeline(brief: str) -> str:
-    plan_doc = plan(brief)
-    output = execute(plan_doc)
-    verdict = review(output)
+    plan_doc = plan(id="plan", brief=brief)
+    output = execute(id="execute", plan_doc=plan_doc)
+    verdict = review(id="review", output=output)
     return verdict

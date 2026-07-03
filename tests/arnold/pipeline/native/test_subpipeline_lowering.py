@@ -139,8 +139,8 @@ class TestRepeatedChildUse:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = yield child_wf(ctx)
-            state = yield child_wf(ctx)
+            state = yield child_wf(ctx, id="child.first")
+            state = yield child_wf(ctx, id="child.second")
             return state
 
         prog = compile_pipeline(parent)
@@ -151,6 +151,8 @@ class TestRepeatedChildUse:
         second = prog.instructions[1]
         assert first.name == "child_wf"
         assert second.name == "child_wf"
+        assert first.call_site_path == ("child.first",)
+        assert second.call_site_path == ("child.second",)
         # Both reference the same child name; subprogram objects are distinct
         # (each is compiled independently) but structurally identical.
         assert isinstance(first.subprogram, NativeProgram)

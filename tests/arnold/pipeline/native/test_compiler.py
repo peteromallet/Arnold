@@ -21,9 +21,11 @@ from arnold.pipeline.native import (
     NativePipeline,
     NativeProgram,
     ParallelInstruction,
+    ParallelMapInstruction,
     compile_pipeline,
     decision,
     parallel,
+    parallel_map,
     phase,
     pipeline,
     step as _step,
@@ -1179,3 +1181,196 @@ class TestParallelCompilation:
         assert list(result) == [branch_a, branch_b]
         assert result.__parallel_branches__ == (branch_a, branch_b)
         assert result.__parallel_name__ == "ab"
+
+
+class TestParallelMapCompilation:
+    def test_yielded_parallel_map_compiles_to_single_instruction(self) -> None:
+        @phase
+        def critique(ctx: object) -> dict:
+            return {"finding": "ok"}
+
+        def reduce_findings(results: list[dict]) -> dict:
+            return {"findings": results}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield parallel_map(
+                items="checks",
+                step=critique,
+                reducer=reduce_findings,
+                path_template="critique/{item_id}",
+                name="critique_batch",
+            )
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        assert [instr.op for instr in prog.instructions] == ["parallel_map", "halt"]
+        instr = prog.instructions[0]
+        assert instr.name == "critique_batch"
+        assert instr.call_site_path == ("critique_batch",)
+        assert instr.parallel_map_index == 0
+        assert instr.parallel_index is None
+        assert isinstance(instr.subprogram, ParallelMapInstruction)
+        assert instr.subprogram.items_ref == "checks"
+        assert instr.subprogram.mapper is critique
+        assert instr.subprogram.mapper_name == "critique"
+        assert instr.subprogram.reducer is reduce_findings
+        assert instr.subprogram.path_template == "critique/{item_id}"
+        assert prog.parallel_map_blocks == (instr.subprogram,)
+
+    def test_parallel_map_accepts_workflow_mapper(self) -> None:
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @_workflow
+        def child(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield parallel_map(items="items", step=child, name="batch")
+            return state
+
+        prog = compile_pipeline(parent)
+        instr = prog.instructions[0]
+        assert instr.op == "parallel_map"
+        assert isinstance(instr.subprogram, ParallelMapInstruction)
+        assert instr.subprogram.mapper is child
+
+    def test_parallel_map_rejects_dynamic_step_expression(self) -> None:
+        @phase
+        def mapper(ctx: object) -> dict:
+            return {}
+
+        def select_step() -> object:
+            return mapper
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield parallel_map(items="checks", step=select_step(), name="batch")
+            return state
+
+        with pytest.raises(NativeCompileError) as exc_info:
+            compile_pipeline(my_pipe)
+        assert "direct named callable" in str(exc_info.value)
+
+    def test_parallel_map_rejects_dynamic_reducer_expression(self) -> None:
+        @phase
+        def mapper(ctx: object) -> dict:
+            return {}
+
+        def make_reducer() -> object:
+            return mapper
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield parallel_map(
+                items="checks",
+                step=mapper,
+                reducer=make_reducer(),
+                name="batch",
+            )
+            return state
+
+        with pytest.raises(NativeCompileError) as exc_info:
+            compile_pipeline(my_pipe)
+        assert "reducer must be a direct named callable" in str(exc_info.value)
+
+    def test_parallel_map_rejects_dynamic_path_template_expression(self) -> None:
+        @phase
+        def mapper(ctx: object) -> dict:
+            return {}
+
+        template = "critique/{item_id}"
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield parallel_map(
+                items="checks",
+                step=mapper,
+                path_template=template,
+                name="batch",
+            )
+            return state
+
+        with pytest.raises(NativeCompileError) as exc_info:
+            compile_pipeline(my_pipe)
+        assert "path_template must be a string literal" in str(exc_info.value)
+
+
+class TestNestedWorkflowMetadataCompilation:
+    def test_subpipeline_emits_call_site_path_and_schema_ports(self) -> None:
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"result": "ok"}
+
+        @_workflow(
+            name="child",
+            inputs={"type": "object", "required": ["seed"]},
+            outputs={"type": "object", "required": ["result"]},
+        )
+        def child(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child(ctx, id="child_call")
+            return state
+
+        prog = compile_pipeline(parent)
+        instr = prog.instructions[0]
+        assert instr.op == "subpipeline"
+        assert instr.call_site_path == ("child_call",)
+        assert tuple(port.port_name for port in instr.consumes) == ("seed",)
+        assert tuple(port.name for port in instr.produces) == ("result",)
+
+    def test_subpipeline_preserves_explicit_output_bindings(self) -> None:
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"result": "ok"}
+
+        @_workflow(
+            name="child",
+            outputs={"type": "object", "required": ["result"]},
+        )
+        def child(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child(ctx, id="child_call", outputs={"result": "child_result"})
+            return state
+
+        prog = compile_pipeline(parent)
+        instr = prog.instructions[0]
+        assert instr.op == "subpipeline"
+        assert dict(instr.output_bindings) == {"result": "child_result"}
+
+    def test_direct_self_call_cycle_is_rejected(self) -> None:
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield parent(ctx)
+            return state
+
+        with pytest.raises(NativeCompileError) as exc_info:
+            compile_pipeline(parent)
+        assert "Workflow cycle detected: parent -> parent" in str(exc_info.value)
+
+    def test_transitive_cycle_is_rejected(self) -> None:
+        @pipeline
+        def alpha(ctx: object) -> dict:
+            state = yield beta(ctx)
+            return state
+
+        @pipeline
+        def beta(ctx: object) -> dict:
+            state = yield alpha(ctx)
+            return state
+
+        with pytest.raises(NativeCompileError) as exc_info:
+            compile_pipeline(alpha)
+        assert "Workflow cycle detected: alpha -> beta -> alpha" in str(exc_info.value)

@@ -21,17 +21,18 @@ from typing import Any, Mapping
 
 from arnold.workflow.refs import require_ref
 
-GRAMMAR_VERSION = "arnold.workflow.authoring.v1"
+GRAMMAR_VERSION = "arnold.workflow.authoring.v2"
 
 
 class ComponentKind(StrEnum):
-    """Typed component kinds recognized by the V1 authoring grammar."""
+    """Typed component kinds recognized by the V2 authoring grammar."""
 
     STEP = "step"
     PROMPT = "prompt"
     POLICY = "policy"
     SCHEMA = "schema"
     SUBFLOW = "subflow"
+    WORKFLOW = "workflow"
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,10 @@ class ComponentProvenance:
     module: str
     qualname: str
     export_name: str | None = None
+    call_site_path: str | None = None
+    parent_path: str | None = None
+    iteration_coordinate: str | None = None
+    policy_references: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "module", _require_identifier_path("module", self.module))
@@ -51,6 +56,29 @@ class ComponentProvenance:
                 "export_name",
                 _require_identifier("export_name", self.export_name),
             )
+        if self.call_site_path is not None:
+            object.__setattr__(
+                self,
+                "call_site_path",
+                _require_provenance_path("call_site_path", self.call_site_path),
+            )
+        if self.parent_path is not None:
+            object.__setattr__(
+                self,
+                "parent_path",
+                _require_provenance_path("parent_path", self.parent_path),
+            )
+        if self.iteration_coordinate is not None:
+            object.__setattr__(
+                self,
+                "iteration_coordinate",
+                _require_iteration_coordinate("iteration_coordinate", self.iteration_coordinate),
+            )
+        object.__setattr__(
+            self,
+            "policy_references",
+            tuple(_require_ref("policy_references", value) for value in self.policy_references),
+        )
 
     @property
     def ref(self) -> str:
@@ -352,6 +380,25 @@ def _require_qualname(name: str, value: str) -> str:
 
 def _require_ref(name: str, value: str) -> str:
     return require_ref(name, value)
+
+
+def _require_provenance_path(name: str, value: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{name} must be a non-empty authored path")
+    for segment in value.split("/"):
+        if not segment:
+            raise ValueError(f"{name} must not contain empty path segments")
+        base = segment.split("[", 1)[0]
+        _require_ref(name, base)
+    return value
+
+
+def _require_iteration_coordinate(name: str, value: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{name} must be a non-empty iteration coordinate")
+    if not (value.startswith("[") and value.endswith("]")):
+        raise ValueError(f"{name} must use bracket notation")
+    return value
 
 
 workflow = IntrinsicDeclaration("workflow")

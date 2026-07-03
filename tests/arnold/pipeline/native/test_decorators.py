@@ -19,6 +19,8 @@ from arnold.pipeline.native import (
     NativePipeline,
     NativeProgram,
     NativeInvocable,
+    ParallelInstruction,
+    ParallelMapInstruction,
     decision,
     get_decision_meta,
     get_phase_meta,
@@ -32,6 +34,7 @@ from arnold.pipeline.native import (
     is_workflow,
     native_panel,
     parallel,
+    parallel_map,
     phase,
     pipeline,
     step,
@@ -1009,6 +1012,275 @@ class TestNativePanelShape:
         reducer = np_result.__parallel_reducer__
         np_reduced = reducer([{"x": 1}])
         assert np_reduced == {"only.x": 1}
+
+
+# ── parallel_map decorator and helper tests ────────────────────────────
+
+
+class TestParallelMapImport:
+    """``parallel_map`` and ``ParallelMapInstruction`` are importable
+    from ``arnold.pipeline.native``."""
+
+    def test_parallel_map_importable(self) -> None:
+        assert parallel_map is not None
+        assert callable(parallel_map)
+
+    def test_parallel_map_instruction_importable(self) -> None:
+        assert ParallelMapInstruction is not None
+
+
+class TestParallelMapHelper:
+    """``parallel_map()`` produces a metadata-carrying declaration
+    distinct from :func:`parallel`."""
+
+    def test_basic_declaration(self) -> None:
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {"status": "ok"}
+
+        decl = parallel_map(items="checks", step=my_step)
+        assert decl is not None
+        assert decl.__parallel_map_items__ == "checks"
+        assert decl.__parallel_map_step__ is my_step
+        assert decl.__parallel_map_reducer__ is None
+        assert decl.__parallel_map_path_template__ == ""
+        assert decl.__parallel_map_name__ is None
+
+    def test_full_declaration(self) -> None:
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {"status": "ok"}
+
+        def my_reducer(results: list) -> dict:
+            return {"merged": True}
+
+        decl = parallel_map(
+            items="checks",
+            step=my_step,
+            reducer=my_reducer,
+            path_template="critique/{item_id}",
+            name="batch_critique",
+        )
+        assert decl.__parallel_map_items__ == "checks"
+        assert decl.__parallel_map_step__ is my_step
+        assert decl.__parallel_map_reducer__ is my_reducer
+        assert decl.__parallel_map_path_template__ == "critique/{item_id}"
+        assert decl.__parallel_map_name__ == "batch_critique"
+
+    def test_not_a_list(self) -> None:
+        """``parallel_map`` returns a declaration object, not a list."""
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {"status": "ok"}
+
+        decl = parallel_map(items="checks", step=my_step)
+        assert not isinstance(decl, list)
+        assert not isinstance(decl, (tuple, set))
+
+    def test_empty_items_rejected(self) -> None:
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {"status": "ok"}
+
+        with pytest.raises(TypeError, match="non-empty str"):
+            parallel_map(items="", step=my_step)
+
+    def test_non_string_items_rejected(self) -> None:
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {"status": "ok"}
+
+        with pytest.raises(TypeError, match="non-empty str"):
+            parallel_map(items=123, step=my_step)  # type: ignore[arg-type]
+
+    def test_non_callable_step_rejected(self) -> None:
+        with pytest.raises(TypeError, match="callable"):
+            parallel_map(items="checks", step="not_callable")  # type: ignore[arg-type]
+
+    def test_keyword_only_signature(self) -> None:
+        """``parallel_map`` enforces keyword-only arguments."""
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {"status": "ok"}
+
+        with pytest.raises(TypeError):
+            parallel_map("checks", my_step)  # type: ignore[misc]
+
+
+class TestParallelMapDistinctFromParallel:
+    """``parallel_map`` is a distinct construct, not overloading
+    static ``parallel`` semantics."""
+
+    def test_different_return_type(self) -> None:
+        """``parallel()`` returns a list-like; ``parallel_map()`` does not."""
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {}
+
+        par = parallel([my_step])
+        pm = parallel_map(items="checks", step=my_step)
+
+        # parallel returns a _ParallelBranchList (a list subclass)
+        assert isinstance(par, list)
+        # parallel_map returns a _ParallelMapDeclaration (not a list)
+        assert not isinstance(pm, list)
+
+    def test_different_metadata_attributes(self) -> None:
+        """``parallel()`` and ``parallel_map()`` carry different metadata."""
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {}
+
+        par = parallel([my_step])
+        pm = parallel_map(items="checks", step=my_step)
+
+        # parallel has branch-list metadata
+        assert hasattr(par, "__parallel_branches__")
+        assert hasattr(par, "__parallel_reducer__")
+        assert hasattr(par, "__parallel_name__")
+
+        # parallel_map has its own metadata namespace
+        assert hasattr(pm, "__parallel_map_items__")
+        assert hasattr(pm, "__parallel_map_step__")
+        assert hasattr(pm, "__parallel_map_reducer__")
+        assert hasattr(pm, "__parallel_map_path_template__")
+        assert hasattr(pm, "__parallel_map_name__")
+
+        # parallel_map does NOT have parallel metadata
+        assert not hasattr(pm, "__parallel_branches__")
+
+        # parallel does NOT have parallel_map metadata
+        assert not hasattr(par, "__parallel_map_items__")
+
+    def test_different_ir_types(self) -> None:
+        """``ParallelInstruction`` and ``ParallelMapInstruction`` are
+        distinct frozen dataclasses with different fields."""
+
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {}
+
+        # Construct the two IR types
+        pi = ParallelInstruction(
+            name="static_par",
+            branches=("my_step",),
+            branch_funcs=(my_step,),
+        )
+        pmi = ParallelMapInstruction(
+            name="dynamic_map",
+            items_ref="checks",
+            mapper=my_step,
+            mapper_name="my_step",
+        )
+
+        # They are different types
+        assert not isinstance(pi, ParallelMapInstruction)
+        assert not isinstance(pmi, ParallelInstruction)
+
+        # They carry different fields
+        assert hasattr(pi, "branches")
+        assert not hasattr(pi, "items_ref")
+
+        assert hasattr(pmi, "items_ref")
+        assert not hasattr(pmi, "branches")
+
+    def test_different_ir_defaults(self) -> None:
+        """``ParallelMapInstruction`` has sensible defaults."""
+
+        pmi = ParallelMapInstruction()
+        assert pmi.name == ""
+        assert pmi.items_ref == ""
+        assert pmi.mapper is None
+        assert pmi.mapper_name == ""
+        assert pmi.reducer is None
+        assert pmi.path_template == ""
+        assert pmi.merge_pc is None
+
+    def test_parallel_map_instruction_frozen(self) -> None:
+        """``ParallelMapInstruction`` is frozen — fields cannot be mutated."""
+
+        pmi = ParallelMapInstruction(name="test")
+        with pytest.raises(Exception):
+            pmi.name = "other"  # type: ignore[misc]
+        with pytest.raises(Exception):
+            pmi.items_ref = "other"  # type: ignore[misc]
+
+
+class TestParallelMapIRRoundTrip:
+    """``parallel_map()`` metadata can feed ``ParallelMapInstruction``
+    construction."""
+
+    def test_declaration_to_ir(self) -> None:
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {"status": "ok"}
+
+        def my_reducer(results: list) -> dict:
+            return {"total": len(results)}
+
+        decl = parallel_map(
+            items="checks",
+            step=my_step,
+            reducer=my_reducer,
+            path_template="item/{id}",
+            name="batch",
+        )
+
+        # Round-trip: metadata → ParallelMapInstruction
+        pmi = ParallelMapInstruction(
+            name=decl.__parallel_map_name__ or "",
+            items_ref=decl.__parallel_map_items__,
+            mapper=decl.__parallel_map_step__,
+            mapper_name=getattr(decl.__parallel_map_step__, "__name__", ""),
+            reducer=decl.__parallel_map_reducer__,
+            path_template=decl.__parallel_map_path_template__,
+        )
+        assert pmi.name == "batch"
+        assert pmi.items_ref == "checks"
+        assert pmi.mapper is my_step
+        assert pmi.mapper_name == "my_step"
+        assert pmi.reducer is my_reducer
+        assert pmi.path_template == "item/{id}"
+
+    def test_declaration_with_workflow_step(self) -> None:
+        """``parallel_map`` accepts ``@workflow``-decorated callables as step."""
+        @workflow
+        def child_wf(ctx: object) -> dict:
+            return {"result": "ok"}
+
+        decl = parallel_map(items="items", step=child_wf)
+        assert decl.__parallel_map_step__ is child_wf
+
+    def test_native_program_parallel_map_blocks(self) -> None:
+        """``NativeProgram`` can carry ``parallel_map_blocks``."""
+        pmi = ParallelMapInstruction(name="dyn", items_ref="items")
+        prog = NativeProgram(
+            name="test",
+            parallel_map_blocks=(pmi,),
+        )
+        assert prog.parallel_map_blocks == (pmi,)
+        assert len(prog.parallel_map_blocks) == 1
+
+    def test_native_program_default_parallel_map_blocks(self) -> None:
+        """``NativeProgram.parallel_map_blocks`` defaults to empty tuple."""
+        prog = NativeProgram(name="test")
+        assert prog.parallel_map_blocks == ()
+
+    def test_native_program_coexists_with_parallel_blocks(self) -> None:
+        """``parallel_blocks`` and ``parallel_map_blocks`` coexist
+        without interference."""
+        pi = ParallelInstruction(name="static")
+        pmi = ParallelMapInstruction(name="dynamic", items_ref="items")
+
+        prog = NativeProgram(
+            name="mixed",
+            parallel_blocks=(pi,),
+            parallel_map_blocks=(pmi,),
+        )
+        assert len(prog.parallel_blocks) == 1
+        assert len(prog.parallel_map_blocks) == 1
+        assert prog.parallel_blocks[0].name == "static"
+        assert prog.parallel_map_blocks[0].name == "dynamic"
 
 
 # ── Human-gate decision metadata tests ────────────────────────────────

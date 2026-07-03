@@ -505,9 +505,91 @@ python_authoring_m3:
           manifest_hash: sha256:1111111111111111111111111111111111111111111111111111111111111111
           alias: review
 
+    canonical_megaplan_topology:
+      fixture: tests/fixtures/workflow_authoring/m3/valid_m3_canonical_megaplan_topology.py
+      canonical_shape: fanout_panel
+      topology_hash: sha256:635698fb235a5c87553c35258154b72a1f1774fff29caa6030dd7499a0643ab1
+      manifest_hash: sha256:db4b3522cdd3e39be1246d6a4f3569c650bbff72fad45cf0ea7f4a56f85f8afc
+      nodes:
+        - id: prep
+          kind: megaplan:prep
+        - id: plan
+          kind: megaplan:plan
+        - id: critique-fanout
+          kind: parallel_map
+        - id: gate
+          kind: megaplan:gate
+        - id: tiebreaker
+          kind: subpipeline
+        - id: finalize
+          kind: megaplan:finalize
+        - id: execute-batches
+          kind: parallel_map
+        - id: review-fan-in
+          kind: parallel_map
+        - id: halt
+          kind: megaplan:halt
+        - id: revise
+          kind: megaplan:revise
+      edges:
+        - id: prep-plan
+          source: prep
+          target: plan
+          label: default
+          condition_ref: null
+        - id: plan-critique-fanout
+          source: plan
+          target: critique-fanout
+          label: default
+          condition_ref: null
+        - id: critique-fanout-gate
+          source: critique-fanout
+          target: gate
+          label: default
+          condition_ref: null
+        - id: gate-finalize
+          source: gate
+          target: finalize
+          label: proceed
+          condition_ref: gate.gate_route_signal.eq.proceed
+        - id: gate-revise
+          source: gate
+          target: revise
+          label: iterate
+          condition_ref: gate.gate_route_signal.eq.iterate
+        - id: gate-tiebreaker
+          source: gate
+          target: tiebreaker
+          label: tiebreaker
+          condition_ref: gate.gate_route_signal.eq.tiebreaker
+        - id: finalize-execute-batches
+          source: finalize
+          target: execute-batches
+          label: default
+          condition_ref: null
+        - id: execute-batches-review-fan-in
+          source: execute-batches
+          target: review-fan-in
+          label: default
+          condition_ref: null
+        - id: review-fan-in-halt
+          source: review-fan-in
+          target: halt
+          label: pass
+          condition_ref: review-fan-in.review_route_signal.eq.pass
+        - id: review-fan-in-review_revise
+          source: review-fan-in
+          target: review_revise
+          label: rework
+          condition_ref: review-fan-in.review_route_signal.eq.rework
+      subpipelines:
+        tiebreaker:
+          manifest_hash: sha256:de851fe19389f02de8a1edc5d4b616100c2d40a28fef95de74d0ac0d8798a075
+          alias: tiebreaker_child
+
   deferred_canonical_shapes:
     fanout_panel:
-      reason: Python-shaped source has no M3 fanout/panel syntax.
+      reason: Static compile-time panel remains a DSL shape; M3-owned runtime-list fanout is covered by parallel_map in canonical_megaplan_topology.
       expected_diagnostic: AWF014_UNSUPPORTED_POLICY_CARRIER
     retry:
       reason: M3 lowers retry as a policy carrier, not as an explicit retry wrapper node.

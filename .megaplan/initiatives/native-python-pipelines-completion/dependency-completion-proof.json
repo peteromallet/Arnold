@@ -1,6 +1,6 @@
 {
   "schema": "arnold.megaplan.dependency_completion_repair.v1",
-  "repaired_at": "2026-07-03T14:58:21.933127+00:00",
+  "repaired_at": "2026-07-03T18:01:40.115951+00:00",
   "source_workspace": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
   "source_chain": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
   "target_chain": "/workspace/native-composition-followup/Arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",

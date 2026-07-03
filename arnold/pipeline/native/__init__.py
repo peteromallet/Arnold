@@ -38,6 +38,7 @@ from arnold.pipeline.native.decorators import (
     is_workflow,
     native_panel,
     parallel,
+    parallel_map,
     phase,
     pipeline,
     step,
@@ -58,6 +59,7 @@ from arnold.pipeline.native.ir import (
     NativePipeline,
     NativeProgram,
     ParallelInstruction,
+    ParallelMapInstruction,
 )
 from arnold.pipeline.native.runtime import (
     NativeExecutionResult,
@@ -94,6 +96,7 @@ __all__ = [
     "RoutingPurityReport",
     "NullNativeRuntimeHooks",
     "ParallelInstruction",
+    "ParallelMapInstruction",
     "compile_pipeline",
     "decision",
     "force_legacy_runtime",
@@ -110,6 +113,7 @@ __all__ = [
     "native_runtime_enabled",
     "native_panel",
     "parallel",
+    "parallel_map",
     "persist_native_cursor",
     "phase",
     "pipeline",

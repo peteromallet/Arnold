@@ -2,9 +2,6 @@
   "grammar_version": "arnold.workflow.authoring.v2",
   "source_path": "tests/fixtures/workflow_authoring/m0/deferred_m0_nested_child_workflow.py",
   "outcome": "valid",
-  "status": "deferred",
-  "deferred_until": "M3",
-  "description": "Parent workflow calling a child @workflow as a nested composition unit. Deferred until M3 child-workflow compilation is available.",
   "expected_provenance": {
     "source_form": "function",
     "grammar_version": "arnold.workflow.authoring.v2",

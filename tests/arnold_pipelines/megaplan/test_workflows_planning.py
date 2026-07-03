@@ -205,13 +205,20 @@ class TestAuthoredWorkflow:
 
 
 class TestPlanningSubworkflowSourceShape:
-    def test_planning_prep_subworkflow_names_declared_interfaces(self) -> None:
-        func = _function_node("planning_prep_subworkflow")
+    def test_planning_spine_names_declared_interfaces(self) -> None:
+        func = _function_node("planning_workflow")
         assert {"SOURCE_PREP", "SOURCE_PLAN"} <= _called_names(func)
 
-    def test_critique_gate_revise_subworkflow_keeps_loop_cursor_visible(self) -> None:
-        func = _function_node("critique_gate_revise_subworkflow")
-        assert {"SOURCE_CRITIQUE", "SOURCE_GATE", "AUTHOR_REVISE", "loop"} <= _called_names(func)
+    def test_critique_gate_revise_spine_uses_parallel_map_and_loop_cursor(self) -> None:
+        func = _function_node("planning_workflow")
+        assert {
+            "SOURCE_CRITIQUE",
+            "SOURCE_CRITIQUE_PANEL_WORKFLOW",
+            "SOURCE_GATE",
+            "SOURCE_REVISE",
+            "loop",
+            "parallel_map",
+        } <= _called_names(func)
         loop_calls = [
             call
             for call in ast.walk(func)
@@ -231,10 +238,11 @@ class TestPlanningSubworkflowSourceShape:
         assert "gate_payload" not in branch_names
         assert "review_payload" not in branch_names
 
-    def test_tiebreaker_subworkflow_names_declared_interfaces_and_loop_policy(self) -> None:
-        func = _function_node("tiebreaker_subworkflow")
-        assert {"SOURCE_TIEBREAKER_RUN", "AUTHOR_TIEBREAKER_DECIDE", "loop"} <= _called_names(func)
-        assert _branch_names(func) == {"decision"}
+    def test_tiebreaker_branch_invokes_nested_child_workflow(self) -> None:
+        func = _function_node("planning_workflow")
+        assert {"SOURCE_TIEBREAKER_WORKFLOW"} <= _called_names(func)
+        assert "decision" in _branch_names(func)
+        assert _call_ids(func, "SOURCE_TIEBREAKER_WORKFLOW") == {"tiebreaker"}
         loop_calls = [
             call
             for call in ast.walk(func)
@@ -244,26 +252,27 @@ class TestPlanningSubworkflowSourceShape:
         ]
         assert len(loop_calls) == 1
         keywords = {keyword.arg: keyword.value for keyword in loop_calls[0].keywords}
-        assert isinstance(keywords["policy"], ast.Name)
-        assert keywords["policy"].id == "TIEBREAKER_POLICY"
         assert isinstance(keywords["reentry_id"], ast.Constant)
         assert keywords["reentry_id"].value == "critique"
 
-    def test_finalize_execute_review_subworkflow_names_declared_interfaces(self) -> None:
-        func = _function_node("finalize_execute_review_subworkflow")
+    def test_finalize_execute_review_spine_uses_parallel_maps(self) -> None:
+        func = _function_node("planning_workflow")
         assert {
             "SOURCE_FINALIZE",
             "SOURCE_EXECUTE",
+            "SOURCE_EXECUTE_BATCH_WORKFLOW",
             "SOURCE_REVIEW",
+            "SOURCE_REVIEW_PANEL_WORKFLOW",
             "SOURCE_HALT",
             "SOURCE_REVISE",
+            "parallel_map",
         } <= _called_names(func)
-        assert _branch_names(func) == {"review_route_signal"}
-        assert _call_ids(func, "SOURCE_HALT") == {"halt", "review_halt"}
-        assert _call_ids(func, "SOURCE_REVISE") == {"review_revise"}
+        assert "review_route_signal" in _branch_names(func)
+        assert {"halt", "review_halt"} <= _call_ids(func, "SOURCE_HALT")
+        assert "review_revise" in _call_ids(func, "SOURCE_REVISE")
 
-    def test_override_escalation_subworkflow_names_declared_interfaces(self) -> None:
-        func = _function_node("override_escalation_subworkflow")
+    def test_override_escalation_spine_names_declared_interfaces(self) -> None:
+        func = _function_node("planning_workflow")
         assert {
             "SOURCE_OVERRIDE",
             "SOURCE_HALT",
@@ -271,9 +280,9 @@ class TestPlanningSubworkflowSourceShape:
             "SOURCE_EXECUTE",
             "SOURCE_REVISE",
         } <= _called_names(func)
-        assert _branch_names(func) == {"override_result"}
-        assert _call_ids(func, "SOURCE_HALT") == {"override_halt", "override_unknown"}
-        assert _call_ids(func, "SOURCE_REVISE") == {"override_revise"}
+        assert "override_result" in _branch_names(func)
+        assert {"override_halt", "override_unknown"} <= _call_ids(func, "SOURCE_HALT")
+        assert "override_revise" in _call_ids(func, "SOURCE_REVISE")
 
     def test_parent_visible_suspension_points_remain_on_top_level_spine(self) -> None:
         func = _function_node("planning_workflow")
