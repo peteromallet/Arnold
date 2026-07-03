@@ -678,6 +678,61 @@ def test_megaplan_chain_status_clears_stale_completed_current_plan_raw_state(
     assert normalized.last_state == "done"
 
 
+def test_megaplan_chain_status_clears_inherited_blocked_state_after_cursor_advances(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config_with_repo(tmp_path, "app")
+    repo = config.repos_root / "app"
+    idea_dir = repo / ".megaplan" / "initiatives" / "epic" / "briefs"
+    idea_dir.mkdir(parents=True, exist_ok=True)
+    (idea_dir / "m1.md").write_text("Implement the first milestone.\n", encoding="utf-8")
+    (idea_dir / "m2.md").write_text("Implement the second milestone.\n", encoding="utf-8")
+    _write_raw_chain(
+        repo,
+        "\n".join(
+            [
+                "base_branch: main",
+                "milestones:",
+                "  - label: m1",
+                "    idea: .megaplan/initiatives/epic/briefs/m1.md",
+                "  - label: m2",
+                "    idea: .megaplan/initiatives/epic/briefs/m2.md",
+                "",
+            ]
+        ),
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "add chain spec")
+    monkeypatch.setattr("agentbox.host.start_session", lambda *args, **kwargs: "agentbox-chain-1")
+    monkeypatch.setattr(
+        "agentbox.host.inspect_session",
+        lambda name: SessionStatus(name, "running", True),
+    )
+
+    result = MegaplanChainHandler().launch(
+        config,
+        "chain-1",
+        repo_name="app",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
+    )
+    save_chain_state(
+        result.resolved_spec_path,
+        ChainState(
+            current_milestone_index=1,
+            current_plan_name=None,
+            last_state="blocked",
+            completed=[{"label": "m1", "plan": "m1", "status": "done"}],
+        ),
+    )
+
+    normalized = load_chain_state(result.resolved_spec_path)
+
+    assert normalized.current_milestone_index == 1
+    assert normalized.current_plan_name is None
+    assert normalized.last_state == "done"
+
+
 def test_megaplan_chain_status_ignores_stale_completed_current_plan_by_milestone_label(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -3443,6 +3443,8 @@ def _reconcile_chain_from_ground_truth(
                 state.current_plan_name = None
                 state.pr_number = None
                 state.pr_state = None
+                if state.last_state in {STATE_BLOCKED, "authority_divergence"}:
+                    state.last_state = "done"
 
     _append_reconciliation_audit(
         state,
