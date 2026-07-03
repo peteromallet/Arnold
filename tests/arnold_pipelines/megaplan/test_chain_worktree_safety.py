@@ -193,11 +193,15 @@ def test_chain_clean_resets_skip_worktree_megaplan_runtime_journal(
     _git(repo, "update-index", "--skip-worktree", ".megaplan/epics/m1/events.jsonl")
     journal.write_text('{"event":"dirty runtime"}\n', encoding="utf-8")
     assert _git(repo, "ls-files", "-v", ".megaplan/epics/m1/events.jsonl").stdout.startswith("S ")
+    messages: list[str] = []
 
-    _clean_worktree_for_chain(repo, writer=lambda _message: None)
+    _clean_worktree_for_chain(repo, writer=messages.append)
 
     assert journal.read_text(encoding="utf-8") == '{"event":"base"}\n'
     assert _git(repo, "ls-files", "-v", ".megaplan/epics/m1/events.jsonl").stdout.startswith("H ")
+    joined = "".join(messages)
+    assert ".megaplan/epics/m1/events.jsonl" in joined
+    assert ".megaplan/plans" not in joined
 
 
 def test_chain_commit_refuses_non_git_directory_without_deleting_files(
