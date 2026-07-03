@@ -42,6 +42,10 @@ load_spec = load_cloud_spec
 # execution model to _phase_command (M3 Step 12 compatibility boundary).
 cloud_substrate: str = "subprocess_isolated"
 
+_TEMPLATE_PLACEHOLDER_RE = re.compile(
+    r"\bTODO(?:_[A-Z0-9]+)+\b|<box-ip>|TODO_SSH_HOST|TODO_REPO_URL"
+)
+
 
 def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
     cloud_sub = cloud_parser.add_subparsers(dest="cloud_action", required=True)
@@ -115,6 +119,22 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         help=(
             "Allow launching a chain spec outside .megaplan/initiatives/<initiative>/chain.yaml. "
             "Intended only for temporary compatibility."
+        ),
+    )
+    chain_parser.add_argument(
+        "--allow-template-placeholders",
+        action="store_true",
+        help=(
+            "Required override to launch even when initiative/cloud files still contain "
+            "template placeholders such as TODO_REPO_URL or TODO_SSH_HOST."
+        ),
+    )
+    chain_parser.add_argument(
+        "--allow-human-gates",
+        action="store_true",
+        help=(
+            "Required override to launch a cloud chain whose chain.yaml uses "
+            "merge_policy != auto or driver.auto_approve: false."
         ),
     )
     _add_repo_override_args(chain_parser)
@@ -194,6 +214,22 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         "--allow-loose-chain-spec",
         action="store_true",
         help="Allow a chain spec outside .megaplan/initiatives/<initiative>/chain.yaml.",
+    )
+    preflight_parser.add_argument(
+        "--allow-template-placeholders",
+        action="store_true",
+        help=(
+            "Required override to pass preflight even when initiative/cloud files still "
+            "contain template placeholders."
+        ),
+    )
+    preflight_parser.add_argument(
+        "--allow-human-gates",
+        action="store_true",
+        help=(
+            "Required override to pass preflight for cloud chains that intentionally "
+            "pause for human PR merges or verification gates."
+        ),
     )
     _add_repo_override_args(preflight_parser)
 
@@ -905,18 +941,34 @@ def _cloud_profile_warnings(preflight_summary: Mapping[str, Any], spec: CloudSpe
 
 
 def _phase_model_by_label_from_preflight(preflight_summary: Mapping[str, Any]) -> dict[str, list[str]]:
-    """Return full per-milestone phase pins from cloud preflight resolution.
+    """Return phase pins that must be materialized in the uploaded chain spec.
 
     Cloud chain launch may resolve routing from cloud-only defaults such as
     ``agents.default``. The remote ``chain start`` process only sees the
     uploaded chain YAML, so the resolved routing must be materialized into that
     temporary upload spec or init can fall back to a different local default.
+
+    Do not materialize resolved profile routes for profiled milestones. Profiles
+    can carry ``tier_models.execute``/``tier_models.critique`` tables; flattening
+    their resolved phase map into ``phase_model`` erases adaptive per-batch
+    routing and pins execute to one model.
     """
     phase_model_by_label: dict[str, list[str]] = {}
     for milestone in preflight_summary.get("milestones", []):
         if not isinstance(milestone, Mapping):
             continue
         label = milestone.get("label")
+        profile = milestone.get("profile")
+        explicit = milestone.get("explicit_phase_model")
+        if isinstance(profile, str) and profile:
+            if (
+                isinstance(label, str)
+                and isinstance(explicit, list)
+                and all(isinstance(item, str) for item in explicit)
+                and explicit
+            ):
+                phase_model_by_label[label] = list(explicit)
+            continue
         resolved = milestone.get("resolved_phase_map")
         if not isinstance(label, str) or not isinstance(resolved, Mapping):
             continue
@@ -1848,7 +1900,8 @@ def _chain_start_command(
     )
     if engine_dir:
         engine_path = shlex.quote(engine_dir)
-        prefix += f"cd {engine_path} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
+        cwd = shlex.quote(project_dir or engine_dir)
+        prefix += f"cd {cwd} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
     return (
         f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start {flags} "
         f">> {log_target} 2>&1"
@@ -1874,7 +1927,7 @@ def _plan_auto_command(
     )
     if engine_dir:
         engine_path = shlex.quote(engine_dir)
-        prefix += f"cd {engine_path} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
+        prefix += f"cd {shlex.quote(workspace)} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
         command = (
             f"python3 -P -m arnold_pipelines.megaplan auto "
             f"--plan {shlex.quote(plan_name)} --project-dir {shlex.quote(workspace)}"
@@ -2101,7 +2154,7 @@ def _epic_chain_start_command(
     )
     if engine_dir:
         engine_path = shlex.quote(engine_dir)
-        prefix += f"cd {engine_path} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
+        prefix += f"cd {shlex.quote(workspace)} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
     return (
         f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan epic-chain start {flags} "
         f">> {log_target} 2>&1"
@@ -2382,6 +2435,86 @@ def _run_sync_megaplan(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     return 0
 
 
+def _initiative_template_placeholder_findings(
+    local_spec_path: Path,
+    *,
+    project_root: Path,
+    cloud_yaml: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Return template placeholders that require an explicit launch override."""
+    roots: list[Path] = []
+    if is_canonical_chain_spec(local_spec_path, project_root):
+        roots.append(local_spec_path.parent)
+    else:
+        roots.append(local_spec_path)
+    if cloud_yaml is not None:
+        roots.append(cloud_yaml)
+
+    findings: list[dict[str, Any]] = []
+    seen: set[Path] = set()
+    for root in roots:
+        candidates: list[Path]
+        if root.is_dir():
+            candidates = [
+                path
+                for path in root.rglob("*")
+                if path.is_file() and path.suffix.lower() in {".md", ".yaml", ".yml"}
+            ]
+        else:
+            candidates = [root]
+        for path in candidates:
+            resolved = path.expanduser().resolve()
+            if resolved in seen or not resolved.exists():
+                continue
+            seen.add(resolved)
+            try:
+                text = resolved.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            for line_no, line in enumerate(text.splitlines(), start=1):
+                match = _TEMPLATE_PLACEHOLDER_RE.search(line)
+                if match is None:
+                    continue
+                findings.append(
+                    {
+                        "path": str(resolved),
+                        "line": line_no,
+                        "placeholder": match.group(0),
+                    }
+                )
+    return findings
+
+
+def _human_gate_findings(chain_spec: Any) -> list[dict[str, Any]]:
+    """Return chain-policy settings that intentionally require human action."""
+    findings: list[dict[str, Any]] = []
+    merge_policy = getattr(chain_spec, "merge_policy", None)
+    if merge_policy and merge_policy != "auto":
+        findings.append(
+            {
+                "field": "merge_policy",
+                "value": merge_policy,
+                "impact": (
+                    "milestone PRs park instead of auto-merging; unattended cloud "
+                    "chains can stop at awaiting_pr_merge"
+                ),
+            }
+        )
+    auto_approve = getattr(chain_spec, "auto_approve", None)
+    if auto_approve is False:
+        findings.append(
+            {
+                "field": "driver.auto_approve",
+                "value": False,
+                "impact": (
+                    "prep clarification and human verification gates require an "
+                    "operator instead of being converted into conservative assumptions"
+                ),
+            }
+        )
+    return findings
+
+
 def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> int:
     from arnold_pipelines.megaplan import chain as chain_module
     from arnold_pipelines.megaplan.cloud.preflight import resolve_cloud_chain_runtime_dependencies
@@ -2393,7 +2526,13 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
         project_root,
         allow_loose=bool(getattr(args, "allow_loose_chain_spec", False)),
     )
+    placeholder_findings = _initiative_template_placeholder_findings(
+        local_spec_path,
+        project_root=project_root,
+        cloud_yaml=_cloud_yaml_path(root, args),
+    )
     chain_spec = chain_module.load_spec(local_spec_path)
+    human_gate_findings = _human_gate_findings(chain_spec)
     anchor_requirement = chain_module.chain_spec.validate_anchor_requirement(chain_spec, local_spec_path)
     chain_module.chain_spec.validate_paths(chain_spec, project_root, spec_path=local_spec_path)
     launch_ctx = _derive_chain_launch_context(
@@ -2422,6 +2561,16 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
             }
         )
     errors: list[str] = []
+    if placeholder_findings and not bool(getattr(args, "allow_template_placeholders", False)):
+        errors.append(
+            "template placeholders remain; edit them or pass --allow-template-placeholders"
+        )
+    if human_gate_findings and not bool(getattr(args, "allow_human_gates", False)):
+        errors.append(
+            "human-gated cloud chain policy present; use merge_policy: auto and "
+            "driver.auto_approve: true for unattended cloud runs, or pass "
+            "--allow-human-gates to acknowledge intentional pauses"
+        )
     if missing_env:
         errors.append("missing configured local secrets: " + ", ".join(missing_env))
     if remote.get("import_check", {}).get("errors"):
@@ -2448,6 +2597,8 @@ def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provid
         "preflight": preflight_summary,
         "warnings": _cloud_profile_warnings(preflight_summary, spec),
         "missing_env": missing_env,
+        "template_placeholders": placeholder_findings,
+        "human_gates": human_gate_findings,
         "errors": errors,
     }
     sys.stdout.write(json.dumps(payload, indent=2) + "\n")
@@ -2464,7 +2615,7 @@ def _chain_launch_verification_command(
     sleep_seconds: int = _CHAIN_VERIFY_SLEEP_SECONDS,
 ) -> str:
     script = f"""
-import json, pathlib, subprocess, time
+	import json, pathlib, re, subprocess, time
 workspace = pathlib.Path({workspace!r})
 session = {session_name!r}
 state_path = pathlib.Path({state_path!r})
@@ -2677,6 +2828,41 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     chain_spec = chain_module.load_spec(local_spec_path)
     chain_module.chain_spec.validate_anchor_requirement(chain_spec, local_spec_path)
     chain_module.chain_spec.validate_paths(chain_spec, project_root, spec_path=local_spec_path)
+    human_gate_findings = _human_gate_findings(chain_spec)
+    if human_gate_findings and not bool(getattr(args, "allow_human_gates", False)):
+        sample = ", ".join(
+            f"{item['field']}={item['value']!r}"
+            for item in human_gate_findings
+        )
+        raise CliError(
+            "human_gated_cloud_chain",
+            (
+                "Cloud chain policy contains human gates. For unattended cloud runs, "
+                "set merge_policy: auto and driver.auto_approve: true. If these "
+                "pauses are intentional, relaunch with --allow-human-gates. "
+                f"Findings: {sample}"
+            ),
+            extra={"human_gates": human_gate_findings},
+        )
+    placeholder_findings = _initiative_template_placeholder_findings(
+        local_spec_path,
+        project_root=project_root,
+        cloud_yaml=_cloud_yaml_path(root, args),
+    )
+    if placeholder_findings and not bool(getattr(args, "allow_template_placeholders", False)):
+        sample = ", ".join(
+            f"{Path(item['path']).name}:{item['line']}={item['placeholder']}"
+            for item in placeholder_findings[:5]
+        )
+        raise CliError(
+            "template_placeholders_present",
+            (
+                "Initiative/cloud template placeholders remain. Edit the generated values "
+                "before cloud launch, or pass --allow-template-placeholders to override. "
+                f"Examples: {sample}"
+            ),
+            extra={"template_placeholders": placeholder_findings},
+        )
     explicit_base_branch = _chain_spec_has_explicit_base_branch(local_spec_path)
     if not explicit_base_branch:
         chain_spec.base_branch = spec.repo.branch
@@ -2820,6 +3006,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         "identity_digest": launch_ctx.digest,
         "chain_slug": launch_ctx.slug,
         "run_kind": "chain",
+        "allow_human_gates": bool(getattr(args, "allow_human_gates", False)),
         "relaunch_command": _refresh_then_chain_start_command(
             remote_spec_path,
             spec=launch_spec,
@@ -3014,7 +3201,7 @@ def _epic_chain_launch_verification_command(
     sleep_seconds: int = _CHAIN_VERIFY_SLEEP_SECONDS,
 ) -> str:
     script = f"""
-import json, pathlib, subprocess, time
+import json, pathlib, re, subprocess, time
 workspace = pathlib.Path({workspace!r})
 session = {session_name!r}
 remote_spec = pathlib.Path({remote_spec_path!r})
@@ -3430,7 +3617,7 @@ def cloud_status_payload(args: argparse.Namespace, spec: CloudSpec, provider) ->
 
 def _cloud_chains_command() -> str:
     script = f"""
-import json, pathlib, subprocess, time
+import json, pathlib, re, subprocess, time
 from datetime import datetime, timezone
 from arnold_pipelines.megaplan.cloud.session_markers import is_canonical_session_marker_path
 marker_dir = pathlib.Path({_CHAIN_SESSION_MARKER_DIR!r})
@@ -3553,18 +3740,112 @@ def _active_step_evidence(workspace, plan_name):
     except Exception as exc:
         return {{"status": "invalid", "path": str(path), "error": str(exc)}}
     current_state = state.get("current_state") or state.get("state") or ""
-    active_step = state.get("active_step")
-    if not isinstance(active_step, dict) or not active_step:
-        return {{"status": "absent", "path": str(path), "current_state": current_state}}
-    return {{
-        "status": "present",
+    config = state.get("config") if isinstance(state.get("config"), dict) else {{}}
+    clarification = state.get("clarification") if isinstance(state.get("clarification"), dict) else {{}}
+    questions = clarification.get("questions") if isinstance(clarification.get("questions"), list) else []
+    common = {{
         "path": str(path),
         "current_state": current_state,
+        "auto_approve": config.get("auto_approve"),
+        "clarification_source": clarification.get("source") or "",
+        "clarification_intent": clarification.get("intent_summary") or "",
+        "clarification_question_count": len(questions),
+        "clarification_questions": [q for q in questions if isinstance(q, str)][:5],
+    }}
+    active_step = state.get("active_step")
+    if not isinstance(active_step, dict) or not active_step:
+        return {{"status": "absent", **common}}
+    return {{
+        "status": "present",
+        **common,
         "phase": active_step.get("phase") or active_step.get("step") or "",
         "name": active_step.get("name") or "",
         "attempt": active_step.get("attempt"),
         "worker_pid": active_step.get("worker_pid"),
         "last_activity_at": active_step.get("last_activity_at") or "",
+    }}
+
+def _policy_evidence(remote_spec):
+    payload = {{"status": "missing", "path": remote_spec or ""}}
+    if not remote_spec:
+        return payload
+    path = pathlib.Path(remote_spec)
+    if not path.exists():
+        return payload
+    try:
+        text = path.read_text()
+    except Exception as exc:
+        return {{"status": "invalid", "path": str(path), "error": str(exc)}}
+    merge_policy = "auto"
+    match = re.search(r"(?m)^merge_policy:\\s*([^\\s#]+)", text)
+    if match:
+        merge_policy = match.group(1).strip().strip("'\\\"")
+    driver_auto_approve = True
+    driver_match = re.search(r"(?ms)^driver:\\s*\\n(?P<body>(?:[ \\t]+[^\\n]*\\n?)*)", text)
+    if driver_match:
+        auto_match = re.search(r"(?m)^[ \\t]+auto_approve:\\s*([^\\s#]+)", driver_match.group("body"))
+        if auto_match:
+            raw = auto_match.group(1).strip().strip("'\\\"").lower()
+            driver_auto_approve = raw in {{"1", "true", "yes", "on"}}
+    return {{
+        "status": "present",
+        "path": str(path),
+        "merge_policy": merge_policy,
+        "driver_auto_approve": driver_auto_approve,
+        "human_gated": merge_policy != "auto" or driver_auto_approve is False,
+    }}
+
+def _operator_status(payload):
+    status = payload.get("status") or "unknown"
+    active = payload.get("active_step_evidence") if isinstance(payload.get("active_step_evidence"), dict) else {{}}
+    policy = payload.get("policy_evidence") if isinstance(payload.get("policy_evidence"), dict) else {{}}
+    if status == "awaiting_human_verify":
+        if active.get("clarification_source") == "prep":
+            count = int(active.get("clarification_question_count") or 0)
+            return {{
+                "status": "blocked_prep_clarification",
+                "reason": f"prep clarification waiting for operator ({{count}} question(s))",
+                "next_action": "answer clarification and run resume-clarify, or relaunch an unattended cloud chain with driver.auto_approve: true",
+            }}
+        return {{
+            "status": "blocked_human_verification",
+            "reason": "plan is awaiting human verification records",
+            "next_action": "record human verification verdicts, or relaunch an unattended cloud chain with driver.auto_approve: true",
+        }}
+    if status == "awaiting_pr_merge":
+        return {{
+            "status": "blocked_pr_review_policy",
+            "reason": f"merge_policy={{policy.get('merge_policy') or 'review'}} requires human PR merge",
+            "next_action": "merge the PR, or use merge_policy: auto for unattended cloud chains",
+        }}
+    if status == "running":
+        return {{
+            "status": "running_phase",
+            "reason": "runner or worker process is alive",
+            "next_action": "observe progress",
+        }}
+    if status == "complete":
+        return {{
+            "status": "complete",
+            "reason": "chain is complete",
+            "next_action": "none",
+        }}
+    if policy.get("human_gated") and not payload.get("allow_human_gates"):
+        return {{
+            "status": "human_gate_misconfigured",
+            "reason": f"unacknowledged human-gated policy on cloud session: merge_policy={{policy.get('merge_policy')}} driver.auto_approve={{policy.get('driver_auto_approve')}}",
+            "next_action": "switch to merge_policy: auto and driver.auto_approve: true, or relaunch with --allow-human-gates",
+        }}
+    if policy.get("human_gated"):
+        return {{
+            "status": status,
+            "reason": f"human-gated policy: merge_policy={{policy.get('merge_policy')}} driver.auto_approve={{policy.get('driver_auto_approve')}}",
+            "next_action": "expect human pauses, or switch to merge_policy: auto and driver.auto_approve: true",
+        }}
+    return {{
+        "status": status,
+        "reason": "",
+        "next_action": "inspect logs/state",
     }}
 
 def _payload_for(name):
@@ -3598,19 +3879,23 @@ def _payload_for(name):
     if not plan_name and isinstance(health_payload, dict):
         plan_name = health_payload.get("current_plan_name")
     payload["active_step_evidence"] = _active_step_evidence(payload.get("workspace"), plan_name)
+    payload["policy_evidence"] = _policy_evidence(payload.get("remote_spec") or "")
     payload["display_name"] = _display_name(payload)
     payload["marker_status"] = payload["marker_evidence"]["status"]
     payload["tmux_status"] = payload["tmux_evidence"]["status"]
     payload["process_status"] = payload["process_evidence"]["status"]
     payload["chain_health_status"] = payload["chain_health_evidence"]["status"]
     payload["active_step_status"] = payload["active_step_evidence"]["status"]
-    payload["status"] = _effective_session_status(payload)
     payload["watchdog_evidence"] = watchdog_by_session.get(
         name,
         {{"status": "missing", "path": "/workspace/watchdog-report.json"}},
     )
     payload["watchdog_action"] = payload["watchdog_evidence"].get("action", "")
     payload["watchdog_status"] = payload["watchdog_evidence"].get("watchdog_status", "")
+    payload["status"] = _effective_session_status(payload)
+    payload["operator_status"] = _operator_status(payload)
+    payload["status_reason"] = payload["operator_status"].get("reason", "")
+    payload["next_action"] = payload["operator_status"].get("next_action", "")
     payload["watchdog_repairing"] = _watchdog_is_repairing(payload["watchdog_evidence"])
     payload["should_be_running"] = _should_be_running(payload)
     return payload
@@ -3646,13 +3931,15 @@ def _should_be_running(payload):
     return False
 
 def _effective_session_status(payload):
-    if payload.get("tmux_status") == "alive" or payload.get("process_status") == "alive":
-        return "running"
     active_step = payload.get("active_step_evidence")
     if isinstance(active_step, dict):
         current_state = active_step.get("current_state")
         if current_state == "done":
             return "complete"
+        if active_step.get("status") == "present" and (
+            payload.get("tmux_status") == "alive" or payload.get("process_status") == "alive"
+        ):
+            return "running"
         if current_state in {{
             "awaiting_human_verify",
             "awaiting_pr_merge",
@@ -3666,11 +3953,16 @@ def _effective_session_status(payload):
             "reviewed",
         }}:
             return str(current_state)
+    if payload.get("tmux_status") == "alive" or payload.get("process_status") == "alive":
+        return "running"
     health = payload.get("health")
     if isinstance(health, dict):
         last_state = health.get("last_state")
-        if last_state == "done":
+        chain_complete = health.get("chain_complete")
+        if last_state == "done" and chain_complete is not False:
             return "complete"
+        if last_state == "done" and chain_complete is False:
+            return "stale_bookkeeping"
         if last_state in {{
             "awaiting_human_verify",
             "awaiting_pr_merge",
@@ -3682,6 +3974,11 @@ def _effective_session_status(payload):
             "retrying_failure",
         }}:
             return str(last_state)
+    watchdog_status = payload.get("watchdog_status")
+    if watchdog_status == "complete":
+        return "complete"
+    if watchdog_status in {{"awaiting_pr_merge", "needs_human"}}:
+        return str(watchdog_status)
     return "stopped"
 
 watchdog_by_session, watchdog_report_evidence = _load_watchdog_sessions()
@@ -3705,10 +4002,14 @@ if marker_dir.exists():
         sessions_by_name.setdefault(name, _payload_for(name))
 sessions = sorted(sessions_by_name.values(), key=lambda item: item.get("session", ""))
 summary = {{}}
+operator_summary = {{}}
 should_be_running_count = 0
 watchdog_repairing_count = 0
 for item in sessions:
     summary[item.get("status", "unknown")] = summary.get(item.get("status", "unknown"), 0) + 1
+    operator = item.get("operator_status") if isinstance(item.get("operator_status"), dict) else {{}}
+    operator_key = operator.get("status") or item.get("status", "unknown")
+    operator_summary[operator_key] = operator_summary.get(operator_key, 0) + 1
     if item.get("should_be_running"):
         should_be_running_count += 1
     if item.get("watchdog_repairing"):
@@ -3719,6 +4020,7 @@ print(json.dumps({{
     "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     "sessions": sessions,
     "summary": summary,
+    "operator_summary": operator_summary,
     "should_be_running_count": should_be_running_count,
     "watchdog_repairing_count": watchdog_repairing_count,
     "watchdog_report_evidence": watchdog_report_evidence,
@@ -3743,12 +4045,15 @@ def _run_cloud_chains(spec: CloudSpec, provider) -> int:
         sys.stderr.write(
             f"cloud sessions: {len(sessions)} "
             f"should_be_running={payload.get('should_be_running_count', 0)} "
-            f"watchdog_repairing={payload.get('watchdog_repairing_count', 0)}\n"
+            f"watchdog_repairing={payload.get('watchdog_repairing_count', 0)} "
+            f"operator_summary={payload.get('operator_summary', {})}\n"
         )
         for item in sessions:
             if isinstance(item, dict):
                 health = item.get("health") if isinstance(item.get("health"), dict) else {}
                 active = item.get("active_step_evidence") if isinstance(item.get("active_step_evidence"), dict) else {}
+                policy = item.get("policy_evidence") if isinstance(item.get("policy_evidence"), dict) else {}
+                operator = item.get("operator_status") if isinstance(item.get("operator_status"), dict) else {}
                 display_state = active.get("current_state") or (health.get("last_state") if health else "")
                 detail = ""
                 if health:
@@ -3769,12 +4074,27 @@ def _run_cloud_chains(spec: CloudSpec, provider) -> int:
                         f" watchdog={item.get('watchdog_status') or ''}"
                         f" watchdog_action={item.get('watchdog_action') or ''}"
                     )
+                policy_detail = ""
+                if policy.get("status") == "present":
+                    policy_detail = (
+                        f" merge_policy={policy.get('merge_policy')} "
+                        f"auto_approve={policy.get('driver_auto_approve')}"
+                    )
+                operator_detail = ""
+                if operator:
+                    operator_detail = (
+                        f" operator={operator.get('status') or ''}"
+                        f" reason={operator.get('reason') or ''}"
+                        f" next={operator.get('next_action') or ''}"
+                    )
                 sys.stderr.write(
                     f"- {item.get('display_name') or item.get('session')} "
                     f"session={item.get('session')} status={item.get('status')} "
                     f"should_run={'yes' if item.get('should_be_running') else 'no'} "
                     f"tmux={item.get('tmux_status')} process={item.get('process_status')}"
                     f"{watchdog_detail}"
+                    f"{policy_detail}"
+                    f"{operator_detail}"
                     f"{detail} workspace={item.get('workspace')} spec={item.get('remote_spec')}\n"
                 )
     sys.stdout.write(json.dumps(payload, indent=2) + "\n")

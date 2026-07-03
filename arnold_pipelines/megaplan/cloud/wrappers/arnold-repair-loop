@@ -33,7 +33,7 @@ HERMES_LAUNCHER="${CLOUD_WATCHDOG_HERMES_LAUNCHER:-/root/.claude/skills/subagent
 KIMI_MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"
 KIMI_BASE_URL="${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}"
 DEV_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_TIMEOUT_SECS:-600}"
-DEV_ROOT_CAUSE_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_ROOT_CAUSE_TIMEOUT_SECS:-1800}"
+DEV_ROOT_CAUSE_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_ROOT_CAUSE_TIMEOUT_SECS:-3600}"
 KIMI_TIMEOUT="${CLOUD_WATCHDOG_KIMI_TIMEOUT_SECS:-600}"
 MECHANICAL_VERIFY_INITIAL_SECS="${CLOUD_WATCHDOG_MECHANICAL_VERIFY_INITIAL_SECS:-12}"
 MECHANICAL_VERIFY_HOLD_SECS="${CLOUD_WATCHDOG_MECHANICAL_VERIFY_HOLD_SECS:-18}"
@@ -44,7 +44,7 @@ CODEX_REASONING_EFFORT="${CLOUD_WATCHDOG_CODEX_REASONING_EFFORT:-low}"
 ROOT_CAUSE_REASONING_EFFORT="${CLOUD_WATCHDOG_ROOT_CAUSE_REASONING_EFFORT:-high}"
 REPAIR_RECURRENCE_MIN_DISPATCHES="${CLOUD_WATCHDOG_REPAIR_RECURRENCE_MIN_DISPATCHES:-3}"
 REPAIR_RECURRENCE_WINDOW_SECS="${CLOUD_WATCHDOG_REPAIR_RECURRENCE_WINDOW_SECS:-21600}"
-REPAIR_BUDGET_SECS="${CLOUD_WATCHDOG_REPAIR_BUDGET_SECS:-3600}"
+REPAIR_BUDGET_SECS="${CLOUD_WATCHDOG_REPAIR_BUDGET_SECS:-7200}"
 REPAIR_ITERATION_MAX="${CLOUD_WATCHDOG_REPAIR_ITERATION_MAX:-3}"
 DISCORD_DM_BIN="${DISCORD_DM_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-discord-dm}"
 
@@ -59,7 +59,7 @@ REPAIR_PID_FILE="${CLOUD_WATCHDOG_REPAIR_PID_FILE:-$MARKER_DIR/${SAFE_SESSION}.r
 REPAIR_LOCK_DIR="${CLOUD_WATCHDOG_REPAIR_LOCK_DIR:-$MARKER_DIR/${SAFE_SESSION}.repair-loop.lock}"
 
 if ! [[ "$REPAIR_BUDGET_SECS" =~ ^[0-9]+$ ]] || (( REPAIR_BUDGET_SECS <= 0 )); then
-  REPAIR_BUDGET_SECS=3600
+  REPAIR_BUDGET_SECS=7200
 fi
 if ! [[ "$REPAIR_ITERATION_MAX" =~ ^[0-9]+$ ]] || (( REPAIR_ITERATION_MAX <= 0 )); then
   REPAIR_ITERATION_MAX=3
@@ -130,6 +130,15 @@ from arnold_pipelines.megaplan.cloud.redact import redact_text
 path = Path(sys.argv[1])
 path.write_text(redact_text(path.read_text(encoding="utf-8")), encoding="utf-8")
 PY
+}
+
+prepare_repair_agent_exec_env() {
+  # Repair prompts can include large summarized incident context. If allexport
+  # leaks in from the parent shell or sourced hot env, those locals become
+  # exported environment strings and Linux can reject execve with E2BIG before
+  # the repair agent starts.
+  set +a
+  export -n failure_summary chain_health_block recurrence_block mode_tasks relaunch_command 2>/dev/null || true
 }
 
 clear_session_repair_markers_now() {
@@ -592,6 +601,106 @@ chain_process_is_alive() {
   return 1
 }
 
+kill_matching_runner_processes() {
+  require_repair_lock_held
+  local session="$1"
+  local remote_spec="$2"
+  local run_kind="${3:-chain}"
+  local plan_name="${4:-}"
+  python3 - "$$" "$session" "$remote_spec" "$run_kind" "$plan_name" <<'PY' 2>>"$LOG" || true
+import os
+import signal
+import subprocess
+import sys
+import time
+
+own_pid = int(sys.argv[1])
+session = sys.argv[2]
+remote_spec = sys.argv[3]
+run_kind = sys.argv[4]
+plan_name = sys.argv[5]
+
+try:
+    proc = subprocess.run(
+        ["ps", "-eww", "-o", "pid=", "-o", "pgid=", "-o", "args="],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+except Exception:
+    raise SystemExit(0)
+if proc.returncode != 0:
+    raise SystemExit(0)
+
+needles: list[str] = []
+if run_kind == "chain" and remote_spec:
+    needles.append("arnold_pipelines.megaplan chain start")
+elif run_kind == "epic_chain" and remote_spec:
+    needles.append("arnold_pipelines.megaplan epic-chain start")
+elif plan_name:
+    needles.append("arnold_pipelines.megaplan auto")
+
+targets: set[int] = set()
+ignored = {os.getpid(), os.getppid(), own_pid}
+for line in proc.stdout.splitlines():
+    stripped = line.strip()
+    if not stripped:
+        continue
+    try:
+        pid_text, pgid_text, args = stripped.split(None, 2)
+        pid = int(pid_text)
+        pgid = int(pgid_text)
+    except Exception:
+        continue
+    if pid in ignored:
+        continue
+    if session and f"arnold-repair-loop {session}" in args:
+        continue
+    if remote_spec and any(needle in args for needle in needles) and "--spec" in args and remote_spec in args:
+        targets.add(pgid if pgid > 0 else pid)
+    elif plan_name and any(needle in args for needle in needles) and f"--plan {plan_name}" in args:
+        targets.add(pgid if pgid > 0 else pid)
+
+for pgid in sorted(targets):
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+        print(f"killed stale runner process group pgid={pgid}", file=sys.stderr)
+    except ProcessLookupError:
+        pass
+    except Exception as exc:
+        print(f"failed SIGTERM stale runner pgid={pgid}: {exc}", file=sys.stderr)
+
+if targets:
+    time.sleep(2)
+for pgid in sorted(targets):
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+        print(f"force-killed stale runner process group pgid={pgid}", file=sys.stderr)
+    except ProcessLookupError:
+        pass
+    except Exception:
+        pass
+PY
+}
+
+marker_requires_repair_despite_alive() {
+  python3 - "$MARKER_PATH" <<'PY' 2>/dev/null
+import json
+import pathlib
+import sys
+
+try:
+    payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    payload = {}
+text = json.dumps(payload, sort_keys=True)
+if "workspace_drift:" in text or "sandbox_refused_outside_project_root" in text:
+    print("workspace_drift")
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 session_health_status() {
   local session="$1"
   local workspace="$2"
@@ -663,7 +772,7 @@ default_plan_relaunch_command() {
   local workspace="$2"
   local log_path="$workspace/.megaplan/cloud-logs/${plan_name}.log"
   printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan auto --plan %q --project-dir %q >> %q 2>&1' \
-    "$ARNOLD_SRC" "$ARNOLD_SRC" "$plan_name" "$workspace" "$log_path"
+    "$workspace" "$ARNOLD_SRC" "$plan_name" "$workspace" "$log_path"
 }
 
 resolve_relaunch_command() {
@@ -689,14 +798,15 @@ resolve_relaunch_command() {
     log_relative=".megaplan/cloud-chain-${session}.log"
   fi
   printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
-    "$ARNOLD_SRC" "$ARNOLD_SRC" "$remote_spec" "$workspace" "$workspace/$log_relative"
+    "$workspace" "$ARNOLD_SRC" "$remote_spec" "$workspace" "$workspace/$log_relative"
 }
 
 repair_target_completion_status() {
   local workspace="$1"
   local run_kind="$2"
   local plan_name="${3:-}"
-  python3 - "$workspace" "$run_kind" "$plan_name" <<'PY'
+  python3 - "$workspace" "$run_kind" "$plan_name" "$REMOTE_SPEC" <<'PY'
+import hashlib
 import json
 import pathlib
 import sys
@@ -704,6 +814,7 @@ import sys
 workspace = pathlib.Path(sys.argv[1])
 run_kind = sys.argv[2]
 plan_name = sys.argv[3]
+remote_spec = pathlib.Path(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] else None
 
 def load_json(path: pathlib.Path | None) -> dict[str, object]:
     if path is None:
@@ -713,6 +824,44 @@ def load_json(path: pathlib.Path | None) -> dict[str, object]:
     except Exception:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+def _resolve_remote_spec(root: pathlib.Path, path: pathlib.Path | None) -> pathlib.Path | None:
+    if path is None:
+        return None
+    candidates = [path]
+    if not path.is_absolute():
+        candidates.append(root / path)
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+        if resolved.exists():
+            return resolved
+    return candidates[-1]
+
+def spec_milestone_count(root: pathlib.Path, spec_path: pathlib.Path | None) -> int:
+    resolved_spec = _resolve_remote_spec(root, spec_path)
+    candidates = [resolved_spec] if resolved_spec is not None and resolved_spec.exists() else []
+    candidates.extend(sorted(root.glob(".megaplan/initiatives/**/chain.yaml")))
+    for path in candidates:
+        try:
+            count = 0
+            in_milestones = False
+            for raw in path.read_text(encoding="utf-8").splitlines():
+                stripped = raw.strip()
+                if stripped == "milestones:":
+                    in_milestones = True
+                    continue
+                if in_milestones and stripped and not raw.startswith((" ", "-")):
+                    break
+                if in_milestones and stripped.startswith("- label:"):
+                    count += 1
+            if count:
+                return count
+        except Exception:
+            continue
+    return 0
 
 def candidate_plan_states(root: pathlib.Path) -> list[pathlib.Path]:
     candidates: list[tuple[float, pathlib.Path]] = []
@@ -729,6 +878,18 @@ def candidate_plan_states(root: pathlib.Path) -> list[pathlib.Path]:
     return [path for _, path in candidates]
 
 def latest_chain_state(root: pathlib.Path) -> pathlib.Path | None:
+    resolved_spec = _resolve_remote_spec(root, remote_spec)
+    if resolved_spec is not None:
+        try:
+            digest = hashlib.sha1(str(resolved_spec.resolve()).encode("utf-8")).hexdigest()[:12]
+        except OSError:
+            digest = hashlib.sha1(str(resolved_spec).encode("utf-8")).hexdigest()[:12]
+        for candidate in (
+            root / ".megaplan" / "plans" / ".chains" / f"{resolved_spec.stem}-{digest}.json",
+            resolved_spec.parent / ".megaplan" / "plans" / ".chains" / f"{resolved_spec.stem}-{digest}.json",
+        ):
+            if candidate.exists():
+                return candidate
     candidates = set()
     candidates.update((root / ".megaplan" / "plans" / ".chains").glob("*.json"))
     candidates.update(root.glob(".megaplan/initiatives/*/.megaplan/plans/.chains/*.json"))
@@ -759,13 +920,11 @@ def is_terminal_plan(plan_state: dict[str, object]) -> tuple[bool, str]:
 
 def chain_completion_reason(chain_state: dict[str, object]) -> str:
     last_state = str(chain_state.get("last_state") or "").strip().lower()
-    if last_state in {"done", "complete"}:
-        return f"last_state={last_state}"
     milestones = chain_state.get("milestones")
     milestones = milestones if isinstance(milestones, list) else []
     completed = chain_state.get("completed")
     completed = completed if isinstance(completed, list) else []
-    milestone_count = len(milestones)
+    milestone_count = len(milestones) or spec_milestone_count(workspace, remote_spec)
     completed_count = len(completed)
     current_idx = chain_state.get("current_milestone_index")
     try:
@@ -789,6 +948,8 @@ def chain_completion_reason(chain_state: dict[str, object]) -> str:
         return f"all_milestones_completed={len(milestone_labels)}/{milestone_count}"
     if milestone_count and completed_count >= milestone_count:
         return f"completed_entries={completed_count}/{milestone_count}"
+    if last_state in {"done", "complete"}:
+        return ""
     return ""
 
 chain_path = latest_chain_state(workspace) if run_kind == "chain" else None
@@ -846,7 +1007,8 @@ collect_failure_context_json() {
   local session="$2"
   local run_kind="${3:-chain}"
   local plan_name="${4:-}"
-  python3 - "$workspace" "$session" "$run_kind" "$plan_name" "$MARKER_DIR" "$DATA_DIR" <<'PY'
+  python3 - "$workspace" "$session" "$run_kind" "$plan_name" "$MARKER_DIR" "$DATA_DIR" "$REMOTE_SPEC" <<'PY'
+import hashlib
 import json
 import pathlib
 import re
@@ -858,6 +1020,7 @@ run_kind = sys.argv[3]
 marker_plan_name = sys.argv[4]
 marker_dir = pathlib.Path(sys.argv[5]) if len(sys.argv) > 5 else workspace / ".megaplan" / "cloud-sessions"
 repair_data_dir = pathlib.Path(sys.argv[6]) if len(sys.argv) > 6 else marker_dir / "repair-data"
+remote_spec = pathlib.Path(sys.argv[7]) if len(sys.argv) > 7 and sys.argv[7] else None
 
 
 def _tail_text(path: pathlib.Path, lines: int = 20) -> str:
@@ -882,6 +1045,63 @@ def _load_json(path: pathlib.Path) -> dict[str, object]:
     except Exception:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _resolve_remote_spec(root: pathlib.Path, path: pathlib.Path | None) -> pathlib.Path | None:
+    if path is None:
+        return None
+    candidates = [path]
+    if not path.is_absolute():
+        candidates.append(root / path)
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+        if resolved.exists():
+            return resolved
+    return candidates[-1]
+
+
+def _spec_milestone_count(root: pathlib.Path, spec_path: pathlib.Path | None) -> int:
+    resolved_spec = _resolve_remote_spec(root, spec_path)
+    candidates = [resolved_spec] if resolved_spec is not None and resolved_spec.exists() else []
+    candidates.extend(sorted(root.glob(".megaplan/initiatives/**/chain.yaml")))
+    seen: set[pathlib.Path] = set()
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            count = 0
+            in_milestones = False
+            for raw in path.read_text(encoding="utf-8").splitlines():
+                stripped = raw.strip()
+                if stripped == "milestones:":
+                    in_milestones = True
+                    continue
+                if in_milestones and stripped and not raw.startswith((" ", "-")):
+                    break
+                if in_milestones and stripped.startswith("- label:"):
+                    count += 1
+            if count:
+                return count
+        except Exception:
+            continue
+    return 0
+
+
+def _chain_is_complete(chain_state: dict[str, object]) -> bool:
+    milestones = chain_state.get("milestones") if isinstance(chain_state.get("milestones"), list) else []
+    completed = chain_state.get("completed") if isinstance(chain_state.get("completed"), list) else []
+    milestone_count = len(milestones) or _spec_milestone_count(workspace, remote_spec)
+    try:
+        current_idx = int(chain_state.get("current_milestone_index") or 0)
+    except (TypeError, ValueError):
+        current_idx = 0
+    if milestone_count == 0:
+        return str(chain_state.get("last_state") or "").strip().lower() in {"done", "complete"}
+    return current_idx >= milestone_count or len(completed) >= milestone_count
 
 
 def _artifact_sort_key(path: pathlib.Path) -> tuple[float, str]:
@@ -1152,6 +1372,18 @@ def _candidate_plan_states(root: pathlib.Path) -> list[pathlib.Path]:
 
 
 def _latest_chain_state(root: pathlib.Path) -> pathlib.Path | None:
+    resolved_spec = _resolve_remote_spec(root, remote_spec)
+    if resolved_spec is not None:
+        try:
+            digest = hashlib.sha1(str(resolved_spec.resolve()).encode("utf-8")).hexdigest()[:12]
+        except OSError:
+            digest = hashlib.sha1(str(resolved_spec).encode("utf-8")).hexdigest()[:12]
+        for candidate in (
+            root / ".megaplan" / "plans" / ".chains" / f"{resolved_spec.stem}-{digest}.json",
+            resolved_spec.parent / ".megaplan" / "plans" / ".chains" / f"{resolved_spec.stem}-{digest}.json",
+        ):
+            if candidate.exists():
+                return candidate
     chains_root = root / ".megaplan"
     candidates = set()
     candidates.update((root / ".megaplan" / "plans" / ".chains").glob("*.json"))
@@ -1588,6 +1820,7 @@ def _classify_failure(
         last_state == "done"
         and current_state in {"", "done", "unknown"}
         and current_plan_name.lower() in {"", "unknown"}
+        and _chain_is_complete(chain_state)
     ):
         return "chain_completed"
     if plan_current_state == "awaiting_human_verify":
@@ -1679,6 +1912,7 @@ if chain_state_path is not None:
         "last_state": chain_state.get("last_state") or "",
         "current_milestone_index": current_milestone_index,
         "current_milestone_label": current_milestone_label,
+        "milestone_count": len(milestones) or _spec_milestone_count(workspace, remote_spec),
         "completed_count": len(completed),
         "pr_number": chain_state.get("pr_number"),
         "pr_state": chain_state.get("pr_state"),
@@ -1938,6 +2172,27 @@ state_classification = stale_state.get("classification") or (
     )
 )
 signals = list(latest_context.get("raw_failure_signals") or [])
+
+def _summary_chain_complete(summary: dict[str, object]) -> bool:
+    try:
+        milestone_count = int(summary.get("milestone_count") or 0)
+    except (TypeError, ValueError):
+        milestone_count = 0
+    try:
+        completed_count = int(summary.get("completed_count") or 0)
+    except (TypeError, ValueError):
+        completed_count = 0
+    try:
+        current_idx = int(summary.get("current_milestone_index") or 0)
+    except (TypeError, ValueError):
+        current_idx = 0
+    if milestone_count > 0:
+        return completed_count >= milestone_count or current_idx >= milestone_count
+    events = summary.get("events")
+    if isinstance(events, list):
+        return any("all milestones complete" in str(item).lower() for item in events)
+    return False
+
 if not signals:
     fallback_signals = []
     for key in (
@@ -1986,6 +2241,7 @@ if (
     chain_last_state_for_classification == "done"
     and chain_current_state_for_classification in {"", "done", "unknown"}
     and chain_plan_for_classification in {"", "unknown"}
+    and _summary_chain_complete(chain_state)
 ):
     classification = "chain_completed"
 
@@ -2370,7 +2626,7 @@ repair_data_init() {
   local plan_name="$2"
   local relaunch_command="$3"
   local initial_health="$4"
-  local marker_json source_git workspace_git chain_log watchdog_log tmux_info chain_state failure_context
+  local marker_json source_git workspace_git chain_log watchdog_log tmux_info chain_state failure_context payload_dir rc
   marker_json="$(cat "$MARKER_PATH" 2>/dev/null || true)"
   source_git="$(cd "$ARNOLD_SRC" 2>/dev/null && { git branch --show-current; git status --short; git log -1 --oneline; } 2>&1 || true)"
   workspace_git="$(cd "$WORKSPACE" 2>/dev/null && { git branch --show-current; git status --short; git log -1 --oneline; } 2>&1 || true)"
@@ -2379,7 +2635,16 @@ repair_data_init() {
   tmux_info="$(tmux capture-pane -pt "$SESSION" -S -80 2>/dev/null || true)"
   chain_state="$(find "$WORKSPACE/.megaplan" -path '*/.chains/*.json' -o -name 'chain_state.json' 2>/dev/null | sort | tail -10)"
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$run_kind" "$plan_name")"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$ARNOLD_SRC" "$SYNC_BRANCH" "$RUN_DIR" "$relaunch_command" "$initial_health" "$marker_json" "$source_git" "$workspace_git" "$chain_log" "$watchdog_log" "$tmux_info" "$chain_state" "$failure_context" <<'PY'
+  payload_dir="$(mktemp -d)"
+  printf '%s' "$marker_json" > "$payload_dir/marker_json"
+  printf '%s' "$source_git" > "$payload_dir/source_git"
+  printf '%s' "$workspace_git" > "$payload_dir/workspace_git"
+  printf '%s' "$chain_log" > "$payload_dir/chain_log"
+  printf '%s' "$watchdog_log" > "$payload_dir/watchdog_log"
+  printf '%s' "$tmux_info" > "$payload_dir/tmux_info"
+  printf '%s' "$chain_state" > "$payload_dir/chain_state"
+  printf '%s' "$failure_context" > "$payload_dir/failure_context"
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$ARNOLD_SRC" "$SYNC_BRANCH" "$RUN_DIR" "$relaunch_command" "$initial_health" "$payload_dir" <<'PY'
 import json
 import pathlib
 import sys
@@ -2403,16 +2668,24 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     run_dir,
     relaunch_command,
     initial_health,
-    marker_json,
-    source_git,
-    workspace_git,
-    chain_log,
-    watchdog_log,
-    tmux_info,
-    chain_state,
-    failure_context,
+    payload_dir_raw,
 ) = sys.argv[1:]
-failure_context_payload = json.loads(failure_context)
+payload_dir = pathlib.Path(payload_dir_raw)
+
+def read_payload(name: str) -> str:
+    try:
+        return (payload_dir / name).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+
+marker_json = read_payload("marker_json")
+source_git = read_payload("source_git")
+workspace_git = read_payload("workspace_git")
+chain_log = read_payload("chain_log")
+watchdog_log = read_payload("watchdog_log")
+tmux_info = read_payload("tmux_info")
+chain_state = read_payload("chain_state")
+failure_context_payload = json.loads(read_payload("failure_context") or "{}")
 data_path = pathlib.Path(path)
 existing = load_json(data_path, default={})
 attempts = existing.get("attempts") if isinstance(existing.get("attempts"), list) else []
@@ -2477,6 +2750,9 @@ payload["initial_facts"]["resolver_output"] = resolver_output or {}
 payload = merge_additive_fields(payload, target=resolver_output or {})
 save_repair_data(data_path, payload)
 PY
+  rc=$?
+  rm -rf "$payload_dir"
+  return "$rc"
 }
 
 repair_data_record_dev() {
@@ -2719,20 +2995,22 @@ repair_data_record_mechanical() {
   local attempt_id="$2"
   local status="$3"
   local detail="$4"
-  local failure_context
+  local failure_context failure_context_file rc
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$detail" "$failure_context" <<'PY'
+  failure_context_file="$(mktemp)"
+  printf '%s' "$failure_context" > "$failure_context_file"
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$detail" "$failure_context_file" <<'PY'
 import json
 import pathlib
 import sys
 
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
 
-path, iteration_raw, attempt_id_raw, status, detail, failure_context = sys.argv[1:]
+path, iteration_raw, attempt_id_raw, status, detail, failure_context_path = sys.argv[1:]
 iteration = int(iteration_raw)
 attempt_id = int(attempt_id_raw)
 payload = load_json(pathlib.Path(path), default={})
-failure_context_payload = json.loads(failure_context)
+failure_context_payload = json.loads(pathlib.Path(failure_context_path).read_text(encoding="utf-8"))
 iterations = payload.setdefault("iterations", [])
 while len(iterations) < iteration:
     iterations.append({"i": len(iterations) + 1})
@@ -2772,6 +3050,9 @@ for item in attempts:
     break
 save_repair_data(pathlib.Path(path), payload)
 PY
+  rc=$?
+  rm -f "$failure_context_file"
+  return "$rc"
 }
 
 repair_data_record_kimi() {
@@ -2781,20 +3062,22 @@ repair_data_record_kimi() {
   local status="$3"
   local report_path="$4"
   local turn_rc="$5"
-  local failure_context
+  local failure_context failure_context_file rc
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$report_path" "$turn_rc" "$failure_context" <<'PY'
+  failure_context_file="$(mktemp)"
+  printf '%s' "$failure_context" > "$failure_context_file"
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$report_path" "$turn_rc" "$failure_context_file" <<'PY'
 import json
 import pathlib
 import sys
 
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
 
-path, iteration_raw, attempt_id_raw, status, report_path, turn_rc, failure_context = sys.argv[1:]
+path, iteration_raw, attempt_id_raw, status, report_path, turn_rc, failure_context_path = sys.argv[1:]
 iteration = int(iteration_raw)
 attempt_id = int(attempt_id_raw)
 payload = load_json(pathlib.Path(path), default={})
-failure_context_payload = json.loads(failure_context)
+failure_context_payload = json.loads(pathlib.Path(failure_context_path).read_text(encoding="utf-8"))
 report = {}
 report_file = pathlib.Path(report_path)
 if report_file.exists():
@@ -2859,6 +3142,9 @@ for item in attempts:
 
 save_repair_data(pathlib.Path(path), payload)
 PY
+  rc=$?
+  rm -f "$failure_context_file"
+  return "$rc"
 }
 
 repair_data_set_outcome() {
@@ -3135,6 +3421,7 @@ mechanical_launch_step() {
     return 1
   }
   kill_tmux_session_if_present "$session"
+  kill_matching_runner_processes "$session" "$remote_spec" "$run_kind" "$plan_name"
   safe="$(safe_name "$session")"
   launch_script="$(mktemp)"
   cat > "$launch_script" <<EOF
@@ -3165,9 +3452,11 @@ repair_recurrence_prepare_attempt() {
   local iteration="$1"
   local requested_model="$2"
   local dispatch_model="$3"
-  local failure_context
+  local failure_context failure_context_file rc
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$failure_context" "$iteration" "$requested_model" "$dispatch_model" "$REPAIR_RECURRENCE_MIN_DISPATCHES" "$REPAIR_RECURRENCE_WINDOW_SECS" <<'PY'
+  failure_context_file="$(mktemp)"
+  printf '%s' "$failure_context" > "$failure_context_file"
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$failure_context_file" "$iteration" "$requested_model" "$dispatch_model" "$REPAIR_RECURRENCE_MIN_DISPATCHES" "$REPAIR_RECURRENCE_WINDOW_SECS" <<'PY'
 import datetime as dt
 import json
 import pathlib
@@ -3178,7 +3467,7 @@ from arnold_pipelines.megaplan.cloud import repair_recurrence
 (
     data_path_raw,
     progress_path_raw,
-    failure_context_raw,
+    failure_context_path_raw,
     iteration_raw,
     requested_model,
     dispatch_model,
@@ -3187,7 +3476,7 @@ from arnold_pipelines.megaplan.cloud import repair_recurrence
 ) = sys.argv[1:]
 data_path = pathlib.Path(data_path_raw)
 progress_path = pathlib.Path(progress_path_raw)
-failure_context = json.loads(failure_context_raw)
+failure_context = json.loads(pathlib.Path(failure_context_path_raw).read_text(encoding="utf-8"))
 payload = json.loads(data_path.read_text(encoding="utf-8"))
 try:
     progress_payload = json.loads(progress_path.read_text(encoding="utf-8"))
@@ -3237,6 +3526,9 @@ repair_recurrence.atomic_write_json(data_path, payload)
 repair_recurrence.atomic_write_json(progress_path, session_snapshot)
 print(f"{attempt_id}\t{1 if recurrence.get('detected') else 0}")
 PY
+  rc=$?
+  rm -f "$failure_context_file"
+  return "$rc"
 }
 
 render_recurrence_block() {
@@ -3390,6 +3682,7 @@ PY
 }
 
 write_dev_prompt() {
+  set +a
   local prompt_path="$1"
   local requested_model="$2"
   local dispatch_model="$3"
@@ -3481,6 +3774,7 @@ EOF
 }
 
 write_kimi_prompt() {
+  set +a
   local prompt_path="$1"
   local relaunch_command="$2"
   local report_path="$3"
@@ -3541,6 +3835,7 @@ run_dev_fix_turn() {
   fi
   dev_timeout="$(cap_timeout_to_repair_budget "$dev_timeout" "dev-dispatch-$iteration")"
   log "iteration=$iteration dev-fix model=$dispatch_model requested=$requested_model recurring=$recurring timeout=$dev_timeout reasoning=$reasoning_effort"
+  prepare_repair_agent_exec_env
   if [[ "$dispatch_kind" == "hermes" ]]; then
     (
       cd "$ARNOLD_SRC" &&
@@ -3557,7 +3852,7 @@ run_dev_fix_turn() {
         --sandbox danger-full-access \
         -c model="$dispatch_model" \
         -c model_reasoning_effort="$reasoning_effort" \
-        "$(cat "$prompt_path")" </dev/null
+        - < "$prompt_path"
     ) >> "$LOG" 2>&1 &
   fi
   local child_pid=$!
@@ -3585,11 +3880,12 @@ run_kimi_launch_turn() {
   write_kimi_prompt "$prompt_path" "$relaunch_command" "$report_path"
   KIMI_TIMEOUT="$(cap_timeout_to_repair_budget "$KIMI_TIMEOUT" "kimi-dispatch-$iteration")"
   log "iteration=$iteration kimi-launch model=$KIMI_MODEL timeout=$KIMI_TIMEOUT"
+  prepare_repair_agent_exec_env
   (
     cd "$ARNOLD_SRC" &&
     PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" \
     timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent \
-      --query="$(cat "$prompt_path")" \
+      --query_file="$prompt_path" \
       --model="$KIMI_MODEL" \
       --api_key="${KIMI_API_KEY:-}" \
       --base_url="$KIMI_BASE_URL" \
@@ -3875,10 +4171,15 @@ exit_if_repair_target_complete "start"
 INITIAL_HEALTH="$(session_health_status "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME")"
 repair_data_init "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" "$INITIAL_HEALTH"
 if [[ "$INITIAL_HEALTH" == "alive" ]]; then
+  forced_repair_reason="$(marker_requires_repair_despite_alive || true)"
+  if [[ -n "$forced_repair_reason" ]]; then
+    log "repair target is alive but marker requires repair session=$SESSION reason=$forced_repair_reason"
+  else
   repair_data_set_outcome "running"
   clear_repair_markers
   log "repair target already running; no dev-fix needed session=$SESSION"
   exit 0
+  fi
 fi
 
 

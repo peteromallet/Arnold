@@ -28,6 +28,7 @@ from arnold_pipelines.megaplan.chain.git_ops import (
     _require_git_worktree_root,
 )
 from arnold_pipelines.megaplan.chain.spec import MilestoneSpec
+from arnold_pipelines.megaplan.chain.spec import load_spec
 from arnold_pipelines.megaplan.cli import _reset_chain_worktree_target
 from arnold_pipelines.megaplan.types import CliError
 
@@ -91,6 +92,31 @@ def _worktree_registered(repo: Path, target: Path) -> bool:
     )
 
 
+def test_chain_marks_between_milestones_until_final_completion(tmp_path: Path) -> None:
+    spec_path = _write_chain_spec(tmp_path, branch=None)
+    idea2 = tmp_path / "idea2.md"
+    idea2.write_text("ship second milestone\n", encoding="utf-8")
+    spec_path.write_text(
+        spec_path.read_text(encoding="utf-8")
+        + "  - label: m2\n"
+        + f"    idea: {idea2}\n",
+        encoding="utf-8",
+    )
+    spec = load_spec(spec_path)
+    state = chain_module.ChainState(current_milestone_index=0, last_state="running")
+
+    chain_module._mark_chain_after_milestone_advance(spec, state, next_index=1)
+
+    assert state.current_milestone_index == 1
+    assert state.current_plan_name is None
+    assert state.last_state == "between_milestones"
+
+    chain_module._mark_chain_after_milestone_advance(spec, state, next_index=2)
+
+    assert state.current_milestone_index == 2
+    assert state.last_state == "done"
+
+
 def test_chain_fresh_refuses_to_delete_unregistered_spec_directory(tmp_path: Path) -> None:
     invoking_repo = tmp_path / "app"
     _init_repo(invoking_repo)
@@ -151,6 +177,31 @@ def test_chain_git_guards_accept_linked_worktree_and_clean_preserves_repo(
     assert _git(target, "rev-parse", "--show-toplevel").stdout.strip() == str(target)
     assert (target / "README.md").read_text(encoding="utf-8") == "base\n"
     assert not (target / "scratch.txt").exists()
+
+
+def test_chain_clean_resets_skip_worktree_megaplan_runtime_journal(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    journal = repo / ".megaplan" / "epics" / "m1" / "events.jsonl"
+    journal.parent.mkdir(parents=True)
+    journal.write_text('{"event":"base"}\n', encoding="utf-8")
+    _git(repo, "add", ".megaplan/epics/m1/events.jsonl")
+    _git(repo, "commit", "-m", "track journal")
+
+    _git(repo, "update-index", "--skip-worktree", ".megaplan/epics/m1/events.jsonl")
+    journal.write_text('{"event":"dirty runtime"}\n', encoding="utf-8")
+    assert _git(repo, "ls-files", "-v", ".megaplan/epics/m1/events.jsonl").stdout.startswith("S ")
+    messages: list[str] = []
+
+    _clean_worktree_for_chain(repo, writer=messages.append)
+
+    assert journal.read_text(encoding="utf-8") == '{"event":"base"}\n'
+    assert _git(repo, "ls-files", "-v", ".megaplan/epics/m1/events.jsonl").stdout.startswith("H ")
+    joined = "".join(messages)
+    assert ".megaplan/epics/m1/events.jsonl" in joined
+    assert ".megaplan/plans" not in joined
 
 
 def test_chain_commit_refuses_non_git_directory_without_deleting_files(
@@ -416,6 +467,89 @@ def test_run_chain_surfaces_unrecoverable_missing_base_branch_as_terminal_state(
         == "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
     )
     assert "cannot be restored from local refs" in result["reason"]
+
+
+def test_run_chain_preserves_dirty_retry_attempt_before_reinit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    origin = tmp_path / "origin.git"
+    source = tmp_path / "source"
+    runner = tmp_path / "runner"
+
+    _git(tmp_path, "init", "--bare", str(origin))
+    _git(tmp_path, "clone", str(origin), str(source))
+    _git(source, "config", "user.email", "test@example.com")
+    _git(source, "config", "user.name", "Test User")
+    (source / "README.md").write_text("base\n", encoding="utf-8")
+    _git(source, "add", "README.md")
+    _git(source, "commit", "-m", "base")
+    _git(source, "branch", "-M", "main")
+    _git(source, "push", "-u", "origin", "main")
+
+    _git(tmp_path, "clone", str(origin), str(runner))
+    _git(runner, "config", "user.email", "test@example.com")
+    _git(runner, "config", "user.name", "Test User")
+    spec_path = _write_chain_spec(runner, branch=None)
+    text = spec_path.read_text(encoding="utf-8")
+    spec_path.write_text("driver:\n  require_clean_base: true\n" + text, encoding="utf-8")
+    _git(runner, "add", "NORTHSTAR.md", "chain.yaml", "idea.md")
+    _git(runner, "commit", "-m", "add chain spec")
+
+    init_calls: list[str] = []
+    drive_calls = 0
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._preflight_agent_backends",
+        lambda spec, *, writer: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.resolve_execution_environment",
+        lambda **_kwargs: SimpleNamespace(to_dict=lambda: {}),
+    )
+
+    def fake_init(*_args, **_kwargs):
+        plan_name = f"plan-{len(init_calls) + 1}"
+        init_calls.append(plan_name)
+        return plan_name
+
+    def fake_drive(*_args, **_kwargs):
+        nonlocal drive_calls
+        drive_calls += 1
+        (runner / "src.py").write_text(f"attempt {drive_calls}\n", encoding="utf-8")
+        return SimpleNamespace(status="blocked", reason="cap")
+
+    def fake_handle(*_args, **_kwargs):
+        return "retry" if drive_calls == 1 else "stop"
+
+    monkeypatch.setattr("arnold_pipelines.megaplan.chain._init_plan", fake_init)
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._write_chain_policy_into_plan_meta",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._attach_chain_anchors_to_plan",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+        fake_drive,
+    )
+    monkeypatch.setattr("arnold_pipelines.megaplan.chain._handle_outcome", fake_handle)
+
+    messages: list[str] = []
+    result = run_chain(spec_path, runner, writer=messages.append)
+
+    assert result["status"] == "stopped"
+    assert init_calls == ["plan-1", "plan-2"]
+    assert "attempt 2\n" == (runner / "src.py").read_text(encoding="utf-8")
+    assert "attempt 1" in _git(runner, "stash", "show", "-p", "--include-untracked", "stash@{0}").stdout
+    saved = load_chain_state(spec_path)
+    preserved = saved.metadata["retry_preserved_wip"]
+    assert preserved[-1]["milestone"] == "m1"
+    assert preserved[-1]["plan"] == "plan-1"
+    assert preserved[-1]["stash_ref"].startswith("stash@{")
+    assert any("preserving via git stash before retry" in msg for msg in messages)
 
 
 def test_chain_child_python_commands_use_safe_path(

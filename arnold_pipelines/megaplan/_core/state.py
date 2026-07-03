@@ -858,19 +858,24 @@ def write_plan_state(
             elif mode == "merge-meta-list":
                 if state is None:
                     raise TypeError("state is required for merge-meta-list mode")
-                next_state = dict(state)
+                # Meta-list appends are often issued by short-lived override
+                # commands while another override or phase transition is also
+                # saving state. Preserve the current on-disk state as authority
+                # for non-meta fields so a stale add-note snapshot cannot roll
+                # back a just-applied transition such as resume-clarify.
+                next_state = dict(existing) if state_path.exists() else dict(state)
                 disk_meta = existing.get("meta") if isinstance(existing.get("meta"), dict) else {}
-                meta = next_state.setdefault("meta", {})
-                if not isinstance(meta, dict):
-                    meta = {}
-                    next_state["meta"] = meta
+                memory_meta = state.get("meta") if isinstance(state.get("meta"), dict) else {}
+                base_meta = next_state.get("meta") if isinstance(next_state.get("meta"), dict) else {}
+                meta = dict(base_meta)
+                next_state["meta"] = meta
                 for field in (merge_fields or _DEFAULT_MERGE_FIELDS):
                     key_func = _FIELD_KEY_FUNCS.get(field)
                     if key_func is None:
                         continue
                     meta[field] = _merge_meta_lists(
                         disk_meta.get(field, []),
-                        meta.get(field, []),
+                        memory_meta.get(field, []),
                         key_func=key_func,
                     )
             elif mode == "legacy-migration":
