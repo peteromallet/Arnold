@@ -3911,7 +3911,12 @@ def _watchdog_is_repairing(evidence):
         return False
     action = str(evidence.get("action") or "")
     status = str(evidence.get("watchdog_status") or "")
-    return action == "repair" or status in {{"repair_dispatched", "repairing"}} or "repair" in status
+    return (
+        action in {{"repair", "meta_repair"}}
+        or status in {{"repair_dispatched", "repairing", "dispatched"}}
+        or "repair" in action
+        or "repair" in status
+    )
 
 def _should_be_running(payload):
     status = payload.get("status")
@@ -3937,6 +3942,8 @@ def _should_be_running(payload):
     return False
 
 def _effective_session_status(payload):
+    if payload.get("tmux_status") == "alive" or payload.get("process_status") == "alive":
+        return "running"
     active_step = payload.get("active_step_evidence")
     if isinstance(active_step, dict):
         current_state = active_step.get("current_state")
@@ -3956,11 +3963,9 @@ def _effective_session_status(payload):
             "gated",
             "finalized",
             "executed",
-            "reviewed",
+                "reviewed",
         }}:
             return str(current_state)
-    if payload.get("tmux_status") == "alive" or payload.get("process_status") == "alive":
-        return "running"
     health = payload.get("health")
     if isinstance(health, dict):
         last_state = health.get("last_state")
