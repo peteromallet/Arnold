@@ -1490,6 +1490,34 @@ class TestCheckMetaRepairRecursion:
         assert NEEDS_HUMAN in result.recommendation
         assert "mr-001" in result.existing_meta_repair_ids
 
+    def test_codex_launch_failure_record_does_not_poison_recursion(
+        self, tmp_path: Path
+    ) -> None:
+        repair_dir = tmp_path / "repair-data"
+        meta_dir = repair_dir / "meta"
+        meta_dir.mkdir(parents=True)
+
+        record = {
+            "meta_repair_id": "mr-launch-failed",
+            "session": "recursion-test",
+            "trigger": "partial_liveness_recurrence",
+            "diagnosis": "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/Hermes subagents); see meta-repair log.",
+            "subagent_results": {
+                "codex_response": "Not inside a trusted directory and --skip-git-repo-check was not specified."
+            },
+            "outcome": "UNKNOWN",
+        }
+        (meta_dir / "mr-launch-failed.json").write_text(
+            json.dumps(record), encoding="utf-8"
+        )
+
+        result = check_meta_repair_recursion(
+            session="recursion-test",
+            repair_data_dir=repair_dir,
+        )
+        assert result.recursing is False
+        assert result.existing_meta_repair_ids == ()
+
     def test_existing_record_for_different_session_is_not_recursion(
         self, tmp_path: Path
     ) -> None:

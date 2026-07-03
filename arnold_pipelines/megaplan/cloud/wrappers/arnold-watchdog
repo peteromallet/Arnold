@@ -3356,6 +3356,7 @@ dispatch_meta_repair() {
   local workspace="$2"
   local remote_spec="$3"
   local report_items="$4"
+  local trigger_label="${5:-}"
   local pgid_path repair_busy recursion_result
   REPAIR_DISPATCH_RESULT="unavailable"
 
@@ -3409,12 +3410,12 @@ dispatch_meta_repair() {
 
   # Background-dispatch meta-repair so it never blocks the watchdog tick
   if command -v setsid >/dev/null 2>&1; then
-    setsid bash -c 'echo "$$" > "$1"; exec "$2" "$3"' \
-      _ "$pgid_path" "$META_REPAIR_BIN" "$session" \
+    setsid bash -c 'echo "$$" > "$1"; exec "$2" "$3" "$4"' \
+      _ "$pgid_path" "$META_REPAIR_BIN" "$session" "$trigger_label" \
       >> "$LOG" 2>&1 < /dev/null &
   else
-    bash -c 'echo "$$" > "$1"; exec "$2" "$3"' \
-      _ "$pgid_path" "$META_REPAIR_BIN" "$session" \
+    bash -c 'echo "$$" > "$1"; exec "$2" "$3" "$4"' \
+      _ "$pgid_path" "$META_REPAIR_BIN" "$session" "$trigger_label" \
       >> "$LOG" 2>&1 < /dev/null &
   fi
   log "meta-repair background-dispatched session=$session pid=$!"
@@ -5322,7 +5323,7 @@ PY
     local meta_repair_trigger meta_dispatch_result
     meta_repair_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation")"
     if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
-      if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items"; then
+      if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items" "${meta_repair_trigger#TRIGGER:}"; then
         meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
         if [[ "$meta_dispatch_result" == "dispatched" ]]; then
           log "session alive after repair failure; meta-repair background-dispatched session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
@@ -5620,7 +5621,7 @@ PY
     local meta_repair_trigger meta_dispatch_result
     meta_repair_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation")"
     if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
-      if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items"; then
+      if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items" "${meta_repair_trigger#TRIGGER:}"; then
         meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
         if [[ "$meta_dispatch_result" == "dispatched" ]]; then
           log "session unhealthy after repair failure; meta-repair background-dispatched session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"

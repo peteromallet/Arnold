@@ -9615,8 +9615,9 @@ def test_meta_repair_wrapper_has_codex_dispatch() -> None:
     """Wrapper must dispatch Codex with danger-full-access sandbox."""
     text = _meta_repair_wrapper()
 
-    assert 'codex exec --sandbox danger-full-access' in text
-    assert 'codex exec --sandbox danger-full-access - < "$BRIEF_PATH"' in text
+    assert 'cd "$ARNOLD_SRC" || exit 1' in text
+    assert 'codex exec --skip-git-repo-check --sandbox danger-full-access' in text
+    assert 'codex exec --skip-git-repo-check --sandbox danger-full-access - < "$BRIEF_PATH"' in text
     assert '$(cat "$BRIEF_PATH")' not in text
     assert 'CODEX_TIMEOUT="${MEGAPLAN_META_CODEX_TIMEOUT_SECS:-5400}"' in text
     assert 'codex CLI missing' in text
@@ -9677,6 +9678,7 @@ def test_meta_repair_wrapper_has_record_persistence() -> None:
     assert 'MetaRepairRecord' in text
     assert 'MetaRepairTrigger' in text
     assert 'META_REPAIR_ID' in text
+    assert 'leaving recursion guard unpoisoned' in text
 
 
 def test_meta_repair_recursion_check_embedded_python_matches_contract(
@@ -9747,7 +9749,7 @@ def test_meta_repair_classification_embedded_python_matches_contract(
     """The classification_and_prompt embedded Python must call evaluate_meta_repair_triggers."""
     marker = (
         'python3 - "$SESSION" "$REPAIR_DATA_DIR" "$REPAIR_DATA_PATH" '
-        '"$META_REPAIR_ENABLED_VAR" <<'
+        '"$META_REPAIR_ENABLED_VAR" "$WATCHDOG_TRIGGER" <<'
     )
     text = _meta_repair_wrapper()
 
@@ -9770,6 +9772,8 @@ def test_meta_repair_classification_embedded_python_matches_contract(
 
     # Verify the embedded program imports evaluate_meta_repair_triggers correctly
     assert "evaluate_meta_repair_triggers" in program
+    assert "MetaRepairClassification" in program
+    assert "watchdog preclassified trigger" in program
     assert "NO_TRIGGER" in program
     assert "PROMPT_START" in program
     assert "PROMPT_END" in program
@@ -10052,6 +10056,51 @@ def test_meta_repair_dispatch_enabled_success(tmp_path: Path) -> None:
     assert report_path.exists(), f"report not created"
     report_content = report_path.read_text(encoding="utf-8")
     assert "dispatched" in report_content, f"report missing dispatched: {report_content}"
+
+
+def test_meta_repair_dispatch_passes_trigger_to_wrapper(tmp_path: Path) -> None:
+    """dispatch_meta_repair passes the watchdog trigger to arnold-meta-repair-loop."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    report_path = tmp_path / "report.jsonl"
+    args_path = tmp_path / "args.txt"
+
+    fake_bin = tmp_path / "arnold-meta-repair-loop"
+    fake_bin.write_text(
+        f"#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > {str(args_path)!r}\nexit 0\n",
+        encoding="utf-8",
+    )
+    fake_bin.chmod(0o755)
+
+    script = _build_meta_dispatch_script(
+        marker_dir,
+        report_path,
+        meta_repair_bin=str(fake_bin),
+        extra_lines=[
+            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r} repair_timeout",
+            'echo "RESULT=$REPAIR_DISPATCH_RESULT"',
+        ],
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "RESULT=dispatched" in result.stdout
+
+    import time as _time
+
+    for _ in range(20):
+        if args_path.exists():
+            break
+        _time.sleep(0.05)
+    assert args_path.read_text(encoding="utf-8").splitlines() == [
+        "demo-session",
+        "repair_timeout",
+    ]
 
 
 def test_meta_repair_dispatch_busy_skip(tmp_path: Path) -> None:
