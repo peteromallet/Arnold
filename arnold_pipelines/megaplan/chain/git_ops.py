@@ -800,7 +800,7 @@ def _checkout_milestone_branch(
             "(authoritative merged history)\n"
         )
     _compat()._run_command(root, ["git", "checkout", "-B", branch, fork_point], writer=writer, error_code="git_branch_failed")
-    _compat()._run_git_push_command(
+    _compat()._run_command(
         root,
         ["git", "push", "--no-verify", "-u", "origin", branch],
         writer=writer,
