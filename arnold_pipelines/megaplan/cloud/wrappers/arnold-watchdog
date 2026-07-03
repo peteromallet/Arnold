@@ -2698,7 +2698,6 @@ if (
     status == "ok"
     and not completion_guard_repair_eligible
     and last_state in NONTERMINAL_STATES
-    and not plan_has_active_step
     and stuck_ticks >= STUCK_TICKS
 ):
     status = "chain_stuck"
@@ -2816,7 +2815,7 @@ default_plan_relaunch_command() {
   local workspace="$2"
   local log_path="$workspace/.megaplan/cloud-logs/${plan_name}.log"
   printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan auto --plan %q --project-dir %q >> %q 2>&1' \
-    "$SRC_DIR" "$SRC_DIR" "$plan_name" "$workspace" "$log_path"
+    "$workspace" "$SRC_DIR" "$plan_name" "$workspace" "$log_path"
 }
 
 resolve_relaunch_command() {
@@ -2844,7 +2843,7 @@ resolve_relaunch_command() {
     log_relative=".megaplan/cloud-chain-${session}.log"
   fi
   printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
-    "$SRC_DIR" "$SRC_DIR" "$remote_spec" "$workspace" "$workspace/$log_relative"
+    "$workspace" "$SRC_DIR" "$remote_spec" "$workspace" "$workspace/$log_relative"
 }
 
 kimi_dispatch_marker_set() {
@@ -3034,49 +3033,6 @@ if isinstance(payload, dict):
 PY
 }
 
-repair_data_source_head_for_session() {
-  local session="$1"
-  local data_path="${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}/$session.repair-data.json"
-  [[ -r "$data_path" ]] || return 0
-  python3 - "$data_path" <<'PY'
-import json
-import pathlib
-import re
-import sys
-
-try:
-    payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-except Exception:
-    payload = {}
-source_git = str(payload.get("source_git") or "").strip()
-for line in source_git.splitlines():
-    candidate = line.strip()
-    if not candidate:
-        continue
-    match = re.match(r"^([0-9a-f]{7,40})\b", candidate)
-    if match:
-        print(match.group(1))
-        break
-PY
-}
-
-editable_source_head() {
-  [[ -d "$SRC_DIR/.git" ]] || return 0
-  git -C "$SRC_DIR" rev-parse HEAD 2>/dev/null || true
-}
-
-repair_source_changed_since_last_attempt() {
-  local session="$1"
-  local previous_head current_head
-  previous_head="$(repair_data_source_head_for_session "$session")"
-  current_head="$(editable_source_head)"
-  [[ -n "$previous_head" && -n "$current_head" ]] || return 1
-  if [[ "$current_head" == "$previous_head"* || "$previous_head" == "$current_head"* ]]; then
-    return 1
-  fi
-  return 0
-}
-
 repair_outcome_wants_repair_retry() {
   case "${1:-}" in
     recurring_retry_pending|repair_timeout|repair_exhausted)
@@ -3086,76 +3042,6 @@ repair_outcome_wants_repair_retry() {
       return 1
       ;;
   esac
-}
-
-current_target_implies_alive() {
-  local observation="${1:-}"
-  [[ -n "$observation" ]] || {
-    echo 0
-    return 0
-  }
-  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$observation" <<'PY' 2>/dev/null || true
-import json
-import sys
-
-try:
-    record = json.loads(sys.argv[1])
-except Exception:
-    print(0)
-    raise SystemExit(0)
-
-if not isinstance(record, dict):
-    print(0)
-    raise SystemExit(0)
-
-heartbeat = record.get("active_step_heartbeat")
-heartbeat = heartbeat if isinstance(heartbeat, dict) else {}
-plan_state = record.get("plan_state")
-plan_state = plan_state if isinstance(plan_state, dict) else {}
-events = record.get("event_cursors")
-events = events if isinstance(events, dict) else {}
-current_refs = record.get("current_refs")
-current_refs = current_refs if isinstance(current_refs, dict) else {}
-
-has_active_heartbeat = bool(heartbeat.get("active"))
-has_current_plan = bool(
-    str(current_refs.get("current_plan_name") or "").strip()
-    or str(plan_state.get("name") or "").strip()
-)
-has_plan_proof = bool(plan_state.get("present")) or bool(events.get("events_present"))
-
-print(1 if (has_active_heartbeat and has_current_plan and has_plan_proof) else 0)
-PY
-}
-
-current_target_plan_name() {
-  local observation="${1:-}"
-  [[ -n "$observation" ]] || return 0
-  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$observation" <<'PY' 2>/dev/null || true
-import json
-import sys
-
-try:
-    record = json.loads(sys.argv[1])
-except Exception:
-    raise SystemExit(0)
-
-if not isinstance(record, dict):
-    raise SystemExit(0)
-
-current_refs = record.get("current_refs")
-current_refs = current_refs if isinstance(current_refs, dict) else {}
-plan_state = record.get("plan_state")
-plan_state = plan_state if isinstance(plan_state, dict) else {}
-
-plan_name = str(
-    current_refs.get("current_plan_name")
-    or plan_state.get("name")
-    or ""
-).strip()
-if plan_name:
-    print(plan_name)
-PY
 }
 
 # Background-dispatch the bounded repair loop so it never blocks the tick. The
@@ -4736,23 +4622,6 @@ repair_unhealthy_session() {
   if kimi_dispatch_failed_previously "$session"; then
     local previous_repair_outcome
     previous_repair_outcome="$(repair_data_outcome_for_session "$session" || true)"
-    if repair_source_changed_since_last_attempt "$session"; then
-      local previous_source_head current_source_head
-      previous_source_head="$(repair_data_source_head_for_session "$session" || true)"
-      current_source_head="$(editable_source_head || true)"
-      log "editable source advanced since failed repair; retrying root-cause repair session=$session previous=${previous_source_head:-unknown} current=${current_source_head:-unknown} reason=$reason"
-      if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
-        if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
-          log "session unhealthy after source-advanced repair retry; another repair loop already running so waiting turn session=$session reason=$reason"
-          return 0
-        fi
-        log "session unhealthy after source-advanced repair retry: background-dispatched repair loop session=$session reason=$reason"
-        tmux kill-session -t "$session" 2>/dev/null || true
-        return 0
-      fi
-      log "source advanced after failed repair but repair loop missing -> direct relaunch session=$session reason=$reason"
-      return 1
-    fi
     if repair_outcome_wants_repair_retry "$previous_repair_outcome"; then
       log "previous repair outcome requires another root-cause repair session=$session outcome=${previous_repair_outcome:-unknown} reason=$reason"
       if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
@@ -5010,13 +4879,8 @@ record = resolve_current_target(
 print(json.dumps(record, sort_keys=True))
 PY
   )"
-  local current_target_alive current_target_plan
-  current_target_alive=0
-  current_target_plan=
   if [[ -n "$current_target_observation" ]]; then
     log "current-target observe session=$session evidence=$current_target_observation"
-    current_target_alive="$(current_target_implies_alive "$current_target_observation")"
-    current_target_plan="$(current_target_plan_name "$current_target_observation")"
   fi
 
   local terminal_status terminal_observe terminal_summary
@@ -5046,10 +4910,6 @@ PY
   fi
   local health
   health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"
-  if [[ "$current_target_alive" == "1" && "$health" != "alive" ]]; then
-    log "current-target proves live plan activity; overriding session health to alive session=$session plan=${current_target_plan:-unknown} prior_health=$health"
-    health="alive"
-  fi
   if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
     log "flag $session: chain spec missing: $remote_spec"
     repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "spec_missing: chain spec missing at $remote_spec" || true
@@ -5061,55 +4921,46 @@ PY
     return 1
   fi
   if [[ "$run_kind" == "chain" ]]; then
-    if [[ "$current_target_alive" == "1" ]]; then
-      CHAIN_HEALTH_STATUS="ok"
-      CHAIN_HEALTH_KIND=""
-      CHAIN_HEALTH_SUMMARY=""
-      CHAIN_HEALTH_ARTIFACT_PATH=""
-      CHAIN_HEALTH_LOG_MESSAGE=""
-      log "current-target shows active plan execution; suppressing chain-level repair path session=$session plan=${current_target_plan:-unknown}"
-    else
-      chain_health_status "$session" "$workspace" "$remote_spec_path" "$health"
-      if [[ -n "${CHAIN_HEALTH_LOG_MESSAGE:-}" ]]; then
-        log "${CHAIN_HEALTH_LOG_MESSAGE}"
+    chain_health_status "$session" "$workspace" "$remote_spec_path" "$health"
+    if [[ -n "${CHAIN_HEALTH_LOG_MESSAGE:-}" ]]; then
+      log "${CHAIN_HEALTH_LOG_MESSAGE}"
+    fi
+    if [[ "${CHAIN_HEALTH_STATUS:-ok}" == "chain_uncommitted_execute_output" || "${CHAIN_HEALTH_STATUS:-ok}" == "chain_large_file_push_rejection" ]]; then
+      local chain_health_message repair_busy
+      chain_health_message="${CHAIN_HEALTH_SUMMARY:-chain publish failure needs repair}"
+      if [[ -n "${CHAIN_HEALTH_ARTIFACT_PATH:-}" ]]; then
+        chain_health_message="$chain_health_message; artifact=${CHAIN_HEALTH_ARTIFACT_PATH}"
       fi
-      if [[ "${CHAIN_HEALTH_STATUS:-ok}" == "chain_uncommitted_execute_output" || "${CHAIN_HEALTH_STATUS:-ok}" == "chain_large_file_push_rejection" ]]; then
-        local chain_health_message repair_busy
-        chain_health_message="${CHAIN_HEALTH_SUMMARY:-chain publish failure needs repair}"
-        if [[ -n "${CHAIN_HEALTH_ARTIFACT_PATH:-}" ]]; then
-          chain_health_message="$chain_health_message; artifact=${CHAIN_HEALTH_ARTIFACT_PATH}"
-        fi
-        repair_busy="$(repair_loop_busy_state "$session")"
-        if [[ "$repair_busy" == "same_session" ]]; then
-          log "repairable chain health issue detected; repair already running session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-}"
-          report_item "$report_items" "$session" "repair" "repair_running" "repairable chain issue repair already running" "$workspace" "$remote_spec"
-        elif [[ "$repair_busy" == "other_session" ]]; then
+      repair_busy="$(repair_loop_busy_state "$session")"
+      if [[ "$repair_busy" == "same_session" ]]; then
+        log "repairable chain health issue detected; repair already running session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-}"
+        report_item "$report_items" "$session" "repair" "repair_running" "repairable chain issue repair already running" "$workspace" "$remote_spec"
+      elif [[ "$repair_busy" == "other_session" ]]; then
+        log "repairable chain health issue detected; another repair loop already running session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-}"
+        report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
+      elif dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+        if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
           log "repairable chain health issue detected; another repair loop already running session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-}"
           report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
-        elif dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
-          if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
-            log "repairable chain health issue detected; another repair loop already running session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-}"
-            report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
-          else
-            log "repairable chain health issue detected: background-dispatched repair loop session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-} artifact=${CHAIN_HEALTH_ARTIFACT_PATH:-}"
-            report_item "$report_items" "$session" "repair" "repair_dispatched" "$chain_health_message" "$workspace" "$remote_spec"
-          fi
         else
-          log "repairable chain health issue detected but repair loop is unavailable session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-}"
-          report_item "$report_items" "$session" "repair" "repair_unavailable" "$chain_health_message" "$workspace" "$remote_spec"
+          log "repairable chain health issue detected: background-dispatched repair loop session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-} artifact=${CHAIN_HEALTH_ARTIFACT_PATH:-}"
+          report_item "$report_items" "$session" "repair" "repair_dispatched" "$chain_health_message" "$workspace" "$remote_spec"
         fi
-        return 0
+      else
+        log "repairable chain health issue detected but repair loop is unavailable session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-}"
+        report_item "$report_items" "$session" "repair" "repair_unavailable" "$chain_health_message" "$workspace" "$remote_spec"
       fi
-      if [[ "${CHAIN_HEALTH_STATUS:-ok}" != "ok" ]]; then
-        local chain_health_message
-        chain_health_message="${CHAIN_HEALTH_SUMMARY:-chain-level issue detected}"
-        if [[ -n "${CHAIN_HEALTH_ARTIFACT_PATH:-}" ]]; then
-          chain_health_message="$chain_health_message; artifact=${CHAIN_HEALTH_ARTIFACT_PATH}"
-        fi
-        log "chain-level health issue detected session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-} artifact=${CHAIN_HEALTH_ARTIFACT_PATH:-}"
-        repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "${CHAIN_HEALTH_STATUS:-chain_issue}: $chain_health_message" || true
-        return 0
+      return 0
+    fi
+    if [[ "${CHAIN_HEALTH_STATUS:-ok}" != "ok" ]]; then
+      local chain_health_message
+      chain_health_message="${CHAIN_HEALTH_SUMMARY:-chain-level issue detected}"
+      if [[ -n "${CHAIN_HEALTH_ARTIFACT_PATH:-}" ]]; then
+        chain_health_message="$chain_health_message; artifact=${CHAIN_HEALTH_ARTIFACT_PATH}"
       fi
+      log "chain-level health issue detected session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-} artifact=${CHAIN_HEALTH_ARTIFACT_PATH:-}"
+      repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "${CHAIN_HEALTH_STATUS:-chain_issue}: $chain_health_message" || true
+      return 0
     fi
   fi
   if [[ "$health" == "alive" ]]; then
@@ -5417,8 +5268,21 @@ PY
     return 0
   fi
 
-  meta_repair_trigger_status() {
-    PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$REPAIR_DATA_DIR" "$MARKER_DIR" "$current_target_observation" <<'PY'
+  # Repair + relaunch. The primary repair operator is BACKGROUND-DISPATCHED so
+  # it never blocks the tick (it can run up to its 60-min timeout and relaunches
+  # the run itself on success). The watchdog's direct tmux relaunch runs only as
+  # a fallback: when repair is unavailable, or when it was already dispatched
+  # and has since exited without reviving the session (marker present + not
+  # running).
+  if [[ "$health" != "stopped" ]]; then
+    if repair_unhealthy_session "$session" "$workspace" "$remote_spec" "$health"; then
+      # Repair running or just background-dispatched; it owns the relaunch.
+      report_item "$report_items" "$session" "repair" "repair_running" "$health" "$workspace" "$remote_spec"
+      return 0
+    fi
+    local meta_repair_trigger meta_dispatch_result
+    meta_repair_trigger="$(
+      PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$REPAIR_DATA_DIR" "$MARKER_DIR" "$current_target_observation" <<'PY'
 import json
 import pathlib
 import sys
@@ -5637,7 +5501,7 @@ classification, _ = evaluate_meta_repair_triggers(
     discord_delivery_failed=discord_delivery_failed,
     discord_escalation_is_true_blocker=discord_escalation_is_true_blocker,
     repair_budget_exhausted=repair_outcome in {"repair_timeout", "repair_exhausted"},
-    load_evidence=False,
+    load_evidence=True,
 )
 
 if classification.should_dispatch and classification.trigger_label:
@@ -5645,22 +5509,7 @@ if classification.should_dispatch and classification.trigger_label:
 else:
     print("NO_TRIGGER")
 PY
-  }
-
-  # Repair + relaunch. The primary repair operator is BACKGROUND-DISPATCHED so
-  # it never blocks the tick (it can run up to its 60-min timeout and relaunches
-  # the run itself on success). The watchdog's direct tmux relaunch runs only as
-  # a fallback: when repair is unavailable, or when it was already dispatched
-  # and has since exited without reviving the session (marker present + not
-  # running).
-  if [[ "$health" != "stopped" ]]; then
-    if repair_unhealthy_session "$session" "$workspace" "$remote_spec" "$health"; then
-      # Repair running or just background-dispatched; it owns the relaunch.
-      report_item "$report_items" "$session" "repair" "repair_running" "$health" "$workspace" "$remote_spec"
-      return 0
-    fi
-    local meta_repair_trigger meta_dispatch_result
-    meta_repair_trigger="$(meta_repair_trigger_status)"
+    )"
     if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
       if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items"; then
         meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
@@ -5687,20 +5536,6 @@ PY
       fi
       log "session stopped after mechanical relaunch; repair loop missing -> direct relaunch session=$session"
     elif kimi_dispatch_failed_previously "$session"; then
-      local meta_repair_trigger meta_dispatch_result
-      meta_repair_trigger="$(meta_repair_trigger_status)"
-      if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
-        if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items"; then
-          meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
-          if [[ "$meta_dispatch_result" == "dispatched" ]]; then
-            log "session stopped after repair failure; meta-repair background-dispatched session=$session trigger=${meta_repair_trigger#TRIGGER:}"
-            return 0
-          fi
-          log "session stopped after repair failure; meta-repair trigger matched but fell through to direct relaunch session=$session trigger=${meta_repair_trigger#TRIGGER:} dispatch=${meta_dispatch_result:-unknown}"
-        else
-          log "session stopped after repair failure; meta-repair trigger matched but dispatch unavailable session=$session trigger=${meta_repair_trigger#TRIGGER:}"
-        fi
-      fi
       log "session stopped; repair loop tried and exited without recovery -> direct relaunch session=$session"
       kimi_dispatch_marker_clear "$session"
     else

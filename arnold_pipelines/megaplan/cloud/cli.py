@@ -1864,7 +1864,8 @@ def _chain_start_command(
     )
     if engine_dir:
         engine_path = shlex.quote(engine_dir)
-        prefix += f"cd {engine_path} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
+        cwd = shlex.quote(project_dir or engine_dir)
+        prefix += f"cd {cwd} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
     return (
         f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start {flags} "
         f">> {log_target} 2>&1"
@@ -1890,7 +1891,7 @@ def _plan_auto_command(
     )
     if engine_dir:
         engine_path = shlex.quote(engine_dir)
-        prefix += f"cd {engine_path} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
+        prefix += f"cd {shlex.quote(workspace)} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
         command = (
             f"python3 -P -m arnold_pipelines.megaplan auto "
             f"--plan {shlex.quote(plan_name)} --project-dir {shlex.quote(workspace)}"
@@ -2117,7 +2118,7 @@ def _epic_chain_start_command(
     )
     if engine_dir:
         engine_path = shlex.quote(engine_dir)
-        prefix += f"cd {engine_path} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
+        prefix += f"cd {shlex.quote(workspace)} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
     return (
         f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan epic-chain start {flags} "
         f">> {log_target} 2>&1"

@@ -132,6 +132,15 @@ path.write_text(redact_text(path.read_text(encoding="utf-8")), encoding="utf-8")
 PY
 }
 
+prepare_repair_agent_exec_env() {
+  # Repair prompts can include large summarized incident context. If allexport
+  # leaks in from the parent shell or sourced hot env, those locals become
+  # exported environment strings and Linux can reject execve with E2BIG before
+  # the repair agent starts.
+  set +a
+  export -n failure_summary chain_health_block recurrence_block mode_tasks relaunch_command 2>/dev/null || true
+}
+
 clear_session_repair_markers_now() {
   require_repair_lock_held
   rm -f "$NEEDS_HUMAN_FILE" "$MARKER_DIR/$SESSION.kimi-dispatch" "$MARKER_DIR/$SESSION.kimi-pgid" 2>/dev/null || true
@@ -278,105 +287,19 @@ PY
   fi
 }
 
-run_with_bounded_env() {
-  local timeout_secs="$1"
-  local stdin_path="$2"
-  shift 2
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$timeout_secs" "$stdin_path" "$@" <<'PY'
-import os
-import subprocess
-import sys
-
-timeout_secs = int(float(sys.argv[1]))
-stdin_path = sys.argv[2]
-argv = sys.argv[3:]
-
-whitelist = (
-    "ANTHROPIC_API_KEY",
-    "DEEPSEEK_API_KEY",
-    "GH_TOKEN",
-    "HOME",
-    "KIMI_API_KEY",
-    "KIMI_BASE_URL",
-    "LANG",
-    "LC_ALL",
-    "LC_CTYPE",
-    "LOGNAME",
-    "MEGAPLAN_DEFAULT_PROFILE",
-    "MEGAPLAN_REPAIR_PROFILE",
-    "NO_COLOR",
-    "OPENAI_API_KEY",
-    "OPENROUTER_API_KEY",
-    "PATH",
-    "PYENV_VERSION",
-    "PYTHONPATH",
-    "PYTHONSAFEPATH",
-    "TERM",
-    "TMPDIR",
-    "USER",
-    "ZHIPU_API_KEY",
-)
-env = {}
-for key in whitelist:
-    value = os.environ.get(key)
-    if value:
-        env[key] = value
-
-stdin_handle = None
-try:
-    if stdin_path:
-        stdin_handle = open(stdin_path, "rb")
-    completed = subprocess.run(
-        argv,
-        check=False,
-        env=env,
-        stdin=stdin_handle,
-        timeout=timeout_secs,
-    )
-except subprocess.TimeoutExpired:
-    raise SystemExit(124)
-finally:
-    if stdin_handle is not None:
-        stdin_handle.close()
-
-raise SystemExit(completed.returncode)
-PY
-}
-
-finalize_nonterminal_repair_outcome() {
-  local exit_code="${1:-0}"
-  local current_outcome="" final_outcome=""
-  if [[ "$exit_code" == "0" || ! -f "$DATA_FILE" || "$REPAIR_LOCK_DIR_OWNED" != "1" ]]; then
-    return
-  fi
-  current_outcome="$(json_field "$DATA_FILE" outcome 2>/dev/null || true)"
-  case "${current_outcome:-}" in
-    ""|repairing|running)
-      final_outcome="repair_exhausted"
-      if [[ "$(repair_exhausted_should_retry_without_human 2>/dev/null || true)" == "1" ]]; then
-        final_outcome="recurring_retry_pending"
-      fi
-      repair_data_set_outcome "$final_outcome"
-      log "repair loop exited unexpectedly with non-terminal outcome=${current_outcome:-unset}; finalized outcome=$final_outcome session=$SESSION exit_code=$exit_code"
-      ;;
-  esac
-}
-
 shutdown_repair_loop() {
-  local exit_code="${1:-0}"
   if [[ "$REPAIR_SHUTDOWN_RAN" == "1" ]]; then
     return
   fi
   REPAIR_SHUTDOWN_RAN=1
-  finalize_nonterminal_repair_outcome "$exit_code"
   cleanup_children
   release_repair_lock
 }
 
-trap 'shutdown_repair_loop $?' EXIT
-trap 'shutdown_repair_loop 129; exit 129' HUP
-trap 'shutdown_repair_loop 130; exit 130' INT
-trap 'shutdown_repair_loop 143; exit 143' TERM
+trap 'shutdown_repair_loop' EXIT
+trap 'shutdown_repair_loop; exit 129' HUP
+trap 'shutdown_repair_loop; exit 130' INT
+trap 'shutdown_repair_loop; exit 143' TERM
 
 acquire_repair_lock() {
   local existing_pid="" live_pid="" lock_owner_pid="" lock_status="" stale_lock_json="" repair_lock_output=""
@@ -749,7 +672,7 @@ default_plan_relaunch_command() {
   local workspace="$2"
   local log_path="$workspace/.megaplan/cloud-logs/${plan_name}.log"
   printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan auto --plan %q --project-dir %q >> %q 2>&1' \
-    "$ARNOLD_SRC" "$ARNOLD_SRC" "$plan_name" "$workspace" "$log_path"
+    "$workspace" "$ARNOLD_SRC" "$plan_name" "$workspace" "$log_path"
 }
 
 resolve_relaunch_command() {
@@ -775,7 +698,7 @@ resolve_relaunch_command() {
     log_relative=".megaplan/cloud-chain-${session}.log"
   fi
   printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
-    "$ARNOLD_SRC" "$ARNOLD_SRC" "$remote_spec" "$workspace" "$workspace/$log_relative"
+    "$workspace" "$ARNOLD_SRC" "$remote_spec" "$workspace" "$workspace/$log_relative"
 }
 
 repair_target_completion_status() {
@@ -1234,53 +1157,13 @@ def _history_tail_summary(plan_state: dict[str, object]) -> dict[str, object]:
     return {"last_entries": last_entries, "consecutive_execute_blocked": consecutive}
 
 
-def _artifact_batch_number(path: pathlib.Path | None, prefix: str, suffix: str) -> int | None:
-    if path is None:
-        return None
-    name = path.name
-    if not (name.startswith(prefix) and name.endswith(suffix)):
-        return None
-    middle = name[len(prefix) : len(name) - len(suffix)]
-    return int(middle) if middle.isdigit() else None
-
-
-def _prefer_authoritative_execute_artifacts(
-    output_summary: dict[str, object],
-    execution_summary: dict[str, object],
-) -> dict[str, object]:
-    output_path_raw = output_summary.get("path")
-    execution_path_raw = execution_summary.get("path")
-    output_path = pathlib.Path(str(output_path_raw)) if output_path_raw else None
-    execution_path = pathlib.Path(str(execution_path_raw)) if execution_path_raw else None
-    output_batch = _artifact_batch_number(output_path, "execute_batch_", "_output.json")
-    execution_batch = _artifact_batch_number(execution_path, "execution_batch_", ".json")
-    if (
-        output_batch is None
-        or execution_batch is None
-        or output_batch != execution_batch
-        or not execution_summary.get("status_counts")
-    ):
-        return output_summary
-    return {
-        "path": output_summary.get("path"),
-        "status": "superseded_by_execution_batch",
-        "superseded_by": execution_summary.get("path"),
-        "batch_number": output_batch,
-    }
-
-
 def _collect_execute_attempt_context(plan_dir: pathlib.Path, plan_state: dict[str, object]) -> dict[str, object]:
     output_path = _newest_artifact(plan_dir, "execute_batch_*_output.json")
     execution_path = _newest_artifact(plan_dir, "execution_batch_*.json")
-    output_summary = _summarize_execute_batch_artifact(output_path)
-    execution_summary = _summarize_execute_batch_artifact(execution_path)
     context: dict[str, object] = {
         "plan_dir": str(plan_dir),
-        "execute_batch_output": _prefer_authoritative_execute_artifacts(
-            output_summary,
-            execution_summary,
-        ),
-        "execution_batch": execution_summary,
+        "execute_batch_output": _summarize_execute_batch_artifact(output_path),
+        "execution_batch": _summarize_execute_batch_artifact(execution_path),
         "plan_history": _history_tail_summary(plan_state),
     }
     finalize_path = plan_dir / "finalize.json"
@@ -3698,6 +3581,7 @@ PY
 }
 
 write_dev_prompt() {
+  set +a
   local prompt_path="$1"
   local requested_model="$2"
   local dispatch_model="$3"
@@ -3789,6 +3673,7 @@ EOF
 }
 
 write_kimi_prompt() {
+  set +a
   local prompt_path="$1"
   local relaunch_command="$2"
   local report_path="$3"
@@ -3849,10 +3734,11 @@ run_dev_fix_turn() {
   fi
   dev_timeout="$(cap_timeout_to_repair_budget "$dev_timeout" "dev-dispatch-$iteration")"
   log "iteration=$iteration dev-fix model=$dispatch_model requested=$requested_model recurring=$recurring timeout=$dev_timeout reasoning=$reasoning_effort"
+  prepare_repair_agent_exec_env
   if [[ "$dispatch_kind" == "hermes" ]]; then
     (
       cd "$ARNOLD_SRC" &&
-      run_with_bounded_env "$dev_timeout" "" python "$HERMES_LAUNCHER" \
+      timeout "$dev_timeout" env PYENV_VERSION="${PYENV_VERSION:-3.11.11}" python "$HERMES_LAUNCHER" \
         --model="$dispatch_model" \
         --toolsets="file,web,terminal" \
         --query_file="$prompt_path" \
@@ -3861,11 +3747,11 @@ run_dev_fix_turn() {
   else
     (
       cd "$ARNOLD_SRC" &&
-      run_with_bounded_env "$dev_timeout" "$prompt_path" codex exec \
+      timeout "$dev_timeout" codex exec \
         --sandbox danger-full-access \
         -c model="$dispatch_model" \
         -c model_reasoning_effort="$reasoning_effort" \
-        -
+        - < "$prompt_path"
     ) >> "$LOG" 2>&1 &
   fi
   local child_pid=$!
@@ -3893,9 +3779,11 @@ run_kimi_launch_turn() {
   write_kimi_prompt "$prompt_path" "$relaunch_command" "$report_path"
   KIMI_TIMEOUT="$(cap_timeout_to_repair_budget "$KIMI_TIMEOUT" "kimi-dispatch-$iteration")"
   log "iteration=$iteration kimi-launch model=$KIMI_MODEL timeout=$KIMI_TIMEOUT"
+  prepare_repair_agent_exec_env
   (
     cd "$ARNOLD_SRC" &&
-    run_with_bounded_env "$KIMI_TIMEOUT" "" python3 -P -m arnold.agent.run_agent \
+    PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" \
+    timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent \
       --query_file="$prompt_path" \
       --model="$KIMI_MODEL" \
       --api_key="${KIMI_API_KEY:-}" \
