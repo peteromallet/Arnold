@@ -4019,6 +4019,8 @@ def test_selected_precedent_unknown_constructor_stops_as_authoring_blocker(
     assert result["outcome"]["kind"] == "clarify"
     assert result["graph_unchanged"] is True
     assert "cannot author the required workflow classes" in result["message"]
+    assert "I found a HotShotXL workflow precedent" not in result["message"]
+    assert "AnimateDiff Video Generation with ControlNet and IP-Adapter" in result["message"]
     assert "HotshotXLCLIPTextEncode" in result["message"]
     messages_path = (
         tmp_path

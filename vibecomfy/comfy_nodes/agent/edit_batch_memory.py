@@ -443,15 +443,16 @@ def _selected_precedent_unknown_class_feedback(
             for match in re.findall(r"Unknown class_type '([^']+)'", message):
                 if match not in unknown_classes:
                     unknown_classes.append(match)
-        source = str(getattr(statement, "source", "") or "")
-        match = re.search(r"=\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(", source)
-        if match:
-            class_type = match.group(1)
-            if class_type and class_type not in unknown_classes:
-                unknown_classes.append(class_type)
 
     if not unknown_classes:
         return ""
+
+    selected_name = str(selected.get("name") or "").strip()
+    precedent_text = (
+        f"the selected workflow precedent ({selected_name})"
+        if selected_name
+        else "the selected workflow precedent"
+    )
 
     precedent_classes: list[str] = []
     for key in ("minimal_spine", "terminal_output_path"):
@@ -480,13 +481,13 @@ def _selected_precedent_unknown_class_feedback(
     if invented_classes:
         invented_text = ", ".join(invented_classes[:4])
         return (
-            "I found a HotShotXL workflow precedent, but this edit session cannot author the "
+            f"I found {precedent_text}, but this edit session cannot author the "
             f"required workflow classes ({missing_text}). I also rejected invented replacement "
             f"class names ({invented_text}) because they were not present in the selected "
             "precedent or the current authoring schema. The graph is unchanged."
         )
     return (
-        "I found a HotShotXL workflow precedent, but this edit session cannot author the "
+        f"I found {precedent_text}, but this edit session cannot author the "
         f"required workflow classes ({missing_text}). The graph is unchanged."
     )
 
