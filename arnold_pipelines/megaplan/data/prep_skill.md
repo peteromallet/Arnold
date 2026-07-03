@@ -21,7 +21,7 @@ The dials are independent — work through each one ignoring the others — then
 
 **The dials measure residual complexity, not nominal scope.** Discount for decisions already made; add for unknowns remaining. A spec-shaped brief with everything known lands a tier lower than the same nominal scope arriving as a sketch.
 
-**Defaults to keep in mind:** score the run first; use `--profile partnered-3 --vendor codex` for overall plan difficulty 1–3, `partnered-4` for 4, and `partnered-5` for 5. Keep `--robustness full` and `--depth` unset unless you can name the specific reason to change them. Built-in profiles live in `megaplan/profiles/`; per-user (`~/.config/megaplan/profiles.toml`) and per-project (`<project>/.megaplan/profiles.toml`) TOML overrides win over them.
+**Defaults to keep in mind: default to `--profile partnered-5` unless the user instructs otherwise.** Prefer maximum planning/critique quality even when the work looks small; only step down to `partnered-4` or `partnered-3` when the user asks for a lighter run or you can name a concrete reason the work is genuinely trivial (decisions already locked, single localized change, failure trivially detected). Still score overall plan difficulty 1–5 for the record and to justify any downward deviation. Keep `--vendor` at your config default, `--robustness full`, and `--depth` unset unless you can name the specific reason to change them. Built-in profiles live in `megaplan/profiles/`; per-user (`~/.config/megaplan/profiles.toml`) and per-project (`<project>/.megaplan/profiles.toml`) TOML overrides win over them.
 
 ---
 
@@ -97,7 +97,7 @@ Use these guardrails:
 - Use `5` when a bad plan could still pass local tests while damaging a contract, invariant, migration path, data model, security boundary, or downstream architecture.
 - Score the highest plausible planning failure, not the scariest noun. Production data, auth, or schemas do not automatically mean `5` if the actual change is local and well-proven.
 
-When genuinely torn between two scores, choose the lower score and raise `--depth` or `--robustness` first, unless the specific risk is bad task decomposition, bad task-difficulty adjudication, or a bad architecture choice. Those are profile-selection risks.
+When genuinely torn, **stay at the `partnered-5` default** unless the user has asked for a lighter run — the difficulty score documents the risk profile and justifies any downward deviation; it does not pull you below the default on its own. The risks that genuinely warrant staying high regardless of size are profile-selection risks: bad task decomposition, bad task-difficulty adjudication, or a bad architecture choice.
 
 Use the dials separately:
 
@@ -235,7 +235,7 @@ The invocation has three layers: three flags for the dials, four modifiers for o
 
 ### The modifier flags
 
-- **`--vendor claude|codex`** — vendor override where the selected profile exposes premium vendor slots. Defaults to `[defaults].vendor` in `~/.config/megaplan/config.toml` (or `claude` if unset).
+- **`--vendor claude|codex`** — vendor override where the selected profile exposes premium vendor slots. Defaults to `[defaults].vendor` in `~/.config/megaplan/config.toml` (or `codex` if unset).
 - **`--critic cross`** — overrides the critique+review pair to the other premium vendor relative to `--vendor`, when supported by the selected profile.
 - **`--deepseek-provider direct`** — keeps canonical DeepSeek v4-pro slots on DeepSeek's direct API. Defaults to `direct`; Fireworks is not a supported DeepSeek route.
 - **`--with-prep`** — force the `prep` research phase into the workflow regardless of `--robustness`. Off by default; no-op at `thorough`/`extreme`. See "Optional phases" above.

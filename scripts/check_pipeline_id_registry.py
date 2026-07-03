@@ -17,6 +17,7 @@ if _repo_str in sys.path:
 sys.path.insert(0, _repo_str)
 
 from arnold.pipeline import (  # noqa: E402
+    Pipeline as NativePipeline,
     load_pipeline_id_registries,
     load_pipeline_id_registry,
 )
@@ -196,6 +197,7 @@ def check_aggregate_uniqueness(paths: list[Path]) -> list[str]:
 
 
 _HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_NATIVE_ID_RE = re.compile(r"^native:[A-Za-z0-9_.-]+$")
 DEFAULT_IDENTITY_REPORT = REPO_ROOT / "docs" / "arnold" / "manifest-identity-report.json"
 
 
@@ -222,16 +224,31 @@ def _compile_workflow_manifest(info: ShippedPipelineInfo) -> Any | None:
     return compile_pipeline(built)
 
 
+def _manifest_identity(info: ShippedPipelineInfo) -> str | None:
+    """Return the registry identity emitted for workflow and native builders."""
+
+    if info.builder is None:
+        return None
+    built = info.builder()
+    from arnold.workflow.dsl import Pipeline as WorkflowPipeline
+
+    if isinstance(built, WorkflowPipeline):
+        return compile_pipeline(built).manifest_hash or ""
+    if isinstance(built, NativePipeline) and getattr(built, "native_program", None) is not None:
+        return f"native:{built.native_program.name}"
+    return None
+
+
 def _expected_manifest_hashes() -> dict[str, str]:
-    """Compute expected manifest hashes from compiled workflow builders."""
+    """Compute expected registry identities from shipped builders."""
     expected: dict[str, str] = {}
     for info in discover_migrated_pipelines():
         if info.registry_id is None:
             continue
-        manifest = _compile_workflow_manifest(info)
-        if manifest is None:
+        identity = _manifest_identity(info)
+        if identity is None:
             continue
-        expected[info.registry_id] = manifest.manifest_hash or ""
+        expected[info.registry_id] = identity
     return expected
 
 
@@ -260,7 +277,9 @@ def check_registry_hashes(paths: list[Path]) -> list[str]:
                         f"[{path}] {stable_id!r}: missing manifest_hash after Phase 4"
                     )
                 continue
-            if not isinstance(manifest_hash, str) or not _HASH_RE.match(manifest_hash):
+            if not isinstance(manifest_hash, str) or not (
+                _HASH_RE.match(manifest_hash) or _NATIVE_ID_RE.match(manifest_hash)
+            ):
                 errors.append(
                     f"[{path}] {stable_id!r}: invalid manifest_hash {manifest_hash!r}"
                 )
@@ -400,6 +419,7 @@ def build_manifest_identity_report(
         if info.registry_id is None:
             continue
         manifest = _compile_workflow_manifest(info)
+        manifest_identity = _manifest_identity(info)
         registry_entry = registry_entries.get(info.registry_id)
         registry_manifest_hash = None
         registry_path = None
@@ -414,7 +434,7 @@ def build_manifest_identity_report(
                 "package_path": info.package_path,
                 "package_exists": (root / info.package_path).exists(),
                 "compiled_manifest_hash": (
-                    manifest.manifest_hash or "" if manifest is not None else ""
+                    manifest_identity or (manifest.manifest_hash or "" if manifest is not None else "")
                 ),
                 "registry_path": registry_path,
                 "registry_manifest_hash": registry_manifest_hash,

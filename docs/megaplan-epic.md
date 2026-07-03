@@ -71,7 +71,7 @@ on_failure:
   abort: stop_chain                  # stop_chain | skip_milestone | retry_milestone
 on_escalate:
   abort: stop_chain
-merge_policy: auto                   # auto | manual
+merge_policy: auto                   # default: auto. Use for unattended/cloud epics so clean milestone PRs merge and the chain advances; use review/manual only when the user explicitly wants a human PR gate after every milestone.
 
 driver:
   robustness: standard               # default if a milestone doesn't override
@@ -145,6 +145,8 @@ State persistence means:
 ## Cloud chain mode
 
 For chains that need to outlive your terminal session, run them inside `megaplan cloud` with `mode: chain` in `cloud.yaml`. The container drives the chain unattended; you observe via `megaplan cloud status` / `cloud logs` / `cloud attach`. See `docs/cloud.md` for the cloud reference.
+
+Cloud epics should normally keep `merge_policy: auto` and `driver.auto_approve: true`. `merge_policy: review`/`manual` intentionally parks the chain at `awaiting_pr_merge` after every milestone PR; do not use it for unattended runs unless the user asked for human PR review gates.
 
 When supervising a long cloud chain, follow the cadence in the main megaplan skill: check after launch, again after 10-15 min, then hourly.
 

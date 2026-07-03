@@ -416,7 +416,7 @@ def _render_next_milestone_recommendations(data: dict[str, Any]) -> str:
     if not rows:
         lines.append("- **Populate the manifest:** no disposition rows have been classified yet.")
     else:
-        lines.append("- **Extract capability seams** (M2a) before relocating plugins (M2b) to `arnold_pipelines/megaplan/`.")
+        lines.append("- **Extract capability seams** (M2a) before relocating plugins (M2b) to `arnold/pipelines/megaplan/`.")
 
     if not data.get("parity_gates"):
         lines.append("- **Define parity gates:** no behavior-preservation gates have been declared.")

@@ -44,6 +44,9 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     REPAIR_TIMEOUT,
     REPAIRING,
     atomic_write_json,
+    merge_additive_fields,
+    read_repair_index,
+    save_repair_data,
 )
 
 
@@ -1155,6 +1158,49 @@ class TestPersistMetaRepairRecord:
         assert loaded["diagnosis"] == "Snapshot read error"
         assert loaded["changes"] == [{"file": "a.py", "action": "add"}]
         assert loaded["outcome"] == "needs_human"
+
+    def test_persist_updates_session_index_without_clobbering_latest_outcome(
+        self, tmp_path: Path
+    ) -> None:
+        repair_dir = tmp_path / "repair-data"
+        repair_dir.mkdir(parents=True)
+        save_repair_data(
+            repair_dir / "json-session.repair-data.json",
+            merge_additive_fields(
+                {
+                    "session": "json-session",
+                    "workspace": "/workspace/project",
+                    "run_kind": "chain",
+                    "plan_name": "m5-plan",
+                    "outcome": REPAIR_TIMEOUT,
+                    "attempts": [],
+                    "iterations": [],
+                    "initial_facts": {},
+                    "current_advancement_snapshot": {},
+                    "current_signature": {},
+                },
+                verification={"recorded_at": "2026-07-01T11:50:00+00:00"},
+            ),
+        )
+
+        record = MetaRepairRecord(
+            meta_repair_id="mr-indexed",
+            session="json-session",
+            trigger=MetaRepairTrigger.STATE_INSPECTION_FAILURE,
+            diagnosis="Snapshot read error",
+            outcome="fixed",
+            created_at="2026-07-01T12:00:00+00:00",
+        )
+
+        persist_meta_repair_record(record, repair_data_dir=repair_dir)
+
+        index_payload = read_repair_index(repair_dir / "index.json")
+        session_entry = index_payload["sessions"]["json-session"]
+        assert session_entry["refs"]["latest-outcome"]["outcome"] == REPAIR_TIMEOUT
+        assert session_entry["latest_meta_repair_id"] == "mr-indexed"
+        assert session_entry["latest_meta_outcome"] == "fixed"
+        assert session_entry["latest_meta_recorded_at"] == "2026-07-01T12:00:00+00:00"
+        assert session_entry["latest_meta_record_path"].endswith("/repair-data/meta/mr-indexed.json")
 
     def test_load_persisted_record_roundtrip(self, tmp_path: Path) -> None:
         repair_dir = tmp_path / "repair-data"
