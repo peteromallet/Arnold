@@ -1,0 +1,13 @@
+{
+  "incidents": [],
+  "integrity": [],
+  "projection": "incidents",
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "event_count": 0,
+    "journal_line_count": 0,
+    "last_seq": null,
+    "malformed_line_count": 0
+  }
+}
