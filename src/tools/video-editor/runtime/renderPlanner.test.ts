@@ -1,14 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { planRender } from '@/tools/video-editor/runtime/renderPlanner.ts';
+import {
+  blockerToRouteFitMetadata,
+  findingToRouteFitMetadata,
+} from '@/tools/video-editor/runtime/routeFitMapper.ts';
 import type {
   CapabilityFinding,
   CapabilityRequirement,
   ProcessStatus,
+  RenderBlocker,
   RenderMaterialRef,
   TimelineSnapshot,
 } from '@reigh/editor-sdk';
 import type {
+  ContributionIndex,
   VideoEditorOutputFormatDescriptor,
+  VideoEditorPlannerBlockerDescriptor,
   VideoEditorProcessDescriptor,
   VideoEditorShaderDescriptor,
 } from '@/tools/video-editor/runtime/extensionSurface.ts';
@@ -282,6 +289,42 @@ function shaderMaterializerProcess(): VideoEditorProcessDescriptor {
     blockers: [],
     nextActions: [],
   };
+}
+
+function shaderContributionIndex(
+  entries: readonly {
+    contributionId: string;
+    extensionId?: string;
+    status?: 'active' | 'inactive-reserved' | 'disabled' | 'invalid';
+    projected?: boolean;
+    projectionEligible?: boolean;
+    source?: 'descriptor-array' | 'preserved-record';
+  }[],
+): ContributionIndex {
+  const index: Record<string, ContributionIndex[string]> = {};
+
+  for (const entry of entries) {
+    const extensionId = entry.extensionId ?? 'ext.shader';
+    const scopedKey = `shader:${extensionId}:${entry.contributionId}`;
+    index[scopedKey] = [{
+      scopedKey,
+      kind: 'shader',
+      extensionId,
+      contributionId: entry.contributionId,
+      status: entry.status ?? 'active',
+      diagnostics: [],
+      duplicateOrdinal: 0,
+      projectionEligible: entry.projectionEligible ?? true,
+      projection: {
+        duplicateOrdinal: 0,
+        eligible: entry.projectionEligible ?? true,
+        projected: entry.projected ?? true,
+        source: entry.source ?? 'descriptor-array',
+      },
+    }];
+  }
+
+  return index;
 }
 
 function materialRef(
@@ -569,9 +612,62 @@ describe('planRender', () => {
           },
         ],
       },
+      extensionRuntime: {
+        outputFormats: [],
+        processes: [],
+        shaders: [],
+        contributionIndex: shaderContributionIndex([
+          { contributionId: 'ext.shader.clip' },
+          { contributionId: 'ext.shader.post' },
+          { contributionId: 'ext.shader.clip.second' },
+          { contributionId: 'ext.shader.post.second' },
+        ]),
+      },
     });
 
     expect(result.canBrowserExport).toBe(false);
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'planner.shaderComposition.clip:clip-1.shader.preview.clip.second.browser-export.scope-occupied',
+        severity: 'error',
+        route: 'browser-export',
+        reason: 'unknown',
+        extensionId: 'ext.shader',
+        contributionId: 'ext.shader.clip.second',
+        detail: {
+          source: 'shader-composition-limit',
+          scope: 'clip',
+          clipId: 'clip-1',
+          existingShaderId: 'shader.preview.clip',
+          incomingShaderId: 'shader.preview.clip.second',
+        },
+      }),
+      expect.objectContaining({
+        id: 'planner.shaderComposition.clip:clip-1.shader.preview.clip.second.worker-export.scope-occupied',
+        severity: 'error',
+        route: 'worker-export',
+      }),
+      expect.objectContaining({
+        id: 'planner.shaderComposition.postprocess.shader.preview.post.second.browser-export.scope-occupied',
+        severity: 'error',
+        route: 'browser-export',
+        reason: 'unknown',
+        extensionId: 'ext.shader',
+        contributionId: 'ext.shader.post.second',
+        detail: {
+          source: 'shader-composition-limit',
+          scope: 'postprocess',
+          clipId: undefined,
+          existingShaderId: 'shader.preview.post',
+          incomingShaderId: 'shader.preview.post.second',
+        },
+      }),
+      expect.objectContaining({
+        id: 'planner.shaderComposition.postprocess.shader.preview.post.second.worker-export.scope-occupied',
+        severity: 'error',
+        route: 'worker-export',
+      }),
+    ]));
     expect(result.blockers).toEqual(expect.arrayContaining([
       expect.objectContaining({
         route: 'browser-export',
@@ -595,6 +691,67 @@ describe('planRender', () => {
       expect.objectContaining({
         message: 'Shader "shader.preview.post.second" cannot export because no shader materializer produced RenderMaterial for timeline postprocess.',
       }),
+    ]));
+  });
+
+  it('projects snapshot shader refs through the contribution index before duplicate-scope diagnosis', () => {
+    const result = planRender({
+      snapshot: {
+        ...snapshotWithShaders(),
+        shaders: [
+          {
+            id: 'clip-1:shader:shader.preview.clip',
+            shaderId: 'shader.preview.clip',
+            scope: 'clip',
+            clipId: 'clip-1',
+            extensionId: 'ext.shader',
+            contributionId: 'ext.shader.clip',
+            enabled: true,
+          },
+          {
+            id: 'clip-1:shader:shader.preview.clip.disabled',
+            shaderId: 'shader.preview.clip.disabled',
+            scope: 'clip',
+            clipId: 'clip-1',
+            extensionId: 'ext.shader',
+            contributionId: 'ext.shader.clip.disabled',
+            enabled: true,
+          },
+        ],
+      },
+      extensionRuntime: {
+        outputFormats: [],
+        processes: [],
+        shaders: [],
+        contributionIndex: shaderContributionIndex([
+          { contributionId: 'ext.shader.clip' },
+          {
+            contributionId: 'ext.shader.clip.disabled',
+            status: 'disabled',
+            projected: false,
+            projectionEligible: false,
+            source: 'preserved-record',
+          },
+        ]),
+      },
+    });
+
+    expect(result.findings).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'planner.shaderComposition.clip:clip-1.shader.preview.clip.disabled.browser-export.scope-occupied',
+      }),
+      expect.objectContaining({
+        id: 'planner.shaderComposition.clip:clip-1.shader.preview.clip.disabled.worker-export.scope-occupied',
+      }),
+    ]));
+    expect(result.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        contributionId: 'ext.shader.clip',
+        message: 'Shader "shader.preview.clip" cannot export because no shader materializer produced RenderMaterial for clip "clip-1".',
+      }),
+    ]));
+    expect(result.blockers).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ contributionId: 'ext.shader.clip.disabled' }),
     ]));
   });
 
@@ -960,6 +1117,291 @@ describe('planRender', () => {
         expect.objectContaining({ label: 'Materialize hero-shot:depth' }),
         expect.objectContaining({ label: 'Materialize hero-shot:normal' }),
       ],
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Route planner / route-fit compatibility (M1a T17)
+  // ---------------------------------------------------------------------------
+
+  describe('route planner / route-fit compatibility', () => {
+    const attributableIdx: ContributionIndex = shaderContributionIndex([
+      { contributionId: 'ext.shader.clip', extensionId: 'ext.shader' },
+      { contributionId: 'ext.shader.post', extensionId: 'ext.shader' },
+    ]);
+
+    const ambiguousIdx: ContributionIndex = (() => {
+      const map: Record<string, ContributionIndex[string]> = {};
+      const create = (scopedKey: string, contributionId: string, extensionId: string) => {
+        map[scopedKey] = [{
+          scopedKey,
+          kind: scopedKey.split(':')[0],
+          extensionId,
+          contributionId,
+          status: 'active' as const,
+          diagnostics: Object.freeze([]),
+          duplicateOrdinal: 0,
+          projectionEligible: true,
+          projection: Object.freeze({
+            duplicateOrdinal: 0,
+            eligible: true,
+            projected: true,
+            source: 'descriptor-array' as const,
+          }),
+        }];
+      };
+      create('shader:ext-a:shared', 'shared', 'ext-a');
+      create('output-format:ext-a:shared', 'shared', 'ext-a');
+      return Object.freeze(map);
+    })();
+
+    it('produces identical RenderPlannerResult top-level keys regardless of contributionIndex', () => {
+      const without = planRender({ snapshot: snapshotWithShaders() });
+      const withIdx = planRender({
+        snapshot: snapshotWithShaders(),
+        extensionRuntime: {
+          outputFormats: [],
+          processes: [],
+          shaders: [],
+          contributionIndex: attributableIdx,
+        },
+      });
+
+      // All top-level result keys must be present in both paths.
+      const resultKeys: readonly (keyof typeof without)[] = [
+        'guard', 'findings', 'blockers', 'routes', 'routePlans',
+        'diagnostics', 'nextActions', 'canBrowserExport', 'canWorkerExport',
+      ];
+      for (const key of resultKeys) {
+        expect(withIdx).toHaveProperty(key);
+        expect(without).toHaveProperty(key);
+      }
+    });
+
+    it('preserves route plans with identical blocker counts when contributionIndex has only active entries', () => {
+      const without = planRender({ snapshot: snapshotWithShaders() });
+      const withIdx = planRender({
+        snapshot: snapshotWithShaders(),
+        extensionRuntime: {
+          outputFormats: [],
+          processes: [],
+          shaders: [],
+          contributionIndex: attributableIdx,
+        },
+      });
+
+      // Route shape must be identical when no projection filtering changes the shader list.
+      for (const route of ['browser-export', 'worker-export'] as const) {
+        const withoutPlan = without.routePlans.find((rp) => rp.route === route);
+        const withPlan = withIdx.routePlans.find((rp) => rp.route === route);
+        expect(withPlan?.blockerCount).toBe(withoutPlan?.blockerCount);
+        expect(withPlan?.blocked).toBe(withoutPlan?.blocked);
+      }
+    });
+
+    it('keeps canBrowserExport and canWorkerExport consistent when contributionIndex does not filter shaders', () => {
+      const withIdx = planRender({
+        snapshot: snapshotWithShaders(),
+        extensionRuntime: {
+          outputFormats: [],
+          processes: [],
+          shaders: [],
+          contributionIndex: attributableIdx,
+        },
+      });
+
+      // Shader-only snapshots without materializers block both exports.
+      expect(withIdx.canBrowserExport).toBe(false);
+      expect(withIdx.canWorkerExport).toBe(false);
+    });
+
+    it('produces route-fit metadata from blockers only when the blocker is directly attributable', () => {
+      const result = planRender({
+        snapshot: snapshotWithShaders(),
+        extensionRuntime: {
+          outputFormats: [],
+          processes: [],
+          shaders: [],
+          contributionIndex: attributableIdx,
+        },
+      });
+
+      // Shader blockers carry extensionId + contributionId.
+      const shaderBlockers = result.blockers.filter(
+        (b): b is VideoEditorPlannerBlockerDescriptor =>
+          typeof (b as VideoEditorPlannerBlockerDescriptor).extensionId === 'string',
+      );
+
+      for (const blocker of shaderBlockers) {
+        const metadata = blockerToRouteFitMetadata(blocker, attributableIdx);
+        expect(metadata).toBeDefined();
+        expect(metadata!.route).toBe(blocker.route);
+        expect(metadata!.fit).toBe('blocked');
+        expect(metadata!.reason).toBe(blocker.reason);
+      }
+    });
+
+    it('omits route-fit metadata for blockers whose identity is not in the contribution index', () => {
+      const blocker: VideoEditorPlannerBlockerDescriptor = {
+        id: 'blocker-unknown',
+        extensionId: 'ext.unknown',
+        contributionId: 'unknown-contrib',
+        route: 'browser-export',
+        reason: 'route-unsupported',
+        message: 'Unknown contribution.',
+      };
+
+      expect(blockerToRouteFitMetadata(blocker, attributableIdx)).toBeUndefined();
+    });
+
+    it('omits route-fit metadata when contributionIndex is undefined', () => {
+      const blocker: VideoEditorPlannerBlockerDescriptor = {
+        id: 'blocker-no-index',
+        extensionId: 'ext.shader',
+        contributionId: 'ext.shader.clip',
+        route: 'browser-export',
+        reason: 'missing-material',
+        message: 'No material.',
+      };
+
+      expect(blockerToRouteFitMetadata(blocker, undefined)).toBeUndefined();
+    });
+
+    it('omits route-fit metadata from blockers with ambiguous extensionId+contributionId', () => {
+      const blocker: VideoEditorPlannerBlockerDescriptor = {
+        id: 'blocker-ambiguous',
+        extensionId: 'ext-a',
+        contributionId: 'shared',
+        route: 'sidecar-export',
+        reason: 'process-dependent',
+        message: 'Shared identity ambiguous.',
+      };
+
+      expect(blockerToRouteFitMetadata(blocker, ambiguousIdx)).toBeUndefined();
+    });
+
+    it('produces route-fit metadata from findings only when extensionId and contributionId are directly attributable', () => {
+      const finding: CapabilityFinding = {
+        id: 'finding-attributable',
+        severity: 'error',
+        route: 'browser-export',
+        reason: 'missing-material',
+        message: 'Material missing.',
+        extensionId: 'ext.shader',
+        contributionId: 'ext.shader.clip',
+      };
+
+      const metadata = findingToRouteFitMetadata(finding, attributableIdx);
+      expect(metadata).toBeDefined();
+      expect(metadata!.route).toBe('browser-export');
+      expect(metadata!.fit).toBe('blocked'); // error severity → blocked
+    });
+
+    it('maps warning-severity findings to degraded route-fit', () => {
+      const finding: CapabilityFinding = {
+        id: 'finding-warning',
+        severity: 'warning',
+        route: 'worker-export',
+        reason: 'process-dependent',
+        message: 'Degraded.',
+        extensionId: 'ext.shader',
+        contributionId: 'ext.shader.post',
+      };
+
+      const metadata = findingToRouteFitMetadata(finding, attributableIdx);
+      expect(metadata).toBeDefined();
+      expect(metadata!.fit).toBe('degraded');
+    });
+
+    it('omits route-fit metadata from findings when extensionId is missing', () => {
+      const finding: CapabilityFinding = {
+        id: 'finding-no-ext',
+        severity: 'error',
+        route: 'browser-export',
+        reason: 'unknown',
+        message: 'No extension.',
+      };
+
+      expect(findingToRouteFitMetadata(finding, attributableIdx)).toBeUndefined();
+    });
+
+    it('omits route-fit metadata from findings when contributionId is missing', () => {
+      const finding: CapabilityFinding = {
+        id: 'finding-no-contrib',
+        severity: 'error',
+        route: 'browser-export',
+        reason: 'unknown',
+        message: 'No contribution.',
+        extensionId: 'ext.shader',
+      };
+
+      expect(findingToRouteFitMetadata(finding, attributableIdx)).toBeUndefined();
+    });
+
+    it('omits route-fit metadata from findings when contributionIndex is undefined', () => {
+      const finding: CapabilityFinding = {
+        id: 'finding-no-index',
+        severity: 'error',
+        route: 'browser-export',
+        reason: 'missing-material',
+        message: 'No index.',
+        extensionId: 'ext.shader',
+        contributionId: 'ext.shader.clip',
+      };
+
+      expect(findingToRouteFitMetadata(finding, undefined)).toBeUndefined();
+    });
+
+    it('omits route-fit metadata from findings with ambiguous identity', () => {
+      const finding: CapabilityFinding = {
+        id: 'finding-ambiguous',
+        severity: 'error',
+        route: 'sidecar-export',
+        reason: 'unknown',
+        message: 'Ambiguous.',
+        extensionId: 'ext-a',
+        contributionId: 'shared',
+      };
+
+      expect(findingToRouteFitMetadata(finding, ambiguousIdx)).toBeUndefined();
+    });
+
+    it('returns route-fit metadata from a real planner blocker only when the scoped contribution is in the index', () => {
+      // Use a blocker produced by the planner with a known contribution.
+      const result = planRender({
+        snapshot: snapshotWithShaders(),
+      });
+
+      const clipBlocker = result.blockers.find(
+        (b) => (b as RenderBlocker).contributionId === 'ext.shader.clip',
+      ) as VideoEditorPlannerBlockerDescriptor | undefined;
+
+      if (clipBlocker) {
+        // With the proper index the blocker should be attributable.
+        const meta = blockerToRouteFitMetadata(clipBlocker, attributableIdx);
+        expect(meta).toBeDefined();
+        expect(meta!.route).toBe('browser-export');
+
+        // Without the index it should be undefined.
+        expect(blockerToRouteFitMetadata(clipBlocker, undefined)).toBeUndefined();
+      }
+    });
+
+    it('does not leak route-fit metadata for planner blockers whose contribution is not in the contribution index', () => {
+      // Empty index — no entries are attributable.
+      const emptyIndex: ContributionIndex = Object.freeze({});
+
+      const result = planRender({
+        snapshot: snapshotWithShaders(),
+      });
+
+      for (const blocker of result.blockers) {
+        const descriptor = blocker as VideoEditorPlannerBlockerDescriptor;
+        if (descriptor.extensionId && descriptor.contributionId) {
+          // With empty index the identity cannot be resolved.
+          expect(blockerToRouteFitMetadata(descriptor, emptyIndex)).toBeUndefined();
+        }
+      }
     });
   });
 });

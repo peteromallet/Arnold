@@ -1,0 +1,63 @@
+{
+  "id": "log_5dd745b2286c",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 13747,
+      "schema_version": 1,
+      "ts_utc": "2026-07-03T00:37:08.435356+00:00",
+      "ts_rel_init_s": 30824.497423,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T8",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "missing_output:files_changed:src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "missing_outputs": [
+          "files_changed:src/tools/video-editor/runtime/extensionSurface.test.ts",
+          "commands_run:npx vitest run src/tools/video-editor/runtime/extensionSurface.test.ts"
+        ],
+        "stale_evidence": [],
+        "would_block_reasons": [
+          "missing_output:files_changed:src/tools/video-editor/runtime/extensionSurface.test.ts",
+          "missing_output:commands_run:npx vitest run src/tools/video-editor/runtime/extensionSurface.test.ts"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T8",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+              "src/tools/video-editor/runtime/extensionSurface.test.ts"
+            ],
+            "commands_run": [
+              "npx vitest run src/tools/video-editor/runtime/extensionSurface.test.ts"
+            ]
+          },
+          "linked_evidence_count": 11,
+          "evidence_count": 117,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 1,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 117,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-03T00:37:08.433291+00:00"
+      },
+      "transaction_id": "9a4c0bd82674c593",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-03T00:37:08.435426Z"
+}

@@ -1,0 +1,80 @@
+{
+  "id": "log_a3b6c9d5af24",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 4521,
+      "schema_version": 1,
+      "ts_utc": "2026-07-02T19:26:56.482163+00:00",
+      "ts_rel_init_s": 12212.54423,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T11",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T11",
+          "declared_outputs": {
+            "commands_run": [
+              "vitest run renderPlanner.test.ts (14 passed)",
+              "vitest run outputFormatRegistry.test.ts (61 passed)",
+              "vitest run extensionSurface.test.ts (148 passed)",
+              "vitest run SDK boundary/index/manifest tests (1062 passed of 1078; 16 pre-existing DOM/env failures)"
+            ]
+          },
+          "linked_evidence_count": 20,
+          "evidence_count": 202,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 20,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "provided",
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 101,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-02T19:26:56.479846+00:00"
+      },
+      "transaction_id": "ccc91b7f857f82c7",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-02T19:26:56.482250Z"
+}

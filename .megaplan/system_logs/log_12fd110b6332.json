@@ -1,0 +1,79 @@
+{
+  "id": "log_12fd110b6332",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 15005,
+      "schema_version": 1,
+      "ts_utc": "2026-07-03T01:25:10.201265+00:00",
+      "ts_rel_init_s": 33706.263332,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T4",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_files_changed",
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T4",
+          "declared_outputs": {
+            "files_changed": [
+              "config/governance/sdk-public-api-manifest.json"
+            ],
+            "commands_run": [
+              "node scripts/quality/check-sdk-api-manifest.mjs \u2014 CHECK PASSED, 377 export(s) match the baseline manifest",
+              "npm run check:contracts \u2014 Governance check passed for 18 contract(s)",
+              "git diff -- config/governance/sdk-public-api-manifest.json config/contracts/registry.json config/contracts/reigh-extension.schema.json \u2014 no diff (all clean)"
+            ]
+          },
+          "linked_evidence_count": 16,
+          "evidence_count": 272,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 16,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "provided",
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 136,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-03T01:25:10.199113+00:00"
+      },
+      "transaction_id": "9675c7a617150272",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-03T01:25:10.201321Z"
+}

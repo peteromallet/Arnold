@@ -726,26 +726,52 @@ describe('M6: defineExtension accepts M6 contribution types', () => {
     expect(ext.manifest.contributions![2].kind).toBe('searchProvider');
   });
 
-  it('rejects duplicate contribution IDs across M6 kinds', () => {
+  it('allows cross-kind reuse of the same bare contribution ID', () => {
+    // SD3: Cross-kind reuse is valid — only exact scoped-key duplicates (same kind + same ID) are blocked.
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.m6.cross-kind' as any,
+        version: '1.0.0',
+        label: 'M6 Cross-Kind Reuse',
+        contributions: [
+          {
+            id: 'dup-id' as any,
+            kind: 'parser',
+            label: 'Parser',
+            acceptMimeTypes: ['image/jpeg'],
+          },
+          {
+            id: 'dup-id' as any,
+            kind: 'outputFormat',
+            label: 'Output',
+            requiresRender: false,
+            outputExtension: 'json',
+          },
+        ],
+      },
+    });
+    expect(ext.manifest.contributions).toHaveLength(2);
+  });
+
+  it('still rejects same-kind duplicate contribution IDs', () => {
     expect(() =>
       defineExtension({
         manifest: {
-          id: 'com.m6.dup' as any,
+          id: 'com.m6.same-kind-dup' as any,
           version: '1.0.0',
-          label: 'M6 Duplicate Test',
+          label: 'M6 Same-Kind Duplicate',
           contributions: [
             {
               id: 'dup-id' as any,
               kind: 'parser',
-              label: 'Parser',
+              label: 'Parser A',
               acceptMimeTypes: ['image/jpeg'],
             },
             {
               id: 'dup-id' as any,
-              kind: 'outputFormat',
-              label: 'Output',
-              requiresRender: false,
-              outputExtension: 'json',
+              kind: 'parser',
+              label: 'Parser B',
+              acceptMimeTypes: ['image/png'],
             },
           ],
         },
@@ -3299,25 +3325,51 @@ describe('M10: defineExtension accepts agentTool contributions', () => {
     expect(Object.isFrozen((contrib as any).resultFamilies)).toBe(true);
   });
 
-  it('rejects duplicate contribution IDs across agentTool and other kinds', () => {
+  it('allows cross-kind reuse across agentTool and other kinds', () => {
+    // SD3: Cross-kind reuse is valid — only exact scoped-key duplicates (same kind + same ID) are blocked.
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.m10.cross-kind' as any,
+        version: '1.0.0',
+        label: 'M10 Cross-Kind Reuse',
+        contributions: [
+          {
+            id: 'dup-agent' as any,
+            kind: 'agentTool',
+            toolId: 'tool.dup',
+            label: 'Dup Tool',
+          },
+          {
+            id: 'dup-agent' as any,
+            kind: 'command',
+            command: 'dup.cmd',
+            label: 'Dup Command',
+          },
+        ],
+      },
+    });
+    expect(ext.manifest.contributions).toHaveLength(2);
+  });
+
+  it('still rejects same-kind duplicate agentTool IDs', () => {
     expect(() =>
       defineExtension({
         manifest: {
-          id: 'com.m10.dup' as any,
+          id: 'com.m10.same-kind-dup' as any,
           version: '1.0.0',
-          label: 'M10 Duplicate',
+          label: 'M10 Same-Kind Duplicate',
           contributions: [
             {
               id: 'dup-agent' as any,
               kind: 'agentTool',
-              toolId: 'tool.dup',
-              label: 'Dup Tool',
+              toolId: 'tool.dup-a',
+              label: 'Dup Tool A',
             },
             {
               id: 'dup-agent' as any,
-              kind: 'command',
-              command: 'dup.cmd',
-              label: 'Dup Command',
+              kind: 'agentTool',
+              toolId: 'tool.dup-b',
+              label: 'Dup Tool B',
             },
           ],
         },

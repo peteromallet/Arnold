@@ -78,16 +78,14 @@ describe('timeline shader metadata domain helpers', () => {
 
     const assigned = assignTimelineClipShader(clip, otherClipShader);
 
-    expect(assigned.ok).toBe(false);
-    if (!assigned.ok) {
-      expect(assigned.code).toBe('shader_scope_occupied');
-      expect(assigned.scope).toBe('clip');
-      expect(assigned.existing.shaderId).toBe('shader.clipGlow');
-      expect(assigned.incoming.shaderId).toBe('shader.clipEdge');
-      expect(assigned.message).toBe(
-        'Cannot add shader "shader.clipEdge" to clip "clip-1" because shader "shader.clipGlow" is already assigned. V1 supports one clip shader per clip. Remove the existing shader before assigning another.',
-      );
-    }
+    expect(assigned).toEqual({
+      ok: false,
+      code: 'shader_scope_occupied',
+      scope: 'clip',
+      existing: clipShader,
+      incoming: otherClipShader,
+      message: 'Cannot add shader "shader.clipEdge" to clip "clip-1" because shader "shader.clipGlow" is already assigned. V1 supports one clip shader per clip. Remove the existing shader before assigning another.',
+    });
     expect(getTimelineClipShader(clip)).toEqual(clipShader);
   });
 
@@ -100,16 +98,23 @@ describe('timeline shader metadata domain helpers', () => {
 
     const validation = validateTimelineConfigSnapshot(config);
 
-    expect(validation.ok).toBe(false);
-    expect(validation.issues).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        code: 'shader_scope_occupied',
+    expect(validation).toEqual({
+      level: 'config-only',
+      ok: false,
+      issues: [{
+        level: 'config-only',
         severity: 'error',
+        code: 'shader_scope_occupied',
+        message: 'Cannot add shader "shader.clipEdge" to clip "clip-1" because shader "shader.clipGlow" is already assigned. V1 supports one clip shader per clip. Remove the existing shader before assigning another.',
         clipId: 'clip-1',
         path: 'clips.clip-1.app.shader',
-        message: 'Cannot add shader "shader.clipEdge" to clip "clip-1" because shader "shader.clipGlow" is already assigned. V1 supports one clip shader per clip. Remove the existing shader before assigning another.',
-      }),
-    ]));
+        repairApplied: false,
+        details: {
+          scope: 'clip',
+          shaderCount: 2,
+        },
+      }],
+    });
   });
 
   it('assigns and serializes one postprocess shader in timeline app metadata', () => {
@@ -130,16 +135,14 @@ describe('timeline shader metadata domain helpers', () => {
 
     const assigned = assignTimelinePostprocessShader(config, otherPostprocessShader);
 
-    expect(assigned.ok).toBe(false);
-    if (!assigned.ok) {
-      expect(assigned.code).toBe('shader_scope_occupied');
-      expect(assigned.scope).toBe('postprocess');
-      expect(assigned.existing.shaderId).toBe('shader.postGrade');
-      expect(assigned.incoming.shaderId).toBe('shader.postVignette');
-      expect(assigned.message).toBe(
-        'Cannot add postprocess shader "shader.postVignette" because postprocess shader "shader.postGrade" is already assigned. V1 supports one timeline postprocess shader. Remove the existing postprocess shader before assigning another.',
-      );
-    }
+    expect(assigned).toEqual({
+      ok: false,
+      code: 'shader_scope_occupied',
+      scope: 'postprocess',
+      existing: postprocessShader,
+      incoming: otherPostprocessShader,
+      message: 'Cannot add postprocess shader "shader.postVignette" because postprocess shader "shader.postGrade" is already assigned. V1 supports one timeline postprocess shader. Remove the existing postprocess shader before assigning another.',
+    });
     expect(getTimelinePostprocessShader(config)).toEqual(postprocessShader);
   });
 
@@ -151,14 +154,21 @@ describe('timeline shader metadata domain helpers', () => {
 
     const validation = validateTimelineConfigSnapshot(config);
 
-    expect(validation.ok).toBe(false);
-    expect(validation.issues).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        code: 'shader_scope_occupied',
+    expect(validation).toEqual({
+      level: 'config-only',
+      ok: false,
+      issues: [{
+        level: 'config-only',
         severity: 'error',
-        path: 'app.shaderPostprocess',
+        code: 'shader_scope_occupied',
         message: 'Cannot add postprocess shader "shader.postVignette" because postprocess shader "shader.postGrade" is already assigned. V1 supports one timeline postprocess shader. Remove the existing postprocess shader before assigning another.',
-      }),
-    ]));
+        path: 'app.shaderPostprocess',
+        repairApplied: false,
+        details: {
+          scope: 'postprocess',
+          shaderCount: 2,
+        },
+      }],
+    });
   });
 });

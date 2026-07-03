@@ -777,31 +777,31 @@ describe('M6: ExtensionManifest contributions accept parser/outputFormat/searchP
     expect(ext.manifest.contributions![0].kind).toBe('searchProvider');
   });
 
-  it('defineExtension rejects duplicate contribution IDs across M6 kinds', () => {
-    expect(() =>
-      defineExtension({
-        manifest: {
-          id: 'com.m6.dup' as any,
-          version: '1.0.0',
-          label: 'M6 Duplicate Test',
-          contributions: [
-            {
-              id: 'dup-id' as any,
-              kind: 'parser',
-              label: 'Parser',
-              acceptMimeTypes: ['image/jpeg'],
-            },
-            {
-              id: 'dup-id' as any,
-              kind: 'outputFormat',
-              label: 'Output',
-              requiresRender: false,
-              outputExtension: 'json',
-            },
-          ],
-        },
-      }),
-    ).toThrow(/Duplicate contribution ID/);
+  it('defineExtension allows cross-kind reuse of the same contribution ID (SD3)', () => {
+    // SD3: cross-kind reuse is valid; only same-kind+same-ID scoped-key duplicates are blocked
+    const ext = defineExtension({
+      manifest: {
+        id: 'com.m6.cross-kind' as any,
+        version: '1.0.0',
+        label: 'M6 Cross-Kind Reuse',
+        contributions: [
+          {
+            id: 'dup-id' as any,
+            kind: 'parser',
+            label: 'Parser',
+            acceptMimeTypes: ['image/jpeg'],
+          },
+          {
+            id: 'dup-id' as any,
+            kind: 'outputFormat',
+            label: 'Output',
+            requiresRender: false,
+            outputExtension: 'json',
+          },
+        ],
+      },
+    });
+    expect(ext.manifest.contributions).toHaveLength(2);
   });
 });
 

@@ -1,0 +1,60 @@
+{
+  "id": "log_3a48689536e4",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 7961,
+      "schema_version": 1,
+      "ts_utc": "2026-07-02T21:13:35.999106+00:00",
+      "ts_rel_init_s": 18612.061173,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T6",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "missing_output:files_changed:/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m1a-reference-identity-patch-20260702-1603/execution_batch_6.json",
+        "missing_outputs": [
+          "files_changed:/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m1a-reference-identity-patch-20260702-1603/execution_batch_6.json"
+        ],
+        "stale_evidence": [],
+        "would_block_reasons": [
+          "missing_output:files_changed:/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m1a-reference-identity-patch-20260702-1603/execution_batch_6.json"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T6",
+          "declared_outputs": {
+            "files_changed": [
+              "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m1a-reference-identity-patch-20260702-1603/execution_batch_6.json"
+            ],
+            "commands_run": [
+              "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts"
+            ]
+          },
+          "linked_evidence_count": 8,
+          "evidence_count": 171,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 1,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 171,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-02T21:13:35.996661+00:00"
+      },
+      "transaction_id": "0e78db0315d4d7dc",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-02T21:13:35.999220Z"
+}

@@ -1,0 +1,70 @@
+{
+  "id": "log_baecb00b3464",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 21507,
+      "schema_version": 1,
+      "ts_utc": "2026-07-03T06:37:39.207703+00:00",
+      "ts_rel_init_s": 52455.26977,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T6",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "missing_output:commands_run:npx vitest run src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/lib/timeline-domain.shaders.test.ts src/tools/video-editor/lib/timeline-patch.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/routeFitMapper.test.ts --reporter=verbose",
+        "missing_outputs": [
+          "commands_run:npx vitest run src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/lib/timeline-domain.shaders.test.ts src/tools/video-editor/lib/timeline-patch.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/routeFitMapper.test.ts --reporter=verbose",
+          "commands_run:npx vitest run src/tools/video-editor/runtime/composition/shaderValidation.test.ts src/tools/video-editor/runtime/extensionPackageManifest.test.ts --reporter=verbose",
+          "commands_run:git diff HEAD -- config/contracts/reigh-extension.schema.json",
+          "commands_run:grep -rn 'from.*runtime/' src/sdk/ --include='*.ts' --include='*.tsx'",
+          "commands_run:grep -rn 'ContributionIndex' src/sdk/ --include='*.ts' --include='*.tsx'"
+        ],
+        "stale_evidence": [],
+        "would_block_reasons": [
+          "missing_output:commands_run:npx vitest run src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/lib/timeline-domain.shaders.test.ts src/tools/video-editor/lib/timeline-patch.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/routeFitMapper.test.ts --reporter=verbose",
+          "missing_output:commands_run:npx vitest run src/tools/video-editor/runtime/composition/shaderValidation.test.ts src/tools/video-editor/runtime/extensionPackageManifest.test.ts --reporter=verbose",
+          "missing_output:commands_run:git diff HEAD -- config/contracts/reigh-extension.schema.json",
+          "missing_output:commands_run:grep -rn 'from.*runtime/' src/sdk/ --include='*.ts' --include='*.tsx'",
+          "missing_output:commands_run:grep -rn 'ContributionIndex' src/sdk/ --include='*.ts' --include='*.tsx'"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T6",
+          "declared_outputs": {
+            "commands_run": [
+              "npx vitest run src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/lib/timeline-domain.shaders.test.ts src/tools/video-editor/lib/timeline-patch.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/routeFitMapper.test.ts --reporter=verbose",
+              "npx vitest run src/tools/video-editor/runtime/composition/shaderValidation.test.ts src/tools/video-editor/runtime/extensionPackageManifest.test.ts --reporter=verbose",
+              "git diff HEAD -- config/contracts/reigh-extension.schema.json",
+              "grep -rn 'from.*runtime/' src/sdk/ --include='*.ts' --include='*.tsx'",
+              "grep -rn 'ContributionIndex' src/sdk/ --include='*.ts' --include='*.tsx'"
+            ]
+          },
+          "linked_evidence_count": 22,
+          "evidence_count": 168,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 12,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "provided",
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 84,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-03T06:37:39.205438+00:00"
+      },
+      "transaction_id": "b66ffe0513ae64d7",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-03T06:37:39.207823Z"
+}

@@ -52,6 +52,26 @@ export interface CompileOnlyOutputFormatEntry {
 export type CompileOnlyOutputFormatRegistry = ReadonlyMap<string, CompileOnlyOutputFormatEntry>;
 
 // ---------------------------------------------------------------------------
+// Scoped key helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a scoped registry key from an extension ID and a bare format ID.
+ *
+ * Two extensions can register compile-only output formats with the same bare
+ * {@link OutputFormatContribution.id} without clobbering each other because
+ * the internal registry key is scoped to the owning extension.
+ *
+ * The key follows the system-wide `kind:extensionId:contributionId` format
+ * with `outputFormat` as the fixed kind, consistent with
+ * {@link ContributionIndex} scoped keys used by the planner, router, and
+ * runtime assembly.
+ */
+export function formatScopedKey(extensionId: string, formatId: string): string {
+  return `outputFormat:${extensionId}:${formatId}`;
+}
+
+// ---------------------------------------------------------------------------
 // Registry creation
 // ---------------------------------------------------------------------------
 
@@ -62,7 +82,7 @@ export type CompileOnlyOutputFormatRegistry = ReadonlyMap<string, CompileOnlyOut
  * Render-dependent formats (requiresRender: true) are silently skipped
  * because they require the render pipeline, which is not available here.
  *
- * Returns a frozen map keyed by contribution ID.
+ * Returns a frozen map keyed by scoped key ({@link formatScopedKey}).
  */
 export function createCompileOnlyOutputFormatRegistry(
   entries: readonly CompileOnlyOutputFormatEntry[],
@@ -70,7 +90,8 @@ export function createCompileOnlyOutputFormatRegistry(
   const map = new Map<string, CompileOnlyOutputFormatEntry>();
   for (const entry of entries) {
     if (entry.contribution.requiresRender) continue;
-    map.set(entry.contribution.id as string, entry);
+    const key = formatScopedKey(entry.extensionId, entry.contribution.id as string);
+    map.set(key, entry);
   }
   return Object.freeze(map);
 }
@@ -132,7 +153,8 @@ export async function executeCompileOnlyOutput(
   registry: CompileOnlyOutputFormatRegistry,
   options: CompileOnlyOutputExecutionOptions,
 ): Promise<CompileOnlyOutputExecutionResult | null> {
-  const entry = registry.get(options.formatId);
+  const key = formatScopedKey(options.extensionId, options.formatId);
+  const entry = registry.get(key);
   if (!entry) return null;
 
   // Safety: render-dependent formats are excluded at registry creation time.
@@ -224,7 +246,8 @@ export function executeCompileOnlyOutputSync(
   registry: CompileOnlyOutputFormatRegistry,
   options: CompileOnlyOutputExecutionOptions,
 ): CompileOnlyOutputExecutionResult | null {
-  const entry = registry.get(options.formatId);
+  const key = formatScopedKey(options.extensionId, options.formatId);
+  const entry = registry.get(key);
   if (!entry) return null;
 
   if (entry.contribution.requiresRender) return null;

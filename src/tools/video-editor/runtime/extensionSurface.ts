@@ -12,6 +12,7 @@ import type {
   ExtensionDiagnostic,
   ContributionKind,
   MetadataFacetValueKind,
+  RouteFitMetadata,
   ShaderFallbackBehavior,
   ShaderMaterializerDescriptor,
   ShaderPassDescriptor,
@@ -402,9 +403,94 @@ export interface InactiveReservedContribution {
   extensionId: string;
   contributionId: string;
   kind: ContributionKind;
+  /** Canonical scoped identity key (`kind:extensionId:contributionId`). */
+  scopedKey: string;
+  /** Encounter ordinal within an exact scoped-key duplicate group (0 = first). */
+  duplicateOrdinal: number;
+  /** Whether this declaration remains eligible for descriptor projection fallback. */
+  projectionEligible: boolean;
   /** The earliest milestone that activates this kind. */
   milestone: string;
 }
+
+// ---------------------------------------------------------------------------
+// Host-owned contribution index types
+// ---------------------------------------------------------------------------
+
+/** Runtime-owned status for a contribution-index entry. */
+export type ContributionIndexStatus =
+  | 'active'
+  | 'inactive-reserved'
+  | 'disabled'
+  | 'invalid';
+
+/** Projection metadata for a contribution-index entry. */
+export interface ContributionIndexProjectionMetadata {
+  /** Encounter ordinal within an exact scoped-key duplicate group (0 = first). */
+  readonly duplicateOrdinal: number;
+  /** Whether this record remained eligible for descriptor projection. */
+  readonly eligible: boolean;
+  /** Whether the host actually projected this record into a descriptor array. */
+  readonly projected: boolean;
+  /** Provenance of the runtime-facing record. */
+  readonly source: 'descriptor-array' | 'preserved-record';
+}
+
+/** Structured host-owned resolution policy for preserved duplicate records. */
+export interface ContributionIndexResolutionPolicy {
+  readonly kind: 'exact-duplicate';
+  readonly strategy: 'first-wins-projection';
+  readonly winnerScopedKey: string;
+  readonly winnerDuplicateOrdinal: number;
+}
+
+/**
+ * A single entry in the host-owned contribution index.
+ *
+ * Each entry maps a scoped key (`kind:extensionId:contributionId`) to its
+ * identity triple. This index is populated at runtime assembly time from
+ * bridged contributions and is frozen with nested data.
+ *
+ * These types are **not** exposed through SDK descriptor pointer types or
+ * manifest schema — they are owned exclusively by the host runtime.
+ */
+export interface ContributionIndexEntry {
+  readonly scopedKey: string;
+  readonly kind: string;
+  readonly extensionId: string;
+  readonly contributionId: string;
+  /** Runtime-owned status for this contribution record. */
+  readonly status: ContributionIndexStatus;
+  /** Package-state classification when the host supplied package inventory data. */
+  readonly packageState?: PackageState;
+  /** Optional render identifier assigned by the host render pipeline. */
+  readonly renderId?: string;
+  /** Optional route-fit metadata attributed to this contribution when a planner
+   *  finding or blocker can be resolved to a scoped contribution key. */
+  readonly routeFit?: RouteFitMetadata;
+  /** Scoped diagnostics directly attributable to this contribution key. */
+  readonly diagnostics: readonly ExtensionDiagnostic[];
+  /** Encounter ordinal within an exact scoped-key duplicate group (0 = first). */
+  readonly duplicateOrdinal: number;
+  /** Whether this entry was eligible for descriptor projection. */
+  readonly projectionEligible: boolean;
+  /** Structured projection metadata for planner/runtime consumers. */
+  readonly projection: ContributionIndexProjectionMetadata;
+  /** Resolution metadata for preserved exact duplicates that were not projected. */
+  readonly resolutionPolicy?: ContributionIndexResolutionPolicy;
+}
+
+/**
+ * Host-owned contribution index keyed by scoped key.
+ *
+ * Format: `kind:extensionId:contributionId`
+ *
+ * The index is frozen at assembly time and provides O(1) lookup of
+ * contribution identity records by scoped key. Exact scoped-key duplicates
+ * are preserved as frozen arrays in encounter order. Batch T8 populates
+ * active bridged records plus preserved exact-duplicate records.
+ */
+export type ContributionIndex = Readonly<Record<string, readonly ContributionIndexEntry[]>>;
 
 /**
  * The normalized, frozen result of host-owned extension runtime normalization.
@@ -421,6 +507,16 @@ export interface ExtensionRuntime {
   readonly inactiveReserved: readonly InactiveReservedContribution[];
   /** Set of contribution IDs that are known to have render declarations. */
   readonly knownRenderIds: ReadonlySet<string>;
+  /**
+   * Host-owned contribution index keyed by scoped key (`kind:extensionId:contributionId`).
+   *
+   * Built from bridged contributions at assembly time and frozen with nested
+   * entry objects. Provides O(1) lookup of contribution identity without
+   * scanning descriptor arrays.
+   *
+   * **Not** exposed through SDK descriptor pointer types or manifest schema.
+   */
+  readonly contributionIndex: ContributionIndex;
   /** Extension-scoped settings defaults keyed by extension ID. */
   readonly settingsDefaults: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
   /** M6: Normalized parser descriptors, ordered by extension order then contribution order. */
@@ -544,8 +640,9 @@ export const DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME: VideoEditorExtensionRuntime
  *
  * - Preserves {@link DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME} identity when
  *   the extension list is empty or all contributions are inactive/reserved.
- * - Detects duplicate extension IDs and duplicate contribution IDs (both
- *   intra-extension and cross-extension) and emits structured diagnostics.
+ * - Detects duplicate extension IDs and exact scoped-key duplicate
+ *   contribution declarations, emitting structured diagnostics without
+ *   dropping preserved records.
  * - Separates bridged M1 contributions (slot, dialog, panel, inspectorSection)
  *   from reserved future kinds (effect, transition, clipType, parser, agentTool,
  *   agent) and collects the latter as inactive reserved metadata.
@@ -583,6 +680,7 @@ const EMPTY_EXTENSION_RUNTIME: ExtensionRuntime = Object.freeze({
   diagnostics: Object.freeze([]),
   inactiveReserved: Object.freeze([]),
   knownRenderIds: Object.freeze(new Set<string>()),
+  contributionIndex: Object.freeze({}),
   settingsDefaults: Object.freeze({}),
   assetParsers: EMPTY_ASSET_PARSERS,
   outputFormats: EMPTY_OUTPUT_FORMATS,

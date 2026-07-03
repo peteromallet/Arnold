@@ -1,0 +1,304 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `plan`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m1a-reference-identity-patch-20260702-1603`
+Current milestone: `m1a-reference-identity`
+
+### Phase Instruction
+Build a plan that advances the local brief while preserving the North Star. If scope is narrowed, state whether the narrowing is a bridge or a contradiction.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are creating an implementation plan for the following idea.
+
+        Engineering brief produced from the codebase and task details:
+
+        ### Task Summary
+        Add portable reference identity foundation (ContributionRef, LiveSourceRef, MaterialRef alias, contributionRefKey) and a host-owned additive contributionIndex to ExtensionRuntime, reserve graph-owned TimelinePatch vocabulary, and extract shader-scope validation into host composition validation with a narrow projection helper — all before graph projection becomes authority.
+
+        ### Key Evidence
+        - FamilyContributionRef (familyAdapter.ts:28-34) is a two-field pair {contribution, extensionId} carrying the full contribution object, used as canonical input for adapter normalization. It cannot be replaced; ContributionRef coexists as a three-part decomposed identity key (extensionId, kind, contributionId) serving different downstream purposes. (source: src/sdk/core/families/familyAdapter.ts:28-34; src/sdk/manifest.ts:67-77 (ExtensionContribution already carries id and kind); relevance: high)
+- ContributionRef, LiveSourceRef, and the composition/references module do not yet exist anywhere in the codebase. MaterialRef is declared as a type alias of existing RenderMaterialRef (artifacts.ts:43-51). The barrel insertion point in src/sdk/index.ts has no naming conflicts. (source: Zero grep matches for ContributionRef, LiveSourceRef; artifacts.ts:43-51 for RenderMaterialRef; index.ts:14-154 for barrel structure; relevance: high)
+- The locked decision that cross-extension bare-contributionId reuse is valid directly contradicts FamilyContributionSequence.ts:132-158, which uses a bare-ID Map for duplicate detection, emits 'runtime/duplicate-contribution' error diagnostic, and skips the contribution entirely. The scope requires scoped-key matching and duplicate preservation with resolutionPolicy — this is a migration in duplicate-detection semantics, not just additive. (source: FamilyContributionSequence.ts:132-158; locked decisions section of task; relevance: high)
+- ExtensionRuntime (extensionSurface.ts:413-457) has no contributionIndex field. It carries inactiveReserved, knownRenderIds, packageStateInventory, and per-kind descriptor arrays. All raw material for index construction flows through Phase 5 of assembleExtensionRuntime (FamilyRuntimeAssembly.ts:354-468) — active descriptors from per-kind arrays, inactive/reserved from FamilyContributionSequence.inactiveReserved, disabled/invalid from packageStateInventory entries where packageState is not 'loaded', route metadata from outputFormatDescriptors, diagnostics from seq.diagnostics. (source: extensionSurface.ts:413-457; FamilyRuntimeAssembly.ts:211-471; FamilyContributionSequence.ts:27-44; relevance: high)
+- Reserved graph ops follow a self-documenting, auto-propagating pattern: the SDK const TIMELINE_PATCH_RESERVED_OP_FAMILIES is imported by timeline-patch.ts to build RESERVED_OPS set at line 72. All downstream gates (ALL_KNOWN_OPS at line 592, reserved warning at line 615, compilation skip at line 975, preview at line 1830) auto-include new entries. No validation switch-case changes needed. Adding graph-owned families requires only extending the type union and const array in patch.ts:34-36,62-65. Adding graph diff granularities requires extending patch.ts:138-143,146-152. (source: src/sdk/video/timeline/patch.ts:34-73,138-153; src/tools/video-editor/lib/timeline-patch.ts:72,592-601,615-630,682-683,975-977; relevance: high)
+- Three independent shader-scope validation sites exist with overlapping 'one per scope' logic: (1) timeline-domain.ts assignment functions (assignTimelineClipShader L373, assignTimelinePostprocessShader L394), (2) timeline-domain.ts serialized config validation (validateSerializedConfig L2031, L2068-2092, L2149-2171), (3) renderPlanner.ts snapshot-level dedup (diagnoseSnapshotShaderComposition L419). Sites 1 and 2 use host types (TimelineShaderMetadata), site 3 uses SDK types (TimelineShaderSummary). A narrow projection helper must bridge these. Existing shader tests in timeline-domain.shaders.test.ts and renderPlanner.test.ts (L546-599) must remain green. (source: timeline-domain.ts:321-413,2031-2182; renderPlanner.ts:395-476,920-924; renderPlanner.test.ts:546-599; relevance: high)
+- Route-fit normalization infrastructure already exists: RouteFitMetadata (capabilities.ts:97-106) with fit values 'supported'|'blocked'|'degraded'|'unknown', and routeFitFinding() (renderPlanner.ts:201-225) converts CapabilityRequirement.routeFit into CapabilityFinding. RenderPlannerResult (renderPlanner.ts:88-98) surfaces routePlans with route, determinism, blockers. Contribution-level attribution is available in individual CapabilityFinding records (extensionId, contributionId fields). No contribution-to-route join currently exists — the index builder must join these back to scoped keys. (source: renderPlanner.ts:88-108,201-225,867-900,918-1010; capabilities.ts:97-106; relevance: high)
+- No new manifest-facing schema entries are needed. Reference contracts are SDK/runtime types, contribution-index is host-owned (explicitly OUT of scope for public shapes), reserved graph ops are runtime vocabulary (not manifest declarations). The existing AgentContribution pattern (schema lines 783-795) shows how reserved-only shapes are handled: minimal schema with id and kind, described as 'not yet bridged.' (source: config/contracts/reigh-extension.schema.json:783-795; task scope OUT section; relevance: medium)
+
+        ### Relevant Code
+        | File | Functions | Why |
+| --- | --- | --- |
+| src/sdk/core/families/familyAdapter.ts | FamilyContributionRef<TContribution> | FamilyContributionRef definition (L28-34) — the existing ref contract that ContributionRef must coexist with; used by familyAdapterUtils.ts and hostFamilyAdapter.ts |
+| src/sdk/video/timeline/patch.ts | TimelinePatchReservedOpFamily, TIMELINE_PATCH_RESERVED_OP_FAMILIES, TimelineDiffGranularity, TIMELINE_DIFF_GRANULARITIES, TIMELINE_PATCH_ALL_OP_FAMILIES | Addition point for reserved graph op families (L34-36,62-65) and graph diff granularities (L138-143,146-152); barrel-exported via index.ts:123-124 |
+| src/tools/video-editor/runtime/families/FamilyContributionSequence.ts | buildFamilyContributionSequence | Contains the bare-ID duplicate detection that contradicts the locked decision (L132-158); must migrate to scoped-key matching with preserve-on-duplicate and resolutionPolicy annotation |
+| src/tools/video-editor/runtime/extensionSurface.ts | ExtensionRuntime, InactiveReservedContribution, PackageStateInventoryEntry, normalizeExtensionRuntime | ExtensionRuntime interface (L413-457) where contributionIndex must be added; InactiveReservedContribution (L401-407) provides reserved-entry shape; PackageStateInventoryEntry (L471+) provides package-state data |
+| src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts | assembleExtensionRuntime, ADAPTER_DISPATCH | assembleExtensionRuntime Phase 5 (L354-468) is the assembly point where contributionIndex will be populated from per-kind descriptors, seq.inactiveReserved, packageStateInventory, and diagnostics |
+| src/tools/video-editor/lib/timeline-patch.ts | validateTimelinePatch, compileTimelinePatch, previewTimelinePatch | RESERVED_OPS set (L72) auto-propagates new SDK reserved families; reserved-op gates at L592,615,682,975,1830 auto-include new entries |
+| src/tools/video-editor/runtime/renderPlanner.ts | diagnoseSnapshotShaderComposition, shaderCompositionKey, shaderDescriptorKey, routeFitFinding, buildRoutePlan, planRender | diagnoseSnapshotShaderComposition (L419) is the renderPlanner shader-dedup site to extract; shaderDescriptorKey (L258) uses bare two-part key (no kind) — must be adapted; planRender (L918) calls diagnoseSnapshotShaderComposition; existing route-fit normalization (L201-225, L867-900) is the template for index route metadata |
+| src/tools/video-editor/lib/timeline-domain.ts | assignTimelineClipShader, assignTimelinePostprocessShader, validateSerializedConfig, validateTimelineConfigSnapshot, sameTimelineShaderIdentity, createShaderScopeOccupiedResult | assignTimelineClipShader (L373), assignTimelinePostprocessShader (L394), and validateSerializedConfig (L2031) are the two host-side shader-scope validation sites to extract; shader_scope_occupied error code used across all sites |
+| src/sdk/video/rendering/artifacts.ts | RenderMaterialRef | RenderMaterialRef (L43-51) is the MaterialRef alias target |
+| src/sdk/video/liveData.ts | LiveSource | LiveSource interface (L87-106) is the basis for LiveSourceRef identity extraction |
+| src/sdk/index.ts | barrel exports | Barrel insertion point for new reference types (new Video: Composition section); existing reserved-op exports at L123-124 |
+| src/sdk/capabilities.ts | RouteFitMetadata | RouteFitMetadata (L97-106) is the existing portable route-fit shape for index surface |
+| config/contracts/reigh-extension.schema.json | AgentContribution | AgentContribution (L783-795) is the reserved-only pattern; no new schema entries needed but verify no additionalProperties violations |
+
+        ### Test Expectations
+        - [fail_to_pass] timeline-domain.shaders.test.ts (all 6 tests): Shader assignment rejection (shader_scope_occupied), serialized validation of stacked shader metadata, round-trip serialization for clip and postprocess scopes
+- [fail_to_pass] renderPlanner.test.ts duplicate shader diagnosis (L546-599): diagnoseSnapshotShaderComposition produces correct CapabilityFinding errors for duplicate shaders in a snapshot
+- [fail_to_pass] timeline-patch.test.ts reserved ops tests (L175-225): clip.split and clip.slice produce reserved-op warnings with {reserved:true, deferred:true, nonPreviewable:true}
+- [fail_to_pass] sdk-boundary.test.ts (L126): TimelinePatchReservedOpFamily type import — new graph families will be included in boundary type-check
+- [fail_to_pass] renderPlanner.test.ts RenderPlannerResult shape: Backward compatibility of RenderPlannerResult shape after route-fit normalization changes
+
+        ### Constraints
+        - SDK modules must not import host runtime modules
+- Existing family arrays remain source-compatible
+- Do not make duplicate fallback a permanent semantic resolution policy
+- Do not activate process/output-format vocabulary beyond reserved data shapes
+- Do not loosen SDK boundary checks to make examples pass
+- MaterialRef is a type alias of RenderMaterialRef, not a parallel material system
+- First-wins is projection fallback only — resolutionPolicy marks duplicates but does not perform permanent first-wins resolution
+- RenderPlannerResult shape must remain backward compatible
+- Existing shader scope tests must remain green
+- contributionRefKey defaults to versionless lookup (kind:extensionId:contributionId)
+
+        ### Suggested Approach
+        Phase 1 — Reference contracts: Create src/sdk/video/composition/references.ts with ContributionRef (extensionId, kind, contributionId), LiveSourceRef (sourceId, optional kind), MaterialRef as type alias of RenderMaterialRef, and contributionRefKey() defaulting to `kind:extensionId:contributionId`. Add barrel exports in a new Video: Composition section in src/sdk/index.ts. These coexist with existing FamilyContributionRef — do not replace or extend it.
+
+Phase 2 — Contribution index: Add `contributionIndex: readonly ContributionIndexEntry[]` to ExtensionRuntime in extensionSurface.ts. The entry shape covers: scopedKey, extensionId, kind, contributionId, status (active|inactive-reserved|disabled|invalid), packageState, routeFit (RouteFitMetadata subset), renderId, diagnostics, resolutionPolicy (optional, for duplicates). Populate during assembleExtensionRuntime Phase 5 by iterating per-kind descriptor arrays (active), seq.inactiveReserved (inactive-reserved), and packageStateInventory entries where packageState !== 'loaded' (disabled/invalid). 
+
+Phase 2b — Duplicate migration: Change FamilyContributionSequence.ts:132 from bare-ID Map to scoped-key Map (`${extensionId}::${kind}::${contributionId}`). Preserve duplicates instead of skipping: when a scoped-key collision is detected, emit a warning diagnostic (not error) and continue processing, recording resolutionPolicy: 'duplicate' on both entries. The existing `runtime/duplicate-contribution` error transitions to a warning for scoped-key duplicates; bare-ID cross-extension reuse becomes valid per locked decisions.
+
+Phase 3 — Reserved graph ops: Extend TimelinePatchReservedOpFamily in patch.ts:34-36 with graph.node.*, graph.edge.*, graph.group.* families. Extend TIMELINE_PATCH_RESERVED_OP_FAMILIES array at L62-65. Extend TimelineDiffGranularity at L138-143 with 'graph'|'node'|'edge'. Downstream consumers auto-propagate. Add test cases for graph.* reserved ops in timeline-patch.test.ts.
+
+Phase 4 — Shader scope extraction: Create src/tools/video-editor/runtime/composition/ directory with a host composition validation module. Consolidate shader-scope validation logic from timeline-domain.ts (assignment + serialized config validation) and renderPlanner.ts (snapshot dedup) into shared functions. Define a narrow projection helper `projectShaderRefs(shaderSummaries: TimelineShaderSummary[], contributionIndex: ContributionIndexEntry[]): ProjectedShaderRef[]` that maps snapshot shader refs through the contribution index. Keep existing call sites wired to the extracted module to maintain test compatibility.
+
+Phase 5 — Route-fit normalization: Add a `normalizeRouteFit(routePlans, findings, blockers)` helper that joins per-contribution CapabilityFinding records to scoped keys, mapping blocked→'blocked', unblocked-with-process-dependency→'degraded', unblocked→'supported' using existing RouteFitMetadata shape. Populate into contributionIndex entries during assembly. Do not modify RenderPlannerResult shape.
+
+Phase 6 — Final pass: Verify all existing tests pass. Verify SDK boundary (no host imports in SDK modules). Verify barrel exports. Verify schema unchanged (no new manifest-facing vocabulary).
+
+### Open Questions
+- [blocking] The locked decision states 'Cross-extension reuse of a bare contributionId and same-extension cross-kind reuse are valid,' but FamilyContributionSequence.ts:132-158 uses bare-ID duplicate detection that emits an error diagnostic and drops the contribution. Should the existing 'runtime/duplicate-contribution' error be demoted to a warning for scoped-key duplicates, or should the bare-ID check be removed entirely in favor of scoped-key-only checking? The scope says duplicates are preserved with resolutionPolicy, implying the skip (continue) must be removed.
+
+        The engineering brief above is evidence gathered from the codebase. Treat it as the default working context, challenge its conclusions when the code disagrees, and only do targeted repository lookups when a concrete gap remains. Open questions in the brief are candidate concerns, not mandates — act on ones that materially affect the plan, dismiss immaterial or already-resolved ones with a brief reason, and treat question count as noise.
+
+        Idea:
+# M1a: Reference Identity, Patch Vocabulary, And First Validation Rule
+
+## Outcome
+
+Add the portable reference identity foundation and reserved graph-owned patch vocabulary. The milestone creates scoped contribution refs and the additive contribution index needed before graph projection becomes authority.
+
+## Execution Posture
+
+Build the smallest SDK/runtime bridge that preserves source compatibility. Keep refs portable and data-only; keep descriptor pointers and package-state interpretation host-owned.
+
+## Scope
+
+IN:
+- Add SDK reference contracts and barrel exports for `ContributionRef`, useful family refinements, `LiveSourceRef`, `MaterialRef`, and `contributionRefKey`.
+- Add `ExtensionRuntime.contributionIndex` during family runtime assembly.
+- Use scoped keys by `(extensionId, kind, contributionId)` with versionless default lookup.
+- Preserve duplicate scoped-key declarations as duplicate index entries with structured `resolutionPolicy`.
+- Include active descriptors, inactive/reserved metadata, disabled/invalid entries, package state, route metadata where known, and diagnostics in the host-owned index.
+- Reserve graph-owned `TimelinePatch` op families and diff granularities.
+- Extract shader-scope validation into host composition validation.
+- Add a narrow shader projection helper for existing snapshot shader refs.
+- Normalize route fit using existing planner outputs only.
+
+OUT:
+- Full graph contracts.
+- Target paths.
+- Material runtime.
+- New planner actions.
+- Process or output-format work.
+- Public descriptor-pointer or contribution-index entry shapes.
+
+## Locked Decisions
+
+- Contribution identity defaults to `kind:extensionId:contributionId`; version and compatibility range are resolver inputs.
+- Cross-extension reuse of a bare `contributionId` and same-extension cross-kind reuse are valid.
+- Duplicate declarations of the same scoped key are preserved; first-wins is projection fallback only.
+- Reserved graph ops are known but non-executable.
+- `MaterialRef` is an alias of existing `RenderMaterialRef`, not a parallel material system.
+
+## Constraints
+
+- SDK modules must not import host runtime modules.
+- Existing family arrays remain source-compatible.
+- Do not make duplicate fallback a permanent semantic resolution policy.
+- Do not activate process/output-format vocabulary beyond reserved data shapes.
+- Do not loosen SDK boundary checks to make examples pass.
+
+## Done Criteria
+
+- `contributionRefKey` defaults to versionless lookup.
+- Contribution index resolves active and inactive/reserved descriptors and preserves duplicates.
+- Duplicate scoped-key projection records a `resolutionPolicy`.
+- Reserved graph ops are known and non-executable.
+- Existing shader scope tests remain green.
+- `RenderPlannerResult` remains backward compatible.
+
+## Touchpoints
+
+- `src/sdk/index.ts`
+- `src/sdk/video/composition/references.ts`
+- `src/tools/video-editor/runtime/FamilyRuntimeAssembly.ts`
+- `src/tools/video-editor/runtime/ExtensionRuntime*`
+- `src/tools/video-editor/runtime/composition/**`
+- `src/tools/video-editor/lib/renderRouter.ts`
+- `src/tools/video-editor/commands/**`
+- `config/contracts/reigh-extension.schema.json`
+- `tests/**/video-editor/**`
+
+User notes and answers:
+- Prep clarification answers: The repo evidence supports removing any bare-contributionId duplicate gate and using scoped-key-only duplicate detection. Locked decisions in state.json and docs/extensions/composition-spine/{m0-decisions,v8-architecture-baseline}.md define identity as (extensionId, kind, contributionId), explicitly allow cross-extension bare-ID reuse and same-extension cross-kind reuse, and preserve exact scoped-key duplicates with resolutionPolicy. The runtime implementation in src/tools/video-editor/runtime/families/FamilyContributionSequence.ts already matches that by warning only on duplicate scoped keys and preserving duplicates without skipping them. extensionSurface.test.ts also asserts no runtime/duplicate-contribution diagnostic for cross-extension bare-ID reuse or same-extension cross-kind reuse. Therefore the correct behavior is not to demote an old bare-ID error for scoped cases, but to remove bare-ID duplicate checking entirely in favor of scoped-key-only checking; exact scoped-key duplicates remain preserved with warning diagnostics plus first-wins-projection fallback metadata.
+- Prep clarification answers: remove the obsolete bare-contributionId duplicate check and rely on scoped-key-only duplicate handling. Cross-extension bare-ID reuse and same-extension cross-kind reuse remain valid. Exact scoped-key duplicates should be preserved, not skipped; emit at most a warning with resolutionPolicy metadata. Current repo evidence already matches that decision in src/tools/video-editor/runtime/families/FamilyContributionSequence.ts and FamilyRuntimeAssembly.ts.
+
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+
+
+
+
+        No prior clarification artifact exists. Identify ambiguities, ask clarifying questions, and state your assumptions inside the plan output.
+
+
+
+        Requirements:
+        - If the engineering brief suggests an approach, use it as your starting hypothesis — but before committing, consider if there's a simpler or more fundamental fix. The brief is well-researched input, not a final answer.
+        - If the brief is absent, incomplete, or says "skip", inspect the repository yourself before planning.
+        - Stay focused on the requested idea. If repo exploration surfaces unrelated issues or docs, ignore them and return to the task.
+        - Prefer source code, tests, and directly relevant config files. Avoid `.megaplan/`, prior plan artifacts, and unrelated `docs/` or ops/deployment material unless the task explicitly depends on them.
+        - Stop exploring once you have enough evidence to name the concrete touch points and validation path. Do not keep browsing after you can write the plan.
+        - Produce a concrete implementation plan in markdown.
+        - Define observable success criteria as objects with `criterion` (string) and `priority` (`must`, `should`, or `info`):
+          - `must` — hard gate. The reviewer will block on failure. Use for correctness, functional requirements, and verifiable outcomes (e.g., "all existing tests pass", "API returns 200 for valid input"). Every `must` criterion must have a clear yes/no answer.
+          - `should` — quality target. The reviewer flags but does not block. Use for subjective goals, numeric guidelines, and best-effort improvements (e.g., "file under ~300 lines", "no deeply nested conditionals", "each function has a single responsibility").
+          - `info` — documented for humans, reviewer skips. Use for criteria that cannot be verified in this pipeline (e.g., "13 manual smoke tests pass", "stakeholder sign-off obtained").
+        - Each success criterion should include a `requires` field listing the capabilities needed for verification. Valid capability strings: `run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, `run_linter` (container), `drive_browser`, `inspect_runtime_ui`, `observe_runtime_logs`, `subjective_judgment`, `verify_physical_device` (human). `must` criteria MUST have non-empty `requires`. Example: `{"criterion": "All tests pass", "priority": "must", "requires": ["run_tests"]}`.
+        - Use the `questions` field for ambiguities that would materially change implementation.
+        - Use the `assumptions` field for defaults you are making so planning can proceed now.
+        - Prefer cheap validation steps early.
+        - Keep the plan proportional to the task. A 1-line fix needs a 2-step plan (apply fix + run tests), not a 5-step investigation.
+        - Size each step so it can be implemented AND verified in a single worker turn (~15 min, one model conversation). A step that bundles "create the abstraction AND migrate every consumer AND write all the tests" is too large to finish in one turn and will fail (the worker runs out of time before it can implement, leaving the step blocked). For large mechanical refactors, split along the natural seam — one step to add the new abstraction + its unit tests, then one step per consumer to migrate (the last migration step also adds parity tests) — rather than one giant step. Higher complexity does not earn a step more time; it only routes to a stronger model for the same single turn.
+        - If user notes answer earlier questions, incorporate them into the draft plan instead of re-asking them.
+        - Fix the problem fully. Do not limit scope just to avoid breaking existing tests — update the tests too if needed.
+        - Prefer the simplest, most direct fix. No fallbacks, type conversions, or defensive wrappers without concrete evidence they are needed.
+        - If the task or issue hints suggest a specific approach, follow it. Only deviate with concrete counter-evidence.
+        - Assign every plan step a complexity score 1–5 before finalize. Reason about complexity in the plan markdown (e.g. "Complexity: 2" per step), and surface it informally so the reviewer can audit:
+          - 1 = trivial single-file mechanical change
+          - 2 = simple change with tests to update
+          - 3 = multi-file change with non-trivial logic
+          - 4 = cross-cutting change with architecture implications
+          - 5 = fundamental system change with high regression risk
+        - Populate `changed_surfaces` with every concrete file path your plan will change or create. Include both source files and test files. Use repo-relative paths (e.g., `src/prompts.py`, `tests/test_prompts.py`). This list drives the deterministic test-selection blast radius; be complete. If your plan touches a file, list it.
+        - (Optional) Populate `test_blast_radius` with your own scoped test-selection proposal. This complements the deterministic floor the system computes from `changed_surfaces`. Provide `strategy` ("scoped", "full", or "none"), `selectors` (array of `{"kind": "path", "value": "<path>", "reason": "<why>"}` objects), and a `rationale` string. The system merges your proposal with the deterministic floor; you cannot narrow below the floor, but you can widen with additional selectors or escalate to full. If you intend a scoped finalize baseline while keeping the full suite as a hard gate, set `strategy` to "scoped", include concrete `selectors`, and set `full_suite_fallback` to true; the floor's full-suite requirement will be honored by the fallback without forcing the baseline strategy to "full".
+
+        Plan template — simple format (adapt to the actual repo and scope):
+````md
+# Implementation Plan: [Title]
+
+## Overview
+Summarize the goal, current repository shape, and the constraints that matter.
+
+## Main Phase
+
+### Step 1: Audit the current behavior (`src/prompts.py`)
+**Scope:** Small
+1. **Inspect** the current implementation and call out the exact insertion points (`src/prompts.py:29`).
+
+### Step 2: Add the first change (`src/evaluation.py`)
+**Scope:** Medium
+1. **Implement** the smallest viable change with exact file references (`src/evaluation.py:1`).
+2. **Capture** any tricky behavior with a short example.
+   ```python
+   issues = validate_plan_structure(plan_text)
+   ```
+
+### Step 3: Wire downstream behavior (`src/handlers.py`, `src/workers.py`)
+**Scope:** Medium
+1. **Update** the runtime flow in the touched files (`src/handlers.py:400`, `src/workers.py:199`).
+
+### Step 4: Prove the change (`tests/test_validator.py`, `tests/test_integration.py`)
+**Scope:** Small
+1. **Run** the cheapest targeted checks first (`tests/test_validator.py:1`).
+2. **Finish** with broader verification once the wiring is in place (`tests/test_integration.py:1`).
+
+## Execution Order
+1. Update prompts and mocks before enforcing stricter validation.
+2. Land higher-risk wiring after the validator and tests are ready.
+
+## Validation Order
+1. Start with focused unit tests.
+2. Run the broader suite after the flow changes are in place.
+````
+
+For complex plans, use multiple phases:
+````md
+## Phase 1: Foundation — Dependencies, DB, Types
+
+### Step 1: Install dependencies (`package.json`)
+...
+
+### Step 2: Create database migration (`supabase/migrations/`)
+...
+
+## Phase 2: Core Integration
+
+### Step 3: Port the main component (`src/components/`)
+...
+````
+
+Template guidance:
+- Simple plans: use `## Main Phase` with `### Step N:` sections underneath.
+- Complex plans: use multiple `## Phase N:` sections, each containing `### Step N:` steps. Step numbers are global (not per-phase).
+- The flat `## Step N:` format (without phases) also works for backwards compatibility.
+- Key invariants: one H1 title, one `## Overview`, numbered step sections (`### Step N:` or `## Step N:`), and at least one ordering section.

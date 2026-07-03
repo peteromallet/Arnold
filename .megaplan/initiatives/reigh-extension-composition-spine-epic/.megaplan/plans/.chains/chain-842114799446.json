@@ -4,9 +4,9 @@
   "current_plan_name": "m1a-reference-identity-patch-20260702-1603",
   "current_milestone_base_sha": null,
   "target_base_ref": "4c348280f180be93c56efdb1ea9a6a5e2a4bfa4b",
-  "last_state": "prepped",
+  "last_state": "authority_divergence",
   "pr_number": 77,
-  "pr_state": "open",
+  "pr_state": "merged",
   "completed": [
     {
       "label": "m0-decisions-fixtures",
@@ -16,9 +16,9 @@
       "pr_state": "merged"
     }
   ],
-  "branch_head": "ae863c5db2e682fd54eec70281f4f6d61200bd18",
-  "pr_head": "1271da46bf96a19167b02212fc3c47c8610bb9e4",
-  "last_pushed_commit": "ae863c5db2e682fd54eec70281f4f6d61200bd18",
+  "branch_head": "f98ae48319fadb5c93ad390fcc4992432359495f",
+  "pr_head": "f98ae48319fadb5c93ad390fcc4992432359495f",
+  "last_pushed_commit": "f98ae48319fadb5c93ad390fcc4992432359495f",
   "dirty_flag": true,
   "sync_state": "dirty",
   "extra_repos": [],
@@ -42,22 +42,90 @@
       "last_observed_phase": "chain_start",
       "project_root": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app",
       "schema_version": 1,
-      "target_base": null,
+      "target_base": "439d2a19429554f068c81f14a83450355738815a",
       "target_base_ref": "main",
-      "target_fallback_reason": "merge_base_unavailable:main",
-      "target_head": "e19485769b0c0e515d6df630f78cafc09f57ad20",
+      "target_fallback_reason": null,
+      "target_head": "439d2a19429554f068c81f14a83450355738815a",
       "target_root": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app",
       "work_dir": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
     },
     "ground_truth_reconciliation": {
-      "reconciled_at": "2026-07-02T16:14:20Z",
+      "reconciled_at": "2026-07-02T17:57:08Z",
       "plan": "m1a-reference-identity-patch-20260702-1603",
-      "current_state": "prepped",
+      "current_state": "finalized",
       "latest_failure": null,
-      "last_gate": {},
-      "active_step": null,
+      "last_gate": {
+        "recommendation": "PROCEED",
+        "rationale": "All four issue_hints from the first iteration are resolved with concrete plan amendments: Phase 0 audits touchpoints with explicit no-change rationale, Phase 4 provides a concrete shader-validation extraction strategy with timeline-domain mapping rules, Phase 2 adds projection filtering to prevent duplicate descriptor pollution, and the MaterialRef alias policy is documented with no M1a deprecation. No unresolved significant flags remain. Weighted score is 0 (clean). Preflight checks all passed. The 14 success criteria span must-verify behaviors across SDK exports, runtime index construction, duplicate handling, shader compatibility, registry hardening, and scope containment. The plan is thorough enough to execute.",
+        "reprompted": false,
+        "signals_assessment": "Score trajectory: 5.0 (iteration 1, four blocking issue_hints) \u2192 0 (iteration 2, all resolved). No recurring critiques. No scope creep flags. 4 resolved flags, 0 addressed-but-unverified, 0 unresolved. Plan delta 93.7% reflects substantial revision. Preflight posture clean: project dir exists and is writable, success criteria present, Claude and Codex available.",
+        "warnings": [
+          "Criterion 14 (should priority) depends on subjective judgment of scope containment \u2014 verify during execution that no general composition graph contract, target-path model, material runtime, or shader stacks leak in.",
+          "The iteration pressure analysis shows FG-001 (MaterialRef alias) and FG-002 (criterion 13 subjective verification) as two-iteration recurring groups. FG-001 is fully resolved in the plan text; FG-002 is inherent to the 'should' priority criterion and will need reviewer attention during the review stage, not further plan revision."
+        ],
+        "settled_decisions": [
+          {
+            "id": "SD1",
+            "decision": "Contribution identity defaults to kind:extensionId:contributionId; version and compatibility range are resolver inputs, not part of the default key.",
+            "rationale": "Keeps the key deterministic and stable for index lookups without baking version coupling into the identity layer. The plan explicitly reserves version fields as resolver-level concerns."
+          },
+          {
+            "id": "SD2",
+            "decision": "MaterialRef is a composition-facing alias for the existing RenderMaterialRef type; RenderMaterialRef remains public and supported with no M1a deprecation or migration.",
+            "rationale": "Avoids breaking existing consumers and avoids introducing a parallel material model. The alias provides SDK ergonomics for composition scenarios without forcing a rename."
+          },
+          {
+            "id": "SD3",
+            "decision": "Cross-extension bare contributionId reuse and same-extension cross-kind reuse are valid; only exact scoped-key duplicates (same kind, extensionId, contributionId) are diagnosed as warnings.",
+            "rationale": "Enables independent extension authors to use the same bare ID without coordination overhead while still catching accidental intra-extension duplicates."
+          },
+          {
+            "id": "SD4",
+            "decision": "Exact scoped-key duplicates are fully preserved in sequencing and the contribution index with structured resolutionPolicy metadata, but only the first occurrence reaches runtime descriptor arrays (projection filtering).",
+            "rationale": "Preserves auditability and diagnostics while preventing duplicate runtime descriptors from polluting render planner or UI consumers. First-wins is projection fallback only, not permanent semantic resolution."
+          },
+          {
+            "id": "SD5",
+            "decision": "Reserved graph patch operation families (graph.node.*, graph.edge.*, graph.group.*) and diff granularities (graph, node, edge) are known to SDK types and host patch validation but remain non-executable, non-previewable warnings.",
+            "rationale": "Reserves the vocabulary now so that when graph contracts are introduced in a future milestone, existing extension SDKs and patch validation can recognize and handle graph ops without a breaking vocabulary change."
+          },
+          {
+            "id": "SD6",
+            "decision": "Shader scope validation is extracted into a host composition helper that imports no timeline-domain issue types or render planner types; timeline-domain.ts maps the helper's result back to its existing TimelineDomainIssue/TimelineShaderAssignmentResult shapes.",
+            "rationale": "Centralizes the validation logic so renderPlanner.ts can reuse the same helper for planner shader diagnosis without coupling planner types to timeline-domain types or vice versa, while preserving test compatibility for existing error payloads."
+          },
+          {
+            "id": "SD7",
+            "decision": "No manifest-facing schema vocabulary is introduced in this milestone; config/contracts/reigh-extension.schema.json remains unchanged.",
+            "rationale": "This milestone changes runtime/reference semantics and governance fixtures, not the manifest schema vocabulary that extension authors declare against. Schema drift is explicitly verified in the validation phase."
+          }
+        ],
+        "passed": true,
+        "preflight_results": {
+          "project_dir_exists": true,
+          "project_dir_writable": true,
+          "success_criteria_present": true,
+          "claude_available": true,
+          "codex_available": true
+        },
+        "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize."
+      },
+      "active_step": {
+        "phase": "execute",
+        "agent": "codex",
+        "mode": "persistent",
+        "run_id": "2c744fa8-c324-4b52-b766-65b794003f46",
+        "worker_pid": 3403820,
+        "started_at": "2026-07-02T17:50:51Z",
+        "attempt": 1,
+        "last_activity_at": "2026-07-02T17:53:34Z",
+        "last_activity_kind": "liveness",
+        "model": "gpt-5.4",
+        "session_id": "019f23da-7be4-7be0-a97c-8a4cd124b0f8",
+        "last_activity_detail": "worker subprocess alive"
+      },
       "pr_number": 77,
-      "pr_state": "open"
+      "pr_state": "merged"
     },
     "operator_recovery_20260702": {
       "previous_current_plan_name": "m0-decisions-fixtures-and-20260701-1826",

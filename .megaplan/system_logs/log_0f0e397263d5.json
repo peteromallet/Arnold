@@ -1,0 +1,66 @@
+{
+  "id": "log_0f0e397263d5",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 4933,
+      "schema_version": 1,
+      "ts_utc": "2026-07-02T19:37:12.443957+00:00",
+      "ts_rel_init_s": 12828.506024,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T9",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "missing_output:files_changed:src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "missing_outputs": [
+          "files_changed:src/tools/video-editor/runtime/extensionSurface.test.ts",
+          "commands_run:vitest run extensionSurface.test.ts (140\u2192148, all passed)",
+          "commands_run:vitest run 7 scoped files (1254 passed)"
+        ],
+        "stale_evidence": [],
+        "would_block_reasons": [
+          "missing_output:files_changed:src/tools/video-editor/runtime/extensionSurface.test.ts",
+          "missing_output:commands_run:vitest run extensionSurface.test.ts (140\u2192148, all passed)",
+          "missing_output:commands_run:vitest run 7 scoped files (1254 passed)"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T9",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+              "src/tools/video-editor/runtime/extensionSurface.test.ts"
+            ],
+            "commands_run": [
+              "vitest run extensionSurface.test.ts (140\u2192148, all passed)",
+              "vitest run 7 scoped files (1254 passed)"
+            ]
+          },
+          "linked_evidence_count": 14,
+          "evidence_count": 81,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 1,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 81,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-02T19:37:12.442241+00:00"
+      },
+      "transaction_id": "4e46610ba9d3ebc8",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-02T19:37:12.444024Z"
+}

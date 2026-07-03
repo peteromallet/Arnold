@@ -1,0 +1,66 @@
+{
+  "id": "log_802bf667fe45",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 14340,
+      "schema_version": 1,
+      "ts_utc": "2026-07-03T00:50:07.812034+00:00",
+      "ts_rel_init_s": 31603.874101,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T9",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "missing_output:files_changed:src/tools/video-editor/runtime/outputFormatRegistry.ts",
+        "missing_outputs": [
+          "files_changed:src/tools/video-editor/runtime/outputFormatRegistry.ts",
+          "commands_run:./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/outputFormatRegistry.test.ts",
+          "commands_run:./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/lib/renderRouter.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx"
+        ],
+        "stale_evidence": [],
+        "would_block_reasons": [
+          "missing_output:files_changed:src/tools/video-editor/runtime/outputFormatRegistry.ts",
+          "missing_output:commands_run:./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/outputFormatRegistry.test.ts",
+          "missing_output:commands_run:./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/lib/renderRouter.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T9",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/runtime/outputFormatRegistry.ts"
+            ],
+            "commands_run": [
+              "./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/outputFormatRegistry.test.ts",
+              "./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/sdk/boundary.test.ts src/sdk/index.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts",
+              "./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/lib/renderRouter.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx"
+            ]
+          },
+          "linked_evidence_count": 10,
+          "evidence_count": 132,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 1,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 132,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-03T00:50:07.810162+00:00"
+      },
+      "transaction_id": "3ff1f747cece4eef",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-03T00:50:07.812097Z"
+}

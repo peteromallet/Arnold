@@ -1,0 +1,235 @@
+Execute the approved plan in the repository.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: prep surfaced 1 blocking ambiguity; answer and run `megaplan override resume-clarify`
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Batch framing:
+        - Execute batch 8 of 15.
+        - Actionable task IDs for this batch: ['T8']
+        - Already completed task IDs available as dependency context: ['T1', 'T2', 'T3', 'T5', 'T6', 'T7']
+
+        Actionable tasks for this batch:
+        [
+  {
+    "id": "T8",
+    "depends_on": [
+      "T7"
+    ],
+    "status": "pending",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 6: Populate `ExtensionRuntime.contributionIndex` with active projected entries, preserved duplicate records, inactive-reserved entries, and disabled/invalid package inventory entries; attach diagnostics by scoped key where possible and by extension/contribution fallback only when kind is unavailable.",
+    "complexity_justification": "The index consolidates multiple runtime sources into one host-owned view consumed by diagnostics and route metadata. Errors here are non-local because they can make descriptors look valid while the audit/index state is wrong.",
+    "executor_notes": ""
+  }
+]
+
+        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
+        [
+  {
+    "id": "T3",
+    "depends_on": [
+      "T2"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "The new SDK reference module is data-only and the key format is explicitly settled as `kind:extensionId:contributionId`. The risk is contained to a new file, barrel export, and straightforward boundary tests.",
+    "executor_notes": "Verified the checked-in SDK reference module is data-only, imports only RenderMaterialRef from the SDK rendering surface, exports ContributionRef/LiveSourceRef/MaterialRef plus contributionRefKey through the public barrel, and keeps MaterialRef as a transparent alias of RenderMaterialRef. No additional source edits were required. Scoped verification passed: 4 files, 969 tests.",
+    "files_changed": [],
+    "commands_run": [
+      "npx vitest run src/sdk/boundary.test.ts src/sdk/index.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts"
+    ]
+  },
+  {
+    "id": "T1",
+    "depends_on": [],
+    "status": "done",
+    "kind": "audit",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 0: Audit `src/tools/video-editor/commands/**`, `src/tools/video-editor/lib/renderRouter.ts`, `config/contracts/reigh-extension.schema.json`, SDK duplicate validators, and package duplicate validators. Record concrete no-change rationale for commands, render router, and schema unless the audit finds a direct compatibility break.",
+    "complexity_justification": "This audit crosses SDK validation, runtime router compatibility, command surfaces, and manifest schema governance. It is read-only, but the executor must distinguish intentional no-change surfaces from validators that must move to scoped semantics.",
+    "executor_notes": "Audit completed. No-change confirmed for all five surfaces: (1) commands/** \u2014 timeline command infrastructure, no contribution identity; (2) renderRouter.ts \u2014 shape-driven render routing, no identity fields; (3) reigh-extension.schema.json \u2014 frozen manifest schema, must remain unchanged; (4) SDK duplicate validators (FamilyContributionSequence.ts, FamilyRuntimeAssembly.ts, manifest.ts) \u2014 already scoped-key-aware with kind:extensionId:contributionId detection; (5) package duplicate validators (extensionLoader.ts) \u2014 package-level (extensionId) duplicates, separate from contribution identity....",
+    "files_changed": [],
+    "commands_run": [
+      "read_file commands/** (6 files)",
+      "read_file lib/renderRouter.ts",
+      "read_file config/contracts/reigh-extension.schema.json",
+      "read_file runtime/families/FamilyContributionSequence.ts",
+      "read_file runtime/families/FamilyRuntimeAssembly.ts",
+      "read_file runtime/extensionLoader.ts",
+      "search_files duplicate in src/sdk"
+    ]
+  },
+  {
+    "id": "T6",
+    "depends_on": [
+      "T5"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 4: Migrate `FamilyContributionSequence` duplicate detection from bare IDs to exact scoped keys `(kind, extensionId, contributionId)`, preserve every contribution record, emit `runtime/duplicate-contribution` warnings only for exact scoped duplicates, and carry duplicate ordinal/projection eligibility metadata forward without replacing `FamilyContributionRef` input shapes.",
+    "complexity_justification": "Sequencing feeds family assembly and package summaries, so a mistaken identity rule would propagate beyond the edited file and silently misclassify valid extensions. The task changes the runtime identity invariant while preserving adapter compatibility.",
+    "executor_notes": "Verified FamilyContributionSequence in the current checkout already keys duplicates by kind:extensionId:contributionId, preserves all contribution records, emits runtime/duplicate-contribution warnings only for exact scoped duplicates, and carries duplicateOrdinal/projectionEligible metadata forward without changing FamilyContributionRef input shapes. Targeted verification passed: 4 files, 698 tests.",
+    "files_changed": [],
+    "commands_run": [
+      "npx vitest run src/sdk/index.test.ts src/sdk/boundary.test.ts src/tools/video-editor/runtime/extensionPackageManifest.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts"
+    ]
+  },
+  {
+    "id": "T2",
+    "depends_on": [
+      "T1"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "This changes validation behavior in `src/sdk/manifest.ts` and `src/tools/video-editor/runtime/extensionPackageManifest.ts`, with tests that currently encode the old rejection rule. The behavior is non-trivial but still localized to validation boundaries and obvious failure cases.",
+    "executor_notes": "Verified the current checkout already allows bare contributionId reuse when the scoped identity differs while still rejecting exact same-kind duplicates. SDK manifest validation and package validation continue to fail genuine manifest errors and pass cross-kind reuse as intended. Targeted verification passed: 4 files, 698 tests.",
+    "files_changed": [],
+    "commands_run": [
+      "npx vitest run src/sdk/index.test.ts src/sdk/boundary.test.ts src/tools/video-editor/runtime/extensionPackageManifest.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts"
+    ]
+  },
+  {
+    "id": "T5",
+    "depends_on": [
+      "T4"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 3: Add host-owned `ContributionIndexEntry` and `contributionIndex` types to `src/tools/video-editor/runtime/extensionSurface.ts`, including scoped ref fields, status, package state, optional render id, optional route fit, diagnostics, projection metadata, optional `resolutionPolicy`, and runtime freezing of entries and nested data.",
+    "complexity_justification": "This adds a runtime-facing index contract used by later assembly and diagnostics work. The change is multi-field and shared inside the video-editor runtime, but it does not alter manifest schema or SDK descriptor pointer types.",
+    "executor_notes": "Added RouteFitMetadata to @reigh/editor-sdk import block and inserted two optional fields into ContributionIndexEntry: renderId?: string and routeFit?: RouteFitMetadata. The existing ExtensionRuntime.contributionIndex already exposes ContributionIndex with frozen semantics. No SDK descriptor pointer types or manifest schema contracts were added. All 148 extensionSurface tests, 28 routeFitMapper tests, and 32 renderPlanner tests pass.",
+    "files_changed": [
+      "src/tools/video-editor/runtime/extensionSurface.ts"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/runtime/extensionSurface.test.ts",
+      "npx vitest run src/tools/video-editor/runtime/routeFitMapper.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+    ]
+  },
+  {
+    "id": "T7",
+    "depends_on": [
+      "T6"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 5: Update `FamilyRuntimeAssembly` so preserved contribution records are separated from projection candidates, exact scoped duplicates are filtered before adapter descriptor arrays, duplicate index entries receive structured `resolutionPolicy`, slot first-wins behavior remains intact, and contribution summary counts use scoped active keys.",
+    "complexity_justification": "Projection filtering is a shared runtime boundary: descriptors, diagnostics, summaries, and the future index must agree while preserving duplicates for audit. A subtle mistake can pollute runtime descriptor arrays or drop audit records outside the local assembly tests.",
+    "executor_notes": "Updated FamilyRuntimeAssembly so projection winner tracking applies to preserved inactive-reserved families as well as bridged families, duplicate index entries consistently receive first-wins resolutionPolicy when they were not projected, and inactive-reserved winners reflect descriptor-array projection metadata. Added runtime assembly coverage for slot/dialog/outputFormat scoped duplicates and reserved-family projection metadata. Scoped verification passed: 4 files, 969 tests.",
+    "files_changed": [
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+      "src/tools/video-editor/runtime/extensionSurface.test.ts"
+    ],
+    "commands_run": [
+      "npx vitest run src/sdk/boundary.test.ts src/sdk/index.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts"
+    ]
+  }
+]
+
+        Prior batch deviations (address if applicable):
+        [
+  "Advisory observation mismatch: git status/content hash delta found unclaimed files: config/contracts/registry.json, src/sdk/__tests__/sdk-boundary.test.ts, src/sdk/boundary.test.ts, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/lifecycle.ts, src/sdk/manifest.ts, src/sdk/video/composition/references.ts, src/sdk/video/timeline/patch.ts, src/tools/video-editor/lib/timeline-domain.shaders.test.ts, src/tools/video-editor/lib/timeline-domain.ts, src/tools/video-editor/lib/timeline-patch.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.ts, src/tools/video-editor/runtime/extensionPackageManifest.test.ts, src/tools/video-editor/runtime/extensionSurface.test.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/families/FamilyContributionSequence.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts, src/tools/video-editor/runtime/outputFormatRegistry.test.ts, src/tools/video-editor/runtime/outputFormatRegistry.ts, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/renderPlanner.ts, src/tools/video-editor/runtime/routeFitMapper.test.ts, src/tools/video-editor/runtime/routeFitMapper.ts",
+  "Advisory audit finding: Git status shows changed files not claimed by any task: src/tools/video-editor/runtime/extensionSurface.test.ts, src/tools/video-editor/runtime/families/FamilyContributionSequence.ts"
+]
+
+        User action prerequisites:
+        No user_action prerequisites for this batch.
+
+
+        Batch-scoped sense checks:
+        [
+  {
+    "id": "SC8",
+    "task_id": "T8",
+    "verdict": "",
+    "question": "Does `contributionIndex` include active, inactive-reserved, disabled, invalid, and duplicate entries where source data exists, with diagnostics attached by scoped key whenever possible?"
+  }
+]
+
+
+        ## Execution context (settled - DO NOT re-litigate)
+
+        - SD1: Contribution identity defaults to kind:extensionId:contributionId; version and compatibility range are resolver inputs, not part of the default key. - Keeps the key deterministic and stable for index lookups without baking version coupling into the identity layer. The plan explicitly reserves version fields as resolver-level concerns.
+- SD2: MaterialRef is a composition-facing alias for the existing RenderMaterialRef type; RenderMaterialRef remains public and supported with no M1a deprecation or migration. - Avoids breaking existing consumers and avoids introducing a parallel material model. The alias provides SDK ergonomics for composition scenarios without forcing a rename.
+- SD3: Cross-extension bare contributionId reuse and same-extension cross-kind reuse are valid; only exact scoped-key duplicates (same kind, extensionId, contributionId) are diagnosed... - Enables independent extension authors to use the same bare ID without coordination overhead while still catching accidental intra-extension duplicates.
+
+        ## Plan execution order rationale
+
+        1. Audit touchpoints and fix SDK manifest/package duplicate blocking first.
+2. Land SDK reference exports and governance fixture updates.
+3. Change runtime duplicate sequencing to scoped keys while preserving all declarations.
+4. Add projection filtering and contribution index population.
+5. Harden compile-only output registry scoped lookup.
+6. Add reserved graph patch vocabulary.
+7. Extract shader validation and then migrate planner shader diagnosis.
+8. Add route-fit metadata only where attribution is already available.
+9. Finish with focused tests, import/governance checks, lint/build, and broader fallback.
+
+        ## Inter-task guidance from finalize
+
+        Execute in the written order. The main implementation risk is mixing three identities that must stay distinct: portable SDK refs, adapter-facing family refs, and host-owned runtime index entries. Use scoped keys for runtime identity, preserve duplicates for audit, and filter only at projection boundaries. Treat route fit and shader validation as narrow compatibility hardening, not as a license to add graph contracts or material/shader runtime features. No user action is required; all checks are mechanical local code, fixture, audit, or test work.
+
+        Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations.
+        Robustness level: thorough.
+
+        Requirements:
+        - Execute only the actionable tasks in this batch.
+        - Treat completed tasks as dependency context, not new work.
+        - Return structured JSON only.
+        - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
+        - Template file already written for reference: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m1a-reference-identity-patch-20260702-1603/execute_batch_8_output.json
+        - Only produce `task_updates` for these tasks: [T8]
+        - `task_updates[].status` must be one of `done`, `skipped`, `completed`, or `blocked`; never `pending` or `in_progress`.
+        - Only produce `sense_check_acknowledgments` for these sense checks: [SC8]
+        - Do not include updates for tasks or sense checks outside this batch.
+        - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+        - Keep `executor_notes` verification-focused.
+        - Best-effort progress checkpointing: if `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m1a-reference-identity-patch-20260702-1603/execution_batch_8.json` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
+        - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
+        - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
+        - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
+
+        Batch JSON response template:
+        ```json
+        {
+  "output": "",
+  "files_changed": [],
+  "commands_run": [],
+  "deviations": [],
+  "task_updates": [
+    {
+      "task_id": "T8",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC8",
+      "executor_note": ""
+    }
+  ]
+}
+        ```

@@ -1,0 +1,418 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `finalize`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m1a-reference-identity-patch-20260702-1603`
+Current milestone: `m1a-reference-identity`
+
+### Phase Instruction
+Convert the approved plan into executable tasks while preserving North Star constraints and visible alignment checks.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are DECOMPOSING the approved plan below into an ordered task DAG. The plan has been
+        critiqued, gated, and possibly revised. Do NOT re-evaluate strategy or re-litigate
+        decisions - gate has settled those.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M1a: Reference Identity, Patch Vocabulary, And First Validation Rule
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: M1a Reference Identity Finishing Pass
+
+## Overview
+The checkout already contains the main M1a implementation: SDK composition refs, `ExtensionRuntime.contributionIndex`, scoped duplicate preservation, graph-reserved patch ops, extracted shader validation, and route-fit mapping. This plan is therefore a finishing pass: close the remaining public contract ambiguity, deduplicate scoped-key construction where it reduces risk, and prove the existing behavior stays aligned with the North Star. The scope narrowing is a bridge, not a contradiction: this milestone only creates portable identity and validation foundations before graph projection becomes authoritative.
+
+Baseline probe already run: the focused Vitest set passed, 6 files / 824 tests.
+
+## Main Phase
+
+### Step 1: Confirm Current M1a Surfaces Before Editing
+**Complexity: 1**
+1. Re-check `src/sdk/video/composition/references.ts`, `src/sdk/index.ts`, `src/tools/video-editor/runtime/extensionSurface.ts`, `src/tools/video-editor/runtime/families/FamilyContributionSequence.ts`, `src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts`, `src/sdk/video/timeline/patch.ts`, and `src/tools/video-editor/runtime/composition/shaderValidation.ts`.
+2. Treat already-landed behavior as the base state; do not recreate modules or widen into graph contracts, target paths, material runtime, process activation, or output-format execution.
+
+### Step 2: Tighten the SDK Reference Contract
+**Complexity: 2**
+1. Update `LiveSourceRef` in `src/sdk/video/composition/references.ts` so the kind field is optional while keeping the repo’s existing `sourceKind` naming unless clarified otherwise.
+2. Keep `ContributionRef` data-only and keep `contributionRefKey(ref)` returning `kind:extensionId:contributionId` with no version inputs.
+3. Keep `MaterialRef` as a transparent alias of `RenderMaterialRef`; do not add a parallel material model.
+4. Update `src/sdk/__tests__/sdk-boundary.test.ts` to assert `LiveSourceRef` is constructable with only `sourceId` and also accepts `sourceKind` when known.
+
+### Step 3: Centralize Scoped-Key Construction Without Changing Semantics
+**Complexity: 3**
+1. In `FamilyContributionSequence.ts`, keep duplicate detection scoped only to `(extensionId, kind, contributionId)` and preserve exact duplicates with warning diagnostics.
+2. Where host runtime code builds scoped keys (`FamilyContributionSequence.ts`, `FamilyRuntimeAssembly.ts`, `shaderValidation.ts`, `routeFitMapper.ts`), use `contributionRefKey` or one local helper with the exact same format.
+3. Preserve first-wins as projection fallback metadata only: duplicate records remain in `contributionIndex`, later duplicates get `resolutionPolicy`, and cross-extension or cross-kind bare-ID reuse remains valid.
+
+### Step 4: Preserve Existing Runtime Index And Route-Fit Behavior
+**Complexity: 3**
+1. Keep `ContributionIndex` host-owned and out of public manifest/schema shapes.
+2. Ensure active descriptors, inactive/reserved records, disabled/invalid package inventory entries, diagnostics, package state, projection metadata, and known route-fit metadata remain represented in frozen index entries.
+3. Keep route-fit attribution narrow: only attach metadata when a blocker/finding can resolve to one scoped contribution key; ambiguous same-extension cross-kind matches must remain unknown.
+4. Do not change `RenderPlannerResult` top-level shape or route-decision behavior.
+
+### Step 5: Preserve Graph Patch And Shader Validation Contracts
+**Complexity: 2**
+1. Verify `graph.node.*`, `graph.edge.*`, and `graph.group.*` remain known reserved patch families and stay non-executable/non-previewable.
+2. Verify `graph`, `node`, and `edge` remain valid diff granularities.
+3. Keep shader assignment, serialized shader validation, and planner snapshot dedup routed through the host composition validation helper.
+4. Keep the shader projection helper narrow: it filters snapshot shader refs through `ContributionIndex` without making the graph authoritative.
+
+### Step 6: Validation Pass
+**Complexity: 2**
+1. Run focused tests first:
+   ```sh
+   npx vitest run --config config/testing/vitest.config.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/lib/timeline-domain.shaders.test.ts src/tools/video-editor/lib/timeline-patch.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/routeFitMapper.test.ts
+   ```
+2. Run boundary/import checks:
+   ```sh
+   npm run check:video-editor-sdk-imports
+   npm run check:sdk-public-exports
+   ```
+3. If any scoped change affects generated contract manifests, update only the relevant contract-governance artifacts; otherwise leave `config/contracts/reigh-extension.schema.json` unchanged.
+
+## Execution Order
+1. Audit first because most surfaces already exist.
+2. Apply the narrow SDK contract correction before runtime key cleanup.
+3. Make runtime key cleanup behavior-preserving and test-backed.
+4. Finish with targeted tests, then SDK boundary/import checks.
+
+## Validation Order
+1. SDK boundary tests for public refs and patch vocabulary.
+2. Runtime surface tests for contribution index and duplicates.
+3. Shader and planner tests for validation/projection compatibility.
+4. Route-fit mapper tests for attribution and route invariance.
+5. SDK import/export checks for boundary integrity.
+
+
+        Plan metadata:
+        {
+  "version": 3,
+  "timestamp": "2026-07-03T01:24:06Z",
+  "hash": "sha256:84907a4796c75669c7b3a45042a6246d8d541c0203bf9690b47204cdf98a2b7b",
+  "questions": [
+    "Should `LiveSourceRef` expose the optional kind as `sourceKind?: string` to match existing timeline/live-binding vocabulary, or as `kind?: string` to mirror `LiveSource.kind` exactly?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`contributionRefKey` remains importable from the SDK barrel and returns `kind:extensionId:contributionId` without version fields.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`LiveSourceRef` is data-only and constructable with `sourceId` alone, while still allowing source kind metadata when supplied.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`MaterialRef` remains a type alias of `RenderMaterialRef` and no parallel material runtime is introduced.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`ExtensionRuntime.contributionIndex` preserves active, inactive-reserved, disabled, and invalid contribution entries with frozen nested data, diagnostics, package state, projection metadata, and duplicate `resolutionPolicy` where applicable.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Cross-extension bare contribution ID reuse and same-extension cross-kind reuse produce no `runtime/duplicate-contribution` diagnostic, while exact scoped-key duplicates are preserved with warning diagnostics.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Graph patch families are known reserved ops, emit reserved warnings, and remain skipped by compile/preview execution paths.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Shader scope validation remains centralized through host composition validation and existing assignment, serialized-config, and planner duplicate-scope tests pass.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Route-fit attribution only attaches metadata for uniquely resolvable scoped contribution keys and does not change `RenderPlannerResult` top-level shape or route decisions.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "SDK modules do not import host runtime modules, and public SDK export checks pass.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "No new manifest-facing schema vocabulary is added for contribution refs, contribution index entries, graph ops, or route-fit metadata.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Scoped-key construction is easy to audit and avoids divergent string formats across runtime helpers.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The already-present M1a code is intentional and should be finished, not reverted or recreated.",
+    "Unless clarified, the SDK live-source reference will keep the existing `sourceKind` property name and make it optional.",
+    "`ContributionIndex` remains host-owned and is not added to public manifest schemas or descriptor pointer contracts.",
+    "Route-fit metadata in the contribution index is advisory metadata only; it must not influence route selection in this milestone.",
+    "The graph vocabulary added here is reserved data vocabulary only, not graph projection authority or execution support.",
+    "No anchor conflict is present: this is a bridge toward the composition spine while staying inside V1 constraints."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/sdk/__tests__/sdk-boundary.test.ts",
+        "reason": "Covers SDK reference exports, reference shapes, and patch vocabulary boundary types."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/timeline-domain.shaders.test.ts",
+        "reason": "Covers shader assignment and serialized shader scope validation."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/timeline-patch.test.ts",
+        "reason": "Covers reserved graph patch op validation, compile skipping, and preview behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "reason": "Covers contribution index assembly, duplicate semantics, package states, and freezing."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "reason": "Covers snapshot shader projection, duplicate shader findings, and RenderPlannerResult compatibility."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/routeFitMapper.test.ts",
+        "reason": "Covers route-fit attribution and route-selection invariance."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/video/composition/references.ts",
+      "src/sdk/__tests__/sdk-boundary.test.ts",
+      "src/tools/video-editor/runtime/families/FamilyContributionSequence.ts",
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+      "src/tools/video-editor/runtime/composition/shaderValidation.ts",
+      "src/tools/video-editor/runtime/routeFitMapper.ts",
+      "src/tools/video-editor/runtime/extensionSurface.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.test.ts",
+      "src/tools/video-editor/runtime/routeFitMapper.test.ts"
+    ],
+    "always_run": [
+      "npm run check:video-editor-sdk-imports",
+      "npm run check:sdk-public-exports"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/sdk/__tests__/sdk-boundary.test.ts, src/sdk/video/composition/references.ts, src/tools/video-editor/runtime/composition/shaderValidation.ts, src/tools/video-editor/runtime/extensionSurface.test.ts, src/tools/video-editor/runtime/families/FamilyContributionSequence.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/routeFitMapper.test.ts, src/tools/video-editor/runtime/routeFitMapper.ts. Candidate: The change is concentrated in SDK reference contracts and host runtime composition/index helpers; the selected tests cover each requested behavior while retaining full-suite fallback for integration confidence.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    }
+  },
+  "structure_warnings": []
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "PROCEED",
+  "passed": true,
+  "rationale_brief": "The plan is a finishing pass on already-landed M1a code. Only one concrete change remains: making LiveSourceRef.sourceKind optional (it is currently required at references.ts:55). All other plan steps are behavior-preserving audits or no-ops \u2014 scoped-key formats are already consistent across FamilyContributionSequence, shaderValidation, and routeFitMapper.",
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "LiveSourceRef uses sourceKind (not kind) as the optional property name.",
+      "rationale": "The existing timeline/live-binding vocabulary uses sourceKind consistently. Renaming to kind would break precedent and the plan question has no definitive answer from upstream. Default to preserving the existing vocabulary while making the field optional."
+    },
+    {
+      "id": "SD2",
+      "decision": "Scoped-key construction in FamilyContributionSequence stays with the local helper contributionScopedKey rather than importing contributionRefKey from the SDK.",
+      "rationale": "FamilyContributionSequence operates on ExtensionContribution shapes (not ContributionRef shapes), so importing contributionRefKey would require a mapping layer. The local helper produces identical format (kind:extensionId:contributionId) and is auditable in a single file. Importing the SDK function would create a dependency from host runtime to SDK symbol, which the plan's success criterion #9 explicitly forbids (SDK modules must not import host runtime modules, and conversely we should avoid unnecessary host\u2192SDK coupling in runtime assembly code)."
+    },
+    {
+      "id": "SD3",
+      "decision": "Commands directory, renderRouter.ts, and reigh-extension.schema.json require zero changes for M1a.",
+      "rationale": "Direct audit confirms zero M1a surface exposure. The idea snapshot listed them as potential touchpoints but the implementation did not touch them. Future milestones (graph projection, target paths, material runtime) may affect these files."
+    }
+  ],
+  "warnings": [
+    "LiveSourceRef.sourceKind is still a required field (references.ts:55) despite the plan requiring it to be optional. This is the primary code change to execute.",
+    "The current sdk-boundary test at line 4633-4642 expects sourceKind as a required property \u2014 it must be updated alongside the type change.",
+    "Scoped-key construction in FamilyContributionSequence uses a local helper (contributionScopedKey) rather than the SDK's contributionRefKey. The format is identical (kind:extensionId:contributionId), but importing contributionRefKey directly would eliminate the format-divergence risk called out in success criterion #11.",
+    "Step 6 of the plan conditionally leaves config/contracts/reigh-extension.schema.json unchanged \u2014 verify this decision during validation."
+  ],
+  "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize. Verify unresolved flags against the plan and project code before accepting.",
+  "carried_flags": [],
+  "iteration": 3,
+  "produced_at": "2026-07-03T01:36:07Z"
+}
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m1a-reference-identity-patch-20260702-1603/finalize_output.json
+        Read this file first — it contains the expected JSON structure (tasks, user_actions, sense_checks, watch_items, meta_commentary).
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Requirements:
+        - Produce structured JSON only.
+        - For each `## Step N:` in the plan, emit 1-N tasks.
+        - For each task, emit one sense_check.
+        - Default `user_actions` to `[]`. Identify a user_action ONLY when the work is genuinely non-mechanical and the executor literally cannot do it (secrets the human alone holds, identity-bound infra access, legal/license signatories, manual UI smoke tests on production). If a check is mechanical, make it a task — not a user_action. See the detailed guidance below.
+        - Do not invent tasks that don't trace to a plan step.
+        - How batching works at runtime — shape `depends_on` with this in mind, not just literal sequencing. Tasks that share the same `depends_on` set form one batch (capped at 5). Each batch dispatches as a SINGLE LLM conversation to a SINGLE model, picked by the max(complexity) in that batch. So a c=4 audit plus three c=2 tweaks sharing a batch all run in one turn on the c=4 model. Two consequences you control via DAG shape:
+          - Routing: every task in a batch runs on the highest-tier task's model — bundle a c=2 task beside a c=4 sibling and it runs on the pricier model.
+          - Cognitive load: one conversation holds all of the batch's tasks in working context. The more disparate the tasks, the higher the risk the model loses the thread or claims completion without doing the work. Wide, mixed batches are the dominant quality failure mode.
+        - Three principles for shaping batches — judgment, not arithmetic (there is no mechanical split rule):
+          1. Isolate heavyweights. A c=4 or c=5 task usually deserves its own batch. Chain lighter tasks through it via `depends_on` rather than placing them as siblings.
+          2. Bundle context-related light work. Several c=2/c=3 tasks touching the same files or contracts batch well together.
+          3. Never emit more than 5 actionable parallel siblings. If a step legitimately fans out wider, linearize via `depends_on` so the runtime batcher sees at most 5 at a time.
+        - Do not include `validation` or `coverage_complete` fields - the harness computes those.
+        - The FINAL task MUST run tests; harness validation will reject finalize output without it.
+        - `tasks` must be an ordered array of task objects. Every task object must include:
+          - `id`: short stable task ID like `T1`
+          - `description`: concrete work item
+          - `depends_on`: array of earlier task IDs or `[]`
+          - `status`: always `"pending"` at finalize time
+          - `executor_notes`: always `""` at finalize time
+          - `reviewer_verdict`: always `""` at finalize time
+          - `kind`: indicating the type of work. One of:
+            - `code`: writes or modifies source files (executor must produce `files_changed`).
+            - `test`: writes or modifies test files, or runs the test suite (executor must produce `files_changed` in tests/ OR `commands_run` containing pytest/test invocations).
+            - `audit`: read-only investigation — grep, code review, schema inspection (executor evidence is `executor_notes` describing findings; no `files_changed` expected).
+            - `research`: external research or non-code investigation (executor evidence is `executor_notes`).
+            - `docs`: writes documentation files (executor must produce `files_changed`).
+            If unsure, default to `code`.
+          - `complexity`: integer 1–5 complexity score. This score routes the task to a
+            model at execution time, so adjudicate it deliberately — do not guess. Use the rubric:
+            - 1 = trivial, mechanical, single-file change with no logic to reason about
+                  (rename, constant bump, comment, import). A weak model cannot get it wrong.
+            - 2 = simple, localized change plus the obvious test update; one file or two,
+                  logic is linear and the failure mode is obvious.
+            - 3 = multi-file change with non-trivial logic, control flow, or data shape the
+                  executor must hold in its head; correctness is not self-evident from the diff.
+            - 4 = a wrong implementation would be NON-LOCAL and not caught by an obvious test:
+                  the error propagates through a shared contract or invariant that code you did
+                  NOT edit relies on. Touching several files is NOT sufficient on its own — a
+                  mechanical multi-file change whose failure is local and test-evident is tier 2-3.
+            - 5 = fundamental system-invariant change with high regression risk: concurrency that
+                  cascades, a schema/wire-format others build on, a state machine, or a security/
+                  auth boundary. ONLY when a subtle error would pass the full suite and corrupt
+                  state or break a system-wide contract — not merely "important" or central code.
+            Score on the hardest REALISTIC aspect of the task, not a worst-case imagining. When
+            genuinely torn between two tiers, choose the LOWER one UNLESS you can name the specific
+            cascading, test-evading failure that earns the higher tier in the justification.
+            You are not the model that executes this task, and the score neither saves nor
+            costs you anything — so do not lowball to seem efficient and do not highball to
+            play safe. Both distort routing: a too-low score sends a hard task to a model
+            that fails it; a too-high score burns a premium model on trivial work. Score
+            what the task honestly requires, no higher and no lower.
+            FLOOR: a task is NEVER below tier 4 only when it GENUINELY changes the semantics of
+            concurrency, a schema/state-machine, a security/auth boundary, or a contract other
+            code actually depends on — because a subtle error there passes tests but is wrong.
+            This floor does NOT apply to mechanical edits that merely sit near such code, or that
+            add a new interface nothing relies on yet; score those on the rubric (usually 2-3).
+          - `complexity_justification`: REQUIRED. One or two sentences that argue, specifically,
+            why this task sits at exactly that tier — cite the concrete files, interfaces, or
+            risk that places it there (e.g. "touches the auth middleware contract used by 4
+            call sites, so a mistake is non-local → tier 4"). A bare restatement of the rubric
+            ("this is complex") is not acceptable; the justification must be defensible against
+            a reviewer who disagrees.
+        - `watch_items` must be an array of strings covering runtime risks, critique concerns, and assumptions to keep visible during execution.
+        - `sense_checks` must be an array with one verification question per task. Every sense-check object must include:
+          - `id`: short stable ID like `SC1`
+          - `task_id`: the related task ID
+          - `question`: reviewer verification question
+          - `verdict`: always `""` at finalize time
+        - `user_actions` should default to `[]`. Emitting a user_action stalls execution on a human gate — it is a load-bearing escape hatch, not a convenience. Prefer to design every step to be fully mechanical: the executor can read files, run commands, query APIs, fetch URLs, parse JSON, edit code, and run tests. If a check is mechanical, write it as a task — not a user_action.
+- Emit a user_action ONLY when the work is *genuinely non-mechanical* and the executor has no path to do it itself: secrets the human alone holds (a real API key the executor cannot mint), infrastructure access bound to the human's identity (cloud console, VPN), legal/license/security-policy judgments that require a human signatory, or out-of-band manual UI smoke tests on production. If you cannot name a specific reason the executor cannot do it, the task is mechanical — make it a task.
+- Anything that touches code, configuration, fixtures, or local files MUST be a task. Reading docs, grepping, editing, running tests, writing SQL, and producing JSON resolution files are tasks. Negative example: writing the migration SQL is a task, not a user_action; verifying a license URL is reachable is a task, not a user_action.
+- When you do emit a user_action, set `requires_human_only_reason` to a specific sentence naming why the executor literally cannot perform it (not just "it's important").
+- If `user_actions` is non-empty, expect that execution will block until the human resolves each one — only emit them when that block is unavoidable.
+- Positive examples (rare, last-resort): `U1: Set ANTHROPIC_API_KEY in .env (before_execute, requires_human_only_reason: "secret the executor cannot mint")`; `U2: Confirm legal sign-off to commit the third-party JSON corpus (before_execute, requires_human_only_reason: "license judgment with legal liability")`.
+        - `meta_commentary` must be a single string with execution guidance, gotchas, or judgment calls that help the executor succeed.
+        - Preserve information that strong existing artifacts already capture well: execution ordering, watch-outs, reviewer checkpoints, and practical context.
+        - The structured output should be self-contained: an executor reading only `finalize.json` should have everything needed to work.
+        - Keep the task count proportional to the work. A simple 1-2 file fix should be 2 tasks: (1) apply the fix, (2) run tests. Do NOT create separate "inspect" or "read" tasks for simple changes — the executor can read and fix in one step. Only create more tasks when the work has genuinely independent stages.
+        - One task is the unit of ONE worker turn: the executor must IMPLEMENT it, VERIFY it, and emit its result envelope inside a single ~15-minute conversation. A task that cannot realistically finish in one turn is mis-sized and WILL fail — the worker reports `blocked: "turn ended before implementation"` or runs out the clock mid-edit. Size every task to fit one turn; raising `complexity` does NOT buy more turns, it only routes to a stronger model for the SAME single turn. When a step is a large mechanical refactor, SPLIT it across tasks instead of bundling: "add the new abstraction + its unit tests" (T1) → "migrate consumer A" (T2, depends_on T1) → "migrate consumer B + parity tests" (T3, depends_on T2). A single task that says "extract this 2000-line file into modules and write tests" or "consolidate the roots AND migrate three registries AND add parity tests" is a god-task — decompose it into one task per consumer/module, each independently completable and verifiable.
+        - - The harness owns test verification — do NOT author a run-until-pass task. If you include a test-related task, scope it to: introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute suite.
+- For code-mode plans, preserve a scoped test contract. Prefer the plan's machine-readable `test_blast_radius`; when it is missing, ensure at least one finalized task carries a concrete scoped pytest command in `commands_run` (for example `pytest tests/test_relevant.py -q`) or mappable `files_changed` paths. Do not rely on an unscoped `pytest` command unless the plan explicitly opts into `test_selection=full`.

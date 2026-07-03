@@ -33,7 +33,10 @@ export type TimelinePatchOpFamily =
 /** Reserved operation families that are validated but not executed in M3. */
 export type TimelinePatchReservedOpFamily =
   | 'clip.split'
-  | 'clip.slice';
+  | 'clip.slice'
+  | 'graph.node.*'
+  | 'graph.edge.*'
+  | 'graph.group.*';
 
 /** All known operation family strings (active + reserved). */
 export type TimelinePatchAnyOpFamily =
@@ -62,6 +65,9 @@ Object.freeze(TIMELINE_PATCH_OP_FAMILIES);
 export const TIMELINE_PATCH_RESERVED_OP_FAMILIES = [
   'clip.split',
   'clip.slice',
+  'graph.node.*',
+  'graph.edge.*',
+  'graph.group.*',
 ] as const satisfies readonly TimelinePatchReservedOpFamily[];
 Object.freeze(TIMELINE_PATCH_RESERVED_OP_FAMILIES);
 
@@ -140,7 +146,10 @@ export type TimelineDiffGranularity =
   | 'track'
   | 'asset'
   | 'app'
-  | 'project-data';
+  | 'project-data'
+  | 'graph'
+  | 'node'
+  | 'edge';
 
 /** Locked vocabulary for diff entry granularity. */
 export const TIMELINE_DIFF_GRANULARITIES = [
@@ -149,6 +158,9 @@ export const TIMELINE_DIFF_GRANULARITIES = [
   'asset',
   'app',
   'project-data',
+  'graph',
+  'node',
+  'edge',
 ] as const satisfies readonly TimelineDiffGranularity[];
 Object.freeze(TIMELINE_DIFF_GRANULARITIES);
 

@@ -1,0 +1,64 @@
+{
+  "id": "log_01adcd9a305d",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 5258,
+      "schema_version": 1,
+      "ts_utc": "2026-07-02T19:44:58.466542+00:00",
+      "ts_rel_init_s": 13294.528609,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T11",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "missing_output:commands_run:vitest run renderPlanner.test.ts (14 passed)",
+        "missing_outputs": [
+          "commands_run:vitest run renderPlanner.test.ts (14 passed)",
+          "commands_run:vitest run extensionSurface.test.ts (148 passed)",
+          "commands_run:vitest run SDK boundary/index/manifest tests (1062 passed of 1078; 16 pre-existing DOM/env failures)"
+        ],
+        "stale_evidence": [],
+        "would_block_reasons": [
+          "missing_output:commands_run:vitest run renderPlanner.test.ts (14 passed)",
+          "missing_output:commands_run:vitest run extensionSurface.test.ts (148 passed)",
+          "missing_output:commands_run:vitest run SDK boundary/index/manifest tests (1062 passed of 1078; 16 pre-existing DOM/env failures)"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T11",
+          "declared_outputs": {
+            "commands_run": [
+              "vitest run renderPlanner.test.ts (14 passed)",
+              "vitest run outputFormatRegistry.test.ts (61 passed)",
+              "vitest run extensionSurface.test.ts (148 passed)",
+              "vitest run SDK boundary/index/manifest tests (1062 passed of 1078; 16 pre-existing DOM/env failures)"
+            ]
+          },
+          "linked_evidence_count": 10,
+          "evidence_count": 71,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 1,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 71,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-02T19:44:58.464123+00:00"
+      },
+      "transaction_id": "64c18ac02b8f4e35",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-02T19:44:58.466645Z"
+}

@@ -1,0 +1,64 @@
+{
+  "id": "log_6fce1c1aa127",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 18970,
+      "schema_version": 1,
+      "ts_utc": "2026-07-03T03:43:50.964805+00:00",
+      "ts_rel_init_s": 42027.026872,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T11",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T11",
+          "declared_outputs": {
+            "commands_run": [
+              "megaplan override resume-clarify",
+              "npx vitest run src/tools/video-editor/runtime/composition/shaderValidation.test.ts src/tools/video-editor/lib/timeline-domain.shaders.test.ts"
+            ]
+          },
+          "linked_evidence_count": 6,
+          "evidence_count": 162,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 6,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "provided",
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 81,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-03T03:43:50.962893+00:00"
+      },
+      "transaction_id": "a750460a45e97760",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-03T03:43:50.964890Z"
+}

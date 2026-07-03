@@ -1,0 +1,59 @@
+{
+  "id": "log_b46ba500116d",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 12912,
+      "schema_version": 1,
+      "ts_utc": "2026-07-03T00:11:38.578012+00:00",
+      "ts_rel_init_s": 29294.640079,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T3",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T3",
+          "declared_outputs": {
+            "commands_run": [
+              "npx vitest run src/sdk/boundary.test.ts src/sdk/index.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts"
+            ]
+          },
+          "linked_evidence_count": 3,
+          "evidence_count": 115,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 3,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 115,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-03T00:11:38.575989+00:00"
+      },
+      "transaction_id": "70aa73bc387abe7c",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-03T00:11:38.578073Z"
+}

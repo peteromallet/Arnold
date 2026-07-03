@@ -1,0 +1,63 @@
+{
+  "id": "log_b212ce7ff7a3",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 13750,
+      "schema_version": 1,
+      "ts_utc": "2026-07-03T00:37:12.306080+00:00",
+      "ts_rel_init_s": 30828.368147,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T7",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "missing_output:files_changed:src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "missing_outputs": [
+          "files_changed:src/tools/video-editor/runtime/extensionSurface.test.ts",
+          "commands_run:npx vitest run src/sdk/boundary.test.ts src/sdk/index.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts"
+        ],
+        "stale_evidence": [],
+        "would_block_reasons": [
+          "missing_output:files_changed:src/tools/video-editor/runtime/extensionSurface.test.ts",
+          "missing_output:commands_run:npx vitest run src/sdk/boundary.test.ts src/sdk/index.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T7",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+              "src/tools/video-editor/runtime/extensionSurface.test.ts"
+            ],
+            "commands_run": [
+              "npx vitest run src/sdk/boundary.test.ts src/sdk/index.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts"
+            ]
+          },
+          "linked_evidence_count": 13,
+          "evidence_count": 117,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 1,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 117,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-03T00:37:12.304453+00:00"
+      },
+      "transaction_id": "2e8ff68355e178d2",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-03T00:37:12.306152Z"
+}

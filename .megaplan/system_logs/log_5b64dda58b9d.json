@@ -1,0 +1,68 @@
+{
+  "id": "log_5b64dda58b9d",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 12616,
+      "schema_version": 1,
+      "ts_utc": "2026-07-02T23:55:47.398897+00:00",
+      "ts_rel_init_s": 28343.460964,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T5",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_files_changed",
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T5",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/runtime/extensionSurface.ts"
+            ],
+            "commands_run": [
+              "npx vitest run src/tools/video-editor/runtime/extensionSurface.test.ts",
+              "npx vitest run src/tools/video-editor/runtime/routeFitMapper.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+            ]
+          },
+          "linked_evidence_count": 7,
+          "evidence_count": 121,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 7,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 121,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-02T23:55:47.396531+00:00"
+      },
+      "transaction_id": "a8fc71d59c4707a3",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-02T23:55:47.398990Z"
+}

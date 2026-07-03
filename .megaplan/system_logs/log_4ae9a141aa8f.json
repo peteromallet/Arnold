@@ -1,0 +1,70 @@
+{
+  "id": "log_4ae9a141aa8f",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 12813,
+      "schema_version": 1,
+      "ts_utc": "2026-07-03T00:08:53.056311+00:00",
+      "ts_rel_init_s": 29129.118378,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T13",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "missing_output:files_changed:src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+        "missing_outputs": [
+          "files_changed:src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+          "commands_run:npx vitest run src/tools/video-editor/runtime/routeFitMapper.test.ts (47 tests)",
+          "commands_run:npx vitest run src/tools/video-editor/runtime/routeFitMapper.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/lib/renderRouter.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/composition/shaderValidation.test.ts (278 tests)",
+          "commands_run:npx vitest run [11 test files comprehensive] (1224 tests)"
+        ],
+        "stale_evidence": [],
+        "would_block_reasons": [
+          "missing_output:files_changed:src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+          "missing_output:commands_run:npx vitest run src/tools/video-editor/runtime/routeFitMapper.test.ts (47 tests)",
+          "missing_output:commands_run:npx vitest run src/tools/video-editor/runtime/routeFitMapper.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/lib/renderRouter.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/composition/shaderValidation.test.ts (278 tests)",
+          "missing_output:commands_run:npx vitest run [11 test files comprehensive] (1224 tests)"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T13",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/runtime/routeFitMapper.ts",
+              "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+              "src/tools/video-editor/runtime/routeFitMapper.test.ts"
+            ],
+            "commands_run": [
+              "npx vitest run src/tools/video-editor/runtime/routeFitMapper.test.ts (47 tests)",
+              "npx vitest run src/tools/video-editor/runtime/routeFitMapper.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/lib/renderRouter.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/composition/shaderValidation.test.ts (278 tests)",
+              "npx vitest run [11 test files comprehensive] (1224 tests)"
+            ]
+          },
+          "linked_evidence_count": 20,
+          "evidence_count": 121,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 2,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 121,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-03T00:08:53.054485+00:00"
+      },
+      "transaction_id": "87ee1efbde1299d3",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-03T00:08:53.056418Z"
+}

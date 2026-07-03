@@ -225,6 +225,164 @@ describe('validateTimelinePatch — reserved ops', () => {
 });
 
 // ---------------------------------------------------------------------------
+// graph reserved ops — known, warning-only, non-previewable, skipped compile
+// ---------------------------------------------------------------------------
+
+describe('validateTimelinePatch — graph reserved ops', () => {
+  const graphFamilies = ['graph.node.*', 'graph.edge.*', 'graph.group.*'] as const;
+
+  for (const family of graphFamilies) {
+    it(`recognizes "${family}" as a known operation family (not unknown-op)`, () => {
+      const result = validateTimelinePatch(
+        makePatch({
+          operations: [makeOp(family as TimelinePatchAnyOpFamily, 'graph-1', { nodes: [] })],
+        }),
+      );
+      const unknownDiag = result.diagnostics.find((d) => d.code === 'timeline-patch/unknown-op');
+      expect(unknownDiag).toBeUndefined();
+    });
+
+    it(`produces warning (not error) for "${family}"`, () => {
+      const result = validateTimelinePatch(
+        makePatch({
+          operations: [makeOp(family as TimelinePatchAnyOpFamily, 'graph-1', { nodes: [] })],
+        }),
+      );
+      const reservedDiag = result.diagnostics.find((d) => d.code === 'timeline-patch/reserved-op');
+      expect(reservedDiag).toBeDefined();
+      expect(reservedDiag!.severity).toBe('warning');
+      expect(reservedDiag!.op).toBe(family);
+    });
+
+    it(`marks "${family}" as non-previewable via detail`, () => {
+      const result = validateTimelinePatch(
+        makePatch({
+          operations: [makeOp(family as TimelinePatchAnyOpFamily, 'graph-1', { nodes: [] })],
+        }),
+      );
+      const reservedDiag = result.diagnostics.find((d) => d.code === 'timeline-patch/reserved-op');
+      expect(reservedDiag).toBeDefined();
+      expect(reservedDiag!.detail).toEqual({ reserved: true, deferred: true, nonPreviewable: true });
+    });
+  }
+
+  it('still validates target requirement for graph ops', () => {
+    const result = validateTimelinePatch(
+      makePatch({
+        operations: [{ op: 'graph.node.*' as TimelinePatchAnyOpFamily, target: '' }],
+      }),
+    );
+    expect(result.valid).toBe(false);
+    expect(result.diagnostics.some((d) => d.code === 'timeline-patch/missing-target')).toBe(true);
+  });
+});
+
+describe('compileTimelinePatch — graph reserved ops skipped', () => {
+  const data = makeMinimalTimelineData({
+    tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+    clips: [{ id: 'c1', track: 'V1', at: 0 }],
+  });
+
+  it('skips graph.node.* during compile (no graph diff entries produced)', () => {
+    const compiled = compileTimelinePatch(
+      makePatch({
+        operations: [makeOp('graph.node.*' as TimelinePatchAnyOpFamily, 'graph-1', { nodes: [] })],
+      }),
+      data,
+    );
+    // Reserved ops produce warnings, not errors → valid=true after validation
+    // But they are skipped during compilation → no diff entries
+    expect(compiled.valid).toBe(true);
+    const graphEntries = compiled.diff.entries.filter(
+      (e) => e.granularity === 'graph' || e.granularity === 'node' || e.granularity === 'edge',
+    );
+    expect(graphEntries).toHaveLength(0);
+    // confirm warning diagnostic is present
+    expect(compiled.diagnostics.some((d) => d.code === 'timeline-patch/reserved-op')).toBe(true);
+  });
+
+  it('skips graph.edge.* during compile (no diff entries)', () => {
+    const compiled = compileTimelinePatch(
+      makePatch({
+        operations: [makeOp('graph.edge.*' as TimelinePatchAnyOpFamily, 'graph-1', { from: 'a', to: 'b' })],
+      }),
+      data,
+    );
+    expect(compiled.valid).toBe(true);
+    expect(compiled.diff.entries).toHaveLength(0);
+  });
+
+  it('skips graph.group.* during compile (no diff entries)', () => {
+    const compiled = compileTimelinePatch(
+      makePatch({
+        operations: [makeOp('graph.group.*' as TimelinePatchAnyOpFamily, 'graph-1', { members: [] })],
+      }),
+      data,
+    );
+    expect(compiled.valid).toBe(true);
+    expect(compiled.diff.entries).toHaveLength(0);
+  });
+
+  it('skips graph ops even when mixed with active ops', () => {
+    const compiled = compileTimelinePatch(
+      makePatch({
+        operations: [
+          makeOp('graph.node.*' as TimelinePatchAnyOpFamily, 'g1', { nodes: [] }),
+          makeOp('clip.remove', 'c1'),
+        ],
+      }),
+      data,
+    );
+    expect(compiled.valid).toBe(true);
+    // Only the clip.remove should produce a diff entry
+    expect(compiled.diff.entries.length).toBeGreaterThanOrEqual(1);
+    const graphEntries = compiled.diff.entries.filter(
+      (e) => e.granularity === 'graph' || e.granularity === 'node' || e.granularity === 'edge',
+    );
+    expect(graphEntries).toHaveLength(0);
+    // Graph op warning should be present
+    expect(compiled.diagnostics.some((d) => d.code === 'timeline-patch/reserved-op')).toBe(true);
+  });
+});
+
+describe('previewTimelinePatch — graph reserved ops non-previewable', () => {
+  const data = makeMinimalTimelineData({
+    tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+    clips: [{ id: 'c1', track: 'V1', at: 0 }],
+  });
+
+  it('sets fullyPreviewable to false for graph.node.*', () => {
+    const result = previewTimelinePatch(
+      makePatch({
+        operations: [makeOp('graph.node.*' as TimelinePatchAnyOpFamily, 'graph-1', { nodes: [] })],
+      }),
+      data,
+    );
+    expect(result.fullyPreviewable).toBe(false);
+  });
+
+  it('sets fullyPreviewable to false for graph.edge.*', () => {
+    const result = previewTimelinePatch(
+      makePatch({
+        operations: [makeOp('graph.edge.*' as TimelinePatchAnyOpFamily, 'graph-1', { from: 'a', to: 'b' })],
+      }),
+      data,
+    );
+    expect(result.fullyPreviewable).toBe(false);
+  });
+
+  it('sets fullyPreviewable to false for graph.group.*', () => {
+    const result = previewTimelinePatch(
+      makePatch({
+        operations: [makeOp('graph.group.*' as TimelinePatchAnyOpFamily, 'graph-1', { members: [] })],
+      }),
+      data,
+    );
+    expect(result.fullyPreviewable).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // clip.add
 // ---------------------------------------------------------------------------
 

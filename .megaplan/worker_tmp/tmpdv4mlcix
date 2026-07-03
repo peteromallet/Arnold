@@ -1,0 +1,1436 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+Review the implementation against the success criteria.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M1a: Reference Identity, Patch Vocabulary, And First Validation Rule
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: M1a Reference Identity Finishing Pass
+
+## Overview
+The checkout already contains the main M1a implementation: SDK composition refs, `ExtensionRuntime.contributionIndex`, scoped duplicate preservation, graph-reserved patch ops, extracted shader validation, and route-fit mapping. This plan is therefore a finishing pass: close the remaining public contract ambiguity, deduplicate scoped-key construction where it reduces risk, and prove the existing behavior stays aligned with the North Star. The scope narrowing is a bridge, not a contradiction: this milestone only creates portable identity and validation foundations before graph projection becomes authoritative.
+
+Baseline probe already run: the focused Vitest set passed, 6 files / 824 tests.
+
+## Main Phase
+
+### Step 1: Confirm Current M1a Surfaces Before Editing
+**Complexity: 1**
+1. Re-check `src/sdk/video/composition/references.ts`, `src/sdk/index.ts`, `src/tools/video-editor/runtime/extensionSurface.ts`, `src/tools/video-editor/runtime/families/FamilyContributionSequence.ts`, `src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts`, `src/sdk/video/timeline/patch.ts`, and `src/tools/video-editor/runtime/composition/shaderValidation.ts`.
+2. Treat already-landed behavior as the base state; do not recreate modules or widen into graph contracts, target paths, material runtime, process activation, or output-format execution.
+
+### Step 2: Tighten the SDK Reference Contract
+**Complexity: 2**
+1. Update `LiveSourceRef` in `src/sdk/video/composition/references.ts` so the kind field is optional while keeping the repo’s existing `sourceKind` naming unless clarified otherwise.
+2. Keep `ContributionRef` data-only and keep `contributionRefKey(ref)` returning `kind:extensionId:contributionId` with no version inputs.
+3. Keep `MaterialRef` as a transparent alias of `RenderMaterialRef`; do not add a parallel material model.
+4. Update `src/sdk/__tests__/sdk-boundary.test.ts` to assert `LiveSourceRef` is constructable with only `sourceId` and also accepts `sourceKind` when known.
+
+### Step 3: Centralize Scoped-Key Construction Without Changing Semantics
+**Complexity: 3**
+1. In `FamilyContributionSequence.ts`, keep duplicate detection scoped only to `(extensionId, kind, contributionId)` and preserve exact duplicates with warning diagnostics.
+2. Where host runtime code builds scoped keys (`FamilyContributionSequence.ts`, `FamilyRuntimeAssembly.ts`, `shaderValidation.ts`, `routeFitMapper.ts`), use `contributionRefKey` or one local helper with the exact same format.
+3. Preserve first-wins as projection fallback metadata only: duplicate records remain in `contributionIndex`, later duplicates get `resolutionPolicy`, and cross-extension or cross-kind bare-ID reuse remains valid.
+
+### Step 4: Preserve Existing Runtime Index And Route-Fit Behavior
+**Complexity: 3**
+1. Keep `ContributionIndex` host-owned and out of public manifest/schema shapes.
+2. Ensure active descriptors, inactive/reserved records, disabled/invalid package inventory entries, diagnostics, package state, projection metadata, and known route-fit metadata remain represented in frozen index entries.
+3. Keep route-fit attribution narrow: only attach metadata when a blocker/finding can resolve to one scoped contribution key; ambiguous same-extension cross-kind matches must remain unknown.
+4. Do not change `RenderPlannerResult` top-level shape or route-decision behavior.
+
+### Step 5: Preserve Graph Patch And Shader Validation Contracts
+**Complexity: 2**
+1. Verify `graph.node.*`, `graph.edge.*`, and `graph.group.*` remain known reserved patch families and stay non-executable/non-previewable.
+2. Verify `graph`, `node`, and `edge` remain valid diff granularities.
+3. Keep shader assignment, serialized shader validation, and planner snapshot dedup routed through the host composition validation helper.
+4. Keep the shader projection helper narrow: it filters snapshot shader refs through `ContributionIndex` without making the graph authoritative.
+
+### Step 6: Validation Pass
+**Complexity: 2**
+1. Run focused tests first:
+   ```sh
+   npx vitest run --config config/testing/vitest.config.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/lib/timeline-domain.shaders.test.ts src/tools/video-editor/lib/timeline-patch.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/routeFitMapper.test.ts
+   ```
+2. Run boundary/import checks:
+   ```sh
+   npm run check:video-editor-sdk-imports
+   npm run check:sdk-public-exports
+   ```
+3. If any scoped change affects generated contract manifests, update only the relevant contract-governance artifacts; otherwise leave `config/contracts/reigh-extension.schema.json` unchanged.
+
+## Execution Order
+1. Audit first because most surfaces already exist.
+2. Apply the narrow SDK contract correction before runtime key cleanup.
+3. Make runtime key cleanup behavior-preserving and test-backed.
+4. Finish with targeted tests, then SDK boundary/import checks.
+
+## Validation Order
+1. SDK boundary tests for public refs and patch vocabulary.
+2. Runtime surface tests for contribution index and duplicates.
+3. Shader and planner tests for validation/projection compatibility.
+4. Route-fit mapper tests for attribution and route invariance.
+5. SDK import/export checks for boundary integrity.
+
+
+        Review execution context (`finalize.json` + `execution.json`, prompt projection only):
+        {
+  "tasks": [
+    {
+      "id": "T1",
+      "depends_on": [],
+      "status": "done",
+      "kind": "audit",
+      "complexity": 1,
+      "reviewer_verdict": "",
+      "description": "Step 1 audit: re-check the current M1a surfaces in src/sdk/video/composition/references.ts, src/sdk/index.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/families/FamilyContributionSequence.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts, src/sdk/video/timeline/patch.ts, and src/tools/video-editor/runtime/composition/shaderValidation.ts. Treat existing M1a behavior as the base state and explicitly note that no graph contracts, target...",
+      "complexity_justification": "This is a read-only orientation pass over named files with settled strategy and no edits. The executor only needs to confirm the already-landed surfaces before the narrow contract fix.",
+      "executor_notes": "Audit complete. All 7 named files inspected. M1a surfaces confirmed as base state with no edits needed. === FILE-BY-FILE AUDIT === 1. src/sdk/video/composition/references.ts \u2705 - ContributionRef: kind, extensionId, contributionId (data-only, clean) - LiveSourceRef: sourceId, sourceKind (uses sourceKind per SD1, not kind) - MaterialRef: alias of RenderMaterialRef (data-only, no material runtime) - contributionRefKey: returns \"kind:extensionId:contributionId\" (no version fields) - No host runtime imports 2. src/sdk/index.ts \u2705 - Re-exports ContributionRef, LiveSourceRef, MaterialRef (type-only)...",
+      "files_changed": [],
+      "commands_run": []
+    },
+    {
+      "id": "T2",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Step 2 implementation: update LiveSourceRef in src/sdk/video/composition/references.ts so sourceKind is optional while preserving the existing sourceKind property name, keep ContributionRef data-only with contributionRefKey(ref) returning kind:extensionId:contributionId without version fields, and keep MaterialRef as a transparent RenderMaterialRef alias. Update src/sdk/__tests__/sdk-boundary.test.ts so LiveSourceRef is constructable with only sourceId and also accepts sourceKind when supplied.",
+      "complexity_justification": "The real edit is a localized SDK type-contract change plus the matching SDK boundary test in two files. The main failure mode is obvious at compile/test time: sourceKind remaining required or the public ref exports changing unexpectedly.",
+      "executor_notes": "Made sourceKind optional in LiveSourceRef via `sourceKind?: string` in references.ts line 55. Updated sdk-boundary.test.ts: renamed test to reflect both constructability scenarios, added refMinimal (sourceId-only, verifies sourceKind is undefined and Object.keys only has sourceId), and refFull (with sourceKind supplied, verifies both keys present). Verified: ContributionRef remains data-only with contributionRefKey returning kind:extensionId:contributionId (no changes needed). MaterialRef unchanged as transparent RenderMaterialRef alias. Full test suite: 329/329 passed (1 test file, 0 failu...",
+      "files_changed": [
+        "src/sdk/video/composition/references.ts",
+        "src/sdk/__tests__/sdk-boundary.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run src/sdk/__tests__/sdk-boundary.test.ts --reporter=verbose"
+      ]
+    },
+    {
+      "id": "T3",
+      "depends_on": [
+        "T2"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 3 scoped-key cleanup: audit FamilyContributionSequence.ts, FamilyRuntimeAssembly.ts, shaderValidation.ts, and routeFitMapper.ts for scoped contribution key construction. Preserve duplicate detection scoped exactly to extensionId, kind, and contributionId; preserve exact duplicates with warning diagnostics, first-wins projection fallback metadata, duplicate resolutionPolicy, and valid cross-extension or cross-kind bare-ID reuse. If any divergent key format exists, replace it with contribu...",
+      "complexity_justification": "This spans several runtime helpers and duplicate semantics in contribution indexing, so the executor must preserve behavior across inactive records, diagnostics, and projection metadata while reducing format drift. It is not tier 4 because it is behavior-preserving and covered by focused runtime...",
+      "executor_notes": "Audit complete: all four files use kind:extensionId:contributionId format with zero divergence. === PER-FILE FINDINGS === (1) FamilyContributionSequence.ts: contributionScopedKey helper (line 85-90) returns `${contribution.kind}:${extensionId}:${contribution.id}` \u2014 correct. Duplicate detection via seenScopedContributionCounts (line 98), warning diagnostics for duplicateOrdinal > 0 (lines 181-191), first-wins projection via projectionEligible: duplicateOrdinal === 0 (line 105). (2) FamilyRuntimeAssembly.ts: computePackageContributionSummary with owningExtensionId uses `${contrib.kind}:${owni...",
+      "files_changed": [],
+      "commands_run": [
+        "vitest run ... shaderValidation.test.ts routeFitMapper.test.ts extensionSurface.test.ts",
+        "vitest run ... sdk-boundary.test.ts"
+      ]
+    },
+    {
+      "id": "T4",
+      "depends_on": [
+        "T3"
+      ],
+      "status": "done",
+      "kind": "audit",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 4 runtime preservation audit: verify ContributionIndex remains host-owned and absent from public manifest/schema shapes, and that frozen entries still represent active descriptors, inactive/reserved records, disabled and invalid package inventory entries, diagnostics, package state, projection metadata, and known route-fit metadata. Confirm route-fit attribution stays narrow by attaching metadata only when a blocker or finding resolves to one scoped contribution key, same-extension cross...",
+      "complexity_justification": "This is read-only but requires tracing contribution index assembly, route-fit attribution, and planner compatibility across multiple runtime files and tests. A shallow audit could miss non-local metadata shape drift, so it warrants tier 3 even without edits.",
+      "executor_notes": "Step 4 runtime preservation audit COMPLETE. All checks pass. === FINDINGS === (A) ContributionIndex HOST-OWNED: Confirmed. ContributionIndex/ContributionIndexEntry types are defined exclusively in extensionSurface.ts (lines 457-493) and are absent from both config/governance/sdk-public-api-manifest.json and config/contracts/registry.json (zero matches in either). (B) FROZEN ENTRIES COVERAGE: buildContributionIndexEntries() in FamilyRuntimeAssembly.ts (lines 560-673) populates all required categories: \u2460 Active bridged entries from sortedBridged (lines 576-602) with status 'active'. \u2461 Inactiv...",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run src/tools/video-editor/runtime/composition/shaderValidation.test.ts --reporter=verbose",
+        "npx vitest run src/tools/video-editor/runtime/routeFitMapper.test.ts --reporter=verbose",
+        "npx vitest run src/tools/video-editor/runtime/extensionSurface.test.ts src/sdk/__tests__/sdk-boundary.test.ts --reporter=verbose",
+        "npx vitest run src/tools/video-editor/runtime/renderPlanner.test.ts --reporter=verbose"
+      ]
+    },
+    {
+      "id": "T5",
+      "depends_on": [
+        "T3"
+      ],
+      "status": "done",
+      "kind": "audit",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Step 5 graph patch and shader validation audit: verify graph.node.*, graph.edge.*, and graph.group.* remain known reserved patch families, emit reserved warnings, and remain non-executable/non-previewable; verify graph, node, and edge remain valid diff granularities. Confirm shader assignment, serialized shader validation, and planner snapshot dedup still route through the host composition validation helper, and that shader projection only filters snapshot shader refs through ContributionInde...",
+      "complexity_justification": "The contracts are already implemented and the task is to verify reserved patch vocabulary and centralized shader validation in targeted files. The risk is limited because no execution path or graph authority should be changed.",
+      "executor_notes": "Step 5 graph patch and shader validation audit COMPLETE. All checks pass. === FINDINGS === (A) RESERVED PATCH FAMILIES: Confirmed. TIMELINE_PATCH_RESERVED_OP_FAMILIES in src/sdk/video/timeline/patch.ts (lines 65-72) includes 'graph.node.*', 'graph.edge.*', 'graph.group.*' alongside 'clip.split' and 'clip.slice'. These are frozen constants defined in the SDK public contract. (B) RESERVED WARNINGS: Confirmed. validateTimelinePatch() in src/tools/video-editor/lib/timeline-patch.ts (lines 614-630): when RESERVED_OPS.has(op.op), a warning diagnostic is emitted with code 'timeline-patch/reserved-...",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run src/tools/video-editor/lib/timeline-patch.test.ts --reporter=verbose",
+        "npx vitest run src/tools/video-editor/runtime/renderPlanner.test.ts --reporter=verbose"
+      ]
+    },
+    {
+      "id": "T6",
+      "depends_on": [
+        "T4",
+        "T5"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This is a mechanical targeted test/check pass with explicit commands from the approved plan. The executor may need to distinguish new failures from baseline noise, but no broad debugging or full-suite repair is requested.",
+      "executor_notes": "All three commands passed with zero new failures. Vitest: 824/824 tests passed across 6 test files (sdk-boundary 329, timeline-domain.shaders 6, timeline-patch 262, extensionSurface 150, renderPlanner 30, routeFitMapper 47). check:video-editor-sdk-imports: all checks passed (allowlist, packagability smoke, negative fixtures, external consumer). check:sdk-public-exports: AUDIT PASSED, 377 exports, 0 violations, 0 obsolete entries; SDK no-barrel-imports clean (59 files, 0 violations). config/contracts/reigh-extension.schema.json confirmed unchanged (git diff empty). Baseline test failures was...",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/lib/timeline-domain.shaders.test.ts src/tools/video-editor/lib/timeline-patch.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/routeFitMapper.test.ts",
+        "npm run check:video-editor-sdk-imports",
+        "npm run check:sdk-public-exports"
+      ]
+    }
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "verdict": "",
+      "question": "Did the executor inspect all named M1a surface files and avoid widening into graph contracts, target paths, material runtime, process activation, or output-format execution?",
+      "executor_note": "Confirmed: All 7 named M1a surface files inspected (references.ts, sdk/index.ts, extensionSurface.ts, FamilyContributionSequence.ts, FamilyRuntimeAssembly.ts, patch.ts, shaderValidation.ts). No widening into graph contracts, target paths, material runtime, process activation, or output-format execution. Graph ops are reserved only in patch.ts types (graph.node.*, graph.edge.*, graph.group.*) as non-executable, non-previewable families. MaterialRef is a transparent alias for RenderMaterialRef (no material runtime). Process descriptors are declaration-only in M12 reserved buckets. Output-form..."
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "verdict": "",
+      "question": "Is LiveSourceRef constructable with sourceId alone while still accepting sourceKind, and did contributionRefKey plus MaterialRef keep their existing public contracts?",
+      "executor_note": "CONFIRMED. LiveSourceRef is now constructable with sourceId alone (`{ sourceId: 'webcam-1' }` \u2014 sourceKind is undefined, Object.keys returns only ['sourceId']) while still accepting sourceKind when supplied (`{ sourceId: 'webcam-2', sourceKind: 'webcam' }` \u2014 both keys present). contributionRefKey remains unchanged: returns `kind:extensionId:contributionId` with no version fields. MaterialRef remains a transparent RenderMaterialRef alias. All 329 SDK boundary tests pass."
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "verdict": "",
+      "question": "Do all scoped contribution keys still use exactly kind:extensionId:contributionId, with exact duplicates warned and preserved while cross-extension or cross-kind bare-ID reuse remains valid?",
+      "executor_note": "CONFIRMED. All scoped contribution keys use exactly kind:extensionId:contributionId across all four audited files: (1) FamilyContributionSequence.ts contributionScopedKey \u2192 `${contribution.kind}:${extensionId}:${contribution.id}`; (2) FamilyRuntimeAssembly.ts disabled/invalid entries \u2192 `${contrib.kind}:${entry.extensionId}:${contrib.id}`, plus all index lookups inherit the scopedKey from the sequence; (3) shaderValidation.ts shaderContributionScopedKey \u2192 `shader:${extensionId}:${contributionId}` (hardcoded kind='shader', which is the only valid kind for shader contributions); (4) routeFitMa..."
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "verdict": "",
+      "question": "Does ContributionIndex remain host-owned and complete for active, inactive/reserved, disabled, and invalid entries, with frozen metadata and route-fit attribution only for uniquely resolvable scoped keys?",
+      "executor_note": "YES. ContributionIndex remains host-owned (defined in extensionSurface.ts, absent from SDK public API manifest and contract registry). Frozen entries cover all four statuses: active (sortedBridged), inactive-reserved (inactiveReserved), disabled (packageStateToIndexStatus maps incompatible/duplicate/settings-error/runtime-error \u2192 'disabled'), and invalid (packageState='invalid'). Each entry carries diagnostics, packageState, projection metadata, duplicate ordinal, and optional resolutionPolicy/routeFit. Route-fit metadata is attached only through normalizeContributionIndexRouteFit() which e..."
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "verdict": "",
+      "question": "Are reserved graph patch families and diff granularities still recognized without becoming executable or previewable, and does shader validation remain centralized through the host helper?",
+      "executor_note": "YES. graph.node.*, graph.edge.*, and graph.group.* are in TIMELINE_PATCH_RESERVED_OP_FAMILIES (patch.ts:65-72), emit warning diagnostics with code 'timeline-patch/reserved-op' and detail.nonPreviewable=true (timeline-patch.ts:617-627), are skipped during compilation (continue at line 976), cause fullyPreviewable=false in preview (line 1840). graph/node/edge are valid TimelineDiffGranularity values (patch.ts:150-152). Shader validation is centralized: renderPlanner.ts imports projectShaderRefs/validateShaderComposition from shaderValidation.ts. Shader projection filters snapshot shaders thro..."
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "verdict": "",
+      "question": "Did the focused Vitest command and both SDK boundary/import checks complete without new failures, and was config/contracts/reigh-extension.schema.json left unchanged unless a generated contract artifact truly required updating?",
+      "executor_note": "YES. The focused Vitest command completed with 824/824 tests passing (6 files, 0 failures). check:video-editor-sdk-imports passed all checks. check:sdk-public-exports AUDIT PASSED (377 exports, 0 violations). config/contracts/reigh-extension.schema.json is unchanged per git diff. No new failures introduced."
+    }
+  ],
+  "task_updates": [
+    {
+      "task_id": "T1",
+      "status": "done",
+      "executor_notes": "Audit complete. All 7 named files inspected. M1a surfaces confirmed as base state with no edits needed. === FILE-BY-FILE AUDIT === 1. src/sdk/video/composition/references.ts \u2705 - ContributionRef: kind, extensionId, contributionId (data-only, clean) - LiveSourceRef: sourceId, sourceKind (uses sourceKind per SD1, not kind) - MaterialRef: alias of RenderMaterialRef (data-only, no material runtime) - contributionRefKey: returns \"kind:extensionId:contributionId\" (no version fields) - No host runtime imports 2. src/sdk/index.ts \u2705 - Re-exports ContributionRef, LiveSourceRef, MaterialRef (type-only)...",
+      "files_changed": [],
+      "commands_run": []
+    },
+    {
+      "task_id": "T2",
+      "status": "done",
+      "executor_notes": "Made sourceKind optional in LiveSourceRef via `sourceKind?: string` in references.ts line 55. Updated sdk-boundary.test.ts: renamed test to reflect both constructability scenarios, added refMinimal (sourceId-only, verifies sourceKind is undefined and Object.keys only has sourceId), and refFull (with sourceKind supplied, verifies both keys present). Verified: ContributionRef remains data-only with contributionRefKey returning kind:extensionId:contributionId (no changes needed). MaterialRef unchanged as transparent RenderMaterialRef alias. Full test suite: 329/329 passed (1 test file, 0 failu...",
+      "files_changed": [
+        "src/sdk/video/composition/references.ts",
+        "src/sdk/__tests__/sdk-boundary.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run src/sdk/__tests__/sdk-boundary.test.ts --reporter=verbose"
+      ]
+    },
+    {
+      "task_id": "T3",
+      "status": "done",
+      "executor_notes": "Audit complete: all four files use kind:extensionId:contributionId format with zero divergence. === PER-FILE FINDINGS === (1) FamilyContributionSequence.ts: contributionScopedKey helper (line 85-90) returns `${contribution.kind}:${extensionId}:${contribution.id}` \u2014 correct. Duplicate detection via seenScopedContributionCounts (line 98), warning diagnostics for duplicateOrdinal > 0 (lines 181-191), first-wins projection via projectionEligible: duplicateOrdinal === 0 (line 105). (2) FamilyRuntimeAssembly.ts: computePackageContributionSummary with owningExtensionId uses `${contrib.kind}:${owni...",
+      "files_changed": [],
+      "commands_run": [
+        "vitest run ... shaderValidation.test.ts routeFitMapper.test.ts extensionSurface.test.ts",
+        "vitest run ... sdk-boundary.test.ts"
+      ]
+    },
+    {
+      "task_id": "T4",
+      "status": "done",
+      "executor_notes": "Step 4 runtime preservation audit COMPLETE. All checks pass. === FINDINGS === (A) ContributionIndex HOST-OWNED: Confirmed. ContributionIndex/ContributionIndexEntry types are defined exclusively in extensionSurface.ts (lines 457-493) and are absent from both config/governance/sdk-public-api-manifest.json and config/contracts/registry.json (zero matches in either). (B) FROZEN ENTRIES COVERAGE: buildContributionIndexEntries() in FamilyRuntimeAssembly.ts (lines 560-673) populates all required categories: \u2460 Active bridged entries from sortedBridged (lines 576-602) with status 'active'. \u2461 Inactiv...",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run src/tools/video-editor/runtime/composition/shaderValidation.test.ts --reporter=verbose",
+        "npx vitest run src/tools/video-editor/runtime/routeFitMapper.test.ts --reporter=verbose",
+        "npx vitest run src/tools/video-editor/runtime/extensionSurface.test.ts src/sdk/__tests__/sdk-boundary.test.ts --reporter=verbose",
+        "npx vitest run src/tools/video-editor/runtime/renderPlanner.test.ts --reporter=verbose"
+      ]
+    },
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "Step 5 graph patch and shader validation audit COMPLETE. All checks pass. === FINDINGS === (A) RESERVED PATCH FAMILIES: Confirmed. TIMELINE_PATCH_RESERVED_OP_FAMILIES in src/sdk/video/timeline/patch.ts (lines 65-72) includes 'graph.node.*', 'graph.edge.*', 'graph.group.*' alongside 'clip.split' and 'clip.slice'. These are frozen constants defined in the SDK public contract. (B) RESERVED WARNINGS: Confirmed. validateTimelinePatch() in src/tools/video-editor/lib/timeline-patch.ts (lines 614-630): when RESERVED_OPS.has(op.op), a warning diagnostic is emitted with code 'timeline-patch/reserved-...",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run src/tools/video-editor/lib/timeline-patch.test.ts --reporter=verbose",
+        "npx vitest run src/tools/video-editor/runtime/renderPlanner.test.ts --reporter=verbose"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "All three commands passed with zero new failures. Vitest: 824/824 tests passed across 6 test files (sdk-boundary 329, timeline-domain.shaders 6, timeline-patch 262, extensionSurface 150, renderPlanner 30, routeFitMapper 47). check:video-editor-sdk-imports: all checks passed (allowlist, packagability smoke, negative fixtures, external consumer). check:sdk-public-exports: AUDIT PASSED, 377 exports, 0 violations, 0 obsolete entries; SDK no-barrel-imports clean (59 files, 0 violations). config/contracts/reigh-extension.schema.json confirmed unchanged (git diff empty). Baseline test failures was...",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/lib/timeline-domain.shaders.test.ts src/tools/video-editor/lib/timeline-patch.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/routeFitMapper.test.ts",
+        "npm run check:video-editor-sdk-imports",
+        "npm run check:sdk-public-exports"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "Verified `FamilyContributionSequence` keys duplicate detection by exact scoped identity (`kind:extensionId:contributionId`), preserves every contribution record, emits `runtime/duplicate-contribution` warnings only for exact scoped duplicates, and carries `duplicateOrdinal`/`projectionEligible` metadata forward without changing `FamilyContributionRef` input shapes. Foreground verification passed: 5 files, 962 tests.",
+      "files_changed": [],
+      "commands_run": [
+        "./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/boundary.test.ts src/tools/video-editor/runtime/extensionPackageManifest.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/lib/timeline-patch.test.ts"
+      ]
+    },
+    {
+      "task_id": "T7",
+      "status": "done",
+      "executor_notes": "Verified FamilyRuntimeAssembly keeps preserved duplicate contribution records separate from projection candidates, filters exact scoped duplicates before descriptor arrays, assigns structured first-wins resolutionPolicy to non-projected duplicate index entries, preserves slot first-wins behavior, and computes contribution summary activity from scoped active keys. Foreground scoped verification passed: boundary.test.ts (183), index.test.ts (309), sdk-boundary.test.ts (329), extensionSurface.test.ts (150); 971/971 passed.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+        "src/tools/video-editor/runtime/extensionSurface.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/boundary.test.ts src/sdk/index.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts"
+      ]
+    },
+    {
+      "task_id": "T8",
+      "status": "done",
+      "executor_notes": "Verified FamilyRuntimeAssembly keeps contribution-index diagnostics scoped by key when kind is known and only falls back across same extensionId+contributionId entries when kind attribution is unavailable. Re-ran extensionSurface coverage for both same-extension cross-kind fallback and kind-aware targeting; the scoped runtime test file passed 150/150.",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run src/tools/video-editor/runtime/extensionSurface.test.ts"
+      ]
+    },
+    {
+      "task_id": "T9",
+      "status": "done",
+      "executor_notes": "VERIFIED: formatScopedKey returns outputFormat:extensionId:formatId (line 71), aligning with system-wide kind:extensionId:contributionId format. JSDoc documents the format and relationship to ContributionIndex. Public CompileOnlyOutputExecutionOptions remain source-compatible \u2014 callers pass bare formatId + extensionId separately. Audit confirmed: renderRouter.ts (shape-driven, no identity fields), useRenderState.ts (delegates to scoped-key-aware registry), renderPlanner.ts (already shader-scoped-key-aware), commands/** (timeline infrastructure, no contribution identity) \u2014 all NO CHANGE. Tes...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/outputFormatRegistry.ts"
+      ],
+      "commands_run": [
+        "vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/outputFormatRegistry.test.ts",
+        "vitest run --config config/testing/vitest.config.ts src/sdk/boundary.test.ts src/sdk/index.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/lib/renderRouter.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx"
+      ]
+    },
+    {
+      "task_id": "T10",
+      "status": "done",
+      "executor_notes": "Re-verified T10: graph reserved patch vocabulary is fully implemented and tested. patch.ts defines reserved op families (graph.node.*, graph.edge.*, graph.group.* at lines 37-39) and granularities (graph, node, edge at lines 150-152). timeline-patch.ts produces warning-only diagnostics via RESERVED_OPS check (line 615: {reserved:true, deferred:true, nonPreviewable:true}), skips compile execution (line 975: RESERVED_OPS.has(family) => continue), and marks preview as non-fully-previewable (line 1828-1830). timeline-patch.test.ts has dedicated test suites: 'validateTimelinePatch \u2014 graph reserv...",
+      "files_changed": [],
+      "commands_run": [
+        "./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-patch.test.ts",
+        "./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/boundary.test.ts src/tools/video-editor/runtime/extensionPackageManifest.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/lib/timeline-patch.test.ts"
+      ]
+    },
+    {
+      "task_id": "T11",
+      "status": "done",
+      "executor_notes": "Verified `runtime/composition/shaderValidation.ts` covers shared assignment and stack validation, and `timeline-domain.ts` delegates clip/postprocess assignment plus serialized config validation without changing issue code, severity, message, path, details, `existing`/`incoming` payloads, or `repairApplied: false`. Focused verification passed: 2 files, 13 tests, 13 passed.",
+      "files_changed": [],
+      "commands_run": [
+        "megaplan override resume-clarify",
+        "npx vitest run src/tools/video-editor/runtime/composition/shaderValidation.test.ts src/tools/video-editor/lib/timeline-domain.shaders.test.ts"
+      ]
+    },
+    {
+      "task_id": "T12",
+      "status": "done",
+      "executor_notes": "Verified the checked-in T12 implementation already routes renderPlanner shader duplicate-scope diagnosis through runtime/composition/shaderValidation.ts via projectShaderRefs() and validateShaderComposition(). Planner compatibility remains intact: duplicate findings keep the existing planner.shaderComposition.*.scope-occupied IDs, error severity, browser-export and worker-export coverage, shader-composition-limit detail payloads, blocker behavior, and RenderPlannerResult shape. Verification: npx vitest run src/tools/video-editor/runtime/composition/shaderValidation.test.ts src/tools/video-e...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/shaderValidation.ts",
+        "src/tools/video-editor/runtime/composition/shaderValidation.test.ts",
+        "src/tools/video-editor/runtime/renderPlanner.ts",
+        "src/tools/video-editor/runtime/renderPlanner.test.ts"
+      ],
+      "commands_run": [
+        "megaplan override resume-clarify",
+        "npx vitest run src/tools/video-editor/runtime/composition/shaderValidation.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+      ]
+    },
+    {
+      "task_id": "T13",
+      "status": "done",
+      "executor_notes": "Verified: normalizeContributionIndexRouteFit() in routeFitMapper.ts (lines 193-246) enriches contribution index with RouteFitMetadata from descriptor blockers via resolveScopedKey() \u2014 direct kind:extensionId:contributionId matches (line 69-72) and unique extensionId+contributionId matches without kind (lines 74-87). Ambiguous cross-kind matches return undefined, leaving routeFit absent. First-wins policy for same-key duplicate blockers (line 209). Existing routeFit on entries is preserved (lines 238-240). Wired into FamilyRuntimeAssembly.ts at lines 733-738 using blockers from outputFormatD...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/routeFitMapper.ts",
+        "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+        "src/tools/video-editor/runtime/routeFitMapper.test.ts"
+      ],
+      "commands_run": [
+        "./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/routeFitMapper.test.ts",
+        "./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+      ]
+    },
+    {
+      "task_id": "T14",
+      "status": "done",
+      "executor_notes": "Ran focused validation across all 13 test files. SDK references/manifest (index.test.ts 309, boundary.test.ts 183, sdk-boundary.test.ts 329, manifest-schema-validation.test.ts 28), package validation (extensionPackageManifest.test.ts 58), extension runtime/index (extensionSurface.test.ts 150), output format registry (outputFormatRegistry.test.ts 61), timeline patch (timeline-patch.test.ts 262), timeline-domain shaders (timeline-domain.shaders.test.ts 6), render planner (renderPlanner.test.ts 30), render router (renderRouter.test.ts 44), shader validation helper (shaderValidation.test.ts 7),...",
+      "files_changed": [],
+      "commands_run": [
+        "npm --prefix /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app install --legacy-peer-deps",
+        "npx --prefix /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/boundary.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/runtime/extensionPackageManifest.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/outputFormatRegistry.test.ts src/tools/video-editor/lib/timeline-patch.test.ts src/tools/video-editor/lib/timeline-domain.shaders.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/lib/renderRouter.test.ts src/sdk/manifest-schema-validation.test.ts src/tools/video-editor/runtime/composition/shaderValidation.test.ts src/tools/video-editor/runtime/routeFitMapper.test.ts"
+      ]
+    },
+    {
+      "task_id": "T15",
+      "status": "done",
+      "executor_notes": "Re-ran all 6 verification commands fresh. 5/6 passed clean: SDK import boundaries PASSED (allowlist + packagability smoke + negative fixtures + external consumer all green), SDK public export governance PASSED (377 exports, 0 violations, no-barrel-imports clean), contract checks PASSED (18 contracts), lint PASSED (0 warnings), build PASSED (tsc + vite build with NODE_OPTIONS=--max-old-space-size=8192; pre-existing CSS/dynamic-import warnings only). Full test suite (npm run test \u2192 vitest run) timed out at 1200s \u2014 pre-existing NotFoundPage.test.tsx hang matching baseline capture failure (base...",
+      "files_changed": [],
+      "commands_run": [
+        "npm run check:video-editor-sdk-imports",
+        "npm run check:sdk-public-exports -- --release",
+        "npm run check:contracts",
+        "npm run lint",
+        "NODE_OPTIONS=--max-old-space-size=8192 npm run build",
+        "npm run test"
+      ]
+    },
+    {
+      "task_id": "T16",
+      "status": "done",
+      "executor_notes": "Created src/tools/video-editor/runtime/routeFitMapper.ts exporting: (1) resolveScopedKey \u2014 resolves kind:extensionId:contributionId from contributionIndex using direct lookup when all three identity fields are supplied, or unique-match scan when only extensionId+contributionId are supplied; returns undefined for ambiguous/missing cases. (2) resolveRouteFitMetadata \u2014 joins caller-supplied identity, route, fit, reason, and message into RouteFitMetadata only when the scoped key is uniquely resolvable; defaults fit to 'unknown'. (3) blockerToRouteFitMetadata \u2014 convenience wrapper for VideoEdito...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/routeFitMapper.ts",
+        "src/tools/video-editor/runtime/routeFitMapper.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/routeFitMapper.test.ts (30 passed)",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts (163 passed)",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/shaderValidation.test.ts (4 passed)"
+      ]
+    },
+    {
+      "task_id": "T17",
+      "status": "done",
+      "executor_notes": "Added 15 compatibility tests in a new nested `describe('route planner / route-fit compatibility', ...)` block inside `renderPlanner.test.ts`. Tests cover: (1) RenderPlannerResult shape stability \u2014 all top-level keys present regardless of contributionIndex; (2) route plan identity \u2014 identical blocker counts and blocked state when contributionIndex has active entries; (3) export route consistency \u2014 canBrowserExport/canWorkerExport unchanged; (4) blocker\u2192RouteFitMetadata attribution \u2014 only produces metadata when blocker extensionId+contributionId uniquely resolve in the index, returns undefine...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/renderPlanner.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run renderPlanner.test.ts \u2014 30/30 passed",
+        "npx vitest run routeFitMapper.test.ts extensionSurface.test.ts \u2014 178/178 passed",
+        "npx vitest run renderPlanner.test.ts routeFitMapper.test.ts \u2014 60/60 passed"
+      ]
+    },
+    {
+      "task_id": "T18",
+      "status": "done",
+      "executor_notes": "Ran the complete scoped test suite (14 test files, 1691 tests) covering all changed surfaces: SDK (index, boundary, sdk-boundary, manifest-schema-validation, barrel-import-smoke), runtime (extensionSurface, extensionPackageManifest, renderPlanner, outputFormatRegistry, routeFitMapper, shaderValidation), timeline (timeline-patch, timeline-domain.shaders), and router (renderRouter). All 1691 tests pass with zero failures. No new failures introduced. Baseline is null (capture failed) so no pre-existing failure comparison available, but all tests are green. Individual file results: outputFormat...",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run [14 test files] \u2014 1691 passed, 0 failures"
+      ]
+    },
+    {
+      "task_id": "T19",
+      "status": "done",
+      "executor_notes": "Final verification complete. 16 scoped test files: 1777/1777 pass. TypeScript: 0 errors. Contract schema (reigh-extension.schema.json): 0 line diff \u2014 unchanged. Contract governance: 18/18 pass after adding ContributionRef, LiveSourceRef, MaterialRef, contributionRefKey to registry.json. Import boundaries: shaderValidation.ts imports no timeline-domain types; routeFitMapper.ts imports no SDK modules; SDK files import no runtime modules. Public exports: barrel exports verified, barrel-import-smoke 199/199 pass. Lint: 0 warnings on changed sources. Edge smoke: 132/133 pass (1 pre-existing skip...",
+      "files_changed": [
+        "config/contracts/registry.json"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts [16 files] \u2014 1777 passed",
+        "npx tsc --noEmit \u2014 0 errors",
+        "git diff HEAD -- config/contracts/reigh-extension.schema.json \u2014 unchanged",
+        "npx eslint --max-warnings 0 [changed sources] \u2014 passed",
+        "npm run check:contracts \u2014 18/18 passed",
+        "npm run check:sdk-public-exports \u2014 377 exports, 0 violations",
+        "npm run check:video-editor-sdk-imports \u2014 all passed",
+        "npx vitest run --config config/testing/vitest.edge.smoke.config.ts \u2014 132 passed"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC1",
+      "executor_note": "Confirmed: All 7 named M1a surface files inspected (references.ts, sdk/index.ts, extensionSurface.ts, FamilyContributionSequence.ts, FamilyRuntimeAssembly.ts, patch.ts, shaderValidation.ts). No widening into graph contracts, target paths, material runtime, process activation, or output-format execution. Graph ops are reserved only in patch.ts types (graph.node.*, graph.edge.*, graph.group.*) as non-executable, non-previewable families. MaterialRef is a transparent alias for RenderMaterialRef (no material runtime). Process descriptors are declaration-only in M12 reserved buckets. Output-form..."
+    },
+    {
+      "sense_check_id": "SC2",
+      "executor_note": "CONFIRMED. LiveSourceRef is now constructable with sourceId alone (`{ sourceId: 'webcam-1' }` \u2014 sourceKind is undefined, Object.keys returns only ['sourceId']) while still accepting sourceKind when supplied (`{ sourceId: 'webcam-2', sourceKind: 'webcam' }` \u2014 both keys present). contributionRefKey remains unchanged: returns `kind:extensionId:contributionId` with no version fields. MaterialRef remains a transparent RenderMaterialRef alias. All 329 SDK boundary tests pass."
+    },
+    {
+      "sense_check_id": "SC3",
+      "executor_note": "CONFIRMED. All scoped contribution keys use exactly kind:extensionId:contributionId across all four audited files: (1) FamilyContributionSequence.ts contributionScopedKey \u2192 `${contribution.kind}:${extensionId}:${contribution.id}`; (2) FamilyRuntimeAssembly.ts disabled/invalid entries \u2192 `${contrib.kind}:${entry.extensionId}:${contrib.id}`, plus all index lookups inherit the scopedKey from the sequence; (3) shaderValidation.ts shaderContributionScopedKey \u2192 `shader:${extensionId}:${contributionId}` (hardcoded kind='shader', which is the only valid kind for shader contributions); (4) routeFitMa..."
+    },
+    {
+      "sense_check_id": "SC4",
+      "executor_note": "YES. ContributionIndex remains host-owned (defined in extensionSurface.ts, absent from SDK public API manifest and contract registry). Frozen entries cover all four statuses: active (sortedBridged), inactive-reserved (inactiveReserved), disabled (packageStateToIndexStatus maps incompatible/duplicate/settings-error/runtime-error \u2192 'disabled'), and invalid (packageState='invalid'). Each entry carries diagnostics, packageState, projection metadata, duplicate ordinal, and optional resolutionPolicy/routeFit. Route-fit metadata is attached only through normalizeContributionIndexRouteFit() which e..."
+    },
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "YES. graph.node.*, graph.edge.*, and graph.group.* are in TIMELINE_PATCH_RESERVED_OP_FAMILIES (patch.ts:65-72), emit warning diagnostics with code 'timeline-patch/reserved-op' and detail.nonPreviewable=true (timeline-patch.ts:617-627), are skipped during compilation (continue at line 976), cause fullyPreviewable=false in preview (line 1840). graph/node/edge are valid TimelineDiffGranularity values (patch.ts:150-152). Shader validation is centralized: renderPlanner.ts imports projectShaderRefs/validateShaderComposition from shaderValidation.ts. Shader projection filters snapshot shaders thro..."
+    },
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "YES. The focused Vitest command completed with 824/824 tests passing (6 files, 0 failures). check:video-editor-sdk-imports passed all checks. check:sdk-public-exports AUDIT PASSED (377 exports, 0 violations). config/contracts/reigh-extension.schema.json is unchanged per git diff. No new failures introduced."
+    },
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "Confirmed. Sequencing allows cross-extension bare-ID reuse and same-extension cross-kind reuse, warns only on exact scoped duplicates, preserves all declarations, and keeps `FamilyContributionRef` source-compatible."
+    },
+    {
+      "sense_check_id": "SC7",
+      "executor_note": "Confirmed. Exact scoped duplicate descriptors are filtered out of runtime family arrays while duplicate declarations remain preserved in contributionIndex metadata, with structured first-wins resolutionPolicy on non-projected losers and descriptor-array projection provenance on winners."
+    },
+    {
+      "sense_check_id": "SC8",
+      "executor_note": "Confirmed. The contribution index includes active projected records, preserved duplicate records, inactive-reserved entries, and disabled/invalid package inventory entries where source data exists; diagnostics remain scoped when kind is known and fall back by extensionId+contributionId only when kind attribution is unavailable."
+    },
+    {
+      "sense_check_id": "SC9",
+      "executor_note": "CONFIRMED. formatScopedKey returns outputFormat:extensionId:formatId, so two extensions with same bare formatId produce distinct keys. Public CompileOnlyOutputExecutionOptions remain source-compatible \u2014 callers pass bare formatId + extensionId separately; scoping is internal. All audited surfaces (renderRouter, useRenderState, renderPlanner, commands/**) require no changes. Verified via 1159 passing tests across outputFormatRegistry, SDK suite, and audited surfaces."
+    },
+    {
+      "sense_check_id": "SC10",
+      "executor_note": "CONFIRMED. Graph patch op families (graph.node.*, graph.edge.*, graph.group.*) and granularities (graph, node, edge) are recognized only as reserved vocabulary. Validation produces 'warning' severity diagnostics with detail {reserved:true, deferred:true, nonPreviewable:true}. Compile skips them entirely (RESERVED_OPS.has(family) => continue at line 975 of timeline-patch.ts). Preview sets fullyPreviewable=false at lines 1828-1830. No graph operations are executed. Verified by 262 passing tests in timeline-patch.test.ts including dedicated graph-op test suites, plus 962 broader tests all green."
+    },
+    {
+      "sense_check_id": "SC11",
+      "executor_note": "Confirmed. `timeline-domain.shaders.test.ts` still matches exact clip/postprocess occupied payloads and serialized-config issues after helper delegation; focused verification passed with 13/13 tests green across `shaderValidation.test.ts` and `timeline-domain.shaders.test.ts`."
+    },
+    {
+      "sense_check_id": "SC12",
+      "executor_note": "Confirmed. renderPlanner now reuses the shared shader validation helper path without changing planner-facing outputs: duplicate findings still use planner.shaderComposition.*.scope-occupied IDs, severity error, browser-export and worker-export route coverage, shader-composition-limit details, and the existing RenderPlannerResult fields. Targeted helper and planner tests passed (37/37)."
+    },
+    {
+      "sense_check_id": "SC13",
+      "executor_note": "Confirmed. Route-fit metadata is joined only on directly or uniquely resolvable scoped contribution identity: (1) blockers with kind+extensionId+contributionId match directly via resolveScopedKey (routeFitMapper.ts lines 69-72), (2) blockers with only extensionId+contributionId must uniquely match a single entry across all kinds (lines 74-87). Ambiguous cross-kind matches (same extensionId+contributionId under different kinds) return undefined and are left absent/unknown (tested at lines 440-450 and 280-286). Route selection is unchanged \u2014 verified by 5 invariance tests (lines 516-693): pla..."
+    },
+    {
+      "sense_check_id": "SC14",
+      "executor_note": "CONFIRMED. All 13 focused test files pass with zero failures (1514/1514 tests). SDK references/manifest (309+183+329+28), package validation (58), extension runtime/index (150), output format registry (61), timeline patch (262), timeline-domain shaders (6), render planner (30), render router (44), shader validation helper (7), route-fit mapper (47). No new failures; baseline was null but all green means no regressions detected."
+    },
+    {
+      "sense_check_id": "SC15",
+      "executor_note": "SDK import boundaries PASSED (allowlist + packagability smoke + negative fixtures + external consumer all green). SDK public export governance PASSED (377 exports, 0 violations, no barrel imports within SDK). Contract checks PASSED (18 contracts). Lint PASSED (0 warnings). Build PASSED (tsc + vite build with NODE_OPTIONS=--max-old-space-size=8192; pre-existing CSS/dynamic-import warnings only). Full test suite hangs on pre-existing NotFoundPage.test.tsx issue (baseline was already null with exit code 4; timed out at 1200s). T14 already confirmed all 1514 focused tests pass with 0 failures...."
+    },
+    {
+      "sense_check_id": "SC16",
+      "executor_note": "CONFIRMED. resolveScopedKey only returns a scoped key when identity is directly attributable: (a) all three fields (kind, extensionId, contributionId) are provided \u2192 direct O(1) lookup in the index; (b) only extensionId+contributionId are provided \u2192 scans the index and returns a key only when exactly one entry across all kinds matches (ambiguous multi-kind matches return undefined). The mapper never infers kind from bare contributionId alone \u2014 extensionId is always required. blockerToRouteFitMetadata and findingToRouteFitMetadata delegate to the same resolution logic, so ambiguous bare IDs..."
+    },
+    {
+      "sense_check_id": "SC17",
+      "executor_note": "CONFIRMED. The 15 compatibility tests prove: (a) RenderPlannerResult public shape is unchanged \u2014 all 9 top-level keys (guard, findings, blockers, routes, routePlans, diagnostics, nextActions, canBrowserExport, canWorkerExport) are present with identical structure regardless of contributionIndex; (b) route selection is preserved \u2014 blocker counts, blocked state, and export availability are identical when the index has only active entries (no filtering/projection changes); (c) route-fit metadata is populated only where directly attributable \u2014 blockerToRouteFitMetadata and findingToRouteFitMeta..."
+    },
+    {
+      "sense_check_id": "SC18",
+      "executor_note": "CONFIRMED. The focused test suite ran against all 14 changed-surface test files covering SDK, runtime, timeline, planner, router, and registry surfaces. Results: 1691 tests passed, 0 failures. No new failures introduced beyond the recorded baseline (baseline is null as capture failed, but all tests pass cleanly). Breakdown: SDK tests (index 309, boundary 183, sdk-boundary 329, barrel-import-smoke 199, manifest-schema-validation 28) all pass; runtime tests (extensionSurface 148, extensionPackageManifest 58, renderPlanner 30, outputFormatRegistry 61, routeFitMapper 30, shaderValidation 4) all..."
+    },
+    {
+      "sense_check_id": "SC19",
+      "executor_note": "All checks executed and passed: (1) Import boundary: shaderValidation.ts imports no timeline-domain types; routeFitMapper.ts imports no SDK modules; SDK files import no runtime modules \u2014 clean. (2) Public exports: ContributionRef, LiveSourceRef, MaterialRef, contributionRefKey all present in barrel (src/sdk/index.ts lines 113-114), barrel-import-smoke 199/199 pass. (3) Contract governance: 18/18 pass (4 new entries added to registry.json). (4) Lint: eslint --max-warnings 0 on all changed source files passes. (5) Build: tsc --noEmit passes with 0 errors. (6) Edge smoke: 132/133 pass. (7) con..."
+    }
+  ],
+  "output": "Aggregated execute batches: completed 19/5. Batch 1: T1 audit complete. All 7 named M1a surface files inspected. Existing M1a behavior confirmed as base state. No graph contracts, target paths, material runtime, process activation, or output-format execution widening detected. All settled decisions (SD1, SD2, SD3) respected. No source edits required for this batch. Batch 2: Batch 3: Batch 4: Batch 5: Batch 6: Verified current checkout already satisfies T6; no source edits were required. Scoped duplicate sequencing verification passed. Batch 7: Verified T7 in the checked-in runtime assembly and extension-surface coverage. The scoped foreground Vitest run passed with 971/971 tests. Batch 8: Verified current checkout satisfies T8. Contribution-index diagnostics fall back by extensionId+contributionId only when kind attribution is unavailable, and stay scoped to the resolved contribution kind when a kind hint exists. Scoped verification passed: src/tools/video-editor/runtime/extensionSurface.test.ts (150/150). Batch 9: T9 verified complete. formatScopedKey returns outputFormat:extensionId:formatId (line 71). Public CompileOnlyOutputExecutionOptions remain source-compatible \u2014 callers pass bare formatId + extensionId separately; scoping is internal. Audit confirmed: renderRouter.ts (shape-driven, no identity fields), useRenderState.ts (delegates to scoped-key-aware registry), renderPlanner.ts (already extensionId-aware), commands/** (timeline infrastructure, no contribution iden...",
+  "deviations": [
+    "Advisory observation mismatch: git status/content hash delta found unclaimed files: config/contracts/registry.json, config/governance/sdk-public-api-manifest.json, src/sdk/__tests__/sdk-boundary.test.ts, src/sdk/boundary.test.ts, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/lifecycle.ts, src/sdk/manifest.ts, src/sdk/video/composition/references.ts, src/sdk/video/timeline/patch.ts, src/tools/video-editor/lib/timeline-domain.shaders.test.ts, src/tools/video-editor/lib/timeline-domain.ts, src/tools/video-editor/lib/timeline-patch.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.ts, src/tools/video-ed...",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: config/contracts/registry.json, config/governance/sdk-public-api-manifest.json, src/sdk/__tests__/sdk-boundary.test.ts, src/sdk/boundary.test.ts, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/lifecycle.ts, src/sdk/manifest.ts, src/sdk/video/composition/references.ts, src/sdk/video/timeline/patch.ts, src/tools/video-editor/lib/timeline-domain.shaders.test.ts, src/tools/video-editor/lib/timeline-domain.ts, src/tools/video-editor/lib/timeline-patch.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.ts, src/tools/video-editor...",
+    "Advisory audit finding: Sense check SC2 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC3 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+    "Advisory audit finding: Tasks left pending after execute (executor never started them): T2, T3, T4, T5, T6",
+    "Advisory observation mismatch: git status/content hash delta found unclaimed files: config/contracts/registry.json, config/governance/sdk-public-api-manifest.json, src/sdk/boundary.test.ts, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/lifecycle.ts, src/sdk/manifest.ts, src/sdk/video/timeline/patch.ts, src/tools/video-editor/lib/timeline-domain.shaders.test.ts, src/tools/video-editor/lib/timeline-domain.ts, src/tools/video-editor/lib/timeline-patch.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.ts, src/tools/video-editor/runtime/extensionPackageManifest.test.ts, src/tools/video-editor/runtime/ext...",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: config/contracts/registry.json, config/governance/sdk-public-api-manifest.json, src/sdk/boundary.test.ts, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/lifecycle.ts, src/sdk/manifest.ts, src/sdk/video/timeline/patch.ts, src/tools/video-editor/lib/timeline-domain.shaders.test.ts, src/tools/video-editor/lib/timeline-domain.ts, src/tools/video-editor/lib/timeline-patch.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.ts, src/tools/video-editor/runtime/extensionPackageManifest.test.ts, src/tools/video-editor/runtime/extensi...",
+    "Advisory audit finding: Sense check SC3 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+    "Advisory audit finding: Tasks left pending after execute (executor never started them): T3, T4, T5, T6",
+    "T3 is a read-only audit task with no source file changes \u2014 status 'done' reflects completed verification, not code edits.",
+    "Advisory observation mismatch: git status/content hash delta found unclaimed files: config/contracts/registry.json, config/governance/sdk-public-api-manifest.json, src/sdk/__tests__/sdk-boundary.test.ts, src/sdk/boundary.test.ts, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/lifecycle.ts, src/sdk/manifest.ts, src/sdk/video/composition/references.ts, src/sdk/video/timeline/patch.ts, src/tools/video-editor/lib/timeline-domain.shaders.test.ts, src/tools/video-editor/lib/timeline-domain.ts, src/tools/video-editor/lib/timeline-patch.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.ts, src/tools/video-ed...",
+    "Advisory: done tasks rely on non-file evidence (FLAG-006 softening): T3",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: config/contracts/registry.json, config/governance/sdk-public-api-manifest.json, src/sdk/boundary.test.ts, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/lifecycle.ts, src/sdk/manifest.ts, src/sdk/video/timeline/patch.ts, src/tools/video-editor/lib/timeline-domain.shaders.test.ts, src/tools/video-editor/lib/timeline-domain.ts, src/tools/video-editor/lib/timeline-patch.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.ts, src/tools/video-editor/runtime/extensionPackageManifest.test.ts, src/tools/video-editor/runtime/extensi...",
+    "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+    {
+      "omitted_count": 70,
+      "reason": "prompt projection"
+    }
+  ],
+  "files_changed": [
+    "src/sdk/video/composition/references.ts",
+    "src/sdk/__tests__/sdk-boundary.test.ts",
+    "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+    "src/tools/video-editor/runtime/extensionSurface.test.ts",
+    "src/tools/video-editor/runtime/outputFormatRegistry.ts",
+    "src/tools/video-editor/runtime/composition/shaderValidation.ts",
+    "src/tools/video-editor/runtime/composition/shaderValidation.test.ts",
+    "src/tools/video-editor/runtime/renderPlanner.ts",
+    "src/tools/video-editor/runtime/renderPlanner.test.ts",
+    "src/tools/video-editor/runtime/routeFitMapper.ts",
+    "src/tools/video-editor/runtime/routeFitMapper.test.ts",
+    "config/contracts/registry.json"
+  ],
+  "commands_run": [
+    "npx vitest run src/sdk/__tests__/sdk-boundary.test.ts --reporter=verbose",
+    "node /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/node_modules/.bin/vitest run --config /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/config/testing/vitest.config.ts --reporter=verbose /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-...",
+    "node /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/node_modules/.bin/vitest run --config /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/config/testing/vitest.config.ts --reporter=verbose /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-...",
+    "npx vitest run src/tools/video-editor/runtime/composition/shaderValidation.test.ts --reporter=verbose (7/7 passed)",
+    "npx vitest run src/tools/video-editor/runtime/routeFitMapper.test.ts --reporter=verbose (47/47 passed)",
+    "npx vitest run src/tools/video-editor/runtime/extensionSurface.test.ts src/sdk/__tests__/sdk-boundary.test.ts --reporter=verbose (479/479 passed)",
+    "npx vitest run src/tools/video-editor/runtime/renderPlanner.test.ts --reporter=verbose (30/30 passed)",
+    "npx vitest run src/tools/video-editor/lib/timeline-patch.test.ts --reporter=verbose (262/262 passed)",
+    "npx vitest run --config config/testing/vitest.config.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/lib/timeline-domain.shaders.test.ts src/tools/video-editor/lib/timeline-patch.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/render...",
+    "npm run check:video-editor-sdk-imports",
+    "npm run check:sdk-public-exports",
+    "./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/boundary.test.ts src/tools/video-editor/runtime/extensionPackageManifest.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/lib/timeline-patch.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/sdk/boundary.test.ts src/sdk/index.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts",
+    "npx vitest run src/tools/video-editor/runtime/extensionSurface.test.ts",
+    "vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/outputFormatRegistry.test.ts",
+    "vitest run --config config/testing/vitest.config.ts src/sdk/boundary.test.ts src/sdk/index.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts",
+    "vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/lib/renderRouter.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx",
+    "./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-patch.test.ts",
+    "megaplan override resume-clarify",
+    "npx vitest run src/tools/video-editor/runtime/composition/shaderValidation.test.ts src/tools/video-editor/lib/timeline-domain.shaders.test.ts",
+    {
+      "omitted_count": 27,
+      "reason": "prompt projection"
+    }
+  ],
+  "watch_items": [
+    "Settled decision SD1: keep LiveSourceRef.sourceKind as the optional property name; do not rename it to kind.",
+    "Settled decision SD2: FamilyContributionSequence may keep its local contributionScopedKey helper if it emits exactly kind:extensionId:contributionId; do not introduce unnecessary host-to-SDK coupling just to satisfy key reuse.",
+    "ContributionRef remains data-only and contributionRefKey must not include version, package state, or other runtime metadata.",
+    "MaterialRef must remain an alias of RenderMaterialRef; do not introduce a parallel material model or runtime.",
+    "ContributionIndex is host-owned runtime state and must not be added to public manifest schemas, descriptor pointer contracts, or config/contracts/reigh-extension.schema.json.",
+    "Duplicate semantics are scoped by extensionId, kind, and contributionId only; exact duplicates warn and remain indexed, while cross-extension and cross-kind bare-ID reuse is valid.",
+    "Route-fit metadata is advisory and narrow; it must not affect route selection or RenderPlannerResult top-level shape.",
+    "Graph patch vocabulary in this milestone is reserved data vocabulary only; do not make graph projection authoritative or add execution/preview support.",
+    "Live or nondeterministic inputs still require bake/promotion before authoritative export; this milestone should not weaken that North Star constraint."
+  ],
+  "user_actions": [],
+  "meta_commentary": "This is a finishing pass, not a redesign. The only expected source change is making LiveSourceRef.sourceKind optional and updating the SDK boundary test; the scoped-key and runtime tasks are there to catch drift and make narrowly scoped fixes only if inspection finds divergence. Keep config/contracts/reigh-extension.schema.json unchanged unless a real generated contract artifact changes, and keep all graph, route-fit, and shader behavior within the M1a bridge scope rather than turning the composition graph into the authority in this milestone."
+}
+
+        Plan metadata:
+        {
+  "version": 3,
+  "timestamp": "2026-07-03T01:24:06Z",
+  "hash": "sha256:84907a4796c75669c7b3a45042a6246d8d541c0203bf9690b47204cdf98a2b7b",
+  "questions": [
+    "Should `LiveSourceRef` expose the optional kind as `sourceKind?: string` to match existing timeline/live-binding vocabulary, or as `kind?: string` to mirror `LiveSource.kind` exactly?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`contributionRefKey` remains importable from the SDK barrel and returns `kind:extensionId:contributionId` without version fields.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`LiveSourceRef` is data-only and constructable with `sourceId` alone, while still allowing source kind metadata when supplied.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`MaterialRef` remains a type alias of `RenderMaterialRef` and no parallel material runtime is introduced.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`ExtensionRuntime.contributionIndex` preserves active, inactive-reserved, disabled, and invalid contribution entries with frozen nested data, diagnostics, package state, projection metadata, and duplicate `resolutionPolicy` where applicable.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Cross-extension bare contribution ID reuse and same-extension cross-kind reuse produce no `runtime/duplicate-contribution` diagnostic, while exact scoped-key duplicates are preserved with warning diagnostics.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Graph patch families are known reserved ops, emit reserved warnings, and remain skipped by compile/preview execution paths.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Shader scope validation remains centralized through host composition validation and existing assignment, serialized-config, and planner duplicate-scope tests pass.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Route-fit attribution only attaches metadata for uniquely resolvable scoped contribution keys and does not change `RenderPlannerResult` top-level shape or route decisions.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "SDK modules do not import host runtime modules, and public SDK export checks pass.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "No new manifest-facing schema vocabulary is added for contribution refs, contribution index entries, graph ops, or route-fit metadata.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Scoped-key construction is easy to audit and avoids divergent string formats across runtime helpers.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The already-present M1a code is intentional and should be finished, not reverted or recreated.",
+    "Unless clarified, the SDK live-source reference will keep the existing `sourceKind` property name and make it optional.",
+    "`ContributionIndex` remains host-owned and is not added to public manifest schemas or descriptor pointer contracts.",
+    "Route-fit metadata in the contribution index is advisory metadata only; it must not influence route selection in this milestone.",
+    "The graph vocabulary added here is reserved data vocabulary only, not graph projection authority or execution support.",
+    "No anchor conflict is present: this is a bridge toward the composition spine while staying inside V1 constraints."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/sdk/__tests__/sdk-boundary.test.ts",
+        "reason": "Covers SDK reference exports, reference shapes, and patch vocabulary boundary types."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/timeline-domain.shaders.test.ts",
+        "reason": "Covers shader assignment and serialized shader scope validation."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/timeline-patch.test.ts",
+        "reason": "Covers reserved graph patch op validation, compile skipping, and preview behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "reason": "Covers contribution index assembly, duplicate semantics, package states, and freezing."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "reason": "Covers snapshot shader projection, duplicate shader findings, and RenderPlannerResult compatibility."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/routeFitMapper.test.ts",
+        "reason": "Covers route-fit attribution and route-selection invariance."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/video/composition/references.ts",
+      "src/sdk/__tests__/sdk-boundary.test.ts",
+      "src/tools/video-editor/runtime/families/FamilyContributionSequence.ts",
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+      "src/tools/video-editor/runtime/composition/shaderValidation.ts",
+      "src/tools/video-editor/runtime/routeFitMapper.ts",
+      "src/tools/video-editor/runtime/extensionSurface.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.test.ts",
+      "src/tools/video-editor/runtime/routeFitMapper.test.ts"
+    ],
+    "always_run": [
+      "npm run check:video-editor-sdk-imports",
+      "npm run check:sdk-public-exports"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/sdk/__tests__/sdk-boundary.test.ts, src/sdk/video/composition/references.ts, src/tools/video-editor/runtime/composition/shaderValidation.ts, src/tools/video-editor/runtime/extensionSurface.test.ts, src/tools/video-editor/runtime/families/FamilyContributionSequence.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/routeFitMapper.test.ts, src/tools/video-editor/runtime/routeFitMapper.ts. Candidate: The change is concentrated in SDK reference contracts and host runtime composition/index helpers; the selected tests cover each requested behavior while retaining full-suite fallback for integration confidence.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    }
+  },
+  "structure_warnings": []
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "PROCEED",
+  "passed": true,
+  "rationale_brief": "The plan is a finishing pass on already-landed M1a code. Only one concrete change remains: making LiveSourceRef.sourceKind optional (it is currently required at references.ts:55). All other plan steps are behavior-preserving audits or no-ops \u2014 scoped-key formats are already consistent across FamilyContributionSequence, shaderValidation, and routeFitMapper.",
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "LiveSourceRef uses sourceKind (not kind) as the optional property name.",
+      "rationale": "The existing timeline/live-binding vocabulary uses sourceKind consistently. Renaming to kind would break precedent and the plan question has no definitive answer from upstream. Default to preserving the existing vocabulary while making the field optional."
+    },
+    {
+      "id": "SD2",
+      "decision": "Scoped-key construction in FamilyContributionSequence stays with the local helper contributionScopedKey rather than importing contributionRefKey from the SDK.",
+      "rationale": "FamilyContributionSequence operates on ExtensionContribution shapes (not ContributionRef shapes), so importing contributionRefKey would require a mapping layer. The local helper produces identical format (kind:extensionId:contributionId) and is auditable in a single file. Importing the SDK function would create a dependency from host runtime to SDK symbol, which the plan's success criterion #9 explicitly forbids (SDK modules must not import host runtime modules, and conversely we should avoid unnecessary host\u2192SDK coupling in runtime assembly code)."
+    },
+    {
+      "id": "SD3",
+      "decision": "Commands directory, renderRouter.ts, and reigh-extension.schema.json require zero changes for M1a.",
+      "rationale": "Direct audit confirms zero M1a surface exposure. The idea snapshot listed them as potential touchpoints but the implementation did not touch them. Future milestones (graph projection, target paths, material runtime) may affect these files."
+    }
+  ],
+  "warnings": [
+    "LiveSourceRef.sourceKind is still a required field (references.ts:55) despite the plan requiring it to be optional. This is the primary code change to execute.",
+    "The current sdk-boundary test at line 4633-4642 expects sourceKind as a required property \u2014 it must be updated alongside the type change.",
+    "Scoped-key construction in FamilyContributionSequence uses a local helper (contributionScopedKey) rather than the SDK's contributionRefKey. The format is identical (kind:extensionId:contributionId), but importing contributionRefKey directly would eliminate the format-divergence risk called out in success criterion #11.",
+    "Step 6 of the plan conditionally leaves config/contracts/reigh-extension.schema.json unchanged \u2014 verify this decision during validation."
+  ],
+  "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize. Verify unresolved flags against the plan and project code before accepting.",
+  "carried_flags": [],
+  "iteration": 3,
+  "produced_at": "2026-07-03T01:36:07Z"
+}
+
+        Settled decisions (verify the executor implemented these correctly):
+- SD1: LiveSourceRef uses sourceKind (not kind) as the optional property name. (The existing timeline/live-binding vocabulary uses sourceKind consistently. Renaming to kind would break precedent and the plan question has no definitive answer from upstream. Default to preserving the existing vocabulary while making the field optional.)
+- SD2: Scoped-key construction in FamilyContributionSequence stays with the local helper contributionScopedKey rather than importing contributionRefKey from the SDK. (FamilyContributionSequence operates on ExtensionContribution shapes (not ContributionRef shapes), so importing contributionRefKey would require a mapping layer. The local helper produces identical format (kind:extensionId:contributionId) and is auditable in a single file. Importing the SDK function would create a dependency from host runtime to SDK symbol, which the plan's success criterion #9 explicitly forbids (SDK modules must not import host runtime modules, and conversely we should avoid unnecessary host→SDK coupling in runtime assembly code).)
+- SD3: Commands directory, renderRouter.ts, and reigh-extension.schema.json require zero changes for M1a. (Direct audit confirms zero M1a surface exposure. The idea snapshot listed them as potential touchpoints but the implementation did not touch them. Future milestones (graph projection, target paths, material runtime) may affect these files.)
+
+
+Critique flags to re-verify against the final diff:
+            [
+  {
+    "id": "verifiability-0",
+    "concern": "Criterion 10: requires human verification (subjective_judgment).",
+    "severity": "minor",
+    "status": "open"
+  },
+  {
+    "id": "issue_hints-2",
+    "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Step 7 says to create `shaderValidation.ts` and 'Wire timeline-domain assignment and serialized config validation through it' but never specifies how the existing inline functions in `timeline-domain.ts` \u2014 `assignTimelineClipShader`, `assignTimelinePostprocessShader`, the `shader_scope_occupied` result type, and the serialized config validation path at line ~2072 \u2014 will be modified or what stays in place. The `timeline-domain.ts` file (2,253 lines) has shader validation deeply coupled to `TimelineDomainIssue` types and `TimelineConfig` serialization. Extracting validation without breaking the existing test coverage at `timeline-domain.shaders.test.ts` (164 lines) requires a concrete extraction plan that Step 7 doesn't provide.",
+    "severity": "significant",
+    "status": "verified"
+  },
+  {
+    "id": "issue_hints-3",
+    "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Step 4 migrates duplicate detection from bare-ID rejection (current behavior: `error` severity, `continue` skip, first-wins) to scoped-key warning with preservation. However, no plan step addresses how downstream descriptor arrays \u2014 particularly `shaderDescriptors`, `effectDescriptors`, `transitionDescriptors`, and `agentToolDescriptors` in `FamilyRuntimeAssembly` \u2014 will handle now-preserved duplicate entries. The slot adapter already does first-wins for slots, but other descriptor arrays append unconditionally. Without mitigation, duplicate scoped-key entries would produce duplicate runtime descriptors, potentially causing render planner or UI consumers to see the same contribution twice.",
+    "severity": "significant",
+    "status": "verified"
+  },
+  {
+    "id": "issue_hints-4",
+    "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: The plan adds `MaterialRef` as an alias for `RenderMaterialRef` (already exported at line 117 of `src/sdk/index.ts`). Introducing a parallel export name under a new 'Video: Composition' section creates a dual-name situation where both `MaterialRef` and `RenderMaterialRef` are public SDK exports referring to the same type. The plan doesn't clarify whether `RenderMaterialRef` should be deprecated, whether consumers should migrate, or whether the alias is temporary. This ambiguity could confuse extension authors about which name to use.",
+    "severity": "significant",
+    "status": "verified"
+  },
+  {
+    "id": "REVIEW-ROUTE_FIT_INDEX_STORAGE-001",
+    "concern": "Does contributionIndex store route-fit metadata where known?: ContributionIndexEntry lacks a routeFit/RouteFitMetadata field and FamilyRuntimeAssembly never writes route-fit metadata into contributionIndex entries.",
+    "severity": "significant",
+    "status": "verified"
+  }
+]
+
+            For each flag above that was raised during critique, verify whether the final diff actually addresses the concern.
+            A flag is resolved only if the final diff contains code that directly addresses the concern.
+            Do not trust pre-execute promises or plan claims; check the diff itself.
+            Add resolved flag IDs to `verified_flag_ids`.
+            Add flag IDs that are unresolved only by prose judgment, without a deterministic pre/post failing check, to `disputed_flag_ids`.
+            For any unresolved flag that is backed by a deterministic pre/post failing check, add a `rework_items` entry with a typed `target`, `issue`, `expected`, `actual`, `evidence_file`, `flag_id`, `source: "review_flag_reverify"`, and `deterministic_check`. Use `target.kind: "task"` with `task_id` for a single finalize task, `target.kind: "bulk"` with `task_ids` for a bulk operation that maps to multiple finalize tasks, or `target.kind: "manifest"` with `task_ids` for manifest-backed routes. Only use legacy `task_id: "REVIEW"` when the finding is a review blocker with no routable finalize target; execute treats that as telemetry/blocker compatibility, not runnable rework.
+
+Advisory mechanical pre-check flags:
+            [
+  {
+    "id": "PRECHECK-DIFF_SIZE_SANITY",
+    "check": "diff_size_sanity",
+    "detail": "Diff size looks larger than expected: changed_lines=4484, expected\u2248180, ratio=24.91, files=26, hunks=103.",
+    "severity": "minor",
+    "evidence_file": "config/contracts/registry.json"
+  }
+]
+
+            Copy this list verbatim into the output `pre_check_flags` field.
+
+        Historical execution audit context (`execution_audit.json`, prompt projection only):
+        {
+  "skipped": false,
+  "reason": "",
+  "findings": [
+    "Git status shows changed files not claimed by any task: config/contracts/registry.json, config/governance/sdk-public-api-manifest.json, src/sdk/boundary.test.ts, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/lifecycle.ts, src/sdk/manifest.ts, src/sdk/video/timeline/patch.ts, src/tools/video-editor/lib/timeline-domain.shaders.test.ts, src/tools/video-editor/lib/timeline-domain.ts, src/tools/video-editor/lib/timeline-patch.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.ts, src/tools/video-editor/runt..."
+  ],
+  "files_in_diff": [
+    "config/contracts/registry.json",
+    "config/governance/sdk-public-api-manifest.json",
+    "src/sdk/__tests__/sdk-boundary.test.ts",
+    "src/sdk/boundary.test.ts",
+    "src/sdk/index.test.ts",
+    "src/sdk/index.ts",
+    "src/sdk/lifecycle.ts",
+    "src/sdk/manifest.ts",
+    "src/sdk/video/composition/references.ts",
+    "src/sdk/video/timeline/patch.ts",
+    "src/tools/video-editor/lib/timeline-domain.shaders.test.ts",
+    "src/tools/video-editor/lib/timeline-domain.ts",
+    "src/tools/video-editor/lib/timeline-patch.test.ts",
+    "src/tools/video-editor/runtime/composition/shaderValidation.test.ts",
+    "src/tools/video-editor/runtime/composition/shaderValidation.ts",
+    "src/tools/video-editor/runtime/extensionPackageManifest.test.ts",
+    "src/tools/video-editor/runtime/extensionSurface.test.ts",
+    "src/tools/video-editor/runtime/extensionSurface.ts",
+    "src/tools/video-editor/runtime/families/FamilyContributionSequence.ts",
+    "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+    "src/tools/video-editor/runtime/outputFormatRegistry.test.ts",
+    "src/tools/video-editor/runtime/outputFormatRegistry.ts",
+    "src/tools/video-editor/runtime/renderPlanner.test.ts",
+    "src/tools/video-editor/runtime/renderPlanner.ts",
+    "src/tools/video-editor/runtime/routeFitMapper.test.ts",
+    "src/tools/video-editor/runtime/routeFitMapper.ts"
+  ],
+  "files_claimed": [
+    "src/sdk/__tests__/sdk-boundary.test.ts",
+    "src/sdk/video/composition/references.ts"
+  ]
+}
+
+        Fresh review-time evidence (`review_evidence.json`):
+        {
+  "projection": "bounded_prompt_summary",
+  "full_artifact": "review_evidence.json",
+  "schema": "megaplan.review_evidence",
+  "schema_version": 1,
+  "evidence_contract_version": 1,
+  "mode": "shadow",
+  "subject": {
+    "kind": "plan",
+    "name": "plan",
+    "to_state": "done",
+    "from_state": "executed",
+    "phase": "review",
+    "plan_name": "plan",
+    "milestone_label": null
+  },
+  "accepted": false,
+  "would_block": false,
+  "failures": [
+    "phase_coverage: execution_batch_19.json has no corroborated completed task IDs",
+    "green_suite: verification suite ran but delta is not computable (collection parse failure in baseline or verification)"
+  ],
+  "providers_used": [
+    "phase_coverage",
+    "landed_diff",
+    "worker_did_work",
+    "green_suite",
+    "execution_acceptance_contract",
+    "review_disposition",
+    "declared_noop"
+  ],
+  "legacy_evidence_count": 0,
+  "unknown_evidence_count": 1,
+  "would_block_reasons": [
+    "phase_coverage: execution_batch_19.json has no corroborated completed task IDs",
+    "green_suite: verification suite ran but delta is not computable (collection parse failure in baseline or verification)"
+  ],
+  "artifact": "review_evidence.json",
+  "generated_at": "2026-07-03T01:58:54Z",
+  "phase": "review",
+  "iteration": 3,
+  "base_sha": "4c348280f180be93c56efdb1ea9a6a5e2a4bfa4b",
+  "head_sha": "8a4201d9688f6cc73c18dbc71dcd86f7ade7959f",
+  "invocation_id": "3917bd7e98774c4d",
+  "provider_diagnostics": {
+    "phase_coverage": {
+      "ok": true
+    },
+    "landed_diff": {
+      "ok": true
+    },
+    "worker_did_work": {
+      "ok": true
+    },
+    "green_suite": {
+      "ok": true
+    },
+    "execution_acceptance_contract": {
+      "ok": true
+    },
+    "review_disposition": {
+      "ok": true
+    },
+    "declared_noop": {
+      "ok": true
+    }
+  },
+  "diagnostics": {
+    "base_sha": {
+      "ok": true,
+      "source": "state.meta.chain_policy.milestone_base_sha"
+    },
+    "head_sha": {
+      "ok": true,
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "source": "git_rev_parse_head"
+    },
+    "invocation_id": {
+      "ok": true,
+      "source": "state.meta.current_invocation_id"
+    }
+  },
+  "evidence": [
+    {
+      "kind": "phase_coverage",
+      "status": "unsatisfied",
+      "summary": "execution_batch_19.json has no corroborated completed task IDs",
+      "trust_class": "judgment",
+      "provider": "PhaseCoverageProvider",
+      "provider_version": "1",
+      "source": "phase_result.json",
+      "subject": "plan",
+      "artifact": {
+        "path": "phase_result.json",
+        "sha256": "sha256:1930711a178d0b35a186d93f393a65bcd54180eae1dbf6d656629878db934142",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "phase": "execute",
+        "exit_kind": "success",
+        "reason": "execution_batch_19.json has no corroborated completed task IDs",
+        "evidence_id": "sha256:1b8fc73ed8072571490c231b37d4290d917f03ce131e58845ed402078ff2ab46"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "landed_diff",
+      "status": "satisfied",
+      "summary": "diff present and claim-consistent",
+      "trust_class": "judgment",
+      "provider": "LandedDiffProvider",
+      "provider_version": "1",
+      "source": "execution_evidence.validate_execution_evidence",
+      "subject": "plan",
+      "artifact": {
+        "path": "finalize.json",
+        "sha256": "sha256:5e172ab8c2846153739c77f959dad6e535fa482d2de8c8e05a48154b87fb99a5",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "preview": "{\n  \"findings\": [\n    \"Git status shows changed files not claimed by any task: config/contracts/registry.json, config/governance/sdk-public-api-manifest.json, src/sdk/boundary.test.ts, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/lifecycle.ts, src/sdk/manifest.ts, src/sdk/video/timeline/patch.ts, src/tools/video-editor/lib/timeline-domain.shaders.test.ts, src/tools/video-editor/lib/timeline-domain.ts, src/tools/video-editor/lib/timeline-patch.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.ts, src/tools/video-editor/runtime/extensionPackageManifest.test.ts, src/tools/video-editor/runtime/extensionSurface.test.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/families/FamilyContributionSequence.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts, src/tools/video-editor/runtime/outputFormatRegistry.test.ts, src/tools/video-editor/runtime/outputFormatRegistry.ts, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/renderPlanner.ts, src/tools/video-editor/runtime/routeFitMapper.test.ts, src/tools/video-edito\n\n[truncated 3,172 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "worker_did_work",
+      "status": "satisfied",
+      "summary": "worker activity present",
+      "trust_class": "evidence",
+      "provider": "WorkerDidWorkProvider",
+      "provider_version": "1",
+      "source": "execution_batch_*.json",
+      "subject": "plan",
+      "artifacts": [
+        {
+          "path": "execution_batch_1.json",
+          "sha256": "sha256:13d0fde2472a3b79b6815c6fe28a10a90a1e70b4c4866c2ea606e11f7b25c780",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_10.json",
+          "sha256": "sha256:8d94ef5617a25ce08628cc678a64a605037ab1496445a96dc99c4614367483de",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_11.json",
+          "sha256": "sha256:b23d18fee57f9ae5764baa73456747cfd2f6a8d0d68999cabae588accd28764a",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_12.json",
+          "sha256": "sha256:b0d735572943e3dbb811afac5ad406784cd2c5508f3a8042e82536863b679bb7",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_13.json",
+          "sha256": "sha256:5a2918d50f285100b2206dd12c670ddfd72e5f73e7ad46c8c2b206060ffb0a00",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_14.json",
+          "sha256": "sha256:34f6f309bc1240907296c4254592d41ecf848f71a273d276ec90a6cc046c5ae6",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_15.json",
+          "sha256": "sha256:b743033059b0228fb236f7ad1d21e1a058ef1f5e225d32583552eab6614c12d9",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_16.json",
+          "sha256": "sha256:0a6e87e571de07bcb2de41b0d706041de14208bf917bbf02d1629dabaec472ff",
+          "artifact_type": "application/json"
+        }
+      ],
+      "artifacts_omitted": 12,
+      "details_preview": {
+        "files_changed": 36,
+        "commands_run": 105,
+        "sections_written": 0,
+        "batches": 20,
+        "batch_artifacts": [
+          "execution_batch_1.json",
+          "execution_batch_10.json",
+          "execution_batch_11.json",
+          "execution_batch_12.json",
+          "execution_batch_13.json",
+          "execution_batch_14.json",
+          "execution_batch_15.json",
+          "execution_batch_16.json",
+          "execution_batch_16_output.json",
+          "execution_batch_17.json",
+          "execution_batch_18.json",
+          "execution_batch_19.json",
+          "execution_batch_2.json",
+          "execution_batch_3.json",
+          "execution_batch_4.json",
+          "execution_batch_5.json",
+          "execution_batch_6.json",
+          "execution_batch_7.json",
+          "execution_batch_8.json",
+          "execution_batch_9.json"
+        ],
+        "activity_source": "execution_batch_records",
+        "evidence_id": "sha256:79b131024f8d606623a9fcbd6dad05a9722bf2da36d1c294315ffec72aeb06af"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "green_suite",
+      "status": "unsatisfied",
+      "summary": "verification suite ran but delta is not computable (collection parse failure in baseline or verification)",
+      "trust_class": "evidence",
+      "provider": "GreenSuiteProvider",
+      "provider_version": "1",
+      "source": "verification:82bf2ef10557",
+      "subject": "plan:plan",
+      "observed_at": "1783043934.330208",
+      "code_hash": "sha256:5582c88929d6bded26e0085edef3e545c2c8b67af4971bd0a079e387b0abf86a",
+      "artifact": {
+        "path": "verification/raw_82bf2ef10557.log",
+        "sha256": "sha256:63779ce47cbbd961627fbad1d63f1a9c312d5128b26d732761e7c8b95afca5e3",
+        "artifact_type": "text/plain"
+      },
+      "artifacts": [
+        {
+          "path": "verification/raw_82bf2ef10557.log",
+          "sha256": "sha256:63779ce47cbbd961627fbad1d63f1a9c312d5128b26d732761e7c8b95afca5e3",
+          "artifact_type": "text/plain"
+        },
+        {
+          "path": "verification/suite_runs.ndjson",
+          "sha256": "sha256:5eecbba46e41007977b493e62c42b75450033757fa0cb117dd99a1ae76a847b9",
+          "artifact_type": "application/x-ndjson"
+        }
+      ],
+      "details_preview": {
+        "preview": "{\n  \"run_id\": \"82bf2ef10557\",\n  \"phase\": \"verification\",\n  \"command\": \"/root/.pyenv/versions/3.11.11/bin/python3 -m pytest src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/lib/timeline-domain.shaders.test.ts src/tools/video-editor/lib/timeline-patch.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/routeFitMapper.test.ts --tb=no -q --no-header -rA\",\n  \"duration\": 0.3153134980238974,\n  \"collected\": 0,\n  \"collected_ids\": [],\n  \"failure_count\": 0,\n  \"failures\": [\n    \"runner_error\"\n  ],\n  \"pass_count\": 0,\n  \"status\": \"runner_error\",\n  \"exit_code\": 4,\n  \"code_hash\": \"sha256:5582c88929d6bded26e0085edef3e545c2c8b67af4971bd0a079e387b0abf86a\",\n  \"collections_parse_ok\": false,\n  \"collection_errors\": [],\n  \"raw_log_path\": \"/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m1a-reference-identity-patch-20260702-1603/verification/raw_82bf2ef10557.log\",\n  \"freshness_cache_hit\": false,\n  \"baseline_test_command\": null,\n  \"baseline_test_note\": \"Baseline capture failed: runner error (exit code: 4)\",\n  \"delta\": {\n    \"computable\": false,\n    \"newly_failing\"\n\n[truncated 1,100 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "execution_acceptance_contract",
+      "status": "unknown",
+      "summary": "execute acceptance contract could not be verified because suite evidence is runner_error",
+      "trust_class": "evidence",
+      "provider": "ExecuteAcceptanceContractProvider",
+      "provider_version": "1",
+      "source": "gate.json|gate_signals_v*.json + verification/suite_runs.ndjson",
+      "subject": "plan",
+      "details_preview": {
+        "preview": "{\n  \"contract\": {\n    \"scope\": \"execute\",\n    \"verification_mode\": \"verification_suite\",\n    \"required_checks\": [\n      {\n        \"id\": \"correctness\",\n        \"question\": \"Are the proposed changes technically correct?\",\n        \"reason\": \"Step 5 names `src/tools/video-editor/runtime/composition/shaderValidation.ts`, while Step 6 runs `timeline-domain.shaders.test.ts` and `renderPlanner.test.ts` but omits `src/tools/video-editor/runtime/composition/shaderValidation.test.ts`, which directly covers `validateShaderAssignment`, `validateShaderStack`, `projectShaderRefs`, and `validateShaderComposition`.\",\n        \"complexity\": 4,\n        \"attention\": \"high_complexity_unverifiable\"\n      },\n      {\n        \"id\": \"scope\",\n        \"question\": \"Search for related code that handles the same concept. Is the reported issue a symptom of something broader \\u2014 and is any single step sized to fit one worker turn?\",\n        \"reason\": \"Commands (6 files): 0 matches for contributionRefKey/ContributionRef/LiveSourceRef/MaterialRef/ContributionIndex. renderRouter.ts: 0 matches. reigh-extension.schema.json: 0 matches. Plan changed_surfaces omits all three without comment.\",\n        \"complexity\": 3\n  \n\n[truncated 583 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "review_disposition",
+      "status": "satisfied",
+      "summary": "review reported success",
+      "trust_class": "judgment",
+      "provider": "ReviewDispositionProvider",
+      "provider_version": "1",
+      "source": "review.json",
+      "subject": "plan",
+      "artifact": {
+        "path": "review.json",
+        "sha256": "sha256:dafc6f8bcd3213741157cafc6f8e9e7c5953b1f10063668a2f2d3d361e35438e",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "review_verdict": "approved",
+        "issue_count": 1,
+        "force_proceeded": false,
+        "evidence_id": "sha256:07bba6a66ddc19f40021607ff734f1c8767e4ac2055d94f7b42b067181c47006"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "declared_noop",
+      "status": "not_applicable",
+      "summary": "no declared no-op/waiver artifact (absence is not a failure)",
+      "trust_class": "claim",
+      "provider": "DeclaredNoopProvider",
+      "provider_version": "1",
+      "source": "completion/noop.json|completion_noop.json",
+      "subject": "plan",
+      "details_preview": {
+        "evidence_id": "sha256:c5a9ab90387234220c35d0514efb5fab48bd80d5d3066b982919aa7d976625c8"
+      },
+      "details_full_location": "review_evidence.json"
+    }
+  ],
+  "evidence_count": 7,
+  "green_suite": {
+    "delta": {
+      "computable": false,
+      "newly_failing": 0,
+      "newly_passing": 0,
+      "still_red": 0,
+      "still_green": 0,
+      "deleted_tests": 0,
+      "added_tests": 0,
+      "flakes": 0,
+      "tests_collected": 0,
+      "duration": 0.3153134980238974,
+      "flake_retry_skipped": false,
+      "flake_retry_reason": ""
+    }
+  }
+}
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m1a-reference-identity-patch-20260702-1603/review_output.json
+        Read this file first — it contains the expected JSON structure with pre-populated `task_verdicts`, `sense_check_verdicts`, and `criteria`.
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Git diff summary:
+        ?? .megaplan/epics/m1a-reference-identity-patch-20260702-1603/
+?? .megaplan/system_logs/log_012a9c313ad9.json
+?? .megaplan/system_logs/log_02818ff30df4.json
+?? .megaplan/system_logs/log_0ed62fe078d7.json
+?? .megaplan/system_logs/log_121aa1540d5b.json
+?? .megaplan/system_logs/log_161de0d9dcc6.json
+?? .megaplan/system_logs/log_1968ca0dee55.json
+?? .megaplan/system_logs/log_2003b4336cd1.json
+?? .megaplan/system_logs/log_20c28c400970.json
+?? .megaplan/system_logs/log_223e9aa57ce0.json
+?? .megaplan/system_logs/log_23d7df5a9eda.json
+?? .megaplan/system_logs/log_240b5709e5be.json
+?? .megaplan/system_logs/log_271c7a88a726.json
+?? .megaplan/system_logs/log_29435bb8008b.json
+?? .megaplan/system_logs/log_2e21f3f9b17a.json
+?? .megaplan/system_logs/log_3370c1d76530.json
+?? .megaplan/system_logs/log_400e5643d8ea.json
+?? .megaplan/system_logs/log_414be208ecb0.json
+?? .megaplan/system_logs/log_424314a8fb73.json
+?? .megaplan/system_logs/log_429f0e32356e.json
+?? .megaplan/system_logs/log_4388594d6bee.json
+?? .megaplan/system_logs/log_43f5c767f10a.json
+?? .megaplan/system_logs/log_45d10a073562.json
+?? .megaplan/system_logs/log_45d11cb14360.json
+?? .megaplan/system_logs/log_4e5b73efce46.json
+?? .megaplan/system_logs/log_4ed079066b30.json
+?? .megaplan/system_logs/log_4f1c3cfe5170.json
+?? .megaplan/system_logs/log_500947f756bd.json
+?? .megaplan/system_logs/log_513f6de573fd.json
+?? .megaplan/system_logs/log_5474218bcfb0.json
+?? .megaplan/system_logs/log_5572c0750184.json
+?? .megaplan/system_logs/log_56e044b514be.json
+?? .megaplan/system_logs/log_57b1af4b82c1.json
+?? .megaplan/system_logs/log_5d5e413c517b.json
+?? .megaplan/system_logs/log_5dfa84876579.json
+?? .megaplan/system_logs/log_5fba0882d6ef.json
+?? .megaplan/system_logs/log_608ea1fb5a7e.json
+?? .megaplan/system_logs/log_61627f27d916.json
+?? .megaplan/system_logs/log_636ef9e00ea0.json
+?? .megaplan/system_logs/log_691f38d8133f.json
+?? .megaplan/system_logs/log_6937364a7410.json
+?? .megaplan/system_logs/log_6a097a714d97.json
+?? .megaplan/system_logs/log_6a29e7e887c9.json
+?? .megaplan/system_logs/log_6e21b8ee8182.json
+?? .megaplan/system_logs/log_701b35ebbc73.json
+?? .megaplan/system_logs/log_701f650a721e.json
+?? .megaplan/system_logs/log_70d19d2c2f66.json
+?? .megaplan/system_logs/log_719ab3c6c318.json
+?? .megaplan/system_logs/log_7237e4117e19.json
+?? .megaplan/system_logs/log_726538da6d65.json
+?? .megaplan/system_logs/log_751aa2cd2f31.json
+?? .megaplan/system_logs/log_7667c6cf3db8.json
+?? .megaplan/system_logs/log_7750bcfc9be6.json
+?? .megaplan/system_logs/log_78fcf6647867.json
+?? .megaplan/system_logs/log_7b1f8d699432.json
+?? .megaplan/system_logs/log_7ea5b23b4a0c.json
+?? .megaplan/system_logs/log_7ec3b0461cf7.json
+?? .megaplan/system_logs/log_8c78021aa70b.json
+?? .megaplan/system_logs/log_8ed2a7f97672.json
+?? .megaplan/system_logs/log_90cd6232bed1.json
+?? .megaplan/system_logs/log_92bb8bc620d3.json
+?? .megaplan/system_logs/log_959392493988.json
+?? .megaplan/system_logs/log_96733b427a1c.json
+?? .megaplan/system_logs/log_984a90ce9e5a.json
+?? .megaplan/system_logs/log_98a391ea98d7.json
+?? .megaplan/system_logs/log_a2c8e9a0403f.json
+?? .megaplan/system_logs/log_a9302a542a72.json
+?? .megaplan/system_logs/log_aeeedbf677d9.json
+?? .megaplan/system_logs/log_b21b012d5245.json
+?? .megaplan/system_logs/log_b45bf4610396.json
+?? .megaplan/system_logs/log_b6c3cce375d7.json
+?? .megaplan/system_logs/log_b74b48e581c3.json
+?? .megaplan/system_logs/log_b7ae5c722ca9.json
+?? .megaplan/system_logs/log_bdffb0096a28.json
+?? .megaplan/system_logs/log_be0867ab7959.json
+?? .megaplan/system_logs/log_c10aa6d03c1b.json
+?? .megaplan/system_logs/log_c3f98b25fdc0.json
+?? .megaplan/system_logs/log_c41265c945bd.json
+?? .megaplan/system_logs/log_c5d77921df26.json
+?? .megaplan/system_logs/log_cc484b31696f.json
+?? .megaplan/system_logs/log_d38f963d9728.json
+?? .megaplan/system_logs/log_d7c932f6d022.json
+?? .megaplan/system_logs/log_d84e71ae8849.json
+?? .megaplan/system_logs/log_dfe076e5d508.json
+?? .megaplan/system_logs/log_e018b8cb2d70.json
+?? .megaplan/system_logs/log_e0c9034edf5d.json
+?? .megaplan/system_logs/log_e644dcaf1895.json
+?? .megaplan/system_logs/log_e64790a52aa6.json
+?? .megaplan/system_logs/log_e6f39bf7e3ad.json
+?? .megaplan/system_logs/log_e748b681a76c.json
+?? .megaplan/system_logs/log_ecb7b9a08b0e.json
+?? .megaplan/system_logs/log_eea4c4379fba.json
+?? .megaplan/system_logs/log_f1b7c4ae7a3e.json
+?? .megaplan/system_logs/log_f79c746bdeb4.json
+?? .megaplan/system_logs/log_fa08d21bf056.json
+?? .megaplan/system_logs/log_fcb0f31e3a1c.json
+
+        Requirements:
+        - Verify each success criterion explicitly.
+        - Fresh repository inspection and `review_evidence.json` outrank stale execution-time claims from `execution_audit.json`, `finalize.json`, and executor notes.
+        - Use repository tools to inspect relevant files and run focused verification commands when behavior or tests are part of a criterion; include concrete repository-backed evidence for every criterion verdict.
+        - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
+          - `must` criteria are hard gates only when backed by a deterministic runnable check that failed on the pre-execute baseline and still fails after execution. Ungrounded prose concerns are advisory.
+          - `should` criteria are quality targets. If the spirit is met but the letter is not, mark `pass` with evidence explaining the gap. Only mark `fail` if the intent was clearly missed. A `should` failure alone does NOT require `needs_rework`.
+          - `info` criteria are for human reference. Mark them `waived` with a note — do not evaluate them.
+          - If a criterion has `requires` capabilities that are not satisfiable by container workers (e.g., `drive_browser`, `subjective_judgment`), mark it `deferred_human` — NOT `fail` or `waived`. Deferred-human criteria do NOT count toward `needs_rework`.
+          - If a criterion (any priority) cannot be verified in this context (e.g., requires manual testing or runtime observation), mark it `waived` with an explanation.
+        - Set `review_verdict` to `needs_rework` only for a rework item with `deterministic_check: {"command": "...", "baseline_status": "failed", "post_status": "failed"}`. Use `approved` for prose-only concerns; record those as advisory issues instead.
+        - Set `review_completion_status` to `"incomplete"` when you could not inspect the repository or run verification commands; otherwise set it to `"complete"`.
+        - The decisions listed above were settled at the gate stage. Verify that the executor implemented each settled decision correctly. Flag deviations from these decisions, but do not question the decisions themselves.
+        - baseline_test_failures in finalize.json lists tests that were already failing before execution. Do not flag these as rework items unless the executor introduced new failures in those same tests.
+        - Cross-reference each task's `files_changed` and `commands_run` against the git diff and any audit findings.
+        - Review every `sense_check` explicitly and treat perfunctory acknowledgments as a reason to dig deeper.
+        - Follow this JSON shape exactly:
+        ```json
+        {
+          "review_verdict": "approved",
+          "review_completion_status": "complete",
+          "criteria": [
+            {
+              "name": "All existing tests pass",
+              "priority": "must",
+              "pass": "pass",
+              "evidence": "Test suite ran green — 42 passed, 0 failed."
+            },
+            {
+              "name": "File under ~300 lines",
+              "priority": "should",
+              "pass": "pass",
+              "evidence": "File is 375 lines — above the target but reasonable given the component's responsibilities. Spirit met."
+            },
+            {
+              "name": "Manual smoke tests pass",
+              "priority": "info",
+              "pass": "waived",
+              "evidence": "Cannot be verified in automated review. Noted for manual QA."
+            }
+          ],
+          "issues": [],
+          "rework_items": [],
+          "summary": "Approved. All must criteria pass. The should criterion on line count is close enough given the component scope.",
+          "task_verdicts": [
+            {
+              "task_id": "T6",
+              "reviewer_verdict": "Pass. Claimed handler changes and command evidence match the repo state.",
+              "evidence_files": ["megaplan/handlers.py", "megaplan/evaluation.py"]
+            }
+          ],
+          "sense_check_verdicts": [
+            {
+              "sense_check_id": "SC6",
+              "verdict": "Confirmed. The execute blocker only fires when both evidence arrays are empty."
+            }
+          ]
+        }
+        ```
+        - `rework_items` must be an array of structured rework directives. When `review_verdict` is `needs_rework`, populate one entry per issue with:
+          - `target`: typed route for the rework. Use `{"kind": "task", "task_id": "T6"}` for one finalize task, `{"kind": "bulk", "id": "bulk-1", "task_ids": ["T6", "T7"]}` for bulk-operation findings, or `{"kind": "manifest", "id": "manifest-path-or-ref", "task_ids": ["T6"]}` for manifest-backed findings.
+          - `task_id`: legacy compatibility only. It may mirror the single task target, or be `"REVIEW"` only for review blockers with no runnable finalize target.
+          - `issue`: what is wrong
+          - `expected`: what correct behavior looks like
+          - `actual`: what was observed
+          - `evidence_file`: file path supporting the finding
+          - `flag_id`: critique/review flag ID when applicable, otherwise `null`
+          - `source`: short machine-readable source tag when applicable, otherwise `null`
+          - `deterministic_check` (required for blocking rework): object with `command`, `baseline_status`, and `post_status`
+        - `issues` must still be populated as a flat one-line-per-item summary derived from `rework_items` (for backward compatibility). When approved, blocking `rework_items` should be empty; prose-only concerns may be summarized in `issues`.
+        - When the work needs another execute pass, keep the same shape and change only `review_verdict` to `needs_rework`; make `issues`, `rework_items`, `summary`, and task verdicts specific enough for the executor to act on directly.

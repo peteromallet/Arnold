@@ -1,0 +1,64 @@
+{
+  "id": "log_7e8d0abcd224",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 15628,
+      "schema_version": 1,
+      "ts_utc": "2026-07-03T01:40:44.446428+00:00",
+      "ts_rel_init_s": 34640.508495,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T10",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T10",
+          "declared_outputs": {
+            "commands_run": [
+              "./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-patch.test.ts",
+              "./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/boundary.test.ts src/tools/video-editor/runtime/extensionPackageManifest.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/lib/timeline-patch.test.ts"
+            ]
+          },
+          "linked_evidence_count": 6,
+          "evidence_count": 160,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 6,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "provided",
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 80,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-03T01:40:44.444084+00:00"
+      },
+      "transaction_id": "3fcd7205d32daeea",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-03T01:40:44.446492Z"
+}

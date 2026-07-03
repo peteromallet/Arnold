@@ -1,0 +1,89 @@
+{
+  "id": "log_af3768f20f7c",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 4549,
+      "schema_version": 1,
+      "ts_utc": "2026-07-02T19:27:11.834320+00:00",
+      "ts_rel_init_s": 12227.896387,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T2",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_files_changed",
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T2",
+          "declared_outputs": {
+            "files_changed": [
+              "src/sdk/video/composition/references.ts",
+              "src/sdk/index.ts",
+              "src/sdk/__tests__/sdk-boundary.test.ts"
+            ],
+            "commands_run": [
+              "vitest run --config config/testing/vitest.boundary.config.ts",
+              "vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts",
+              "vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/__tests__/sdk-boundary.test.ts"
+            ]
+          },
+          "linked_evidence_count": 24,
+          "evidence_count": 202,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 24,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "provided",
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 101,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-02T19:27:11.828034+00:00"
+      },
+      "transaction_id": "2dfc3b24ed3222e8",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-02T19:27:11.834500Z"
+}

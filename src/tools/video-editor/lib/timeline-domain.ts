@@ -21,6 +21,13 @@ import type {
   TrackDefinition,
 } from '../types/index.ts';
 import { validateAssetMetadata } from './assetMetadata';
+import {
+  sameCompositionShaderIdentity,
+  shaderScopeOccupiedMessage,
+  validateShaderAssignment,
+  validateShaderStack,
+  type CompositionShaderStackEntry,
+} from '@/tools/video-editor/runtime/composition/shaderValidation.ts';
 import type { TransitionRegistrySnapshot } from '@/tools/video-editor/transitions/registry/types.ts';
 import {
   validateClipTransition,
@@ -333,41 +340,34 @@ export const getTimelinePostprocessShader = (
 export const sameTimelineShaderIdentity = (
   left: TimelineShaderMetadata,
   right: TimelineShaderMetadata,
-): boolean => (
-  left.scope === right.scope
-  && left.extensionId === right.extensionId
-  && left.contributionId === right.contributionId
-  && left.shaderId === right.shaderId
-);
+): boolean => sameCompositionShaderIdentity(left, right);
 
 export const timelineShaderScopeOccupiedMessage = (
   scope: TimelineShaderScope,
   existingShaderId: string,
   incomingShaderId: string,
   clipId?: string,
-): string => {
-  if (scope === 'clip') {
-    const target = clipId ? `clip "${clipId}"` : 'the clip scope';
-    return `Cannot add shader "${incomingShaderId}" to ${target} because shader "${existingShaderId}" is already assigned. ` +
-      'V1 supports one clip shader per clip. Remove the existing shader before assigning another.';
-  }
-
-  return `Cannot add postprocess shader "${incomingShaderId}" because postprocess shader "${existingShaderId}" is already assigned. ` +
-    'V1 supports one timeline postprocess shader. Remove the existing postprocess shader before assigning another.';
-};
+): string => shaderScopeOccupiedMessage(scope, existingShaderId, incomingShaderId, clipId);
 
 const createShaderScopeOccupiedResult = <T>(
-  scope: TimelineShaderScope,
+  occupied: { scope: TimelineShaderScope; message: string },
   existing: TimelineShaderMetadata,
   incoming: TimelineShaderMetadata,
-  clipId?: string,
 ): TimelineShaderAssignmentResult<T> => ({
   ok: false,
   code: 'shader_scope_occupied',
-  scope,
+  scope: occupied.scope,
   existing,
   incoming,
-  message: timelineShaderScopeOccupiedMessage(scope, existing.shaderId, incoming.shaderId, clipId),
+  message: occupied.message,
+});
+
+const createTimelineShaderValidationEntry = (
+  shader: TimelineShaderMetadata,
+  clipId?: string,
+): CompositionShaderStackEntry => ({
+  ...shader,
+  ...(shader.scope === 'clip' && clipId ? { clipId } : {}),
 });
 
 export const assignTimelineClipShader = (
@@ -375,8 +375,12 @@ export const assignTimelineClipShader = (
   shader: TimelineClipShaderMetadata,
 ): TimelineShaderAssignmentResult<TimelineClip> => {
   const existing = getTimelineClipShader(clip);
-  if (existing && !sameTimelineShaderIdentity(existing, shader)) {
-    return createShaderScopeOccupiedResult('clip', existing, shader, clip.id);
+  const validation = validateShaderAssignment(
+    existing ? createTimelineShaderValidationEntry(existing, clip.id) : undefined,
+    createTimelineShaderValidationEntry(shader, clip.id),
+  );
+  if (!validation.ok && existing) {
+    return createShaderScopeOccupiedResult(validation.occupied, existing, shader);
   }
 
   return {
@@ -396,8 +400,12 @@ export const assignTimelinePostprocessShader = (
   shader: TimelinePostprocessShaderMetadata,
 ): TimelineShaderAssignmentResult<TimelineConfig> => {
   const existing = getTimelinePostprocessShader(config);
-  if (existing && !sameTimelineShaderIdentity(existing, shader)) {
-    return createShaderScopeOccupiedResult('postprocess', existing, shader);
+  const validation = validateShaderAssignment(
+    existing ? createTimelineShaderValidationEntry(existing) : undefined,
+    createTimelineShaderValidationEntry(shader),
+  );
+  if (!validation.ok && existing) {
+    return createShaderScopeOccupiedResult(validation.occupied, existing, shader);
   }
 
   return {
@@ -429,6 +437,52 @@ const createIssue = (
 const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 
 const isPositiveNumber = (value: unknown): value is number => isFiniteNumber(value) && value > 0;
+
+const createSerializedShaderStackEntry = (
+  value: unknown,
+  scope: TimelineShaderScope,
+  clipId?: string,
+): CompositionShaderStackEntry => {
+  const candidate = isRecord(value) ? value : undefined;
+  return {
+    scope,
+    ...(scope === 'clip' && clipId ? { clipId } : {}),
+    extensionId: typeof candidate?.extensionId === 'string' ? candidate.extensionId : 'unknown',
+    contributionId: typeof candidate?.contributionId === 'string' ? candidate.contributionId : 'unknown',
+    shaderId: typeof candidate?.shaderId === 'string' ? candidate.shaderId : 'unknown',
+  };
+};
+
+const createSerializedShaderScopeOccupiedIssue = (
+  level: TimelineDomainContractLevel,
+  scope: TimelineShaderScope,
+  shaderStack: readonly unknown[],
+  path: string,
+  clipId?: string,
+): TimelineDomainIssue | null => {
+  const validation = validateShaderStack(
+    shaderStack.map((shader) => createSerializedShaderStackEntry(shader, scope, clipId)),
+  );
+  if (validation.ok) {
+    return null;
+  }
+
+  return createIssue(
+    level,
+    'error',
+    'shader_scope_occupied',
+    validation.occupied.message,
+    {
+      ...(clipId ? { clipId } : {}),
+      path,
+      repairApplied: false,
+      details: {
+        scope,
+        shaderCount: validation.occupied.shaderCount,
+      },
+    },
+  );
+};
 
 const stripDupSuffix = (id: string): string => id.replace(/(-dup-\d+)+$/, '');
 
@@ -2066,29 +2120,16 @@ const validateSerializedConfig = (
 
     const clipApp = clip.app as Record<string, unknown> | undefined;
     if (Array.isArray(clipApp?.shader)) {
-      const shaderStack = clipApp.shader;
-      const existing = shaderStack[0] as { shaderId?: unknown } | undefined;
-      const incoming = shaderStack[1] as { shaderId?: unknown } | undefined;
-      issues.push(createIssue(
+      const issue = createSerializedShaderScopeOccupiedIssue(
         level,
-        'error',
-        'shader_scope_occupied',
-        timelineShaderScopeOccupiedMessage(
-          'clip',
-          typeof existing?.shaderId === 'string' ? existing.shaderId : 'unknown',
-          typeof incoming?.shaderId === 'string' ? incoming.shaderId : 'unknown',
-          clip.id,
-        ),
-        {
-          clipId: clip.id,
-          path: `clips.${clip.id}.app.shader`,
-          repairApplied: false,
-          details: {
-            scope: 'clip',
-            shaderCount: shaderStack.length,
-          },
-        },
-      ));
+        'clip',
+        clipApp.shader,
+        `clips.${clip.id}.app.shader`,
+        clip.id,
+      );
+      if (issue) {
+        issues.push(issue);
+      }
     }
   }
 
@@ -2148,26 +2189,15 @@ const validateSerializedConfig = (
 
   const postprocessShaderValue = (config.app as Record<string, unknown> | undefined)?.[TIMELINE_POSTPROCESS_SHADER_APP_KEY];
   if (Array.isArray(postprocessShaderValue)) {
-    const existing = postprocessShaderValue[0] as { shaderId?: unknown } | undefined;
-    const incoming = postprocessShaderValue[1] as { shaderId?: unknown } | undefined;
-    issues.push(createIssue(
+    const issue = createSerializedShaderScopeOccupiedIssue(
       level,
-      'error',
-      'shader_scope_occupied',
-      timelineShaderScopeOccupiedMessage(
-        'postprocess',
-        typeof existing?.shaderId === 'string' ? existing.shaderId : 'unknown',
-        typeof incoming?.shaderId === 'string' ? incoming.shaderId : 'unknown',
-      ),
-      {
-        path: `app.${TIMELINE_POSTPROCESS_SHADER_APP_KEY}`,
-        repairApplied: false,
-        details: {
-          scope: 'postprocess',
-          shaderCount: postprocessShaderValue.length,
-        },
-      },
-    ));
+      'postprocess',
+      postprocessShaderValue,
+      `app.${TIMELINE_POSTPROCESS_SHADER_APP_KEY}`,
+    );
+    if (issue) {
+      issues.push(issue);
+    }
   }
 
   return {

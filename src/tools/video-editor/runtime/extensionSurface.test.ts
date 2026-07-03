@@ -43,6 +43,23 @@ function ext(
   });
 }
 
+/** Build a raw extension without SDK duplicate validation for sequencing tests. */
+function unsafeExt(
+  id: string,
+  contributions: readonly Record<string, unknown>[],
+): ReighExtension {
+  return Object.freeze({
+    manifest: Object.freeze({
+      id,
+      version: '1.0.0',
+      label: id,
+      contributions: Object.freeze(
+        contributions.map((contribution) => Object.freeze({ ...contribution })),
+      ),
+    }),
+  }) as ReighExtension;
+}
+
 /** Find diagnostics matching a code. */
 function diagsOf(runtime: ExtensionRuntime, code: string): ExtensionDiagnostic[] {
   return runtime.diagnostics.filter((d) => d.code === code);
@@ -280,10 +297,10 @@ describe('normalizeExtensionRuntime — duplicate extension IDs', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Duplicate contribution IDs (cross-extension)
+// Shared bare contribution IDs (cross-extension)
 // ---------------------------------------------------------------------------
 
-describe('normalizeExtensionRuntime — duplicate contribution IDs', () => {
+describe('normalizeExtensionRuntime — shared bare contribution IDs', () => {
   const ext1 = ext('com.example.one', {
     manifest: {
       contributions: [
@@ -299,21 +316,439 @@ describe('normalizeExtensionRuntime — duplicate contribution IDs', () => {
     },
   });
 
-  it('emits an error diagnostic for cross-extension duplicate contribution ID', () => {
+  it('allows cross-extension bare contributionId reuse when scoped keys differ', () => {
     const rt = normalizeExtensionRuntime([ext1, ext2]);
     const dups = diagsOf(rt, 'runtime/duplicate-contribution');
-    expect(dups).toHaveLength(1);
-    expect(dups[0].severity).toBe('error');
-    expect(dups[0].contributionId).toBe('shared-btn');
-    expect(dups[0].extensionId).toBe('com.example.two');
+    expect(dups).toEqual([]);
   });
 
-  it('skips the duplicate contribution (first owner wins)', () => {
+  it('projects both contributions instead of skipping the later declaration', () => {
     const rt = normalizeExtensionRuntime([ext1, ext2]);
-    // The first extension's slot contribution should be present
     expect(rt.config.slots).toHaveProperty('toolbar');
-    // The second extension's duplicate should be skipped
-    expect(rt.config.slots).not.toHaveProperty('statusBar');
+    expect(rt.config.slots).toHaveProperty('statusBar');
+  });
+
+  it('falls back to extensionId+contributionId attribution when kind is unavailable', () => {
+    const ex = ext('com.example.shared-kindless', {
+      manifest: {
+        contributions: [
+          { id: 'shared-id' as any, kind: 'slot', slot: 'toolbar', order: 0 },
+          { id: 'shared-id' as any, kind: 'dialog', order: 1 },
+        ],
+      },
+    });
+
+    const seq = buildFamilyContributionSequence([ex]);
+    seq.diagnostics.push({
+      severity: 'warning',
+      code: 'runtime/test-kindless-diagnostic',
+      message: 'Synthetic diagnostic without kind metadata.',
+      extensionId: 'com.example.shared-kindless',
+      contributionId: 'shared-id',
+    });
+
+    const rt = assembleExtensionRuntime(
+      seq,
+      [
+        {
+          extensionId: 'com.example.shared-kindless',
+          packageState: 'loaded',
+          stateReason: 'Loaded.',
+          packageMetadata: { label: 'Shared Kindless', version: '1.0.0' },
+        },
+      ],
+      DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME,
+      VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY,
+    );
+
+    expect(
+      rt.contributionIndex['slot:com.example.shared-kindless:shared-id'][0].diagnostics,
+    ).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'runtime/test-kindless-diagnostic' }),
+    ]));
+    expect(
+      rt.contributionIndex['dialog:com.example.shared-kindless:shared-id'][0].diagnostics,
+    ).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'runtime/test-kindless-diagnostic' }),
+    ]));
+  });
+
+  it('prefers scoped-key attribution when the diagnostic exposes a kind hint', () => {
+    const ex = ext('com.example.shared-kindful', {
+      manifest: {
+        contributions: [
+          { id: 'shared-id' as any, kind: 'slot', slot: 'toolbar', order: 0 },
+          { id: 'shared-id' as any, kind: 'dialog', order: 1 },
+        ],
+      },
+    });
+
+    const seq = buildFamilyContributionSequence([ex]);
+    seq.diagnostics.push({
+      severity: 'warning',
+      code: 'runtime/test-kindful-diagnostic',
+      message: 'Synthetic diagnostic with kind metadata.',
+      extensionId: 'com.example.shared-kindful',
+      contributionId: 'shared-id',
+      detail: {
+        contributionKind: 'dialog',
+      },
+    });
+
+    const rt = assembleExtensionRuntime(
+      seq,
+      [
+        {
+          extensionId: 'com.example.shared-kindful',
+          packageState: 'loaded',
+          stateReason: 'Loaded.',
+          packageMetadata: { label: 'Shared Kindful', version: '1.0.0' },
+        },
+      ],
+      DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME,
+      VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY,
+    );
+
+    expect(
+      rt.contributionIndex['dialog:com.example.shared-kindful:shared-id'][0].diagnostics,
+    ).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'runtime/test-kindful-diagnostic' }),
+    ]));
+    expect(
+      rt.contributionIndex['slot:com.example.shared-kindful:shared-id'][0].diagnostics,
+    ).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'runtime/test-kindful-diagnostic' }),
+    ]));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Exact scoped-key duplicates
+// ---------------------------------------------------------------------------
+
+describe('buildFamilyContributionSequence — exact scoped-key duplicates', () => {
+  it('preserves duplicates with warning diagnostics and projection metadata', () => {
+    const ex = unsafeExt('com.example.scoped-dup', [
+      { id: 'shared-dialog', kind: 'dialog', order: 0 },
+      { id: 'shared-dialog', kind: 'dialog', order: 0 },
+      { id: 'shared-dialog', kind: 'slot', slot: 'toolbar', order: 0 },
+      {
+        id: 'shared-output',
+        kind: 'outputFormat',
+        label: 'Shared Output A',
+        requiresRender: false,
+        outputExtension: 'json',
+      },
+      {
+        id: 'shared-output',
+        kind: 'outputFormat',
+        label: 'Shared Output B',
+        requiresRender: false,
+        outputExtension: 'json',
+      },
+    ]);
+
+    const seq = buildFamilyContributionSequence([ex]);
+    const dups = seq.diagnostics.filter(
+      (diagnostic) => diagnostic.code === 'runtime/duplicate-contribution',
+    );
+
+    expect(dups).toHaveLength(2);
+    expect(dups.every((diagnostic) => diagnostic.severity === 'warning')).toBe(true);
+
+    const dialogScopedKey = 'dialog:com.example.scoped-dup:shared-dialog';
+    const duplicateDialogs = seq.sortedBridged.filter(
+      (item) => item.scopedKey === dialogScopedKey,
+    );
+    expect(duplicateDialogs).toHaveLength(2);
+    expect(
+      duplicateDialogs.map((item) => ({
+        duplicateOrdinal: item.duplicateOrdinal,
+        projectionEligible: item.projectionEligible,
+      })),
+    ).toEqual([
+      { duplicateOrdinal: 0, projectionEligible: true },
+      { duplicateOrdinal: 1, projectionEligible: false },
+    ]);
+
+    const slotWithSharedBareId = seq.sortedBridged.find(
+      (item) => item.scopedKey === 'slot:com.example.scoped-dup:shared-dialog',
+    );
+    expect(slotWithSharedBareId?.duplicateOrdinal).toBe(0);
+    expect(slotWithSharedBareId?.projectionEligible).toBe(true);
+
+    const outputScopedKey = 'outputFormat:com.example.scoped-dup:shared-output';
+    const duplicateOutputs = seq.m6ReservedOutputFormats.filter(
+      (item) => item.scopedKey === outputScopedKey,
+    );
+    expect(duplicateOutputs).toHaveLength(2);
+    expect(
+      duplicateOutputs.map((item) => ({
+        duplicateOrdinal: item.duplicateOrdinal,
+        projectionEligible: item.projectionEligible,
+      })),
+    ).toEqual([
+      { duplicateOrdinal: 0, projectionEligible: true },
+      { duplicateOrdinal: 1, projectionEligible: false },
+    ]);
+
+    const inactiveReservedOutputs = seq.inactiveReserved.filter(
+      (item) => item.scopedKey === outputScopedKey,
+    );
+    expect(inactiveReservedOutputs).toHaveLength(2);
+    expect(
+      inactiveReservedOutputs.map((item) => ({
+        duplicateOrdinal: item.duplicateOrdinal,
+        projectionEligible: item.projectionEligible,
+      })),
+    ).toEqual([
+      { duplicateOrdinal: 0, projectionEligible: true },
+      { duplicateOrdinal: 1, projectionEligible: false },
+    ]);
+  });
+});
+
+describe('normalizeExtensionRuntime — exact scoped-key duplicates', () => {
+  it('projects only the first exact scoped-key occurrence while enriching active index entries', () => {
+    const ex = unsafeExt('com.example.runtime-scoped-dup', [
+      { id: 'shared-toolbar', kind: 'slot', slot: 'toolbar', order: 0 },
+      { id: 'shared-toolbar', kind: 'slot', slot: 'toolbar', order: 1 },
+      { id: 'shared-dialog', kind: 'dialog', order: 0 },
+      { id: 'shared-dialog', kind: 'dialog', order: 1 },
+      {
+        id: 'shared-output',
+        kind: 'outputFormat',
+        label: 'Shared Output A',
+        requiresRender: false,
+        outputExtension: 'json',
+      },
+      {
+        id: 'shared-output',
+        kind: 'outputFormat',
+        label: 'Shared Output B',
+        requiresRender: false,
+        outputExtension: 'json',
+      },
+    ]);
+
+    const rt = normalizeExtensionRuntime([ex], [
+      {
+        extensionId: 'com.example.runtime-scoped-dup',
+        packageState: 'loaded',
+        stateReason: 'Loaded.',
+        packageMetadata: { label: 'Scoped Dup', version: '1.0.0' },
+      },
+    ]);
+
+    expect(Object.keys(rt.config.slots)).toEqual(['toolbar']);
+    expect(rt.config.dialogHost.dialogs.map((dialog) => dialog.id)).toEqual([
+      'shared-dialog',
+    ]);
+    expect(rt.config.outputFormats.map((format) => format.id)).toEqual([
+      'shared-output',
+    ]);
+
+    expect(rt.contributionIndex['slot:com.example.runtime-scoped-dup:shared-toolbar'])
+      .toEqual([
+        {
+          scopedKey: 'slot:com.example.runtime-scoped-dup:shared-toolbar',
+          kind: 'slot',
+          extensionId: 'com.example.runtime-scoped-dup',
+          contributionId: 'shared-toolbar',
+          status: 'active',
+          packageState: 'loaded',
+          diagnostics: [
+            expect.objectContaining({
+              code: 'runtime/duplicate-contribution',
+              severity: 'warning',
+              extensionId: 'com.example.runtime-scoped-dup',
+              contributionId: 'shared-toolbar',
+            }),
+          ],
+          duplicateOrdinal: 0,
+          projectionEligible: true,
+          projection: {
+            duplicateOrdinal: 0,
+            eligible: true,
+            projected: true,
+            source: 'descriptor-array',
+          },
+        },
+        {
+          scopedKey: 'slot:com.example.runtime-scoped-dup:shared-toolbar',
+          kind: 'slot',
+          extensionId: 'com.example.runtime-scoped-dup',
+          contributionId: 'shared-toolbar',
+          status: 'active',
+          packageState: 'loaded',
+          diagnostics: [
+            expect.objectContaining({
+              code: 'runtime/duplicate-contribution',
+              severity: 'warning',
+              extensionId: 'com.example.runtime-scoped-dup',
+              contributionId: 'shared-toolbar',
+            }),
+          ],
+          duplicateOrdinal: 1,
+          projectionEligible: false,
+          projection: {
+            duplicateOrdinal: 1,
+            eligible: false,
+            projected: false,
+            source: 'preserved-record',
+          },
+          resolutionPolicy: {
+            kind: 'exact-duplicate',
+            strategy: 'first-wins-projection',
+            winnerScopedKey: 'slot:com.example.runtime-scoped-dup:shared-toolbar',
+            winnerDuplicateOrdinal: 0,
+          },
+        },
+      ]);
+    expect(rt.contributionIndex['dialog:com.example.runtime-scoped-dup:shared-dialog'])
+      .toEqual([
+        {
+          scopedKey: 'dialog:com.example.runtime-scoped-dup:shared-dialog',
+          kind: 'dialog',
+          extensionId: 'com.example.runtime-scoped-dup',
+          contributionId: 'shared-dialog',
+          status: 'active',
+          packageState: 'loaded',
+          diagnostics: [
+            expect.objectContaining({
+              code: 'runtime/duplicate-contribution',
+              severity: 'warning',
+              extensionId: 'com.example.runtime-scoped-dup',
+              contributionId: 'shared-dialog',
+            }),
+          ],
+          duplicateOrdinal: 0,
+          projectionEligible: true,
+          projection: {
+            duplicateOrdinal: 0,
+            eligible: true,
+            projected: true,
+            source: 'descriptor-array',
+          },
+        },
+        {
+          scopedKey: 'dialog:com.example.runtime-scoped-dup:shared-dialog',
+          kind: 'dialog',
+          extensionId: 'com.example.runtime-scoped-dup',
+          contributionId: 'shared-dialog',
+          status: 'active',
+          packageState: 'loaded',
+          diagnostics: [
+            expect.objectContaining({
+              code: 'runtime/duplicate-contribution',
+              severity: 'warning',
+              extensionId: 'com.example.runtime-scoped-dup',
+              contributionId: 'shared-dialog',
+            }),
+          ],
+          duplicateOrdinal: 1,
+          projectionEligible: false,
+          projection: {
+            duplicateOrdinal: 1,
+            eligible: false,
+            projected: false,
+            source: 'preserved-record',
+          },
+          resolutionPolicy: {
+            kind: 'exact-duplicate',
+            strategy: 'first-wins-projection',
+            winnerScopedKey: 'dialog:com.example.runtime-scoped-dup:shared-dialog',
+            winnerDuplicateOrdinal: 0,
+          },
+        },
+      ]);
+    expect(rt.contributionIndex['outputFormat:com.example.runtime-scoped-dup:shared-output'])
+      .toEqual([
+        {
+          scopedKey: 'outputFormat:com.example.runtime-scoped-dup:shared-output',
+          kind: 'outputFormat',
+          extensionId: 'com.example.runtime-scoped-dup',
+          contributionId: 'shared-output',
+          status: 'inactive-reserved',
+          packageState: 'loaded',
+          diagnostics: expect.arrayContaining([
+            expect.objectContaining({
+              code: 'runtime/contribution-kind-not-yet-bridged',
+              severity: 'info',
+              extensionId: 'com.example.runtime-scoped-dup',
+              contributionId: 'shared-output',
+            }),
+            expect.objectContaining({
+              code: 'runtime/duplicate-contribution',
+              severity: 'warning',
+              extensionId: 'com.example.runtime-scoped-dup',
+              contributionId: 'shared-output',
+            }),
+          ]),
+          duplicateOrdinal: 0,
+          projectionEligible: true,
+          projection: {
+            duplicateOrdinal: 0,
+            eligible: true,
+            projected: true,
+            source: 'descriptor-array',
+          },
+        },
+        {
+          scopedKey: 'outputFormat:com.example.runtime-scoped-dup:shared-output',
+          kind: 'outputFormat',
+          extensionId: 'com.example.runtime-scoped-dup',
+          contributionId: 'shared-output',
+          status: 'inactive-reserved',
+          packageState: 'loaded',
+          diagnostics: expect.arrayContaining([
+            expect.objectContaining({
+              code: 'runtime/contribution-kind-not-yet-bridged',
+              severity: 'info',
+              extensionId: 'com.example.runtime-scoped-dup',
+              contributionId: 'shared-output',
+            }),
+            expect.objectContaining({
+              code: 'runtime/duplicate-contribution',
+              severity: 'warning',
+              extensionId: 'com.example.runtime-scoped-dup',
+              contributionId: 'shared-output',
+            }),
+          ]),
+          duplicateOrdinal: 1,
+          projectionEligible: false,
+          projection: {
+            duplicateOrdinal: 1,
+            eligible: false,
+            projected: false,
+            source: 'preserved-record',
+          },
+          resolutionPolicy: {
+            kind: 'exact-duplicate',
+            strategy: 'first-wins-projection',
+            winnerScopedKey: 'outputFormat:com.example.runtime-scoped-dup:shared-output',
+            winnerDuplicateOrdinal: 0,
+          },
+        },
+      ]);
+    expect(Object.isFrozen(rt.contributionIndex)).toBe(true);
+    expect(
+      Object.isFrozen(
+        rt.contributionIndex['dialog:com.example.runtime-scoped-dup:shared-dialog'],
+      ),
+    ).toBe(true);
+    expect(
+      Object.isFrozen(
+        rt.contributionIndex['dialog:com.example.runtime-scoped-dup:shared-dialog'][0]
+          .diagnostics,
+      ),
+    ).toBe(true);
+    expect(
+      Object.isFrozen(
+        rt.contributionIndex['dialog:com.example.runtime-scoped-dup:shared-dialog'][1]
+          .projection,
+      ),
+    ).toBe(true);
   });
 });
 
@@ -397,6 +832,79 @@ describe('normalizeExtensionRuntime — inactive reserved contributions', () => 
     expect(search.milestone).toBe('M6');
     const process = rt.inactiveReserved.find((r) => r.kind === 'process')!;
     expect(process.milestone).toBe('M12');
+  });
+
+  it('populates contribution index with inactive-reserved entries', () => {
+    const rt = normalizeExtensionRuntime([withReserved], [
+      {
+        extensionId: 'com.example.future',
+        packageState: 'loaded',
+        stateReason: 'Loaded.',
+        packageMetadata: { label: 'Future', version: '1.0.0' },
+      },
+    ]);
+
+    // outputFormat, searchProvider, process should be in the index as inactive-reserved
+    const outputKey = 'outputFormat:com.example.future:my-output';
+    const searchKey = 'searchProvider:com.example.future:my-search';
+    const processKey = 'process:com.example.future:my-process';
+
+    expect(rt.contributionIndex[outputKey]).toBeDefined();
+    expect(rt.contributionIndex[outputKey]).toHaveLength(1);
+    expect(rt.contributionIndex[outputKey][0]).toMatchObject({
+      scopedKey: outputKey,
+      kind: 'outputFormat',
+      extensionId: 'com.example.future',
+      contributionId: 'my-output',
+      status: 'inactive-reserved',
+      packageState: 'loaded',
+      duplicateOrdinal: 0,
+      projectionEligible: true,
+      projection: {
+        duplicateOrdinal: 0,
+        eligible: true,
+        projected: true,
+        source: 'descriptor-array',
+      },
+    });
+
+    expect(rt.contributionIndex[searchKey]).toBeDefined();
+    expect(rt.contributionIndex[searchKey][0]).toMatchObject({
+      status: 'inactive-reserved',
+      kind: 'searchProvider',
+      contributionId: 'my-search',
+    });
+
+    expect(rt.contributionIndex[processKey]).toBeDefined();
+    expect(rt.contributionIndex[processKey][0]).toMatchObject({
+      status: 'inactive-reserved',
+      kind: 'process',
+      contributionId: 'my-process',
+    });
+
+    // Active contributions should NOT have inactive-reserved status
+    const effectKey = 'effect:com.example.future:my-effect';
+    expect(rt.contributionIndex[effectKey]).toBeDefined();
+    expect(rt.contributionIndex[effectKey][0].status).toBe('active');
+  });
+
+  it('freezes inactive-reserved index entries and nested structures', () => {
+    const rt = normalizeExtensionRuntime([withReserved], [
+      {
+        extensionId: 'com.example.future',
+        packageState: 'loaded',
+        stateReason: 'Loaded.',
+        packageMetadata: { label: 'Future', version: '1.0.0' },
+      },
+    ]);
+
+    const outputKey = 'outputFormat:com.example.future:my-output';
+    const entries = rt.contributionIndex[outputKey];
+    expect(entries).toBeDefined();
+    expect(Object.isFrozen(entries)).toBe(true);
+    expect(Object.isFrozen(entries![0])).toBe(true);
+    expect(Object.isFrozen(entries![0].diagnostics)).toBe(true);
+    expect(Object.isFrozen(entries![0].projection)).toBe(true);
   });
 
   it('tracks reserved-vs-active families from the registry maturity helpers', () => {
@@ -1685,6 +2193,7 @@ import {
   type PackageContributionSummary,
   type PackageStateInventoryEntry,
 } from '@/tools/video-editor/runtime/extensionSurface.ts';
+import type { PackageState } from '@/tools/video-editor/runtime/extensionLoader';
 
 describe('computePackageContributionSummary', () => {
   it('returns null for undefined manifest contributions', () => {
@@ -2042,6 +2551,224 @@ describe('normalizeExtensionRuntime — package contribution summaries', () => {
     expect(disabledSummary!.active).toBe(-1); // no active descriptor
     expect(disabledSummary!.kinds).toEqual(['Panel']);
   });
+
+  it('counts active contributions by scoped key for same-extension cross-kind bare ID reuse', () => {
+    const ex = unsafeExt('com.example.shared-summary', [
+      { id: 'shared', kind: 'slot', slot: 'toolbar' },
+      { id: 'shared', kind: 'dialog' },
+      { id: 'shared', kind: 'dialog' },
+    ]);
+
+    const pkgEntry: PackageStateInventoryEntry = {
+      extensionId: 'com.example.shared-summary',
+      packageState: 'loaded',
+      stateReason: 'Loaded.',
+      packageMetadata: { label: 'Shared Summary', version: '1.0.0' },
+    };
+
+    const rt = normalizeExtensionRuntime([ex], [pkgEntry]);
+    const summary = rt.packageStateInventory[0].contributionSummary;
+
+    expect(summary).not.toBeNull();
+    expect(summary!.declared).toBe(3);
+    expect(summary!.active).toBe(2);
+    expect(summary!.inactive).toBe(0);
+  });
+
+  it('counts only the first winning slot contribution as active', () => {
+    const ex = ext('com.example.slot-summary', {
+      manifest: {
+        contributions: [
+          { id: 'toolbar-primary' as any, kind: 'slot', slot: 'toolbar', order: 0 },
+          { id: 'toolbar-secondary' as any, kind: 'slot', slot: 'toolbar', order: 10 },
+        ],
+      },
+    });
+
+    const pkgEntry: PackageStateInventoryEntry = {
+      extensionId: 'com.example.slot-summary',
+      packageState: 'loaded',
+      stateReason: 'Loaded.',
+      packageMetadata: { label: 'Slot Summary', version: '1.0.0' },
+    };
+
+    const rt = normalizeExtensionRuntime([ex], [pkgEntry]);
+    const summary = rt.packageStateInventory[0].contributionSummary;
+
+    expect(summary).not.toBeNull();
+    expect(summary!.declared).toBe(2);
+    expect(summary!.active).toBe(1);
+    expect(summary!.inactive).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Contribution index — disabled / invalid package contributions
+// ---------------------------------------------------------------------------
+
+describe('normalizeExtensionRuntime — contribution index for disabled/invalid packages', () => {
+  it('populates index entries for disabled-by-user packages with manifest contributions', () => {
+    const disabledContribs: readonly Record<string, unknown>[] = [
+      { id: 'disabled-panel', kind: 'panel' },
+    ];
+
+    const disabledEntry: PackageStateInventoryEntry = {
+      extensionId: 'com.example.disabled',
+      packageState: 'disabled-by-user',
+      stateReason: 'User disabled.',
+      packageMetadata: { label: 'Disabled', version: '1.0.0' },
+      manifestContributions: disabledContribs as any,
+    };
+
+    const rt = normalizeExtensionRuntime([], [disabledEntry]);
+    const key = 'panel:com.example.disabled:disabled-panel';
+
+    expect(rt.contributionIndex[key]).toBeDefined();
+    expect(rt.contributionIndex[key]).toHaveLength(1);
+    expect(rt.contributionIndex[key][0]).toMatchObject({
+      scopedKey: key,
+      kind: 'panel',
+      extensionId: 'com.example.disabled',
+      contributionId: 'disabled-panel',
+      status: 'disabled',
+      packageState: 'disabled-by-user',
+      duplicateOrdinal: 0,
+      projectionEligible: false,
+      projection: {
+        duplicateOrdinal: 0,
+        eligible: false,
+        projected: false,
+        source: 'preserved-record',
+      },
+    });
+  });
+
+  it('populates index entries for invalid packages with manifest contributions', () => {
+    const invalidContribs: readonly Record<string, unknown>[] = [
+      { id: 'invalid-slot', kind: 'slot', slot: 'toolbar' },
+    ];
+
+    const invalidEntry: PackageStateInventoryEntry = {
+      extensionId: 'com.example.invalid',
+      packageState: 'invalid',
+      stateReason: 'Manifest parse error.',
+      packageMetadata: null,
+      manifestContributions: invalidContribs as any,
+    };
+
+    const rt = normalizeExtensionRuntime([], [invalidEntry]);
+    const key = 'slot:com.example.invalid:invalid-slot';
+
+    expect(rt.contributionIndex[key]).toBeDefined();
+    expect(rt.contributionIndex[key][0]).toMatchObject({
+      status: 'invalid',
+      packageState: 'invalid',
+      kind: 'slot',
+      contributionId: 'invalid-slot',
+    });
+  });
+
+  it('maps incompatible/duplicate/settings-error/runtime-error to disabled status', () => {
+    const states: PackageState[] = ['incompatible', 'duplicate', 'settings-error', 'runtime-error'];
+
+    for (const state of states) {
+      const contribs: readonly Record<string, unknown>[] = [
+        { id: `pkg-${state}`, kind: 'dialog' },
+      ];
+
+      const entry: PackageStateInventoryEntry = {
+        extensionId: `com.example.${state}`,
+        packageState: state,
+        stateReason: `${state} reason.`,
+        packageMetadata: { label: state, version: '1.0.0' },
+        manifestContributions: contribs as any,
+      };
+
+      const rt = normalizeExtensionRuntime([], [entry]);
+      const key = `dialog:com.example.${state}:pkg-${state}`;
+      expect(rt.contributionIndex[key]).toBeDefined();
+      expect(rt.contributionIndex[key][0].status).toBe('disabled');
+      expect(rt.contributionIndex[key][0].packageState).toBe(state);
+    }
+  });
+
+  it('freezes disabled/invalid index entries and nested structures', () => {
+    const disabledContribs: readonly Record<string, unknown>[] = [
+      { id: 'frozen-disabled', kind: 'panel' },
+    ];
+
+    const disabledEntry: PackageStateInventoryEntry = {
+      extensionId: 'com.example.frozen-dis',
+      packageState: 'disabled-by-user',
+      stateReason: 'User disabled.',
+      packageMetadata: { label: 'Frozen', version: '1.0.0' },
+      manifestContributions: disabledContribs as any,
+    };
+
+    const rt = normalizeExtensionRuntime([], [disabledEntry]);
+    const key = 'panel:com.example.frozen-dis:frozen-disabled';
+    const entries = rt.contributionIndex[key];
+
+    expect(entries).toBeDefined();
+    expect(Object.isFrozen(entries)).toBe(true);
+    expect(Object.isFrozen(entries![0])).toBe(true);
+    expect(Object.isFrozen(entries![0].diagnostics)).toBe(true);
+    expect(Object.isFrozen(entries![0].projection)).toBe(true);
+  });
+
+  it('skips loaded packages (already handled by sortedBridged) and empty manifestContributions', () => {
+    const loadedEntry: PackageStateInventoryEntry = {
+      extensionId: 'com.example.skip-loaded',
+      packageState: 'loaded',
+      stateReason: 'Loaded.',
+      packageMetadata: { label: 'Skip', version: '1.0.0' },
+      manifestContributions: [{ id: 'skip-me', kind: 'slot', slot: 'toolbar' } as any],
+    };
+
+    const noContribsEntry: PackageStateInventoryEntry = {
+      extensionId: 'com.example.no-contribs',
+      packageState: 'disabled-by-user',
+      stateReason: 'Disabled.',
+      packageMetadata: { label: 'No Contribs', version: '1.0.0' },
+      manifestContributions: [],
+    };
+
+    const rt = normalizeExtensionRuntime([], [loadedEntry, noContribsEntry]);
+
+    // Loaded packages without active extensions should still be indexed
+    // because they have manifestContributions and are not in sortedBridged.
+    // But they are 'loaded' so we skip them in the disabled/invalid loop.
+    const loadedKey = 'slot:com.example.skip-loaded:skip-me';
+    expect(rt.contributionIndex[loadedKey]).toBeUndefined();
+
+    // Empty manifest contributions produce no index entries
+    const noContribsKey = Object.keys(rt.contributionIndex).filter(
+      (k) => k.includes('com.example.no-contribs'),
+    );
+    expect(noContribsKey).toHaveLength(0);
+  });
+
+  it('does not duplicate index entries when an extension is both active and has a non-loaded package entry', () => {
+    const ex = unsafeExt('com.example.active-disabled', [
+      { id: 'my-slot', kind: 'slot', slot: 'toolbar' },
+    ]);
+
+    const disabledDupEntry: PackageStateInventoryEntry = {
+      extensionId: 'com.example.active-disabled',
+      packageState: 'disabled-by-user',
+      stateReason: 'User disabled (stale).',
+      packageMetadata: { label: 'Active Disabled', version: '1.0.0' },
+      manifestContributions: [{ id: 'my-slot', kind: 'slot', slot: 'toolbar' } as any],
+    };
+
+    const rt = normalizeExtensionRuntime([ex], [disabledDupEntry]);
+    const key = 'slot:com.example.active-disabled:my-slot';
+
+    // Should only have the active entry, not a duplicate disabled entry
+    expect(rt.contributionIndex[key]).toBeDefined();
+    expect(rt.contributionIndex[key]).toHaveLength(1);
+    expect(rt.contributionIndex[key][0].status).toBe('active');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2254,62 +2981,39 @@ describe('normalizeExtensionRuntime — runtime/config aliasing', () => {
 // ---------------------------------------------------------------------------
 
 describe('normalizeExtensionRuntime — cross-kind duplicate contribution IDs', () => {
-  it('rejects duplicate contribution ID even when the kind differs (first owner wins)', () => {
-    const extA = ext('com.example.slot-owner', {
+  it('allows same-extension bare contributionId reuse when the kind differs', () => {
+    const ex = ext('com.example.multi-kind', {
       manifest: {
         contributions: [
           { id: 'shared-cross-kind' as any, kind: 'slot', slot: 'toolbar' },
-        ],
-      },
-    });
-    const extB = ext('com.example.effect-claimant', {
-      manifest: {
-        contributions: [
           { id: 'shared-cross-kind' as any, kind: 'effect', effectId: 'glow', label: 'Glow' },
         ],
       },
     });
-    const rt = normalizeExtensionRuntime([extA, extB]);
+    const rt = normalizeExtensionRuntime([ex]);
 
-    // First owner (slot) wins
     expect(rt.config.slots).toHaveProperty('toolbar');
-    // Second claimant (effect) is skipped
-    expect(rt.config.effects).toHaveLength(0);
-
-    // Diagnostic emitted for the second occurrence
-    const dups = diagsOf(rt, 'runtime/duplicate-contribution');
-    expect(dups).toHaveLength(1);
-    expect(dups[0].contributionId).toBe('shared-cross-kind');
-    expect(dups[0].extensionId).toBe('com.example.effect-claimant');
-    expect(dups[0].severity).toBe('error');
+    expect(rt.config.effects).toHaveLength(1);
+    expect(rt.config.effects[0].id).toBe('shared-cross-kind');
+    expect(diagsOf(rt, 'runtime/duplicate-contribution')).toEqual([]);
   });
 
-  it('rejects duplicate contribution ID across bridged and reserved kinds', () => {
-    const extA = ext('com.example.bridged-owner', {
+  it('allows same-extension bare contributionId reuse across bridged and reserved kinds', () => {
+    const ex = ext('com.example.shared-reserved', {
       manifest: {
         contributions: [
           { id: 'shared-reserved-id' as any, kind: 'parser', label: 'Parser' },
-        ],
-      },
-    });
-    const extB = ext('com.example.reserved-claimant', {
-      manifest: {
-        contributions: [
           { id: 'shared-reserved-id' as any, kind: 'outputFormat', label: 'Output', requiresRender: false, outputExtension: 'json' },
         ],
       },
     });
-    const rt = normalizeExtensionRuntime([extA, extB]);
+    const rt = normalizeExtensionRuntime([ex]);
 
-    // extA parser wins
     expect(rt.config.assetParsers).toHaveLength(1);
     expect(rt.config.assetParsers[0].id).toBe('shared-reserved-id');
-    // extB outputFormat is skipped
-    expect(rt.config.outputFormats).toHaveLength(0);
-
-    const dups = diagsOf(rt, 'runtime/duplicate-contribution');
-    expect(dups).toHaveLength(1);
-    expect(dups[0].contributionId).toBe('shared-reserved-id');
+    expect(rt.config.outputFormats).toHaveLength(1);
+    expect(rt.config.outputFormats[0].id).toBe('shared-reserved-id');
+    expect(diagsOf(rt, 'runtime/duplicate-contribution')).toEqual([]);
   });
 });
 

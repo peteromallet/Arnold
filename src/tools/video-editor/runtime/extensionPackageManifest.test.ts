@@ -178,6 +178,19 @@ describe('validateWorkspaceSourcePackage', () => {
     expect(result.errors.some((e) => e.code === 'manifest/duplicate-contribution-id')).toBe(false);
   });
 
+  it('allows cross-kind reuse of the same bare contribution ID (SD3)', () => {
+    const result = validateWorkspaceSourcePackage(
+      workspaceSource({
+        contributions: [
+          { id: 'shared-id', kind: 'command', command: 'test.cmd', label: 'Command' },
+          { id: 'shared-id', kind: 'effect', effectId: 'test.effect', label: 'Effect' },
+        ] as any,
+      }),
+    );
+    expect(result.valid).toBe(true);
+    expect(result.errors.some((e) => e.code === 'manifest/duplicate-contribution-id')).toBe(false);
+  });
+
   it('warns about extra top-level keys beyond manifest', () => {
     const result = validateWorkspaceSourcePackage({
       manifest: workspaceSource().manifest,
@@ -331,6 +344,21 @@ describe('validateInstalledBundlePackage', () => {
     );
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.code === 'manifest/duplicate-contribution-id')).toBe(true);
+  });
+
+  it('allows cross-kind reuse in installed bundle (SD3)', () => {
+    const result = validateInstalledBundlePackage(
+      installedBundle({
+        manifest: {
+          contributions: [
+            { id: 'shared-id', kind: 'command', command: 'test.cmd', label: 'Command' },
+            { id: 'shared-id', kind: 'effect', effectId: 'test.effect', label: 'Effect' },
+          ] as any,
+        },
+      }),
+    );
+    expect(result.valid).toBe(true);
+    expect(result.errors.some((e) => e.code === 'manifest/duplicate-contribution-id')).toBe(false);
   });
 
   it('rejects invalid contribution IDs', () => {

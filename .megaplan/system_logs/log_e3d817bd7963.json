@@ -1,0 +1,72 @@
+{
+  "id": "log_e3d817bd7963",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 14728,
+      "schema_version": 1,
+      "ts_utc": "2026-07-03T01:07:02.667428+00:00",
+      "ts_rel_init_s": 32618.729495,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T12",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "missing_output:files_changed:src/tools/video-editor/runtime/composition/shaderValidation.ts",
+        "missing_outputs": [
+          "files_changed:src/tools/video-editor/runtime/composition/shaderValidation.ts",
+          "files_changed:src/tools/video-editor/runtime/composition/shaderValidation.test.ts",
+          "files_changed:src/tools/video-editor/runtime/renderPlanner.ts",
+          "files_changed:src/tools/video-editor/runtime/renderPlanner.test.ts",
+          "commands_run:npx vitest run src/tools/video-editor/runtime/composition/shaderValidation.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+        ],
+        "stale_evidence": [],
+        "would_block_reasons": [
+          "missing_output:files_changed:src/tools/video-editor/runtime/composition/shaderValidation.ts",
+          "missing_output:files_changed:src/tools/video-editor/runtime/composition/shaderValidation.test.ts",
+          "missing_output:files_changed:src/tools/video-editor/runtime/renderPlanner.ts",
+          "missing_output:files_changed:src/tools/video-editor/runtime/renderPlanner.test.ts",
+          "missing_output:commands_run:npx vitest run src/tools/video-editor/runtime/composition/shaderValidation.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T12",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/runtime/composition/shaderValidation.ts",
+              "src/tools/video-editor/runtime/composition/shaderValidation.test.ts",
+              "src/tools/video-editor/runtime/renderPlanner.ts",
+              "src/tools/video-editor/runtime/renderPlanner.test.ts"
+            ],
+            "commands_run": [
+              "megaplan override resume-clarify",
+              "npx vitest run src/tools/video-editor/runtime/composition/shaderValidation.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+            ]
+          },
+          "linked_evidence_count": 15,
+          "evidence_count": 132,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 1,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 132,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-03T01:07:02.664336+00:00"
+      },
+      "transaction_id": "e71f4c2cc0ccc366",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-03T01:07:02.667537Z"
+}

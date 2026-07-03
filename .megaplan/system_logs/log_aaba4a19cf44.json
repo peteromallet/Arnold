@@ -1,0 +1,63 @@
+{
+  "id": "log_aaba4a19cf44",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 12638,
+      "schema_version": 1,
+      "ts_utc": "2026-07-02T23:58:53.425962+00:00",
+      "ts_rel_init_s": 28529.488029,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T5",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "missing_output:files_changed:src/tools/video-editor/runtime/extensionSurface.ts",
+        "missing_outputs": [
+          "files_changed:src/tools/video-editor/runtime/extensionSurface.ts",
+          "commands_run:npx vitest run src/tools/video-editor/runtime/routeFitMapper.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+        ],
+        "stale_evidence": [],
+        "would_block_reasons": [
+          "missing_output:files_changed:src/tools/video-editor/runtime/extensionSurface.ts",
+          "missing_output:commands_run:npx vitest run src/tools/video-editor/runtime/routeFitMapper.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T5",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/runtime/extensionSurface.ts"
+            ],
+            "commands_run": [
+              "npx vitest run src/tools/video-editor/runtime/extensionSurface.test.ts",
+              "npx vitest run src/tools/video-editor/runtime/routeFitMapper.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+            ]
+          },
+          "linked_evidence_count": 8,
+          "evidence_count": 139,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 1,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 139,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-02T23:58:53.423434+00:00"
+      },
+      "transaction_id": "3f690086a7057f98",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-02T23:58:53.426084Z"
+}

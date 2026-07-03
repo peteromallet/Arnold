@@ -1,0 +1,89 @@
+{
+  "id": "log_67d3660ec6b0",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 7210,
+      "schema_version": 1,
+      "ts_utc": "2026-07-02T20:58:52.440662+00:00",
+      "ts_rel_init_s": 17728.502729,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T3",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_files_changed",
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T3",
+          "declared_outputs": {
+            "files_changed": [
+              "src/sdk/manifest.ts",
+              "src/sdk/lifecycle.ts",
+              "src/sdk/index.test.ts",
+              "src/sdk/boundary.test.ts",
+              "src/tools/video-editor/runtime/extensionPackageManifest.test.ts"
+            ],
+            "commands_run": [
+              "vitest run src/sdk/index.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/sdk/boundary.test.ts src/tools/video-editor/runtime/extensionPackageManifest.test.ts src/sdk/smoke/barrel-import-smoke.test.ts \u2014 1078 passed"
+            ]
+          },
+          "linked_evidence_count": 24,
+          "evidence_count": 276,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 24,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "provided",
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 138,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-02T20:58:52.438743+00:00"
+      },
+      "transaction_id": "c3d1c350b81a4b0f",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-02T20:58:52.440814Z"
+}

@@ -22,6 +22,7 @@ import {
   createCompileOnlyOutputFormatRegistry,
   executeCompileOnlyOutput,
   executeCompileOnlyOutputSync,
+  formatScopedKey,
 } from '@/tools/video-editor/runtime/outputFormatRegistry.ts';
 
 // ---------------------------------------------------------------------------
@@ -111,7 +112,7 @@ describe('createCompileOnlyOutputFormatRegistry', () => {
     };
     const registry = createCompileOnlyOutputFormatRegistry([entry]);
     expect(registry.size).toBe(1);
-    expect(registry.get('test-format')).toBe(entry);
+    expect(registry.get(formatScopedKey('com.example.test', 'test-format'))).toBe(entry);
   });
 
   it('excludes render-dependent entries (requiresRender: true)', () => {
@@ -305,7 +306,7 @@ describe('executeCompileOnlyOutputSync', () => {
     // Manually create a registry that includes a render-dependent entry
     // (this bypasses createCompileOnlyOutputFormatRegistry which filters them)
     const map = new Map<string, CompileOnlyOutputFormatEntry>();
-    map.set('test-format', entry);
+    map.set(formatScopedKey('com.example.test', 'test-format'), entry);
     const registry: CompileOnlyOutputFormatRegistry = Object.freeze(map);
 
     const result = executeCompileOnlyOutputSync(registry, {
@@ -878,8 +879,8 @@ describe('M6: render-dependent declarations never execute', () => {
 
     const registry = createCompileOnlyOutputFormatRegistry([compileOnly, renderDep]);
     expect(registry.size).toBe(1);
-    expect(registry.has('compile-a')).toBe(true);
-    expect(registry.has('render-b')).toBe(false);
+    expect(registry.has(formatScopedKey('com.example.a', 'compile-a'))).toBe(true);
+    expect(registry.has(formatScopedKey('com.example.b', 'render-b'))).toBe(false);
   });
 
   it('registry with only render-dependent entries has size 0', () => {
@@ -919,7 +920,7 @@ describe('M6: render-dependent declarations never execute', () => {
       extensionId: 'com.example.rg',
     };
     const map = new Map<string, CompileOnlyOutputFormatEntry>();
-    map.set('render-guard', renderDep);
+    map.set(formatScopedKey('com.example.rg', 'render-guard'), renderDep);
     const registry: CompileOnlyOutputFormatRegistry = Object.freeze(map);
 
     const result = executeCompileOnlyOutputSync(registry, {
@@ -938,7 +939,7 @@ describe('M6: render-dependent declarations never execute', () => {
       extensionId: 'com.example.rag',
     };
     const map = new Map<string, CompileOnlyOutputFormatEntry>();
-    map.set('render-async-guard', renderDep);
+    map.set(formatScopedKey('com.example.rag', 'render-async-guard'), renderDep);
     const registry: CompileOnlyOutputFormatRegistry = Object.freeze(map);
 
     const result = await executeCompileOnlyOutput(registry, {
@@ -958,7 +959,7 @@ describe('M6: render-dependent declarations never execute', () => {
       extensionId: 'com.example.ncs',
     };
     const map = new Map<string, CompileOnlyOutputFormatEntry>();
-    map.set('never-called-sync', renderDep);
+    map.set(formatScopedKey('com.example.ncs', 'never-called-sync'), renderDep);
     const registry: CompileOnlyOutputFormatRegistry = Object.freeze(map);
 
     executeCompileOnlyOutputSync(registry, {
@@ -978,7 +979,7 @@ describe('M6: render-dependent declarations never execute', () => {
       extensionId: 'com.example.nca',
     };
     const map = new Map<string, CompileOnlyOutputFormatEntry>();
-    map.set('never-called-async', renderDep);
+    map.set(formatScopedKey('com.example.nca', 'never-called-async'), renderDep);
     const registry: CompileOnlyOutputFormatRegistry = Object.freeze(map);
 
     await executeCompileOnlyOutput(registry, {
@@ -1085,9 +1086,9 @@ describe('M6: multiple compile-only formats in one registry', () => {
     ];
     const registry = createCompileOnlyOutputFormatRegistry(entries);
     expect(registry.size).toBe(2);
-    expect(registry.has('co-1')).toBe(true);
-    expect(registry.has('co-2')).toBe(true);
-    expect(registry.has('rd-1')).toBe(false);
+    expect(registry.has(formatScopedKey('com.example.mix', 'co-1'))).toBe(true);
+    expect(registry.has(formatScopedKey('com.example.mix', 'co-2'))).toBe(true);
+    expect(registry.has(formatScopedKey('com.example.mix', 'rd-1'))).toBe(false);
 
     const timeline = makeTimelineSnapshot();
     const assets = makeAssets();
@@ -1495,5 +1496,220 @@ describe('M6: artifact compatibility proof', () => {
     expect(result).not.toBeNull();
     expect(result!.data).toEqual(new Uint8Array(0));
     expect(result!.hasBlockingErrors).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T10: Cross-extension duplicate bare format IDs
+// ---------------------------------------------------------------------------
+
+describe('cross-extension duplicate bare format IDs', () => {
+  it('two extensions with the same bare formatId are both stored without clobbering', () => {
+    const handlerA = makeSyncHandler(makeJsonResult({ ext: 'A' }));
+    const handlerB = makeSyncHandler(makeJsonResult({ ext: 'B' }));
+
+    const entryA: CompileOnlyOutputFormatEntry = {
+      contribution: makeContribution({ id: 'shared-format', label: 'Format A' }),
+      handler: handlerA,
+      extensionId: 'com.example.alpha',
+    };
+    const entryB: CompileOnlyOutputFormatEntry = {
+      contribution: makeContribution({ id: 'shared-format', label: 'Format B' }),
+      handler: handlerB,
+      extensionId: 'com.example.beta',
+    };
+
+    const registry = createCompileOnlyOutputFormatRegistry([entryA, entryB]);
+
+    // Both entries are stored under distinct scoped keys
+    expect(registry.size).toBe(2);
+    expect(registry.get(formatScopedKey('com.example.alpha', 'shared-format'))).toBe(entryA);
+    expect(registry.get(formatScopedKey('com.example.beta', 'shared-format'))).toBe(entryB);
+  });
+
+  it('lookup by extensionId + formatId returns the correct entry', () => {
+    const handlerA = makeSyncHandler(makeJsonResult({ ext: 'A' }));
+    const handlerB = makeSyncHandler(makeJsonResult({ ext: 'B' }));
+
+    const entryA: CompileOnlyOutputFormatEntry = {
+      contribution: makeContribution({ id: 'shared-format', label: 'Format A' }),
+      handler: handlerA,
+      extensionId: 'com.example.alpha',
+    };
+    const entryB: CompileOnlyOutputFormatEntry = {
+      contribution: makeContribution({ id: 'shared-format', label: 'Format B' }),
+      handler: handlerB,
+      extensionId: 'com.example.beta',
+    };
+
+    const registry = createCompileOnlyOutputFormatRegistry([entryA, entryB]);
+    const timeline = makeTimelineSnapshot();
+    const assets = makeAssets();
+
+    // Execute via extension Alpha
+    const resultA = executeCompileOnlyOutputSync(registry, {
+      formatId: 'shared-format',
+      timeline,
+      assets,
+      extensionId: 'com.example.alpha',
+    });
+    expect(resultA).not.toBeNull();
+    const decoderA = new TextDecoder();
+    expect(JSON.parse(decoderA.decode(resultA!.data))).toEqual({ ext: 'A' });
+
+    // Execute via extension Beta
+    const resultB = executeCompileOnlyOutputSync(registry, {
+      formatId: 'shared-format',
+      timeline,
+      assets,
+      extensionId: 'com.example.beta',
+    });
+    expect(resultB).not.toBeNull();
+    const decoderB = new TextDecoder();
+    expect(JSON.parse(decoderB.decode(resultB!.data))).toEqual({ ext: 'B' });
+  });
+
+  it('cross-extension duplicate bare formatId works with async execution', async () => {
+    const handlerA = makeAsyncHandler(makeJsonResult({ ext: 'A-async' }));
+    const handlerB = makeAsyncHandler(makeJsonResult({ ext: 'B-async' }));
+
+    const entryA: CompileOnlyOutputFormatEntry = {
+      contribution: makeContribution({ id: 'async-shared' }),
+      handler: handlerA,
+      extensionId: 'com.example.alpha',
+    };
+    const entryB: CompileOnlyOutputFormatEntry = {
+      contribution: makeContribution({ id: 'async-shared' }),
+      handler: handlerB,
+      extensionId: 'com.example.beta',
+    };
+
+    const registry = createCompileOnlyOutputFormatRegistry([entryA, entryB]);
+    const timeline = makeTimelineSnapshot();
+    const assets = makeAssets();
+
+    const resultA = await executeCompileOnlyOutput(registry, {
+      formatId: 'async-shared',
+      timeline,
+      assets,
+      extensionId: 'com.example.alpha',
+    });
+    expect(resultA).not.toBeNull();
+    const decoderA = new TextDecoder();
+    expect(JSON.parse(decoderA.decode(resultA!.data))).toEqual({ ext: 'A-async' });
+
+    const resultB = await executeCompileOnlyOutput(registry, {
+      formatId: 'async-shared',
+      timeline,
+      assets,
+      extensionId: 'com.example.beta',
+    });
+    expect(resultB).not.toBeNull();
+    const decoderB = new TextDecoder();
+    expect(JSON.parse(decoderB.decode(resultB!.data))).toEqual({ ext: 'B-async' });
+  });
+
+  it('unknown extensionId + formatId combination returns null', () => {
+    const entry: CompileOnlyOutputFormatEntry = {
+      contribution: makeContribution({ id: 'only-mine' }),
+      handler: makeSyncHandler(makeJsonResult({})),
+      extensionId: 'com.example.alpha',
+    };
+
+    const registry = createCompileOnlyOutputFormatRegistry([entry]);
+
+    // Correct extension but wrong formatId
+    const result1 = executeCompileOnlyOutputSync(registry, {
+      formatId: 'nonexistent',
+      timeline: makeTimelineSnapshot(),
+      assets: makeAssets(),
+      extensionId: 'com.example.alpha',
+    });
+    expect(result1).toBeNull();
+
+    // Correct formatId but wrong extension
+    const result2 = executeCompileOnlyOutputSync(registry, {
+      formatId: 'only-mine',
+      timeline: makeTimelineSnapshot(),
+      assets: makeAssets(),
+      extensionId: 'com.example.beta',
+    });
+    expect(result2).toBeNull();
+  });
+
+  it('same extension and same bare formatId overwrites (last-wins within same scope)', () => {
+    const handler1 = makeSyncHandler(makeJsonResult({ version: 1 }));
+    const handler2 = makeSyncHandler(makeJsonResult({ version: 2 }));
+
+    const entry1: CompileOnlyOutputFormatEntry = {
+      contribution: makeContribution({ id: 'same-scope-fmt' }),
+      handler: handler1,
+      extensionId: 'com.example.same',
+    };
+    const entry2: CompileOnlyOutputFormatEntry = {
+      contribution: makeContribution({ id: 'same-scope-fmt' }),
+      handler: handler2,
+      extensionId: 'com.example.same',
+    };
+
+    const registry = createCompileOnlyOutputFormatRegistry([entry1, entry2]);
+
+    // Same scoped key → single entry, last-wins
+    expect(registry.size).toBe(1);
+    expect(registry.get(formatScopedKey('com.example.same', 'same-scope-fmt'))).toBe(entry2);
+
+    // Execution returns the last-registered handler's output
+    const result = executeCompileOnlyOutputSync(registry, {
+      formatId: 'same-scope-fmt',
+      timeline: makeTimelineSnapshot(),
+      assets: makeAssets(),
+      extensionId: 'com.example.same',
+    });
+    expect(result).not.toBeNull();
+    const decoder = new TextDecoder();
+    expect(JSON.parse(decoder.decode(result!.data))).toEqual({ version: 2 });
+  });
+
+  it('three extensions sharing the same bare formatId all coexist', () => {
+    const makeHandler = (label: string) => makeSyncHandler(makeJsonResult({ from: label }));
+    const entries: CompileOnlyOutputFormatEntry[] = [
+      {
+        contribution: makeContribution({ id: 'triple-format' }),
+        handler: makeHandler('ext-1'),
+        extensionId: 'com.example.one',
+      },
+      {
+        contribution: makeContribution({ id: 'triple-format' }),
+        handler: makeHandler('ext-2'),
+        extensionId: 'com.example.two',
+      },
+      {
+        contribution: makeContribution({ id: 'triple-format' }),
+        handler: makeHandler('ext-3'),
+        extensionId: 'com.example.three',
+      },
+    ];
+
+    const registry = createCompileOnlyOutputFormatRegistry(entries);
+    expect(registry.size).toBe(3);
+
+    const timeline = makeTimelineSnapshot();
+    const assets = makeAssets();
+
+    for (const extId of ['com.example.one', 'com.example.two', 'com.example.three']) {
+      const result = executeCompileOnlyOutputSync(registry, {
+        formatId: 'triple-format',
+        timeline,
+        assets,
+        extensionId: extId,
+      });
+      expect(result).not.toBeNull();
+      const decoder = new TextDecoder();
+      const parsed = JSON.parse(decoder.decode(result!.data));
+      const expectedLabel = extId === 'com.example.one' ? 'ext-1'
+        : extId === 'com.example.two' ? 'ext-2'
+        : 'ext-3';
+      expect(parsed).toEqual({ from: expectedLabel });
+    }
   });
 });

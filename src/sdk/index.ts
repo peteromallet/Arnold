@@ -107,6 +107,13 @@ export type { ProcessSpawnConfig, ProcessManifestEntry, ProcessEnvFieldSpec, Pro
 export type { ShaderPassKind, ShaderColorSpace, ShaderFallbackBehavior, ShaderTextureSourceKind, ShaderTextureFilter, ShaderTextureWrap, ShaderInlineSource, ShaderModuleSource, ShaderSourceDescriptor, ShaderPassDescriptor, ShaderUniformType, ShaderUniformEnumOption, ShaderTextureRef, ShaderUniformDefaultValue, ShaderUniformDefinition, ShaderUniformSchema, ShaderTextureDefinition, ShaderTextureSchema, ShaderMaterializerDescriptor, ShaderContribution, ShaderRegistrationOptions, ShaderRegistrationService } from './video/families/shaders';
 
 // ===========================================================================
+// Video: Composition (reference identity)
+// ===========================================================================
+
+export type { ContributionRef, LiveSourceRef, MaterialRef } from './video/composition/references';
+export { contributionRefKey } from './video/composition/references';
+
+// ===========================================================================
 // Video: Rendering
 // ===========================================================================
 

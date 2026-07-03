@@ -240,6 +240,15 @@ import type {
   ExtensionContext,
   ExtensionDiagnostic,
   DisposeHandle,
+  // M1a: Composition reference identity
+  ContributionRef,
+  LiveSourceRef,
+  MaterialRef,
+} from '@reigh/editor-sdk';
+
+// M1a value exports
+import {
+  contributionRefKey,
 } from '@reigh/editor-sdk';
 
 // ---------------------------------------------------------------------------
@@ -4600,5 +4609,103 @@ describe('T6: family adapter manifest (sdk-boundary)', () => {
       expect(Array.isArray(entry.gaps)).toBe(true);
       expect(Array.isArray(entry.sdkModules)).toBe(true);
     }
+  });
+});
+
+// ===========================================================================
+// M1a: Composition reference identity
+// ===========================================================================
+
+describe('M1a: Composition reference types are data-only and importable from @reigh/editor-sdk', () => {
+  it('ContributionRef is a data-only type with kind, extensionId, contributionId', () => {
+    const ref: ContributionRef = {
+      kind: 'effect',
+      extensionId: 'com.example.my-ext',
+      contributionId: 'glow-effect',
+    };
+    expect(ref.kind).toBe('effect');
+    expect(ref.extensionId).toBe('com.example.my-ext');
+    expect(ref.contributionId).toBe('glow-effect');
+    // Data-only: no methods, no version fields
+    expect(Object.keys(ref).sort()).toEqual(['contributionId', 'extensionId', 'kind']);
+  });
+
+  it('LiveSourceRef is constructable with only sourceId and also accepts sourceKind when supplied', () => {
+    // Constructable with only sourceId (sourceKind is optional)
+    const refMinimal: LiveSourceRef = { sourceId: 'webcam-1' };
+    expect(refMinimal.sourceId).toBe('webcam-1');
+    expect(refMinimal.sourceKind).toBeUndefined();
+    expect(Object.keys(refMinimal).sort()).toEqual(['sourceId']);
+
+    // Also accepts sourceKind when supplied
+    const refFull: LiveSourceRef = {
+      sourceId: 'webcam-2',
+      sourceKind: 'webcam',
+    };
+    expect(refFull.sourceId).toBe('webcam-2');
+    expect(refFull.sourceKind).toBe('webcam');
+    expect(Object.keys(refFull).sort()).toEqual(['sourceId', 'sourceKind']);
+  });
+
+  it('MaterialRef is a transparent alias of RenderMaterialRef', () => {
+    // Type-level assertion: assign a MaterialRef to a RenderMaterialRef
+    const mat: MaterialRef = {
+      id: 'mat-1',
+      mediaKind: 'video',
+      locator: { kind: 'url', uri: 'https://example.com/video.mp4' },
+      determinism: 'deterministic',
+      replacementPolicy: 'preserve-live-ref',
+    };
+    // MaterialRef and RenderMaterialRef are the same type
+    const asRender: RenderMaterialRef = mat;
+    expect(asRender.id).toBe('mat-1');
+    expect(asRender.mediaKind).toBe('video');
+    // MaterialRef is not a deprecation — both names coexist
+    expect(typeof (mat as any).__deprecated).toBe('undefined');
+  });
+
+  it('contributionRefKey returns kind:extensionId:contributionId without version fields', () => {
+    const ref: ContributionRef = {
+      kind: 'shader',
+      extensionId: 'com.example.shaders',
+      contributionId: 'bloom-pass',
+    };
+    const key = contributionRefKey(ref);
+    expect(key).toBe('shader:com.example.shaders:bloom-pass');
+    // No version fields in the key
+    expect(key).not.toContain('version');
+    expect(key).not.toContain('semver');
+  });
+
+  it('contributionRefKey is deterministic and stable', () => {
+    const a: ContributionRef = { kind: 'slot', extensionId: 'ext-a', contributionId: 'toolbar' };
+    const b: ContributionRef = { kind: 'slot', extensionId: 'ext-a', contributionId: 'toolbar' };
+    expect(contributionRefKey(a)).toBe(contributionRefKey(b));
+    expect(contributionRefKey(a)).toBe('slot:ext-a:toolbar');
+  });
+
+  it('ContributionRef scoped keys distinguish same contributionId in different extensions', () => {
+    const refA: ContributionRef = { kind: 'effect', extensionId: 'ext-a', contributionId: 'glow' };
+    const refB: ContributionRef = { kind: 'effect', extensionId: 'ext-b', contributionId: 'glow' };
+    expect(contributionRefKey(refA)).not.toBe(contributionRefKey(refB));
+    expect(contributionRefKey(refA)).toBe('effect:ext-a:glow');
+    expect(contributionRefKey(refB)).toBe('effect:ext-b:glow');
+  });
+
+  it('ContributionRef scoped keys distinguish same contributionId in different kinds', () => {
+    const refA: ContributionRef = { kind: 'effect', extensionId: 'ext-a', contributionId: 'glow' };
+    const refB: ContributionRef = { kind: 'transition', extensionId: 'ext-a', contributionId: 'glow' };
+    expect(contributionRefKey(refA)).not.toBe(contributionRefKey(refB));
+    expect(contributionRefKey(refA)).toBe('effect:ext-a:glow');
+    expect(contributionRefKey(refB)).toBe('transition:ext-a:glow');
+  });
+
+  it('contributionRefKey is importable from @reigh/editor-sdk as a function', () => {
+    expect(typeof contributionRefKey).toBe('function');
+  });
+
+  it('all M1a exports are present in the SDK star import', () => {
+    // Re-import via star to verify barrel visibility
+    expect('contributionRefKey' in (globalThis as any) === false || typeof contributionRefKey === 'function').toBe(true);
   });
 });

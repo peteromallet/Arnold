@@ -1,0 +1,61 @@
+{
+  "id": "log_d4117b0e7891",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 20525,
+      "schema_version": 1,
+      "ts_utc": "2026-07-03T05:04:15.361439+00:00",
+      "ts_rel_init_s": 46851.423506,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T2",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T2",
+          "declared_outputs": {
+            "commands_run": [
+              "vitest run src/sdk/__tests__/sdk-boundary.test.ts -- 329/329 passed"
+            ]
+          },
+          "linked_evidence_count": 4,
+          "evidence_count": 160,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 4,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "provided",
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 80,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-03T05:04:15.359288+00:00"
+      },
+      "transaction_id": "e28c9d0078f34294",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-03T05:04:15.361532Z"
+}

@@ -70,7 +70,8 @@ export function defineExtension(options: DefineExtensionOptions): ReighExtension
     throw new Error(`Invalid extension ID "${manifest.id}": ${idErrors.join('; ')}`);
   }
 
-  // Validate contribution IDs for uniqueness
+  // Validate contribution IDs for uniqueness using scoped keys (kind:contributionId).
+  // Cross-kind reuse of the same bare contributionId is valid per SD3.
   if (manifest.contributions && manifest.contributions.length > 0) {
     const seen = new Set<string>();
     for (const contribution of manifest.contributions) {
@@ -80,12 +81,14 @@ export function defineExtension(options: DefineExtensionOptions): ReighExtension
           `Invalid contribution ID "${contribution.id}" in extension "${manifest.id}": ${cErrors.join('; ')}`,
         );
       }
-      if (seen.has(contribution.id)) {
+      const cKind = (contribution as unknown as Record<string, unknown>).kind as string | undefined;
+      const scopedKey = cKind && typeof cKind === 'string' ? `${cKind}:${contribution.id}` : contribution.id;
+      if (seen.has(scopedKey)) {
         throw new Error(
-          `Duplicate contribution ID "${contribution.id}" in extension "${manifest.id}"`,
+          `Duplicate contribution ID "${contribution.id}"${cKind && typeof cKind === 'string' ? ` for kind "${cKind}"` : ''} in extension "${manifest.id}"`,
         );
       }
-      seen.add(contribution.id);
+      seen.add(scopedKey);
     }
   }
 

@@ -1,0 +1,74 @@
+{
+  "id": "log_3176ec3fabbb",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 7517,
+      "schema_version": 1,
+      "ts_utc": "2026-07-02T21:03:04.545268+00:00",
+      "ts_rel_init_s": 17980.607335,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T13",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_files_changed",
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T13",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/runtime/composition/shaderValidation.ts",
+              "src/tools/video-editor/runtime/composition/shaderValidation.test.ts"
+            ],
+            "commands_run": [
+              "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/shaderValidation.test.ts"
+            ]
+          },
+          "linked_evidence_count": 12,
+          "evidence_count": 276,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 12,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "provided",
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 138,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-02T21:03:04.543356+00:00"
+      },
+      "transaction_id": "cb5ef5a743351438",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-02T21:03:04.545337Z"
+}

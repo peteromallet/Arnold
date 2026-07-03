@@ -376,17 +376,26 @@ export function validateManifest(
       for (const msg of cErrors) {
         pushErr('manifest/invalid-contribution-id', `Contribution "${cId}": ${msg}`, cId);
       }
-      if (seen.has(cId)) {
-        pushErr('manifest/duplicate-contribution-id', `Duplicate contribution ID "${cId}"`, cId);
-      }
-      seen.add(cId);
 
-      // ---- Contribution kind validation ----
+      // ---- Contribution kind validation (extract early for scoped duplicate detection) ----
       const cKind = (contribution as unknown as Record<string, unknown>).kind as string | undefined;
       if (!cKind || typeof cKind !== 'string') {
         pushErr('manifest/missing-contribution-kind', `Contribution "${cId}" is missing a kind`, cId);
+        // Duplicate detection for kindless entries still uses bare ID
+        if (seen.has(cId)) {
+          pushErr('manifest/duplicate-contribution-id', `Duplicate contribution ID "${cId}"`, cId);
+        }
+        seen.add(cId);
         continue; // cannot validate kind-specific rules without a kind
       }
+
+      // Duplicate detection uses scoped key (kind:contributionId) — cross-kind
+      // reuse of the same bare contributionId is valid (SD3).
+      const scopedKey = `${cKind}:${cId}`;
+      if (seen.has(scopedKey)) {
+        pushErr('manifest/duplicate-contribution-id', `Duplicate contribution ID "${cId}" for kind "${cKind}"`, cId);
+      }
+      seen.add(scopedKey);
       if (!KNOWN_CONTRIBUTION_KINDS_SET.has(cKind)) {
         pushErr(
           'manifest/unknown-contribution-kind',

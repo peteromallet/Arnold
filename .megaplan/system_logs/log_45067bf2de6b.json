@@ -1,0 +1,66 @@
+{
+  "id": "log_45067bf2de6b",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 6539,
+      "schema_version": 1,
+      "ts_utc": "2026-07-02T20:27:31.735540+00:00",
+      "ts_rel_init_s": 15847.797607,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T9",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T9",
+          "declared_outputs": {
+            "commands_run": [
+              "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts (148 passed)",
+              "npx vitest run --config config/testing/vitest.config.ts 7 scoped files (1254 passed total)"
+            ]
+          },
+          "linked_evidence_count": 8,
+          "evidence_count": 276,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 8,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "provided",
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 138,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-02T20:27:31.733563+00:00"
+      },
+      "transaction_id": "2c826155e0f6d18c",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-02T20:27:31.735599Z"
+}

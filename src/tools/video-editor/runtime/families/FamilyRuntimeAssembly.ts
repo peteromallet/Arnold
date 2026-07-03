@@ -12,7 +12,10 @@
  * @module families/FamilyRuntimeAssembly
  */
 
-import type { ExtensionContribution } from '@reigh/editor-sdk';
+import type {
+  ExtensionContribution,
+  ExtensionDiagnostic,
+} from '@reigh/editor-sdk';
 import type {
   HostFamilyAdapter,
   FamilyAdapterRegistry,
@@ -20,9 +23,11 @@ import type {
   FamilyNormalizeResult,
 } from '@reigh/editor-sdk';
 import type { FamilyContributionSequence } from './FamilyContributionSequence';
+import { contributionScopedKey } from './FamilyContributionSequence';
 import { VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY } from './familyAdapterRegistry';
 import type {
   ExtensionRuntime,
+  ContributionIndexEntry,
   VideoEditorExtensionRuntimeConfig,
   VideoEditorSlotRenderer,
   VideoEditorSlotName,
@@ -43,6 +48,7 @@ import type {
   PackageStateInventoryEntry,
 } from '../extensionSurface';
 import type { VideoEditorSlotDescriptor } from './slotAdapter';
+import { normalizeContributionIndexRouteFit } from '../routeFitMapper';
 
 // ---------------------------------------------------------------------------
 // Contribution kind labels
@@ -94,14 +100,18 @@ export interface PackageContributionSummary {
 /**
  * Compute a {@link PackageContributionSummary} from manifest contributions.
  *
- * When `activeIds` is provided, contributions whose ID appears in the set are
- * counted as active.  When `inactiveCount` is provided, it is used as the
- * inactive count.  Both are optional and default to -1 (unknown) when absent.
+ * When `activeKeys` is provided, contributions whose active identity appears
+ * in the set are counted as active. When `owningExtensionId` is provided,
+ * active identities are matched by scoped key (`kind:extensionId:contributionId`)
+ * so same-extension cross-kind reuse is counted correctly and exact scoped-key
+ * duplicates count once. When `inactiveCount` is provided, it is used as the
+ * inactive count. Both are optional and default to -1 (unknown) when absent.
  */
 export function computePackageContributionSummary(
   manifestContributions: readonly ExtensionContribution[] | undefined | null,
-  activeIds?: ReadonlySet<string>,
+  activeKeys?: ReadonlySet<string>,
   inactiveCount?: number,
+  owningExtensionId?: string,
 ): PackageContributionSummary | null {
   const contribs = manifestContributions ?? [];
   const declared = contribs.length;
@@ -128,11 +138,17 @@ export function computePackageContributionSummary(
   }
 
   let active = -1;
-  if (activeIds) {
+  if (activeKeys) {
     active = 0;
+    const countedScopedKeys = new Set<string>();
     for (const contrib of contribs) {
-      if (activeIds.has(contrib.id as string)) {
+      const scopedKey = owningExtensionId
+        ? contributionScopedKey(owningExtensionId, contrib)
+        : `${contrib.kind}:${contrib.id as string}`;
+      const activeKey = owningExtensionId ? scopedKey : (contrib.id as string);
+      if (activeKeys.has(activeKey) && !countedScopedKeys.has(scopedKey)) {
         active++;
+        countedScopedKeys.add(scopedKey);
       }
     }
   }
@@ -228,19 +244,24 @@ export function assembleExtensionRuntime(
   } = seq;
 
   const registry = adapterRegistry ?? VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY;
+  type BridgedContributionRecord = (typeof sortedBridged)[number];
+  const activeContributionScopedKeys = new Set<string>();
+  const projectedContributionRecordKeys = new Set<string>();
 
-  // ---- Phase 4: collect contributions by dispatch source --------------------
-  const byKind: Record<string, { kind: string; contributions: typeof sortedBridged }> = {};
+  // ---- Phase 4: collect projection candidates by dispatch source ------------
+  const projectionCandidatesByKind: Record<string, { kind: string; contributions: typeof sortedBridged }> = {};
 
   function pushToKind(kind: string, item: (typeof sortedBridged)[number]) {
-    if (!byKind[kind]) {
-      byKind[kind] = { kind, contributions: [] };
+    if (!projectionCandidatesByKind[kind]) {
+      projectionCandidatesByKind[kind] = { kind, contributions: [] };
     }
-    byKind[kind].contributions.push(item);
+    projectionCandidatesByKind[kind].contributions.push(item);
   }
 
   for (const item of sortedBridged) {
-    pushToKind(item.contribution.kind, item);
+    if (item.projectionEligible) {
+      pushToKind(item.contribution.kind, item);
+    }
   }
 
   // ---- Phase 4a: dispatch to adapters --------------------------------------
@@ -296,11 +317,360 @@ export function assembleExtensionRuntime(
     }
   }
 
-  function getReservedContributions(kind: string): typeof sortedBridged {
-    if (kind === 'outputFormat') return m6ReservedOutputFormats;
-    if (kind === 'searchProvider') return m6ReservedSearchProviders;
-    if (kind === 'process') return m12ReservedProcesses;
-    return [];
+  function getReservedProjectionCandidates(kind: string): typeof sortedBridged {
+    const preserved =
+      kind === 'outputFormat'
+        ? m6ReservedOutputFormats
+        : kind === 'searchProvider'
+          ? m6ReservedSearchProviders
+          : kind === 'process'
+            ? m12ReservedProcesses
+            : [];
+    if (preserved.length === 0) {
+      return [];
+    }
+    const projectionCandidates = preserved.filter((item) => item.projectionEligible);
+    if (projectionCandidates.length === preserved.length) {
+      return preserved;
+    }
+    return projectionCandidates;
+  }
+
+  function contributionRecordKey(
+    item: Readonly<{ scopedKey: string; duplicateOrdinal: number }>,
+  ): string {
+    return `${item.scopedKey}#${item.duplicateOrdinal}`;
+  }
+
+  function duplicateResolutionPolicy(
+    item: Readonly<{ scopedKey: string; duplicateOrdinal: number }>,
+  ): ContributionIndexEntry['resolutionPolicy'] {
+    if (item.duplicateOrdinal === 0) {
+      return undefined;
+    }
+    return Object.freeze({
+      kind: 'exact-duplicate' as const,
+      strategy: 'first-wins-projection' as const,
+      winnerScopedKey: item.scopedKey,
+      winnerDuplicateOrdinal: 0,
+    });
+  }
+
+  function markProjectedContribution(item: BridgedContributionRecord): void {
+    activeContributionScopedKeys.add(item.scopedKey);
+    projectedContributionRecordKeys.add(contributionRecordKey(item));
+  }
+
+  function recordProjectedDescriptorKeys(
+    contributions: ReadonlyArray<BridgedContributionRecord>,
+    descriptors: readonly unknown[],
+  ): void {
+    const descriptorCounts = new Map<string, number>();
+
+    for (const descriptor of descriptors) {
+      if (!descriptor || typeof descriptor !== 'object') {
+        continue;
+      }
+      const id = 'id' in descriptor && typeof descriptor.id === 'string'
+        ? descriptor.id
+        : null;
+      if (!id) {
+        continue;
+      }
+      const extensionId = 'extensionId' in descriptor && typeof descriptor.extensionId === 'string'
+        ? descriptor.extensionId
+        : null;
+      const key = extensionId ? `${extensionId}::${id}` : id;
+      descriptorCounts.set(key, (descriptorCounts.get(key) ?? 0) + 1);
+    }
+
+    for (const item of contributions) {
+      const contributionId = item.contribution.id as string;
+      const exactKey = `${item.extensionId}::${contributionId}`;
+      const fallbackKey = contributionId;
+      const exactCount = descriptorCounts.get(exactKey) ?? 0;
+      if (exactCount > 0) {
+        descriptorCounts.set(exactKey, exactCount - 1);
+        markProjectedContribution(item);
+        continue;
+      }
+      const fallbackCount = descriptorCounts.get(fallbackKey) ?? 0;
+      if (fallbackCount > 0) {
+        descriptorCounts.set(fallbackKey, fallbackCount - 1);
+        markProjectedContribution(item);
+      }
+    }
+  }
+
+  function recordProjectedSlotKeys(
+    contributions: ReadonlyArray<BridgedContributionRecord>,
+    descriptors: readonly VideoEditorSlotDescriptor[],
+  ): void {
+    const projectedSlots = new Set(descriptors.map((descriptor) => descriptor.slot));
+    const consumedSlots = new Set<string>();
+    for (const item of contributions) {
+      const slotName = (item.contribution as ExtensionContribution & {
+        readonly slot?: string;
+      }).slot;
+      if (slotName && projectedSlots.has(slotName) && !consumedSlots.has(slotName)) {
+        consumedSlots.add(slotName);
+        markProjectedContribution(item);
+      }
+    }
+  }
+
+  function freezeDiagnostic(
+    diagnostic: Readonly<ExtensionDiagnostic>,
+  ): Readonly<ExtensionDiagnostic> {
+    return Object.freeze({
+      ...diagnostic,
+      ...(diagnostic.detail
+        ? { detail: Object.freeze({ ...diagnostic.detail }) }
+        : {}),
+    });
+  }
+
+  function buildDiagnosticsByScopedKey(): ReadonlyMap<string, readonly ReturnType<typeof freezeDiagnostic>[]> {
+    const activeByScopedKey = new Map<string, BridgedContributionRecord[]>();
+    const activeByExtensionContribution = new Map<string, BridgedContributionRecord[]>();
+
+    for (const item of sortedBridged) {
+      const scopedItems = activeByScopedKey.get(item.scopedKey) ?? [];
+      scopedItems.push(item);
+      activeByScopedKey.set(item.scopedKey, scopedItems);
+
+      const extensionContributionKey = `${item.extensionId}::${item.contribution.id as string}`;
+      const ambiguousItems = activeByExtensionContribution.get(extensionContributionKey) ?? [];
+      ambiguousItems.push(item);
+      activeByExtensionContribution.set(extensionContributionKey, ambiguousItems);
+    }
+
+    // Also index inactive-reserved items so their diagnostics can be attached
+    const inactiveByScopedKey = new Map<string, typeof inactiveReserved>();
+    const inactiveByExtensionContribution = new Map<string, typeof inactiveReserved>();
+    for (const item of inactiveReserved) {
+      const scopedItems = inactiveByScopedKey.get(item.scopedKey) ?? [];
+      scopedItems.push(item);
+      inactiveByScopedKey.set(item.scopedKey, scopedItems);
+
+      const extensionContributionKey = `${item.extensionId}::${item.contributionId}`;
+      const ambiguousItems = inactiveByExtensionContribution.get(extensionContributionKey) ?? [];
+      ambiguousItems.push(item);
+      inactiveByExtensionContribution.set(extensionContributionKey, ambiguousItems);
+    }
+
+    const attached = new Map<string, ReturnType<typeof freezeDiagnostic>[]>();
+
+    for (const diagnostic of diagnostics) {
+      if (!diagnostic.extensionId || !diagnostic.contributionId) {
+        continue;
+      }
+
+      const frozenDiagnostic = freezeDiagnostic(diagnostic);
+      const extensionContributionKey =
+        `${diagnostic.extensionId}::${diagnostic.contributionId}`;
+      const candidateItems = activeByExtensionContribution.get(extensionContributionKey) ?? [];
+      const inactiveCandidateItems = inactiveByExtensionContribution.get(extensionContributionKey) ?? [];
+      if (candidateItems.length === 0 && inactiveCandidateItems.length === 0) {
+        continue;
+      }
+
+      let targetScopedKeys: readonly string[] = [];
+      if (candidateItems.length === 1 && inactiveCandidateItems.length === 0) {
+        targetScopedKeys = [candidateItems[0].scopedKey];
+      } else if (candidateItems.length === 0 && inactiveCandidateItems.length === 1) {
+        targetScopedKeys = [inactiveCandidateItems[0].scopedKey];
+      } else {
+        const detailKind =
+          typeof diagnostic.detail?.contributionKind === 'string'
+            ? diagnostic.detail.contributionKind
+            : null;
+        const activeKindMatches = candidateItems.filter((item) => {
+          if (detailKind) {
+            return item.contribution.kind === detailKind;
+          }
+          return diagnostic.message.includes(`kind: ${item.contribution.kind}`);
+        });
+        const inactiveKindMatches = inactiveCandidateItems.filter((item) => {
+          if (detailKind) {
+            return item.kind === detailKind;
+          }
+          return diagnostic.message.includes(`kind: ${item.kind}`);
+        });
+        const matchedScopedKeys = new Set([
+          ...activeKindMatches.map((item) => item.scopedKey),
+          ...inactiveKindMatches.map((item) => item.scopedKey),
+        ]);
+
+        if (matchedScopedKeys.size > 0) {
+          targetScopedKeys = [...matchedScopedKeys];
+        } else if (!detailKind) {
+          // Fall back only when the diagnostic cannot identify a unique kind.
+          targetScopedKeys = [
+            ...new Set([
+              ...candidateItems.map((item) => item.scopedKey),
+              ...inactiveCandidateItems.map((item) => item.scopedKey),
+            ]),
+          ];
+        }
+      }
+
+      for (const scopedKey of targetScopedKeys) {
+        const scopedDiagnostics = attached.get(scopedKey) ?? [];
+        scopedDiagnostics.push(frozenDiagnostic);
+        attached.set(scopedKey, scopedDiagnostics);
+      }
+    }
+
+    return new Map(
+      [...attached.entries()].map(([scopedKey, scopedDiagnostics]) => [
+        scopedKey,
+        Object.freeze(scopedDiagnostics),
+      ]),
+    );
+  }
+
+  function freezeContributionIndex(
+    contributionIndex: Record<string, ContributionIndexEntry[]>,
+  ): Readonly<Record<string, readonly ContributionIndexEntry[]>> {
+    const frozenIndex: Record<string, readonly ContributionIndexEntry[]> = {};
+    for (const [key, entries] of Object.entries(contributionIndex)) {
+      frozenIndex[key] = Object.freeze(entries);
+    }
+    return Object.freeze(frozenIndex);
+  }
+
+  function packageStateToIndexStatus(
+    state: PackageStateInventoryEntry['packageState'],
+  ): ContributionIndexEntry['status'] {
+    switch (state) {
+      case 'invalid':
+        return 'invalid';
+      case 'disabled-by-user':
+        return 'disabled';
+      case 'incompatible':
+      case 'duplicate':
+      case 'settings-error':
+      case 'runtime-error':
+        return 'disabled';
+      default:
+        return 'active';
+    }
+  }
+
+  function buildContributionIndexEntries(): Readonly<Record<string, readonly ContributionIndexEntry[]>> {
+    const contributionIndex: Record<string, ContributionIndexEntry[]> = {};
+    const diagnosticsByScopedKey = buildDiagnosticsByScopedKey();
+    const packageStateByExtensionId = new Map<string, PackageStateInventoryEntry['packageState']>();
+    for (const entry of packageStateEntries ?? []) {
+      if (!packageStateByExtensionId.has(entry.extensionId)) {
+        packageStateByExtensionId.set(entry.extensionId, entry.packageState);
+      }
+    }
+
+    // Track which extension IDs have active bridged contributions
+    const activeExtensionIds = new Set<string>();
+    for (const item of sortedBridged) {
+      activeExtensionIds.add(item.extensionId);
+    }
+
+    for (const item of sortedBridged) {
+      if (!contributionIndex[item.scopedKey]) {
+        contributionIndex[item.scopedKey] = [];
+      }
+      const projected = projectedContributionRecordKeys.has(contributionRecordKey(item));
+      const resolutionPolicy = !projected ? duplicateResolutionPolicy(item) : undefined;
+      const diagnosticsForScopedKey =
+        diagnosticsByScopedKey.get(item.scopedKey) ?? Object.freeze([]);
+      contributionIndex[item.scopedKey].push(Object.freeze({
+        scopedKey: item.scopedKey,
+        kind: item.contribution.kind,
+        extensionId: item.extensionId,
+        contributionId: item.contribution.id as string,
+        status: 'active',
+        packageState: packageStateByExtensionId.get(item.extensionId),
+        diagnostics: diagnosticsForScopedKey,
+        duplicateOrdinal: item.duplicateOrdinal,
+        projectionEligible: item.projectionEligible,
+        projection: Object.freeze({
+          duplicateOrdinal: item.duplicateOrdinal,
+          eligible: item.projectionEligible,
+          projected,
+          source: projected ? 'descriptor-array' : 'preserved-record',
+        }),
+        ...(resolutionPolicy ? { resolutionPolicy } : {}),
+      }));
+    }
+
+    // ---- Inactive-reserved contributions ------------------------------------
+    for (const item of inactiveReserved) {
+      if (!contributionIndex[item.scopedKey]) {
+        contributionIndex[item.scopedKey] = [];
+      }
+      const projected = projectedContributionRecordKeys.has(contributionRecordKey(item));
+      const resolutionPolicy = !projected ? duplicateResolutionPolicy(item) : undefined;
+      const diagnosticsForScopedKey =
+        diagnosticsByScopedKey.get(item.scopedKey) ?? Object.freeze([]);
+      contributionIndex[item.scopedKey].push(Object.freeze({
+        scopedKey: item.scopedKey,
+        kind: item.kind,
+        extensionId: item.extensionId,
+        contributionId: item.contributionId,
+        status: 'inactive-reserved',
+        packageState: packageStateByExtensionId.get(item.extensionId),
+        diagnostics: diagnosticsForScopedKey,
+        duplicateOrdinal: item.duplicateOrdinal,
+        projectionEligible: item.projectionEligible,
+        projection: Object.freeze({
+          duplicateOrdinal: item.duplicateOrdinal,
+          eligible: item.projectionEligible,
+          projected,
+          source: projected ? 'descriptor-array' : 'preserved-record',
+        }),
+        ...(resolutionPolicy ? { resolutionPolicy } : {}),
+      }));
+    }
+
+    // ---- Disabled / invalid package contributions ---------------------------
+    for (const entry of packageStateEntries ?? []) {
+      const packageState = entry.packageState;
+      // Skip loaded packages — their contributions are already in sortedBridged
+      if (packageState === 'loaded') continue;
+      // Skip if this extension already has active bridged contributions
+      if (activeExtensionIds.has(entry.extensionId)) continue;
+
+      const manifestContribs = entry.manifestContributions;
+      if (!manifestContribs || manifestContribs.length === 0) continue;
+
+      const indexStatus = packageStateToIndexStatus(packageState);
+      const frozenEmptyDiagnostics = Object.freeze([]);
+
+      for (const contrib of manifestContribs) {
+        const scopedKey = contributionScopedKey(entry.extensionId, contrib);
+        if (!contributionIndex[scopedKey]) {
+          contributionIndex[scopedKey] = [];
+        }
+        contributionIndex[scopedKey].push(Object.freeze({
+          scopedKey,
+          kind: contrib.kind,
+          extensionId: entry.extensionId,
+          contributionId: contrib.id as string,
+          status: indexStatus,
+          packageState,
+          diagnostics: frozenEmptyDiagnostics,
+          duplicateOrdinal: 0,
+          projectionEligible: false,
+          projection: Object.freeze({
+            duplicateOrdinal: 0,
+            eligible: false,
+            projected: false,
+            source: 'preserved-record',
+          }),
+        }));
+      }
+    }
+
+    return freezeContributionIndex(contributionIndex);
   }
 
   for (const [kind, config] of Object.entries(ADAPTER_DISPATCH)) {
@@ -314,8 +684,8 @@ export function assembleExtensionRuntime(
 
     const contributions =
       config.source === 'bridged'
-        ? byKind[kind]?.contributions ?? []
-        : getReservedContributions(kind);
+        ? projectionCandidatesByKind[kind]?.contributions ?? []
+        : getReservedProjectionCandidates(kind);
 
     if (contributions.length === 0) {
       continue;
@@ -337,7 +707,9 @@ export function assembleExtensionRuntime(
     }
 
     if (config.field === 'slots') {
-      for (const descriptor of result.descriptors as VideoEditorSlotDescriptor[]) {
+      const slotDescriptors = result.descriptors as VideoEditorSlotDescriptor[];
+      recordProjectedSlotKeys(contributions, slotDescriptors);
+      for (const descriptor of slotDescriptors) {
         if (descriptor.slot && !slots[descriptor.slot]) {
           slots[descriptor.slot] = descriptor.render;
         }
@@ -347,9 +719,24 @@ export function assembleExtensionRuntime(
 
     const target = getDescriptorArray(config.field);
     if (target) {
-      target.push(...(result.descriptors as unknown[]));
+      const descriptors = result.descriptors as unknown[];
+      target.push(...descriptors);
+      recordProjectedDescriptorKeys(contributions, descriptors);
     }
   }
+
+  const contributionIndex = buildContributionIndexEntries();
+
+  // ---- Route-fit normalization ---------------------------------------------
+  // Enrich contribution index entries with route-fit metadata from
+  // descriptor blockers whose identity can be directly or uniquely
+  // resolved to a scoped key.  Ambiguous blockers are silently skipped.
+  const descriptorBlockers = [
+    ...outputFormatDescriptors.flatMap((fmt) => fmt.blockers),
+    ...processDescriptors.flatMap((proc) => proc.blockers),
+  ];
+  const routeFitContributionIndex =
+    normalizeContributionIndexRouteFit(contributionIndex, descriptorBlockers);
 
   // ---- Phase 5: assemble and freeze ----------------------------------------
   /** Whether any contributions — bridged or M6-reserved — affect the config. */
@@ -394,24 +781,6 @@ export function assembleExtensionRuntime(
       })
     : defaultConfig;
 
-  // ---- Compute contribution summaries for package state inventory ---------
-  const activeContributionIds = new Set<string>();
-  for (const key of Object.keys(slots)) activeContributionIds.add(key);
-  for (const d of dialogDescriptors) activeContributionIds.add(d.id);
-  for (const p of panelDescriptors) activeContributionIds.add(p.id);
-  for (const s of inspectorSectionDescriptors) activeContributionIds.add(s.id);
-  for (const o of overlayDescriptors) activeContributionIds.add(o.id);
-  for (const ap of assetParserDescriptors) activeContributionIds.add(ap.id);
-  for (const of_ of outputFormatDescriptors) activeContributionIds.add(of_.id);
-  for (const sp of searchProviderDescriptors) activeContributionIds.add(sp.id);
-  for (const mf of metadataFacetDescriptors) activeContributionIds.add(mf.id);
-  for (const ads of assetDetailSectionDescriptors) activeContributionIds.add(ads.id);
-  for (const eff of effectDescriptors) activeContributionIds.add(eff.id);
-  for (const tr of transitionDescriptors) activeContributionIds.add(tr.id);
-  for (const sh of shaderDescriptors) activeContributionIds.add(sh.id);
-  for (const at of agentToolDescriptors) activeContributionIds.add(at.id);
-  for (const pr of processDescriptors) activeContributionIds.add(pr.id);
-
   const enrichedPackageStateEntries = (packageStateEntries ?? []).map((entry) => {
     const ext = uniqueExtensions.find(
       (e) => (e.manifest.id as string) === entry.extensionId,
@@ -425,8 +794,9 @@ export function assembleExtensionRuntime(
       ).length;
       contributionSummary = computePackageContributionSummary(
         ext.manifest.contributions,
-        activeContributionIds,
+        activeContributionScopedKeys,
         inactiveForExt,
+        entry.extensionId,
       );
     } else if (entry.manifestContributions) {
       contributionSummary = computePackageContributionSummary(
@@ -448,6 +818,7 @@ export function assembleExtensionRuntime(
     diagnostics: Object.freeze(diagnostics),
     inactiveReserved: Object.freeze(inactiveReserved),
     knownRenderIds: Object.freeze(new Set(knownRenderIds)),
+    contributionIndex: routeFitContributionIndex,
     settingsDefaults: Object.freeze(
       Object.fromEntries(
         Object.entries(settingsDefaults).map(([k, v]) => [k, Object.freeze(v)]),

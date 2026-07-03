@@ -1,0 +1,71 @@
+{
+  "id": "log_e5bf7d9133f5",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 19746,
+      "schema_version": 1,
+      "ts_utc": "2026-07-03T04:14:19.632352+00:00",
+      "ts_rel_init_s": 43855.694419,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T9",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_files_changed",
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T9",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/runtime/outputFormatRegistry.ts"
+            ],
+            "commands_run": [
+              "vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/outputFormatRegistry.test.ts",
+              "vitest run --config config/testing/vitest.config.ts src/sdk/boundary.test.ts src/sdk/index.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts",
+              "vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/lib/renderRouter.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx"
+            ]
+          },
+          "linked_evidence_count": 8,
+          "evidence_count": 168,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 8,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "provided",
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 84,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-03T04:14:19.630583+00:00"
+      },
+      "transaction_id": "6cf1dbff3d3a99c3",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-03T04:14:19.632408Z"
+}

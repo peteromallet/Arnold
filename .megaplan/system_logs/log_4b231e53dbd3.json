@@ -1,0 +1,68 @@
+{
+  "id": "log_4b231e53dbd3",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 20253,
+      "schema_version": 1,
+      "ts_utc": "2026-07-03T04:58:31.378442+00:00",
+      "ts_rel_init_s": 46507.440509,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T13",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "missing_output:files_changed:src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+        "missing_outputs": [
+          "files_changed:src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+          "commands_run:./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/routeFitMapper.test.ts",
+          "commands_run:./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+        ],
+        "stale_evidence": [],
+        "would_block_reasons": [
+          "missing_output:files_changed:src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+          "missing_output:commands_run:./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/routeFitMapper.test.ts",
+          "missing_output:commands_run:./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T13",
+          "declared_outputs": {
+            "files_changed": [
+              "src/tools/video-editor/runtime/routeFitMapper.ts",
+              "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+              "src/tools/video-editor/runtime/routeFitMapper.test.ts"
+            ],
+            "commands_run": [
+              "./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/routeFitMapper.test.ts",
+              "./node_modules/.bin/vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+            ]
+          },
+          "linked_evidence_count": 20,
+          "evidence_count": 160,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 4,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "provided",
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 80,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-03T04:58:31.376633+00:00"
+      },
+      "transaction_id": "c18afe27167f7b00",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-03T04:58:31.378513Z"
+}

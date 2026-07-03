@@ -1,0 +1,69 @@
+{
+  "id": "log_2a589605298c",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 14140,
+      "schema_version": 1,
+      "ts_utc": "2026-07-03T00:45:31.728603+00:00",
+      "ts_rel_init_s": 31327.79067,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T1",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T1",
+          "declared_outputs": {
+            "commands_run": [
+              "read_file commands/** (6 files)",
+              "read_file lib/renderRouter.ts",
+              "read_file config/contracts/reigh-extension.schema.json",
+              "read_file runtime/families/FamilyContributionSequence.ts",
+              "read_file runtime/families/FamilyRuntimeAssembly.ts",
+              "read_file runtime/extensionLoader.ts",
+              "search_files duplicate in src/sdk"
+            ]
+          },
+          "linked_evidence_count": 7,
+          "evidence_count": 117,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 7,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 117,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-03T00:45:31.726617+00:00"
+      },
+      "transaction_id": "40bdb6001d4f16ae",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-03T00:45:31.728663Z"
+}

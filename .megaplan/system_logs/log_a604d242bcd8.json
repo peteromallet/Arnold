@@ -1,0 +1,58 @@
+{
+  "id": "log_a604d242bcd8",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 12620,
+      "schema_version": 1,
+      "ts_utc": "2026-07-02T23:55:50.950560+00:00",
+      "ts_rel_init_s": 28347.012627,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T10",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T10",
+          "declared_outputs": {
+            "commands_run": [
+              "npx vitest run src/tools/video-editor/lib/timeline-patch.test.ts"
+            ]
+          },
+          "linked_evidence_count": 2,
+          "evidence_count": 121,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 2,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 121,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-02T23:55:50.948682+00:00"
+      },
+      "transaction_id": "f8456c84a2a88d98",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-02T23:55:50.950619Z"
+}

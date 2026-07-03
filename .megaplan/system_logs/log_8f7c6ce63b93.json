@@ -1,0 +1,86 @@
+{
+  "id": "log_8f7c6ce63b93",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 18666,
+      "schema_version": 1,
+      "ts_utc": "2026-07-03T03:33:11.720919+00:00",
+      "ts_rel_init_s": 41387.782986,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T19",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_files_changed",
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T19",
+          "declared_outputs": {
+            "files_changed": [
+              "config/contracts/registry.json"
+            ],
+            "commands_run": [
+              "npx vitest run --config config/testing/vitest.config.ts [16 files] \u2014 1777 passed",
+              "npx tsc --noEmit \u2014 0 errors",
+              "git diff HEAD -- config/contracts/reigh-extension.schema.json \u2014 unchanged",
+              "npx eslint --max-warnings 0 [changed sources] \u2014 passed",
+              "npm run check:contracts \u2014 18/18 passed",
+              "npm run check:sdk-public-exports \u2014 377 exports, 0 violations",
+              "npm run check:video-editor-sdk-imports \u2014 all passed",
+              "npx vitest run --config config/testing/vitest.edge.smoke.config.ts \u2014 132 passed"
+            ]
+          },
+          "linked_evidence_count": 18,
+          "evidence_count": 162,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 18,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "provided",
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 81,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-03T03:33:11.718707+00:00"
+      },
+      "transaction_id": "f914ab03822a1686",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-03T03:33:11.721009Z"
+}

@@ -2,6 +2,7 @@ import type {
   ReighExtension,
   ExtensionContribution,
   ExtensionDiagnostic,
+  FamilyContributionRef,
   EffectContribution,
   TransitionContribution,
 } from '@reigh/editor-sdk';
@@ -14,9 +15,11 @@ import { VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY } from '@/tools/video-editor/runti
 // ---------------------------------------------------------------------------
 
 /** A contribution paired with its owning extension ID during sequencing. */
-export interface CollectedContribution {
-  contribution: ExtensionContribution;
-  extensionId: string;
+export interface CollectedContribution
+  extends FamilyContributionRef<ExtensionContribution> {
+  readonly scopedKey: string;
+  readonly duplicateOrdinal: number;
+  readonly projectionEligible: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -51,14 +54,17 @@ function recordInactiveReservedContribution(
   inactiveReserved: InactiveReservedContribution[],
   diagnostics: ExtensionDiagnostic[],
   knownRenderIds: Set<string>,
-  extensionId: string,
-  contribution: ExtensionContribution,
+  collected: CollectedContribution,
   milestone: string,
 ): void {
+  const { extensionId, contribution, scopedKey, duplicateOrdinal, projectionEligible } = collected;
   inactiveReserved.push({
     extensionId,
     contributionId: contribution.id as string,
     kind: contribution.kind,
+    scopedKey,
+    duplicateOrdinal,
+    projectionEligible,
     milestone,
   });
   diagnostics.push({
@@ -74,6 +80,30 @@ function recordInactiveReservedContribution(
   if (contribution.render) {
     knownRenderIds.add(contribution.render);
   }
+}
+
+export function contributionScopedKey(
+  extensionId: string,
+  contribution: ExtensionContribution,
+): string {
+  return `${contribution.kind}:${extensionId}:${contribution.id as string}`;
+}
+
+function collectContributionRecord(
+  extensionId: string,
+  contribution: ExtensionContribution,
+  seenScopedContributionCounts: Map<string, number>,
+): CollectedContribution {
+  const scopedKey = contributionScopedKey(extensionId, contribution);
+  const duplicateOrdinal = seenScopedContributionCounts.get(scopedKey) ?? 0;
+  seenScopedContributionCounts.set(scopedKey, duplicateOrdinal + 1);
+  return {
+    contribution,
+    extensionId,
+    scopedKey,
+    duplicateOrdinal,
+    projectionEligible: duplicateOrdinal === 0,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -117,7 +147,7 @@ export function buildFamilyContributionSequence(
     }
   }
 
-  // ---- Phase 2: collect contributions, detect duplicate contribution IDs ----
+  // ---- Phase 2: collect contributions, detect exact scoped-key duplicates ---
   const bridged: CollectedContribution[] = [];
   const inactiveReserved: InactiveReservedContribution[] = [];
   const knownRenderIds = new Set<string>();
@@ -129,7 +159,7 @@ export function buildFamilyContributionSequence(
   const m6ReservedSearchProviders: CollectedContribution[] = [];
   const m12ReservedProcesses: CollectedContribution[] = [];
 
-  const seenContributionIds = new Map<string, string>(); // contribId -> extensionId
+  const seenScopedContributionCounts = new Map<string, number>();
 
   for (const ext of uniqueExtensions) {
     const extId = ext.manifest.id as string;
@@ -142,22 +172,23 @@ export function buildFamilyContributionSequence(
     const contribs = ext.manifest.contributions ?? [];
     for (const contrib of contribs) {
       const contribId = contrib.id as string;
+      const collected = collectContributionRecord(
+        extId,
+        contrib,
+        seenScopedContributionCounts,
+      );
 
-      // Cross-extension duplicate detection
-      const existingOwner = seenContributionIds.get(contribId);
-      if (existingOwner !== undefined) {
+      if (collected.duplicateOrdinal > 0) {
         diagnostics.push({
-          severity: 'error',
+          severity: 'warning',
           code: 'runtime/duplicate-contribution',
           message:
-            `Duplicate contribution ID "${contribId}" in extension "${extId}" ` +
-            `(already declared by "${existingOwner}"). Skipping.`,
+            `Duplicate contribution declaration "${contribId}" (kind: ${contrib.kind}) ` +
+            `in extension "${extId}". Preserving the duplicate record.`,
           extensionId: extId,
           contributionId: contribId,
         });
-        continue;
       }
-      seenContributionIds.set(contribId, extId);
 
       // outputFormat/searchProvider/process remain historically reserved
       // (surfaced as descriptors but recorded as inactive reserved).
@@ -180,7 +211,7 @@ export function buildFamilyContributionSequence(
         const effectContrib = contrib as unknown as EffectContribution;
         if (effectContrib.effectId) {
           // Component-backed: treat as active
-          bridged.push({ contribution: contrib, extensionId: extId });
+          bridged.push(collected);
           if (contrib.render) {
             knownRenderIds.add(contrib.render);
           }
@@ -190,6 +221,9 @@ export function buildFamilyContributionSequence(
             extensionId: extId,
             contributionId: contribId,
             kind: contrib.kind,
+            scopedKey: collected.scopedKey,
+            duplicateOrdinal: collected.duplicateOrdinal,
+            projectionEligible: collected.projectionEligible,
             milestone: notYetBridged ?? 'unknown',
           });
           diagnostics.push({
@@ -215,7 +249,7 @@ export function buildFamilyContributionSequence(
         const transitionContrib = contrib as unknown as TransitionContribution;
         if (transitionContrib.transitionId) {
           // Renderer-backed: treat as active
-          bridged.push({ contribution: contrib, extensionId: extId });
+          bridged.push(collected);
           if (contrib.render) {
             knownRenderIds.add(contrib.render);
           }
@@ -225,6 +259,9 @@ export function buildFamilyContributionSequence(
             extensionId: extId,
             contributionId: contribId,
             kind: contrib.kind,
+            scopedKey: collected.scopedKey,
+            duplicateOrdinal: collected.duplicateOrdinal,
+            projectionEligible: collected.projectionEligible,
             milestone: notYetBridged ?? 'unknown',
           });
           diagnostics.push({
@@ -254,15 +291,14 @@ export function buildFamilyContributionSequence(
           inactiveReserved,
           diagnostics,
           knownRenderIds,
-          extId,
-          contrib,
+          collected,
           notYetBridged,
         );
         // Collect into the appropriate M6 reserved list for later projection
         if (contrib.kind === 'outputFormat') {
-          m6ReservedOutputFormats.push({ contribution: contrib, extensionId: extId });
+          m6ReservedOutputFormats.push(collected);
         } else {
-          m6ReservedSearchProviders.push({ contribution: contrib, extensionId: extId });
+          m6ReservedSearchProviders.push(collected);
         }
         continue;
       }
@@ -271,11 +307,10 @@ export function buildFamilyContributionSequence(
           inactiveReserved,
           diagnostics,
           knownRenderIds,
-          extId,
-          contrib,
+          collected,
           notYetBridged,
         );
-        m12ReservedProcesses.push({ contribution: contrib, extensionId: extId });
+        m12ReservedProcesses.push(collected);
         continue;
       }
       if (notYetBridged !== null) {
@@ -283,14 +318,13 @@ export function buildFamilyContributionSequence(
           inactiveReserved,
           diagnostics,
           knownRenderIds,
-          extId,
-          contrib,
+          collected,
           notYetBridged,
         );
         continue;
       }
 
-      bridged.push({ contribution: contrib, extensionId: extId });
+      bridged.push(collected);
 
       // Track known render IDs
       if (contrib.render) {
@@ -309,7 +343,12 @@ export function buildFamilyContributionSequence(
     const orderA = a.contribution.order ?? 0;
     const orderB = b.contribution.order ?? 0;
     if (orderA !== orderB) return orderA - orderB;
-    return (a.contribution.id as string).localeCompare(b.contribution.id as string);
+    const idCompare = (a.contribution.id as string).localeCompare(b.contribution.id as string);
+    if (idCompare !== 0) return idCompare;
+    if (a.scopedKey === b.scopedKey) {
+      return a.duplicateOrdinal - b.duplicateOrdinal;
+    }
+    return 0;
   });
 
   return {

@@ -1,0 +1,78 @@
+{
+  "id": "log_d4e4e5360f51",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 17196,
+      "schema_version": 1,
+      "ts_utc": "2026-07-03T03:01:13.148670+00:00",
+      "ts_rel_init_s": 39469.210737,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T15",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T15",
+          "declared_outputs": {
+            "commands_run": [
+              "npm run check:video-editor-sdk-imports",
+              "npm run check:sdk-public-exports -- --release",
+              "npm run check:contracts",
+              "npm run lint",
+              "NODE_OPTIONS=--max-old-space-size=8192 npm run build",
+              "npm run test"
+            ]
+          },
+          "linked_evidence_count": 16,
+          "evidence_count": 162,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 16,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "provided",
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 81,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-03T03:01:13.146646+00:00"
+      },
+      "transaction_id": "fc9e7b87b4baf04d",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-03T03:01:13.148791Z"
+}
