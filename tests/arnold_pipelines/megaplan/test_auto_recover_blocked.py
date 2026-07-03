@@ -12,6 +12,54 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
 )
 
 
+def test_drive_forwards_live_phase_model_to_phase_subprocess(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "finalized"}),
+        encoding="utf-8",
+    )
+    captured_args: list[list[str]] = []
+
+    def fake_status(plan: str, **kwargs):
+        assert plan == "demo"
+        return {
+            "state": "finalized",
+            "next_step": "execute",
+            "valid_next": ["execute"],
+            "progress": {},
+        }
+
+    def fake_run_planning_phase(args, **kwargs):
+        captured_args.append(list(args))
+        return (0, "", "")
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    auto.drive(
+        "demo",
+        cwd=tmp_path,
+        max_iterations=1,
+        poll_sleep=0,
+        phase_model=["execute=hermes:deepseek:deepseek-v4-pro"],
+    )
+
+    assert len(captured_args) == 1
+    assert captured_args[0][0] == "execute"
+    assert captured_args[0][-4:] == [
+        "--plan",
+        "demo",
+        "--phase-model",
+        "execute=hermes:deepseek:deepseek-v4-pro",
+    ]
+
+
 def test_drive_stops_on_non_retryable_recover_blocked_error(
     monkeypatch,
     tmp_path: Path,
@@ -87,68 +135,6 @@ def test_drive_stops_on_non_retryable_recover_blocked_error(
     assert "explicitly resolved as non-terminal" in outcome.reason
     assert status_calls == 1
     assert run_calls == 1
-
-
-def test_drive_auto_approve_resumes_prep_clarification(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    plan_dir = tmp_path / "demo"
-    plan_dir.mkdir()
-    (plan_dir / "state.json").write_text(
-        json.dumps(
-            {
-                "name": "demo",
-                "current_state": "awaiting_human_verify",
-                "config": {"auto_approve": True},
-                "clarification": {
-                    "source": "prep",
-                    "questions": ["Which schema shape should structured params use?"],
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    status_calls = 0
-
-    def fake_status(plan: str, **kwargs):
-        nonlocal status_calls
-        status_calls += 1
-        assert plan == "demo"
-        if status_calls == 1:
-            return {
-                "state": "awaiting_human_verify",
-                "next_step": "verify-human",
-                "valid_next": ["verify-human", "resume-clarify"],
-                "progress": {},
-            }
-        return {
-            "state": "done",
-            "next_step": None,
-            "valid_next": [],
-            "progress": {},
-        }
-
-    def fake_run_planning_phase(args, **kwargs):
-        raise AssertionError("prep clarification auto-resume should not dispatch a phase")
-
-    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
-    monkeypatch.setattr(auto, "_status", fake_status)
-    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
-    monkeypatch.setattr(auto, "_publish_done_plan", lambda *args, **kwargs: None)
-    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
-
-    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=3, poll_sleep=0)
-
-    assert outcome.status == "done"
-    assert status_calls == 2
-    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    assert state["current_state"] == "prepped"
-    assert "clarification" not in state
-    notes = state["meta"]["notes"]
-    assert notes[-1]["source"] == "auto_approve_prep_clarification"
-    assert "structured params" in notes[-1]["note"]
-    assert state["meta"]["overrides"][-1]["action"] == "auto-resume-clarify"
 
 
 def test_drive_preflights_resume_clarify_state_mismatch(
@@ -259,6 +245,68 @@ def test_drive_breaks_repeated_control_invalid_transition(
     assert failure["phase"] == "force-proceed"
     assert failure["metadata"]["count"] == 2
     assert failure["metadata"]["max_attempts"] == 2
+
+
+def test_drive_auto_approve_resumes_prep_clarification(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "awaiting_human_verify",
+                "config": {"auto_approve": True},
+                "clarification": {
+                    "source": "prep",
+                    "questions": ["Which schema shape should structured params use?"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    status_calls = 0
+
+    def fake_status(plan: str, **kwargs):
+        nonlocal status_calls
+        status_calls += 1
+        assert plan == "demo"
+        if status_calls == 1:
+            return {
+                "state": "awaiting_human_verify",
+                "next_step": "verify-human",
+                "valid_next": ["verify-human", "resume-clarify"],
+                "progress": {},
+            }
+        return {
+            "state": "done",
+            "next_step": None,
+            "valid_next": [],
+            "progress": {},
+        }
+
+    def fake_run_planning_phase(args, **kwargs):
+        raise AssertionError("prep clarification auto-resume should not dispatch a phase")
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
+    monkeypatch.setattr(auto, "_publish_done_plan", lambda *args, **kwargs: None)
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=3, poll_sleep=0)
+
+    assert outcome.status == "done"
+    assert status_calls == 2
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["current_state"] == "prepped"
+    assert "clarification" not in state
+    notes = state["meta"]["notes"]
+    assert notes[-1]["source"] == "auto_approve_prep_clarification"
+    assert "structured params" in notes[-1]["note"]
+    assert state["meta"]["overrides"][-1]["action"] == "auto-resume-clarify"
 
 
 def test_drive_internal_error_log_prefers_latest_failure_over_warning_stderr(

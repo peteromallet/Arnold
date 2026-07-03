@@ -905,18 +905,34 @@ def _cloud_profile_warnings(preflight_summary: Mapping[str, Any], spec: CloudSpe
 
 
 def _phase_model_by_label_from_preflight(preflight_summary: Mapping[str, Any]) -> dict[str, list[str]]:
-    """Return full per-milestone phase pins from cloud preflight resolution.
+    """Return phase pins that must be materialized in the uploaded chain spec.
 
     Cloud chain launch may resolve routing from cloud-only defaults such as
     ``agents.default``. The remote ``chain start`` process only sees the
     uploaded chain YAML, so the resolved routing must be materialized into that
     temporary upload spec or init can fall back to a different local default.
+
+    Do not materialize resolved profile routes for profiled milestones. Profiles
+    can carry ``tier_models.execute``/``tier_models.critique`` tables; flattening
+    their resolved phase map into ``phase_model`` erases adaptive per-batch
+    routing and pins execute to one model.
     """
     phase_model_by_label: dict[str, list[str]] = {}
     for milestone in preflight_summary.get("milestones", []):
         if not isinstance(milestone, Mapping):
             continue
         label = milestone.get("label")
+        profile = milestone.get("profile")
+        explicit = milestone.get("explicit_phase_model")
+        if isinstance(profile, str) and profile:
+            if (
+                isinstance(label, str)
+                and isinstance(explicit, list)
+                and all(isinstance(item, str) for item in explicit)
+                and explicit
+            ):
+                phase_model_by_label[label] = list(explicit)
+            continue
         resolved = milestone.get("resolved_phase_map")
         if not isinstance(label, str) or not isinstance(resolved, Mapping):
             continue

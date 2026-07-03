@@ -92,6 +92,66 @@ def test_tmux_chain_launch_default_marker_records_run_kind() -> None:
     assert marker["run_kind"] == "chain"
 
 
+def test_preflight_phase_model_materialization_preserves_profile_tier_routing() -> None:
+    result = _phase_model_by_label_from_preflight(
+        {
+            "milestones": [
+                {
+                    "label": "m1",
+                    "profile": "premium",
+                    "explicit_phase_model": [],
+                    "resolved_phase_map": {
+                        "execute": "codex:gpt-5.4",
+                        "plan": "codex:high",
+                    },
+                }
+            ]
+        }
+    )
+
+    assert result == {}
+
+
+def test_preflight_phase_model_materialization_keeps_explicit_profile_pins() -> None:
+    result = _phase_model_by_label_from_preflight(
+        {
+            "milestones": [
+                {
+                    "label": "m1",
+                    "profile": "premium",
+                    "explicit_phase_model": ["prep=hermes:deepseek:deepseek-v4-pro"],
+                    "resolved_phase_map": {
+                        "execute": "codex:gpt-5.4",
+                        "prep": "hermes:deepseek:deepseek-v4-pro",
+                    },
+                }
+            ]
+        }
+    )
+
+    assert result == {"m1": ["prep=hermes:deepseek:deepseek-v4-pro"]}
+
+
+def test_preflight_phase_model_materialization_keeps_cloud_default_without_profile() -> None:
+    result = _phase_model_by_label_from_preflight(
+        {
+            "milestones": [
+                {
+                    "label": "m1",
+                    "profile": None,
+                    "explicit_phase_model": [],
+                    "resolved_phase_map": {
+                        "execute": "codex:medium",
+                        "plan": "codex:high",
+                    },
+                }
+            ]
+        }
+    )
+
+    assert result == {"m1": ["execute=codex:medium", "plan=codex:high"]}
+
+
 def test_launch_epic_rejects_missing_north_star(tmp_path: Path) -> None:
     app = tmp_path / "app"
     brief_dir = app / ".megaplan" / "initiatives" / "demo"
