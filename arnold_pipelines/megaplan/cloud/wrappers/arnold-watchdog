@@ -2704,6 +2704,7 @@ if (
     status == "ok"
     and not completion_guard_repair_eligible
     and last_state in NONTERMINAL_STATES
+    and not plan_has_active_step
     and stuck_ticks >= STUCK_TICKS
 ):
     status = "chain_stuck"
