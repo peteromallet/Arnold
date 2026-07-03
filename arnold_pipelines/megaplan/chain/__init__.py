@@ -3416,7 +3416,12 @@ def _reconcile_chain_from_ground_truth(
                 f"-> {next_index}\n"
             )
             state.current_milestone_index = next_index
-            if next_index < len(spec.milestones):
+            if next_index >= len(spec.milestones):
+                state.current_plan_name = None
+                state.pr_number = None
+                state.pr_state = None
+                state.last_state = "done"
+            else:
                 state.current_plan_name = None
                 state.pr_number = None
                 state.pr_state = None
