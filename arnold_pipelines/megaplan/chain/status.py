@@ -312,7 +312,7 @@ def _current_plan_facts(
     chain_state: ChainState | None,
     diagnostics: list[dict[str, Any]],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    plan_name = chain_state.current_plan_name if chain_state is not None else None
+    plan_name = _active_current_plan_name(chain_state)
     if not plan_name:
         return {"status": "missing", "reason": "no current plan"}, {"status": "missing"}
     if project_root is None:
@@ -338,6 +338,19 @@ def _current_plan_facts(
     except Exception as exc:
         diagnostics.append(_diagnostic("plan_state", type(exc).__name__, str(exc)))
         return {"status": "unavailable", "reason": str(exc), "plan": plan_name}, {"status": "unavailable"}
+
+
+def _active_current_plan_name(chain_state: ChainState | None) -> str | None:
+    if chain_state is None or not chain_state.current_plan_name:
+        return None
+    for index, completed in enumerate(chain_state.completed):
+        if not isinstance(completed, Mapping):
+            continue
+        if completed.get("plan") != chain_state.current_plan_name:
+            continue
+        if chain_state.current_milestone_index >= index + 1:
+            return None
+    return chain_state.current_plan_name
 
 
 def _human_verification_facts(
