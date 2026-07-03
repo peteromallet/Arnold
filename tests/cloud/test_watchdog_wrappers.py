@@ -314,6 +314,17 @@ def test_watchdog_defaults_editable_install_to_dedicated_branch() -> None:
     assert "workflow-manifest-runtime" not in text
 
 
+def test_watchdog_sync_does_not_broadly_commit_source_drift() -> None:
+    text = _wrapper("arnold-watchdog")
+    start = text.index("sync_editable_source_branch() {")
+    end = text.index("\n\ncodex_repair_editable_install() {", start)
+    sync_body = text[start:end]
+
+    assert "git add -A -- arnold_pipelines/megaplan/skills" in sync_body
+    assert "source checkout has non-sync drift; not auto-committing" in sync_body
+    assert "git add -A &&" not in sync_body
+
+
 def test_host_watchdog_ensure_starts_shell_wrapped_watchdog_and_verifies_liveness() -> None:
     text = _systemd_file("ensure-megaplan-watchdog")
 
