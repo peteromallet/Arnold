@@ -4834,6 +4834,115 @@ tmux() { echo TMUX >&2; return 1; }
     assert "TMUX" not in result.stderr
 
 
+def test_watchdog_uses_current_target_live_activity_to_suppress_chain_repair(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    workspace.mkdir()
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    plan_name = "demo-plan"
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    _write_chain_state(
+        workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json",
+        {
+            "current_milestone_index": 1,
+            "current_plan_name": plan_name,
+            "last_state": "blocked",
+            "completed": [{"label": "m0"}],
+        },
+    )
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "name": plan_name,
+            "current_state": "finalized",
+            "active_step": {
+                "phase": "execute",
+                "attempt": 2,
+                "started_at": "2026-07-03T11:16:25Z",
+                "last_activity_at": "2026-07-03T11:25:45Z",
+                "last_activity_kind": "llm_stream",
+            },
+        },
+        events_body=json.dumps({"kind": "llm_token_heartbeat", "phase": "execute"}) + "\n",
+    )
+    (marker_dir / "demo-session.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "workspace": str(workspace),
+                "remote_spec": ".megaplan/initiatives/demo/chain.yaml",
+                "run_kind": "chain",
+                "plan_name": "",
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("current_target_implies_alive"),
+            _extract_wrapper_function("current_target_plan_name"),
+            _extract_wrapper_function("repair_needs_human_path"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+resolve_existing_remote_spec() { printf '%s\n' "$3"; }
+session_health_status() { echo stopped; }
+session_terminal_status() { echo none; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+plan_attention_status_env() { return 0; }
+repair_loop_busy_state() { echo none; }
+mechanical_relaunch_attempted_previously() { return 0; }
+kimi_dispatch_failed_previously() { return 1; }
+kimi_dispatch_marker_set() { :; }
+write_partial_liveness_tick() { :; }
+kimi_dispatch_marker_clear() { :; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
+chain_health_status() {
+  echo CHAIN_HEALTH_CALLED >&2
+  CHAIN_HEALTH_STATUS=chain_stuck
+  CHAIN_HEALTH_SUMMARY="should have been suppressed"
+  CHAIN_HEALTH_ARTIFACT_PATH=/tmp/chain-health.json
+  CHAIN_HEALTH_LOG_MESSAGE=
+}
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unintended_stop() { echo REPAIR >&2; return 0; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-session {str(workspace)!r} {str(spec_path)!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    log = log_path.read_text(encoding="utf-8")
+    assert "current-target proves live plan activity; overriding session health to alive" in log
+    assert "current-target shows active plan execution; suppressing chain-level repair path" in log
+    assert "\tobserve\talive\tsession already alive\t" in report
+    assert "CHAIN_HEALTH_CALLED" not in result.stderr
+    assert "DISPATCH" not in result.stderr
+    assert "REPAIR" not in result.stderr
+    assert "TMUX" not in result.stderr
+
+
 def test_repair_loop_collect_failure_context_includes_resolver_output(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     marker_dir = tmp_path / "markers"
