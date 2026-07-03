@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -820,3 +821,115 @@ def test_drive_plan_restores_process_cwd_after_auto_driver(tmp_path: Path, monke
 
     assert outcome.status == "done"
     assert Path.cwd() == root
+
+
+def test_run_chain_blocks_pr_merge_when_completion_guard_fails_before_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    _init_repo(root)
+    spec_path = _write_chain_spec(root)
+    _git(root, "add", "NORTHSTAR.md", "chain.yaml", "idea.md")
+    _git(root, "commit", "-m", "add chain spec")
+
+    plan_dir = root / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "plan-m1", "current_state": "done"}),
+        encoding="utf-8",
+    )
+
+    ready_calls: list[int] = []
+    merge_calls: list[int] = []
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._preflight_agent_backends",
+        lambda spec, *, writer: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.resolve_execution_environment",
+        lambda **_kwargs: SimpleNamespace(to_dict=lambda: {}),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._refresh_base_branch",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._init_plan",
+        lambda *args, **kwargs: "plan-m1",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._write_chain_policy_into_plan_meta",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._attach_chain_anchors_to_plan",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._commit_and_push_phase",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._capture_sync_state",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._ensure_milestone_pr",
+        lambda *args, **kwargs: 80,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+        lambda *args, **kwargs: DriverOutcome(
+            status="done",
+            plan="plan-m1",
+            final_state="done",
+            iterations=1,
+            reason="ok",
+        ),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._record_chain_last_state_after_plan_run",
+        lambda _root, _spec_path, state, outcome, *, writer: state,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._handle_outcome",
+        lambda *args, **kwargs: "advance",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._plan_terminal_completion_is_authoritative",
+        lambda *args, **kwargs: (True, "authoritative"),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._chain_completion_guard",
+        lambda *args, **kwargs: (False, "no typed no-op completion waiver found"),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._pr_state",
+        lambda *args, **kwargs: "open",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._mark_pr_ready",
+        lambda *args, **kwargs: ready_calls.append(1),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._enable_auto_merge",
+        lambda *args, **kwargs: merge_calls.append(1) or "merged",
+    )
+
+    result = run_chain(spec_path, root, writer=lambda _message: None)
+
+    assert result["status"] == "stopped"
+    assert "completion guard blocked before PR merge" in result["reason"]
+    assert ready_calls == []
+    assert merge_calls == []
+
+    saved = load_chain_state(spec_path)
+    assert saved.last_state == "blocked"
+    assert saved.pr_number == 80
+    assert saved.pr_state == "open"

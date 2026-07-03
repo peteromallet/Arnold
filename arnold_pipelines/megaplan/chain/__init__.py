@@ -4790,6 +4790,37 @@ def run_chain(
                     pr_number=state.pr_number,
                 )
             else:
+                pending_merge_record = {
+                    "label": milestone.label,
+                    "plan": plan_name,
+                    "status": outcome.status,
+                    "pr_number": state.pr_number,
+                    "pr_state": current_pr_state,
+                }
+                premerge_ok, premerge_reason = _chain_completion_guard(
+                    root,
+                    pending_merge_record,
+                    implementation_milestone=True,
+                    chain_state=state,
+                )
+                if not premerge_ok:
+                    writer(
+                        f"[chain] completion guard blocked {milestone.label} before "
+                        f"PR merge: {premerge_reason}\n"
+                    )
+                    state.last_state = STATE_BLOCKED
+                    state.pr_state = current_pr_state
+                    chain_spec.save_chain_state(spec_path, state)
+                    return _result(
+                        "stopped",
+                        state,
+                        events,
+                        spec=spec,
+                        reason=(
+                            f"milestone {milestone.label} completion guard blocked "
+                            f"before PR merge: {premerge_reason}"
+                        ),
+                    )
                 _mark_pr_ready(root, state.pr_number, writer=writer)
                 if spec.merge_policy == "review":
                     state.last_state = STATE_AWAITING_PR_MERGE
