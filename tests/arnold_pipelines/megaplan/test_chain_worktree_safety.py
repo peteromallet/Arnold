@@ -179,6 +179,27 @@ def test_chain_git_guards_accept_linked_worktree_and_clean_preserves_repo(
     assert not (target / "scratch.txt").exists()
 
 
+def test_chain_clean_resets_skip_worktree_megaplan_runtime_journal(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    journal = repo / ".megaplan" / "epics" / "m1" / "events.jsonl"
+    journal.parent.mkdir(parents=True)
+    journal.write_text('{"event":"base"}\n', encoding="utf-8")
+    _git(repo, "add", ".megaplan/epics/m1/events.jsonl")
+    _git(repo, "commit", "-m", "track journal")
+
+    _git(repo, "update-index", "--skip-worktree", ".megaplan/epics/m1/events.jsonl")
+    journal.write_text('{"event":"dirty runtime"}\n', encoding="utf-8")
+    assert _git(repo, "ls-files", "-v", ".megaplan/epics/m1/events.jsonl").stdout.startswith("S ")
+
+    _clean_worktree_for_chain(repo, writer=lambda _message: None)
+
+    assert journal.read_text(encoding="utf-8") == '{"event":"base"}\n'
+    assert _git(repo, "ls-files", "-v", ".megaplan/epics/m1/events.jsonl").stdout.startswith("H ")
+
+
 def test_chain_commit_refuses_non_git_directory_without_deleting_files(
     tmp_path: Path,
 ) -> None:
