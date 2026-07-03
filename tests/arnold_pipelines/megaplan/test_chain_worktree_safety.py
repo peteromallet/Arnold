@@ -119,6 +119,12 @@ def test_chain_marks_between_milestones_until_final_completion(tmp_path: Path) -
     assert state.last_state == "done"
 
 
+def test_chain_facade_reexports_git_push_helper() -> None:
+    assert (
+        chain_module._run_git_push_command is git_ops._run_git_push_command
+    )
+
+
 def test_chain_fresh_refuses_to_delete_unregistered_spec_directory(tmp_path: Path) -> None:
     invoking_repo = tmp_path / "app"
     _init_repo(invoking_repo)
