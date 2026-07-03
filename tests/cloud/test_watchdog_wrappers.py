@@ -634,6 +634,8 @@ def test_repair_loop_collects_execute_attempt_artifacts_and_renders_summary(tmp_
     payload = json.loads(result.stdout)
     execute_context = payload["execute_attempt_context"]
     assert execute_context["execute_batch_output"]["path"].endswith("execute_batch_2_output.json")
+    assert execute_context["execute_batch_output"]["status"] == "superseded_by_execution_batch"
+    assert "status_counts" not in execute_context["execute_batch_output"]
     assert execute_context["execution_batch"]["status_counts"]["blocked"] == 1
     assert execute_context["finalize"]["baseline_test_failures"] is None
     assert execute_context["plan_history"]["consecutive_execute_blocked"] == 8
