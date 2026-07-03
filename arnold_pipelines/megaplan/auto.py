@@ -77,6 +77,7 @@ from arnold_pipelines.megaplan.planning.state import (
     STATE_FAILED,
     STATE_FINALIZED,
     STATE_PAUSED,
+    STATE_PREPPED,
     STATE_TIEBREAKER_PENDING,
     STATE_TIEBREAKER_READY,
 )
@@ -2655,6 +2656,87 @@ def _plan_clarification(plan_dir: Path | None) -> dict[str, Any] | None:
     return state_data.get("clarification")
 
 
+def _auto_resume_prep_clarification(plan_dir: Path | None, *, log) -> bool:
+    """In auto-approve runs, turn prep clarification halts into assumptions.
+
+    Prep can surface "blocking" questions when a worker fails to gather enough
+    evidence. In unattended cloud epics, ``auto_approve`` means the operator has
+    delegated bounded judgment calls to the harness; otherwise the chain can park
+    forever before planning even starts.
+    """
+    if plan_dir is None:
+        return False
+    state_data = _read_state_data(plan_dir)
+    if state_data is None:
+        return False
+    config = state_data.get("config")
+    if not isinstance(config, dict) or not config.get("auto_approve"):
+        return False
+    clarification = state_data.get("clarification")
+    if not isinstance(clarification, dict) or clarification.get("source") != "prep":
+        return False
+    questions = clarification.get("questions") or []
+    if not isinstance(questions, list):
+        questions = []
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _resume(current: dict[str, Any]) -> bool:
+        meta = current.get("meta")
+        if not isinstance(meta, dict):
+            meta = {}
+            current["meta"] = meta
+        notes = meta.get("notes")
+        if not isinstance(notes, list):
+            notes = []
+            meta["notes"] = notes
+        question_text = "\n".join(f"- {q}" for q in questions if isinstance(q, str))
+        notes.append(
+            {
+                "source": "auto_approve_prep_clarification",
+                "timestamp": stamp,
+                "text": (
+                    "Unattended auto-approve run: prep clarification halt was "
+                    "converted into planner assumptions so the cloud chain can "
+                    "continue. Questions:\n"
+                    f"{question_text or '- <none recorded>'}\n"
+                    "Planner/executor must make conservative repo-backed "
+                    "assumptions, encode them in artifacts, and let normal "
+                    "critique/gate/review phases reject unsafe choices."
+                ),
+            }
+        )
+        overrides = meta.get("overrides")
+        if not isinstance(overrides, list):
+            overrides = []
+            meta["overrides"] = overrides
+        overrides.append(
+            {
+                "action": "auto-resume-clarify",
+                "timestamp": stamp,
+                "reason": "auto_approve prep clarification",
+                "question_count": len(questions),
+            }
+        )
+        current["current_state"] = STATE_PREPPED
+        current.pop("clarification", None)
+        return True
+
+    try:
+        write_plan_state(
+            plan_dir,
+            mode="patch-many",
+            patch={"current_state": STATE_PREPPED, "clarification": None},
+            mutation=_resume,
+        )
+    except Exception:
+        return False
+    log(
+        "auto-approved prep clarification assumptions — resuming from prepped",
+        question_count=len(questions),
+    )
+    return True
+
+
 def _parse_active_step_timestamp(value: object) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -3359,6 +3441,8 @@ def drive(
                 # questions and the resume loop so the operator can act.
                 clarification = _plan_clarification(plan_dir)
                 if isinstance(clarification, dict) and clarification.get("source") == "prep":
+                    if _auto_resume_prep_clarification(plan_dir, log=log):
+                        continue
                     questions = clarification.get("questions") or []
                     question_list = "\n".join(f"  - {q}" for q in questions)
                     hint = (
