@@ -5347,14 +5347,18 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
     text = _wrapper("arnold-repair-loop")
 
     assert 'DEV_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_TIMEOUT_SECS:-600}"' in text
-    assert 'DEV_ROOT_CAUSE_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_ROOT_CAUSE_TIMEOUT_SECS:-1800}"' in text
+    assert 'DEV_ROOT_CAUSE_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_ROOT_CAUSE_TIMEOUT_SECS:-3600}"' in text
+    assert 'REPAIR_BUDGET_SECS="${CLOUD_WATCHDOG_REPAIR_BUDGET_SECS:-7200}"' in text
     assert 'KIMI_TIMEOUT="${CLOUD_WATCHDOG_KIMI_TIMEOUT_SECS:-600}"' in text
     assert 'KIMI_MAX_TURNS="${CLOUD_WATCHDOG_KIMI_MAX_TURNS:-40}"' in text
     assert "verify_started_and_holding()" in text
     assert "mechanical_launch_step()" in text
     assert "run_kimi_launch_turn()" in text
     assert 'timeout "$dev_timeout"' in text
+    assert '- < "$prompt_path"' in text
     assert 'timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent \\' in text
+    assert '--query_file="$prompt_path"' in text
+    assert '--query="$(cat "$prompt_path")"' not in text
     assert 'tmux new-session -d -s "$session"' in text
     assert 'repair_data_record_kimi "$iteration" "$CURRENT_ATTEMPT_ID" "running"' in text
 
