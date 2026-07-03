@@ -6484,6 +6484,17 @@ def test_watchdog_scan_once_runs_repair_trigger_before_marker_scan() -> None:
     assert text.index("repair_trigger_scan") < text.index('sync_editable_source_branch "$report_items" || true')
 
 
+def test_repair_trigger_path_unit_fires_immediate_error_queue_scan() -> None:
+    path_unit = _systemd_file("megaplan-repair-trigger.path")
+    service_unit = _systemd_file("megaplan-repair-trigger.service")
+
+    assert "DirectoryNotEmpty=/workspace/.megaplan/repair-queue/requests" in path_unit
+    assert "PathModified=/workspace/.megaplan/repair-queue/requests" in path_unit
+    assert "Unit=megaplan-repair-trigger.service" in path_unit
+    assert "ExecStart=/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger" in service_unit
+    assert "ARNOLD_REPAIR_TRIGGER_ENABLED" in service_unit
+
+
 def test_watchdog_scan_once_tolerates_repair_trigger_observe_only_without_systemd(tmp_path: Path) -> None:
     trigger = tmp_path / "arnold-repair-trigger"
     trigger.write_text(

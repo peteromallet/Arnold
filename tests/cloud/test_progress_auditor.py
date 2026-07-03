@@ -21,10 +21,15 @@ from arnold_pipelines.megaplan.cloud.redact import REDACTION
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WRAPPER_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
+SYSTEMD_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "systemd"
 
 
 def _wrapper(name: str) -> str:
     return (WRAPPER_DIR / name).read_text(encoding="utf-8")
+
+
+def _systemd_file(name: str) -> str:
+    return (SYSTEMD_DIR / name).read_text(encoding="utf-8")
 
 
 def _extract_report_assembler() -> str:
@@ -206,6 +211,21 @@ def _run_dispatch_one(
 
 class TestGreenChecksNoFindings:
     """Report shape when all plans are healthy (no suspicious signals)."""
+
+    def test_six_hour_auditor_repairs_superfixer_via_subagent_introspection(self) -> None:
+        text = _wrapper("arnold-progress-auditor")
+        timer = _systemd_file("megaplan-progress-audit.timer")
+        service = _systemd_file("megaplan-progress-audit.service")
+
+        assert "OnUnitActiveSec=6h" in timer
+        assert "Description=Megaplan 6-hour DeepSeek plan progress audit" in service
+        assert "Codex then reads the subagent-launcher skill" in text
+        assert "DeepSeek research subagents" in text
+        assert "First audit the repair system itself" in text
+        assert "there is no active or recent repair attempt" in text
+        assert "Arnold superfixer bug" in text
+        assert "Fix the watchdog/repair-trigger/auditor source" in text
+        assert "do not hand-unblock only this run" in text
 
     def test_json_payload_includes_green_checks_when_findings_empty(self, tmp_path: Path) -> None:
         findings_data = {
