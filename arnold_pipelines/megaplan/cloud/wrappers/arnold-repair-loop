@@ -3317,7 +3317,9 @@ PY
 }
 
 repair_exhausted_should_retry_without_human() {
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$MARKER_DIR" "$DATA_DIR" "$NEEDS_HUMAN_FILE" <<'PY'
+  REPAIR_MARKER_DIR="$MARKER_DIR" REPAIR_DATA_DIR="$DATA_DIR" REPAIR_NEEDS_HUMAN_FILE="$NEEDS_HUMAN_FILE" \
+    PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" <<'PY'
+import os
 import pathlib
 import sys
 
@@ -3327,7 +3329,10 @@ from arnold_pipelines.megaplan.cloud.human_blockers import (
 )
 from arnold_pipelines.megaplan.cloud.repair_contract import validate_repair_data
 
-data_path, marker_dir, data_dir, needs_human_path = sys.argv[1:]
+data_path = sys.argv[1]
+marker_dir = os.environ.get("REPAIR_MARKER_DIR", "")
+data_dir = os.environ.get("REPAIR_DATA_DIR", "")
+needs_human_path = os.environ.get("REPAIR_NEEDS_HUMAN_FILE", "")
 payload = validate_repair_data(pathlib.Path(data_path))
 recurrence = payload.get("current_recurrence") or {}
 run_detected = bool(payload.get("run_recurrence_detected")) or bool(recurrence.get("detected"))

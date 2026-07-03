@@ -377,6 +377,7 @@ window = float(window_h)
 now = dt.datetime.now(dt.timezone.utc)
 cutoff = now - dt.timedelta(hours=window)
 sys.path.insert(0, arnold_src)
+sys.path.insert(0, str(pathlib.Path.cwd()))
 
 from arnold_pipelines.megaplan.cloud.redact import redact_text
 from arnold_pipelines.megaplan.cloud.repair_contract import read_jsonl_records

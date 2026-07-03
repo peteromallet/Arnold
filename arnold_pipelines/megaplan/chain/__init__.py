@@ -3397,7 +3397,7 @@ def _reconcile_chain_from_ground_truth(
     if (
         active_uses_pr
         and state.pr_number is not None
-        and current_plan_state in {STATE_FINALIZED, STATE_DONE}
+        and current_plan_state == STATE_DONE
         and live_active_pr_state == "open"
         and state.last_state != STATE_AWAITING_PR_MERGE
     ):
@@ -3631,7 +3631,13 @@ def _handle_outcome(
     and CANNOT loop forever on a deterministic failure.
     """
     status = outcome.status
-    if status in {"done", "finalized"}:
+    if status == "finalized":
+        writer(
+            f"[chain] plan {outcome.plan} is finalized but not executed; "
+            "stopping before PR progression\n"
+        )
+        return "stop"
+    if status == "done":
         if root is not None:
             authoritative, reason = _plan_terminal_completion_is_authoritative(
                 root, outcome.plan
@@ -3659,6 +3665,16 @@ def _handle_outcome(
     if status == "infrastructure_error":
         writer(
             f"[chain] plan {outcome.plan} stopped on infrastructure error: "
+            f"{outcome.reason}\n"
+        )
+        return "stop"
+    if (
+        status == "blocked"
+        and "prerequisite-blocked" in outcome.reason
+        and "not satisfied" in outcome.reason
+    ):
+        writer(
+            f"[chain] plan {outcome.plan} stopped on unresolved explicit blocker: "
             f"{outcome.reason}\n"
         )
         return "stop"
