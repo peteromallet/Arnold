@@ -5366,6 +5366,12 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
     assert 'KIMI_MAX_TURNS="${CLOUD_WATCHDOG_KIMI_MAX_TURNS:-40}"' in text
     assert "verify_started_and_holding()" in text
     assert "mechanical_launch_step()" in text
+    assert "kill_matching_runner_processes()" in text
+    assert 'kill_matching_runner_processes "$session" "$remote_spec" "$run_kind" "$plan_name"' in text
+    assert "marker_requires_repair_despite_alive()" in text
+    assert "repair target is alive but marker requires repair" in text
+    assert "workspace_drift:" in text
+    assert "sandbox_refused_outside_project_root" in text
     assert "run_kimi_launch_turn()" in text
     assert 'timeout "$dev_timeout"' in text
     assert '- < "$prompt_path"' in text
