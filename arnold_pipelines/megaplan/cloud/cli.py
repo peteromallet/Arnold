@@ -3669,8 +3669,11 @@ def _effective_session_status(payload):
     health = payload.get("health")
     if isinstance(health, dict):
         last_state = health.get("last_state")
-        if last_state == "done":
+        chain_complete = health.get("chain_complete")
+        if last_state == "done" and chain_complete is not False:
             return "complete"
+        if last_state == "done" and chain_complete is False:
+            return "stale_bookkeeping"
         if last_state in {{
             "awaiting_human_verify",
             "awaiting_pr_merge",

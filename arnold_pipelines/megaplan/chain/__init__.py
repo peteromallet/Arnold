@@ -3273,6 +3273,19 @@ def _append_reconciliation_audit(
     }
 
 
+def _mark_chain_after_milestone_advance(
+    spec: ChainSpec,
+    state: ChainState,
+    *,
+    next_index: int,
+) -> None:
+    state.current_milestone_index = next_index
+    state.current_plan_name = None
+    state.last_state = "done" if next_index >= len(spec.milestones) else "between_milestones"
+    state.pr_number = None
+    state.pr_state = None
+
+
 def _reconcile_chain_from_ground_truth(
     root: Path,
     spec_path: Path,
@@ -4236,11 +4249,7 @@ def run_chain(
                         writer=writer,
                     )
                 idx += 1
-                state.current_milestone_index = idx
-                state.current_plan_name = None
-                state.last_state = "done"
-                state.pr_number = None
-                state.pr_state = None
+                _mark_chain_after_milestone_advance(spec, state, next_index=idx)
                 chain_spec.save_chain_state(spec_path, state)
                 manifest_reason = _finalize_validation_artifacts_after_done_append(
                     root=root,
@@ -4410,11 +4419,7 @@ def run_chain(
                     writer=writer,
                 )
             idx += 1
-            state.current_milestone_index = idx
-            state.current_plan_name = None
-            state.last_state = "done"
-            state.pr_number = None
-            state.pr_state = None
+            _mark_chain_after_milestone_advance(spec, state, next_index=idx)
             chain_spec.save_chain_state(spec_path, state)
             manifest_reason = _finalize_validation_artifacts_after_done_append(
                 root=root,
@@ -4942,11 +4947,7 @@ def run_chain(
             writer=writer,
         )
         idx += 1
-        state.current_milestone_index = idx
-        state.current_plan_name = None
-        state.last_state = "done"
-        state.pr_number = None
-        state.pr_state = None
+        _mark_chain_after_milestone_advance(spec, state, next_index=idx)
         chain_spec.save_chain_state(spec_path, state)
         manifest_reason = _finalize_validation_artifacts_after_done_append(
             root=root,
