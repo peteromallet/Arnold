@@ -445,7 +445,19 @@ def test_drive_execute_prereq_block_without_user_actions_surfaces_blocked(
     plan_dir = tmp_path / "demo"
     plan_dir.mkdir()
     (plan_dir / "state.json").write_text(
-        json.dumps({"name": "demo", "current_state": "finalized"}),
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "finalized",
+                "active_step": {
+                    "phase": "execute",
+                    "run_id": "stale-run",
+                    "worker_pid": 12345,
+                    "started_at": "2026-07-03T10:44:49Z",
+                    "last_activity_at": "2026-07-03T10:44:49Z",
+                },
+            }
+        ),
         encoding="utf-8",
     )
     (plan_dir / "finalize.json").write_text(
@@ -490,6 +502,8 @@ def test_drive_execute_prereq_block_without_user_actions_surfaces_blocked(
     assert outcome.final_state == "finalized"
     assert "T11" in outcome.reason
     assert captured_failures[-1]["kind"] == "execution_blocked"
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert "active_step" not in state
 
 
 def test_drive_execute_prereq_block_with_user_action_stays_awaiting_human(
