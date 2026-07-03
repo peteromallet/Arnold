@@ -3111,6 +3111,238 @@ else:
 PY
 }
 
+compute_meta_repair_trigger() {
+  local session="$1"
+  local current_target_observation="${2:-}"
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$REPAIR_DATA_DIR" "$MARKER_DIR" "$current_target_observation" <<'PY'
+import json
+import pathlib
+import sys
+from typing import Any
+
+from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
+from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
+
+session, repair_data_dir_raw, marker_dir_raw, current_target_observation_raw = sys.argv[1:]
+repair_data_dir = pathlib.Path(repair_data_dir_raw)
+marker_dir = pathlib.Path(marker_dir_raw)
+repair_data_path = repair_data_dir / f"{session}.repair-data.json"
+needs_human_path = repair_data_dir / f"{session}.needs-human.json"
+sidecar_root = repair_data_dir.with_name(f"{repair_data_dir.name}.d")
+
+if not repair_data_path.exists():
+    print("NO_TRIGGER")
+    raise SystemExit(0)
+
+try:
+    payload = json.loads(repair_data_path.read_text(encoding="utf-8"))
+except Exception:
+    print("NO_TRIGGER")
+    raise SystemExit(0)
+
+if not isinstance(payload, dict):
+    print("NO_TRIGGER")
+    raise SystemExit(0)
+
+resolver_record: dict[str, Any] = {}
+if current_target_observation_raw:
+    try:
+        loaded_observation = json.loads(current_target_observation_raw)
+    except Exception:
+        loaded_observation = {}
+    if isinstance(loaded_observation, dict):
+        resolver_record = loaded_observation
+
+
+def strings_from(value: Any) -> list[str]:
+    found: list[str] = []
+    if isinstance(value, str):
+        found.append(value)
+    elif isinstance(value, dict):
+        for item in value.values():
+            found.extend(strings_from(item))
+    elif isinstance(value, list):
+        for item in value:
+            found.extend(strings_from(item))
+    return found
+
+
+attempts = payload.get("attempts")
+if not isinstance(attempts, list):
+    attempts = []
+iterations = payload.get("iterations")
+if not isinstance(iterations, list):
+    iterations = []
+
+recent_attempts = [item for item in attempts[-5:] if isinstance(item, dict)]
+recent_iterations = [item for item in iterations[-5:] if isinstance(item, dict)]
+contexts = [payload.get("current_failure_context")]
+contexts.extend(recent_attempts)
+contexts.extend(recent_iterations)
+
+failure_kinds: list[str] = []
+for item in recent_attempts:
+    for candidate in (
+        item.get("failure_classification"),
+        (item.get("failure_context") or {}).get("failure_classification") if isinstance(item.get("failure_context"), dict) else None,
+        (item.get("post_launch_failure_context") or {}).get("failure_classification") if isinstance(item.get("post_launch_failure_context"), dict) else None,
+        (item.get("plan_latest_failure") or {}).get("kind") if isinstance(item.get("plan_latest_failure"), dict) else None,
+    ):
+        if isinstance(candidate, str) and candidate.strip():
+            failure_kinds.append(candidate.strip())
+            break
+
+repair_outcome = str(payload.get("outcome") or "")
+attempt_outcomes = [
+    str(item.get("outcome") or repair_outcome or "").strip()
+    for item in recent_attempts
+    if isinstance(item, dict)
+]
+attempt_outcomes = [item for item in attempt_outcomes if item]
+
+state_tokens = (
+    "failed:missing_state_path",
+    "failed:state_unreadable",
+    "failed:state_not_object",
+    "state_inspection_error",
+)
+has_state_inspection_error = any(
+    token in text
+    for context in contexts
+    for text in strings_from(context)
+    for token in state_tokens
+)
+
+launch_statuses = []
+for item in recent_attempts + recent_iterations:
+    launch_statuses.extend(
+        str(item.get(key) or "").strip()
+        for key in ("mechanical_launch", "kimi_launch")
+        if isinstance(item, dict)
+    )
+has_model_tool_launch_error = any(
+    status.startswith("failed:")
+    and not any(token in status for token in state_tokens)
+    for status in launch_statuses
+)
+
+discord_delivery_failed = False
+discord_escalation_is_true_blocker = False
+escalation_path = sidecar_root / "escalations" / "escalations.jsonl"
+if escalation_path.exists():
+    escalation_records: list[dict[str, Any]] = []
+    for line in escalation_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(record, dict) and str(record.get("session") or "") == session:
+            escalation_records.append(record)
+    latest_opened: dict[str, Any] | None = None
+    latest_followup_event = ""
+    for record in escalation_records:
+        event = str(record.get("event") or "").strip()
+        if event == "opened":
+            latest_opened = record
+            latest_followup_event = ""
+            continue
+        if (
+            latest_opened
+            and str(record.get("escalation_id") or "") == str(latest_opened.get("escalation_id") or "")
+            and event
+        ):
+            latest_followup_event = event
+    if latest_opened:
+        discord_escalation_is_true_blocker = (
+            str(latest_opened.get("blocker_verdict") or "").strip() == "TRUE_BLOCKER"
+        )
+        discord_delivery_failed = latest_followup_event in {
+            "unavailable",
+            "failed",
+            "delivery_failed",
+        }
+if needs_human_path.exists():
+    try:
+        needs_human_payload = json.loads(needs_human_path.read_text(encoding="utf-8"))
+    except Exception:
+        needs_human_payload = {}
+    discord_status = ""
+    if isinstance(needs_human_payload, dict):
+        discord_status = str(needs_human_payload.get("discord_status") or "").strip()
+    if not discord_delivery_failed:
+        discord_delivery_failed = discord_status not in {"", "pending", "queued", "delivered"}
+
+    current_plan = ""
+    if isinstance(needs_human_payload, dict):
+        current_plan = str(
+            needs_human_payload.get("current_plan_name")
+            or needs_human_payload.get("plan_name")
+            or ""
+        ).strip()
+    if not current_plan:
+        current_plan = str(payload.get("plan_name") or "").strip()
+
+    if current_plan:
+        plan_refs = (resolver_record.get("needs_human") or {}).get("plan_refs", [])
+        if not isinstance(plan_refs, list):
+            plan_refs = []
+        current_refs = resolver_record.get("current_refs") or {}
+        if not isinstance(current_refs, dict):
+            current_refs = {}
+        authoritative_source = str(resolver_record.get("authoritative_source") or "").strip()
+        has_current_target_proof = bool(
+            authoritative_source
+            and authoritative_source != "resolver_observe_disabled"
+            and (
+                bool((resolver_record.get("plan_state") or {}).get("present"))
+                or bool((resolver_record.get("chain_state") or {}).get("present"))
+                or bool((resolver_record.get("chain_log") or {}).get("present"))
+                or bool((resolver_record.get("active_step_heartbeat") or {}).get("active"))
+            )
+        )
+        discord_escalation_is_true_blocker = (
+            current_plan in plan_refs
+            and str(current_refs.get("current_plan_name") or "").strip() == current_plan
+            and has_current_target_proof
+        )
+    if current_plan and not discord_escalation_is_true_blocker:
+        try:
+            blocker = classify_needs_human_blocker(
+                session,
+                current_plan=current_plan,
+                marker_dir=marker_dir,
+                repair_data_dir=repair_data_dir,
+                needs_human_path=needs_human_path,
+                needs_human_payload=needs_human_payload if isinstance(needs_human_payload, dict) else None,
+            )
+            discord_escalation_is_true_blocker = blocker.is_true_blocker
+        except Exception:
+            discord_escalation_is_true_blocker = False
+
+classification, _ = evaluate_meta_repair_triggers(
+    session,
+    repair_data_dir=repair_data_dir,
+    repair_outcome=repair_outcome,
+    attempt_outcomes=attempt_outcomes,
+    failure_kinds=failure_kinds,
+    has_state_inspection_error=has_state_inspection_error,
+    has_model_tool_launch_error=has_model_tool_launch_error,
+    discord_delivery_failed=discord_delivery_failed,
+    discord_escalation_is_true_blocker=discord_escalation_is_true_blocker,
+    repair_budget_exhausted=repair_outcome in {"repair_timeout", "repair_exhausted"},
+    load_evidence=True,
+)
+
+if classification.should_dispatch and classification.trigger_label:
+    print(f"TRIGGER:{classification.trigger_label}")
+else:
+    print("NO_TRIGGER")
+PY
+}
+
 dispatch_meta_repair() {
   local session="$1"
   local workspace="$2"
@@ -5080,6 +5312,20 @@ PY
       repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "$stall_health" || true
       return 0
     fi
+    local meta_repair_trigger meta_dispatch_result
+    meta_repair_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation")"
+    if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
+      if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items"; then
+        meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
+        if [[ "$meta_dispatch_result" == "dispatched" ]]; then
+          log "session alive after repair failure; meta-repair background-dispatched session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
+          return 0
+        fi
+        log "session alive after repair failure; meta-repair trigger matched but stayed in observe path session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:} dispatch=${meta_dispatch_result:-unknown}"
+      else
+        log "session alive after repair failure; meta-repair trigger matched but dispatch unavailable session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
+      fi
+    fi
     # Alive and phase-healthy: any prior repair dispatch succeeded, so clear the
     # marker so a future stop dispatches the primary repair fresh instead of
     # falling back.
@@ -5365,235 +5611,7 @@ PY
       return 0
     fi
     local meta_repair_trigger meta_dispatch_result
-    meta_repair_trigger="$(
-      PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$REPAIR_DATA_DIR" "$MARKER_DIR" "$current_target_observation" <<'PY'
-import json
-import pathlib
-import sys
-from typing import Any
-
-from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
-from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
-
-session, repair_data_dir_raw, marker_dir_raw, current_target_observation_raw = sys.argv[1:]
-repair_data_dir = pathlib.Path(repair_data_dir_raw)
-marker_dir = pathlib.Path(marker_dir_raw)
-repair_data_path = repair_data_dir / f"{session}.repair-data.json"
-needs_human_path = repair_data_dir / f"{session}.needs-human.json"
-sidecar_root = repair_data_dir.with_name(f"{repair_data_dir.name}.d")
-
-if not repair_data_path.exists():
-    print("NO_TRIGGER")
-    raise SystemExit(0)
-
-try:
-    payload = json.loads(repair_data_path.read_text(encoding="utf-8"))
-except Exception:
-    print("NO_TRIGGER")
-    raise SystemExit(0)
-
-if not isinstance(payload, dict):
-    print("NO_TRIGGER")
-    raise SystemExit(0)
-
-resolver_record: dict[str, Any] = {}
-if current_target_observation_raw:
-    try:
-        loaded_observation = json.loads(current_target_observation_raw)
-    except Exception:
-        loaded_observation = {}
-    if isinstance(loaded_observation, dict):
-        resolver_record = loaded_observation
-
-
-def strings_from(value: Any) -> list[str]:
-    found: list[str] = []
-    if isinstance(value, str):
-        found.append(value)
-    elif isinstance(value, dict):
-        for item in value.values():
-            found.extend(strings_from(item))
-    elif isinstance(value, list):
-        for item in value:
-            found.extend(strings_from(item))
-    return found
-
-
-attempts = payload.get("attempts")
-if not isinstance(attempts, list):
-    attempts = []
-iterations = payload.get("iterations")
-if not isinstance(iterations, list):
-    iterations = []
-
-recent_attempts = [item for item in attempts[-5:] if isinstance(item, dict)]
-recent_iterations = [item for item in iterations[-5:] if isinstance(item, dict)]
-contexts = [payload.get("current_failure_context")]
-contexts.extend(recent_attempts)
-contexts.extend(recent_iterations)
-
-failure_kinds: list[str] = []
-for item in recent_attempts:
-    for candidate in (
-        item.get("failure_classification"),
-        (item.get("failure_context") or {}).get("failure_classification") if isinstance(item.get("failure_context"), dict) else None,
-        (item.get("post_launch_failure_context") or {}).get("failure_classification") if isinstance(item.get("post_launch_failure_context"), dict) else None,
-        (item.get("plan_latest_failure") or {}).get("kind") if isinstance(item.get("plan_latest_failure"), dict) else None,
-    ):
-        if isinstance(candidate, str) and candidate.strip():
-            failure_kinds.append(candidate.strip())
-            break
-
-repair_outcome = str(payload.get("outcome") or "")
-attempt_outcomes = [
-    str(item.get("outcome") or repair_outcome or "").strip()
-    for item in recent_attempts
-    if isinstance(item, dict)
-]
-attempt_outcomes = [item for item in attempt_outcomes if item]
-
-state_tokens = (
-    "failed:missing_state_path",
-    "failed:state_unreadable",
-    "failed:state_not_object",
-    "state_inspection_error",
-)
-has_state_inspection_error = any(
-    token in text
-    for context in contexts
-    for text in strings_from(context)
-    for token in state_tokens
-)
-
-launch_statuses = []
-for item in recent_attempts + recent_iterations:
-    launch_statuses.extend(
-        str(item.get(key) or "").strip()
-        for key in ("mechanical_launch", "kimi_launch")
-        if isinstance(item, dict)
-    )
-has_model_tool_launch_error = any(
-    status.startswith("failed:")
-    and not any(token in status for token in state_tokens)
-    for status in launch_statuses
-)
-
-discord_delivery_failed = False
-discord_escalation_is_true_blocker = False
-escalation_path = sidecar_root / "escalations" / "escalations.jsonl"
-if escalation_path.exists():
-    escalation_records: list[dict[str, Any]] = []
-    for line in escalation_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            record = json.loads(line)
-        except Exception:
-            continue
-        if isinstance(record, dict) and str(record.get("session") or "") == session:
-            escalation_records.append(record)
-    latest_opened: dict[str, Any] | None = None
-    latest_followup_event = ""
-    for record in escalation_records:
-        event = str(record.get("event") or "").strip()
-        if event == "opened":
-            latest_opened = record
-            latest_followup_event = ""
-            continue
-        if (
-            latest_opened
-            and str(record.get("escalation_id") or "") == str(latest_opened.get("escalation_id") or "")
-            and event
-        ):
-            latest_followup_event = event
-    if latest_opened:
-        discord_escalation_is_true_blocker = (
-            str(latest_opened.get("blocker_verdict") or "").strip() == "TRUE_BLOCKER"
-        )
-        discord_delivery_failed = latest_followup_event in {
-            "unavailable",
-            "failed",
-            "delivery_failed",
-        }
-if needs_human_path.exists():
-    try:
-        needs_human_payload = json.loads(needs_human_path.read_text(encoding="utf-8"))
-    except Exception:
-        needs_human_payload = {}
-    discord_status = ""
-    if isinstance(needs_human_payload, dict):
-        discord_status = str(needs_human_payload.get("discord_status") or "").strip()
-    if not discord_delivery_failed:
-        discord_delivery_failed = discord_status not in {"", "pending", "queued", "delivered"}
-
-    current_plan = ""
-    if isinstance(needs_human_payload, dict):
-        current_plan = str(
-            needs_human_payload.get("current_plan_name")
-            or needs_human_payload.get("plan_name")
-            or ""
-        ).strip()
-    if not current_plan:
-        current_plan = str(payload.get("plan_name") or "").strip()
-
-    if current_plan:
-        plan_refs = (resolver_record.get("needs_human") or {}).get("plan_refs", [])
-        if not isinstance(plan_refs, list):
-            plan_refs = []
-        current_refs = resolver_record.get("current_refs") or {}
-        if not isinstance(current_refs, dict):
-            current_refs = {}
-        authoritative_source = str(resolver_record.get("authoritative_source") or "").strip()
-        has_current_target_proof = bool(
-            authoritative_source
-            and authoritative_source != "resolver_observe_disabled"
-            and (
-                bool((resolver_record.get("plan_state") or {}).get("present"))
-                or bool((resolver_record.get("chain_state") or {}).get("present"))
-                or bool((resolver_record.get("chain_log") or {}).get("present"))
-                or bool((resolver_record.get("active_step_heartbeat") or {}).get("active"))
-            )
-        )
-        discord_escalation_is_true_blocker = (
-            current_plan in plan_refs
-            and str(current_refs.get("current_plan_name") or "").strip() == current_plan
-            and has_current_target_proof
-        )
-    if current_plan and not discord_escalation_is_true_blocker:
-        try:
-            blocker = classify_needs_human_blocker(
-                session,
-                current_plan=current_plan,
-                marker_dir=marker_dir,
-                repair_data_dir=repair_data_dir,
-                needs_human_path=needs_human_path,
-                needs_human_payload=needs_human_payload if isinstance(needs_human_payload, dict) else None,
-            )
-            discord_escalation_is_true_blocker = blocker.is_true_blocker
-        except Exception:
-            discord_escalation_is_true_blocker = False
-
-classification, _ = evaluate_meta_repair_triggers(
-    session,
-    repair_data_dir=repair_data_dir,
-    repair_outcome=repair_outcome,
-    attempt_outcomes=attempt_outcomes,
-    failure_kinds=failure_kinds,
-    has_state_inspection_error=has_state_inspection_error,
-    has_model_tool_launch_error=has_model_tool_launch_error,
-    discord_delivery_failed=discord_delivery_failed,
-    discord_escalation_is_true_blocker=discord_escalation_is_true_blocker,
-    repair_budget_exhausted=repair_outcome in {"repair_timeout", "repair_exhausted"},
-    load_evidence=True,
-)
-
-if classification.should_dispatch and classification.trigger_label:
-    print(f"TRIGGER:{classification.trigger_label}")
-else:
-    print("NO_TRIGGER")
-PY
-    )"
+    meta_repair_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation")"
     if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
       if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items"; then
         meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
