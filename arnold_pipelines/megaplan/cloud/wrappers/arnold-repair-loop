@@ -2370,7 +2370,7 @@ repair_data_init() {
   local plan_name="$2"
   local relaunch_command="$3"
   local initial_health="$4"
-  local marker_json source_git workspace_git chain_log watchdog_log tmux_info chain_state failure_context
+  local marker_json source_git workspace_git chain_log watchdog_log tmux_info chain_state failure_context payload_dir rc
   marker_json="$(cat "$MARKER_PATH" 2>/dev/null || true)"
   source_git="$(cd "$ARNOLD_SRC" 2>/dev/null && { git branch --show-current; git status --short; git log -1 --oneline; } 2>&1 || true)"
   workspace_git="$(cd "$WORKSPACE" 2>/dev/null && { git branch --show-current; git status --short; git log -1 --oneline; } 2>&1 || true)"
@@ -2379,7 +2379,16 @@ repair_data_init() {
   tmux_info="$(tmux capture-pane -pt "$SESSION" -S -80 2>/dev/null || true)"
   chain_state="$(find "$WORKSPACE/.megaplan" -path '*/.chains/*.json' -o -name 'chain_state.json' 2>/dev/null | sort | tail -10)"
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$run_kind" "$plan_name")"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$ARNOLD_SRC" "$SYNC_BRANCH" "$RUN_DIR" "$relaunch_command" "$initial_health" "$marker_json" "$source_git" "$workspace_git" "$chain_log" "$watchdog_log" "$tmux_info" "$chain_state" "$failure_context" <<'PY'
+  payload_dir="$(mktemp -d)"
+  printf '%s' "$marker_json" > "$payload_dir/marker_json"
+  printf '%s' "$source_git" > "$payload_dir/source_git"
+  printf '%s' "$workspace_git" > "$payload_dir/workspace_git"
+  printf '%s' "$chain_log" > "$payload_dir/chain_log"
+  printf '%s' "$watchdog_log" > "$payload_dir/watchdog_log"
+  printf '%s' "$tmux_info" > "$payload_dir/tmux_info"
+  printf '%s' "$chain_state" > "$payload_dir/chain_state"
+  printf '%s' "$failure_context" > "$payload_dir/failure_context"
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$ARNOLD_SRC" "$SYNC_BRANCH" "$RUN_DIR" "$relaunch_command" "$initial_health" "$payload_dir" <<'PY'
 import json
 import pathlib
 import sys
@@ -2403,16 +2412,24 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     run_dir,
     relaunch_command,
     initial_health,
-    marker_json,
-    source_git,
-    workspace_git,
-    chain_log,
-    watchdog_log,
-    tmux_info,
-    chain_state,
-    failure_context,
+    payload_dir_raw,
 ) = sys.argv[1:]
-failure_context_payload = json.loads(failure_context)
+payload_dir = pathlib.Path(payload_dir_raw)
+
+def read_payload(name: str) -> str:
+    try:
+        return (payload_dir / name).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+
+marker_json = read_payload("marker_json")
+source_git = read_payload("source_git")
+workspace_git = read_payload("workspace_git")
+chain_log = read_payload("chain_log")
+watchdog_log = read_payload("watchdog_log")
+tmux_info = read_payload("tmux_info")
+chain_state = read_payload("chain_state")
+failure_context_payload = json.loads(read_payload("failure_context") or "{}")
 data_path = pathlib.Path(path)
 existing = load_json(data_path, default={})
 attempts = existing.get("attempts") if isinstance(existing.get("attempts"), list) else []
@@ -2477,6 +2494,9 @@ payload["initial_facts"]["resolver_output"] = resolver_output or {}
 payload = merge_additive_fields(payload, target=resolver_output or {})
 save_repair_data(data_path, payload)
 PY
+  rc=$?
+  rm -rf "$payload_dir"
+  return "$rc"
 }
 
 repair_data_record_dev() {
@@ -2719,20 +2739,22 @@ repair_data_record_mechanical() {
   local attempt_id="$2"
   local status="$3"
   local detail="$4"
-  local failure_context
+  local failure_context failure_context_file rc
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$detail" "$failure_context" <<'PY'
+  failure_context_file="$(mktemp)"
+  printf '%s' "$failure_context" > "$failure_context_file"
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$detail" "$failure_context_file" <<'PY'
 import json
 import pathlib
 import sys
 
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
 
-path, iteration_raw, attempt_id_raw, status, detail, failure_context = sys.argv[1:]
+path, iteration_raw, attempt_id_raw, status, detail, failure_context_path = sys.argv[1:]
 iteration = int(iteration_raw)
 attempt_id = int(attempt_id_raw)
 payload = load_json(pathlib.Path(path), default={})
-failure_context_payload = json.loads(failure_context)
+failure_context_payload = json.loads(pathlib.Path(failure_context_path).read_text(encoding="utf-8"))
 iterations = payload.setdefault("iterations", [])
 while len(iterations) < iteration:
     iterations.append({"i": len(iterations) + 1})
@@ -2772,6 +2794,9 @@ for item in attempts:
     break
 save_repair_data(pathlib.Path(path), payload)
 PY
+  rc=$?
+  rm -f "$failure_context_file"
+  return "$rc"
 }
 
 repair_data_record_kimi() {
@@ -2781,20 +2806,22 @@ repair_data_record_kimi() {
   local status="$3"
   local report_path="$4"
   local turn_rc="$5"
-  local failure_context
+  local failure_context failure_context_file rc
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$report_path" "$turn_rc" "$failure_context" <<'PY'
+  failure_context_file="$(mktemp)"
+  printf '%s' "$failure_context" > "$failure_context_file"
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$report_path" "$turn_rc" "$failure_context_file" <<'PY'
 import json
 import pathlib
 import sys
 
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
 
-path, iteration_raw, attempt_id_raw, status, report_path, turn_rc, failure_context = sys.argv[1:]
+path, iteration_raw, attempt_id_raw, status, report_path, turn_rc, failure_context_path = sys.argv[1:]
 iteration = int(iteration_raw)
 attempt_id = int(attempt_id_raw)
 payload = load_json(pathlib.Path(path), default={})
-failure_context_payload = json.loads(failure_context)
+failure_context_payload = json.loads(pathlib.Path(failure_context_path).read_text(encoding="utf-8"))
 report = {}
 report_file = pathlib.Path(report_path)
 if report_file.exists():
@@ -2859,6 +2886,9 @@ for item in attempts:
 
 save_repair_data(pathlib.Path(path), payload)
 PY
+  rc=$?
+  rm -f "$failure_context_file"
+  return "$rc"
 }
 
 repair_data_set_outcome() {
@@ -3165,9 +3195,11 @@ repair_recurrence_prepare_attempt() {
   local iteration="$1"
   local requested_model="$2"
   local dispatch_model="$3"
-  local failure_context
+  local failure_context failure_context_file rc
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$failure_context" "$iteration" "$requested_model" "$dispatch_model" "$REPAIR_RECURRENCE_MIN_DISPATCHES" "$REPAIR_RECURRENCE_WINDOW_SECS" <<'PY'
+  failure_context_file="$(mktemp)"
+  printf '%s' "$failure_context" > "$failure_context_file"
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$failure_context_file" "$iteration" "$requested_model" "$dispatch_model" "$REPAIR_RECURRENCE_MIN_DISPATCHES" "$REPAIR_RECURRENCE_WINDOW_SECS" <<'PY'
 import datetime as dt
 import json
 import pathlib
@@ -3178,7 +3210,7 @@ from arnold_pipelines.megaplan.cloud import repair_recurrence
 (
     data_path_raw,
     progress_path_raw,
-    failure_context_raw,
+    failure_context_path_raw,
     iteration_raw,
     requested_model,
     dispatch_model,
@@ -3187,7 +3219,7 @@ from arnold_pipelines.megaplan.cloud import repair_recurrence
 ) = sys.argv[1:]
 data_path = pathlib.Path(data_path_raw)
 progress_path = pathlib.Path(progress_path_raw)
-failure_context = json.loads(failure_context_raw)
+failure_context = json.loads(pathlib.Path(failure_context_path_raw).read_text(encoding="utf-8"))
 payload = json.loads(data_path.read_text(encoding="utf-8"))
 try:
     progress_payload = json.loads(progress_path.read_text(encoding="utf-8"))
@@ -3237,6 +3269,9 @@ repair_recurrence.atomic_write_json(data_path, payload)
 repair_recurrence.atomic_write_json(progress_path, session_snapshot)
 print(f"{attempt_id}\t{1 if recurrence.get('detected') else 0}")
 PY
+  rc=$?
+  rm -f "$failure_context_file"
+  return "$rc"
 }
 
 render_recurrence_block() {
