@@ -252,7 +252,7 @@ fi
   cd "$RUN_CWD" &&
   PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" \
   timeout "$TIMEOUT" python3 -P -m arnold.agent.run_agent \
-    --query="$(cat "$PROMPT")" \
+    --query_file="$PROMPT" \
     --model="$MODEL" \
     --api_key="$KIMI_API_KEY" \
     --base_url="$BASE_URL" \
