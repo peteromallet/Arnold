@@ -26,6 +26,9 @@ _CHAIN_RUNTIME_JOURNAL_PATTERNS = (
     ".megaplan/plans/*/execution_trace.jsonl",
 )
 
+_DEFAULT_COMMAND_TIMEOUT_SECONDS = 120
+_GIT_PUSH_TIMEOUT_SECONDS = 600
+
 
 @dataclass(frozen=True)
 class CommitResult:
@@ -275,7 +278,12 @@ def _recover_missing_remote_base_branch(
     push_cmd = ["git", "push", "origin", f"{source_ref}:refs/heads/{base_branch}"]
     try:
         proc = _compat().subprocess.run(
-            push_cmd, cwd=str(root), capture_output=True, text=True, check=False, timeout=120
+            push_cmd,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_GIT_PUSH_TIMEOUT_SECONDS,
         )
     except (_compat().subprocess.TimeoutExpired, FileNotFoundError) as exc:
         writer(f"[chain] {' '.join(push_cmd)} failed: {exc}\n")
@@ -418,7 +426,7 @@ def _run_command(
     cmd: list[str],
     *,
     writer,
-    timeout: float = 120,
+    timeout: float = _DEFAULT_COMMAND_TIMEOUT_SECONDS,
     error_code: str = "command_failed",
 ) -> subprocess.CompletedProcess[str]:
     """Run a git/gh command and raise CliError with captured output on failure."""
@@ -476,6 +484,22 @@ def _run_command(
             },
         )
     return proc
+
+
+def _run_git_push_command(
+    root: Path,
+    cmd: list[str],
+    *,
+    writer,
+    error_code: str = "git_push_failed",
+) -> subprocess.CompletedProcess[str]:
+    return _compat()._run_command(
+        root,
+        cmd,
+        writer=writer,
+        timeout=_GIT_PUSH_TIMEOUT_SECONDS,
+        error_code=error_code,
+    )
 
 
 def _should_retry_gh_without_env(cmd: list[str], proc: subprocess.CompletedProcess[str]) -> bool:
@@ -736,7 +760,7 @@ def _checkout_milestone_branch(
                             "stderr": rebase.stderr,
                         },
                     )
-                _compat()._run_command(
+                _compat()._run_git_push_command(
                     root,
                     ["git", "push", "--no-verify", "--force-with-lease", "origin", branch],
                     writer=writer,
@@ -776,7 +800,12 @@ def _checkout_milestone_branch(
             "(authoritative merged history)\n"
         )
     _compat()._run_command(root, ["git", "checkout", "-B", branch, fork_point], writer=writer, error_code="git_branch_failed")
-    _compat()._run_command(root, ["git", "push", "--no-verify", "-u", "origin", branch], writer=writer, error_code="git_push_failed")
+    _compat()._run_git_push_command(
+        root,
+        ["git", "push", "--no-verify", "-u", "origin", branch],
+        writer=writer,
+        error_code="git_push_failed",
+    )
     return base_sha
 
 
@@ -1283,7 +1312,7 @@ def commit_plan_artifacts_to_base(
             )
         pushed = False
         if push_enabled:
-            _run_command(
+            _run_git_push_command(
                 root,
                 ["git", "push", "--no-verify", "origin", base_branch],
                 writer=writer,
@@ -1683,14 +1712,19 @@ def _commit_and_push_phase(
                     "continuing to force-with-lease push"
                     f"{(': ' + abort_detail) if abort_detail else ''}\n"
                 )
-            _compat()._run_command(
+            _compat()._run_git_push_command(
                 root,
                 ["git", "push", "--no-verify", "--force-with-lease", "origin", f"HEAD:{branch}"],
                 writer=writer,
                 error_code="git_push_failed",
             )
             return
-    _compat()._run_command(root, ["git", "push", "--no-verify", "origin", f"HEAD:{branch}"], writer=writer, error_code="git_push_failed")
+    _compat()._run_git_push_command(
+        root,
+        ["git", "push", "--no-verify", "origin", f"HEAD:{branch}"],
+        writer=writer,
+        error_code="git_push_failed",
+    )
 
 
 def _mark_pr_ready(root: Path, pr_number: int, *, writer) -> None:
