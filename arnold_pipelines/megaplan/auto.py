@@ -185,9 +185,28 @@ PHASE_TIMEOUT_EXIT_CODE = 124  # conventional; matches GNU `timeout`
 PHASE_NAMES = frozenset(
     {"plan", "prep", "critique", "revise", "gate", "finalize", "execute", "review"}
 )
-REQUIRES_STATE_RE = re.compile(
-    r"requires state ['\"](?P<required>[^'\"]+)['\"], got ['\"](?P<got>[^'\"]+)['\"]"
-)
+
+# Stable-ID → flat-name resolution for canonical dispatch surfaces.
+# When the auto-driver receives a stable component ID (e.g. "megaplan:prep"),
+# it resolves to the flat phase name the native program expects.  Flat names
+# pass through unchanged so existing callers are not broken.
+_STABLE_ID_TO_PHASE: dict[str, str] = {
+    "megaplan:prep": "prep",
+    "megaplan:plan": "plan",
+    "megaplan:critique": "critique",
+    "megaplan:gate": "gate",
+    "megaplan:revise": "revise",
+    "megaplan:tiebreaker_run": "tiebreaker_run",
+    "megaplan:tiebreaker_decide": "tiebreaker_decide",
+    "megaplan:finalize": "finalize",
+    "megaplan:execute": "execute",
+    "megaplan:review": "review",
+}
+
+
+def _resolve_phase_name(raw: str) -> str:
+    """Return the flat phase name for *raw*, resolving any stable-ID prefix."""
+    return _STABLE_ID_TO_PHASE.get(raw, raw)
 
 
 @dataclass
@@ -649,7 +668,8 @@ def _run_native_planning_phase(
 ) -> tuple[int, str, str] | None:
     """Run a canonical phase through the compiled shell's native program."""
 
-    phase = args[0] if args else ""
+    raw_phase = args[0] if args else ""
+    phase = _resolve_phase_name(raw_phase)
     if phase not in PHASE_NAMES:
         return None
     try:
@@ -1077,7 +1097,7 @@ def _control_action_state_mismatch(
     next_step: str,
     state: str,
 ) -> dict[str, Any] | None:
-    if next_step in PHASE_NAMES:
+    if _resolve_phase_name(next_step) in PHASE_NAMES:
         return None
     required_state = _required_state_for_control_action(next_step)
     if required_state is None or state == required_state:
@@ -1123,7 +1143,7 @@ def _control_invalid_transition_failure(
     stdout: str,
     stderr: str,
 ) -> dict[str, Any] | None:
-    if next_step in PHASE_NAMES:
+    if _resolve_phase_name(next_step) in PHASE_NAMES:
         return None
     action = _control_action_label(next_step)
     payload = _extract_cli_error_payload(stdout, stderr)
@@ -3209,7 +3229,7 @@ def drive(
                 invocation_id="synthesized",
                 exit_kind=ExitKind.context_exhausted.value,
             )
-        elif next_step not in PHASE_NAMES:
+        elif _resolve_phase_name(next_step) not in PHASE_NAMES:
             # Non-phase commands (e.g. 'override add-note') — no synthesis
             result = None
         elif code == 0:
@@ -5075,7 +5095,7 @@ def drive(
                         # on the stronger model before we consider climbing more.
                         execute_fail_streak = 0
             last_execute_progress = progress_sig
-        elif next_step in PHASE_NAMES:
+        elif _resolve_phase_name(next_step) in PHASE_NAMES:
             # Moving off execute to another phase — the execute failure streak
             # is per-execute and must not leak across phases.
             execute_fail_streak = 0
