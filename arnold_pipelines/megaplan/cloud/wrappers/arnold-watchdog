@@ -1983,7 +1983,7 @@ GUARD_REPEATS = max(
     ),
 )
 LOG_WINDOW = max(120, int(os.environ.get("CLOUD_WATCHDOG_CHAIN_LOG_WINDOW_LINES", "1500")))
-NONTERMINAL_STATES = {"authority_divergence", "blocked", "error", "awaiting_human"}
+NONTERMINAL_STATES = {"authority_divergence", "blocked", "error", "awaiting_human", "between_milestones"}
 STOPPED_COMPLETION_GUARD_STATES = {"authority_divergence", "blocked", "error"}
 
 
@@ -2473,7 +2473,20 @@ details: dict[str, object] = {}
 chain_health_log_message = ""
 completion_guard_repair_eligible = False
 
-if has_large_file_push_rejection:
+if last_state in {"done", "complete"} and not chain_complete:
+    status = "chain_inconsistent_done"
+    issue_kind = "chain_inconsistent_done"
+    summary = (
+        f"chain state advertises last_state={last_state} but only "
+        f"{completed_count}/{milestone_count or '?'} milestones are complete; "
+        "treating as incomplete/stuck instead of terminal"
+    )
+    chain_health_log_message = (
+        "CHAIN HEALTH EVIDENCE: chain last_state is terminal-looking but "
+        "completed milestones do not cover the chain spec."
+    )
+
+if status == "ok" and has_large_file_push_rejection:
     status = "chain_large_file_push_rejection"
     issue_kind = "git_large_file_push_rejection"
     recurring_lines = [
