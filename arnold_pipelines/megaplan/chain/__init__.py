@@ -1784,6 +1784,7 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
         return overrides
 
     authoritative_batch_overrides = _authoritative_batch_task_overrides()
+    authoritative_batch_override_ids = set(authoritative_batch_overrides)
     batches = sorted(
         plan_dir.glob("execution_batch_*.json"),
         key=_execution_batch_sort_key,
@@ -1833,6 +1834,16 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                     for task in finalize_records
                     if str(task.get("id") or "") not in baseline_unavailable_task_ids
                 ]
+                authoritative_finalize_records = [
+                    task
+                    for task in authoritative_finalize_records
+                    if not (
+                        str(state_payload.get("current_state") or "")
+                        in {"finalized", "executed", "done"}
+                        and str(task.get("id") or "") not in authoritative_batch_override_ids
+                        and str(task.get("status") or "") in {"pending", "blocked", "in_progress"}
+                    )
+                ]
                 if authoritative_batch_overrides:
                     overlaid_finalize_records: list[dict[str, Any]] = []
                     for task in authoritative_finalize_records:
@@ -1842,15 +1853,16 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                             overlaid_finalize_records.append(task)
                             continue
                         merged = dict(task)
-                        for field in (
-                            "files_changed",
-                            "commands_run",
-                            "evidence_files",
-                            "sections_written",
-                            "evidence",
-                        ):
-                            if field not in override:
-                                merged.pop(field, None)
+                        if override.get("status") != task.get("status"):
+                            for field in (
+                                "files_changed",
+                                "commands_run",
+                                "evidence_files",
+                                "sections_written",
+                                "evidence",
+                            ):
+                                if field not in override:
+                                    merged.pop(field, None)
                         for key, value in override.items():
                             if key == "task_id":
                                 continue
@@ -1872,6 +1884,7 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
         if str(task.get("task_id") or task.get("id") or "")
         not in baseline_unavailable_task_ids
     ]
+    batch_authority_failure: str | None = None
     if authoritative_task_records:
         batch_decisions: dict[str, AuthorityDecision] = {}
         completed = effective_execute_completed_task_ids(
@@ -1884,14 +1897,15 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
             decisions=batch_decisions,
         )
         if not completed:
-            return False, f"{latest.name} has no corroborated completed task IDs"
+            batch_authority_failure = (
+                f"{latest.name} has no corroborated completed task IDs"
+            )
         incomplete = _non_authoritative_task_reasons(
             authoritative_task_records, completed, batch_decisions
         )
         if incomplete:
-            return (
-                False,
-                f"{latest.name} has non-authoritative tasks: {', '.join(incomplete)}",
+            batch_authority_failure = (
+                f"{latest.name} has non-authoritative tasks: {', '.join(incomplete)}"
             )
 
     if authoritative_finalize_records:
@@ -1920,6 +1934,10 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                 False,
                 f"finalize.json has non-authoritative tasks: {', '.join(pending)}",
             )
+        if batch_authority_failure is not None:
+            return True, "finalize.json"
+    if batch_authority_failure is not None:
+        return False, batch_authority_failure
     return True, latest.name
 
 
