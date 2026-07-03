@@ -4403,14 +4403,23 @@ for log_path in log_candidates[:3]:
         recent = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-240:]
     except Exception:
         continue
-    joined = "\n".join(recent)
-    if (
-        "sandbox refused terminal" in joined
-        and (
-            "outside the sandbox root/project directory" in joined
-            or "outside the worktree" in joined
+    last_sandbox_refusal = -1
+    for idx, line in enumerate(recent):
+        if "sandbox refused terminal" not in line:
+            continue
+        if (
+            "outside the sandbox root/project directory" in line
+            or "outside the worktree" in line
+        ):
+            last_sandbox_refusal = idx
+    if last_sandbox_refusal >= 0:
+        later_progress = any(
+            marker in line
+            for line in recent[last_sandbox_refusal + 1 :]
+            for marker in ("[tool]", "[auto ", "[chain]")
         )
-    ):
+        if later_progress:
+            continue
         print(
             "workspace_drift:"
             f"{state_path.parent.name}:"
