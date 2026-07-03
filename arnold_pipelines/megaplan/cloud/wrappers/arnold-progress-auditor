@@ -158,9 +158,11 @@ EOF
   fi
   if [[ "$commit_enabled" == "1" ]]; then
     cat <<'EOF'
-Autofix mode: REPAIR-SYSTEM PATCH + COMMIT/PUSH (explicitly gated).
+Autofix mode: TRUSTED REPAIR-SYSTEM PATCH + COMMIT/PUSH.
+- You are trusted to ship the repair-system fix when evidence supports it.
 - You may change only the allowed Arnold repair-system files listed below.
 - Keep the fix narrow, validate with `python3 -m py_compile` and one focused test module, then `git commit` and `git push` to `origin/editible-install`.
+- Do not stop at a recommendation for repair-system bugs; patch, validate, commit, push, and return `FIXED <commit-sha>`.
 - Do not touch run-state artifacts, project workspaces, or non-repair-system files.
 EOF
     return 0
@@ -1901,6 +1903,10 @@ Evaluate these questions in order:
   watchdog/audit report path. Synthesize their findings, patch Arnold repair
   code, commit/push when enabled, then relaunch arnold-meta-repair-loop for the same session
   so it can relaunch ordinary repair.
+- Trust the subagents' judgment on the repair implementation. Give them the
+  evidence, constraints, and desired invariant, then let them choose the patch.
+  Do not over-prescribe the implementation or downgrade to report-only when
+  commit/push is enabled.
 - The desired outcome is that the next watchdog/auditor cycle can repair the
   class of failures automatically. Do not patch the running workspace merely to
   make this one session green when the repairer is the broken component.
