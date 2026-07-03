@@ -264,7 +264,7 @@ def _add_common_agent_args(parser: argparse.ArgumentParser) -> None:
         choices=["claude", "codex"],
         default=None,
         help="Pick the premium vendor for tier-2-through-4 profile slots. "
-             "Defaults to ~/.config/megaplan/config.toml [defaults].vendor (or 'claude').",
+             "Defaults to ~/.config/megaplan/config.toml [defaults].vendor (or 'codex').",
     )
     parser.add_argument(
         "--depth",

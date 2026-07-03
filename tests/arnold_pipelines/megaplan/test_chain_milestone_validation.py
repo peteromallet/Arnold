@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -75,6 +76,30 @@ milestones:
     _git(root, "add", ".")
     _git(root, "commit", "-m", "fixture")
     return spec_path
+
+
+def test_chain_spec_defaults_merge_policy_to_auto_for_unattended_epics() -> None:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        spec = ChainSpec.from_dict({"milestones": []})
+
+    assert spec.merge_policy == "auto"
+    assert caught == []
+
+
+@pytest.mark.parametrize(
+    ("configured", "normalized"),
+    [("review", "review"), ("manual", "review")],
+)
+def test_chain_spec_warns_when_merge_policy_is_not_auto(
+    configured: str, normalized: str
+) -> None:
+    with pytest.warns(UserWarning, match="only be set away from `auto`"):
+        spec = ChainSpec.from_dict(
+            {"merge_policy": configured, "milestones": []}
+        )
+
+    assert spec.merge_policy == normalized
 
 
 @pytest.fixture()

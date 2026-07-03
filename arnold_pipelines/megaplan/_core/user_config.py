@@ -59,21 +59,21 @@ def load_user_config_toml(home: Path | None = None) -> dict[str, Any]:
 
 
 def default_vendor(home: Path | None = None) -> str:
-    """Return the configured default vendor, falling back to ``"claude"``.
+    """Return the configured default vendor, falling back to ``"codex"``.
 
     Reads ``[defaults].vendor`` from the user's ``config.toml``. Invalid
-    or missing values fall back to ``"claude"`` silently — the CLI flag
-    is the authoritative override, and this is a "set and forget"
-    convenience.
+    or missing values fall back to ``"codex"`` silently — ``codex`` is the
+    universal default unless a config overrides it. The CLI flag is the
+    authoritative override, and this is a "set and forget" convenience.
     """
     data = load_user_config_toml(home)
     defaults = data.get("defaults")
     if not isinstance(defaults, dict):
-        return "claude"
+        return "codex"
     vendor = defaults.get("vendor")
     if isinstance(vendor, str) and vendor in VALID_VENDORS:
         return vendor
-    return "claude"
+    return "codex"
 
 
 def default_prep_clarify(home: Path | None = None) -> bool:

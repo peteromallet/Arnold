@@ -4402,7 +4402,6 @@ tmux() { echo TMUX >&2; return 0; }
     assert "DISPATCH" not in result.stderr
     assert "REPAIR" not in result.stderr
 
-
 def test_watchdog_missing_chain_spec_uses_terminal_chain_state_without_repair(
     tmp_path: Path,
 ) -> None:
