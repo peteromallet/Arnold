@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from arnold_pipelines.megaplan.incident import projection
 from arnold_pipelines.megaplan.incident import (
     IncidentLedger,
     build_brief,
@@ -884,3 +885,146 @@ def test_build_brief_reports_deadlines_claims_attempts_and_missing_evidence(
         "recommendation": "system.integrity_repair",
         "severity": "ok",
     }
+
+
+def test_build_brief_redacts_legacy_secret_shaped_payloads_during_projection(
+    tmp_path: Path,
+) -> None:
+    ledger = IncidentLedger(tmp_path)
+    ledger.append_event(_event())
+
+    records = [
+        json.loads(line)
+        for line in ledger.events_path.read_text(encoding="utf-8").splitlines()
+    ]
+    records[0]["payload"]["summary"] = (
+        "Authorization: Bearer bearer-secret-token-value sk-proj-secretsecretsecretsecret"
+    )
+    records[0]["payload"]["evidence"] = [
+        {"kind": "log", "message": "Using github token ghp_secretgithubpat1234567890"},
+        {"kind": "log", "message": "aws_access_key_id = AKIAIOSFODNN7EXAMPLE"},
+        {
+            "kind": "log",
+            "message": (
+                "-----BEGIN OPENSSH PRIVATE KEY-----\n"
+                "private-material\n"
+                "-----END OPENSSH PRIVATE KEY-----"
+            ),
+        },
+    ]
+    ledger.events_path.write_text(
+        "\n".join(json.dumps(record) for record in records) + "\n",
+        encoding="utf-8",
+    )
+
+    brief = build_brief("session-1", root=tmp_path)
+    serialized = json.dumps(brief, sort_keys=True)
+
+    for secret in (
+        "bearer-secret-token-value",
+        "sk-proj-secretsecretsecretsecret",
+        "ghp_secretgithubpat1234567890",
+        "AKIAIOSFODNN7EXAMPLE",
+        "OPENSSH PRIVATE KEY",
+    ):
+        assert secret not in serialized
+    assert "***REDACTED***" in brief["summary"]
+    assert "***REDACTED***" in serialized
+
+
+def test_problem_ids_remain_stable_across_transient_summary_variants_and_replay(
+    tmp_path: Path,
+) -> None:
+    ledger = IncidentLedger(tmp_path)
+
+    first_incident = [
+        _event(
+            event_id="evt-stable-1",
+            incident_id="inc-stable-1",
+            problem_id="prob-stable",
+            summary=(
+                "Build runner failed in /tmp/run-123/attempt-1 at "
+                "2026-07-03T20:00:00Z pid=4321 container deadbeefcafebabe"
+            ),
+            deadline_ts="2026-07-03T21:00:00Z",
+        ),
+        _event(
+            event_id="evt-stable-2",
+            incident_id="inc-stable-1",
+            problem_id="prob-stable",
+            type="claim.owner_assigned",
+            actor="six_hour_auditor",
+            outcome="assigned",
+            summary="Assigned owner after attempt-2 in /workspace/tmp/session-aaa",
+            deadline_ts="2026-07-03T22:00:00Z",
+            parent_event_ids=["evt-stable-1"],
+        ),
+        _event(
+            event_id="evt-stable-3",
+            incident_id="inc-stable-1",
+            problem_id="prob-stable",
+            type="verified_recovered",
+            actor="repair_system",
+            outcome="recovered",
+            summary="Recovery verified after pid=9999 at 2026-07-03T20:30:00Z",
+            parent_event_ids=["evt-stable-2"],
+            deadline_ts="2026-07-03T22:15:00Z",
+        ),
+    ]
+    second_incident = [
+        _event(
+            event_id="evt-stable-4",
+            incident_id="inc-stable-2",
+            problem_id="prob-stable",
+            summary=(
+                "Build runner failed in /tmp/run-999/attempt-9 at "
+                "2026-07-04T00:00:00Z pid=9876 container 0123456789abcdef"
+            ),
+            deadline_ts="2026-07-04T01:00:00Z",
+        ),
+        _event(
+            event_id="evt-stable-5",
+            incident_id="inc-stable-2",
+            problem_id="prob-stable",
+            type="claim.owner_assigned",
+            actor="watchdog",
+            outcome="assigned",
+            summary="Owner refreshed from /workspace/tmp/session-bbb attempt-10",
+            deadline_ts="2026-07-04T02:00:00Z",
+            parent_event_ids=["evt-stable-4"],
+        ),
+    ]
+
+    for event in [*first_incident, *second_incident]:
+        ledger.append_event(event)
+
+    first = rebuild_projections(tmp_path)["problems"]["problems"]
+    second = rebuild_projections(tmp_path)["problems"]["problems"]
+
+    assert first == second
+    assert len(first) == 1
+    problem = first[0]
+    assert problem["occurrence_count"] == 5
+    assert problem["linked_incident_ids"] == ["inc-stable-1", "inc-stable-2"]
+    assert problem["recurred_after_fix"] is True
+    assert problem["status"] == "open"
+    assert problem["owner_actor"] == "watchdog"
+    assert problem["next_review_ts"] == "2026-07-03T21:00:00Z"
+
+
+def test_problem_id_normalization_strips_transient_timestamp_pid_attempt_path_and_container_data() -> None:
+    first = _event(
+        summary=(
+            "Repair stalled in /tmp/run-123/attempt-1 at 2026-07-03T20:00:00Z "
+            "pid=4321 container deadbeefcafebabe"
+        ),
+    )
+    second = _event(
+        summary=(
+            "Repair stalled in /workspace/service/attempt-22 at 2026-07-04T03:11:59Z "
+            "pid=8765 container 0123456789abcdef"
+        ),
+    )
+
+    assert projection._normalized_signature(first) == projection._normalized_signature(second)
+    assert projection._problem_id_for_payload(first) == projection._problem_id_for_payload(second)

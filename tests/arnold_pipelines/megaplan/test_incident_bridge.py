@@ -30,7 +30,11 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     TRUE_HUMAN_BLOCKER,
 )
 from arnold_pipelines.megaplan.cloud.incident_bridge import (
+    append_github_issue_publish_failed,
+    append_github_issue_published,
     append_meta_repair_attempt,
+    append_six_hour_auditor_audit_complete,
+    append_six_hour_auditor_diagnosis,
     append_verified_recovered,
 )
 from arnold_pipelines.megaplan.incident import IncidentLedger
@@ -315,6 +319,112 @@ def test_bridge_append_verified_recovered_creates_event(tmp_path: Path) -> None:
 
     events = _read_ledger_events(tmp_path)
     assert len(events) == 1
+
+
+def test_bridge_append_six_hour_auditor_diagnosis_creates_event(tmp_path: Path) -> None:
+    result = append_six_hour_auditor_diagnosis(
+        incident_id="inc-400",
+        summary="Audit found stale repair evidence",
+        session_id="session-audit",
+        problem_id="prob-audit",
+        next_expected_event="meta_repair.repair_attempt",
+        decision={"layers": [{"code": "stale_repair"}]},
+        root=tmp_path,
+    )
+
+    assert result["kind"] == "incident.six_hour_auditor.diagnosis"
+    assert result["payload"]["actor"] == "six_hour_auditor"
+    assert result["payload"]["type"] == "six_hour_auditor.diagnosis"
+    assert result["payload"]["next_expected_event"] == "meta_repair.repair_attempt"
+    assert result["payload"]["decision"] == {"layers": [{"code": "stale_repair"}]}
+
+
+@pytest.mark.parametrize(
+    ("outcome", "next_expected_event"),
+    [
+        ("recovered", None),
+        ("escalated", "github_sync.publish"),
+        ("audit_cycle_complete", "six_hour_auditor.diagnosis"),
+    ],
+)
+def test_bridge_append_six_hour_auditor_audit_complete_allows_expected_handoffs(
+    tmp_path: Path,
+    outcome: str,
+    next_expected_event: str | None,
+) -> None:
+    result = append_six_hour_auditor_audit_complete(
+        incident_id="inc-401",
+        summary="Audit cycle recorded",
+        outcome=outcome,
+        next_expected_event=next_expected_event,
+        deadline_ts="2026-07-04T00:00:00+00:00",
+        root=tmp_path,
+    )
+
+    assert result["kind"] == "incident.six_hour_auditor.audit_complete"
+    assert result["payload"]["outcome"] == outcome
+    assert result["payload"]["next_expected_event"] == next_expected_event
+
+
+def test_bridge_append_six_hour_auditor_audit_complete_rejects_invalid_outcome(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="outcome must be one of"):
+        append_six_hour_auditor_audit_complete(
+            incident_id="inc-402",
+            summary="Audit cycle recorded",
+            outcome="failed",
+            root=tmp_path,
+        )
+
+
+def test_bridge_append_six_hour_auditor_audit_complete_rejects_invalid_handoff(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="next_expected_event must be one of"):
+        append_six_hour_auditor_audit_complete(
+            incident_id="inc-403",
+            summary="Audit cycle recorded",
+            outcome="escalated",
+            next_expected_event="watchdog.dispatch",
+            root=tmp_path,
+        )
+
+
+def test_bridge_append_github_issue_events_create_schema_valid_records(tmp_path: Path) -> None:
+    published = append_github_issue_published(
+        incident_id="inc-404",
+        problem_id="prob-404",
+        summary="Published persistent problem to GitHub",
+        repo="acme/repo",
+        number=77,
+        url="https://github.com/acme/repo/issues/77",
+        action="created",
+        next_expected_event="six_hour_auditor.diagnosis",
+        root=tmp_path,
+    )
+    failed = append_github_issue_publish_failed(
+        incident_id="inc-404",
+        problem_id="prob-404",
+        summary="GitHub publish failed",
+        repo="acme/repo",
+        action="commented",
+        error="rate limited",
+        root=tmp_path,
+    )
+
+    assert published["kind"] == "incident.github_sync.issue_published"
+    assert published["payload"]["evidence"][-1] == {
+        "kind": "github.issue",
+        "repo": "acme/repo",
+        "number": 77,
+        "url": "https://github.com/acme/repo/issues/77",
+        "action": "created",
+    }
+    assert failed["kind"] == "incident.github_sync.issue_publish_failed"
+    assert failed["payload"]["next_expected_event"] == "github_sync.retry"
+    assert failed["payload"]["evidence"][-1] == {
+        "kind": "github.issue",
+        "repo": "acme/repo",
+        "action": "commented",
+        "error": "rate limited",
+    }
 
 
 # ---------------------------------------------------------------------------
