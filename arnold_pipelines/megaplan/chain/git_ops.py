@@ -486,7 +486,7 @@ def _run_command(
     return proc
 
 
-def _run_command(
+def _run_git_push_command(
     root: Path,
     cmd: list[str],
     *,
@@ -760,7 +760,7 @@ def _checkout_milestone_branch(
                             "stderr": rebase.stderr,
                         },
                     )
-                _compat()._run_command(
+                _run_git_push_command(
                     root,
                     ["git", "push", "--no-verify", "--force-with-lease", "origin", branch],
                     writer=writer,
@@ -800,7 +800,7 @@ def _checkout_milestone_branch(
             "(authoritative merged history)\n"
         )
     _compat()._run_command(root, ["git", "checkout", "-B", branch, fork_point], writer=writer, error_code="git_branch_failed")
-    _compat()._run_command(
+    _run_git_push_command(
         root,
         ["git", "push", "--no-verify", "-u", "origin", branch],
         writer=writer,
@@ -1719,7 +1719,7 @@ def _commit_and_push_phase(
                 error_code="git_push_failed",
             )
             return
-    _compat()._run_command(
+    _run_git_push_command(
         root,
         ["git", "push", "--no-verify", "origin", f"HEAD:{branch}"],
         writer=writer,
