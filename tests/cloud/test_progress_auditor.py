@@ -1340,6 +1340,99 @@ class TestLiveSignalFiltering:
         assert "no active attempt/iteration context" in meta["rationale"][0]
         assert not any("meta-repair trigger" in reason for reason in finding["reasons"])
 
+    def test_meta_repair_summary_flags_no_output_launch_failure_artifacts(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "executing",
+                    "iteration": 3,
+                    "latest_failure": {
+                        "kind": "phase_failed",
+                        "message": "repair timed out",
+                        "recorded_at": "2026-07-03T16:00:00+00:00",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+
+        repair_root = tmp_path / "repair-data"
+        meta_dir = repair_root / "meta"
+        meta_dir.mkdir(parents=True, exist_ok=True)
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "outcome": "repair_timeout",
+                    "attempts": [
+                        {
+                            "attempt_id": "attempt-1",
+                            "outcome": "repair_timeout",
+                            "failure_classification": "timeout_or_hang",
+                            "dispatched_at": "2026-07-03T16:00:00+00:00",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (meta_dir / "meta-launch-failed.json").write_text(
+            json.dumps(
+                {
+                    "meta_repair_id": "meta-launch-failed",
+                    "session": "demo-session",
+                    "trigger": "repair_timeout",
+                    "diagnosis": "Codex meta-repair orchestrator returned no output",
+                    "subagent_results": {
+                        "codex_response": "Not inside a trusted directory and --skip-git-repo-check was not specified."
+                    },
+                    "outcome": "UNKNOWN",
+                }
+            ),
+            encoding="utf-8",
+        )
+        meta_runs = tmp_path / "meta-runs"
+        meta_runs.mkdir()
+        (meta_runs / "20260703T211454Z-demo-session-resp.err").write_text(
+            "Not inside a trusted directory and --skip-git-repo-check was not specified.\n",
+            encoding="utf-8",
+        )
+        (meta_runs / "20260703T211454Z-demo-session-resp.txt").write_text(
+            "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/Hermes subagents).\n",
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "plan",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={
+                "MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root),
+                "MEGAPLAN_AUDIT_META_RUN_DIR": str(meta_runs),
+            },
+        )
+
+        finding = findings["findings"][0]
+        meta = finding["meta_repair_summary"]
+        assert meta["should_dispatch"] is True
+        assert meta["trigger"] == "repair_timeout"
+        assert meta["failed_meta_run_evidence"] is True
+        assert meta["failed_meta_record_count"] == 1
+        assert meta["failed_meta_run_count"] >= 1
+        assert any("failed launch/no-output evidence" in reason for reason in finding["reasons"])
+
 
 class TestRootCausePatternsJsonSchema:
     """Verify root_cause_patterns JSON payload shape invariants and stable keys."""
