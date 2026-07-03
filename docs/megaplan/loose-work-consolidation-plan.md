@@ -123,7 +123,7 @@ Arnold cloud workspaces:
 | --- | --- | --- |
 | `/workspace/tiered-repair-hardening/Arnold` | clean `main` at `origin/main`; watchdog says chain complete | no source cleanup; keep/archive logs |
 | `/workspace/arnold` | `editible-install` at `origin/editible-install`; dirty `arnold_pipelines/megaplan/chain/__init__.py` | highest priority cloud-only source work; checkpoint/port before any cloud cleanup |
-| `/workspace/native-python-pipelines-completion-parent-22937539/arnold` | branch `megaplan/m7-megaplan-relocation-and-20260702-0856`, ahead 1 because of audit-only commit `6bf9330c`; actual M7 payload is already pushed as `3fa94fe3` | preserve `6bf9330c` only for audit/history if desired; evaluate `3fa94fe3` as the useful code/doc/test payload |
+| `/workspace/native-python-pipelines-completion-parent-22937539/arnold` | branch `megaplan/m7-megaplan-relocation-and-20260702-0856`, ahead 1 because of audit-only commit `6bf9330c`; actual M7 payload is `3fa94fe3` | `3fa94fe3` and `6bf9330c` are ancestors of fetched `origin/main`; audit tail is also preserved on `preserve/native-python-m7-audit-20260703-0152`; no open M7 code merge remains |
 | `/workspace/native-composition-followup/Arnold` | branch `megaplan/m0-composition-contract-and-20260702-1541`; dirty source/docs/tests plus untracked docs/tests; user confirmed this is active in-progress work | checkpoint/preserve only; do not merge, clean, delete, or retarget as part of this cleanup |
 
 Other cloud repos exist for VibeComfy and Reigh. They have their own dirty state
@@ -155,8 +155,8 @@ without treating it as finished.
 | Repair/watchdog tail work after M1-M5 | `origin/editible-install`, local dirty checkout, `/workspace/arnold` dirty diff | one Arnold repair follow-up consolidation branch/PR |
 | Local preflight/prerequisite recovery changes | current dirty `main` | same repair follow-up branch, after non-destructive checkpoint |
 | Cloud-only prerequisite/completion authority changes | `/workspace/arnold` dirty `chain/__init__.py` | same repair follow-up branch, reconciled against local dirty `chain/__init__.py` |
-| M7 native-python relocation payload | pushed branch commit `3fa94fe3` on `origin/megaplan/m7-megaplan-relocation-and-20260702-0856` | evaluate as real code/doc/test work; PR/merge or deliberately supersede after conflict review |
-| M7 audit-only tail commit | `/workspace/native-python-pipelines-completion-parent-22937539/arnold` unpushed commit `6bf9330c` | preserve only if exact cloud audit history is needed; do not merge as useful code |
+| M7 native-python relocation payload | commit `3fa94fe3` | already contained in fetched `origin/main`; no new PR needed |
+| M7 audit-only tail commit | commit `6bf9330c` and `preserve/native-python-m7-audit-20260703-0152` | already contained in fetched `origin/main` and preserved on a branch; do not treat as useful code |
 | Native composition follow-up | `origin/megaplan/m0-composition-contract-and-20260702-1541` and `/workspace/native-composition-followup/Arnold` dirty payload | already checkpointed to preservation branches; leave active in-progress work untouched |
 | `engine-watchdog-runner` ref | `refs/temporary/engine-watchdog-runner` | small cherry-pick into repair follow-up if still relevant |
 | `live-watchdog-supervisor` ref | `refs/temporary/live-watchdog-supervisor` | separate prototype/archive decision; do not blend blindly into repair follow-up |
@@ -180,7 +180,7 @@ items alike.
 | Low | `refs/snapshots/arnold-m1-m6-wip` | leave open for review | snapshot may contain source/docs/provenance; extract/archive decision required |
 | Low | `refs/snapshots/arnold-m7-m8-wip` | leave open for review | larger migration snapshot may contain source/docs/provenance; extract/archive decision required |
 | Low | Dirty cloud work in `/workspace/native-composition-followup/Arnold` | leave open for active owner | user confirmed this is in progress; no merge/delete/cleanup action in this cleanup |
-| Low | Any branch carrying useful M7 payload `3fa94fe3` | leave open until PR/supersession decision | evaluate code/doc/test payload; either PR/merge or document that another landed change supersedes it |
+| High | Any stale local/cloud pointer to M7 payload `3fa94fe3` or audit tail `6bf9330c` | delete only after confirming no dirty source in the workspace | both commits are ancestors of fetched `origin/main`, and `6bf9330c` is preserved on `preserve/native-python-m7-audit-20260703-0152` |
 
 End-state rule: the cleanup pass should delete high-confidence redundant items
 and any mid-confidence items whose evidence requirements are satisfied. Low
