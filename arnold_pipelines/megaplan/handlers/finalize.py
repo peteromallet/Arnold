@@ -52,6 +52,7 @@ from arnold_pipelines.megaplan.orchestration.test_selection import (
 from arnold_pipelines.megaplan.store import write_plan_artifact_json
 from arnold_pipelines.megaplan.execute.quality import (
     _capture_git_status_snapshot_recursive,
+    _git_head,
     _is_harness_generated_path,
     capture_uncommitted_baseline,
 )
@@ -1646,9 +1647,21 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
 
 def _ensure_execution_baseline(state: PlanState) -> None:
     meta = state.setdefault("meta", {})
-    if isinstance(meta.get("execution_baseline"), dict):
-        return
     project_dir = Path(state["config"]["project_dir"])
+    existing = meta.get("execution_baseline")
+    if isinstance(existing, dict):
+        baseline_head = existing.get("head")
+        try:
+            current_head = _git_head(project_dir)
+        except Exception:
+            current_head = None
+        if (
+            isinstance(baseline_head, str)
+            and baseline_head.strip()
+            and current_head
+            and baseline_head.strip() == current_head
+        ):
+            return
     try:
         baseline = capture_uncommitted_baseline(project_dir)
     except Exception as exc:
@@ -1659,8 +1672,11 @@ def _ensure_execution_baseline(state: PlanState) -> None:
         return
     meta["execution_baseline"] = baseline
     count = len(baseline.get("paths", {})) if isinstance(baseline.get("paths"), dict) else 0
+    action = "Captured"
+    if isinstance(existing, dict):
+        action = "Refreshed"
     print(
-        f"Captured execution baseline: {count} pre-existing uncommitted paths. "
+        f"{action} execution baseline: {count} pre-existing uncommitted paths. "
         "Unchanged paths will be excluded from ownership audits.",
         file=sys.stderr,
     )
