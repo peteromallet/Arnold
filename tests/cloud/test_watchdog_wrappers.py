@@ -7545,6 +7545,16 @@ def test_arnold_progress_auditor_wrapper_has_bash_n_syntax_and_contract() -> Non
     assert "recommendation" in text
     assert "You are auditing a cloud megaplan SESSION, not just one plan." in text
     assert "Superfixer health / repair-the-repairer" in text
+    assert "pipeline friction map" in text
+    assert "Treat all repair/autofix systems as intended to be enabled by default" in text
+    assert "$REPAIR_DATA_DIR/<session>.repair-data.json" in text
+    assert "$REPAIR_DATA_DIR/meta" in text
+    assert "/workspace/.megaplan/meta-runs" in text
+    assert "/root/.codex" in text
+    assert "META_REPAIR_FAILURE" in text
+    assert "arnold-meta-repair-loop actually launched" in text
+    assert "deploy Codex/DeepSeek/Hermes subagents" in text
+    assert "relaunch arnold-meta-repair-loop for the same session" in text
     assert "Fix the watchdog/repair-trigger/auditor source" in text
     assert "dead provider/auth path" in text
     assert "argument-size crash" in text
@@ -9031,9 +9041,10 @@ def test_meta_repair_wrapper_has_feature_flag_gating() -> None:
     """Wrapper must gate on META_REPAIR_ENABLED and exit early when off."""
     text = _meta_repair_wrapper()
 
-    assert 'META_REPAIR_ENABLED_VAR="${ARNOLD_META_REPAIR_ENABLED:-0}"' in text
+    assert 'META_REPAIR_ENABLED_VAR="${ARNOLD_META_REPAIR_ENABLED:-1}"' in text
     assert 'meta-repair disabled' in text
-    assert 'META_REPAIR_COMMIT_ENABLED_VAR="${ARNOLD_META_REPAIR_COMMIT_ENABLED:-0}"' in text
+    assert 'META_REPAIR_COMMIT_ENABLED_VAR="${ARNOLD_META_REPAIR_COMMIT_ENABLED:-1}"' in text
+    assert '0|false|False|FALSE|no|No|NO|off|Off|OFF' in text
 
 
 def test_meta_repair_wrapper_has_recursion_guard() -> None:
@@ -9054,7 +9065,7 @@ def test_meta_repair_wrapper_has_codex_dispatch() -> None:
     assert 'codex exec --sandbox danger-full-access' in text
     assert 'codex exec --sandbox danger-full-access - < "$BRIEF_PATH"' in text
     assert '$(cat "$BRIEF_PATH")' not in text
-    assert 'CODEX_TIMEOUT="${MEGAPLAN_META_CODEX_TIMEOUT_SECS:-3600}"' in text
+    assert 'CODEX_TIMEOUT="${MEGAPLAN_META_CODEX_TIMEOUT_SECS:-5400}"' in text
     assert 'codex CLI missing' in text
 
 
@@ -9071,13 +9082,13 @@ def test_meta_repair_wrapper_has_deepseek_hermes_subagent_instructions() -> None
     assert 'DeepSeek/Hermes' in text
 
 
-def test_meta_repair_wrapper_has_patch_only_default_policy() -> None:
-    """Wrapper must default to patch-only and gate commits behind flag."""
+def test_meta_repair_wrapper_has_default_commit_policy() -> None:
+    """Wrapper must allow commit/push by default while preserving explicit opt-out."""
     text = _meta_repair_wrapper()
 
-    assert 'Patch-only default' in text
-    assert 'MUST NOT commit or' in text
-    assert 'ARNOLD_META_REPAIR_COMMIT_ENABLED=1' in text
+    assert 'Commit/push policy' in text
+    assert 'explicitly disabled' in text
+    assert 'ARNOLD_META_REPAIR_COMMIT_ENABLED=0/false/no/off' in text
     assert 'can_commit_changes' in text
     assert 'can_push_changes' in text
     assert 'commit_allowed=' in text
