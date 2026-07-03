@@ -2052,6 +2052,58 @@ def _clear_latest_failure_for_success(plan_dir: Path | None) -> None:
         return
 
 
+_OBSOLETE_TERMINAL_BLOCK_FAILURE_KINDS = frozenset(
+    {
+        "blocked_recovery_not_resolved",
+        "control_binding_mismatch",
+        "invalid_transition_loop",
+    }
+)
+
+
+def _failure_is_obsolete_after_terminal_block(failure: Any) -> bool:
+    if not isinstance(failure, dict):
+        return False
+    kind = failure.get("kind")
+    if kind in _OBSOLETE_TERMINAL_BLOCK_FAILURE_KINDS:
+        return True
+    if kind != "phase_failed":
+        return False
+    metadata = failure.get("metadata")
+    stderr = metadata.get("stderr") if isinstance(metadata, dict) else ""
+    message = failure.get("message")
+    return "invalid_transition" in f"{message or ''}\n{stderr or ''}"
+
+
+def _clear_obsolete_failure_for_terminal_block(
+    plan_dir: Path | None,
+    status: Mapping[str, Any],
+) -> None:
+    if plan_dir is None:
+        return
+    if status.get("state") != STATE_BLOCKED:
+        return
+    if status.get("next_step") or status.get("valid_next"):
+        return
+    blocker_recovery = status.get("blocker_recovery")
+    if not isinstance(blocker_recovery, dict):
+        return
+    if blocker_recovery.get("has_terminal_blockers") is not True:
+        return
+
+    def _clear(current: dict[str, Any]) -> bool:
+        if not _failure_is_obsolete_after_terminal_block(current.get("latest_failure")):
+            return False
+        current["latest_failure"] = None
+        current.pop("resume_cursor", None)
+        return True
+
+    try:
+        write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_clear)
+    except (CliError, OSError, RuntimeError, ValueError):
+        return
+
+
 def _reconcile_latest_execution_batch(plan_dir: Path | None) -> dict[str, Any] | None:
     if plan_dir is None:
         return None
@@ -3590,6 +3642,8 @@ def drive(
             if plan_dir is not None:
                 if terminal_status == "done":
                     _clear_latest_failure_for_success(plan_dir)
+                elif terminal_status == "blocked":
+                    _clear_obsolete_failure_for_terminal_block(plan_dir, status)
                 try:
                     if terminal_status == "aborted":
                         emit_event(EventKind.PLAN_ABORTED, plan_dir=plan_dir, payload={"state": state})
