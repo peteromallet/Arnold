@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import pytest
 
+from arnold.pipeline.native.composition import derive_composition_graph
 from arnold.pipeline.native import (
     NativeCompileError,
+    NativeInstruction,
+    NativeProgram,
     compile_pipeline,
     derive_topology,
     decision,
@@ -68,6 +71,31 @@ def _build_human_gate_review_loop_graph(*, key_mode: str = "phase") -> Pipeline:
         return state
 
     return project_graph(compile_pipeline(my_pipe), key_mode=key_mode)
+
+
+def _recursive_program() -> NativeProgram:
+    recursive = NativeProgram(
+        name="recursive",
+        stable_id="workflow.recursive",
+        instructions=(
+            NativeInstruction(pc=0, op="subpipeline", name="recursive"),
+            NativeInstruction(pc=1, op="halt"),
+        ),
+    )
+    object.__setattr__(
+        recursive,
+        "instructions",
+        (
+            NativeInstruction(
+                pc=0,
+                op="subpipeline",
+                name="recursive",
+                subprogram=recursive,
+            ),
+            recursive.instructions[1],
+        ),
+    )
+    return recursive
 
 
 # ── sequential projection ─────────────────────────────────────────────
@@ -518,11 +546,6 @@ class TestGraphProjectionEdgeCases:
             project_graph(prog)
 
     def test_program_with_only_jump_and_halt_raises(self) -> None:
-        from arnold.pipeline.native.ir import (
-            NativeInstruction,
-            NativeProgram,
-        )
-
         prog = NativeProgram(
             name="no_real",
             instructions=(
@@ -532,6 +555,14 @@ class TestGraphProjectionEdgeCases:
         )
         with pytest.raises(ValueError, match="no phase or decision"):
             project_graph(prog)
+
+    def test_recursive_program_projection_fails_cleanly(self) -> None:
+        with pytest.raises(ValueError, match="Invalid native projection closure"):
+            project_graph(_recursive_program())
+
+    def test_recursive_program_composition_fails_cleanly(self) -> None:
+        with pytest.raises(ValueError, match="Invalid native composition closure"):
+            derive_composition_graph(_recursive_program())
 
     def test_binding_map_is_dict_or_none(self) -> None:
         @phase

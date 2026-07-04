@@ -49,7 +49,7 @@ from arnold.pipeline.native.hooks import (
     NativeRuntimeHooks,
     NullNativeRuntimeHooks,
 )
-from arnold.pipeline.native.ir import NativeInstruction
+from arnold.pipeline.native.ir import NativeInstruction, NativeProgram
 from arnold.security.audit import claim_broker_audit_entry
 from arnold.security.redaction import redact_value
 from arnold.security.types import RedactionStatus, RetentionPolicy
@@ -58,6 +58,7 @@ from arnold.security.types import RedactionStatus, RetentionPolicy
 __all__ = [
     "AuditHooks",
     "AuditRecord",
+    "resolved_versions_by_stable_id_for_run",
 ]
 
 # ── helpers ───────────────────────────────────────────────────────────
@@ -85,6 +86,59 @@ def _dict_keys_summary(d: Any) -> list[str] | None:
     if isinstance(d, Mapping):
         return sorted(str(k) for k in d.keys())
     return None
+
+
+def _load_audit_records(audit_dir: str | Path) -> list[dict[str, Any]]:
+    audit_path = Path(audit_dir) / "audit.ndjson"
+    if not audit_path.is_file():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in audit_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        if isinstance(payload, dict):
+            records.append(payload)
+    return records
+
+
+def resolved_versions_by_stable_id_for_run(
+    audit_dir: str | Path,
+    *,
+    run_id: str | None = None,
+) -> dict[str, str]:
+    """Return ``stable_id -> resolved version`` from a run's ``run.init`` record."""
+    run_inits = [
+        record
+        for record in _load_audit_records(audit_dir)
+        if record.get("event") == "run.init"
+    ]
+    if run_id is not None:
+        run_inits = [
+            record for record in run_inits if str(record.get("run_id", "")) == run_id
+        ]
+    elif len(run_inits) > 1:
+        raise LookupError("multiple run.init records found; pass run_id explicitly")
+
+    if not run_inits:
+        return {}
+
+    pack_provenance = run_inits[-1].get("pack_provenance")
+    if not isinstance(pack_provenance, Mapping):
+        return {}
+    dependencies = pack_provenance.get("dependencies")
+    if not isinstance(dependencies, list):
+        return {}
+
+    resolved: dict[str, str] = {}
+    for dependency in dependencies:
+        if not isinstance(dependency, Mapping):
+            continue
+        stable_id = dependency.get("stable_id")
+        version = dependency.get("version")
+        if stable_id and version:
+            resolved[str(stable_id)] = str(version)
+    return resolved
 
 
 # ── AuditRecord ───────────────────────────────────────────────────────
@@ -263,15 +317,10 @@ class AuditHooks:
         self._run_id: str = uuid4().hex
         self._attempts: dict[str, int] = {}
         self._active_record: AuditRecord | None = None
+        self._run_init_written = False
 
         if self._audit_dir is not None:
             _ensure_dir(self._audit_dir)
-            # Write a run.init marker so tooling can discover runs
-            self._append_record({
-                "event": "run.init",
-                "run_id": self._run_id,
-                "started_at": _utcnow_iso(),
-            })
 
     # ── private helpers ─────────────────────────────────────────────
 
@@ -289,6 +338,32 @@ class AuditHooks:
         line = _json_dumps(redact_value(record))
         with open(audit_file, "a", encoding="utf-8") as fh:
             fh.write(line + "\n")
+
+    def _write_run_init(
+        self,
+        *,
+        program_name: str | None = None,
+        program_stable_id: str | None = None,
+        run_path: str | None = None,
+        pack_provenance: Mapping[str, Any] | None = None,
+    ) -> None:
+        if self._audit_dir is None or self._run_init_written:
+            return
+        record: dict[str, Any] = {
+            "event": "run.init",
+            "run_id": self._run_id,
+            "started_at": _utcnow_iso(),
+        }
+        if program_name:
+            record["program_name"] = program_name
+        if program_stable_id:
+            record["program_stable_id"] = program_stable_id
+        if run_path:
+            record["run_path"] = run_path
+        if pack_provenance is not None:
+            record["pack_provenance"] = dict(pack_provenance)
+        self._append_record(record)
+        self._run_init_written = True
 
     def _flush_active(self) -> None:
         """Flush the active audit record to disk if one exists."""
@@ -368,6 +443,20 @@ class AuditHooks:
         self._attempts[step_key] = attempt
         return attempt
 
+    def record_run_init(
+        self,
+        program: NativeProgram,
+        *,
+        run_path: str,
+        pack_provenance: Mapping[str, Any] | None = None,
+    ) -> None:
+        self._write_run_init(
+            program_name=program.name,
+            program_stable_id=program.stable_id,
+            run_path=run_path,
+            pack_provenance=pack_provenance,
+        )
+
     # ── NativeRuntimeHooks callbacks ─────────────────────────────────
 
     def on_step_start(
@@ -377,6 +466,7 @@ class AuditHooks:
     ) -> dict[str, Any]:
         ctx = self._inner.on_step_start(instr, ctx)
         if self._audit_dir is not None:
+            self._write_run_init(run_path=self._resolve_run_path(ctx))
             step_key = self._step_key(instr)
             step_path = self._resolve_step_path(ctx)
             effect_meta = ctx.get("effect")

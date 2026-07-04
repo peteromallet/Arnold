@@ -98,7 +98,42 @@ from arnold.pipeline.native.reconcile import (
     reconcile_git_worktree,
 )
 from arnold.pipeline.native.start_from_path import start_from_trace
-from arnold.pipeline.native.audit import AuditHooks
+from arnold.pipeline.native.audit import AuditHooks, resolved_versions_by_stable_id_for_run
+from arnold.pipeline.native.pack_index import (
+    DependentRecord,
+    PackReverseIndex,
+)
+from arnold.pipeline.native.pack_metadata import (
+    DependencySpec,
+    ExportEntry,
+    LockfileEntry,
+    PackLockfile,
+    PackManifest,
+    compute_interface_hash,
+)
+from arnold.pipeline.native.pack_diff import (
+    DiffEntry,
+    DiffReport,
+    diff_pack_exports,
+    diff_pack_manifests,
+)
+from arnold.pipeline.native.pack_registry import (
+    PackRegistry,
+    RegisteredPackExport,
+    ResolvedPackExport,
+)
+from arnold.pipeline.native.pack_validation import (
+    PACK_CLOSURE_MAX_DEPTH,
+    PackClosureValidationError,
+    validate_shared_pack_closure,
+)
+from arnold.pipeline.native.pack_upgrade import (
+    PackUpgradeError,
+    PackUpgradePlan,
+    TransitiveImpact,
+    apply_pack_repin,
+    plan_pack_repin,
+)
 from arnold.pipeline.native.trace import NativeTraceHooks
 from arnold.pipeline.native.validator import (
     RoutingPurityDiagnostic,
@@ -110,8 +145,12 @@ from arnold.pipeline.native.validator import (
 __all__ = [
     "ACTION_TABLE",
     "AuditHooks",
+    "resolved_versions_by_stable_id_for_run",
+    "DependencySpec",
     "EffectClass",
     "EffectLedgerHooks",
+    "ExportEntry",
+    "LockfileEntry",
     "NATIVE_CURSOR_VERSION",
     "NativeCompileError",
     "NativeCursorCorruptError",
@@ -120,6 +159,9 @@ __all__ = [
     "CompositionEdge",
     "CompositionNode",
     "CompositionNodeKind",
+    "DiffEntry",
+    "DiffReport",
+    "DependentRecord",
     "DerivedGraph",
     "DynamicMapMetadata",
     "NativeCompositionGraph",
@@ -137,10 +179,20 @@ __all__ = [
     "NativeTopology",
     "NativeTraceHooks",
     "PATH_DELIMITER",
+    "PackLockfile",
+    "PackManifest",
+    "PackReverseIndex",
+    "PackRegistry",
+    "PackUpgradeError",
+    "PackUpgradePlan",
+    "PACK_CLOSURE_MAX_DEPTH",
     "ParallelInstruction",
     "ParallelMapInstruction",
+    "PackClosureValidationError",
     "PathSegment",
     "ROOT_PATH",
+    "RegisteredPackExport",
+    "ResolvedPackExport",
     "RoutingPurityDiagnostic",
     "RoutingPurityReport",
     "ReconcileActionTableEntry",
@@ -150,11 +202,16 @@ __all__ = [
     "Operation",
     "TopologyEdge",
     "TopologyNode",
+    "TransitiveImpact",
     "action_entry",
+    "apply_pack_repin",
     "compile_pipeline",
+    "compute_interface_hash",
     "decision",
     "derive_idempotency_key",
     "derive_topology",
+    "diff_pack_exports",
+    "diff_pack_manifests",
     "force_legacy_runtime",
     "get_decision_meta",
     "get_phase_meta",
@@ -175,6 +232,7 @@ __all__ = [
     "persist_native_cursor",
     "phase",
     "pipeline",
+    "plan_pack_repin",
     "project_graph",
     "read_native_cursor",
     "reconcile_file_write",
@@ -186,6 +244,7 @@ __all__ = [
     "start_from_trace",
     "step",
     "upgrade_graph_cursor_to_native",
+    "validate_shared_pack_closure",
     "validate_decision_body",
     "validate_pipeline_purity",
     "workflow",

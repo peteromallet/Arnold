@@ -679,6 +679,170 @@ class NativeTopology:
     path_delimiter: str = PATH_DELIMITER
     """Path delimiter used throughout this topology."""
 
+    # ── Query helpers ──────────────────────────────────────────────
+
+    def _node_map(self) -> dict[str, TopologyNode]:
+        """Return a dict mapping ``node_id`` → :class:`TopologyNode`."""
+        return {node.node_id: node for node in self.nodes}
+
+    def _edge_targets_by_source(self, kind: str) -> dict[str, list[str]]:
+        """Return ``{source_id: [target_id, ...]}`` for edges of *kind*."""
+        result: dict[str, list[str]] = {}
+        for edge in self.edges:
+            if edge.kind == kind:
+                result.setdefault(edge.source, []).append(edge.target)
+        return result
+
+    def _edge_sources_by_target(self, kind: str) -> dict[str, str]:
+        """Return ``{target_id: source_id}`` for edges of *kind*.
+
+        When multiple edges of the same kind point to the same target,
+        the last one wins (consistent with single-parent semantics for
+        containment edges).
+        """
+        result: dict[str, str] = {}
+        for edge in self.edges:
+            if edge.kind == kind:
+                result[edge.target] = edge.source
+        return result
+
+    def child(self, node_id: str) -> tuple[TopologyNode, ...]:
+        """Return the direct children of *node_id*.
+
+        Children are discovered via two complementary strategies:
+
+        1. **Edge-based** — edges whose ``source`` is *node_id* and
+           ``kind`` is ``'child_workflow'`` or ``'dynamic_map_item'``.
+
+        2. **Path-based** — nodes whose ``path`` is an immediate
+           child of this node's path in the tree (one additional
+           segment separated by :attr:`path_delimiter`).
+
+        Results are deduplicated and returned in declaration order.
+        """
+        node_map = self._node_map()
+        node = node_map.get(node_id)
+        if node is None:
+            return ()
+
+        seen: set[str] = set()
+
+        # Strategy 1: edge-based containment
+        containment_kinds = ("child_workflow", "dynamic_map_item")
+        for kind in containment_kinds:
+            targets = self._edge_targets_by_source(kind).get(node_id, [])
+            for target_id in targets:
+                if target_id not in seen and target_id in node_map:
+                    seen.add(target_id)
+
+        # Strategy 2: path-based immediate children
+        prefix = node.path + self.path_delimiter
+        for candidate in self.nodes:
+            if candidate.node_id in seen:
+                continue
+            if not candidate.path.startswith(prefix):
+                continue
+            remainder = candidate.path[len(prefix):]
+            if self.path_delimiter not in remainder:
+                seen.add(candidate.node_id)
+
+        return tuple(
+            node_map[nid] for nid in seen if nid in node_map
+        )
+
+    def parent(self, node_id: str) -> TopologyNode | None:
+        """Return the parent node of *node_id*, or ``None``.
+
+        Parent is discovered via two complementary strategies:
+
+        1. **Edge-based** — edges whose ``target`` is *node_id* and
+           ``kind`` is ``'child_workflow'`` or ``'dynamic_map_item'``.
+
+        2. **Path-based** — the node whose ``path`` is the direct
+           parent prefix of this node's path.
+
+        When both strategies produce candidates, edge-based wins.
+        """
+        node_map = self._node_map()
+        node = node_map.get(node_id)
+        if node is None:
+            return None
+
+        # Strategy 1: edge-based containment (preferred)
+        containment_kinds = ("child_workflow", "dynamic_map_item")
+        for kind in containment_kinds:
+            sources = self._edge_sources_by_target(kind)
+            if node_id in sources:
+                return node_map.get(sources[node_id])
+
+        # Strategy 2: path-based
+        segments = node.path.split(self.path_delimiter)
+        if len(segments) <= 1:
+            return None
+        parent_path = self.path_delimiter.join(segments[:-1])
+        return node_map.get(parent_path)
+
+    def ancestors(self, node_id: str) -> tuple[TopologyNode, ...]:
+        """Return all ancestor nodes from immediate parent up to root.
+
+        Ancestors are returned in order from nearest to farthest
+        (parent, grandparent, ...).  The root-most ancestor is last.
+        """
+        result: list[TopologyNode] = []
+        visited: set[str] = {node_id}
+        current = self.parent(node_id)
+        while current is not None:
+            if current.node_id in visited:
+                break  # safety: cycle guard
+            visited.add(current.node_id)
+            result.append(current)
+            current = self.parent(current.node_id)
+        return tuple(result)
+
+    def descendants(self, node_id: str) -> tuple[TopologyNode, ...]:
+        """Return all descendant nodes via BFS over children.
+
+        Descendants are returned in breadth-first order.
+        """
+        node_map = self._node_map()
+        if node_id not in node_map:
+            return ()
+
+        result: list[TopologyNode] = []
+        visited: set[str] = {node_id}
+        queue: list[str] = [node_id]
+
+        while queue:
+            current_id = queue.pop(0)
+            for child_node in self.child(current_id):
+                if child_node.node_id not in visited:
+                    visited.add(child_node.node_id)
+                    result.append(child_node)
+                    queue.append(child_node.node_id)
+
+        return tuple(result)
+
+    def lookup_by_stable_id(self, stable_id: str) -> tuple[TopologyNode, ...]:
+        """Return all nodes whose :attr:`TopologyNode.stable_id` matches."""
+        if not stable_id:
+            return ()
+        return tuple(
+            node for node in self.nodes if node.stable_id == stable_id
+        )
+
+    def lookup_by_path_prefix(self, prefix: str) -> tuple[TopologyNode, ...]:
+        """Return nodes whose :attr:`TopologyNode.path` starts with *prefix*.
+
+        The prefix comparison is a simple ``str.startswith`` on the
+        machine-identity path.  Results are returned in declaration
+        order.
+        """
+        if not prefix:
+            return ()
+        return tuple(
+            node for node in self.nodes if node.path.startswith(prefix)
+        )
+
 
 # Compatibility alias — NativeTopology is the canonical name.
 DerivedGraph = NativeTopology
@@ -841,6 +1005,97 @@ class NativeCompositionGraph:
         return tuple(
             node for node in self.nodes.values() if node.kind == kind
         )
+
+    # ── Query helpers ──────────────────────────────────────────────
+
+    def child(self, node_id: str) -> tuple[CompositionNode, ...]:
+        """Return the direct children of *node_id* via :attr:`CompositionNode.child_ids`.
+
+        Returns an empty tuple when *node_id* is unknown or has no children.
+        """
+        node = self.nodes.get(node_id)
+        if node is None:
+            return ()
+        return tuple(
+            self.nodes[child_id]
+            for child_id in node.child_ids
+            if child_id in self.nodes
+        )
+
+    def parent(self, node_id: str) -> CompositionNode | None:
+        """Return the parent node of *node_id*, or ``None``.
+
+        Uses :attr:`CompositionNode.parent_id` for direct lookup.
+        """
+        node = self.nodes.get(node_id)
+        if node is None or node.parent_id is None:
+            return None
+        return self.nodes.get(node.parent_id)
+
+    def ancestors(self, node_id: str) -> tuple[CompositionNode, ...]:
+        """Return all ancestor nodes from immediate parent up to root.
+
+        Ancestors are returned in order from nearest to farthest
+        (parent, grandparent, ...).  The root-most ancestor is last.
+        """
+        result: list[CompositionNode] = []
+        visited: set[str] = {node_id}
+        current = self.parent(node_id)
+        while current is not None:
+            if current.node_id in visited:
+                break  # safety: cycle guard
+            visited.add(current.node_id)
+            result.append(current)
+            current = self.parent(current.node_id)
+        return tuple(result)
+
+    def descendants(self, node_id: str) -> tuple[CompositionNode, ...]:
+        """Return all descendant nodes via BFS over children.
+
+        Descendants are returned in breadth-first order.
+        """
+        if node_id not in self.nodes:
+            return ()
+
+        result: list[CompositionNode] = []
+        visited: set[str] = {node_id}
+        queue: list[str] = [node_id]
+
+        while queue:
+            current_id = queue.pop(0)
+            for child_node in self.child(current_id):
+                if child_node.node_id not in visited:
+                    visited.add(child_node.node_id)
+                    result.append(child_node)
+                    queue.append(child_node.node_id)
+
+        return tuple(result)
+
+    def lookup_by_stable_id(self, stable_id: str) -> tuple[CompositionNode, ...]:
+        """Return all nodes whose :attr:`CompositionNode.stable_id` matches."""
+        if not stable_id:
+            return ()
+        return tuple(
+            node for node in self.nodes.values()
+            if node.stable_id == stable_id
+        )
+
+    def lookup_by_path_prefix(self, prefix: str) -> tuple[CompositionNode, ...]:
+        """Return nodes whose stable path starts with *prefix*.
+
+        The stable path is built by joining :attr:`CompositionNode.path_segments`
+        with ``/``.  The prefix comparison is a simple ``str.startswith``.
+        Results are returned in stable path order.
+        """
+        if not prefix:
+            return ()
+        matching = [
+            node
+            for node in self.nodes.values()
+            if "/".join(node.path_segments).startswith(prefix)
+        ]
+        matching.sort(key=lambda n: "/".join(n.path_segments))
+        return tuple(matching)
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> NativeCompositionGraph:

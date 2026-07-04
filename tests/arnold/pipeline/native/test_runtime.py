@@ -37,6 +37,7 @@ from arnold.pipeline.native import (
 )
 from arnold.pipeline.native.checkpoint import read_native_cursor
 from arnold.pipeline.native.hooks import EffectLedgerHooks, NullNativeRuntimeHooks
+from arnold.pipeline.native.ir import ParallelMapInstruction
 from arnold.pipeline.types import ContractResult, ContractStatus, HumanSuspension, StepResult
 from arnold.runtime.envelope import RunEnvelope
 
@@ -1965,6 +1966,69 @@ class TestWhileLoopExecution:
             match="Runtime subpipeline cycle detected: workflow.recursive -> workflow.recursive",
         ):
             run_native_pipeline(recursive)
+
+    def test_runtime_entry_validation_rejects_parallel_map_cycle_before_execution(self) -> None:
+        phase_calls: list[str] = []
+
+        def setup(ctx: object) -> dict:
+            phase_calls.append("setup")
+            return {}
+
+        root = NativeProgram(
+            name="mapper_parent",
+            stable_id="workflow.mapper_parent",
+            instructions=(
+                NativeInstruction(pc=0, op="phase", name="setup", func=setup, next_pc=1),
+                NativeInstruction(pc=1, op="parallel_map", name="fanout", next_pc=2),
+                NativeInstruction(pc=2, op="halt"),
+            ),
+        )
+        child = NativeProgram(
+            name="mapper_child",
+            stable_id="workflow.mapper_child",
+            instructions=(
+                NativeInstruction(
+                    pc=0,
+                    op="subpipeline",
+                    name="parent_call",
+                    subprogram=root,
+                ),
+                NativeInstruction(pc=1, op="halt"),
+            ),
+        )
+        object.__setattr__(
+            root,
+            "instructions",
+            (
+                root.instructions[0],
+                NativeInstruction(
+                    pc=1,
+                    op="parallel_map",
+                    name="fanout",
+                    subprogram=ParallelMapInstruction(
+                        name="fanout",
+                        items_ref="items",
+                        mapper=child,
+                        mapper_name="mapper_child",
+                        path_template="fanout/{index}",
+                        merge_pc=2,
+                    ),
+                    next_pc=2,
+                ),
+                root.instructions[2],
+            ),
+        )
+
+        with pytest.raises(
+            NativeRuntimeError,
+            match=(
+                "Runtime subpipeline cycle detected: "
+                "workflow.mapper_parent -> workflow.mapper_child -> workflow.mapper_parent"
+            ),
+        ):
+            run_native_pipeline(root, initial_state={"items": [1]})
+
+        assert phase_calls == []
 
 
 # ── NativeExecutionResult ─────────────────────────────────────────────
