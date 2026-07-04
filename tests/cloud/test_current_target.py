@@ -339,6 +339,52 @@ def test_resolve_current_target_uses_existing_fallback_chain_state_candidate(tmp
     ]
 
 
+def test_resolve_current_target_prefers_terminal_plan_over_stale_chain_state(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    plan_name = "m3-current-plan"
+    _write_marker(
+        marker_dir / "demo-session.json",
+        {
+            "session": "demo-session",
+            "workspace": str(workspace),
+            "remote_spec": str(spec_path),
+            "run_kind": "chain",
+        },
+    )
+    _write_chain_state(
+        _chain_state_path(workspace, spec_path),
+        {"current_plan_name": plan_name, "last_state": "executed"},
+    )
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {"name": plan_name, "current_state": "done"},
+    )
+
+    record = resolve_current_target("demo-session", marker_dir=marker_dir, repair_data_dir=repair_data_dir)
+
+    assert record["authoritative_source"] == "plan_state"
+    assert record["current_refs"]["current_plan_name"] == plan_name
+    assert record["current_refs"]["plan_current_state"] == "done"
+    assert record["stale_evidence"] == [
+        {
+            "kind": "stale_chain_state_after_terminal_plan",
+            "path": str(_chain_state_path(workspace, spec_path)),
+            "plan_name": plan_name,
+            "plan_state": "done",
+            "chain_last_state": "executed",
+        }
+    ]
+    assert "terminal plan state supersedes stale chain state" in record["rationale"]
+
+
 def test_resolve_current_target_tolerates_partial_evidence_fixture(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     repair_data_dir = marker_dir / "repair-data"
