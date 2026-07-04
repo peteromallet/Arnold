@@ -3122,7 +3122,8 @@ PY
 compute_meta_repair_trigger() {
   local session="$1"
   local current_target_observation="${2:-}"
-  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$REPAIR_DATA_DIR" "$MARKER_DIR" "$current_target_observation" <<'PY'
+  local current_health="${3:-}"
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$REPAIR_DATA_DIR" "$MARKER_DIR" "$current_target_observation" "$current_health" <<'PY'
 import json
 import pathlib
 import sys
@@ -3131,7 +3132,7 @@ from typing import Any
 from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
 from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
 
-session, repair_data_dir_raw, marker_dir_raw, current_target_observation_raw = sys.argv[1:]
+session, repair_data_dir_raw, marker_dir_raw, current_target_observation_raw, current_health = sys.argv[1:]
 repair_data_dir = pathlib.Path(repair_data_dir_raw)
 marker_dir = pathlib.Path(marker_dir_raw)
 repair_data_path = repair_data_dir / f"{session}.repair-data.json"
@@ -3160,6 +3161,15 @@ if current_target_observation_raw:
         loaded_observation = {}
     if isinstance(loaded_observation, dict):
         resolver_record = loaded_observation
+
+active_step_heartbeat = resolver_record.get("active_step_heartbeat")
+if (
+    current_health == "alive"
+    and isinstance(active_step_heartbeat, dict)
+    and bool(active_step_heartbeat.get("active"))
+):
+    print("NO_TRIGGER")
+    raise SystemExit(0)
 
 
 def strings_from(value: Any) -> list[str]:
@@ -5321,7 +5331,7 @@ PY
       return 0
     fi
     local meta_repair_trigger meta_dispatch_result
-    meta_repair_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation")"
+    meta_repair_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation" "$health")"
     if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
       if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items" "${meta_repair_trigger#TRIGGER:}"; then
         meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
@@ -5643,7 +5653,7 @@ PY
       return 0
     fi
     local meta_repair_trigger meta_dispatch_result
-    meta_repair_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation")"
+    meta_repair_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation" "$health")"
     if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
       if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items" "${meta_repair_trigger#TRIGGER:}"; then
         meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"

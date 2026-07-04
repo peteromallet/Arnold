@@ -1566,6 +1566,34 @@ class TestCheckMetaRepairRecursion:
         assert result.recursing is False
         assert result.existing_meta_repair_ids == ()
 
+    def test_input_too_large_record_does_not_poison_recursion(
+        self, tmp_path: Path
+    ) -> None:
+        repair_dir = tmp_path / "repair-data"
+        meta_dir = repair_dir / "meta"
+        meta_dir.mkdir(parents=True)
+
+        record = {
+            "meta_repair_id": "mr-input-too-large",
+            "session": "recursion-test",
+            "trigger": "repair_timeout",
+            "diagnosis": "Codex meta-repair prompt exceeded input limit; see meta-repair log.",
+            "subagent_results": {
+                "codex_response": "Input exceeds the maximum length of 1048576 characters. (code -32602)"
+            },
+            "outcome": "Codex meta-repair prompt exceeded input limit; see meta-repair log.",
+        }
+        (meta_dir / "mr-input-too-large.json").write_text(
+            json.dumps(record), encoding="utf-8"
+        )
+
+        result = check_meta_repair_recursion(
+            session="recursion-test",
+            repair_data_dir=repair_dir,
+        )
+        assert result.recursing is False
+        assert result.existing_meta_repair_ids == ()
+
     def test_existing_record_for_different_session_is_not_recursion(
         self, tmp_path: Path
     ) -> None:

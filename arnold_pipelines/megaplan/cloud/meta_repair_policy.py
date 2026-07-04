@@ -39,9 +39,12 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
 
 _CODEX_LAUNCH_FAILURE_NEEDLES = (
     "Codex meta-repair orchestrator returned no output",
+    "Codex meta-repair prompt exceeded input limit",
     "Not inside a trusted directory",
     "--skip-git-repo-check was not specified",
     "codex CLI missing; no automated meta-repair",
+    "Input exceeds the maximum length",
+    "input_too_large",
 )
 
 

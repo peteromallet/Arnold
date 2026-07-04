@@ -629,10 +629,13 @@ def _text_has_meta_launch_failure(text):
         return False
     needles = (
         "Codex meta-repair orchestrator returned no output",
+        "Codex meta-repair prompt exceeded input limit",
         "Not inside a trusted directory",
         "--skip-git-repo-check was not specified",
         "codex CLI missing; no automated meta-repair",
         "failed to launch DeepSeek/Hermes subagents",
+        "Input exceeds the maximum length",
+        "input_too_large",
     )
     return any(needle in text for needle in needles)
 

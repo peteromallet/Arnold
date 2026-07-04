@@ -327,7 +327,11 @@ if command -v codex >/dev/null 2>&1; then
   redact_file_in_place "$RESP_PATH"
   redact_file_in_place "$ERR_PATH"
   if [[ ! -s "$RESP_PATH" ]]; then
-    echo "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/Hermes subagents); see meta-repair log." > "$RESP_PATH"
+    if grep -qE 'Input exceeds the maximum length|input_too_large' "$ERR_PATH" 2>/dev/null; then
+      echo "Codex meta-repair prompt exceeded input limit; see meta-repair log." > "$RESP_PATH"
+    else
+      echo "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/Hermes subagents); see meta-repair log." > "$RESP_PATH"
+    fi
   fi
 else
   log "codex CLI missing; cannot dispatch meta-repair"
@@ -338,7 +342,7 @@ fi
 RESP_TEXT="$(cat "$RESP_PATH")"
 log "codex response $(wc -l <<<"$RESP_TEXT" | tr -d ' ') lines"
 
-if grep -qE 'Codex meta-repair orchestrator returned no output|Not inside a trusted directory|--skip-git-repo-check was not specified' "$RESP_PATH" "$ERR_PATH" 2>/dev/null; then
+if grep -qE 'Codex meta-repair orchestrator returned no output|Codex meta-repair prompt exceeded input limit|Not inside a trusted directory|--skip-git-repo-check was not specified|Input exceeds the maximum length|input_too_large' "$RESP_PATH" "$ERR_PATH" 2>/dev/null; then
   log "codex launch failed before producing a recordable meta-repair response; leaving recursion guard unpoisoned"
   exit 1
 fi
