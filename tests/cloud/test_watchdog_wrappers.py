@@ -7707,6 +7707,78 @@ def test_compute_meta_repair_trigger_skips_recurring_retry_when_session_alive(
     assert result.stdout.strip() == "NO_TRIGGER"
 
 
+def test_compute_meta_repair_trigger_skips_partial_liveness_when_session_alive(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "outcome": "running",
+                "attempts": [
+                    {"attempt_id": 1, "failure_classification": "blocked_state_or_recovery_error"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    sidecar_dir = marker_dir / "repair-data.d" / "events"
+    sidecar_dir.mkdir(parents=True)
+    (sidecar_dir / "events.jsonl").write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "outcome": "partial_liveness",
+                    "recorded_at": f"2026-07-04T10:1{i}:00Z",
+                }
+            )
+            for i in range(2)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    observation = json.dumps(
+        {
+            "authoritative_source": "chain_state",
+            "current_refs": {
+                "current_plan_name": "m4-clip-type-shader-and-20260704-0427",
+                "chain_last_state": "finalized",
+                "plan_current_state": "finalized",
+            },
+            "plan_state": {
+                "present": True,
+                "current_state": "finalized",
+            },
+            "chain_state": {
+                "present": True,
+                "last_state": "finalized",
+            },
+            "active_step_heartbeat": {
+                "active": False,
+            },
+        }
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            (
+                f"compute_meta_repair_trigger demo-session "
+                f"{shlex.quote(observation)} alive"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "NO_TRIGGER"
+
+
 def test_launch_chain_tick_dispatches_meta_repair_on_true_blocker_discord_failure(tmp_path: Path) -> None:
     paths = _prepare_meta_repair_launch_chain_tick_fixture(
         tmp_path,
