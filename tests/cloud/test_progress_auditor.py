@@ -2908,7 +2908,9 @@ class TestStageMetricsArtifactCounters:
         patch_dir.mkdir(parents=True, exist_ok=True)
         (patch_dir / "sitecustomize.py").write_text(
             """
+import arnold_pipelines.megaplan.cloud.watchdog as watchdog
 import arnold_pipelines.megaplan.cloud.six_hour_auditor as auditor
+import arnold_pipelines.megaplan.incident.summaries as summaries
 
 def fake_build_audit_input(session, root, now):
     return {
@@ -2950,8 +2952,10 @@ def fake_audit_projection_input(*args, **kwargs):
         "audit_complete": {"outcome": "escalated", "next_expected_event": "watchdog.dispatch"},
     }
 
+watchdog.build_audit_input = fake_build_audit_input
 auditor.build_audit_input = fake_build_audit_input
 auditor.audit_projection_input = fake_audit_projection_input
+summaries.write_projection_summaries = lambda **kwargs: None
 """.strip()
             + "\n",
             encoding="utf-8",
