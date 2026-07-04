@@ -377,6 +377,60 @@ payload = merge_additive_fields(payload, verification=verification)
 save_repair_data(path, payload)
 PY
     fi
+    repair_lock_output="$(
+      PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$REPAIR_LOCK_DIR" "$SESSION" "$$" "$WORKSPACE" "$0" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" <<'PY'
+import json
+import os
+import sys
+
+from arnold_pipelines.megaplan.cloud.repair_lock import acquire_repair_lock, release_repair_lock
+
+lock_dir, session, pid_text, workspace, *command_parts = sys.argv[1:]
+
+def is_pid_live(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+release_repair_lock(lock_dir)
+result = acquire_repair_lock(
+    lock_dir,
+    session=session,
+    pid=int(pid_text),
+    command=" ".join(command_parts),
+    cwd=workspace,
+    is_pid_live=is_pid_live,
+)
+owner_pid = ""
+if isinstance(result.owner, dict):
+    owner_pid = str(result.owner.get("pid") or "")
+print(result.status)
+print(owner_pid)
+print(json.dumps(result.stale_evidence or {}, sort_keys=True))
+PY
+    )" || repair_lock_output=""
+    _repair_lock_result=()
+    while IFS= read -r line; do
+      _repair_lock_result+=("$line")
+    done <<EOF
+$repair_lock_output
+EOF
+    lock_status="${_repair_lock_result[0]:-}"
+    lock_owner_pid="${_repair_lock_result[1]:-}"
+    stale_lock_json="${_repair_lock_result[2]:-}"
+    if [[ -z "$stale_lock_json" ]]; then
+      stale_lock_json='{}'
+    fi
+    if [[ "$lock_status" == "busy" ]]; then
+      log "another repair loop is already active after stale lock recovery; exiting session=$SESSION owner_pid=${lock_owner_pid:-unknown} pidfile=$REPAIR_PID_FILE"
+      return 1
+    fi
+    if [[ "$lock_status" == "acquired" ]]; then
+      REPAIR_LOCK_DIR_OWNED=1
+      log "stale repair lock reclaimed session=$SESSION lock_dir=$REPAIR_LOCK_DIR"
+    fi
   fi
   while true; do
     if ( set -o noclobber; printf '%s\n' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then
