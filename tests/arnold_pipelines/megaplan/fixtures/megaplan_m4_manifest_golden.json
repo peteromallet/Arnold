@@ -197,9 +197,16 @@
     }
   ],
   "id": "megaplan",
-  "manifest_hash": "sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba",
+  "manifest_hash": "sha256:450be0a9526590ed43f3f11ab75c3125d049d2210409d923636afff9ab035add",
   "metadata": {
     "max_critique_iterations": 4,
+    "policy_refs": [
+      "megaplan:default",
+      "megaplan:model-routing",
+      "megaplan:robustness",
+      "megaplan:artifact-contract",
+      "megaplan:suspension"
+    ],
     "product": "megaplan"
   },
   "nodes": [
@@ -252,7 +259,13 @@
         },
         "output_bindings": {
           "execute_payload": {}
-        }
+        },
+        "policy_refs": [
+          "megaplan:execute",
+          "megaplan:model-routing",
+          "megaplan:artifact-contract",
+          "megaplan:suspension"
+        ]
       },
       "outputs": [
         "execute_payload"
@@ -260,13 +273,62 @@
       "policy": {
         "authority": [],
         "control_transitions": [],
-        "effects": [],
-        "reducers": [],
-        "suspension_routes": [],
-        "timing": {
-          "timeout_seconds": 300.0
+        "effects": [
+          {
+            "effect_id": "artifact.execute.receipt",
+            "payload_ref": "execute.execute_payload",
+            "route": "default"
+          },
+          {
+            "effect_id": "artifact.execute.checkpoint",
+            "payload_ref": "execute.execute_payload",
+            "route": "default"
+          }
+        ],
+        "escalation": {
+          "backoff": "exponential",
+          "escalate_after_attempts": 2,
+          "policy_ref": "megaplan:override",
+          "targets": [
+            "override"
+          ]
         },
-        "topology_overlays": []
+        "reducers": [],
+        "retry": {
+          "backoff": "exponential",
+          "max_attempts": 2,
+          "retry_on": [
+            "timeout",
+            "worker_transient"
+          ]
+        },
+        "suspension_routes": [
+          {
+            "capability_id": "megaplan:planning",
+            "reentry_id": "execute:resume",
+            "resume_payload_ref": "execute.execute_payload",
+            "resume_schema_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
+            "route_id": "execute:resume"
+          }
+        ],
+        "timing": {
+          "deadline_ref": "state.meta.execution_deadline",
+          "timeout_seconds": 300.0,
+          "ttl_seconds": 3600.0
+        },
+        "topology_overlays": [
+          {
+            "condition_ref": "task.complexity",
+            "overlay_id": "execute:task-complexity-route",
+            "overlay_type": "model_route",
+            "source_ref": "finalize.task_complexity_route",
+            "target_refs": [
+              "execute.batch.solo",
+              "execute.batch.standard",
+              "execute.batch.premium"
+            ]
+          }
+        ]
       }
     },
     {
@@ -285,7 +347,11 @@
         },
         "output_bindings": {
           "finalize_payload": {}
-        }
+        },
+        "policy_refs": [
+          "megaplan:default",
+          "megaplan:artifact-contract"
+        ]
       },
       "outputs": [
         "finalize_payload"
@@ -420,21 +486,175 @@
         },
         "output_bindings": {
           "override_result": {}
-        }
+        },
+        "override_actions": [
+          "abort",
+          "add-note",
+          "adopt-execution",
+          "force-proceed",
+          "recover-blocked",
+          "replan",
+          "resume-clarify",
+          "set-model",
+          "set-profile",
+          "set-robustness",
+          "set-vendor"
+        ],
+        "policy_refs": [
+          "megaplan:override",
+          "megaplan:model-routing"
+        ]
       },
       "outputs": [
         "override_result"
       ],
       "policy": {
-        "authority": [],
+        "authority": [
+          {
+            "action": "apply",
+            "authority_id": "human.override",
+            "capability_id": "human:gate"
+          },
+          {
+            "action": "resume",
+            "authority_id": "human.override",
+            "capability_id": "human:gate"
+          }
+        ],
         "control_transitions": [],
-        "effects": [],
+        "effects": [
+          {
+            "effect_id": "override.add_note",
+            "payload_ref": "override.override_result",
+            "route": "default"
+          },
+          {
+            "effect_id": "override.set_model",
+            "payload_ref": "override.override_result",
+            "route": "default"
+          },
+          {
+            "effect_id": "override.set_profile",
+            "payload_ref": "override.override_result",
+            "route": "default"
+          },
+          {
+            "effect_id": "override.set_robustness",
+            "payload_ref": "override.override_result",
+            "route": "default"
+          },
+          {
+            "effect_id": "override.set_vendor",
+            "payload_ref": "override.override_result",
+            "route": "default"
+          }
+        ],
         "reducers": [],
         "suspension_routes": [],
         "timing": {
           "timeout_seconds": 300.0
         },
-        "topology_overlays": []
+        "topology_overlays": [
+          {
+            "condition_ref": "override.action.eq.abort",
+            "overlay_id": "override:abort",
+            "overlay_type": "terminal_route",
+            "source_ref": "override.action",
+            "target_refs": [
+              "halt"
+            ]
+          },
+          {
+            "condition_ref": "override.action.eq.add-note",
+            "overlay_id": "override:add-note",
+            "overlay_type": "additive_config",
+            "source_ref": "override.action",
+            "target_refs": [
+              "current-phase"
+            ]
+          },
+          {
+            "condition_ref": "override.action.eq.adopt-execution",
+            "overlay_id": "override:adopt-execution",
+            "overlay_type": "terminal_route",
+            "source_ref": "override.action",
+            "target_refs": [
+              "review"
+            ]
+          },
+          {
+            "condition_ref": "override.action.eq.force-proceed",
+            "overlay_id": "override:force-proceed",
+            "overlay_type": "terminal_route",
+            "source_ref": "override.action",
+            "target_refs": [
+              "finalize"
+            ]
+          },
+          {
+            "condition_ref": "override.action.eq.recover-blocked",
+            "overlay_id": "override:recover-blocked",
+            "overlay_type": "terminal_route",
+            "source_ref": "override.action",
+            "target_refs": [
+              "current-phase"
+            ]
+          },
+          {
+            "condition_ref": "override.action.eq.replan",
+            "overlay_id": "override:replan",
+            "overlay_type": "terminal_route",
+            "source_ref": "override.action",
+            "target_refs": [
+              "revise"
+            ]
+          },
+          {
+            "condition_ref": "override.action.eq.resume-clarify",
+            "overlay_id": "override:resume-clarify",
+            "overlay_type": "terminal_route",
+            "source_ref": "override.action",
+            "target_refs": [
+              "plan"
+            ]
+          },
+          {
+            "condition_ref": "override.action.eq.set-model",
+            "overlay_id": "override:set-model",
+            "overlay_type": "additive_config",
+            "source_ref": "override.action",
+            "target_refs": [
+              "current-phase"
+            ]
+          },
+          {
+            "condition_ref": "override.action.eq.set-profile",
+            "overlay_id": "override:set-profile",
+            "overlay_type": "additive_config",
+            "source_ref": "override.action",
+            "target_refs": [
+              "current-phase"
+            ]
+          },
+          {
+            "condition_ref": "override.action.eq.set-robustness",
+            "overlay_id": "override:set-robustness",
+            "overlay_type": "additive_config",
+            "source_ref": "override.action",
+            "target_refs": [
+              "current-phase"
+            ]
+          },
+          {
+            "condition_ref": "override.action.eq.set-vendor",
+            "overlay_id": "override:set-vendor",
+            "overlay_type": "additive_config",
+            "source_ref": "override.action",
+            "target_refs": [
+              "current-phase"
+            ]
+          }
+        ]
       }
     },
     {
@@ -512,7 +732,12 @@
         },
         "output_bindings": {
           "review_payload": {}
-        }
+        },
+        "policy_refs": [
+          "megaplan:review",
+          "megaplan:artifact-contract",
+          "megaplan:suspension"
+        ]
       },
       "outputs": [
         "review_payload"
@@ -533,20 +758,81 @@
             "transition_id": "review:done",
             "transition_type": "override",
             "trigger_ref": "review.verdict"
+          },
+          {
+            "policy_ref": "megaplan:review",
+            "target_ref": "override",
+            "transition_id": "review:blocked",
+            "transition_type": "escalation",
+            "trigger_ref": "review.verdict"
+          },
+          {
+            "policy_ref": "megaplan:review",
+            "target_ref": "halt",
+            "transition_id": "review:force_proceeded",
+            "transition_type": "override",
+            "trigger_ref": "review.verdict"
+          },
+          {
+            "policy_ref": "megaplan:review",
+            "target_ref": "halt",
+            "transition_id": "review:deferred_human",
+            "transition_type": "fallback",
+            "trigger_ref": "review.verdict"
           }
         ],
-        "effects": [],
+        "effects": [
+          {
+            "effect_id": "artifact.review.receipt",
+            "payload_ref": "review.review_payload",
+            "route": "default"
+          },
+          {
+            "effect_id": "artifact.review.output",
+            "payload_ref": "review.review_payload",
+            "route": "default"
+          }
+        ],
+        "escalation": {
+          "backoff": "manual_review",
+          "escalate_after_attempts": 4,
+          "policy_ref": "megaplan:override",
+          "targets": [
+            "override"
+          ]
+        },
         "reducers": [],
+        "retry": {
+          "backoff": "manual_review",
+          "max_attempts": 4,
+          "retry_on": [
+            "rework",
+            "transient_failure"
+          ]
+        },
         "suspension_routes": [
           {
             "capability_id": "human:review",
+            "resume_payload_ref": "review.review_payload",
+            "resume_schema_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
             "route_id": "review:human"
           }
         ],
         "timing": {
           "timeout_seconds": 300.0
         },
-        "topology_overlays": []
+        "topology_overlays": [
+          {
+            "condition_ref": "review.cap_exhausted",
+            "overlay_id": "review:cap-exhausted",
+            "overlay_type": "review_cap",
+            "source_ref": "review.verdict",
+            "target_refs": [
+              "override",
+              "halt"
+            ]
+          }
+        ]
       }
     },
     {
@@ -695,13 +981,120 @@
   "policy": {
     "authority": [],
     "control_transitions": [],
-    "effects": [],
+    "effects": [
+      {
+        "effect_id": "artifact.finalize.plan",
+        "payload_ref": "finalize.finalize_payload",
+        "route": "default"
+      },
+      {
+        "effect_id": "artifact.execute.receipt",
+        "payload_ref": "execute.execute_payload",
+        "route": "default"
+      },
+      {
+        "effect_id": "artifact.review.receipt",
+        "payload_ref": "review.review_payload",
+        "route": "default"
+      }
+    ],
     "reducers": [],
-    "suspension_routes": [],
+    "suspension_routes": [
+      {
+        "capability_id": "human:gate",
+        "resume_payload_ref": "gate.gate_payload",
+        "resume_schema_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
+        "route_id": "gate:human"
+      },
+      {
+        "capability_id": "human:review",
+        "resume_payload_ref": "review.review_payload",
+        "resume_schema_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
+        "route_id": "review:human"
+      },
+      {
+        "capability_id": "megaplan:planning",
+        "reentry_id": "revise:loop",
+        "resume_payload_ref": "revise.revise_payload",
+        "resume_schema_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
+        "route_id": "revise:loop"
+      },
+      {
+        "capability_id": "megaplan:planning",
+        "reentry_id": "tiebreaker:loop",
+        "resume_payload_ref": "tiebreaker_decide.decision",
+        "resume_schema_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
+        "route_id": "tiebreaker:loop"
+      },
+      {
+        "capability_id": "megaplan:planning",
+        "reentry_id": "execute:resume",
+        "resume_payload_ref": "execute.execute_payload",
+        "resume_schema_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
+        "route_id": "execute:resume"
+      }
+    ],
     "timing": {
       "timeout_seconds": 300.0
     },
-    "topology_overlays": []
+    "topology_overlays": [
+      {
+        "condition_ref": "phase.route",
+        "overlay_id": "model-routing:phase",
+        "overlay_type": "model_route",
+        "source_ref": "state.config.phase_model",
+        "target_refs": [
+          "prep",
+          "plan",
+          "critique",
+          "gate",
+          "revise",
+          "tiebreaker_run",
+          "tiebreaker_decide",
+          "finalize",
+          "execute",
+          "review"
+        ]
+      },
+      {
+        "condition_ref": "task.complexity",
+        "overlay_id": "model-routing:task-complexity",
+        "overlay_type": "model_route",
+        "source_ref": "finalize.task_complexity_route",
+        "target_refs": [
+          "execute.batch.solo",
+          "execute.batch.standard",
+          "execute.batch.premium"
+        ]
+      },
+      {
+        "condition_ref": "gate.awaiting_human",
+        "overlay_id": "suspension:gate-human",
+        "overlay_type": "suspension_point",
+        "source_ref": "gate.recommendation",
+        "target_refs": [
+          "gate:human"
+        ]
+      },
+      {
+        "condition_ref": "review.deferred_human",
+        "overlay_id": "suspension:review-human",
+        "overlay_type": "suspension_point",
+        "source_ref": "review.verdict",
+        "target_refs": [
+          "review:human"
+        ]
+      },
+      {
+        "condition_ref": "execute.partial_failure",
+        "overlay_id": "suspension:execute-resume",
+        "overlay_type": "suspension_point",
+        "source_ref": "execute.execute_payload",
+        "target_refs": [
+          "execute:resume"
+        ]
+      }
+    ]
   },
   "schema_version": "arnold.workflow.manifest.v1",
   "topology_hash": "sha256:2705e157e12fc074301afa8f5aec4e48d9820814ebaaa77535d152a8cc381fd4",

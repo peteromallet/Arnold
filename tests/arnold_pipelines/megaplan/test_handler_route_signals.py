@@ -8,9 +8,14 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PLAN_PATH = REPO_ROOT / "arnold_pipelines" / "megaplan" / "handlers" / "plan.py"
 GATE_PATH = REPO_ROOT / "arnold_pipelines" / "megaplan" / "handlers" / "gate.py"
 TIEBREAKER_PATH = REPO_ROOT / "arnold_pipelines" / "megaplan" / "handlers" / "_tiebreaker_impl.py"
+TIEBREAKER_RUNTIME_PATH = REPO_ROOT / "arnold_pipelines" / "megaplan" / "orchestration" / "tiebreaker_runtime.py"
 REVIEW_PATH = REPO_ROOT / "arnold_pipelines" / "megaplan" / "handlers" / "review.py"
 OVERRIDE_PATH = REPO_ROOT / "arnold_pipelines" / "megaplan" / "handlers" / "override.py"
+CRITIQUE_PATH = REPO_ROOT / "arnold_pipelines" / "megaplan" / "handlers" / "critique.py"
+SHARED_PATH = REPO_ROOT / "arnold_pipelines" / "megaplan" / "handlers" / "shared.py"
+ROUTE_DISPATCH_PATH = REPO_ROOT / "arnold_pipelines" / "megaplan" / "route_dispatch.py"
 FORBIDDEN_TRANSITION_HELPERS = {"workflow_transition", "workflow_next", "_next_progress_step"}
+FORBIDDEN_CRITIQUE_HELPERS = {"run_parallel_critique"}
 FORBIDDEN_GATE_TARGETS = {"finalize", "revise", "tiebreaker_run", "override", "halt", "gate"}
 FORBIDDEN_TIEBREAKER_TARGETS = {"finalize", "critique", "override"}
 FORBIDDEN_REVIEW_TARGETS = {"execute", "review", "halt", "finalize", "revise"}
@@ -103,13 +108,23 @@ class TestGateSignals:
         assert FORBIDDEN_GATE_TARGETS.isdisjoint(strings)
 
 
+class TestCritiqueSignals:
+    def test_handle_critique_avoids_transition_and_fanout_helpers(self) -> None:
+        calls = _called_names(_function_node(CRITIQUE_PATH, "handle_critique"))
+        assert calls.isdisjoint(FORBIDDEN_TRANSITION_HELPERS | FORBIDDEN_CRITIQUE_HELPERS)
+
+    def test_handle_revise_avoids_transition_helpers(self) -> None:
+        calls = _called_names(_function_node(CRITIQUE_PATH, "handle_revise"))
+        assert calls.isdisjoint(FORBIDDEN_TRANSITION_HELPERS)
+
+
 class TestTiebreakerSignals:
     def test_handle_tiebreaker_decide_avoids_transition_helpers(self) -> None:
         calls = _called_names(_function_node(TIEBREAKER_PATH, "handle_tiebreaker_decide"))
         assert calls.isdisjoint(FORBIDDEN_TRANSITION_HELPERS)
 
     def test_tiebreaker_route_signal_helper_uses_route_labels_not_targets(self) -> None:
-        func = _function_node(TIEBREAKER_PATH, "_route_signal_for_tiebreaker_action")
+        func = _function_node(TIEBREAKER_RUNTIME_PATH, "_route_signal_for_tiebreaker_action")
         strings = _string_constants(func)
         assert {"proceed", "iterate", "escalate"} <= strings
         assert FORBIDDEN_TIEBREAKER_TARGETS.isdisjoint(strings)
@@ -141,10 +156,13 @@ class TestOverrideSignals:
         calls = _called_names(_function_node(OVERRIDE_PATH, "handle_override"))
         assert calls.isdisjoint(FORBIDDEN_TRANSITION_HELPERS)
 
-    def test_override_action_output_uses_route_labels_not_targets(self) -> None:
-        strings = _dict_literal_strings(OVERRIDE_PATH, "_OVERRIDE_ROUTE_SIGNALS")
+    def test_override_action_output_uses_matrix_route_labels_not_targets(self) -> None:
+        from arnold_pipelines.megaplan.workflows.override_matrix import ROUTE_SIGNAL_BY_ACTION
+
+        strings = set(ROUTE_SIGNAL_BY_ACTION.values())
         assert {
             "abort",
+            "adopt_execution",
             "force_proceed",
             "replan",
             "recover_blocked",
@@ -156,3 +174,18 @@ class TestOverrideSignals:
             "set_vendor",
         } <= strings
         assert FORBIDDEN_OVERRIDE_TARGETS.isdisjoint(strings)
+
+
+class TestSharedRouteHelpers:
+    def test_shared_finish_step_avoids_transition_mutation_helpers(self) -> None:
+        calls = _called_names(_function_node(SHARED_PATH, "_finish_step"))
+        assert "workflow_transition" not in calls
+
+    def test_shared_finish_step_uses_workflow_route_dispatch_helper(self) -> None:
+        calls = _called_names(_function_node(SHARED_PATH, "_finish_step"))
+        assert "resolve_route_target_for_signal" in calls
+
+    def test_workflow_route_dispatch_helper_reads_declared_route_bindings(self) -> None:
+        source = ROUTE_DISPATCH_PATH.read_text(encoding="utf-8")
+        assert "STEP_COMPONENTS_BY_ID" in source
+        assert "route_bindings" in source

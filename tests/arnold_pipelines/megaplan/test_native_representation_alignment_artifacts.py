@@ -799,6 +799,189 @@ def test_final_conformance_yaml_validator_uses_traceability_suffix_contract(
     )
 
 
+# ---------------------------------------------------------------------------
+# T2: Row-status consistency check — markdown ↔ YAML drift detection
+# ---------------------------------------------------------------------------
+
+# Known status values from the traceability schema
+_VALID_STATUSES = frozenset({"enabled", "implemented", "deferred", "missing"})
+
+# Words that are too short/common to use as proof-drift signals
+_PROOF_SKIP_WORDS = frozenset({"and", "or", "the", "for", "with", "test", "tests"})
+
+
+def _split_markdown_table_row(stripped: str) -> list[str]:
+    """Split a markdown pipe-table row into cells.
+
+    Handles the ``| cell | cell | ... |`` format used in the alignment plan
+    without assuming a fixed number of columns.  Leading / trailing pipes are
+    stripped before splitting so the caller gets only the cell payloads.
+    """
+    inner = stripped
+    if inner.startswith("|"):
+        inner = inner[1:]
+    if inner.endswith("|"):
+        inner = inner[:-1]
+    return [c.strip() for c in inner.split("|")]
+
+
+def _parse_alignment_table(text: str) -> list[dict[str, str]]:
+    """Parse the traceability matrix table from the alignment markdown.
+
+    Returns one dict per data row with keys *requirement*, *status*, *proof_text*.
+    The table is located inside the ``## Traceability Matrix`` section.
+    """
+    matrix_start = text.find("## Traceability Matrix")
+    if matrix_start == -1:
+        return []
+
+    section = text[matrix_start:]
+    header_map: dict[str, int] = {}
+    rows: list[dict[str, str]] = []
+
+    for line in section.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("| "):
+            if header_map:
+                break  # first non-table line after parsing header → end of table
+            continue
+        if "---" in stripped.split("|")[1] if stripped.startswith("|") else False:
+            continue  # separator row
+
+        cells = _split_markdown_table_row(stripped)
+
+        # Detect header row by looking for the first column header
+        if cells and "report requirement" in cells[0].strip().lower():
+            for idx, cell in enumerate(cells):
+                cell_lower = cell.strip().lower()
+                first_word = cell_lower.split()[0] if cell_lower.split() else ""
+                if first_word == "status":
+                    header_map["status"] = idx
+                elif "required proof" in cell_lower:
+                    header_map["proof"] = idx
+                elif "report requirement" in cell_lower:
+                    header_map["requirement"] = idx
+            continue
+
+        if not header_map:
+            continue
+
+        rows.append(
+            {
+                "requirement": cells[header_map["requirement"]].strip()
+                if header_map.get("requirement", -1) < len(cells)
+                else "",
+                "status": cells[header_map["status"]].strip()
+                if header_map.get("status", -1) < len(cells)
+                else "",
+                "proof_text": cells[header_map["proof"]].strip()
+                if header_map.get("proof", -1) < len(cells)
+                else "",
+            }
+        )
+
+    return rows
+
+
+def _normalize_markdown_status(raw: str) -> str:
+    """Extract the canonical status from a markdown status cell.
+
+    Handles plain values (``enabled``) and annotated forms such as
+    ``enabled (M3: … handler-purity-gated, unimplemented until structural tests land)``.
+    """
+    status = raw.strip()
+    # Split on first parenthesis or dash to isolate the base status word
+    for delim in (" (", "("):
+        if delim in status:
+            status = status.split(delim)[0].strip()
+            break
+    return status.lower()
+
+
+def _proof_label_significant_words(label: str) -> list[str]:
+    """Return significant (≥3 char, non-noise) words from a snake_case proof label."""
+    words = [w for w in label.replace("_", " ").replace("/", " ").split() if len(w) >= 3]
+    return [w.lower() for w in words if w.lower() not in _PROOF_SKIP_WORDS]
+
+
+def test_markdown_yaml_status_proof_consistency() -> None:
+    """Row-status consistency check: fails on status, proof, or deferral drift
+    between the alignment markdown and traceability YAML.
+
+    Parses both artifacts, matches rows by requirement text, and verifies:
+
+    * The status value agrees (normalising away markdown annotations).
+    * Every YAML ``proof_artifacts`` label has a discernible trace in the
+      markdown proof column (significant-word overlap).
+    * No requirement exists in only one artifact.
+    * Statuses are named in the traceability schema's allowed set.
+    """
+    payload = _load_yaml(TRACEABILITY_PATH)
+    yaml_rows = {row["requirement"]: row for row in payload["rows"]}
+
+    alignment_text = ALIGNMENT_PLAN_PATH.read_text(encoding="utf-8")
+    md_rows = _parse_alignment_table(alignment_text)
+    md_by_req = {row["requirement"]: row for row in md_rows}
+
+    errors: list[str] = []
+
+    # --- Pass 1: YAML → markdown (every traceability row must have a markdown peer) ---
+    for yaml_req, yaml_row in yaml_rows.items():
+        md_row = md_by_req.get(yaml_req)
+        if md_row is None:
+            errors.append(
+                f"YAML requirement {yaml_req!r} not found in markdown table"
+            )
+            continue
+
+        yaml_status = yaml_row["status"]
+        md_status_norm = _normalize_markdown_status(md_row["status"])
+
+        # Status drift
+        if md_status_norm != yaml_status:
+            errors.append(
+                f"Status drift for {yaml_req!r}: "
+                f"markdown={md_row['status']!r} (normalised={md_status_norm!r}), "
+                f"YAML={yaml_status!r}"
+            )
+        elif yaml_status not in _VALID_STATUSES:
+            errors.append(
+                f"Unknown status {yaml_status!r} for {yaml_req!r}"
+            )
+
+        # Proof drift: each YAML proof_artifact label should leave a trace in
+        # the markdown proof column.  We tokenise the label into significant
+        # words and require *every* word to appear in the markdown text.
+        yaml_proofs: list[str] = yaml_row.get("proof_artifacts", [])
+        md_proof_lower = md_row["proof_text"].lower()
+
+        for proof_label in yaml_proofs:
+            sig_words = _proof_label_significant_words(proof_label)
+            if not sig_words:
+                continue
+            missing_words = [w for w in sig_words if w not in md_proof_lower]
+            if missing_words:
+                errors.append(
+                    f"Proof drift for {yaml_req!r}: "
+                    f"YAML proof_artifact {proof_label!r} — "
+                    f"significant words {missing_words!r} not found "
+                    f"in markdown proof column"
+                )
+
+    # --- Pass 2: markdown → YAML (nothing in the table is unowned) ---
+    for md_req in md_by_req:
+        if md_req not in yaml_rows:
+            errors.append(
+                f"Markdown requirement {md_req!r} not found in YAML traceability"
+            )
+
+    if errors:
+        raise AssertionError(
+            f"{len(errors)} consistency drift(s) between alignment markdown "
+            f"and traceability YAML:\n" + "\n".join(errors)
+        )
+
+
 def test_review_execution_log_has_no_unaddressed_blockers() -> None:
     review_text = REVIEW_EXECUTION_PATH.read_text(encoding="utf-8")
 

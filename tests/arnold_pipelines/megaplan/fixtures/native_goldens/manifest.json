@@ -300,7 +300,17 @@
           "dynamic-parallel-map"
         ],
         "reason": "Requires LLM inference for parallel review checks. No deterministic no-service runner exists for review content evaluation.",
-        "target_milestone": "M6/report-conformance"
+        "target_milestone": "M6/report-conformance",
+        "owner": "native-composition-followup",
+        "blocking_proof": [
+          "composition-m6-review-fanout-structural-conformance",
+          "composition-m6-review-parallel_map-node-with-reducer-visible"
+        ],
+        "composition_visible_policy_checks": [
+          "Review fanout and reducer visible as parallel_map node in compiled topology",
+          "Review check children visible in static snapshot with deterministic ordering",
+          "REVIEW_POLICY metadata includes parallel check children and reducer routes"
+        ]
       },
       {
         "scenario_id": "D10-review-caps",
@@ -312,6 +322,17 @@
         ],
         "reason": "Requires LLM inference for review approval/block/rework decisions and cap-exhaustion logic. No deterministic no-service runner exists.",
         "target_milestone": "M6/report-conformance",
+        "owner": "native-composition-followup",
+        "blocking_proof": [
+          "composition-m6-review-rework-loop-structural-conformance",
+          "composition-m6-cap-outcome-visible-in-topology",
+          "composition-m6-recoverable-block-escalation-route-visible"
+        ],
+        "composition_visible_policy_checks": [
+          "Review rework loop with approve/request-rework/block/force-proceed/escalate outcomes visible",
+          "Cap exhaustion outcome classifier visible outside retained handler",
+          "REVIEW_POLICY metadata includes rework loop bounds, cap outcomes, and escalation routes"
+        ],
         "obligations": {
           "expected_files": ["review_output.json", "receipt_review.json", "rework_items.json", "cap_exhaustion.json"],
           "schema_keys": ["verdict", "rework_items", "summary", "step", "success", "artifacts"],
@@ -335,7 +356,18 @@
           "model-routing-policy"
         ],
         "reason": "Requires external human interaction and override action dispatch. No deterministic no-service runner exists for human control surface.",
-        "target_milestone": "M6/report-conformance"
+        "target_milestone": "M6/report-conformance",
+        "owner": "native-platform-followup",
+        "blocking_proof": [
+          "platform-m2-human-decision-durable-suspension-tests",
+          "platform-m6-override-action-route-coverage",
+          "platform-m6-human-control-surface-conformance"
+        ],
+        "composition_visible_policy_checks": [
+          "Override action matrix with all 11 action keys and route/effect classification visible",
+          "Human suspension points with durable resume coordinates declared in workflow source",
+          "OVERRIDE_POLICY metadata on compiled workflow includes full action matrix routes"
+        ]
       },
       {
         "scenario_id": "D13-policy-platform",
@@ -347,7 +379,22 @@
           "autodrive-event-liveness"
         ],
         "reason": "Requires timeout/deadline infrastructure, credential policy gates, and worker lease management. These are platform-level concerns, not runtime trace concerns.",
-        "target_milestone": "M6/report-conformance"
+        "target_milestone": "M6/report-conformance",
+        "owner": "native-platform-followup",
+        "blocking_proof": [
+          "platform-m4-timeout-event-trace-tests",
+          "platform-m5-retry-escalation-tests",
+          "platform-m4-worker-lease-cancel-tests",
+          "platform-m2-brokered-credential-tests",
+          "platform-m6-rendered-policy-view-with-all-routes",
+          "platform-m6-credential-route-visible"
+        ],
+        "composition_visible_policy_checks": [
+          "Timeout/deadline policy declared at step/subworkflow call sites in workflow source",
+          "Model routing visible as declared policy keyed by phase/task complexity",
+          "Rendered policy view shows EXECUTE_POLICY, REVIEW_POLICY, GATE_POLICY, OVERRIDE_POLICY metadata attached to compiled workflow",
+          "Exported constants alone rejected as insufficient proof of policy conformance"
+        ]
       },
       {
         "scenario_id": "D14-compiler-authoring",
@@ -361,7 +408,23 @@
           "source-readability"
         ],
         "reason": "Compiler-level validation of DSL authoring contracts, not a runtime trace scenario. Verified through pipeline contract tests (test_pipeline_contracts.py) and compiler unit tests.",
-        "target_milestone": "M6/report-conformance"
+        "target_milestone": "M6/report-conformance",
+        "owner": "native-composition-followup",
+        "blocking_proof": [
+          "composition-m6-compiler-acceptance-fixtures",
+          "composition-m6-compiler-rejection-fixtures",
+          "composition-m6-direct-manifest-authoring-rejection",
+          "composition-m6-megaplan-only-helper-rejection",
+          "composition-m6-single-handler-wrapper-rejection",
+          "composition-m6-shadow-topology-accepted"
+        ],
+        "composition_visible_policy_checks": [
+          "Compiler accepts runtime-list parallel_map with dynamic items",
+          "Compiler accepts nested workflow invocation with literal call_site_id",
+          "Compiler accepts typed loop outcomes or safe break/continue subset",
+          "Compiler/harness rejects direct manifest authoring bypass",
+          "Accepted shadow topology exists before migration with reviewer signoff"
+        ]
       },
       {
         "scenario_id": "D15-handler-extraction",
@@ -373,7 +436,21 @@
           "behavior-parity"
         ],
         "reason": "Handler purity audit and source-path reconciliation. Not a runtime trace scenario — verified through handler extraction tools and source inventory.",
-        "target_milestone": "M6/report-conformance"
+        "target_milestone": "M6/report-conformance",
+        "owner": "native-composition-followup",
+        "blocking_proof": [
+          "composition-m6-handler-purity-scan-current_state-next_step",
+          "composition-m6-mutation-hides-branch-fails",
+          "composition-m6-mutation-hides-fanout-fails",
+          "composition-m6-mutation-hides-suspension-fails",
+          "composition-m6-source-path-reconciliation-matches-package"
+        ],
+        "composition_visible_policy_checks": [
+          "Handler purity scan covers current_state, next_step, workflow_transition, run_parallel, auto-loop dispatch, override action dispatch",
+          "Mutation tests moving semantics back into handlers cause conformance failure",
+          "Installed package source paths match canonical inventory with stale-path negative check",
+          "Scenario goldens cover all named paths for behavior parity verification"
+        ]
       }
     ]
   },

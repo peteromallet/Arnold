@@ -21,6 +21,11 @@ from arnold.workflow.authoring import (
     SchemaComponent,
     StepComponent,
 )
+from arnold_pipelines.megaplan.workflows.override_matrix import (
+    ADDITIVE_CONFIG_ACTIONS,
+    OVERRIDE_ACTION_MATRIX,
+    get_entry,
+)
 
 PROMPT_RESOLVER_REF = "arnold_pipelines.megaplan.prompts:create_prompt"
 PROMPT_COMPONENT_RESOLVER_REF = "arnold_pipelines.megaplan.prompts:create_prompt_components"
@@ -197,6 +202,56 @@ def _workflow(
         label=label,
         metadata=component_metadata,
     )
+
+
+def _override_action_target(action: str) -> str:
+    entry = get_entry(action)
+    if entry.target_ref is not None:
+        return entry.target_ref
+    return "current-phase"
+
+
+def _override_action_overlays() -> tuple[Mapping[str, Any], ...]:
+    overlays: list[Mapping[str, Any]] = []
+    for entry in sorted(OVERRIDE_ACTION_MATRIX, key=lambda item: item.action):
+        overlays.append(
+            {
+                "overlay_id": f"override:{entry.action}",
+                "overlay_type": entry.family,
+                "source_ref": "override.action",
+                "target_refs": (_override_action_target(entry.action),),
+                "condition_ref": f"override.action.eq.{entry.action}",
+            }
+        )
+    return tuple(overlays)
+
+
+def _override_action_effects() -> tuple[Mapping[str, Any], ...]:
+    return tuple(
+        {
+            "effect_id": get_entry(action).effect_id,
+            "payload_ref": "override.override_result",
+        }
+        for action in sorted(ADDITIVE_CONFIG_ACTIONS)
+    )
+
+
+def _override_route_surface() -> Mapping[str, Any]:
+    return {
+        "matrix_ref": "arnold_pipelines.megaplan.workflows.override_matrix:OVERRIDE_ACTION_MATRIX",
+        "actions": tuple(
+            {
+                "action": entry.action,
+                "family": entry.family,
+                "route_signal": entry.route_signal,
+                "target_ref": entry.target_ref,
+                "effect_id": entry.effect_id,
+                "dispatch_surface": entry.dispatch_surface,
+                "control_routed": entry.control_routed,
+            }
+            for entry in OVERRIDE_ACTION_MATRIX
+        ),
+    }
 
 
 PREP_INPUT_SCHEMA = _schema(
@@ -422,7 +477,38 @@ DEFAULT_POLICY = _policy(
             "execute",
             "halt",
             "override",
-        )
+        ),
+        "critique_surface": {
+            "fanout_contract": {
+                "parallel_map_id": "critique-fanout",
+                "fanout_ref": "megaplan.policy.critique_lenses",
+                "step_ref": "SOURCE_CRITIQUE_PANEL_WORKFLOW",
+                "reducer_ref": "SOURCE_CRITIQUE",
+                "path_template": "critique/{item_id}",
+                "route_signal": "critique_payload",
+            },
+            "skip_and_retry_policy": {
+                "bare_robustness": {
+                    "route_signal": "skip_to_finalize",
+                    "effect": "workflow_handles_plan_to_finalize_without_handler_fanout",
+                },
+                "evaluator_retry": {
+                    "phase": "critique_evaluator",
+                    "max_attempts": 2,
+                    "on_exhausted": "blocked",
+                },
+                "payload_recovery": {
+                    "scratch_ref": "critique_output.json",
+                    "promote_to": "critique_v{iteration}.json",
+                },
+            },
+            "external_call_wrapping": {
+                "runtime_wrapper_ref": "arnold_pipelines.megaplan.orchestration.critique_runtime",
+                "retained_handler_ref": "arnold_pipelines.megaplan.handlers.critique:handle_critique",
+                "worker_phase": "critique",
+                "evaluator_phase": "critique_evaluator",
+            },
+        },
     },
 )
 GATE_POLICY = _policy(
@@ -472,7 +558,51 @@ GATE_POLICY = _policy(
             },
         ),
     },
-    metadata={"canonical_carriers": ("gate",)},
+    metadata={
+        "canonical_carriers": ("gate",),
+        "route_surface": {
+            "route_groups": {
+                "finalize": ("proceed", "force_proceed"),
+                "revise": ("iterate", "retry_gate", "reprompt_downgrade"),
+                "tiebreaker": ("tiebreaker",),
+                "override": ("escalate", "blocked_preflight"),
+                "halt": ("abort", "suspend"),
+            },
+            "fallback_route_signals": {
+                "blocking_flag_reprompt": "retry_gate",
+                "reprompt_downgrade": "iterate",
+                "preflight_failed": "blocked_preflight",
+                "unknown_recommendation": "escalate",
+                "critique_cap": "force_proceed",
+            },
+            "critique_gate_diagnostics": {
+                "bare_skip": {
+                    "owner": "critique-fanout",
+                    "effect": "skip_empty_or_bare_findings",
+                },
+                "evaluator_retry": {
+                    "owner": "critique-fanout",
+                    "effect": "retry_unverifiable_or_unavailable_evaluators",
+                },
+                "malformed_payload": {
+                    "owner": "gate",
+                    "effect": "normalize_to_inferred_recommendation",
+                },
+                "empty_payload": {
+                    "owner": "gate",
+                    "effect": "normalize_to_inferred_recommendation",
+                },
+                "worker_unavailable": {
+                    "owner": "gate",
+                    "effect": "escalate_or_retry_via_preflight_policy",
+                },
+                "debt_recorded": {
+                    "owner": "gate",
+                    "effect": "publish_debt_payload_on_proceed",
+                },
+            },
+        },
+    },
 )
 REVISE_LOOP_POLICY = _policy(
     export_name="REVISE_LOOP_POLICY",
@@ -531,7 +661,60 @@ TIEBREAKER_POLICY = _policy(
             },
         ),
     },
-    metadata={"canonical_carriers": ("tiebreaker_decide",)},
+    metadata={
+        "canonical_carriers": ("tiebreaker_decide",),
+        "route_surface": {
+            "run_completion_route": {
+                "route_signal": "default",
+                "target_ref": "tiebreaker_decide",
+                "failure_behavior": "complete_decision_cycle_with_recorded_artifacts",
+            },
+            "decision_routes": {
+                "pick": {"route_signal": "proceed", "target_ref": "finalize"},
+                "replan": {"route_signal": "iterate", "target_ref": "critique-fanout"},
+                "escalate": {"route_signal": "escalate", "target_ref": "override"},
+            },
+            "fallback_route_signal": "escalate",
+        },
+    },
+)
+FINALIZE_POLICY = _policy(
+    export_name="FINALIZE_POLICY",
+    policy_id="megaplan:finalize",
+    policy_type="control",
+    config={
+        "timeout_seconds_ref": "build_pipeline.timeout_seconds",
+        "control_transitions": (
+            {
+                "transition_id": "finalize:execute",
+                "transition_type": "override",
+                "trigger_ref": "finalize.result",
+                "target_ref": "execute",
+                "policy_ref": "megaplan:finalize",
+            },
+            {
+                "transition_id": "finalize:revise",
+                "transition_type": "fallback",
+                "trigger_ref": "finalize.result",
+                "target_ref": "revise",
+                "policy_ref": "megaplan:finalize",
+            },
+        ),
+    },
+    metadata={
+        "authoring_surface": True,
+        "carrier_step_ref": "finalize",
+        "route_surface": {
+            "success_route": {"route_signal": "default", "target_ref": "execute"},
+            "fallback_routes": {
+                "plan_contract_revise_needed": {
+                    "route_signal": "revise",
+                    "target_ref": "revise",
+                    "reason": "missing_scoped_baseline_test_contract",
+                },
+            },
+        },
+    },
 )
 REVIEW_POLICY = _policy(
     export_name="REVIEW_POLICY",
@@ -539,8 +722,24 @@ REVIEW_POLICY = _policy(
     policy_type="control",
     config={
         "timeout_seconds_ref": "build_pipeline.timeout_seconds",
+        "retry": {
+            "max_attempts": M4_LOOP_MAX_ITERATIONS,
+            "backoff": "manual_review",
+            "retry_on": ("rework", "transient_failure"),
+        },
+        "escalation": {
+            "targets": ("override",),
+            "escalate_after_attempts": M4_LOOP_MAX_ITERATIONS,
+            "policy_ref": "megaplan:override",
+            "backoff": "manual_review",
+        },
         "suspension_routes": (
-            {"route_id": "review:human", "capability_id": "human:review"},
+            {
+                "route_id": "review:human",
+                "capability_id": "human:review",
+                "resume_schema_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
+                "resume_payload_ref": "review.review_payload",
+            },
         ),
         "control_transitions": (
             {
@@ -557,16 +756,222 @@ REVIEW_POLICY = _policy(
                 "target_ref": "halt",
                 "policy_ref": "megaplan:review",
             },
+            {
+                "transition_id": "review:blocked",
+                "transition_type": "escalation",
+                "trigger_ref": "review.verdict",
+                "target_ref": "override",
+                "policy_ref": "megaplan:review",
+            },
+            {
+                "transition_id": "review:force_proceeded",
+                "transition_type": "override",
+                "trigger_ref": "review.verdict",
+                "target_ref": "halt",
+                "policy_ref": "megaplan:review",
+            },
+            {
+                "transition_id": "review:deferred_human",
+                "transition_type": "fallback",
+                "trigger_ref": "review.verdict",
+                "target_ref": "halt",
+                "policy_ref": "megaplan:review",
+            },
+        ),
+        "topology_overlays": (
+            {
+                "overlay_id": "review:cap-exhausted",
+                "overlay_type": "review_cap",
+                "source_ref": "review.verdict",
+                "target_refs": ("override", "halt"),
+                "condition_ref": "review.cap_exhausted",
+            },
+        ),
+        "effects": (
+            {"effect_id": "artifact.review.receipt", "payload_ref": "review.review_payload"},
+            {"effect_id": "artifact.review.output", "payload_ref": "review.review_payload"},
         ),
     },
-    metadata={"canonical_carriers": ("review",)},
+    metadata={
+        "canonical_carriers": ("review",),
+        "route_surface": {
+            "fan_in_contract": {
+                "parallel_map_id": "review-fan-in",
+                "fan_in_ref": "review.checks",
+                "step_ref": "SOURCE_REVIEW_PANEL_WORKFLOW",
+                "reducer_ref": "SOURCE_REVIEW",
+                "path_template": "review/{item_id}",
+                "route_signal": "review_route_signal",
+            },
+            "route_groups": {
+                "halt": ("pass", "force_proceeded", "deferred_human"),
+                "rework": ("rework",),
+                "recoverable_block": ("blocked",),
+            },
+            "rework_cycle": {
+                "route_signal": "rework",
+                "target_ref": "execute",
+                "state_ref": "finalized",
+                "fresh_execute_session": True,
+            },
+            "retry_and_cap": {
+                "infrastructure_retry": {
+                    "route_signal": "blocked",
+                    "target_ref": "review",
+                    "state_ref": "executed",
+                    "retry_on": (
+                        "review_incomplete",
+                        "review_process_error",
+                        "missing_reviewer_evidence",
+                    ),
+                },
+                "cap_exhausted_non_blocking": {
+                    "route_signal": "force_proceeded",
+                    "target_ref": "halt",
+                    "state_ref": "done",
+                },
+                "cap_exhausted_with_blockers": {
+                    "route_signal": "blocked",
+                    "target_ref": "override",
+                    "state_ref": "blocked",
+                    "resume_cursor": {
+                        "phase": "review",
+                        "retry_strategy": "manual_review",
+                    },
+                },
+            },
+            "escalation": {
+                "policy_ref": "megaplan:override",
+                "route_signal": "blocked",
+                "actions": ("recover-blocked", "force-proceed"),
+            },
+        },
+    },
 )
 OVERRIDE_POLICY = _policy(
     export_name="OVERRIDE_POLICY",
     policy_id="megaplan:override",
-    policy_type="timing",
-    config={"timeout_seconds_ref": "build_pipeline.timeout_seconds"},
-    metadata={"canonical_carriers": ("override",)},
+    policy_type="control_surface",
+    config={
+        "timeout_seconds_ref": "build_pipeline.timeout_seconds",
+        "authority": (
+            {"authority_id": "human.override", "action": "apply", "capability_id": "human:gate"},
+            {"authority_id": "human.override", "action": "resume", "capability_id": "human:gate"},
+        ),
+        "topology_overlays": _override_action_overlays(),
+        "effects": _override_action_effects(),
+    },
+    metadata={
+        "canonical_carriers": ("override",),
+        "route_surface": _override_route_surface(),
+    },
+)
+EXECUTE_POLICY = _policy(
+    export_name="EXECUTE_POLICY",
+    policy_id="megaplan:execute",
+    policy_type="execution",
+    config={
+        "timeout_seconds_ref": "build_pipeline.timeout_seconds",
+        "deadline_ref": "state.meta.execution_deadline",
+        "ttl_seconds": 3600.0,
+        "retry": {
+            "max_attempts": 2,
+            "backoff": "exponential",
+            "retry_on": ("timeout", "worker_transient"),
+        },
+        "escalation": {
+            "targets": ("override",),
+            "escalate_after_attempts": 2,
+            "policy_ref": "megaplan:override",
+            "backoff": "exponential",
+        },
+        "suspension_routes": (
+            {
+                "route_id": "execute:resume",
+                "capability_id": "megaplan:planning",
+                "reentry_id": "execute:resume",
+                "resume_schema_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
+                "resume_payload_ref": "execute.execute_payload",
+            },
+        ),
+        "topology_overlays": (
+            {
+                "overlay_id": "execute:task-complexity-route",
+                "overlay_type": "model_route",
+                "source_ref": "finalize.task_complexity_route",
+                "target_refs": ("execute.batch.solo", "execute.batch.standard", "execute.batch.premium"),
+                "condition_ref": "task.complexity",
+            },
+        ),
+        "effects": (
+            {"effect_id": "artifact.execute.receipt", "payload_ref": "execute.execute_payload"},
+            {"effect_id": "artifact.execute.checkpoint", "payload_ref": "execute.execute_payload"},
+        ),
+    },
+    metadata={
+        "canonical_carriers": ("execute",),
+        "route_surface": {
+            "approval_gates": {
+                "destructive_confirmation": {
+                    "required_unless": "prose_mode",
+                    "signal_ref": "args.confirm_destructive",
+                    "failure_code": "missing_confirmation",
+                },
+                "operator_approval": {
+                    "required_unless": "state.config.auto_approve",
+                    "signal_ref": "state.meta.user_approved_gate",
+                    "grant_signal_ref": "args.user_approved",
+                    "failure_code": "missing_approval",
+                },
+                "mutating_preflight": {
+                    "policy_ref": (
+                        "arnold_pipelines.megaplan.runtime.execution_environment:"
+                        "preflight_mutating_phase"
+                    ),
+                    "phase": "execute",
+                },
+            },
+            "fanout_contract": {
+                "parallel_map_id": "execute-batches",
+                "fanout_ref": "megaplan.execute.batches",
+                "step_ref": "SOURCE_EXECUTE_BATCH_WORKFLOW",
+                "reducer_ref": "SOURCE_EXECUTE",
+                "path_template": "execute/{index}",
+                "route_signal": "execute_payload",
+            },
+            "retry_and_reentry": {
+                "review_rework_reexecution": {
+                    "detect_ref": "last review history result needs_rework",
+                    "effect": "force_fresh_execute_session",
+                },
+                "blocked_retry": {
+                    "detect_ref": "last execute history result blocked",
+                    "effect": "force_fresh_execute_session",
+                },
+                "blocked_route": {
+                    "route_signal": "blocked",
+                    "target_ref": "override",
+                    "recoverable_state": "blocked",
+                    "resume_cursor": {
+                        "phase": "execute",
+                        "retry_strategy": "fresh_session",
+                    },
+                },
+            },
+            "skip_review_routes": {
+                "bare": {
+                    "route_signal": "no_review",
+                    "target_ref": "halt",
+                    "artifact": None,
+                },
+                "deferred_human": {
+                    "route_signal": "deferred_human",
+                    "target_ref": "halt",
+                    "artifact": "review.json",
+                },
+            },
+        },
+    },
 )
 MODEL_ROUTING_POLICY = _policy(
     export_name="MODEL_ROUTING_POLICY",
@@ -576,6 +981,35 @@ MODEL_ROUTING_POLICY = _policy(
         "default_routing_ref": "arnold_pipelines.megaplan.profiles:DEFAULT_AGENT_ROUTING",
         "profile_loader_ref": "arnold_pipelines.megaplan.profiles:load_profile_metadata",
         "phase_model_override_ref": "state.config.phase_model",
+        "task_complexity_route_ref": "arnold_pipelines.megaplan.execute.batch:_task_complexity_tier_args",
+        "task_complexity_source_ref": "finalize.task_complexity_route",
+        "topology_overlays": (
+            {
+                "overlay_id": "model-routing:phase",
+                "overlay_type": "model_route",
+                "source_ref": "state.config.phase_model",
+                "target_refs": (
+                    "prep",
+                    "plan",
+                    "critique",
+                    "gate",
+                    "revise",
+                    "tiebreaker_run",
+                    "tiebreaker_decide",
+                    "finalize",
+                    "execute",
+                    "review",
+                ),
+                "condition_ref": "phase.route",
+            },
+            {
+                "overlay_id": "model-routing:task-complexity",
+                "overlay_type": "model_route",
+                "source_ref": "finalize.task_complexity_route",
+                "target_refs": ("execute.batch.solo", "execute.batch.standard", "execute.batch.premium"),
+                "condition_ref": "task.complexity",
+            },
+        ),
     },
     metadata={"authoring_surface": True},
 )
@@ -597,6 +1031,11 @@ ARTIFACT_CONTRACT_POLICY = _policy(
     config={
         "step_contracts_ref": "arnold_pipelines.megaplan.step_contracts:STEP_CONTRACTS",
         "content_types_ref": "arnold_pipelines.megaplan.content_types:CONTENT_TYPE_REGISTRY",
+        "effects": (
+            {"effect_id": "artifact.finalize.plan", "payload_ref": "finalize.finalize_payload"},
+            {"effect_id": "artifact.execute.receipt", "payload_ref": "execute.execute_payload"},
+            {"effect_id": "artifact.review.receipt", "payload_ref": "review.review_payload"},
+        ),
     },
     metadata={"authoring_surface": True},
 )
@@ -607,11 +1046,63 @@ SUSPENSION_POLICY = _policy(
     config={
         "runtime_status": "suspended",
         "resume_contract_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
-        "routes": (
-            {"route_id": "gate:human", "capability_id": "human:gate"},
-            {"route_id": "review:human", "capability_id": "human:review"},
-            {"route_id": "revise:loop", "capability_id": "megaplan:planning"},
-            {"route_id": "tiebreaker:loop", "capability_id": "megaplan:planning"},
+        "suspension_routes": (
+            {
+                "route_id": "gate:human",
+                "capability_id": "human:gate",
+                "resume_schema_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
+                "resume_payload_ref": "gate.gate_payload",
+            },
+            {
+                "route_id": "review:human",
+                "capability_id": "human:review",
+                "resume_schema_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
+                "resume_payload_ref": "review.review_payload",
+            },
+            {
+                "route_id": "revise:loop",
+                "capability_id": "megaplan:planning",
+                "reentry_id": "revise:loop",
+                "resume_schema_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
+                "resume_payload_ref": "revise.revise_payload",
+            },
+            {
+                "route_id": "tiebreaker:loop",
+                "capability_id": "megaplan:planning",
+                "reentry_id": "tiebreaker:loop",
+                "resume_schema_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
+                "resume_payload_ref": "tiebreaker_decide.decision",
+            },
+            {
+                "route_id": "execute:resume",
+                "capability_id": "megaplan:planning",
+                "reentry_id": "execute:resume",
+                "resume_schema_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
+                "resume_payload_ref": "execute.execute_payload",
+            },
+        ),
+        "topology_overlays": (
+            {
+                "overlay_id": "suspension:gate-human",
+                "overlay_type": "suspension_point",
+                "source_ref": "gate.recommendation",
+                "target_refs": ("gate:human",),
+                "condition_ref": "gate.awaiting_human",
+            },
+            {
+                "overlay_id": "suspension:review-human",
+                "overlay_type": "suspension_point",
+                "source_ref": "review.verdict",
+                "target_refs": ("review:human",),
+                "condition_ref": "review.deferred_human",
+            },
+            {
+                "overlay_id": "suspension:execute-resume",
+                "overlay_type": "suspension_point",
+                "source_ref": "execute.execute_payload",
+                "target_refs": ("execute:resume",),
+                "condition_ref": "execute.partial_failure",
+            },
         ),
     },
     metadata={"authoring_surface": True},
@@ -767,6 +1258,7 @@ FINALIZE = _step(
     outputs=({"name": "finalize_payload"},),
     policy=DEFAULT_POLICY,
     route_bindings=({"id": "finalize:execute", "label": "default", "target_ref": "execute"},),
+    metadata={"policy_refs": ("megaplan:default", "megaplan:artifact-contract")},
     input_schema=FINALIZE_INPUT_SCHEMA,
     output_schema=FINALIZE_OUTPUT_SCHEMA,
 )
@@ -778,8 +1270,17 @@ EXECUTE = _step(
     handler_ref=f"{HANDLER_MODULE}:handle_execute",
     inputs=({"name": "finalize_payload", "value_ref": "finalize.finalize_payload"},),
     outputs=({"name": "execute_payload"},),
-    policy=DEFAULT_POLICY,
+    policy=EXECUTE_POLICY,
     route_bindings=({"id": "execute:review", "label": "default", "target_ref": "review"},),
+    capability_ids=("megaplan:planning",),
+    metadata={
+        "policy_refs": (
+            "megaplan:execute",
+            "megaplan:model-routing",
+            "megaplan:artifact-contract",
+            "megaplan:suspension",
+        ),
+    },
     input_schema=EXECUTE_INPUT_SCHEMA,
     output_schema=EXECUTE_OUTPUT_SCHEMA,
 )
@@ -797,6 +1298,13 @@ REVIEW = _step(
         {"id": "review:revise", "label": "rework", "condition_ref": "rework", "target_ref": "revise"},
     ),
     capability_ids=("human:review",),
+    metadata={
+        "policy_refs": (
+            "megaplan:review",
+            "megaplan:artifact-contract",
+            "megaplan:suspension",
+        ),
+    },
     input_schema=REVIEW_INPUT_SCHEMA,
     output_schema=REVIEW_OUTPUT_SCHEMA,
 )
@@ -827,6 +1335,13 @@ OVERRIDE = _step(
         },
         {"id": "override:revise", "label": "replan", "condition_ref": "replan", "target_ref": "revise"},
     ),
+    metadata={
+        "policy_refs": (
+            "megaplan:override",
+            "megaplan:model-routing",
+        ),
+        "override_actions": tuple(sorted(entry.action for entry in OVERRIDE_ACTION_MATRIX)),
+    },
     input_schema=OVERRIDE_INPUT_SCHEMA,
     output_schema=OVERRIDE_OUTPUT_SCHEMA,
 )
@@ -955,7 +1470,21 @@ SOURCE_CRITIQUE_PANEL_WORKFLOW = _workflow(
         "topology_contract": {
             "kind": "critique_fanout",
             "fanout_ref": "megaplan.policy.critique_lenses",
+            "parallel_map_id": "critique-fanout",
+            "path_template": "critique/{item_id}",
             "route_signal": "critique_payload",
+            "skip_and_retry_policy": {
+                "bare_robustness": "skip_to_finalize",
+                "evaluator_retry_attempts": 2,
+                "on_exhausted": "blocked",
+                "payload_recovery_ref": "critique_output.json",
+            },
+            "external_call_wrapping": {
+                "runtime_wrapper_ref": "arnold_pipelines.megaplan.orchestration.critique_runtime",
+                "retained_handler_ref": "arnold_pipelines.megaplan.handlers.critique:handle_critique",
+                "worker_phase": "critique",
+                "evaluator_phase": "critique_evaluator",
+            },
         },
     },
 )
@@ -972,11 +1501,17 @@ SOURCE_TIEBREAKER_WORKFLOW = _workflow(
             "kind": "child_workflow",
             "entry_step_id": "tiebreaker_run",
             "decision_step_id": "tiebreaker_decide",
+            "run_completion_route": {
+                "route_signal": "default",
+                "target_ref": "tiebreaker_decide",
+                "failure_behavior": "complete_decision_cycle_with_recorded_artifacts",
+            },
             "decision_routes": (
                 {"action": "pick", "route_signal": "proceed", "target_ref": "finalize"},
                 {"action": "replan", "route_signal": "iterate", "target_ref": "critique-fanout"},
                 {"action": "escalate", "route_signal": "escalate", "target_ref": "override"},
             ),
+            "fallback_route_signal": "escalate",
         },
     },
 )
@@ -995,6 +1530,43 @@ SOURCE_EXECUTE_BATCH_WORKFLOW = _workflow(
             "approval_gate": {
                 "required_ref": "state.meta.user_approved_gate",
                 "confirmation_ref": "args.confirm_destructive",
+            },
+            "approval_gates": {
+                "destructive_confirmation": {
+                    "required_unless": "prose_mode",
+                    "signal_ref": "args.confirm_destructive",
+                    "failure_code": "missing_confirmation",
+                },
+                "operator_approval": {
+                    "required_unless": "state.config.auto_approve",
+                    "signal_ref": "state.meta.user_approved_gate",
+                    "grant_signal_ref": "args.user_approved",
+                    "failure_code": "missing_approval",
+                },
+                "mutating_preflight": {
+                    "policy_ref": (
+                        "arnold_pipelines.megaplan.runtime.execution_environment:"
+                        "preflight_mutating_phase"
+                    ),
+                    "phase": "execute",
+                },
+            },
+            "fanout_contract": {
+                "parallel_map_id": "execute-batches",
+                "fanout_ref": "megaplan.execute.batches",
+                "step_ref": "SOURCE_EXECUTE_BATCH_WORKFLOW",
+                "reducer_ref": "SOURCE_EXECUTE",
+                "path_template": "execute/{index}",
+                "route_signal": "execute_payload",
+            },
+            "retry_and_reentry": {
+                "review_rework_reexecution": "force_fresh_execute_session",
+                "blocked_retry": "force_fresh_execute_session",
+                "blocked_route": {
+                    "route_signal": "blocked",
+                    "recoverable_state": "blocked",
+                    "resume_phase": "execute",
+                },
             },
             "post_batch_routes": (
                 {"route_signal": "review_required", "target_ref": "review-fan-in"},
@@ -1018,6 +1590,28 @@ SOURCE_REVIEW_PANEL_WORKFLOW = _workflow(
             "criteria_ref": "review.criteria",
             "route_signal_ref": "review.route_signal",
             "no_review_route_signal": "pass",
+            "fan_in_contract": {
+                "parallel_map_id": "review-fan-in",
+                "fan_in_ref": "review.checks",
+                "step_ref": "SOURCE_REVIEW_PANEL_WORKFLOW",
+                "reducer_ref": "SOURCE_REVIEW",
+                "path_template": "review/{item_id}",
+                "route_signal": "review_route_signal",
+            },
+            "rework_cycle": {
+                "route_signal": "rework",
+                "target_ref": "execute",
+                "fresh_execute_session": True,
+            },
+            "retry_and_cap": {
+                "infrastructure_retry": "review",
+                "cap_exhausted_non_blocking": "force_proceeded",
+                "cap_exhausted_with_blockers": "recoverable_block",
+            },
+            "escalation": {
+                "policy_ref": "megaplan:override",
+                "actions": ("recover-blocked", "force-proceed"),
+            },
             "reducer_routes": (
                 {"route_signal": "pass", "target_ref": "halt"},
                 {"route_signal": "rework", "target_ref": "revise"},
@@ -1061,8 +1655,14 @@ POLICY_COMPONENTS = (
     GATE_POLICY,
     REVISE_LOOP_POLICY,
     TIEBREAKER_POLICY,
+    FINALIZE_POLICY,
     REVIEW_POLICY,
+    EXECUTE_POLICY,
     OVERRIDE_POLICY,
+    MODEL_ROUTING_POLICY,
+    ROBUSTNESS_POLICY,
+    ARTIFACT_CONTRACT_POLICY,
+    SUSPENSION_POLICY,
 )
 WORKFLOW_COMPONENTS = (
     SOURCE_CRITIQUE_PANEL_WORKFLOW,
@@ -1130,6 +1730,7 @@ __all__ = [
     "CRITIQUE_OUTPUT_SCHEMA",
     "CRITIQUE_PROMPT",
     "DEFAULT_POLICY",
+    "EXECUTE_POLICY",
     "EXECUTE",
     "EXECUTE_INPUT_SCHEMA",
     "EXECUTE_OUTPUT_SCHEMA",
@@ -1137,6 +1738,7 @@ __all__ = [
     "FINALIZE",
     "FINALIZE_INPUT_SCHEMA",
     "FINALIZE_OUTPUT_SCHEMA",
+    "FINALIZE_POLICY",
     "FINALIZE_PROMPT",
     "GATE",
     "GATE_INPUT_SCHEMA",

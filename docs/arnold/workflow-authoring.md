@@ -90,6 +90,52 @@ Recursive behavior must be expressed with explicit bounded control topology:
 - ``SuspensionRoute.reentry_id`` names the stable resume cursor.
 - Arbitrary directed graph cycles are invalid.
 
+## Tree Traces And Audit Skeletons
+
+Every workflow attempt records a tree-shaped trace with stable path-addressed
+correlation. The trace is produced by the native runtime and is serializable
+without capturing live Python frames. Key trace fields:
+
+- ``attempt_id`` — UUID hex string unique per attempt.
+- ``run_path`` — trace-addressable path of the step in the invocation tree.
+- ``parent_run_path`` — path of the parent workflow or iteration context.
+- ``call_site_path`` — the authored literal ``id=`` that created this step.
+- ``step_path`` — full trace tree coordinate.
+- ``attempt_start``, ``step_outcome``, ``attempt_end`` — timing and outcome.
+
+The audit skeleton is the evidence layer for conformance verification, not a
+debug log. See [`audit.py`](../../arnold/pipeline/native/audit.py) for the
+`AuditRecord` dataclass and `AuditHooks` producer.
+
+## Path Resume
+
+Resume targets a specific call-site path in the trace tree, not a bare stage
+name. Paths are tree-shaped (e.g., ``root/second-review/review-verdict``) and
+derived from authored ``id=`` values. Resume uses ``start_from_trace`` from
+``arnold.pipeline.native`` with a target path and trace directory.
+
+Path identity is stable across refactors and does not depend on runtime object
+identity. Replay reuses the same static path plus recorded iteration
+coordinates. See [`python-shaped-authoring-contract.md`](python-shaped-authoring-contract.md)
+for the stable-path-identity rules.
+
+## Platform Boundaries
+
+Workflow source owns topology, stable identity, declared schemas, and policy
+references. The platform (native runtime, executor, worker fleet, artifact
+store) owns credential resolution, model binding, worker dispatch, artifact
+storage, suspension/resume mechanics, and policy enforcement.
+
+Workflow source must not:
+- Read environment variables for secrets.
+- Assume local filesystem paths survive worker migration.
+- Call into worker-fleet or credential APIs.
+- Dispatch to model providers directly from handler bodies.
+
+Instead, declare intent as metadata. See
+[`package-authoring-contract.md`](package-authoring-contract.md) for the
+full platform-boundary contract.
+
 ## CLI Validation
 
 Validate a shipped pipeline with the workflow CLI:
