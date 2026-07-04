@@ -2075,6 +2075,34 @@ def _clear_latest_failure_for_success(plan_dir: Path | None) -> None:
         return
 
 
+def _clear_latest_failure_for_phase_dispatch(
+    plan_dir: Path | None,
+    phase: str | None,
+) -> dict[str, Any] | None:
+    if plan_dir is None or phase not in PHASE_NAMES:
+        return None
+
+    prior_failure: dict[str, Any] | None = None
+
+    def _clear(current: dict[str, Any]) -> bool:
+        nonlocal prior_failure
+        failure = current.get("latest_failure")
+        if isinstance(failure, dict):
+            prior_failure = dict(failure)
+        changed = current.get("latest_failure") is not None
+        current["latest_failure"] = None
+        if "resume_cursor" in current:
+            current.pop("resume_cursor", None)
+            changed = True
+        return changed
+
+    try:
+        write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_clear)
+    except (CliError, OSError, RuntimeError, ValueError):
+        return prior_failure
+    return prior_failure
+
+
 _OBSOLETE_TERMINAL_BLOCK_FAILURE_KINDS = frozenset(
     {
         "blocked_recovery_not_resolved",
@@ -3231,11 +3259,21 @@ def drive(
                 next_cmd.extend(["--phase-model", item])
         return next_cmd
 
-    def _phase_failure_detail(next_step: str, stdout: str, stderr: str) -> str:
+    def _phase_failure_detail(
+        next_step: str,
+        stdout: str,
+        stderr: str,
+        *,
+        prior_failure: Mapping[str, Any] | None = None,
+    ) -> str:
         state_data = _read_state_data(plan_dir)
         latest_failure = state_data.get("latest_failure") if isinstance(state_data, dict) else None
         if isinstance(latest_failure, dict) and latest_failure.get("phase") == next_step:
             message = latest_failure.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()
+        if isinstance(prior_failure, Mapping) and prior_failure.get("phase") == next_step:
+            message = prior_failure.get("message")
             if isinstance(message, str) and message.strip():
                 return message.strip()
         return (_filtered_failure_stderr(stderr) or stdout.strip()[-400:]).strip()
@@ -4305,7 +4343,9 @@ def drive(
                     "--fresh",
                 ]
         log(f"running: megaplan {' '.join(cmd)}", phase=next_step, timeout=phase_timeout)
+        prior_phase_failure: dict[str, Any] | None = None
         if plan_dir is not None:
+            prior_phase_failure = _clear_latest_failure_for_phase_dispatch(plan_dir, next_step)
             try:
                 emit_event(EventKind.PHASE_START, plan_dir=plan_dir, phase=next_step, payload={"phase": next_step})
             except Exception:
@@ -4613,7 +4653,12 @@ def drive(
             # in state.json and the next status() reveals a recoverable valid_next.
             # Stall detection will still kill infinite loops.
             exit_kind = getattr(result, "exit_kind", None)
-            failure_detail = _phase_failure_detail(next_step, out, err)
+            failure_detail = _phase_failure_detail(
+                next_step,
+                out,
+                err,
+                prior_failure=prior_phase_failure,
+            )
             filtered_stderr = _filtered_failure_stderr(err)
             log(f"phase '{next_step}' exited with {exit_kind}: {failure_detail}")
             # plan_locked is transient contention from a concurrent auto/phase,
