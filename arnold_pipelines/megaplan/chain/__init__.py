@@ -3075,6 +3075,81 @@ def _recover_stale_prerequisite_block(
     return True
 
 
+def _rearm_fresh_session_execute_block(
+    plan_dir: Path,
+    *,
+    writer,
+) -> bool:
+    """Reset a blocked execute plan back to finalized for a fresh-session retry.
+
+    ``megaplan auto`` records execute quality/session failures as
+    ``current_state=blocked`` with ``resume_cursor={phase: execute,
+    retry_strategy: fresh_session}``. A later chain relaunch is the explicit
+    signal to honor that cursor and try execute again, not to preserve the
+    stale blocked state forever.
+    """
+
+    state_path = plan_dir / "state.json"
+    try:
+        state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(state_payload, dict):
+        return False
+    if state_payload.get("current_state") != STATE_BLOCKED:
+        return False
+    if state_payload.get("active_step"):
+        return False
+    resume_cursor = state_payload.get("resume_cursor")
+    if not isinstance(resume_cursor, dict):
+        return False
+    if resume_cursor.get("phase") != "execute":
+        return False
+    if resume_cursor.get("retry_strategy") != "fresh_session":
+        return False
+    latest_failure = state_payload.get("latest_failure")
+    if isinstance(latest_failure, dict):
+        failure_phase = latest_failure.get("phase")
+        failure_kind = latest_failure.get("kind")
+        if isinstance(failure_phase, str) and failure_phase and failure_phase != "execute":
+            return False
+        if isinstance(failure_kind, str) and failure_kind not in {
+            "execution_blocked",
+            "tasks_blocked",
+            "external_error",
+        }:
+            return False
+    from arnold_pipelines.megaplan._core.state import write_plan_state
+
+    recovery_event = {
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "reason": "chain relaunch honored execute fresh_session resume cursor",
+    }
+
+    def _patch_blocked_execute(current: dict[str, Any]) -> bool:
+        current.pop("latest_failure", None)
+        current.pop("resume_cursor", None)
+        current.pop("active_step", None)
+        meta = current.setdefault("meta", {})
+        if isinstance(meta, dict):
+            entries = meta.setdefault("fresh_session_execute_recoveries", [])
+            if isinstance(entries, list):
+                entries.append(recovery_event)
+        return True
+
+    write_plan_state(
+        plan_dir,
+        mode="patch-many",
+        patch={"current_state": STATE_FINALIZED},
+        mutation=_patch_blocked_execute,
+    )
+    writer(
+        "[chain] execute block recorded a fresh-session retry; reset blocked plan "
+        "back to finalized so execute can re-run\n"
+    )
+    return True
+
+
 def _drive_plan_with_blocked_execute_recovery(
     root: Path,
     spec_path: Path,
@@ -4477,6 +4552,12 @@ def run_chain(
                 not in ("missing",)
             ):
                 plan_name = state.current_plan_name
+                try:
+                    plan_dir = resolve_plan_dir(root, plan_name)
+                except CliError:
+                    plan_dir = None
+                if plan_dir is not None:
+                    _rearm_fresh_session_execute_block(plan_dir, writer=writer)
                 plan_state = _plan_state_payload_from_name(root, plan_name)
                 if _blocked_plan_replay_would_be_redundant(state, plan_state=plan_state):
                     _append_reconciliation_audit(
