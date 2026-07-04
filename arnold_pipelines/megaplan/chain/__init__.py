@@ -3064,7 +3064,25 @@ def _recover_stale_prerequisite_block(
         entries = meta.setdefault("chain_precondition_revalidations", [])
         if isinstance(entries, list):
             entries.append(audit)
-    save_state_merge_meta(plan_dir, state_payload)
+    from arnold_pipelines.megaplan._core.state import write_plan_state
+
+    def _patch_revalidated_block(current: dict[str, Any]) -> bool:
+        current.pop("latest_failure", None)
+        current.pop("resume_cursor", None)
+        current.pop("active_step", None)
+        meta = current.setdefault("meta", {})
+        if isinstance(meta, dict):
+            entries = meta.setdefault("chain_precondition_revalidations", [])
+            if isinstance(entries, list):
+                entries.append(audit)
+        return True
+
+    write_plan_state(
+        plan_dir,
+        mode="patch-many",
+        patch={"current_state": STATE_FINALIZED},
+        mutation=_patch_revalidated_block,
+    )
     writer(
         f"[chain] execute result=blocked for {outcome.plan}, but current launch "
         "preconditions now pass; cleared stale prerequisite block"
@@ -3785,10 +3803,14 @@ def _handle_outcome(
             f"{outcome.reason}\n"
         )
         return "stop"
+    outcome_reason_lower = outcome.reason.lower()
     if (
         status == "blocked"
-        and "prerequisite-blocked" in outcome.reason
-        and "not satisfied" in outcome.reason
+        and "prerequisite-blocked" in outcome_reason_lower
+        and (
+            "not satisfied" in outcome_reason_lower
+            or "settled" in outcome_reason_lower
+        )
     ):
         writer(
             f"[chain] plan {outcome.plan} stopped on unresolved explicit blocker: "
