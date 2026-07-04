@@ -381,6 +381,15 @@ def effective_execute_completed_task_ids(
         and _is_explained_noop_completion(task)
     }
     completed |= explained_noops
+    if decisions is not None:
+        for task in tasks:
+            if not isinstance(task, Mapping):
+                continue
+            task_id = _task_id(task)
+            if task_id in explained_skips:
+                decisions[task_id] = _explained_skip_decision(task_id, task)
+            elif task_id in explained_noops:
+                decisions[task_id] = _explained_noop_decision(task_id, task)
 
     authoritative_commands = {
         command
@@ -433,6 +442,30 @@ def _is_explained_noop_completion(task: Mapping[str, Any]) -> bool:
         isinstance(notes, str)
         and notes.strip()
         and not is_rubber_stamp(notes, strict=True)
+    )
+
+
+def _explained_skip_decision(task_id: str, task: Mapping[str, Any]) -> AuthorityDecision:
+    return AuthorityDecision(
+        task_id=task_id,
+        status=EvidenceStatus.not_applicable,
+        satisfied=False,
+        diagnostics={
+            "raw_terminal_status": _optional_str(task.get("status")),
+            "execute_completion": "explained_skip",
+        },
+    )
+
+
+def _explained_noop_decision(task_id: str, task: Mapping[str, Any]) -> AuthorityDecision:
+    return AuthorityDecision(
+        task_id=task_id,
+        status=EvidenceStatus.satisfied,
+        satisfied=True,
+        diagnostics={
+            "raw_terminal_status": _optional_str(task.get("status")),
+            "execute_completion": "explained_noop_completion",
+        },
     )
 
 
@@ -841,6 +874,7 @@ def _authority_divergence_payload(
         raw_status not in _TERMINAL_AUTHORITY_CLAIMS
         or decision.authoritative
         or _is_explained_skip(task)
+        or _is_explained_noop_completion(task)
     ):
         return None
     reasons = tuple(

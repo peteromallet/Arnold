@@ -328,6 +328,24 @@ def test_authority_divergence_payload_ignores_explained_skips() -> None:
     assert _authority_divergence_payload(task, decision) is None
 
 
+def test_authority_divergence_payload_ignores_explained_noops() -> None:
+    task = {
+        "id": "t_optional_watchdog_regression",
+        "status": "done",
+        "executor_notes": "No code change needed because existing coverage already proves the signal.",
+        "files_changed": [],
+        "commands_run": [],
+    }
+    decision = AuthorityDecision(
+        task_id="t_optional_watchdog_regression",
+        status=EvidenceStatus.unknown,
+        satisfied=False,
+        would_block_reasons=("missing_linked_evidence",),
+    )
+
+    assert _authority_divergence_payload(task, decision) is None
+
+
 def test_execute_completion_authority_uses_execution_window_and_explained_skips(
     tmp_path: Path,
 ) -> None:
@@ -337,6 +355,44 @@ def test_execute_completion_authority_uses_execution_window_and_explained_skips(
 
     assert ok is True
     assert missing == []
+
+
+def test_effective_execute_completed_task_ids_marks_explained_noops_authoritative(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    base_sha, _head_sha = _init_git_repo(project_dir)
+    plan_dir = project_dir / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True)
+    state = {
+        "config": {"project_dir": str(project_dir)},
+        "meta": {"execution_baseline": {"head": base_sha}},
+    }
+    tasks = [
+        {
+            "id": "T9",
+            "status": "done",
+            "kind": "test",
+            "executor_notes": "No code change needed. Existing progress-auditor coverage already proves this signal.",
+            "files_changed": [],
+            "commands_run": [],
+        }
+    ]
+
+    decisions: dict[str, AuthorityDecision] = {}
+    completed = effective_execute_completed_task_ids(
+        tasks,
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        state=state,
+        decisions=decisions,
+    )
+
+    assert completed == {"T9"}
+    assert decisions["T9"].authoritative is True
+    assert decisions["T9"].status == EvidenceStatus.satisfied
+    assert decisions["T9"].diagnostics["execute_completion"] == "explained_noop_completion"
 
 
 def test_execute_completion_authority_prefers_fresh_execution_evidence_over_stale_finalize(
