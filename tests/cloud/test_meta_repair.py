@@ -1505,7 +1505,7 @@ class TestCheckMetaRepairRecursion:
             "subagent_results": {
                 "codex_response": "Not inside a trusted directory and --skip-git-repo-check was not specified."
             },
-            "outcome": "UNKNOWN",
+            "outcome": "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/Hermes subagents); see meta-repair log.",
         }
         (meta_dir / "mr-launch-failed.json").write_text(
             json.dumps(record), encoding="utf-8"
