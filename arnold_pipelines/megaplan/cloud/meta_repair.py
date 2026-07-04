@@ -702,11 +702,106 @@ def _repair_evidence_superseded_by_current_target(
                 f"repair-data state={repair_state} but live chain state is {current_chain_state}"
             )
 
+    repair_outcome = _meta_safe_text(repair_data.get("outcome")).lower()
+    running_outcomes = {"running", "repairing", "recurring_retry_pending"}
+    if repair_outcome in running_outcomes:
+        latest_repair_epoch = _latest_repair_activity_epoch(evidence)
+        latest_target_epoch = _latest_current_target_epoch(current_target_observation)
+        target_has_recovery_shape = (
+            current_plan_state in recovered_plan_states
+            or current_chain_state in recovered_chain_states
+        )
+        if (
+            latest_repair_epoch is not None
+            and latest_target_epoch is not None
+            and latest_target_epoch > latest_repair_epoch
+            and target_has_recovery_shape
+        ):
+            return (
+                "current-target observation supersedes stale recurring repair evidence: "
+                f"repair outcome is {repair_outcome} but live target activity is newer "
+                f"({latest_target_epoch:.3f} > {latest_repair_epoch:.3f})"
+            )
+
     return ""
 
 
 def _meta_safe_text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
+
+
+def _parse_meta_timestamp(value: Any) -> float | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _latest_repair_activity_epoch(evidence: Mapping[str, Any]) -> float | None:
+    latest: float | None = None
+
+    def consider_timestamp(value: Any) -> None:
+        nonlocal latest
+        parsed = _parse_meta_timestamp(value)
+        if parsed is None:
+            return
+        if latest is None or parsed > latest:
+            latest = parsed
+
+    repair_data = evidence.get("repair_data")
+    if isinstance(repair_data, Mapping):
+        for key in (
+            "recorded_at",
+            "attempted_at",
+            "updated_at",
+            "dispatched_at",
+            "completed_at",
+            "finished_at",
+        ):
+            consider_timestamp(repair_data.get(key))
+        for collection_key in ("attempts", "iterations"):
+            records = repair_data.get(collection_key)
+            if not isinstance(records, list):
+                continue
+            for record in records:
+                if not isinstance(record, Mapping):
+                    continue
+                for key in (
+                    "recorded_at",
+                    "attempted_at",
+                    "updated_at",
+                    "dispatched_at",
+                    "completed_at",
+                    "finished_at",
+                ):
+                    consider_timestamp(record.get(key))
+
+    if latest is not None:
+        return latest
+
+    repair_data_path = evidence.get("repair_data_path")
+    if isinstance(repair_data_path, str) and repair_data_path:
+        try:
+            return Path(repair_data_path).stat().st_mtime
+        except OSError:
+            return None
+    return None
+
+
+def _latest_current_target_epoch(current_target_observation: Mapping[str, Any]) -> float | None:
+    latest: float | None = None
+    for key in ("plan_state", "chain_state", "chain_log", "event_cursors"):
+        record = current_target_observation.get(key)
+        if not isinstance(record, Mapping):
+            continue
+        raw_mtime = record.get("mtime")
+        if isinstance(raw_mtime, (int, float)):
+            mtime = float(raw_mtime)
+            if latest is None or mtime > latest:
+                latest = mtime
+    return latest
 
 
 def _truncate_prompt_text(text: str, *, max_chars: int) -> str:

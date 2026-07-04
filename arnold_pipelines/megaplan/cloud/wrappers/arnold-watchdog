@@ -3410,7 +3410,10 @@ classification, _ = evaluate_meta_repair_triggers(
 
 if (
     current_health == "alive"
-    and classification.trigger_label == "persistent_recurring_retry"
+    and classification.trigger_label in {
+        "persistent_recurring_retry",
+        "partial_liveness_recurrence",
+    }
 ):
     print("NO_TRIGGER")
     raise SystemExit(0)
