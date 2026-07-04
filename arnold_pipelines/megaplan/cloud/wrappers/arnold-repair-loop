@@ -1264,6 +1264,7 @@ def _summarize_finalize_artifact(path: pathlib.Path) -> dict[str, object]:
         "baseline_test_collection_errors": payload.get("baseline_test_collection_errors") or [],
         "baseline_test_command": payload.get("baseline_test_command") or "",
         "status_counts": _task_status_counts(tasks),
+        "tasks": tasks,
         "skipped_or_deferred_tasks": skipped_or_deferred,
         "task_count": len(tasks),
     }
@@ -2459,11 +2460,32 @@ def _task_key(task: object) -> str:
 def _blocked_task_candidates(context: object) -> list[dict[str, object]]:
     if not isinstance(context, dict):
         return []
+    execution_batch = context.get("execution_batch")
+    execute_batch_output = context.get("execute_batch_output")
+    has_execute_blockers = False
+    for section in (execution_batch, execute_batch_output):
+        if not isinstance(section, dict):
+            continue
+        tasks = section.get("blocked_or_deferred_tasks")
+        if isinstance(tasks, list) and any(isinstance(task, dict) for task in tasks):
+            has_execute_blockers = True
+            break
+    execution_incomplete = False
+    for section in (execution_batch, context.get("finalize")):
+        if not isinstance(section, dict):
+            continue
+        counts = section.get("status_counts")
+        if isinstance(counts, dict) and any(
+            isinstance(counts.get(key), int) and counts.get(key) > 0
+            for key in ("pending", "blocked", "deferred")
+        ):
+            execution_incomplete = True
+            break
     candidates: list[dict[str, object]] = []
     for section_name, key in (
-        ("finalize", "skipped_or_deferred_tasks"),
         ("execution_batch", "blocked_or_deferred_tasks"),
         ("execute_batch_output", "blocked_or_deferred_tasks"),
+        ("finalize", "skipped_or_deferred_tasks"),
     ):
         section = context.get(section_name)
         if not isinstance(section, dict):
@@ -2473,6 +2495,14 @@ def _blocked_task_candidates(context: object) -> list[dict[str, object]]:
             continue
         for task in tasks:
             if isinstance(task, dict):
+                if (
+                    section_name == "finalize"
+                    and execution_incomplete
+                    and not has_execute_blockers
+                    and str(task.get("reviewer_verdict") or "").strip()
+                    == "deferred_baseline_unavailable"
+                ):
+                    continue
                 merged = dict(task)
                 merged["_source"] = section_name
                 candidates.append(merged)
@@ -2493,6 +2523,24 @@ def _task_reason(task: dict[str, object]) -> str:
     if verdict and notes:
         return f"{verdict}: {notes}"
     return verdict or notes or str(task.get("status") or "").strip() or "see artifact"
+
+
+def _pending_task_candidates(context: object) -> list[dict[str, object]]:
+    if not isinstance(context, dict):
+        return []
+    finalize = context.get("finalize")
+    if not isinstance(finalize, dict):
+        return []
+    tasks = finalize.get("tasks")
+    if not isinstance(tasks, list):
+        return []
+    pending: list[dict[str, object]] = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        if str(task.get("status") or "").strip().lower() == "pending":
+            pending.append(task)
+    return pending
 
 
 def _review_blocking_items(context: object) -> list[dict[str, object]]:
@@ -2541,6 +2589,12 @@ def _render_last_execute_attempt(context: object, plan_failure: dict[str, object
                 lines.append(f"  -> {notes}")
         else:
             lines.append("- Blocked/deferred task: none found in execute/finalize artifacts")
+            pending_tasks = _pending_task_candidates(context)
+            if pending_tasks:
+                pending_ids = ", ".join(_task_key(task) or "(unknown)" for task in pending_tasks[:5])
+                if len(pending_tasks) > 5:
+                    pending_ids += f", +{len(pending_tasks) - 5} more"
+                lines.append(f"- Pending execute tasks: {pending_ids}")
 
         finalize = context.get("finalize")
         if isinstance(finalize, dict) and finalize:

@@ -703,7 +703,7 @@ def test_repair_loop_collects_execute_attempt_artifacts_and_renders_summary(tmp_
     summary = summary_result.stdout
     assert summary.startswith("## LAST EXECUTE ATTEMPT")
     assert "Blocked/deferred task: m7-13-full-suite-final-gate" in summary
-    assert "deferred_baseline_unavailable" in summary
+    assert "Deferred by harness until baseline is available." in summary
     assert "baseline_test_failures is null" in summary
     assert "runner error exit code 2" in summary
     assert "pytest collection: 1 errors" in summary
@@ -714,6 +714,106 @@ def test_repair_loop_collects_execute_attempt_artifacts_and_renders_summary(tmp_
     assert "T1: Backend agentic replay gate and path helpers are missing." in summary
     assert "evidence_file: vibecomfy/comfy_nodes/agent/routes.py" in summary
     assert "deterministic_check: python -m pytest tests/test_agentic_replay_routes.py -v" in summary
+
+
+def test_repair_loop_summary_prefers_pending_execute_tasks_over_baseline_deferral(tmp_path: Path) -> None:
+    workspace = tmp_path / "workflow"
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo-plan",
+                "current_state": "blocked",
+                "latest_failure": {
+                    "kind": "execution_blocked",
+                    "phase": "execute",
+                    "message": "execute blocked by quality gates",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text(
+        "execute:authority_divergence | reason=missing_linked_evidence; task_id=T1\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_5.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {"task_id": "T5", "status": "done", "executor_notes": "completed"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "execute_batch_5_output.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {"task_id": "T5", "status": "done", "executor_notes": "completed"},
+                ],
+                "output": "T5 completed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "baseline_test_failures": None,
+                "baseline_test_note": "Baseline capture failed: runner error (exit code: 4)",
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "skipped",
+                        "reviewer_verdict": "deferred_baseline_unavailable",
+                        "executor_notes": (
+                            "Deferred by harness: baseline_test_failures is null, so this "
+                            "no-new-failures checkpoint cannot compare against a recorded baseline."
+                        ),
+                    },
+                    {"id": "T5", "status": "done", "executor_notes": "completed"},
+                    {"id": "T6", "status": "pending"},
+                    {"id": "T7", "status": "pending"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (chain_dir / "chain-demo.json").write_text(
+        json.dumps({"current_plan_name": "demo-plan", "last_state": "blocked"}),
+        encoding="utf-8",
+    )
+
+    collect_program = _extract_repair_program(
+        "collect_failure_context_json",
+        "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" <<'PY'",
+    )
+    result = _run_embedded_python(collect_program, str(workspace), "demo", "chain", "")
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(
+        json.dumps({"initial_facts": {}, "iterations": [payload]}),
+        encoding="utf-8",
+    )
+    summary_program = _extract_repair_program(
+        "render_failure_summary",
+        "python3 - \"$data_path\" <<'PY'",
+    )
+    summary_result = _run_embedded_python(summary_program, str(data_path))
+
+    assert summary_result.returncode == 0, summary_result.stderr
+    summary = summary_result.stdout
+    assert "Blocked/deferred task: none found in execute/finalize artifacts" in summary
+    assert "Pending execute tasks: T6, T7" in summary
+    assert "Blocked/deferred task: T1" not in summary
 
 
 def test_repair_loop_collects_stale_state_classification(tmp_path: Path) -> None:
