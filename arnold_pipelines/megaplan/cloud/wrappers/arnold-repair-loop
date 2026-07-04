@@ -738,19 +738,41 @@ PY
 }
 
 marker_requires_repair_despite_alive() {
-  python3 - "$MARKER_PATH" <<'PY' 2>/dev/null
+  python3 - "$MARKER_PATH" "$DATA_FILE" <<'PY' 2>/dev/null
 import json
 import pathlib
 import sys
 
+def load_json(path_text: str) -> dict:
+    try:
+        payload = json.loads(pathlib.Path(path_text).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
 try:
-    payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+    marker_payload = load_json(sys.argv[1])
+    repair_payload = load_json(sys.argv[2]) if len(sys.argv) > 2 else {}
 except Exception:
-    payload = {}
-text = json.dumps(payload, sort_keys=True)
+    marker_payload = {}
+    repair_payload = {}
+text = json.dumps(marker_payload, sort_keys=True)
 if "workspace_drift:" in text or "sandbox_refused_outside_project_root" in text:
     print("workspace_drift")
     raise SystemExit(0)
+failure_context = repair_payload.get("current_failure_context")
+if isinstance(failure_context, dict):
+    latest_failure = failure_context.get("plan_latest_failure")
+    if isinstance(latest_failure, dict) and latest_failure:
+        kind = str(latest_failure.get("kind") or "").strip()
+        state = str(latest_failure.get("current_state") or "").strip()
+        if kind or state:
+            print(f"live_plan_failure:{kind or 'unknown'}:{state or 'unknown'}")
+            raise SystemExit(0)
+    state_mismatch = failure_context.get("state_mismatch")
+    if isinstance(state_mismatch, dict) and state_mismatch.get("detected"):
+        print("state_mismatch")
+        raise SystemExit(0)
 raise SystemExit(1)
 PY
 }
@@ -2862,7 +2884,7 @@ repair_data_init() {
   printf '%s' "$tmux_info" > "$payload_dir/tmux_info"
   printf '%s' "$chain_state" > "$payload_dir/chain_state"
   printf '%s' "$failure_context" > "$payload_dir/failure_context"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$ARNOLD_SRC" "$SYNC_BRANCH" "$RUN_DIR" "$relaunch_command" "$initial_health" "$payload_dir" <<'PY'
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$ARNOLD_SRC" "$SYNC_BRANCH" "$RUN_DIR" "$relaunch_command" "$initial_health" "$payload_dir" "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'PY'
 import json
 import pathlib
 import sys
@@ -2887,6 +2909,8 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     relaunch_command,
     initial_health,
     payload_dir_raw,
+    request_id,
+    blocker_id,
 ) = sys.argv[1:]
 payload_dir = pathlib.Path(payload_dir_raw)
 
@@ -2910,6 +2934,14 @@ attempts = existing.get("attempts") if isinstance(existing.get("attempts"), list
 if not attempts and isinstance(existing.get("iterations"), list):
     attempts = [item for item in existing.get("iterations") if isinstance(item, dict)]
 repair_run_count = int(existing.get("repair_run_count") or 0) + 1
+
+# Derive a stable incident_id from the session so the incident bridge and
+# watchdog can both reference the same incident across repair cycles.
+incident_id = str(existing.get("incident_id") or "").strip() or f"inc-{session}"
+
+# Preserve dispatch-level request/blocker identity from triggering env.
+dispatch_request_id = str(request_id or existing.get("request_id") or "").strip()
+dispatch_blocker_id = str(blocker_id or existing.get("blocker_id") or "").strip()
 
 payload = {
     "session": session,
@@ -2962,10 +2994,12 @@ payload = {
     "run_recurrence_detected": False,
     "iterations": [],
     "outcome": "repairing",
+    "request_id": dispatch_request_id,
+    "blocker_id": dispatch_blocker_id,
 }
 resolver_output = failure_context_payload.get("resolver_output")
 payload["initial_facts"]["resolver_output"] = resolver_output or {}
-payload = merge_additive_fields(payload, target=resolver_output or {})
+payload = merge_additive_fields(payload, target=resolver_output or {}, incident_id=incident_id)
 save_repair_data(data_path, payload)
 PY
   rc=$?
@@ -3079,6 +3113,8 @@ attempt["dispatched_at"] = (payload.get("current_recurrence") or {}).get("dispat
 attempt["problem_signature"] = payload.get("current_signature") or {}
 attempt["advancement_snapshot"] = payload.get("current_advancement_snapshot") or {}
 attempt["recurrence"] = payload.get("current_recurrence") or {}
+attempt["request_id"] = payload.get("request_id") or (payload.get("current_recurrence") or {}).get("request_id") or ""
+attempt["blocker_id"] = payload.get("blocker_id") or (payload.get("current_recurrence") or {}).get("blocker_id") or ""
 attempt["failure_context"] = payload.get("current_failure_context") or {}
 attempt["failure_classification"] = entry["failure_classification"]
 attempt["raw_failure_signals"] = entry["raw_failure_signals"]
@@ -3674,7 +3710,7 @@ repair_recurrence_prepare_attempt() {
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
   failure_context_file="$(mktemp)"
   printf '%s' "$failure_context" > "$failure_context_file"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$failure_context_file" "$iteration" "$requested_model" "$dispatch_model" "$REPAIR_RECURRENCE_MIN_DISPATCHES" "$REPAIR_RECURRENCE_WINDOW_SECS" <<'PY'
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$failure_context_file" "$iteration" "$requested_model" "$dispatch_model" "$REPAIR_RECURRENCE_MIN_DISPATCHES" "$REPAIR_RECURRENCE_WINDOW_SECS" "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'PY'
 import datetime as dt
 import json
 import pathlib
@@ -3691,6 +3727,8 @@ from arnold_pipelines.megaplan.cloud import repair_recurrence
     dispatch_model,
     min_dispatches_raw,
     window_seconds_raw,
+    request_id,
+    blocker_id,
 ) = sys.argv[1:]
 data_path = pathlib.Path(data_path_raw)
 progress_path = pathlib.Path(progress_path_raw)
@@ -3730,6 +3768,10 @@ payload["current_attempt_id"] = attempt_id
 payload["current_failure_context"] = failure_context
 payload["current_signature"] = signature
 payload["current_advancement_snapshot"] = advancement
+dispatch_request_id = str(request_id or payload.get("request_id") or "").strip()
+dispatch_blocker_id = str(blocker_id or payload.get("blocker_id") or "").strip()
+payload["request_id"] = dispatch_request_id or payload.get("request_id")
+payload["blocker_id"] = dispatch_blocker_id or payload.get("blocker_id")
 payload["current_recurrence"] = {
     **recurrence,
     "attempt_id": attempt_id,
@@ -3738,6 +3780,8 @@ payload["current_recurrence"] = {
     "dispatch_model": dispatch_model,
     "dispatched_at": dispatched_at,
     "root_cause_mode": bool(recurrence.get("detected")),
+    "request_id": dispatch_request_id,
+    "blocker_id": dispatch_blocker_id,
 }
 payload["run_recurrence_detected"] = bool(payload.get("run_recurrence_detected")) or bool(recurrence.get("detected"))
 repair_recurrence.atomic_write_json(data_path, payload)
@@ -3877,62 +3921,12 @@ render_chain_health_block() {
   artifact="$(dirname "$DATA_FILE")/${SESSION}.chain-health.json"
   [[ -f "$artifact" ]] || return 0
   python3 - "$artifact" <<'PY'
-import json
-import pathlib
-import sys
-
-
-def load_json(path_text):
-    try:
-        payload = json.loads(pathlib.Path(path_text).read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def is_plan_projected_nonterminal(artifact):
-    status = str(artifact.get("status") or artifact.get("issue_kind") or "").strip()
-    if status not in {"chain_no_advance", "chain_stuck", "chain_stuck_nonterminal"}:
-        return False
-    snapshot = artifact.get("snapshot") if isinstance(artifact.get("snapshot"), dict) else {}
-    if snapshot.get("plan_has_active_step") is True:
-        return False
-    summary = artifact.get("chain_state_summary")
-    summary = summary if isinstance(summary, dict) else {}
-    chain_state = load_json(summary.get("path") or artifact.get("chain_state_path") or "")
-    last_state = str(
-        chain_state.get("last_state") or summary.get("last_state") or ""
-    ).strip()
-    if last_state not in {"blocked", "awaiting_human"}:
-        return False
-    current_plan = str(
-        chain_state.get("current_plan_name")
-        or summary.get("current_plan_name")
-        or ""
-    ).strip()
-    if not current_plan:
-        return False
-    chain_path = pathlib.Path(str(summary.get("path") or artifact.get("chain_state_path") or ""))
-    plans_dir = chain_path.parent.parent if chain_path.name else pathlib.Path()
-    plan_state = load_json(plans_dir / current_plan / "state.json")
-    if str(plan_state.get("current_state") or "").strip() != last_state:
-        return False
-    active_step = plan_state.get("active_step")
-    return not (isinstance(active_step, dict) and bool(active_step.get("phase") or active_step.get("worker_pid")))
-
-
+import json, sys
 try:
-    artifact_path = pathlib.Path(sys.argv[1])
-    d = json.loads(artifact_path.read_text(encoding="utf-8"))
+    d = json.load(open(sys.argv[1]))
 except Exception:
     sys.exit(0)
 if not d or d.get("status") == "ok":
-    sys.exit(0)
-if is_plan_projected_nonterminal(d):
-    try:
-        artifact_path.unlink()
-    except Exception:
-        pass
     sys.exit(0)
 md = d.get("evidence_markdown") or ""
 if md:
