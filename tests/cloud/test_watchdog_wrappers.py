@@ -5587,6 +5587,8 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert "from arnold_pipelines.megaplan.cloud.repair_lock import release_repair_lock" in text
     assert 'log "repair pid claimed session=$SESSION pid=$$ pidfile=$REPAIR_PID_FILE"' in text
     assert 'log "stale repair lock detected; leaving evidence in place session=$SESSION lock_dir=$REPAIR_LOCK_DIR"' in text
+    assert 'log "stale repair lock reclaimed session=$SESSION lock_dir=$REPAIR_LOCK_DIR"' in text
+    assert 'another repair loop is already active after stale lock recovery' in text
     assert 'log "stale repair pidfile detected; reclaiming session=$SESSION stale_pid=$existing_pid pidfile=$REPAIR_PID_FILE"' in text
     assert "guard_against_recursive_repair_loop()" in text
     assert 'export CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE=1' in text
