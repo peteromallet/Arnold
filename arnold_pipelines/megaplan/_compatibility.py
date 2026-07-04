@@ -2,7 +2,7 @@
 
 This module is intentionally narrow: it projects the authored workflow DSL
 pipeline into the neutral Arnold graph shell and attaches a NativeProgram.
-The authored source in ``workflows/planning.py`` remains the canonical DSL.
+The authored source in ``workflows/workflow.py`` remains the canonical DSL.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from typing import Any, Mapping
 from pathlib import Path
 
 from arnold.manifest.manifests import WorkflowManifest
+from arnold.pipeline.native.composition import attach_composition_graph
 from arnold.pipeline.native.ir import NativeInstruction, NativePhase, NativeProgram
 from arnold.pipeline.types import Edge, Pipeline as NeutralPipeline, Stage
 from arnold.pipeline.types import StepContext, StepResult
@@ -141,6 +142,34 @@ def _stages_from_dsl(pipeline: DslPipeline) -> dict[str, Stage]:
     return stages
 
 
+def _routing_topology_from_dsl(pipeline: DslPipeline) -> dict[str, Any]:
+    """Build generic static routing topology records from authored DSL routes.
+
+    The returned dict uses the product-neutral structure expected by
+    :func:`arnold.pipeline.native.validator._validate_routing_topology`:
+
+    * ``nodes`` – a list of ``{"name": "<step.id>"}`` records for every step.
+    * ``routes`` – a list of ``{"source", "label", "target"[, "condition_ref"]}``
+      records for every authored route.
+
+    This allows the generic native validator to perform static label/target
+    resolution without importing any Megaplan-specific semantics.
+    """
+    nodes: list[dict[str, str]] = [{"name": step.id} for step in pipeline.steps]
+    routes: list[dict[str, str | None]] = []
+    for route in pipeline.routes:
+        record: dict[str, str | None] = {
+            "source": route.source,
+            "label": route.label,
+            "target": route.target,
+        }
+        if route.condition_ref is not None:
+            record["condition_ref"] = route.condition_ref
+        routes.append(record)
+
+    return {"nodes": nodes, "routes": routes}
+
+
 def _native_program_from_dsl(pipeline: DslPipeline) -> NativeProgram:
     routes_by_source: dict[str, list[Any]] = {}
     for route in pipeline.routes:
@@ -165,15 +194,17 @@ def _native_program_from_dsl(pipeline: DslPipeline) -> NativeProgram:
             )
         )
 
-    return NativeProgram(
+    program = NativeProgram(
         name=pipeline.id,
         instructions=tuple(instructions),
         phases=tuple(phases),
+        routing_topology=_routing_topology_from_dsl(pipeline),
         description=(
             "Substrate proof only: compatibility projection from authored "
             "Megaplan workflow DSL to neutral native shell."
         ),
     )
+    return attach_composition_graph(program)
 
 
 def _native_phase_func(step: DslStep) -> Any:

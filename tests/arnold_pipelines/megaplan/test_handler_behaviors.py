@@ -163,8 +163,8 @@ class TestCritiqueScratchPromotion:
 
 
 class TestGateOutcomeSemantics:
-    def test_apply_gate_outcome_proceed_when_passed(self, tmp_path: Path) -> None:
-        from arnold_pipelines.megaplan.handlers.gate import _apply_gate_outcome
+    def test_build_gate_route_signal_proceed_when_passed(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
         from arnold_pipelines.megaplan.planning.state import STATE_GATED
 
         state: dict[str, Any] = {
@@ -185,15 +185,15 @@ class TestGateOutcomeSemantics:
             "unresolved_flags": [],
             "orchestrator_guidance": "",
         }
-        result, next_step, msg, blocking = _apply_gate_outcome(
+        outcome = _build_gate_route_signal(
             state, summary, robustness="standard", plan_dir=tmp_path
         )
-        assert result == "success"
-        assert next_step == "finalize"
+        assert outcome["result"] == "success"
+        assert outcome["route_signal"] == "proceed"
         assert state["current_state"] == STATE_GATED
 
-    def test_apply_gate_outcome_iterate_routes_to_revise(self, tmp_path: Path) -> None:
-        from arnold_pipelines.megaplan.handlers.gate import _apply_gate_outcome
+    def test_build_gate_route_signal_iterate_routes_without_target_names(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
 
         state: dict[str, Any] = {
             "name": "p",
@@ -214,14 +214,14 @@ class TestGateOutcomeSemantics:
             "unresolved_flags": [],
             "orchestrator_guidance": "",
         }
-        result, next_step, msg, blocking = _apply_gate_outcome(
+        outcome = _build_gate_route_signal(
             state, summary, robustness="standard", plan_dir=tmp_path
         )
-        assert result == "success"
-        assert next_step == "revise"
+        assert outcome["result"] == "success"
+        assert outcome["route_signal"] == "iterate"
 
-    def test_apply_gate_outcome_auto_downgrade_proceed_to_iterate(self, tmp_path: Path) -> None:
-        from arnold_pipelines.megaplan.handlers.gate import _apply_gate_outcome
+    def test_build_gate_route_signal_retries_gate_for_unresolved_flags(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
 
         state: dict[str, Any] = {
             "name": "p",
@@ -241,12 +241,12 @@ class TestGateOutcomeSemantics:
             "unresolved_flags": [{"id": "f1", "severity": "significant", "status": "open", "concern": "x"}],
             "orchestrator_guidance": "",
         }
-        result, next_step, msg, blocking = _apply_gate_outcome(
+        outcome = _build_gate_route_signal(
             state, summary, robustness="standard", plan_dir=tmp_path
         )
-        assert result == "unresolved_flags"
-        assert next_step == "gate"
-        assert blocking
+        assert outcome["result"] == "unresolved_flags"
+        assert outcome["route_signal"] == "retry_gate"
+        assert outcome["blocking_unresolved_ids"]
 
 
 class TestFinalizeSemanticChecks:

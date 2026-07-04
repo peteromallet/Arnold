@@ -21,6 +21,19 @@ class _Step:
         return StepResult(next="halt")
 
 
+def test_native_authoring_decorators_are_re_exported_from_pipeline() -> None:
+    """Public native authoring decorators (step, phase, workflow, pipeline, decision)
+    must be importable from arnold.pipeline and appear in its __all__."""
+    names = ("step", "phase", "workflow", "pipeline", "decision")
+    for name in names:
+        assert hasattr(pipeline, name), f"{name} missing from arnold.pipeline"
+        assert name in pipeline.__all__, f"{name} missing from arnold.pipeline.__all__"
+        # Verify they resolve to the same object as from arnold.pipeline.native
+        assert getattr(pipeline, name) is getattr(native, name), (
+            f"{name} from arnold.pipeline differs from arnold.pipeline.native"
+        )
+
+
 def test_native_first_import_surface_is_available_from_pipeline_and_native() -> None:
     names = (
         "NativeProgram",

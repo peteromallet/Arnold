@@ -55,7 +55,30 @@ For high-confidence epic handoffs, use the chain completion manifest feature ins
 
 **The brief must be locked in before init** — fully self-contained so the model can run end-to-end without coming back for clarification. The harness snapshots the brief at `init`; later edits to the idea-file are not re-read. If you find yourself wanting to "ask the model" what to do, write that decision down first.
 
-**Store durable briefs in `.megaplan/initiatives/<slug>/`.** Single-plan ideas live at `.megaplan/initiatives/<slug>/briefs/<slug>.md`. Epics live at `.megaplan/initiatives/<epic-slug>/chain.yaml` with milestone briefs under `briefs/`. `.megaplan/plans/` is generated run state; `.megaplan/initiatives/` is the committed input material you hand to `python -m arnold_pipelines.megaplan init` or `python -m arnold_pipelines.megaplan chain start`. Use `python -m arnold_pipelines.megaplan brief new` or `python -m arnold_pipelines.megaplan brief epic` to create the canonical files.
+**Store durable briefs in `.megaplan/initiatives/<slug>/`.** Single-plan ideas live at `.megaplan/initiatives/<slug>/briefs/<slug>.md`. Epics live at `.megaplan/initiatives/<epic-slug>/chain.yaml` with milestone briefs under `briefs/`. `.megaplan/plans/` is generated run state; `.megaplan/initiatives/` is the committed input material you hand to `python -m arnold_pipelines.megaplan init`, `python -m arnold_pipelines.megaplan chain start`, or `python -m arnold_pipelines.megaplan cloud chain`. Use `python -m arnold_pipelines.megaplan initiative new` for new work; `brief new` / `brief epic` are compatibility helpers around the same canonical layout.
+
+**Universal initiation path.** Start every new project, sprint, or epic with an initiative folder, then edit the generated files before launch:
+
+```bash
+python -m arnold_pipelines.megaplan initiative new <slug> \
+  --milestone m1="First Sprint" \
+  --cloud
+```
+
+This creates `.megaplan/initiatives/<slug>/README.md`, `NORTHSTAR.md`, `briefs/<milestone>.md`, `chain.yaml`, and an initiative-local `cloud.yaml`. It is cloud-ready, but deliberately not silently runnable with nonsense defaults: generated placeholders such as `TODO_INITIATIVE_DESCRIPTION`, `TODO_NORTH_STAR_*`, `TODO_REPO_URL`, and `TODO_SSH_HOST` make `cloud preflight` / `cloud chain` fail until the operator edits them or passes the explicit override `--allow-template-placeholders`.
+
+Use existing docs as starting inputs with repeatable `--doc kind=path` flags. Supported kinds are `research`, `decisions`, `notes`, `assets`, and `handoff`:
+
+```bash
+python -m arnold_pipelines.megaplan initiative new code-smell-first-aid \
+  --milestone m1="Runtime Secret Containment" \
+  --milestone m2="Classifier Guardrails" \
+  --doc research=.codex/code-smell-audit/final-report.md \
+  --doc decisions=docs/architecture/current-routing.md \
+  --cloud
+```
+
+Those docs are copied under the initiative and uploaded with the durable inputs. Cite them from the relevant milestone brief instead of relying on local `.codex/` or scratch files that the cloud runner cannot see.
 
 For single plans, pass `--north-star path/to/NORTHSTAR.md` at `init` when the local brief needs durable alignment context. This is optional, but strongly recommended for drift-sensitive standalone plans: migrations, public contracts, cross-cutting refactors, multi-agent handoffs, or any task where local success criteria could accidentally narrow the intended destination. For epics, keep `NORTHSTAR.md` beside `chain.yaml` and declare it as `anchors.north_star`; `brief epic` scaffolds this by default and chain runs require it unless explicitly opted out. Anchor files are snapshotted into plan state at initialization, so edit the source before starting the run.
 

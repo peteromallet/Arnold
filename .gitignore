@@ -52,6 +52,7 @@ arnold_pipelines/megaplan/data/_codex_skills/
 
 # Local/generated planning inputs and cloud runner specs.
 cloud.yaml
+cloud.*.yaml
 chain.yaml
 !.megaplan/initiatives/**/chain.yaml
 plan.md

@@ -18,13 +18,24 @@ completed through M7 and the native-first completion branch is clean.
 
 ## Files To Change And Instructions
 
-- `arnold_pipelines/megaplan/workflows/workflow.py`
-  Rework the canonical Megaplan declaration into compositional units. Split the
-  top-level workflow into explicit nested native workflows where the domain has
-  real boundaries: planning/prep, critique/revise loop, gate/tiebreaker handling,
+- `arnold_pipelines/megaplan/workflows/workflow.pypeline`
+  Make this the canonical Megaplan authoring source. Rework the Megaplan
+  declaration into compositional units. Split the top-level workflow into
+  explicit nested native workflows where the domain has real boundaries:
+  planning/prep, critique/revise loop, gate/tiebreaker handling,
   finalize/execute/review, and any human-gated continuation path. Every
   subworkflow must use explicit stable IDs and declared inputs/outputs from the
-  M0 contract.
+  M0 contract. The migrated source must be idiomatic native Python
+  orchestration: product routes are expressed with ordinary branches, loops,
+  function calls, subworkflow calls, and typed domain results. Do not replace
+  the current graph-era shape with a decorated wrapper around `SOURCE_*`-style
+  component calls, generic stage dispatch, route-label tables, handler refs, or
+  manifest/node builders.
+- `arnold_pipelines/megaplan/workflows/workflow.py`
+  Keep only as compatibility glue if existing imports require it. It may load,
+  compile, or re-export `workflow.pypeline`, but it must not carry independent
+  product routing, loop exits, fanout, suspension, override dispatch, or
+  implicit state transitions.
 - `arnold_pipelines/megaplan/workflows/planning.py`
   Keep the package builder pointing at the migrated canonical workflow and
   record any compatibility shell/projection behavior that remains.
@@ -92,9 +103,10 @@ completed through M7 and the native-first completion branch is clean.
   Add minimal compiler/runtime fixtures required to lock the Megaplan shape.
 - `docs/arnold/megaplan-source-path-reconciliation.md`
   Create or update a launch-gating table before implementation starts. It must
-  identify the live canonical source (`arnold_pipelines/megaplan/workflows/workflow.py`,
-  `planning.py`, `components.py`, and `pipeline.py` facade), installed package
-  import path, CLI/auto-drive entrypoints, and any stale future-looking
+  identify the live canonical source (`arnold_pipelines/megaplan/workflows/workflow.pypeline`),
+  any compatibility shim (`workflow.py`), `planning.py`, `components.py`, and
+  `pipeline.py` facade, installed package import path, CLI/auto-drive
+  entrypoints, and any stale future-looking
   `arnold/pipelines/...` references retained only as migration targets.
 - `docs/arnold/megaplan-semantics-carrier-table.md`
   Create a row-by-row carrier table for every formerly hidden report semantic:
@@ -107,9 +119,22 @@ completed through M7 and the native-first completion branch is clean.
 
 - Canonical Megaplan is authored as a composition of native workflows and steps,
   not as a flat stage list with hidden graph-era orchestration.
+- The canonical workflow source reads as normal Python. A reviewer can follow
+  prep clarification, critique/gate/revise, tiebreaker, finalize/execute/review,
+  review rework, override, suspend, abort, retry, and force-proceed paths
+  through Python control flow and typed outcomes in `workflow.pypeline` and
+  imported native subworkflows, without consulting component tables,
+  compatibility shims, or handler-local `current_state`/`next_step` mutation.
+- `workflow.pypeline` is the semantic authority. Any `workflow.py` compatibility
+  shim is tested to be a loader/re-export only and cannot be cited as the
+  canonical source for implemented report rows.
 - Each Megaplan subworkflow has a stable ID, declared inputs, and declared
   outputs; parent workflows interact with child workflows through that declared
   interface rather than ambient state reach-through.
+- Subworkflows are authored and invoked as decorated Python functions. A
+  workflow-in-workflow call may compile to manifest/runtime metadata, but the
+  author-facing source must not manually assemble child manifest nodes or route
+  through a generic component/handler registry.
 - The critique/revise loop records loop iteration identity in a way compatible
   with the M0 path rules.
 - `megaplan run` and `arnold pipelines describe/run` still resolve the canonical
@@ -160,8 +185,14 @@ completed through M7 and the native-first completion branch is clean.
 
 - Matrix rows owned or affected: Prep clarification gate; Plan artifact/version metadata; Critique skip on bare robustness; Adaptive critique evaluator retry; Parallel critique lenses with fan-in; Bounded critique/gate/revise loop; Gate preflight and payload normalization; Gate signal building and reprompt; Gate flag/debt/fallback handling; Tiebreaker researcher/challenger path; Human decision/suspension; Finalize fallback routes; Dependency-aware execute batches; Execute approval/no-review/deferred-human gates; Execute/review/rework loop; Review parallel checks/fan-in; Review infrastructure retry and cap outcomes; Override full action surface; Timeout/deadline policy; Model routing by phase/task complexity; Runtime-list iteration; Dynamic parallel map; Typed loop outcomes or break/continue; Auto-drive/event/liveness transitions; Trace-only native shadow topology; Handler topology extraction/purity audit; Behavior parity with existing Megaplan; Source readability.
 - Expected status change: composition-owned rows should move from `enabled` planning status toward implementation evidence, except any explicitly deferred platform durability rows. M1 may not mark a report row `implemented` unless it also lands wrapper-detection conformance for that row; otherwise implementation status waits for M2 validator/source-invariant checks and M6 structural conformance/mutation gates.
-- Proof artifacts: source excerpts from canonical Megaplan workflow, source-path reconciliation table, per-row semantics carrier table, rendered topology with untaken branches, handler inventory, artifact manifest, D1/D5/D6/D8/D10 scenario goldens, override matrix, and `megaplan run`/`arnold pipelines` compatibility tests.
+- Proof artifacts: source excerpts from canonical Megaplan `workflow.pypeline`, source-path reconciliation table, per-row semantics carrier table, rendered topology with untaken branches, handler inventory, artifact manifest, D1/D5/D6/D8/D10 scenario goldens, override matrix, `workflow.py` compatibility-shim proof if retained, and `megaplan run`/`arnold pipelines` compatibility tests.
 - False-pass guard: wrapping old handlers in native nodes is not enough. The milestone must fail if `critique`, `gate`, `tiebreaker`, `execute`, `review`, or `override` are single handler-backed stages that still own product routing.
+- Anti-wrapper guard: the milestone must also fail if the final canonical source
+  is a Python-shaped graph DSL: `SOURCE_*`-style component calls, generic
+  stage dispatch, handler refs, route-label tables, or direct manifest/node
+  builders cannot be the product control-flow skeleton. Those constructs may
+  exist only below audited pure phase bodies or compatibility projections, not
+  as the authored Megaplan workflow.
 - Doctrine gate: M1 is the first real proof of the final Megaplan authoring
   doctrine. It must prove compositional source owns report semantics and that
   manifests/native shells are derived artifacts, not parallel semantic owners.

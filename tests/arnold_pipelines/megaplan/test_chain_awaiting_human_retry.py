@@ -18,6 +18,8 @@ from arnold_pipelines.megaplan.chain import (
 from arnold_pipelines.megaplan.chain.spec import ChainSpec, ChainState, load_chain_state, load_spec
 from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_PR_MERGE
 
+_DEFAULT_ACTIVE_STEP = object()
+
 
 def _write_chain_spec(tmp_path: Path, *, merge_policy: str = "review") -> Path:
     spec_path = tmp_path / "chain.yaml"
@@ -44,17 +46,21 @@ def _write_plan_state(
     *,
     plan_name: str = "m7-plan",
     current_state: str = "finalized",
+    active_step: object = _DEFAULT_ACTIVE_STEP,
 ) -> None:
     plan_dir = tmp_path / ".megaplan" / "plans" / plan_name
     plan_dir.mkdir(parents=True, exist_ok=True)
+    serialized_active_step = json.dumps(
+        {"phase": "execute"} if active_step is _DEFAULT_ACTIVE_STEP else active_step
+    )
     (plan_dir / "state.json").write_text(
         (
             '{"name":"%s","current_state":"%s","latest_failure":null,'
             '"last_gate":{"recommendation":"PROCEED"},'
-            '"active_step":{"phase":"execute"},'
+            '"active_step":%s,'
             '"meta":{"chain_policy":{"milestone_label":"m7"}}}'
         )
-        % (plan_name, current_state),
+        % (plan_name, current_state, serialized_active_step),
         encoding="utf-8",
     )
 
@@ -381,6 +387,49 @@ def test_handle_outcome_stops_unresolved_prerequisite_block_without_retry(
     assert any("unresolved explicit blocker" in message for message in messages)
 
 
+def test_handle_outcome_stops_settled_prerequisite_gate_without_retry(
+    tmp_path: Path,
+) -> None:
+    spec = SimpleNamespace(
+        on_failure_policy=SimpleNamespace(
+            retry="retry_milestone",
+            escalate="bump_profile",
+            abort="stop_chain",
+        ),
+        on_escalate_policy=SimpleNamespace(
+            retry="retry_milestone",
+            escalate="bump_profile",
+            abort="stop_chain",
+        ),
+        robustness="extreme",
+    )
+    milestone = SimpleNamespace(label="m1", profile=None, robustness="extreme")
+    state = ChainState()
+    messages: list[str] = []
+
+    decision = _handle_outcome(
+        DriverOutcome(
+            status="blocked",
+            plan="m1-plan",
+            final_state="blocked",
+            iterations=1,
+            reason=(
+                "execute reported prerequisite-blocked tasks: T12 "
+                "(Blocked by the settled SD2 launch gate)"
+            ),
+        ),
+        spec=spec,
+        writer=messages.append,
+        milestone=milestone,
+        state=state,
+        root=tmp_path,
+    )
+
+    assert decision == "stop"
+    assert state.retry_counts == {}
+    assert any("unresolved explicit blocker" in message for message in messages)
+
+
 def test_sync_chain_last_state_refreshes_from_current_plan_state(tmp_path: Path) -> None:
     spec_path = tmp_path / "chain.yaml"
     spec_path.write_text("milestones: []\n", encoding="utf-8")
@@ -517,6 +566,52 @@ def test_reconcile_revalidates_completed_prs_from_live_github(
     assert load_chain_state(spec_path).completed[0]["pr_state"] == "merged"
 
 
+def test_reconcile_clears_stale_active_state_when_completed_milestone_is_terminal(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    spec = load_spec(spec_path)
+    _write_plan_state(tmp_path, current_state="blocked")
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="m7-plan",
+        last_state="blocked",
+        pr_number=122,
+        pr_state="merged",
+        completed=[
+            {
+                "label": "m7",
+                "plan": "m7-plan",
+                "status": "done",
+                "pr_number": 122,
+                "pr_state": "merged",
+            }
+        ],
+    )
+
+    with patch("arnold_pipelines.megaplan.chain._pr_state", return_value="merged"):
+        reconciled = _reconcile_chain_from_ground_truth(
+            tmp_path,
+            spec_path,
+            spec,
+            state,
+            writer=lambda _message: None,
+            push_enabled=True,
+        )
+
+    saved = load_chain_state(spec_path)
+    assert reconciled.current_milestone_index == 1
+    assert reconciled.current_plan_name is None
+    assert reconciled.pr_number is None
+    assert reconciled.pr_state is None
+    assert reconciled.last_state == "done"
+    assert saved.current_milestone_index == 1
+    assert saved.current_plan_name is None
+    assert saved.pr_number is None
+    assert saved.pr_state is None
+    assert saved.last_state == "done"
+
+
 def test_run_chain_resumes_when_reconciled_finalized_pr_is_open(
     tmp_path: Path,
 ) -> None:
@@ -571,3 +666,42 @@ def test_run_chain_resumes_when_reconciled_finalized_pr_is_open(
     saved = load_chain_state(spec_path)
     assert saved.last_state == "finalized"
     assert saved.pr_state == "open"
+
+
+def test_run_chain_does_not_replay_durably_blocked_plan_on_restart(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    _write_plan_state(tmp_path, current_state="blocked", active_step=None)
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=0,
+            current_plan_name="m7-plan",
+            last_state="blocked",
+            pr_number=122,
+            pr_state="open",
+        ),
+    )
+
+    messages: list[str] = []
+    with (
+        patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
+        patch("arnold_pipelines.megaplan.chain._pr_state", return_value="open"),
+        patch("arnold_pipelines.megaplan.chain._plan_state", return_value="blocked"),
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery"
+        ) as drive,
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            writer=messages.append,
+            require_anchor_override=False,
+            missing_anchor_ack_override="unit test uses a minimal chain spec",
+        )
+
+    drive.assert_not_called()
+    assert result["status"] == "stopped"
+    assert result["reason"] == "milestone m7 remains blocked"
+    assert any("already durably blocked" in message for message in messages)

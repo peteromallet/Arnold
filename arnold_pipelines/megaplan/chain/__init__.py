@@ -53,7 +53,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from arnold_pipelines.megaplan.auto import (
     DEFAULT_MAX_ITERATIONS,
@@ -354,6 +354,7 @@ from .git_ops import (
     _remote_branch_head,
     _reset_staged_paths,
     _run_command,
+    _run_git_push_command,
     _should_retry_gh_without_env,
 )
 
@@ -1858,6 +1859,34 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                         overlaid_finalize_records.append(merged)
                     authoritative_finalize_records = overlaid_finalize_records
 
+    if authoritative_finalize_records:
+        finalize_decisions: dict[str, AuthorityDecision] = {}
+        finalize_completed = effective_execute_completed_task_ids(
+            authoritative_finalize_records,
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            state=state_payload,
+            evidence_nucleus=evidence_nucleus,
+            current_head=current_head,
+            decisions=finalize_decisions,
+        )
+        pending = _non_authoritative_task_reasons(
+            authoritative_finalize_records,
+            finalize_completed,
+            finalize_decisions,
+        )
+        pending.extend(
+            _finalize_records_missing_authority_fields(
+                authoritative_finalize_records
+            )
+        )
+        if pending:
+            return (
+                False,
+                f"finalize.json has non-authoritative tasks: {', '.join(pending)}",
+            )
+        return True, "finalize.json"
+
     task_records: list[dict[str, Any]] = []
     for key in ("task_updates", "tasks"):
         raw_records = payload.get(key)
@@ -1892,33 +1921,6 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
             return (
                 False,
                 f"{latest.name} has non-authoritative tasks: {', '.join(incomplete)}",
-            )
-
-    if authoritative_finalize_records:
-        finalize_decisions: dict[str, AuthorityDecision] = {}
-        finalize_completed = effective_execute_completed_task_ids(
-            authoritative_finalize_records,
-            plan_dir=plan_dir,
-            project_dir=project_dir,
-            state=state_payload,
-            evidence_nucleus=evidence_nucleus,
-            current_head=current_head,
-            decisions=finalize_decisions,
-        )
-        pending = _non_authoritative_task_reasons(
-            authoritative_finalize_records,
-            finalize_completed,
-            finalize_decisions,
-        )
-        pending.extend(
-            _finalize_records_missing_authority_fields(
-                authoritative_finalize_records
-            )
-        )
-        if pending:
-            return (
-                False,
-                f"finalize.json has non-authoritative tasks: {', '.join(pending)}",
             )
     return True, latest.name
 
@@ -3220,6 +3222,33 @@ def _plan_state_payload_from_name(root: Path, plan: str | None) -> dict[str, Any
     return raw
 
 
+def _plan_has_live_active_step(plan_state: Mapping[str, Any]) -> bool:
+    active_step = plan_state.get("active_step")
+    if not isinstance(active_step, Mapping):
+        return False
+    return bool(
+        active_step.get("phase")
+        or active_step.get("worker_pid")
+        or active_step.get("pid")
+        or active_step.get("session_id")
+    )
+
+
+def _blocked_plan_replay_would_be_redundant(
+    state: ChainState,
+    *,
+    plan_state: Mapping[str, Any],
+) -> bool:
+    current_state = plan_state.get("current_state")
+    if not isinstance(current_state, str):
+        return False
+    return (
+        state.last_state == STATE_BLOCKED
+        and current_state == STATE_BLOCKED
+        and not _plan_has_live_active_step(plan_state)
+    )
+
+
 def _chain_policy_milestone_label(plan_state: dict[str, Any]) -> str | None:
     meta = plan_state.get("meta")
     if not isinstance(meta, dict):
@@ -3271,6 +3300,19 @@ def _append_reconciliation_audit(
         "pr_number": pr_number,
         "pr_state": pr_state,
     }
+
+
+def _mark_chain_after_milestone_advance(
+    spec: ChainSpec,
+    state: ChainState,
+    *,
+    next_index: int,
+) -> None:
+    state.current_milestone_index = next_index
+    state.current_plan_name = None
+    state.last_state = "done" if next_index >= len(spec.milestones) else "between_milestones"
+    state.pr_number = None
+    state.pr_state = None
 
 
 def _reconcile_chain_from_ground_truth(
@@ -3816,6 +3858,78 @@ def _assert_clean_base(
     )
 
 
+def _preserve_carried_wip_before_retry(
+    root: Path,
+    spec_path: Path,
+    state: ChainState,
+    milestone: "MilestoneSpec",
+    plan_name: str | None,
+    *,
+    writer,
+) -> None:
+    """Stash abandoned attempt WIP before re-initializing a milestone retry.
+
+    This runs only when the chain has decided the current plan is not resumable
+    and will force a fresh init. Without preserving the failed attempt's working
+    tree, the next ``require_clean_base`` check reports the abandoned WIP as the
+    root failure and hides the original blocker.
+    """
+    carried = _carried_wip_paths(root)
+    if not carried:
+        return
+
+    sample = ", ".join(p.name for p in carried[:5])
+    message = (
+        f"megaplan-chain retry-preserve {milestone.label}"
+        + (f" plan={plan_name}" if plan_name else "")
+    )
+    writer(
+        f"[chain] retry for {milestone.label} would re-init over carried WIP "
+        f"({sample}); preserving via git stash before retry\n"
+    )
+    proc = subprocess.run(
+        ["git", "stash", "push", "--include-untracked", "-m", message],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    if proc.returncode != 0:
+        raise CliError(
+            "retry_preserve_failed",
+            "retry could not preserve carried WIP before re-init for "
+            f"{milestone.label}: {proc.stderr.strip() or proc.stdout.strip()}",
+        )
+
+    stash_proc = subprocess.run(
+        ["git", "stash", "list", "--format=%gd", "-n", "1"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    if stash_proc.returncode != 0:
+        raise CliError(
+            "retry_preserve_failed",
+            "retry preserved carried WIP but could not resolve the stash ref: "
+            f"{stash_proc.stderr.strip() or stash_proc.stdout.strip()}",
+        )
+    stash_ref = stash_proc.stdout.strip()
+    metadata = state.metadata.setdefault("retry_preserved_wip", [])
+    if isinstance(metadata, list):
+        metadata.append(
+            {
+                "milestone": milestone.label,
+                "plan": plan_name,
+                "stash_ref": stash_ref,
+                "sample_paths": [p.as_posix() for p in carried[:20]],
+            }
+        )
+    chain_spec.save_chain_state(spec_path, state)
+
+
 def _maybe_file_ladder_ticket(
     root: Path,
     spec_path: Path,
@@ -4164,11 +4278,7 @@ def run_chain(
                         writer=writer,
                     )
                 idx += 1
-                state.current_milestone_index = idx
-                state.current_plan_name = None
-                state.last_state = "done"
-                state.pr_number = None
-                state.pr_state = None
+                _mark_chain_after_milestone_advance(spec, state, next_index=idx)
                 chain_spec.save_chain_state(spec_path, state)
                 manifest_reason = _finalize_validation_artifacts_after_done_append(
                     root=root,
@@ -4338,11 +4448,7 @@ def run_chain(
                     writer=writer,
                 )
             idx += 1
-            state.current_milestone_index = idx
-            state.current_plan_name = None
-            state.last_state = "done"
-            state.pr_number = None
-            state.pr_state = None
+            _mark_chain_after_milestone_advance(spec, state, next_index=idx)
             chain_spec.save_chain_state(spec_path, state)
             manifest_reason = _finalize_validation_artifacts_after_done_append(
                 root=root,
@@ -4371,6 +4477,27 @@ def run_chain(
                 not in ("missing",)
             ):
                 plan_name = state.current_plan_name
+                plan_state = _plan_state_payload_from_name(root, plan_name)
+                if _blocked_plan_replay_would_be_redundant(state, plan_state=plan_state):
+                    _append_reconciliation_audit(
+                        state,
+                        plan_name=plan_name,
+                        plan_state=dict(plan_state),
+                        pr_number=state.pr_number,
+                        pr_state=state.pr_state,
+                    )
+                    chain_spec.save_chain_state(spec_path, state)
+                    writer(
+                        f"[chain] plan {plan_name} is already durably blocked with no "
+                        "active step; preserving the stop without replaying the plan\n"
+                    )
+                    return _result(
+                        "stopped",
+                        state,
+                        events,
+                        spec=spec,
+                        reason=f"milestone {milestone.label} remains blocked",
+                    )
                 state = _sync_chain_last_state_from_plan(
                     root,
                     spec_path,
@@ -4617,6 +4744,14 @@ def run_chain(
                 )
             else:
                 log(f"retrying milestone {milestone.label}")
+                _preserve_carried_wip_before_retry(
+                    root,
+                    spec_path,
+                    state,
+                    milestone,
+                    state.current_plan_name,
+                    writer=writer,
+                )
                 state.current_plan_name = None  # force re-init next loop
             state.pr_number = None
             state.pr_state = None
@@ -4704,6 +4839,37 @@ def run_chain(
                     pr_number=state.pr_number,
                 )
             else:
+                pending_merge_record = {
+                    "label": milestone.label,
+                    "plan": plan_name,
+                    "status": outcome.status,
+                    "pr_number": state.pr_number,
+                    "pr_state": current_pr_state,
+                }
+                premerge_ok, premerge_reason = _chain_completion_guard(
+                    root,
+                    pending_merge_record,
+                    implementation_milestone=True,
+                    chain_state=state,
+                )
+                if not premerge_ok:
+                    writer(
+                        f"[chain] completion guard blocked {milestone.label} before "
+                        f"PR merge: {premerge_reason}\n"
+                    )
+                    state.last_state = STATE_BLOCKED
+                    state.pr_state = current_pr_state
+                    chain_spec.save_chain_state(spec_path, state)
+                    return _result(
+                        "stopped",
+                        state,
+                        events,
+                        spec=spec,
+                        reason=(
+                            f"milestone {milestone.label} completion guard blocked "
+                            f"before PR merge: {premerge_reason}"
+                        ),
+                    )
                 _mark_pr_ready(root, state.pr_number, writer=writer)
                 if spec.merge_policy == "review":
                     state.last_state = STATE_AWAITING_PR_MERGE
@@ -4862,11 +5028,7 @@ def run_chain(
             writer=writer,
         )
         idx += 1
-        state.current_milestone_index = idx
-        state.current_plan_name = None
-        state.last_state = "done"
-        state.pr_number = None
-        state.pr_state = None
+        _mark_chain_after_milestone_advance(spec, state, next_index=idx)
         chain_spec.save_chain_state(spec_path, state)
         manifest_reason = _finalize_validation_artifacts_after_done_append(
             root=root,

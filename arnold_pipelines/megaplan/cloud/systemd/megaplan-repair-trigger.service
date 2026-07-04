@@ -1,9 +1,9 @@
 # ---------------------------------------------------------------------------
 # OPTIONAL latency optimization — NOT a correctness dependency.
 #
-# This oneshot service is activated by megaplan-repair-trigger.path when new
-# failure markers appear in the repair queue.  The watchdog polling loop
-# (arnold-watchdog scan_once) provides the authoritative queue processing;
+# This host-side oneshot service is activated by megaplan-repair-trigger.path
+# when new failure markers appear in the repair queue.  The watchdog polling
+# loop (arnold-watchdog scan_once) provides the authoritative queue processing;
 # systemd activation is a latency optimization only.
 #
 # Dispatch is gated by ARNOLD_REPAIR_TRIGGER_ENABLED (default 1/on).
@@ -20,9 +20,8 @@ After=network.target
 
 [Service]
 Type=oneshot
-# The trigger binary resolves repair-bin, marker-dir, and lock-dir from env
-# vars with the same defaults the watchdog uses.  Override via
-#   Environment=CLOUD_WATCHDOG_MARKER_DIR=...   in a drop-in if needed.
-ExecStart=/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger
+# Execute inside the long-lived cloud container, whose /workspace mount is the
+# same tree watched by the path unit through /opt/megaplan-cloud/workspace.
+ExecStart=/usr/bin/docker exec megaplan-cloud-agent bash -lc 'cd /workspace/arnold && exec arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger'
 # Never restart on its own — the path unit schedules the next activation.
 Restart=no

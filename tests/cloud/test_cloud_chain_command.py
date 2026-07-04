@@ -26,9 +26,12 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _materialize_canonical_epic_input,
     _normalized_chain_upload_spec,
     _phase_model_by_label_from_preflight,
+    _filter_cloud_sessions_since,
+    _parse_cloud_status_since,
     _remote_chain_upload_path,
     _remote_chain_workspace_path,
     _resolve_resume_workspace,
+    _run_cloud_chains,
     _run_preflight,
     _run_sync_megaplan,
     _run_launch_epic_wrapper,
@@ -73,7 +76,7 @@ def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
     )
 
     assert "if [ -f /workspace/.cloud-hot-env ]; then set -a; . /workspace/.cloud-hot-env; set +a; fi;" in command
-    assert "cd /workspace/arnold &&" in command
+    assert "cd /workspace/project && PYTHONSAFEPATH=1 PYTHONPATH=/workspace/arnold:${PYTHONPATH:-}" in command
     assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start" in command
 
 
@@ -90,6 +93,66 @@ def test_tmux_chain_launch_default_marker_records_run_kind() -> None:
     assert marker_json is not None
     marker = json.loads(marker_json.group(1))
     assert marker["run_kind"] == "chain"
+
+
+def test_preflight_phase_model_materialization_preserves_profile_tier_routing() -> None:
+    result = _phase_model_by_label_from_preflight(
+        {
+            "milestones": [
+                {
+                    "label": "m1",
+                    "profile": "premium",
+                    "explicit_phase_model": [],
+                    "resolved_phase_map": {
+                        "execute": "codex:gpt-5.4",
+                        "plan": "codex:high",
+                    },
+                }
+            ]
+        }
+    )
+
+    assert result == {}
+
+
+def test_preflight_phase_model_materialization_keeps_explicit_profile_pins() -> None:
+    result = _phase_model_by_label_from_preflight(
+        {
+            "milestones": [
+                {
+                    "label": "m1",
+                    "profile": "premium",
+                    "explicit_phase_model": ["prep=hermes:deepseek:deepseek-v4-pro"],
+                    "resolved_phase_map": {
+                        "execute": "codex:gpt-5.4",
+                        "prep": "hermes:deepseek:deepseek-v4-pro",
+                    },
+                }
+            ]
+        }
+    )
+
+    assert result == {"m1": ["prep=hermes:deepseek:deepseek-v4-pro"]}
+
+
+def test_preflight_phase_model_materialization_keeps_cloud_default_without_profile() -> None:
+    result = _phase_model_by_label_from_preflight(
+        {
+            "milestones": [
+                {
+                    "label": "m1",
+                    "profile": None,
+                    "explicit_phase_model": [],
+                    "resolved_phase_map": {
+                        "execute": "codex:medium",
+                        "plan": "codex:high",
+                    },
+                }
+            ]
+        }
+    )
+
+    assert result == {"m1": ["execute=codex:medium", "plan=codex:high"]}
 
 
 def test_launch_epic_rejects_missing_north_star(tmp_path: Path) -> None:
@@ -239,6 +302,7 @@ def test_launch_epic_end_to_end_uploads_canonical_spec_and_tracks_watchdog(
     assert "/workspace/demo-" in remote_spec
     marker = next(marker for marker in provider.markers.values() if marker["remote_spec"] == remote_spec)
     assert marker["run_kind"] == "chain"
+    assert marker["allow_human_gates"] is False
     assert "python -P -m arnold_pipelines.megaplan chain start" in marker["relaunch_command"]
     assert f"--spec {remote_spec}" in marker["relaunch_command"]
     assert remote_spec in provider.remote_files
@@ -933,6 +997,16 @@ def test_cloud_chains_command_lists_marker_only_live_process_sessions() -> None:
     assert "return \"running\"" in script
 
 
+def test_cloud_chains_command_prefers_live_runner_over_stale_done_plan_pointer() -> None:
+    script = _cloud_chains_command()
+
+    status_fn = script[script.index("def _effective_session_status(payload):") :]
+    live_runner_check = 'payload.get("tmux_status") == "alive" or payload.get("process_status") == "alive"'
+    stale_done_check = 'if current_state == "done":'
+
+    assert status_fn.index(live_runner_check) < status_fn.index(stale_done_check)
+
+
 def test_cloud_chains_command_lists_all_canonical_markers_not_only_default_prefix() -> None:
     script = _cloud_chains_command()
 
@@ -962,6 +1036,21 @@ def test_cloud_chains_command_includes_should_run_and_watchdog_repair_state() ->
     assert "watchdog_repairing_count" in script
 
 
+def test_cloud_chains_command_explains_policy_and_user_action_blocks() -> None:
+    script = _cloud_chains_command()
+
+    assert "def _policy_evidence(remote_spec):" in script
+    assert '"merge_policy"' in script
+    assert '"driver_auto_approve"' in script
+    assert "def _operator_status(payload):" in script
+    assert "blocked_prep_clarification" in script
+    assert "clarification_question_count" in script
+    assert '"operator_summary"' in script
+    assert '"next_action"' in script
+    assert "human_gate_misconfigured" in script
+    assert "not payload.get(\"allow_human_gates\")" in script
+
+
 # ── T11: sidecar classification & evidence field tests ──────────────────
 
 
@@ -972,6 +1061,15 @@ def test_cloud_chains_command_uses_canonical_session_marker_filter() -> None:
 
     assert "from arnold_pipelines.megaplan.cloud.session_markers import is_canonical_session_marker_path" in script
     assert "is_canonical_session_marker_path(marker)" in script
+
+
+def test_cloud_chains_command_emits_latest_plan_state_evidence() -> None:
+    script = _cloud_chains_command()
+
+    assert "def _latest_plan_state_evidence(workspace):" in script
+    assert '"latest_plan_state"' in script
+    assert '".megaplan" / "plans"' in script
+    assert 'plans_dir.glob("*/state.json")' in script
 
 
 def test_cloud_chains_command_emits_separate_evidence_fields() -> None:
@@ -990,6 +1088,126 @@ def test_cloud_chains_command_emits_separate_evidence_fields() -> None:
     assert '"process_status"' in script
     assert '"chain_health_status"' in script
     assert '"active_step_status"' in script
+
+
+def test_cloud_status_since_parser_accepts_duration() -> None:
+    now = _parse_cloud_status_since("2026-07-04T12:00:00Z")
+    assert now is not None
+
+    cutoff = _parse_cloud_status_since("12h", now=now)
+
+    assert cutoff is not None
+    assert cutoff.isoformat() == "2026-07-04T00:00:00+00:00"
+
+
+def test_cloud_status_since_filter_uses_real_plan_state_not_watchdog_mtime() -> None:
+    payload = {
+        "sessions": [
+            {
+                "session": "old-but-reobserved",
+                "status": "complete",
+                "watchdog_repairing": False,
+                "should_be_running": False,
+                "watchdog_evidence": {"updated_at": "2026-07-04T08:00:00Z"},
+                "latest_plan_state": {
+                    "status": "present",
+                    "updated_at": "2026-07-03T08:00:00Z",
+                    "plan": "old-plan",
+                    "state": "done",
+                },
+                "operator_status": {"status": "complete"},
+            },
+            {
+                "session": "recent",
+                "status": "complete",
+                "watchdog_repairing": False,
+                "should_be_running": False,
+                "latest_plan_state": {
+                    "status": "present",
+                    "updated_at": "2026-07-04T04:00:00Z",
+                    "plan": "recent-plan",
+                    "state": "done",
+                },
+                "operator_status": {"status": "complete"},
+            },
+        ]
+    }
+    since = _parse_cloud_status_since("2026-07-04T00:00:00Z")
+
+    _filter_cloud_sessions_since(payload, since)
+
+    assert [item["session"] for item in payload["sessions"]] == ["recent"]
+    assert payload["unfiltered_session_count"] == 2
+    assert payload["summary"] == {"complete": 1}
+
+
+class _CloudChainsProvider:
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+
+    def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+        assert "_latest_plan_state_evidence" in command
+        return subprocess.CompletedProcess([], 0, json.dumps(self.payload) + "\n", "")
+
+
+def test_cloud_status_all_compact_since_filters_payload_and_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+    payload = {
+        "success": True,
+        "sessions": [
+            {
+                "session": "old",
+                "display_name": "old",
+                "status": "complete",
+                "watchdog_repairing": False,
+                "should_be_running": False,
+                "workspace": "/workspace/old",
+                "latest_plan_state": {
+                    "status": "present",
+                    "updated_at": "2026-07-03T08:00:00Z",
+                    "plan": "old-plan",
+                    "state": "done",
+                },
+                "operator_status": {"status": "complete"},
+            },
+            {
+                "session": "running",
+                "display_name": "running",
+                "status": "running",
+                "watchdog_repairing": True,
+                "should_be_running": True,
+                "workspace": "/workspace/running",
+                "latest_plan_state": {
+                    "status": "present",
+                    "updated_at": "2026-07-04T04:00:00Z",
+                    "plan": "active-plan",
+                    "state": "initialized",
+                },
+                "operator_status": {"status": "running_repairing"},
+            },
+        ],
+    }
+    spec = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/app.git", workspace="/workspace/app"),
+        agents={"default": "codex"},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(),
+        resources=ResourcesSpec(),
+        secrets=[],
+        ssh=SshSpec(host="testhost"),
+    )
+    args = argparse.Namespace(since="2026-07-04T00:00:00Z", compact=True)
+
+    assert _run_cloud_chains(spec, _CloudChainsProvider(payload), args=args) == 0
+
+    captured = capsys.readouterr()
+    assert "cloud sessions: 1 since=2026-07-04T00:00:00Z filtered_from=2" in captured.err
+    assert "session=running" in captured.err
+    assert "session=old" not in captured.err
+    emitted = json.loads(captured.out)
+    assert [item["session"] for item in emitted["sessions"]] == ["running"]
+    assert emitted["should_be_running_count"] == 1
 
 
 def test_cloud_chains_command_marker_only_sessions_have_process_dead_tmux_missing() -> None:

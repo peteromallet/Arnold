@@ -119,8 +119,20 @@ def _extract_repair_program(function_name: str, marker: str) -> str:
         py_start = text.index(marker, start)
     except ValueError:
         if function_name == "collect_failure_context_json":
-            py_start = text.index(
+            for fallback in (
+                "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" \"$MARKER_DIR\" \"$DATA_DIR\" \"$REMOTE_SPEC\" <<'PY'",
                 "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" \"$MARKER_DIR\" \"$DATA_DIR\" <<'PY'",
+            ):
+                try:
+                    py_start = text.index(fallback, start)
+                    break
+                except ValueError:
+                    continue
+            else:
+                raise
+        elif function_name == "repair_target_completion_status":
+            py_start = text.index(
+                "python3 - \"$workspace\" \"$run_kind\" \"$plan_name\" \"$REMOTE_SPEC\" <<'PY'",
                 start,
             )
         else:
@@ -211,8 +223,18 @@ def _run_repair_data_init(
 ) -> subprocess.CompletedProcess[str]:
     program = _extract_repair_program(
         "repair_data_init",
-        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$PROGRESS_FILE\" \"$SESSION\" \"$WORKSPACE\" \"$REMOTE_SPEC\" \"$run_kind\" \"$plan_name\" \"$ARNOLD_SRC\" \"$SYNC_BRANCH\" \"$RUN_DIR\" \"$relaunch_command\" \"$initial_health\" \"$marker_json\" \"$source_git\" \"$workspace_git\" \"$chain_log\" \"$watchdog_log\" \"$tmux_info\" \"$chain_state\" \"$failure_context\" \"${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}\" \"${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}\" <<'PY'",
+        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$PROGRESS_FILE\" \"$SESSION\" \"$WORKSPACE\" \"$REMOTE_SPEC\" \"$run_kind\" \"$plan_name\" \"$ARNOLD_SRC\" \"$SYNC_BRANCH\" \"$RUN_DIR\" \"$relaunch_command\" \"$initial_health\" \"$payload_dir\" \"${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}\" \"${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}\" <<'PY'",
     )
+    payload_dir = data_path.parent / f"{data_path.stem}-repair-init-payload"
+    payload_dir.mkdir(exist_ok=True)
+    (payload_dir / "marker_json").write_text(marker_json, encoding="utf-8")
+    (payload_dir / "source_git").write_text(source_git, encoding="utf-8")
+    (payload_dir / "workspace_git").write_text(workspace_git, encoding="utf-8")
+    (payload_dir / "chain_log").write_text(chain_log, encoding="utf-8")
+    (payload_dir / "watchdog_log").write_text(watchdog_log, encoding="utf-8")
+    (payload_dir / "tmux_info").write_text(tmux_info, encoding="utf-8")
+    (payload_dir / "chain_state").write_text(chain_state, encoding="utf-8")
+    (payload_dir / "failure_context").write_text(json.dumps(failure_context or {}), encoding="utf-8")
     return _run_embedded_python(
         program,
         str(data_path),
@@ -227,14 +249,7 @@ def _run_repair_data_init(
         run_dir,
         relaunch_command,
         initial_health,
-        marker_json,
-        source_git,
-        workspace_git,
-        chain_log,
-        watchdog_log,
-        tmux_info,
-        chain_state,
-        json.dumps(failure_context or {}),
+        str(payload_dir),
         "",
         "",
     )
@@ -316,6 +331,17 @@ def test_watchdog_defaults_editable_install_to_dedicated_branch() -> None:
     assert "workflow-manifest-runtime" not in text
 
 
+def test_watchdog_sync_does_not_broadly_commit_source_drift() -> None:
+    text = _wrapper("arnold-watchdog")
+    start = text.index("sync_editable_source_branch() {")
+    end = text.index("\n\ncodex_repair_editable_install() {", start)
+    sync_body = text[start:end]
+
+    assert "git add -A -- arnold_pipelines/megaplan/skills" in sync_body
+    assert "source checkout has non-sync drift; not auto-committing" in sync_body
+    assert "git add -A &&" not in sync_body
+
+
 def test_host_watchdog_ensure_starts_shell_wrapped_watchdog_and_verifies_liveness() -> None:
     text = _systemd_file("ensure-megaplan-watchdog")
 
@@ -363,6 +389,22 @@ def test_repair_loop_prompts_start_from_inline_incident_snapshot() -> None:
     assert "Do not hardcode a workflow-specific workaround when a general engine fix is appropriate." in text
     assert "This is a recurring problem. Do NOT pick the likely fix." in text
     assert "Trace the actual mechanism end-to-end" in text
+
+
+def test_repair_loop_large_failure_context_is_passed_by_file() -> None:
+    text = _repair_wrapper()
+
+    assert '"$initial_health" "$payload_dir"' in text
+    assert '"$detail" "$failure_context_file"' in text
+    assert '"$turn_rc" "$failure_context_file"' in text
+    assert '"$PROGRESS_FILE" "$failure_context_file"' in text
+    assert 'failure_context_payload = json.loads(read_payload("failure_context") or "{}")' in text
+    assert 'json.loads(pathlib.Path(failure_context_path).read_text(encoding="utf-8"))' in text
+    assert 'json.loads(pathlib.Path(failure_context_path_raw).read_text(encoding="utf-8"))' in text
+    assert '"$initial_health" "$marker_json"' not in text
+    assert '"$detail" "$failure_context" <<' not in text
+    assert '"$turn_rc" "$failure_context" <<' not in text
+    assert '"$PROGRESS_FILE" "$failure_context" "$iteration"' not in text
 
 
 def test_repair_loop_prompt_files_redact_secret_bearers_before_dispatch(tmp_path: Path) -> None:
@@ -605,6 +647,43 @@ def test_repair_loop_collects_execute_attempt_artifacts_and_renders_summary(tmp_
         ),
         encoding="utf-8",
     )
+    (plan_dir / "review.json").write_text(
+        json.dumps(
+            {
+                "outcome": {
+                    "result": "blocked",
+                    "review_verdict": "needs_rework",
+                    "state": "blocked",
+                },
+                "blocking_rework_items": [
+                    {
+                        "task_id": "T1",
+                        "issue": "Backend agentic replay gate and path helpers are missing.",
+                        "expected": "routes.py contains _is_agentic_replay_enabled and ID validation.",
+                        "actual": "No agentic-replay symbols exist in routes.py.",
+                        "evidence_file": "vibecomfy/comfy_nodes/agent/routes.py",
+                        "source": "review_backend_missing",
+                        "deterministic_check": {
+                            "command": "python -m pytest tests/test_agentic_replay_routes.py -v",
+                            "post_status": "failed",
+                        },
+                    },
+                    {
+                        "task_id": "T2",
+                        "issue": "Backend discovery routes are not implemented.",
+                        "expected": "GET /vibecomfy/agentic-replay/runs returns sanitized run records.",
+                        "actual": "No discovery endpoints or helpers exist in routes.py.",
+                        "evidence_file": "vibecomfy/comfy_nodes/agent/routes.py",
+                        "deterministic_check": {
+                            "command": "grep -n 'agentic-replay/runs' vibecomfy/comfy_nodes/agent/routes.py",
+                            "post_status": "failed",
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     (chain_dir / "chain-demo.json").write_text(
         json.dumps({"current_plan_name": "demo-plan", "last_state": "blocked"}),
         encoding="utf-8",
@@ -623,6 +702,8 @@ def test_repair_loop_collects_execute_attempt_artifacts_and_renders_summary(tmp_
     assert execute_context["execution_batch"]["status_counts"]["blocked"] == 1
     assert execute_context["finalize"]["baseline_test_failures"] is None
     assert execute_context["plan_history"]["consecutive_execute_blocked"] == 8
+    assert execute_context["review"]["review_verdict"] == "needs_rework"
+    assert execute_context["review"]["blocking_rework_items"][0]["task_id"] == "T1"
 
     data_path = tmp_path / "repair-data.json"
     data_path.write_text(
@@ -639,12 +720,117 @@ def test_repair_loop_collects_execute_attempt_artifacts_and_renders_summary(tmp_
     summary = summary_result.stdout
     assert summary.startswith("## LAST EXECUTE ATTEMPT")
     assert "Blocked/deferred task: m7-13-full-suite-final-gate" in summary
-    assert "deferred_baseline_unavailable" in summary
+    assert "Deferred by harness until baseline is available." in summary
     assert "baseline_test_failures is null" in summary
     assert "runner error exit code 2" in summary
     assert "pytest collection: 1 errors" in summary
     assert "8 consecutive execute=blocked" in summary
     assert "NOTE: this may be STALE" in summary
+    assert "## Review Blocking Rework" in summary
+    assert "concrete implementation blockers, not a human gate" in summary
+    assert "T1: Backend agentic replay gate and path helpers are missing." in summary
+    assert "evidence_file: vibecomfy/comfy_nodes/agent/routes.py" in summary
+    assert "deterministic_check: python -m pytest tests/test_agentic_replay_routes.py -v" in summary
+
+
+def test_repair_loop_summary_prefers_pending_execute_tasks_over_baseline_deferral(tmp_path: Path) -> None:
+    workspace = tmp_path / "workflow"
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo-plan",
+                "current_state": "blocked",
+                "latest_failure": {
+                    "kind": "execution_blocked",
+                    "phase": "execute",
+                    "message": "execute blocked by quality gates",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text(
+        "execute:authority_divergence | reason=missing_linked_evidence; task_id=T1\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_5.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {"task_id": "T5", "status": "done", "executor_notes": "completed"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "execute_batch_5_output.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {"task_id": "T5", "status": "done", "executor_notes": "completed"},
+                ],
+                "output": "T5 completed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "baseline_test_failures": None,
+                "baseline_test_note": "Baseline capture failed: runner error (exit code: 4)",
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "skipped",
+                        "reviewer_verdict": "deferred_baseline_unavailable",
+                        "executor_notes": (
+                            "Deferred by harness: baseline_test_failures is null, so this "
+                            "no-new-failures checkpoint cannot compare against a recorded baseline."
+                        ),
+                    },
+                    {"id": "T5", "status": "done", "executor_notes": "completed"},
+                    {"id": "T6", "status": "pending"},
+                    {"id": "T7", "status": "pending"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (chain_dir / "chain-demo.json").write_text(
+        json.dumps({"current_plan_name": "demo-plan", "last_state": "blocked"}),
+        encoding="utf-8",
+    )
+
+    collect_program = _extract_repair_program(
+        "collect_failure_context_json",
+        "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" <<'PY'",
+    )
+    result = _run_embedded_python(collect_program, str(workspace), "demo", "chain", "")
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(
+        json.dumps({"initial_facts": {}, "iterations": [payload]}),
+        encoding="utf-8",
+    )
+    summary_program = _extract_repair_program(
+        "render_failure_summary",
+        "python3 - \"$data_path\" <<'PY'",
+    )
+    summary_result = _run_embedded_python(summary_program, str(data_path))
+
+    assert summary_result.returncode == 0, summary_result.stderr
+    summary = summary_result.stdout
+    assert "Blocked/deferred task: none found in execute/finalize artifacts" in summary
+    assert "Pending execute tasks: T6, T7" in summary
+    assert "Blocked/deferred task: T1" not in summary
 
 
 def test_repair_loop_collects_stale_state_classification(tmp_path: Path) -> None:
@@ -1334,8 +1520,10 @@ def test_repair_data_dev_and_mechanical_writers_preserve_legacy_shapes(tmp_path:
 
     mechanical_program = _extract_repair_program(
         "repair_data_record_mechanical",
-        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$iteration\" \"$attempt_id\" \"$status\" \"$detail\" \"$failure_context\" <<'PY'",
+        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$iteration\" \"$attempt_id\" \"$status\" \"$detail\" \"$failure_context_file\" <<'PY'",
     )
+    mechanical_failure_context_path = data_path.parent / "mechanical-failure-context.json"
+    mechanical_failure_context_path.write_text(json.dumps(failure_context), encoding="utf-8")
     mechanical_result = _run_embedded_python(
         mechanical_program,
         str(data_path),
@@ -1343,7 +1531,7 @@ def test_repair_data_dev_and_mechanical_writers_preserve_legacy_shapes(tmp_path:
         "4",
         "failed:retrying_failure",
         "launch blocked by prereq",
-        json.dumps(failure_context),
+        str(mechanical_failure_context_path),
     )
     assert mechanical_result.returncode == 0, mechanical_result.stderr
     payload = json.loads(data_path.read_text(encoding="utf-8"))
@@ -1486,8 +1674,10 @@ def test_repair_data_kimi_and_outcome_writers_preserve_legacy_shapes(tmp_path: P
 
     kimi_program = _extract_repair_program(
         "repair_data_record_kimi",
-        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$iteration\" \"$attempt_id\" \"$status\" \"$report_path\" \"$turn_rc\" \"$failure_context\" <<'PY'",
+        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$iteration\" \"$attempt_id\" \"$status\" \"$report_path\" \"$turn_rc\" \"$failure_context_file\" <<'PY'",
     )
+    kimi_failure_context_path = data_path.parent / "kimi-failure-context.json"
+    kimi_failure_context_path.write_text(json.dumps(failure_context), encoding="utf-8")
     kimi_result = _run_embedded_python(
         kimi_program,
         str(data_path),
@@ -1496,7 +1686,7 @@ def test_repair_data_kimi_and_outcome_writers_preserve_legacy_shapes(tmp_path: P
         "running",
         str(report_path),
         "23",
-        json.dumps(failure_context),
+        str(kimi_failure_context_path),
     )
     assert kimi_result.returncode == 0, kimi_result.stderr
 
@@ -1861,7 +2051,6 @@ def test_repair_loop_classifies_completed_chain_as_chain_completed(tmp_path: Pat
                 "current_plan_name": "",
                 "current_state": "",
                 "last_state": "done",
-                "events": [{"msg": "all milestones complete"}],
             }
         ),
         encoding="utf-8",
@@ -1913,6 +2102,63 @@ def test_repair_loop_classifies_completed_chain_with_null_current_fields(tmp_pat
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["failure_classification"] == "chain_completed"
+
+
+def test_repair_loop_does_not_classify_partial_done_chain_as_completed(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True, exist_ok=True)
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(
+        "\n".join(
+            [
+                "milestones:",
+                "  - label: m1",
+                "    title: M1",
+                "  - label: m2",
+                "    title: M2",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    import hashlib
+
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    (chain_dir / f"{spec_path.stem}-{digest}.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": "",
+                "current_state": "",
+                "last_state": "done",
+                "current_milestone_index": 1,
+                "completed": [{"label": "m1", "status": "merged"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    program = _extract_repair_program(
+        "collect_failure_context_json",
+        "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" <<'PY'",
+    )
+    result = _run_embedded_python(
+        program,
+        str(workspace),
+        "demo-chain",
+        "chain",
+        "",
+        str(workspace / ".megaplan" / "cloud-sessions"),
+        str(workspace / ".megaplan" / "cloud-sessions" / "repair-data"),
+        str(spec_path),
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["failure_classification"] != "chain_completed"
+    assert payload["chain_state_summary"]["last_state"] == "done"
+    assert payload["chain_state_summary"]["milestone_count"] == 2
+    assert payload["chain_state_summary"]["completed_count"] == 1
 
 
 def test_repair_loop_reclassifies_completed_chain_history_unknown_sentinels(tmp_path: Path) -> None:
@@ -3519,6 +3765,23 @@ def test_watchdog_relaunch_runs_editable_install_code_against_active_workspace()
     assert 'sleep 0.2' in text
     assert "relaunch raced with existing tmux session" in text
     assert "session exists after relaunch race" in text
+    assert "export ARNOLD_SUPERVISE_SESSION=" in text
+    assert "export ARNOLD_SUPERVISE_WORKSPACE=" in text
+    assert "export ARNOLD_SUPERVISE_REMOTE_SPEC=" in text
+    assert "export ARNOLD_SUPERVISE_RUN_KIND=" in text
+
+
+def test_supervise_exhaustion_queues_repair_request() -> None:
+    text = _wrapper("arnold-supervise")
+
+    assert "queue_repair_request()" in text
+    assert 'source="arnold_supervise_exit"' in text
+    assert '"failure_kind": "supervised_run_exhausted"' in text
+    assert "non-quota retries exhausted" in text
+    assert "exit_with_repair_request" in text
+    assert "SUPERVISE_SESSION" in text
+    assert "SUPERVISE_WORKSPACE" in text
+    assert "SUPERVISE_REMOTE_SPEC" in text
 
 
 def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
@@ -3895,6 +4158,70 @@ tmux() { echo TMUX >&2; return 1; }
     assert "needs-human webhook unset" in log_path.read_text(encoding="utf-8")
 
 
+def test_watchdog_blocked_recovery_manual_review_dispatches_repair_before_needs_human(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "demo-plan"
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "iteration": 10,
+            "current_state": "blocked",
+            "resume_cursor": {"phase": "review", "retry_strategy": "manual_review"},
+            "latest_failure": {
+                "kind": "blocked_recovery_not_resolved",
+                "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal",
+                "phase": "recover-blocked",
+            },
+        },
+        events_body="{}\n",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_attention_status_env"),
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            _extract_wrapper_function("plan_terminal_status"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\trepair\trepair_dispatched\tblocked_recovery manual_review repair loop dispatched before needs_human\t" in report
+    assert "\tobserve\tneeds_human\t" not in report
+    assert "DISPATCH" in result.stderr
+    assert "REPAIR" not in result.stderr
+    assert "RELAUNCH" not in result.stderr
+    assert "TMUX" not in result.stderr
+    assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
+
+
 def test_watchdog_auto_stall_manual_review_dispatches_repair_before_needs_human(
     tmp_path: Path,
 ) -> None:
@@ -4086,6 +4413,68 @@ tmux() { echo TMUX >&2; return 1; }
     assert "REPAIR" not in result.stderr
     assert "RELAUNCH" not in result.stderr
     assert "TMUX" not in result.stderr
+    assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
+
+
+def test_watchdog_awaiting_human_verify_prep_clarification_dispatches_repair(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "demo-plan"
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "iteration": 3,
+            "current_state": "awaiting_human_verify",
+            "clarification": {
+                "source": "prep",
+                "questions": ["Which schema is authoritative?", "Which artifact should be backfilled?"],
+            },
+        },
+        events_body="{}\n",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_attention_status_env"),
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            _extract_wrapper_function("repair_needs_human_path"),
+            _extract_wrapper_function("plan_terminal_status"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\trepair\trepair_dispatched\tawaiting_human repair loop dispatched before needs_human\t" in report
+    assert "\tobserve\tneeds_human\t" not in report
+    assert "DISPATCH" in result.stderr
+    assert "REPAIR" not in result.stderr
+    assert "RELAUNCH" not in result.stderr
     assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
 
 
@@ -4389,7 +4778,7 @@ repair_unhealthy_session demo-session /workspace/example .megaplan/initiatives/d
     assert "DISPATCH" in result.stderr
 
 
-def test_repair_unhealthy_session_retries_root_cause_repair_after_timeout(tmp_path: Path) -> None:
+def test_repair_unhealthy_session_preserves_direct_relaunch_after_timeout(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     repair_data_dir = tmp_path / "repair-data"
     marker_dir.mkdir()
@@ -4426,9 +4815,51 @@ repair_unhealthy_session demo-session /workspace/example .megaplan/initiatives/d
         ]
     )
     result = _run_watchdog_shell(script)
-    assert result.returncode == 0, result.stderr
-    assert "outcome=repair_timeout" in result.stderr
-    assert "DISPATCH" in result.stderr
+    assert result.returncode == 1, result.stderr
+    assert "repair loop tried and exited without recovery -> direct relaunch" in result.stderr
+    assert "DISPATCH" not in result.stderr
+
+
+def test_repair_unhealthy_session_preserves_direct_relaunch_after_repair_exhausted(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = tmp_path / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    session = "demo-session"
+    (marker_dir / f"{session}.kimi-dispatch").write_text("2026-07-02T00:00:00Z\n", encoding="utf-8")
+    (marker_dir / f"{session}.kimi-pgid").write_text("12345\n", encoding="utf-8")
+    (repair_data_dir / f"{session}.repair-data.json").write_text(
+        json.dumps({"outcome": "repair_exhausted"}),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_clear"),
+            _extract_wrapper_function("kimi_dispatch_failed_previously"),
+            _extract_wrapper_function("repair_data_outcome_for_session"),
+            _extract_wrapper_function("repair_outcome_wants_repair_retry"),
+            _extract_wrapper_function("mechanical_relaunch_attempted_previously"),
+            _extract_wrapper_function("repair_unhealthy_session"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            """
+log() { echo "LOG $*" >&2; }
+kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
+dispatch_kimi_repair() { echo DISPATCH >&2; REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+tmux() { echo "TMUX $*" >&2; return 0; }
+repair_unhealthy_session demo-session /workspace/example .megaplan/initiatives/demo/briefs/demo.md stopped
+""".strip(),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 1, result.stderr
+    assert "repair loop tried and exited without recovery -> direct relaunch" in result.stderr
+    assert "DISPATCH" not in result.stderr
 
 
 def test_repair_unhealthy_session_preserves_direct_relaunch_for_non_retry_repair_outcome(tmp_path: Path) -> None:
@@ -4758,6 +5189,91 @@ tmux() { echo TMUX >&2; return 1; }
     assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
 
 
+def test_watchdog_awaiting_human_verify_chain_state_dispatches_repair_before_relaunch(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "demo-plan"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "iteration": 1,
+            "current_state": "awaiting_human_verify",
+            "clarification": {
+                "intent_summary": "prep surfaced 2 blocking ambiguities; answer and resume",
+                "questions": ["Q1", "Q2"],
+                "source": "prep",
+            },
+        },
+        events_body="{}\n",
+    )
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True, exist_ok=True)
+    import hashlib
+
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    (chain_dir / f"{spec_path.stem}-{digest}.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": plan_name,
+                "last_state": "awaiting_human_verify",
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_attention_status_env"),
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            _extract_wrapper_function("repair_needs_human_path"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+chain_health_status() {
+  CHAIN_HEALTH_STATUS=ok
+  CHAIN_HEALTH_SUMMARY=
+  CHAIN_HEALTH_ARTIFACT_PATH=
+  CHAIN_HEALTH_LOG_MESSAGE=
+}
+""".strip(),
+            f"launch_chain_tick demo-session {str(workspace)!r} {str(spec_path)!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\trepair\trepair_dispatched\tawaiting_human repair loop dispatched before needs_human\t" in report
+    assert "\trestart\trestarted\tstopped session relaunched\t" not in report
+    assert "DISPATCH" in result.stderr
+    assert "RELAUNCH" not in result.stderr
+    assert "TMUX" not in result.stderr
+    assert "REPAIR" not in result.stderr
+
+
 def test_watchdog_completed_chain_state_reports_complete_without_repair(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
@@ -4856,6 +5372,16 @@ def test_watchdog_partial_done_chain_state_relaunches_next_milestone(tmp_path: P
                     {"label": "m2", "status": "done"},
                     {"label": "m3", "status": "done"},
                 ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (chain_dir / "chain-stale-complete.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": "",
+                "last_state": "done",
+                "events": [{"msg": "all milestones complete"}],
             }
         ),
         encoding="utf-8",
@@ -5551,8 +6077,9 @@ def test_watchdog_enforces_single_instance_and_reexecs_after_hot_update() -> Non
     assert 'LOCK_HELD="${CLOUD_WATCHDOG_LOCK_HELD:-0}"' in text
     assert 'exec flock -n "$LOCK_FILE" bash "$SELF_PATH" "${WATCHDOG_ARGS[@]}"' in text
     assert "maybe_reexec_updated_watchdog()" in text
-    assert 'log "watchdog wrapper updated on disk; re-execing current script"' in text
-    assert 'exec bash "$SELF_PATH" "${WATCHDOG_ARGS[@]}"' in text
+    assert 'source_wrapper="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/$(basename "$SELF_PATH")"' in text
+    assert 'log "watchdog wrapper updated on disk; re-execing $reexec_reason"' in text
+    assert 'exec bash "$reexec_path" "${WATCHDOG_ARGS[@]}"' in text
     assert 'log "scan start marker_dir=$MARKER_DIR"' in scan_once
     assert 'sync_editable_source_branch "$report_items" || true' in scan_once
     assert scan_once.count("maybe_reexec_updated_watchdog") == 2
@@ -5572,6 +6099,55 @@ def test_watchdog_refresh_syncs_cloud_runtime_wrappers() -> None:
     assert 'if [[ ! -f "$dest" ]] || ! cmp -s "$wrapper_src_dir/principles.md" "$dest"; then' in text
     assert 'install -m 0644 "$wrapper_src_dir/principles.md" "$dest"' in text
     assert 'sync_cloud_runtime_wrappers >> "$LOG" 2>&1 || return 1' in text
+
+
+def test_watchdog_hot_update_prefers_newer_editable_source_wrapper(tmp_path: Path) -> None:
+    wrapper = tmp_path / "installed" / "arnold-watchdog"
+    wrapper.parent.mkdir(parents=True, exist_ok=True)
+    wrapper.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    src_dir = tmp_path / "src"
+    source_wrapper = src_dir / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers" / "arnold-watchdog"
+    source_wrapper.parent.mkdir(parents=True, exist_ok=True)
+    source_wrapper.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    stale = time.time() - 300
+    fresh = time.time()
+    os.utime(wrapper, (stale, stale))
+    os.utime(source_wrapper, (fresh, fresh))
+
+    fake_bash = tmp_path / "bash"
+    fake_bash.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "print('\\n'.join(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
+    fake_bash.chmod(fake_bash.stat().st_mode | stat.S_IXUSR)
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("maybe_reexec_updated_watchdog"),
+            "log() { :; }",
+            f"SELF_PATH={str(wrapper)!r}",
+            f"SRC_DIR={str(src_dir)!r}",
+            "WATCHDOG_ARGS=(once)",
+            f"WATCHDOG_STARTED_AT={int(stale)}",
+            "maybe_reexec_updated_watchdog",
+        ]
+    )
+
+    env = dict(os.environ)
+    env["PATH"] = f"{tmp_path}:{env.get('PATH', '')}"
+    result = subprocess.run(
+        ["/bin/bash", "-c", script],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [str(source_wrapper), "once"]
 
 
 def test_arnold_chain_wrapper_reloads_hot_env_before_launch() -> None:
@@ -5664,6 +6240,8 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert "from arnold_pipelines.megaplan.cloud.repair_lock import release_repair_lock" in text
     assert 'log "repair pid claimed session=$SESSION pid=$$ pidfile=$REPAIR_PID_FILE"' in text
     assert 'log "stale repair lock detected; leaving evidence in place session=$SESSION lock_dir=$REPAIR_LOCK_DIR"' in text
+    assert 'log "stale repair lock reclaimed session=$SESSION lock_dir=$REPAIR_LOCK_DIR"' in text
+    assert 'another repair loop is already active after stale lock recovery' in text
     assert 'log "stale repair pidfile detected; reclaiming session=$SESSION stale_pid=$existing_pid pidfile=$REPAIR_PID_FILE"' in text
     assert "guard_against_recursive_repair_loop()" in text
     assert 'export CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE=1' in text
@@ -5681,7 +6259,7 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert 'PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE"' in text
     assert 'PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$requested_model"' in text
     assert 'PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$detail"' in text
-    assert 'PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$report_path" "$turn_rc" "$failure_context"' in text
+    assert 'PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$report_path" "$turn_rc" "$failure_context_file"' in text
     assert 'PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$outcome"' in text
     assert 'failure_context_file="$(mktemp)"' in text
     assert 'PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$failure_context_file"' in text
@@ -5751,14 +6329,35 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
     text = _wrapper("arnold-repair-loop")
 
     assert 'DEV_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_TIMEOUT_SECS:-600}"' in text
-    assert 'DEV_ROOT_CAUSE_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_ROOT_CAUSE_TIMEOUT_SECS:-1800}"' in text
+    assert 'DEV_ROOT_CAUSE_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_ROOT_CAUSE_TIMEOUT_SECS:-3600}"' in text
+    assert 'REPAIR_BUDGET_SECS="${CLOUD_WATCHDOG_REPAIR_BUDGET_SECS:-7200}"' in text
     assert 'KIMI_TIMEOUT="${CLOUD_WATCHDOG_KIMI_TIMEOUT_SECS:-600}"' in text
     assert 'KIMI_MAX_TURNS="${CLOUD_WATCHDOG_KIMI_MAX_TURNS:-40}"' in text
     assert "verify_started_and_holding()" in text
     assert "mechanical_launch_step()" in text
+    assert "kill_matching_runner_processes()" in text
+    assert 'kill_matching_runner_processes "$session" "$remote_spec" "$run_kind" "$plan_name"' in text
+    assert "marker_requires_repair_despite_alive()" in text
+    assert 'python3 - "$MARKER_PATH" "$DATA_FILE"' in text
+    assert 'repair_payload.get("current_failure_context")' in text
+    assert "live_plan_failure:" in text
+    assert "state_mismatch" in text
+    assert "repair target is alive but marker requires repair" in text
+    assert "workspace_drift:" in text
+    assert "sandbox_refused_outside_project_root" in text
     assert "run_kimi_launch_turn()" in text
     assert 'timeout "$dev_timeout"' in text
+    assert '- < "$prompt_path"' in text
     assert 'timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent \\' in text
+    assert '--query_file="$prompt_path"' in text
+    assert '--query="$(cat "$prompt_path")"' not in text
+    assert "prepare_repair_agent_exec_env()" in text
+    assert "set +a" in text
+    assert "export -n failure_summary chain_health_block recurrence_block mode_tasks relaunch_command" in text
+    assert text.index("prepare_repair_agent_exec_env") < text.index('timeout "$dev_timeout"')
+    assert text.index("prepare_repair_agent_exec_env", text.index("run_kimi_launch_turn()")) < text.index(
+        'timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent'
+    )
     assert 'tmux new-session -d -s "$session"' in text
     assert 'repair_data_record_kimi "$iteration" "$CURRENT_ATTEMPT_ID" "running"' in text
 
@@ -6672,10 +7271,13 @@ def _run_launch_chain_tick_meta_repair_script(paths: dict[str, Path]) -> subproc
     script = "\n\n".join(
         [
             _extract_wrapper_function("json_field"),
+            _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
+            _extract_wrapper_function_until("write_partial_liveness_tick", "clear_session_tracking_artifacts"),
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(paths['marker_dir'])!r}",
             f"REPAIR_DATA_DIR={str(paths['repair_data_dir'])!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
             f"LOG={str(paths['log_path'])!r}",
             """
 report_item() {
@@ -6685,7 +7287,7 @@ log() { printf '%s\\n' "$*" >> "$LOG"; }
 plan_attention_status_env() { return 0; }
 plan_terminal_status() { return 1; }
 repair_needs_human_path() { printf '%s\\n' "$REPAIR_DATA_DIR/$1.needs-human.json"; }
-session_health_status() { echo dead; }
+session_health_status() { echo "${WATCHDOG_TEST_HEALTH:-dead}"; }
 plan_phase_health_status() { echo ok; }
 plan_progress_stall_status() { echo ok; }
 chain_health_status() {
@@ -6796,6 +7398,112 @@ def test_launch_chain_tick_dispatches_meta_repair_on_partial_liveness_trigger(tm
     assert "trigger=partial_liveness_recurrence" in paths["log_path"].read_text(encoding="utf-8")
 
 
+def test_launch_chain_tick_dispatches_meta_repair_while_session_alive(tmp_path: Path) -> None:
+    paths = _prepare_meta_repair_launch_chain_tick_fixture(
+        tmp_path,
+        payload_overrides={"outcome": "repair_exhausted"},
+    )
+    result = _run_watchdog_shell(
+        "\n\n".join(
+                [
+                    _extract_wrapper_function("json_field"),
+                    _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
+                    _extract_wrapper_function_until("write_partial_liveness_tick", "clear_session_tracking_artifacts"),
+                    _extract_wrapper_function("launch_chain_tick"),
+                f"MARKER_DIR={str(paths['marker_dir'])!r}",
+                f"REPAIR_DATA_DIR={str(paths['repair_data_dir'])!r}",
+                f"SRC_DIR={str(REPO_ROOT)!r}",
+                f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+                f"LOG={str(paths['log_path'])!r}",
+                """
+report_item() {
+  printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\\n' "$*" >> "$LOG"; }
+plan_attention_status_env() { return 0; }
+plan_terminal_status() { return 1; }
+repair_needs_human_path() { printf '%s\\n' "$REPAIR_DATA_DIR/$1.needs-human.json"; }
+session_health_status() { echo alive; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+chain_health_status() {
+  CHAIN_HEALTH_STATUS=ok
+  CHAIN_HEALTH_SUMMARY=
+  CHAIN_HEALTH_ARTIFACT_PATH=
+  CHAIN_HEALTH_LOG_MESSAGE=
+}
+repair_loop_busy_state() { echo none; }
+repair_unhealthy_session() { echo SHOULD_NOT_REPAIR_UNHEALTHY >&2; return 1; }
+dispatch_meta_repair() { echo META_DISPATCH >&2; REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+dispatch_kimi_repair() { echo SHOULD_NOT_DISPATCH_KIMI >&2; return 0; }
+kimi_dispatch_marker_set() { :; }
+kimi_dispatch_marker_clear() { :; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo "echo relaunched"; }
+safe_name() { printf '%s\\n' "$1"; }
+tmux() {
+  if [[ "${1:-}" == "has-session" ]]; then
+    return 1
+  fi
+  echo "TMUX $*" >&2
+  return 0
+}
+""".strip(),
+                (
+                    f"launch_chain_tick demo-session {str(paths['workspace'])!r} "
+                    f"{str(paths['spec_path'])!r} {str(paths['report_path'])!r} chain '' ''"
+                ),
+            ]
+        )
+    )
+    assert result.returncode == 0, result.stderr
+    assert "META_DISPATCH" in result.stderr
+    assert "TMUX" not in result.stderr
+    assert "session alive after repair failure; meta-repair background-dispatched" in paths["log_path"].read_text(encoding="utf-8")
+    events_path = paths["repair_data_dir"].with_name("repair-data.d") / "events" / "events.jsonl"
+    assert not events_path.exists(), "alive-path meta dispatch should short-circuit before writing partial liveness"
+
+
+def test_compute_meta_repair_trigger_skips_stale_timeout_when_alive_has_heartbeat(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps({"session": "demo-session", "outcome": "repair_exhausted"}),
+        encoding="utf-8",
+    )
+    observation = json.dumps(
+        {
+            "authoritative_source": "chain_state",
+            "active_step_heartbeat": {
+                "active": True,
+                "phase": "review",
+                "started_at": "2026-07-04T02:31:43Z",
+            },
+            "current_refs": {
+                "current_plan_name": "m3b-live-binding-and-20260703-2358",
+            },
+        }
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            (
+                f"compute_meta_repair_trigger demo-session "
+                f"{shlex.quote(observation)} alive"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "NO_TRIGGER"
+
+
 def test_launch_chain_tick_dispatches_meta_repair_on_true_blocker_discord_failure(tmp_path: Path) -> None:
     paths = _prepare_meta_repair_launch_chain_tick_fixture(
         tmp_path,
@@ -6853,6 +7561,125 @@ def _run_phase(workspace: Path, run_kind: str = "chain", plan_name: str = "") ->
     )
     assert result.returncode == 0, f"phase program failed: {result.stderr}"
     return result.stdout.strip()
+
+
+def test_plan_phase_health_detects_workspace_drift_without_latest_failure(tmp_path: Path) -> None:
+    workspace = tmp_path / "project"
+    plan = workspace / ".megaplan" / "plans" / "m2-demo"
+    plan.mkdir(parents=True)
+    (plan / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "finalized",
+                "active_step": {"phase": "execute", "worker_pid": 1234},
+                "history": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / ".megaplan" / "cloud-chain-demo.log").write_text(
+        "sandbox refused terminal: refusing terminal command: leading `cd /workspace/arnold` "
+        "targets /workspace/arnold, which is outside the sandbox root/project directory "
+        "/workspace/native-composition-followup/Arnold\n",
+        encoding="utf-8",
+    )
+
+    result = _run_phase(workspace)
+
+    assert result.startswith("workspace_drift:m2-demo:")
+    assert "sandbox_refused_outside_project_root" in result
+
+
+def test_plan_phase_health_ignores_sandbox_refusal_after_later_progress(tmp_path: Path) -> None:
+    workspace = tmp_path / "project"
+    plan = workspace / ".megaplan" / "plans" / "m2-demo"
+    plan.mkdir(parents=True)
+    (plan / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "finalized",
+                "active_step": {"phase": "execute", "worker_pid": 1234},
+                "history": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / ".megaplan" / "cloud-chain-demo.log").write_text(
+        "\n".join(
+            [
+                "sandbox refused terminal: refusing terminal command: leading `cd /workspace/arnold` "
+                "targets /workspace/arnold, which is outside the sandbox root/project directory "
+                "/workspace/native-composition-followup/Arnold. Run commands relative to the project "
+                "directory; do not `cd` to an absolute path outside the worktree.",
+                "  [done] ┊ 💻 $         cd /workspace/arnold && python -c \"...\"  0.0s (0.0s)",
+                "  [tool] (◕ᴗ◕✿) 💻 python -m pytest tests/arnold/pipeline/native/test_decorators.py",
+                "  [done] ┊ 💻 $         python -m pytest tests/arnold/pipeline/native/test_decorators.py  1.4s (1.6s)",
+                "[auto m2-demo] iter 2 state=critiqued next=gate valid_next=['gate', 'step']",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = _run_phase(workspace)
+
+    assert result == "ok"
+
+
+def test_plan_phase_health_ignores_sandbox_refusal_with_recent_active_step(tmp_path: Path) -> None:
+    workspace = tmp_path / "project"
+    plan = workspace / ".megaplan" / "plans" / "m2-demo"
+    plan.mkdir(parents=True)
+    (plan / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "finalized",
+                "active_step": {
+                    "phase": "execute",
+                    "worker_pid": 1234,
+                    "last_activity_at": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+                },
+                "history": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / ".megaplan" / "cloud-chain-demo.log").write_text(
+        "sandbox refused terminal: refusing terminal command: leading `cd /workspace/arnold` "
+        "targets /workspace/arnold, which is outside the sandbox root/project directory "
+        "/workspace/native-composition-followup/Arnold\n",
+        encoding="utf-8",
+    )
+
+    result = _run_phase(workspace)
+
+    assert result == "ok"
+
+
+def test_plan_phase_health_ignores_sandbox_refusal_with_recent_events_only(tmp_path: Path) -> None:
+    workspace = tmp_path / "project"
+    plan = workspace / ".megaplan" / "plans" / "m2-demo"
+    plan.mkdir(parents=True)
+    (plan / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "finalized",
+                "history": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan / "events.ndjson").write_text('{"event":"llm_stream"}\n', encoding="utf-8")
+    (workspace / ".megaplan" / "cloud-chain-demo.log").write_text(
+        "sandbox refused terminal: refusing terminal command: leading `cd /workspace/arnold` "
+        "targets /workspace/arnold, which is outside the sandbox root/project directory "
+        "/workspace/native-composition-followup/Arnold\n",
+        encoding="utf-8",
+    )
+
+    result = _run_phase(workspace)
+
+    assert result == "ok"
 
 
 def _extract_stall_program() -> str:
@@ -7191,6 +8018,47 @@ def test_chain_health_status_detects_repeating_merged_pr_completion_guard_cycle(
     assert "Route to arnold_pipelines/megaplan/chain/" in artifact["why_chain_layer_issue"]
 
 
+def test_chain_health_rejects_incomplete_done_state() -> None:
+    tmp = Path(tempfile.mkdtemp())
+    ws = tmp / "ws"
+    marker = tmp / "markers"
+    repair_dir = tmp / "repair-data"
+    spec_path = ws / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: m1.md\n"
+        "  - label: m2\n"
+        "    idea: m2.md\n",
+        encoding="utf-8",
+    )
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    _write_chain_state(
+        ws / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json",
+        {
+            "current_milestone_index": 1,
+            "current_plan_name": "",
+            "last_state": "done",
+            "completed": [{"label": "m1", "status": "done"}],
+        },
+    )
+
+    payload = _run_chain_health(
+        ws,
+        marker,
+        repair_dir,
+        remote_spec_path=str(spec_path),
+    )
+
+    assert payload["CHAIN_HEALTH_STATUS"] == "chain_inconsistent_done"
+    assert payload["CHAIN_HEALTH_KIND"] == "chain_inconsistent_done"
+    assert "1/2 milestones" in payload["CHAIN_HEALTH_SUMMARY"]
+    artifact = json.loads(Path(payload["CHAIN_HEALTH_ARTIFACT_PATH"]).read_text(encoding="utf-8"))
+    assert artifact["issue_kind"] == "chain_inconsistent_done"
+    assert "last_state=done" in artifact["evidence_markdown"]
+
+
 def test_chain_health_status_leaves_one_off_completion_guard_repair_eligible() -> None:
     tmp = Path(tempfile.mkdtemp())
     ws = tmp / "ws"
@@ -7497,6 +8365,145 @@ def test_chain_health_status_detects_stuck_nonterminal_across_ticks() -> None:
     assert artifact["chain_state_summary"]["last_state"] == "authority_divergence"
 
 
+def test_chain_health_status_ignores_stuck_nonterminal_while_plan_step_is_active() -> None:
+    tmp = Path(tempfile.mkdtemp())
+    ws = tmp / "ws"
+    marker = tmp / "markers"
+    repair_dir = tmp / "repair-data"
+    _write_chain_state(
+        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        {
+            "current_milestone_index": 1,
+            "current_plan_name": "m1-demo-plan",
+            "last_state": "between_milestones",
+            "pr_state": "",
+            "completed": [{"label": "m0"}],
+        },
+    )
+    _write_plan(
+        ws / ".megaplan" / "plans" / "m1-demo-plan",
+        {
+            "current_state": "finalized",
+            "active_step": {"phase": "execute", "started_at": "2026-07-03T16:31:05Z"},
+        },
+    )
+    (ws / ".megaplan" / "cloud-chain-demo.log").parent.mkdir(parents=True, exist_ok=True)
+    (ws / ".megaplan" / "cloud-chain-demo.log").write_text(
+        "[chain] milestone m1 starting\n",
+        encoding="utf-8",
+    )
+
+    first = _run_chain_health(
+        ws,
+        marker,
+        repair_dir,
+        health="alive",
+        env_overrides={"CLOUD_WATCHDOG_CHAIN_STUCK_TICKS": "2"},
+    )
+    second = _run_chain_health(
+        ws,
+        marker,
+        repair_dir,
+        health="alive",
+        env_overrides={"CLOUD_WATCHDOG_CHAIN_STUCK_TICKS": "2"},
+    )
+
+    assert first["CHAIN_HEALTH_STATUS"] == "ok"
+    assert second["CHAIN_HEALTH_STATUS"] == "ok"
+    assert second["CHAIN_HEALTH_ARTIFACT_PATH"] == ""
+
+
+def test_chain_health_status_ignores_stuck_nonterminal_when_chain_last_state_mirrors_blocked_plan() -> None:
+    tmp = Path(tempfile.mkdtemp())
+    ws = tmp / "ws"
+    marker = tmp / "markers"
+    repair_dir = tmp / "repair-data"
+    _write_chain_state(
+        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        {
+            "current_milestone_index": 1,
+            "current_plan_name": "m1-demo-plan",
+            "last_state": "blocked",
+            "pr_state": "open",
+            "completed": [{"label": "m0"}],
+        },
+    )
+    _write_plan(
+        ws / ".megaplan" / "plans" / "m1-demo-plan",
+        {
+            "current_state": "blocked",
+            "latest_failure": {
+                "kind": "execution_blocked",
+                "phase": "execute",
+                "message": "execute blocked by quality gates",
+            },
+        },
+    )
+    (ws / ".megaplan" / "cloud-chain-demo.log").parent.mkdir(parents=True, exist_ok=True)
+    (ws / ".megaplan" / "cloud-chain-demo.log").write_text(
+        "[chain] resuming existing plan m1-demo-plan for m1\n",
+        encoding="utf-8",
+    )
+
+    first = _run_chain_health(
+        ws,
+        marker,
+        repair_dir,
+        health="alive",
+        env_overrides={"CLOUD_WATCHDOG_CHAIN_STUCK_TICKS": "2"},
+    )
+    second = _run_chain_health(
+        ws,
+        marker,
+        repair_dir,
+        health="alive",
+        env_overrides={"CLOUD_WATCHDOG_CHAIN_STUCK_TICKS": "2"},
+    )
+
+    assert first["CHAIN_HEALTH_STATUS"] == "ok"
+    assert second["CHAIN_HEALTH_STATUS"] == "ok"
+    assert second["CHAIN_HEALTH_ARTIFACT_PATH"] == ""
+
+
+def test_chain_health_status_classifies_unclean_base_before_generic_stuck() -> None:
+    tmp = Path(tempfile.mkdtemp())
+    ws = tmp / "ws"
+    marker = tmp / "markers"
+    repair_dir = tmp / "repair-data"
+    _write_chain_state(
+        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        {
+            "current_milestone_index": 1,
+            "current_plan_name": "m1-demo-plan",
+            "last_state": "blocked",
+            "pr_state": "",
+            "completed": [{"label": "m0"}],
+        },
+    )
+    (ws / ".megaplan" / "cloud-chain-demo.log").parent.mkdir(parents=True, exist_ok=True)
+    (ws / ".megaplan" / "cloud-chain-demo.log").write_text(
+        "[chain] retrying milestone m1\n"
+        '{"error": "unclean_base", "message": "require_clean_base: working base carries uncommitted WIP"}\n',
+        encoding="utf-8",
+    )
+
+    payload = _run_chain_health(
+        ws,
+        marker,
+        repair_dir,
+        health="stopped",
+        env_overrides={"CLOUD_WATCHDOG_CHAIN_STUCK_TICKS": "2"},
+    )
+
+    assert payload["CHAIN_HEALTH_STATUS"] == "chain_unclean_base"
+    assert "require_clean_base found carried WIP" in payload["CHAIN_HEALTH_SUMMARY"]
+    assert "retry-preservation issue" in payload["CHAIN_HEALTH_LOG_MESSAGE"]
+    artifact = json.loads(Path(payload["CHAIN_HEALTH_ARTIFACT_PATH"]).read_text(encoding="utf-8"))
+    assert artifact["issue_kind"] == "chain_unclean_base"
+    assert artifact["details"]["dirty_base_signal"] is True
+    assert "Unclean-base evidence" in artifact["evidence_markdown"]
+
+
 def test_chain_health_status_detects_github_large_file_push_rejection() -> None:
     tmp = Path(tempfile.mkdtemp())
     ws = tmp / "ws"
@@ -7636,6 +8643,41 @@ def test_chain_health_no_advance_ignores_active_plan_step() -> None:
         )
         result = _run_chain_health(ws, marker, repair_dir, env_overrides=env)
         assert result["CHAIN_HEALTH_STATUS"] == "ok"
+
+
+def test_chain_health_no_advance_ignores_projected_blocked_plan() -> None:
+    tmp = Path(tempfile.mkdtemp())
+    ws = tmp / "ws"
+    marker = tmp / "markers"
+    repair_dir = tmp / "repair-data"
+    plan_name = "demo-plan"
+    _write_plan(
+        ws / ".megaplan" / "plans" / plan_name,
+        {"current_state": "blocked", "iteration": 1},
+        events_body=json.dumps({"kind": "phase_started", "phase": "execute"}) + "\n",
+    )
+    _write_chain_state(
+        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        {
+            "current_milestone_index": 2,
+            "current_plan_name": plan_name,
+            "last_state": "blocked",
+            "pr_state": "open",
+            "completed": [{"label": "m1"}],
+        },
+    )
+
+    env = {"CLOUD_WATCHDOG_CHAIN_NO_ADVANCE_TICKS": "2"}
+    assert _run_chain_health(ws, marker, repair_dir, env_overrides=env)["CHAIN_HEALTH_STATUS"] == "ok"
+    events_path = ws / ".megaplan" / "plans" / plan_name / "events.ndjson"
+    for i in range(3):
+        events_path.write_text(
+            events_path.read_text(encoding="utf-8") + json.dumps({"kind": "stderr", "i": i}) + "\n",
+            encoding="utf-8",
+        )
+        result = _run_chain_health(ws, marker, repair_dir, env_overrides=env)
+        assert result["CHAIN_HEALTH_STATUS"] == "ok"
+        assert result["CHAIN_HEALTH_ARTIFACT_PATH"] == ""
 
 
 def test_plan_progress_stall_status_is_wired_into_launch_chain_tick() -> None:
@@ -8805,6 +9847,172 @@ def test_auditor_gather_flags_between_milestone_cycling(tmp_path: Path) -> None:
     assert "between-milestone cycling" in " ".join(finding["reasons"])
 
 
+def test_auditor_gather_surfaces_missing_meta_repair_run_for_triggered_session(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    plan_name = "m4-demo"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    _write_plan(
+        plan_dir,
+        {
+            "name": plan_name,
+            "iteration": 4,
+            "current_state": "blocked",
+            "active_step": None,
+            "latest_failure": {
+                "kind": "stalled",
+                "message": "stalled at blocked",
+                "recorded_at": _iso_hours_ago(1.0),
+            },
+            "last_gate": {"recommendation": "ITERATE"},
+            "meta": {"weighted_scores": [5.0, 4.0, 3.0], "plan_deltas": [1.0], "significant_counts": [1]},
+            "history": [
+                {"step": "gate", "result": "iterate", "timestamp": _iso_hours_ago(1.0)},
+                {"step": "gate", "result": "iterate", "timestamp": _iso_hours_ago(2.0)},
+                {"step": "gate", "result": "blocked", "timestamp": _iso_hours_ago(3.0)},
+            ],
+        },
+        plan_v_bodies={"plan_v1.md": "v1"},
+        events_body="{}\n",
+    )
+
+    repair_data_dir = tmp_path / "repair-data"
+    repair_data_dir.mkdir()
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "outcome": "repair_exhausted",
+                "attempts": [
+                    {"attempt_id": 1, "failure_classification": "timeout_or_hang"},
+                    {"attempt_id": 2, "failure_classification": "timeout_or_hang"},
+                    {"attempt_id": 3, "failure_classification": "timeout_or_hang"},
+                ],
+                "iterations": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    gather_dir = tmp_path / "gather"
+    gather_dir.mkdir()
+    worklist = tmp_path / "worklist.jsonl"
+    worklist.write_text(
+        json.dumps(
+            {
+                "workspace": str(workspace),
+                "plan": plan_name,
+                "session": "demo-session",
+                "kind": "chain",
+                "sources": ["marker"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    gather_path = gather_dir / "gather.py"
+    gather_path.write_text(_extract_auditor_gather_program(), encoding="utf-8")
+    env = dict(os.environ)
+    env["MEGAPLAN_AUDIT_REPAIR_DATA_DIR"] = str(repair_data_dir)
+    env["MEGAPLAN_AUDIT_META_RUN_DIR"] = str(tmp_path / "meta-runs")
+    result = subprocess.run(
+        [sys.executable, str(gather_path), str(worklist), str(gather_dir), "6", str(tmp_path), "none"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    findings = json.loads((gather_dir / "findings.json").read_text(encoding="utf-8"))["findings"]
+    assert findings, "expected missing meta-repair run to produce a finding"
+    finding = findings[0]
+    meta_summary = finding["meta_repair_summary"]
+    assert meta_summary["should_dispatch"] is True
+    assert meta_summary["trigger"] in {"repair_timeout", "persistent_recurring_retry"}
+    assert meta_summary["missing_meta_run_evidence"] is True
+    assert meta_summary["meta_record_count"] == 0
+    assert meta_summary["meta_run_log_count"] == 0
+    assert "meta-repair trigger" in " ".join(finding["reasons"])
+
+
+def test_auditor_gather_flags_running_repair_without_attempt_context(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    plan_name = "m1-demo"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    _write_plan(
+        plan_dir,
+        {
+            "name": plan_name,
+            "iteration": 0,
+            "current_state": "initialized",
+            "active_step": None,
+            "latest_failure": {
+                "kind": "phase_failed",
+                "message": "worker_structural_audit_failed: type_mismatch at /suggested_approach",
+                "recorded_at": _iso_hours_ago(1.0),
+            },
+            "history": [{"step": "init", "result": "success", "timestamp": _iso_hours_ago(7.0)}],
+        },
+        plan_v_bodies={"plan_v1.md": "v1"},
+        events_body="{}\n",
+    )
+
+    repair_data_dir = tmp_path / "repair-data"
+    repair_data_dir.mkdir()
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "outcome": "running",
+                "repair_run_count": 6,
+                "attempt_counter": 0,
+                "current_attempt_id": None,
+                "current_signature": {},
+                "current_recurrence": {},
+                "attempts": [],
+                "iterations": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    gather_dir = tmp_path / "gather"
+    gather_dir.mkdir()
+    worklist = tmp_path / "worklist.jsonl"
+    worklist.write_text(
+        json.dumps(
+            {
+                "workspace": str(workspace),
+                "plan": plan_name,
+                "session": "demo-session",
+                "kind": "chain",
+                "sources": ["marker"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    gather_path = gather_dir / "gather.py"
+    gather_path.write_text(_extract_auditor_gather_program(), encoding="utf-8")
+    env = dict(os.environ)
+    env["MEGAPLAN_AUDIT_REPAIR_DATA_DIR"] = str(repair_data_dir)
+    env["MEGAPLAN_AUDIT_META_RUN_DIR"] = str(tmp_path / "meta-runs")
+    result = subprocess.run(
+        [sys.executable, str(gather_path), str(worklist), str(gather_dir), "6", str(tmp_path), "none"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    findings = json.loads((gather_dir / "findings.json").read_text(encoding="utf-8"))["findings"]
+    assert findings, "expected running repair without attempt context to produce a finding"
+    meta_summary = findings[0]["meta_repair_summary"]
+    assert meta_summary["should_dispatch"] is True
+    assert meta_summary["trigger"] == "repair_running_without_attempt_context"
+    assert meta_summary["missing_meta_run_evidence"] is True
+    assert "artifact-quality gap" in " ".join(meta_summary["rationale"])
+
+
 def test_arnold_progress_auditor_produces_evidence_cited_report_via_mocked_deepseek(tmp_path) -> None:
     report = _run_auditor_with_mocked_deepseek(tmp_path)
     finding = report["findings"][0]
@@ -9385,10 +10593,14 @@ def test_meta_repair_wrapper_has_codex_dispatch() -> None:
     """Wrapper must dispatch Codex with danger-full-access sandbox."""
     text = _meta_repair_wrapper()
 
-    assert 'codex exec --sandbox danger-full-access' in text
-    assert 'codex exec --sandbox danger-full-access - < "$BRIEF_PATH"' in text
+    assert 'cd "$ARNOLD_SRC" || exit 1' in text
+    assert 'codex exec --skip-git-repo-check --sandbox danger-full-access' in text
+    assert 'codex exec --skip-git-repo-check --sandbox danger-full-access - < "$BRIEF_PATH"' in text
     assert '$(cat "$BRIEF_PATH")' not in text
     assert 'CODEX_TIMEOUT="${MEGAPLAN_META_CODEX_TIMEOUT_SECS:-5400}"' in text
+    assert 'BRIEF_PREFLIGHT_MAX_CHARS="${MEGAPLAN_META_BRIEF_PREFLIGHT_MAX_CHARS:-900000}"' in text
+    assert 'meta-repair brief exceeded preflight char budget; rebuilding emergency brief' in text
+    assert 'classification_and_prompt 1' in text
     assert 'codex CLI missing' in text
 
 
@@ -9447,6 +10659,8 @@ def test_meta_repair_wrapper_has_record_persistence() -> None:
     assert 'MetaRepairRecord' in text
     assert 'MetaRepairTrigger' in text
     assert 'META_REPAIR_ID' in text
+    assert 'leaving recursion guard unpoisoned' in text
+    assert 'Codex meta-repair prompt exceeded input limit; see meta-repair log.' in text
 
 
 def test_meta_repair_recursion_check_embedded_python_matches_contract(
@@ -9517,7 +10731,7 @@ def test_meta_repair_classification_embedded_python_matches_contract(
     """The classification_and_prompt embedded Python must call evaluate_meta_repair_triggers."""
     marker = (
         'python3 - "$SESSION" "$REPAIR_DATA_DIR" "$REPAIR_DATA_PATH" '
-        '"$META_REPAIR_ENABLED_VAR" <<'
+        '"$META_REPAIR_ENABLED_VAR" "$WATCHDOG_TRIGGER" <<'
     )
     text = _meta_repair_wrapper()
 
@@ -9540,6 +10754,8 @@ def test_meta_repair_classification_embedded_python_matches_contract(
 
     # Verify the embedded program imports evaluate_meta_repair_triggers correctly
     assert "evaluate_meta_repair_triggers" in program
+    assert "MetaRepairClassification" in program
+    assert "watchdog preclassified trigger" in program
     assert "NO_TRIGGER" in program
     assert "PROMPT_START" in program
     assert "PROMPT_END" in program
@@ -9825,6 +11041,51 @@ def test_meta_repair_dispatch_enabled_success(tmp_path: Path) -> None:
     assert "dispatched" in report_content, f"report missing dispatched: {report_content}"
 
 
+def test_meta_repair_dispatch_passes_trigger_to_wrapper(tmp_path: Path) -> None:
+    """dispatch_meta_repair passes the watchdog trigger to arnold-meta-repair-loop."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    report_path = tmp_path / "report.jsonl"
+    args_path = tmp_path / "args.txt"
+
+    fake_bin = tmp_path / "arnold-meta-repair-loop"
+    fake_bin.write_text(
+        f"#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > {str(args_path)!r}\nexit 0\n",
+        encoding="utf-8",
+    )
+    fake_bin.chmod(0o755)
+
+    script = _build_meta_dispatch_script(
+        marker_dir,
+        report_path,
+        meta_repair_bin=str(fake_bin),
+        extra_lines=[
+            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r} repair_timeout",
+            'echo "RESULT=$REPAIR_DISPATCH_RESULT"',
+        ],
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "RESULT=dispatched" in result.stdout
+
+    import time as _time
+
+    for _ in range(20):
+        if args_path.exists():
+            break
+        _time.sleep(0.05)
+    assert args_path.read_text(encoding="utf-8").splitlines() == [
+        "demo-session",
+        "repair_timeout",
+    ]
+
+
 def test_meta_repair_dispatch_busy_skip(tmp_path: Path) -> None:
     """dispatch_meta_repair returns 0 with busy when repair loop already active."""
     marker_dir = tmp_path / "markers"
@@ -9907,6 +11168,54 @@ def test_meta_repair_dispatch_recursive_skip(tmp_path: Path) -> None:
     if report_path.exists():
         report_content = report_path.read_text(encoding="utf-8")
         assert "recursive" in report_content, f"report missing recursive: {report_content}"
+
+
+def test_meta_repair_dispatch_ignores_launch_failure_record(tmp_path: Path) -> None:
+    """dispatch_meta_repair should not treat launch-failure meta records as recursion."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    report_path = tmp_path / "report.jsonl"
+
+    fake_bin = tmp_path / "arnold-meta-repair-loop"
+    fake_bin.write_text("#!/usr/bin/env bash\necho meta-repair ran\nexit 0\n", encoding="utf-8")
+    fake_bin.chmod(0o755)
+
+    repair_data = marker_dir / "repair-data" / "meta"
+    repair_data.mkdir(parents=True)
+    (repair_data / "launch-failed.json").write_text(
+        json.dumps(
+            {
+                "meta_repair_id": "launch-failed",
+                "session": "demo-session",
+                "trigger": "partial_liveness_recurrence",
+                "diagnosis": "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/Hermes subagents); see meta-repair log.",
+                "subagent_results": {
+                    "codex_response": "Not inside a trusted directory and --skip-git-repo-check was not specified."
+                },
+                "outcome": "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/Hermes subagents); see meta-repair log.",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = _build_meta_dispatch_script(
+        marker_dir,
+        report_path,
+        meta_repair_bin=str(fake_bin),
+        extra_lines=[
+            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r}",
+            'echo "RESULT=$REPAIR_DISPATCH_RESULT"',
+        ],
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "RESULT=dispatched" in result.stdout, f"stdout: {result.stdout}"
 
 
 def test_meta_repair_dispatch_report_output(tmp_path: Path) -> None:
@@ -10030,6 +11339,9 @@ def test_meta_repair_dispatch_logs_are_redacted(tmp_path: Path) -> None:
 def test_meta_repair_dispatch_defaults_structural() -> None:
     """Verify META_REPAIR_BIN default and dispatch_meta_repair function exist in watchdog."""
     watchdog_text = _wrapper("arnold-watchdog")
+
+    # Watchdog repair persistence defaults on unless an operator opts out.
+    assert 'PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-1}"' in watchdog_text
 
     # META_REPAIR_BIN default
     assert 'META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-/usr/local/bin/arnold-meta-repair-loop}"' in watchdog_text

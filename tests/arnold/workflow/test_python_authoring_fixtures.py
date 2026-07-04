@@ -10,7 +10,7 @@ from arnold.workflow import diagnostics
 
 
 FIXTURE_DIR = Path("tests/fixtures/workflow_authoring")
-GRAMMAR_VERSION = "arnold.workflow.authoring.v1"
+GRAMMAR_VERSION = "arnold.workflow.authoring.v2"
 EXPECTED_CASES = {
     "valid_direct_linear": "valid",
     "valid_function_linear": "valid",

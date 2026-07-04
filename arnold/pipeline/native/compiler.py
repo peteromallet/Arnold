@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import ast
 import inspect
+import threading
 import textwrap
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
+from arnold.pipeline.native.composition import attach_composition_graph
 from arnold.pipeline.native.decorators import (
     get_decision_meta,
     get_phase_meta,
@@ -31,7 +33,12 @@ from arnold.pipeline.native.ir import (
     NativePhase,
     NativeProgram,
     ParallelInstruction,
+    ParallelMapInstruction,
 )
+from arnold.pipeline.types import Port, PortRef
+
+
+_COMPILE_STACK = threading.local()
 
 
 class NativeCompileError(Exception):
@@ -75,56 +82,73 @@ def compile_pipeline(pipeline_func: Callable[..., Any]) -> NativeProgram:
 
     pipeline_name: str = meta.get("name", pipeline_func.__name__)
     description: str = meta.get("description", "")
+    compile_stack: list[tuple[int, str]] = getattr(_COMPILE_STACK, "stack", [])
+    func_id = id(pipeline_func)
+    if any(existing_id == func_id for existing_id, _ in compile_stack):
+        cycle = [name for _, name in compile_stack] + [pipeline_name]
+        raise NativeCompileError(f"Workflow cycle detected: {' -> '.join(cycle)}")
+    _COMPILE_STACK.stack = [*compile_stack, (func_id, pipeline_name)]
 
     try:
-        source = inspect.getsource(pipeline_func)
-    except OSError as exc:
-        # Source may have shifted on disk after the module was imported
-        # (e.g. long-running process + edited file).  Fall back to reading the
-        # whole source file and finding the function by name in the AST.
-        source_file = inspect.getsourcefile(pipeline_func)
-        if source_file is None:
-            raise NativeCompileError(
-                f"Cannot retrieve source for pipeline {pipeline_name!r}: {exc}"
-            ) from exc
         try:
-            with open(source_file, encoding="utf-8") as fh:
-                source = fh.read()
-        except OSError as read_exc:
-            raise NativeCompileError(
-                f"Cannot retrieve source for pipeline {pipeline_name!r}: {read_exc}"
-            ) from read_exc
+            source = inspect.getsource(pipeline_func)
+        except OSError as exc:
+            # Source may have shifted on disk after the module was imported
+            # (e.g. long-running process + edited file).  Fall back to reading the
+            # whole source file and finding the function by name in the AST.
+            source_file = inspect.getsourcefile(pipeline_func)
+            if source_file is None:
+                raise NativeCompileError(
+                    f"Cannot retrieve source for pipeline {pipeline_name!r}: {exc}"
+                ) from exc
+            try:
+                with open(source_file, encoding="utf-8") as fh:
+                    source = fh.read()
+            except OSError as read_exc:
+                raise NativeCompileError(
+                    f"Cannot retrieve source for pipeline {pipeline_name!r}: {read_exc}"
+                ) from read_exc
 
-    source = textwrap.dedent(source)
-    tree = ast.parse(source)
-    func_def = _find_function_def(tree, pipeline_func.__name__)
+        source = textwrap.dedent(source)
+        tree = ast.parse(source)
+        func_def = _find_function_def(tree, pipeline_func.__name__)
 
-    # ── async def rejection (M4 settled decision) ──────────────────
-    # M4 uses the existing sync generator subset.  Literal ``async def``
-    # native pipelines are not required for milestone 4; if a future
-    # milestone adds async, only compiler-level lowering (matching the
-    # current grammar) is needed — not general async runtime scheduling.
-    if func_def is None:
-        # Check whether the function exists as an async def instead
-        async_func_def = _find_async_function_def(tree, pipeline_func.__name__)
-        if async_func_def is not None:
+        # ── async def rejection (M4 settled decision) ──────────────────
+        # M4 uses the existing sync generator subset.  Literal ``async def``
+        # native pipelines are not required for milestone 4; if a future
+        # milestone adds async, only compiler-level lowering (matching the
+        # current grammar) is needed — not general async runtime scheduling.
+        if func_def is None:
+            # Check whether the function exists as an async def instead
+            async_func_def = _find_async_function_def(tree, pipeline_func.__name__)
+            if async_func_def is not None:
+                raise NativeCompileError(
+                    f"Async def pipeline {pipeline_name!r} is not supported in M4. "
+                    "M4 uses the sync generator subset for native pipelines. "
+                    "Use a regular ``def`` (not ``async def``) with ``yield <phase>(ctx)`` syntax.",
+                    async_func_def,
+                )
             raise NativeCompileError(
-                f"Async def pipeline {pipeline_name!r} is not supported in M4. "
-                "M4 uses the sync generator subset for native pipelines. "
-                "Use a regular ``def`` (not ``async def``) with ``yield <phase>(ctx)`` syntax.",
-                async_func_def,
+                f"Function {pipeline_name!r} not found in parsed source"
             )
-        raise NativeCompileError(
-            f"Function {pipeline_name!r} not found in parsed source"
-        )
 
-    # Pass the pipeline function's globals so the compiler can resolve
-    # module-level @phase/@decision references that live in the same module
-    # as the @pipeline declaration.
-    pipeline_globals: dict[str, Any] = getattr(pipeline_func, '__globals__', {})
-    compiler = _Compiler(pipeline_name, pipeline_globals=pipeline_globals)
-    compiler.lower_body(func_def.body)
-    return compiler.emit(pipeline_func, description)
+        # Pass the pipeline function's globals so the compiler can resolve
+        # module-level @phase/@decision references that live in the same module
+        # as the @pipeline declaration.
+        pipeline_globals: dict[str, Any] = getattr(pipeline_func, "__globals__", {})
+        compiler = _Compiler(pipeline_name, pipeline_globals=pipeline_globals)
+        compiler.lower_body(func_def.body)
+        return compiler.emit(
+            pipeline_func,
+            description,
+            stable_id=meta.get("id"),
+            inputs_schema=meta.get("inputs"),
+            outputs_schema=meta.get("outputs"),
+        )
+    finally:
+        updated_stack = getattr(_COMPILE_STACK, "stack", [])
+        if updated_stack:
+            _COMPILE_STACK.stack = updated_stack[:-1]
 
 
 # ── helpers ───────────────────────────────────────────────────────────
@@ -160,9 +184,32 @@ class _Compiler:
         self._decisions: list[NativeDecision] = []
         self._loop_guards: list[NativeLoopGuard] = []
         self._parallel_blocks: list[ParallelInstruction] = []
+        self._parallel_map_blocks: list[ParallelMapInstruction] = []
         self._pc: int = 0
         self._pending_halt: bool = False
         self._parallel_block_counter: int = 0
+        # Per-parent occurrence counters for deterministic call-site path
+        # suffixes when no explicit id= is provided (SD2 / T3).
+        self._call_site_occurrences: dict[str, int] = {}
+
+    def _build_native_phase(
+        self,
+        func: Callable[..., Any],
+        *,
+        fallback_name: str,
+    ) -> NativePhase:
+        """Build a NativePhase carrying additive decorator metadata."""
+        meta = get_phase_meta(func)
+        name = meta["name"] if meta else fallback_name
+        return NativePhase(
+            name=name,
+            func=func,
+            stable_id=meta.get("id") if meta else None,
+            inputs_schema=meta.get("inputs") if meta else None,
+            outputs_schema=meta.get("outputs") if meta else None,
+            produces=meta.get("produces", ()) if meta else (),
+            consumes=meta.get("consumes", ()) if meta else (),
+        )
 
     # ── emit helpers ──────────────────────────────────────────────
 
@@ -179,6 +226,9 @@ class _Compiler:
         decision_vocabulary: frozenset[str] | None = None,
         subprogram: Any | None = None,
         parallel_index: int | None = None,
+        parallel_map_index: int | None = None,
+        call_site_path: tuple[str, ...] = (),
+        output_bindings: Mapping[str, str] | None = None,
     ) -> int:
         """Append an instruction and return its PC."""
         pc = self._pc
@@ -186,14 +236,17 @@ class _Compiler:
             pc=pc,
             op=op,
             name=name,
+            call_site_path=call_site_path,
             func=func,
             next_pc=next_pc,
             branches=dict(branches) if branches else {},
+            output_bindings=dict(output_bindings) if output_bindings else {},
             produces=produces,
             consumes=consumes,
             decision_vocabulary=decision_vocabulary if decision_vocabulary is not None else frozenset(),
             subprogram=subprogram,
             parallel_index=parallel_index,
+            parallel_map_index=parallel_map_index,
         )
         self._instructions.append(instr)
         self._pc = pc + 1
@@ -203,6 +256,77 @@ class _Compiler:
         if not self._pending_halt:
             self._emit("halt")
             self._pending_halt = True
+
+    def _extract_call_site_path(self, call_node: ast.Call) -> tuple[str, ...]:
+        for kw in call_node.keywords:
+            if kw.arg != "id":
+                continue
+            if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                return (kw.value.value,)
+            raise NativeCompileError("Call-site id must be a string literal", kw.value)
+        return ()
+
+    def _next_call_site_occurrence(self, base_key: str) -> int:
+        """Return the next zero-based occurrence index for *base_key*.
+
+        Deterministic by source order within the parent scope (SD2 / T3).
+        The first occurrence returns 0 (callers may leave call_site_path empty
+        to fall through to stable_id); repeated occurrences return idx >= 1
+        and must be disambiguated.
+        """
+        idx = self._call_site_occurrences.get(base_key, 0)
+        self._call_site_occurrences[base_key] = idx + 1
+        return idx
+
+    def _schema_field_names(self, schema: Mapping[str, Any] | None) -> tuple[str, ...]:
+        if not isinstance(schema, Mapping):
+            return ()
+        required = schema.get("required")
+        if isinstance(required, Sequence) and not isinstance(required, (str, bytes)):
+            fields = tuple(name for name in required if isinstance(name, str))
+            if fields:
+                return fields
+        properties = schema.get("properties")
+        if isinstance(properties, Mapping):
+            return tuple(name for name in properties.keys() if isinstance(name, str))
+        return ()
+
+    def _schema_consumes(self, schema: Mapping[str, Any] | None) -> tuple[PortRef, ...]:
+        return tuple(
+            PortRef(port_name=name, content_type="application/json")
+            for name in self._schema_field_names(schema)
+        )
+
+    def _schema_produces(self, schema: Mapping[str, Any] | None) -> tuple[Port, ...]:
+        return tuple(
+            Port(name=name, content_type="application/json")
+            for name in self._schema_field_names(schema)
+        )
+
+    def _extract_output_bindings(self, call_node: ast.Call) -> dict[str, str]:
+        for kw in call_node.keywords:
+            if kw.arg not in {"outputs", "output_bindings"}:
+                continue
+            if not isinstance(kw.value, ast.Dict):
+                raise NativeCompileError(
+                    "Child output bindings must be a dict literal",
+                    kw.value,
+                )
+            bindings: dict[str, str] = {}
+            for key_node, value_node in zip(kw.value.keys, kw.value.values, strict=True):
+                if not (
+                    isinstance(key_node, ast.Constant)
+                    and isinstance(key_node.value, str)
+                    and isinstance(value_node, ast.Constant)
+                    and isinstance(value_node.value, str)
+                ):
+                    raise NativeCompileError(
+                        "Child output bindings must map string literals to string literals",
+                        kw.value,
+                    )
+                bindings[key_node.value] = value_node.value
+            return bindings
+        return {}
 
     # ── resolution helpers ────────────────────────────────────────
 
@@ -353,6 +477,12 @@ class _Compiler:
             )
 
         func_node = value.func
+        if not isinstance(func_node, ast.Name):
+            raise NativeCompileError(
+                "yield target must be a direct named @phase/@workflow/@pipeline callable; "
+                "dynamic expressions are not supported",
+                func_node,
+            )
         try:
             func = self._resolve_callable(func_node)
         except NativeCompileError:
@@ -362,27 +492,62 @@ class _Compiler:
                 f"Cannot resolve callable for yield: {exc}", func_node
             ) from exc
 
+        if is_pipeline(func):
+            if not isinstance(func_node, ast.Name):
+                raise NativeCompileError(
+                    "yielded child workflow must be a direct named @workflow/@pipeline callable",
+                    func_node,
+                )
+            child_program = compile_pipeline(func)
+            call_site_path = self._extract_call_site_path(value)
+            if not call_site_path:
+                # Generate deterministic per-parent occurrence suffix (SD2 / T3).
+                # First occurrence leaves call_site_path empty (falls through to
+                # stable_id); repeated occurrences get _1, _2, ... suffixes.
+                base_key = child_program.name
+                occ = self._next_call_site_occurrence(base_key)
+                if occ > 0:
+                    call_site_path = (f"{base_key}_{occ}",)
+            self._emit(
+                "subpipeline",
+                name=child_program.name,
+                subprogram=child_program,
+                call_site_path=call_site_path,
+                output_bindings=self._extract_output_bindings(value),
+                consumes=self._schema_consumes(child_program.inputs_schema),
+                produces=self._schema_produces(child_program.outputs_schema),
+            )
+            return
+
         if not is_phase(func):
             if callable(func) and getattr(func, "__name__", "") == "parallel":
                 self._lower_yield_parallel(yield_node)
+                return
+            if callable(func) and getattr(func, "__name__", "") == "parallel_map":
+                self._lower_yield_parallel_map(yield_node)
                 return
             raise NativeCompileError(
                 f"yield target {getattr(func, '__name__', func)!r} is not a @phase-decorated function",
                 func_node,
             )
 
-        meta = get_phase_meta(func)
-        name = meta["name"] if meta else getattr(func, "__name__", "unknown")
-
-        # Extract typed port metadata from phase decorator
-        phase_produces = meta.get("produces", ()) if meta else ()
-        phase_consumes = meta.get("consumes", ()) if meta else ()
+        phase_ir = self._build_native_phase(
+            func,
+            fallback_name=getattr(func, "__name__", "unknown"),
+        )
+        name = phase_ir.name
 
         # Track phase
-        self._phases.append(NativePhase(name=name, func=func, produces=phase_produces, consumes=phase_consumes))
+        self._phases.append(phase_ir)
 
         # Emit phase instruction
-        self._emit("phase", name=name, func=func, produces=phase_produces, consumes=phase_consumes)
+        self._emit(
+            "phase",
+            name=name,
+            func=func,
+            produces=phase_ir.produces,
+            consumes=phase_ir.consumes,
+        )
 
     def _lower_yield_parallel(self, yield_node: ast.Yield) -> None:
         """Lower ``yield parallel([...])`` into one resumable parallel instruction.
@@ -401,24 +566,32 @@ class _Compiler:
         assert isinstance(value, ast.Call), "_lower_yield already guards this"
 
         # Validate and extract branch metadata
-        branch_funcs, branch_names, reducer, explicit_name = (
+        branch_funcs, branch_names, reducer, explicit_name, call_site_id = (
             self._parse_parallel_call(value, context_name="yield parallel(...)")
         )
 
         block_name = self._new_parallel_block_name(explicit_name)
+        # explicit_name is a display label (metadata-only per SD2);
+        # only call_site_id is a stable call-site identity.
+        if call_site_id:
+            call_site_path: tuple[str, ...] = (call_site_id,)
+        else:
+            base_key = explicit_name or block_name
+            occ = self._next_call_site_occurrence(base_key)
+            if occ > 0:
+                call_site_path = (f"{base_key}_{occ}",)
+            else:
+                call_site_path = ()
 
         # Emit a single parallel instruction — no per-branch phase instructions
-        parallel_pc = self._emit("parallel", name=block_name)
+        parallel_pc = self._emit(
+            "parallel", name=block_name, call_site_path=call_site_path
+        )
         merge_pc = self._pc  # next sequential PC after this instruction
 
         # Register each branch callable as a known phase (for metadata/reflection)
         for bf, bn in zip(branch_funcs, branch_names):
-            meta = get_phase_meta(bf)
-            produces = meta.get("produces", ()) if meta else ()
-            consumes = meta.get("consumes", ()) if meta else ()
-            self._phases.append(
-                NativePhase(name=bn, func=bf, produces=produces, consumes=consumes)
-            )
+            self._phases.append(self._build_native_phase(bf, fallback_name=bn))
 
         # Build ParallelInstruction metadata and attach to the instruction
         parallel_index = len(self._parallel_blocks)
@@ -437,14 +610,192 @@ class _Compiler:
             pc=old.pc,
             op=old.op,
             name=old.name,
+            call_site_path=old.call_site_path,
             func=old.func,
             next_pc=merge_pc,
             branches=old.branches,
+            output_bindings=old.output_bindings,
             produces=old.produces,
             consumes=old.consumes,
             decision_vocabulary=old.decision_vocabulary,
             subprogram=parallel_block,
             parallel_index=parallel_index,
+            parallel_map_index=old.parallel_map_index,
+        )
+
+    def _parse_parallel_map_call(
+        self,
+        call_node: ast.Call,
+        *,
+        context_name: str = "yield parallel_map(...)",
+    ) -> tuple[str, Callable[..., Any], str, Callable[..., Any] | None, str | None, str | None]:
+        try:
+            func = self._resolve_callable(call_node.func)
+        except NativeCompileError as exc:
+            raise NativeCompileError(
+                f"{context_name} must be a call to parallel_map(...); {exc}",
+                call_node,
+            ) from exc
+
+        if not callable(func) or getattr(func, "__name__", "") != "parallel_map":
+            raise NativeCompileError(
+                f"{context_name} must be a call to parallel_map(...), got {getattr(func, '__name__', func)!r}",
+                call_node.func,
+            )
+        if call_node.args:
+            raise NativeCompileError(
+                "parallel_map() requires keyword arguments only",
+                call_node,
+            )
+
+        seen_keywords: set[str] = set()
+        items_ref: str | None = None
+        mapper: Callable[..., Any] | None = None
+        path_template = ""
+        reducer: Callable[..., Any] | None = None
+        explicit_name: str | None = None
+        explicit_id: str | None = None
+
+        for kw in call_node.keywords:
+            if kw.arg is None:
+                raise NativeCompileError("parallel_map() does not accept **kwargs", kw)
+            if kw.arg in seen_keywords:
+                raise NativeCompileError(
+                    f"parallel_map() received duplicate keyword {kw.arg!r}",
+                    kw,
+                )
+            seen_keywords.add(kw.arg)
+
+            if kw.arg == "items":
+                if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                    items_ref = kw.value.value
+                else:
+                    raise NativeCompileError(
+                        "parallel_map() items must be a string literal reference",
+                        kw.value,
+                    )
+            elif kw.arg == "step":
+                if not isinstance(kw.value, ast.Name):
+                    raise NativeCompileError(
+                        "parallel_map() step must be a direct named callable",
+                        kw.value,
+                    )
+                mapper = self._resolve_callable(kw.value)
+                if not (is_phase(mapper) or is_pipeline(mapper)):
+                    raise NativeCompileError(
+                        "parallel_map() step must be a @phase/@workflow/@pipeline callable",
+                        kw.value,
+                    )
+            elif kw.arg == "reducer":
+                if not isinstance(kw.value, ast.Name):
+                    raise NativeCompileError(
+                        "parallel_map() reducer must be a direct named callable",
+                        kw.value,
+                    )
+                reducer = self._resolve_callable(kw.value)
+            elif kw.arg == "path_template":
+                if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                    path_template = kw.value.value
+                else:
+                    raise NativeCompileError(
+                        "parallel_map() path_template must be a string literal",
+                        kw.value,
+                    )
+            elif kw.arg == "name":
+                if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                    explicit_name = kw.value.value
+                else:
+                    raise NativeCompileError(
+                        "parallel_map() name must be a string literal",
+                        kw.value,
+                    )
+            elif kw.arg == "id":
+                if not (
+                    isinstance(kw.value, ast.Constant)
+                    and isinstance(kw.value.value, str)
+                ):
+                    raise NativeCompileError(
+                        "parallel_map() id must be a string literal",
+                        kw.value,
+                    )
+                explicit_id = kw.value.value
+            else:
+                raise NativeCompileError(
+                    f"Unsupported parallel_map() keyword: {kw.arg!r}",
+                    kw,
+                )
+
+        if items_ref is None:
+            raise NativeCompileError("parallel_map() requires an items=... argument", call_node)
+        if mapper is None:
+            raise NativeCompileError("parallel_map() requires a step=... argument", call_node)
+        return items_ref, mapper, path_template, reducer, explicit_name, explicit_id
+
+    def _new_parallel_map_block_name(self, explicit_name: str | None) -> str:
+        if explicit_name:
+            return explicit_name
+        name = f"parallel_map_{self._parallel_block_counter}"
+        self._parallel_block_counter += 1
+        return name
+
+    def _lower_yield_parallel_map(self, yield_node: ast.Yield) -> None:
+        value = yield_node.value
+        assert isinstance(value, ast.Call), "_lower_yield already guards this"
+
+        items_ref, mapper, path_template, reducer, explicit_name, explicit_id = self._parse_parallel_map_call(
+            value
+        )
+        block_name = self._new_parallel_map_block_name(explicit_name)
+        mapper_name = getattr(mapper, "__name__", "mapper")
+        # explicit_name is a display label (metadata-only per SD2);
+        # only explicit_id is a stable call-site identity.
+        if explicit_id:
+            call_site_path: tuple[str, ...] = (explicit_id,)
+        else:
+            base_key = explicit_name or mapper_name
+            occ = self._next_call_site_occurrence(base_key)
+            if occ > 0:
+                call_site_path = (f"{base_key}_{occ}",)
+            else:
+                call_site_path = ()
+
+        parallel_map_pc = self._emit(
+            "parallel_map",
+            name=block_name,
+            call_site_path=call_site_path,
+        )
+        merge_pc = self._pc
+        if is_phase(mapper):
+            self._phases.append(self._build_native_phase(mapper, fallback_name=mapper_name))
+
+        parallel_map_index = len(self._parallel_map_blocks)
+        parallel_map_block = ParallelMapInstruction(
+            name=block_name,
+            items_ref=items_ref,
+            mapper=mapper,
+            mapper_name=mapper_name,
+            reducer=reducer,
+            path_template=path_template,
+            merge_pc=merge_pc,
+        )
+        self._parallel_map_blocks.append(parallel_map_block)
+
+        old = self._instructions[parallel_map_pc]
+        self._instructions[parallel_map_pc] = NativeInstruction(
+            pc=old.pc,
+            op=old.op,
+            name=old.name,
+            call_site_path=old.call_site_path,
+            func=old.func,
+            next_pc=merge_pc,
+            branches=old.branches,
+            output_bindings=old.output_bindings,
+            produces=old.produces,
+            consumes=old.consumes,
+            decision_vocabulary=old.decision_vocabulary,
+            subprogram=parallel_map_block,
+            parallel_index=old.parallel_index,
+            parallel_map_index=parallel_map_index,
         )
 
 
@@ -731,6 +1082,7 @@ class _Compiler:
             name=f"{name}_guard",
             func=func,
             branches=branches,
+            output_bindings={},
             produces=(),
             consumes=(),
             decision_vocabulary=vocabulary,
@@ -744,10 +1096,10 @@ class _Compiler:
         call_node: ast.Call,
         *,
         context_name: str = "parallel(...)",
-    ) -> tuple[list[Callable[..., Any]], list[str], Callable[..., Any] | None, str | None]:
+    ) -> tuple[list[Callable[..., Any]], list[str], Callable[..., Any] | None, str | None, str | None]:
         """Validate a ``parallel([...])`` call and return its components.
 
-        Returns ``(branch_funcs, branch_names, reducer, explicit_name)``.
+        Returns ``(branch_funcs, branch_names, reducer, explicit_name, call_site_id)``.
         Raises ``NativeCompileError`` for invalid branch sets, reducers, or
         unsupported keyword arguments.
         """
@@ -831,6 +1183,7 @@ class _Compiler:
 
         reducer: Callable[..., Any] | None = None
         explicit_name: str | None = None
+        call_site_id: str | None = None
         for kw in call_node.keywords:
             if kw.arg == "reducer":
                 try:
@@ -857,12 +1210,22 @@ class _Compiler:
                     raise NativeCompileError(
                         "parallel() name must be a string literal", kw.value
                     )
+            elif kw.arg == "id":
+                if (
+                    isinstance(kw.value, ast.Constant)
+                    and isinstance(kw.value.value, str)
+                ):
+                    call_site_id = kw.value.value
+                else:
+                    raise NativeCompileError(
+                        "parallel() id must be a string literal", kw.value
+                    )
             else:
                 raise NativeCompileError(
                     f"Unsupported parallel() keyword: {kw.arg!r}", kw
                 )
 
-        return branch_funcs, branch_names, reducer, explicit_name
+        return branch_funcs, branch_names, reducer, explicit_name, call_site_id
 
     def _new_parallel_block_name(self, explicit_name: str | None) -> str:
         if explicit_name:
@@ -882,8 +1245,24 @@ class _Compiler:
         This method extracts the phase callables and builds the same
         metadata that _parse_parallel_call would return.
 
-        Returns (branch_funcs, branch_names, reducer, explicit_name).
+        Returns (branch_funcs, branch_names, reducer, explicit_name, call_site_id).
         """
+        call_site_id: str | None = None
+        for kw in call_node.keywords:
+            if kw.arg == "id":
+                if (
+                    isinstance(kw.value, ast.Constant)
+                    and isinstance(kw.value.value, str)
+                ):
+                    call_site_id = kw.value.value
+                else:
+                    raise NativeCompileError(
+                        "native_panel() id must be a string literal", kw.value
+                    )
+            else:
+                raise NativeCompileError(
+                    f"Unsupported native_panel() keyword: {kw.arg!r}", kw
+                )
         if len(call_node.args) < 2:
             raise NativeCompileError(
                 "native_panel(...) requires at least two arguments "
@@ -1007,7 +1386,7 @@ class _Compiler:
                         outputs[f"{rid}.{label}"] = value
             return outputs
 
-        return branch_funcs, branch_names, _panel_reducer, explicit_name
+        return branch_funcs, branch_names, _panel_reducer, explicit_name, call_site_id
 
 
     def _lower_for_stmt(self, stmt: ast.For) -> None:
@@ -1053,6 +1432,7 @@ class _Compiler:
                 branch_names,
                 reducer,
                 explicit_name,
+                call_site_id,
             ) = self._parse_parallel_call(
                 iter_node, context_name="For loop iterable"
             )
@@ -1062,6 +1442,7 @@ class _Compiler:
                 branch_names,
                 reducer,
                 explicit_name,
+                call_site_id,
             ) = self._parse_native_panel_call(iter_node)
         else:
             raise NativeCompileError(
@@ -1070,11 +1451,24 @@ class _Compiler:
                 iter_node.func,
             )
         block_name = self._new_parallel_block_name(explicit_name)
+        # explicit_name is a display label (metadata-only per SD2);
+        # only call_site_id is a stable call-site identity.
+        if call_site_id:
+            call_site_path: tuple[str, ...] = (call_site_id,)
+        else:
+            base_key = explicit_name or block_name
+            occ = self._next_call_site_occurrence(base_key)
+            if occ > 0:
+                call_site_path = (f"{base_key}_{occ}",)
+            else:
+                call_site_path = ()
 
         # Emit the parallel instruction as a placeholder; its metadata is
         # patched after branch bodies are lowered.  At runtime the marker is a
         # no-op, so sequential fall-through executes the inlined bodies.
-        parallel_pc = self._emit("parallel", name=block_name)
+        parallel_pc = self._emit(
+            "parallel", name=block_name, call_site_path=call_site_path
+        )
 
         # Lower each branch body with the corresponding callable substituted.
         # For the M5a sequential baseline, branches are emitted back-to-back
@@ -1113,6 +1507,7 @@ class _Compiler:
             func=old_marker.func,
             next_pc=old_marker.next_pc,
             branches=old_marker.branches,
+            output_bindings=old_marker.output_bindings,
             produces=old_marker.produces,
             consumes=old_marker.consumes,
             decision_vocabulary=old_marker.decision_vocabulary,
@@ -1151,35 +1546,47 @@ class _Compiler:
         self,
         pipeline_func: Callable[..., Any],
         description: str,
+        *,
+        stable_id: str | None,
+        inputs_schema: dict[str, Any] | None,
+        outputs_schema: dict[str, Any] | None,
     ) -> NativeProgram:
         """Assemble and return the final :class:`NativeProgram`."""
         self._emit_halt()
 
         # Fix up sequential next_pc links for non-branch instructions
         for i, instr in enumerate(self._instructions):
-            if instr.op in ("phase", "jump", "parallel") and instr.next_pc is None:
+            if instr.op in ("phase", "jump", "parallel", "parallel_map", "subpipeline") and instr.next_pc is None:
                 next_pc = i + 1
                 if next_pc < len(self._instructions):
                     self._instructions[i] = NativeInstruction(
                         pc=instr.pc,
                         op=instr.op,
                         name=instr.name,
+                        call_site_path=instr.call_site_path,
                         func=instr.func,
                         next_pc=next_pc,
                         branches=instr.branches,
+                        output_bindings=instr.output_bindings,
                         produces=instr.produces,
                         consumes=instr.consumes,
                         decision_vocabulary=instr.decision_vocabulary,
                         subprogram=instr.subprogram,
                         parallel_index=instr.parallel_index,
+                        parallel_map_index=instr.parallel_map_index,
                     )
 
-        return NativeProgram(
+        program = NativeProgram(
             name=self._pipeline_name,
+            stable_id=stable_id,
+            inputs_schema=inputs_schema,
+            outputs_schema=outputs_schema,
             instructions=tuple(self._instructions),
             phases=tuple(self._phases),
             decisions=tuple(self._decisions),
             loop_guards=tuple(self._loop_guards),
             parallel_blocks=tuple(self._parallel_blocks),
+            parallel_map_blocks=tuple(self._parallel_map_blocks),
             description=description,
         )
+        return attach_composition_graph(program)

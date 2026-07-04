@@ -21,7 +21,7 @@ from arnold_pipelines.megaplan.agentbox_adapter import (
     MegaplanChainLaunchError,
     _record_completion_dm,
 )
-from arnold_pipelines.megaplan.chain.spec import ChainState, save_chain_state
+from arnold_pipelines.megaplan.chain.spec import ChainState, load_chain_state, save_chain_state
 
 
 def test_megaplan_chain_launch_validates_relative_spec_before_tmux(
@@ -557,6 +557,244 @@ def test_megaplan_chain_status_snapshot_classifies_active_plan_without_runner_as
     assert snapshot.classification.operation_state is OperationState.SUSPENDED
     assert snapshot.classification.effective_status == "stale_bookkeeping"
     assert snapshot.classification.reason == "active_plan_without_live_runner"
+
+
+def test_megaplan_chain_status_ignores_stale_completed_current_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config_with_repo(tmp_path, "app")
+    repo = config.repos_root / "app"
+    idea_dir = repo / ".megaplan" / "initiatives" / "epic" / "briefs"
+    idea_dir.mkdir(parents=True, exist_ok=True)
+    (idea_dir / "m1.md").write_text("Implement the first milestone.\n", encoding="utf-8")
+    (idea_dir / "m2.md").write_text("Implement the second milestone.\n", encoding="utf-8")
+    _write_raw_chain(
+        repo,
+        "\n".join(
+            [
+                "base_branch: main",
+                "milestones:",
+                "  - label: m1",
+                "    idea: .megaplan/initiatives/epic/briefs/m1.md",
+                "  - label: m2",
+                "    idea: .megaplan/initiatives/epic/briefs/m2.md",
+                "",
+            ]
+        ),
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "add chain spec")
+    monkeypatch.setattr("agentbox.host.start_session", lambda *args, **kwargs: "agentbox-chain-1")
+    monkeypatch.setattr(
+        "agentbox.host.inspect_session",
+        lambda name: SessionStatus(name, "running", True),
+    )
+
+    result = MegaplanChainHandler().launch(
+        config,
+        "chain-1",
+        repo_name="app",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
+    )
+    save_chain_state(
+        result.resolved_spec_path,
+        ChainState(
+            current_milestone_index=1,
+            current_plan_name="m1",
+            last_state="blocked",
+            completed=[{"label": "m1", "plan": "m1", "status": "done"}],
+        ),
+    )
+    _write_plan_state(result.project_root, "m1", "blocked")
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.agentbox_adapter.inspect_session",
+        lambda name: SessionStatus(name, "dead", False),
+    )
+
+    snapshot = MegaplanChainHandler().status(config, "chain-1")
+
+    assert snapshot.plan_status == {"status": "missing", "reason": "no current plan"}
+    assert snapshot.classification.operation_state is OperationState.SUSPENDED
+    assert snapshot.classification.effective_status == "stale_bookkeeping"
+    assert snapshot.classification.reason == "running_operation_without_live_runner"
+
+
+def test_megaplan_chain_status_clears_stale_completed_current_plan_raw_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config_with_repo(tmp_path, "app")
+    repo = config.repos_root / "app"
+    idea_dir = repo / ".megaplan" / "initiatives" / "epic" / "briefs"
+    idea_dir.mkdir(parents=True, exist_ok=True)
+    (idea_dir / "m1.md").write_text("Implement the first milestone.\n", encoding="utf-8")
+    (idea_dir / "m2.md").write_text("Implement the second milestone.\n", encoding="utf-8")
+    _write_raw_chain(
+        repo,
+        "\n".join(
+            [
+                "base_branch: main",
+                "milestones:",
+                "  - label: m1",
+                "    idea: .megaplan/initiatives/epic/briefs/m1.md",
+                "  - label: m2",
+                "    idea: .megaplan/initiatives/epic/briefs/m2.md",
+                "",
+            ]
+        ),
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "add chain spec")
+    monkeypatch.setattr("agentbox.host.start_session", lambda *args, **kwargs: "agentbox-chain-1")
+    monkeypatch.setattr(
+        "agentbox.host.inspect_session",
+        lambda name: SessionStatus(name, "running", True),
+    )
+
+    result = MegaplanChainHandler().launch(
+        config,
+        "chain-1",
+        repo_name="app",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
+    )
+    save_chain_state(
+        result.resolved_spec_path,
+        ChainState(
+            current_milestone_index=1,
+            current_plan_name="m1",
+            last_state="blocked",
+            pr_number=42,
+            pr_state="merged",
+            completed=[{"label": "m1", "plan": "m1", "status": "done"}],
+        ),
+    )
+
+    normalized = load_chain_state(result.resolved_spec_path)
+
+    assert normalized.current_plan_name is None
+    assert normalized.pr_number is None
+    assert normalized.pr_state is None
+    assert normalized.last_state == "done"
+
+
+def test_megaplan_chain_status_clears_inherited_blocked_state_after_cursor_advances(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config_with_repo(tmp_path, "app")
+    repo = config.repos_root / "app"
+    idea_dir = repo / ".megaplan" / "initiatives" / "epic" / "briefs"
+    idea_dir.mkdir(parents=True, exist_ok=True)
+    (idea_dir / "m1.md").write_text("Implement the first milestone.\n", encoding="utf-8")
+    (idea_dir / "m2.md").write_text("Implement the second milestone.\n", encoding="utf-8")
+    _write_raw_chain(
+        repo,
+        "\n".join(
+            [
+                "base_branch: main",
+                "milestones:",
+                "  - label: m1",
+                "    idea: .megaplan/initiatives/epic/briefs/m1.md",
+                "  - label: m2",
+                "    idea: .megaplan/initiatives/epic/briefs/m2.md",
+                "",
+            ]
+        ),
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "add chain spec")
+    monkeypatch.setattr("agentbox.host.start_session", lambda *args, **kwargs: "agentbox-chain-1")
+    monkeypatch.setattr(
+        "agentbox.host.inspect_session",
+        lambda name: SessionStatus(name, "running", True),
+    )
+
+    result = MegaplanChainHandler().launch(
+        config,
+        "chain-1",
+        repo_name="app",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
+    )
+    save_chain_state(
+        result.resolved_spec_path,
+        ChainState(
+            current_milestone_index=1,
+            current_plan_name=None,
+            last_state="blocked",
+            completed=[{"label": "m1", "plan": "m1", "status": "done"}],
+        ),
+    )
+
+    normalized = load_chain_state(result.resolved_spec_path)
+
+    assert normalized.current_milestone_index == 1
+    assert normalized.current_plan_name is None
+    assert normalized.last_state == "done"
+
+
+def test_megaplan_chain_status_ignores_stale_completed_current_plan_by_milestone_label(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config_with_repo(tmp_path, "app")
+    repo = config.repos_root / "app"
+    idea_dir = repo / ".megaplan" / "initiatives" / "epic" / "briefs"
+    idea_dir.mkdir(parents=True, exist_ok=True)
+    (idea_dir / "m1.md").write_text("Implement the first milestone.\n", encoding="utf-8")
+    (idea_dir / "m2.md").write_text("Implement the second milestone.\n", encoding="utf-8")
+    _write_raw_chain(
+        repo,
+        "\n".join(
+            [
+                "base_branch: main",
+                "milestones:",
+                "  - label: m1",
+                "    idea: .megaplan/initiatives/epic/briefs/m1.md",
+                "  - label: m2",
+                "    idea: .megaplan/initiatives/epic/briefs/m2.md",
+                "",
+            ]
+        ),
+    )
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "add chain spec")
+    monkeypatch.setattr("agentbox.host.start_session", lambda *args, **kwargs: "agentbox-chain-1")
+    monkeypatch.setattr(
+        "agentbox.host.inspect_session",
+        lambda name: SessionStatus(name, "running", True),
+    )
+
+    result = MegaplanChainHandler().launch(
+        config,
+        "chain-1",
+        repo_name="app",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
+    )
+    save_chain_state(
+        result.resolved_spec_path,
+        ChainState(
+            current_milestone_index=1,
+            current_plan_name="milestone-m1",
+            last_state="blocked",
+            completed=[{"label": "m1", "status": "done"}],
+        ),
+    )
+    plan_dir = _write_plan_state(result.project_root, "milestone-m1", "blocked")
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    state["meta"] = {"chain_policy": {"milestone_label": "m1"}}
+    (plan_dir / "state.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.agentbox_adapter.inspect_session",
+        lambda name: SessionStatus(name, "dead", False),
+    )
+
+    snapshot = MegaplanChainHandler().status(config, "chain-1")
+
+    assert snapshot.plan_status == {"status": "missing", "reason": "no current plan"}
+    assert snapshot.classification.operation_state is OperationState.SUSPENDED
+    assert snapshot.classification.effective_status == "stale_bookkeeping"
+    assert snapshot.classification.reason == "running_operation_without_live_runner"
 
 
 @pytest.mark.parametrize(

@@ -8502,6 +8502,7 @@ class AIAgent:
 
 def main(
     query: str = None,
+    query_file: str = None,
     model: str = "anthropic/claude-opus-4.6",
     api_key: str = None,
     base_url: str = "https://openrouter.ai/api/v1",
@@ -8518,7 +8519,8 @@ def main(
     Main function for running the agent directly.
 
     Args:
-        query (str): Natural language query for the agent. Defaults to Python 3.13 example.
+        query (str): Natural language query for the agent.
+        query_file (str): Path to a file containing the query. Use for large prompts.
         model (str): Model name to use (OpenRouter format: provider/model). Defaults to anthropic/claude-sonnet-4.6.
         api_key (str): API key for authentication. Uses OPENROUTER_API_KEY env var if not provided.
         base_url (str): Base URL for the model API. Defaults to https://openrouter.ai/api/v1
@@ -8537,6 +8539,16 @@ def main(
         - "research": Web search, extract, crawl + vision tools
     """
     configure_logging(verbose_logging=verbose, quiet_mode=False)
+
+    if query and query_file:
+        print("❌ Pass only one of --query or --query_file")
+        return
+    if query_file:
+        try:
+            query = Path(query_file).expanduser().read_text(encoding="utf-8")
+        except OSError as e:
+            print(f"❌ Failed to read query_file {query_file}: {e}")
+            return
 
     print("🤖 AI Agent with Tool Calling")
     print("=" * 50)

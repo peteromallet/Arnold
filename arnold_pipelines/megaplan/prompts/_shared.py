@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from arnold_pipelines.megaplan._core import json_dump, read_json
+from arnold_pipelines.megaplan.prep_payload import render_suggested_approach
 
 
 def _resolve_prompt_root(plan_dir: Path, root: Path | None) -> Path:
@@ -300,10 +301,9 @@ def _render_prep_block(plan_dir: Path) -> tuple[str, str]:
     else:
         constraints_block = "- No explicit constraints captured."
 
-    suggested_approach = (
-        str(prep.get("suggested_approach", "")).strip()
-        or "No suggested approach provided."
-    )
+    suggested_approach = render_suggested_approach(prep.get("suggested_approach", ""))
+    if not suggested_approach:
+        suggested_approach = "No suggested approach provided."
 
     open_questions = prep.get("open_questions", [])
     open_questions_section = ""

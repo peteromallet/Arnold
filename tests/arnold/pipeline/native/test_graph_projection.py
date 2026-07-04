@@ -16,11 +16,13 @@ from arnold.pipeline.native import (
     NativeCompileError,
     compile_pipeline,
     decision,
+    parallel_map,
     phase,
     pipeline,
     project_graph,
+    workflow,
 )
-from arnold.pipeline.types import ParallelStage, Pipeline, Stage
+from arnold.pipeline.types import ParallelStage, Pipeline, Stage, StepContext
 from arnold.workflow.validator import validate
 
 
@@ -1978,6 +1980,720 @@ class TestParallelProjection:
         assert binding_map is None or binding_map == {}, (
             f"Expected None or empty dict, got {binding_map!r}"
         )
+
+
+# ── subpipeline projection ──────────────────────────────────────────────
+
+
+class TestSubpipelineProjection:
+    """Graph projection for subpipeline instructions (child @workflow/@pipeline calls).
+
+    Subpipeline ops created by the compiler (see test_subpipeline_lowering.py)
+    must project into public topology nodes with stable child IDs where available,
+    correct edge routing, and proper duplicate-name fallback.
+
+    Child workflow calls use yield syntax (``state = yield child_wf(ctx)``) —
+    the compiler lowers yielded ``@workflow``/``@pipeline`` callables into
+    ``subpipeline`` ops.
+    """
+
+    # ── node projection ────────────────────────────────────────────────
+
+    def test_subpipeline_becomes_stage_node(self) -> None:
+        """A subpipeline instruction projects as a Stage in the graph."""
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow(name="child_wf")
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child_wf(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        graph = project_graph(prog)
+
+        assert len(graph.stages) == 1
+        stage_name = list(graph.stages.keys())[0]
+        assert "child_wf" in stage_name
+
+        stage = graph.stages[stage_name]
+        assert isinstance(stage, Stage)
+
+    def test_subpipeline_stage_has_native_subpipeline_kind(self) -> None:
+        """The step adapter for a subpipeline stage has kind 'native_subpipeline'."""
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child_wf(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        graph = project_graph(prog)
+        stage = list(graph.stages.values())[0]
+        assert stage.step.kind == "native_subpipeline"
+
+    def test_subpipeline_step_carries_child_program(self) -> None:
+        """The subpipeline step adapter holds a reference to the child NativeProgram."""
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow(name="child_wf")
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child_wf(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        graph = project_graph(prog)
+        stage = list(graph.stages.values())[0]
+        assert hasattr(stage.step, "child_program")
+        assert stage.step.child_program is not None
+        assert stage.step.child_program.name == "child_wf"
+
+    # ── edge projection ─────────────────────────────────────────────────
+
+    def test_subpipeline_edge_to_next_phase(self) -> None:
+        """A subpipeline stage's edge targets the next public stage."""
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @phase
+        def after(ctx: object) -> dict:
+            return {"done": True}
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child_wf(ctx)
+            state = yield after(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        graph = project_graph(prog)
+
+        child_stage = None
+        after_stage_name = None
+        for name, stage in graph.stages.items():
+            if "child_wf" in name:
+                child_stage = stage
+            if "after" in name:
+                after_stage_name = name
+
+        assert child_stage is not None
+        assert after_stage_name is not None
+
+        edges = _edges_as_tuples(child_stage)
+        assert any(tgt == after_stage_name for _, tgt in edges), (
+            f"Subpipeline edge should target the next phase, got {edges}"
+        )
+
+    def test_subpipeline_edge_to_halt_when_last(self) -> None:
+        """When a subpipeline is the last instruction, its edge targets halt."""
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child_wf(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        graph = project_graph(prog)
+        stage = list(graph.stages.values())[0]
+        assert ("halt", "halt") in _edges_as_tuples(stage)
+
+    def test_subpipeline_edge_from_phase_to_subpipeline(self) -> None:
+        """A preceding phase's edge targets the subpipeline stage."""
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @phase
+        def before(ctx: object) -> dict:
+            return {"before": True}
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield before(ctx)
+            state = yield child_wf(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        graph = project_graph(prog)
+
+        before_stage = None
+        child_stage_name = None
+        for name, stage in graph.stages.items():
+            if "before" in name:
+                before_stage = stage
+            if "child_wf" in name:
+                child_stage_name = name
+
+        assert before_stage is not None
+        assert child_stage_name is not None
+        edges = _edges_as_tuples(before_stage)
+        assert any(tgt == child_stage_name for _, tgt in edges), (
+            f"Before phase should target child subpipeline, got {edges}"
+        )
+
+    # ── naming: stable child ID ─────────────────────────────────────────
+
+    def test_subpipeline_uses_stable_id_as_public_name(self) -> None:
+        """When the child program has a stable_id, it is used as the public stage name."""
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow(name="child_wf", id="my_stable_child")
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child_wf(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        # In pc mode the name still contains the pc suffix
+        graph = project_graph(prog, key_mode="pc")
+        stage_name = list(graph.stages.keys())[0]
+        assert "my_stable_child" in stage_name
+
+        # In phase mode the public name should be the stable_id directly
+        graph_phase = project_graph(prog, key_mode="phase")
+        assert "my_stable_child" in graph_phase.stages
+
+    def test_subpipeline_without_stable_id_uses_func_name(self) -> None:
+        """Without a stable_id, the public name falls back to the instruction name.
+
+        The compiler appends a callsite index (e.g. ``child_wf[0]``), so the
+        stage name contains the function name with a callsite suffix.
+        """
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow(name="child_wf")
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child_wf(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        graph = project_graph(prog, key_mode="phase")
+        stage_names = list(graph.stages.keys())
+        assert len(stage_names) == 1
+        assert "child_wf" in stage_names[0], (
+            f"Expected stage name containing 'child_wf', got {stage_names[0]!r}"
+        )
+
+    def test_subpipeline_stable_id_preserved_in_pc_mode_prefix(self) -> None:
+        """In pc mode, the stable_id appears in the pc-prefixed stage name."""
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow(name="child_wf", id="s_42")
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline(name="parent_pipe")
+        def parent(ctx: object) -> dict:
+            state = yield child_wf(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        graph = project_graph(prog, key_mode="pc")
+        stage_name = list(graph.stages.keys())[0]
+        # pc mode: {prefix}__{public_name}__pc{pc}
+        assert "s_42" in stage_name
+        assert "__pc" in stage_name
+
+    # ── duplicate fallback ──────────────────────────────────────────────
+
+    def test_repeated_same_child_gets_unique_callsite_names(self) -> None:
+        """When the same child is used twice, compiler callsite indexing disambiguates.
+
+        The compiler appends ``[0]``, ``[1]``, etc. to the instruction name for
+        each callsite, so phase-mode projection yields distinct stage names.
+        """
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child_wf(ctx)
+            state = yield child_wf(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        graph = project_graph(prog, key_mode="phase")
+        assert len(graph.stages) == 2
+
+        names = list(graph.stages.keys())
+        # Names are distinct because the compiler appends callsite indices
+        assert names[0] != names[1], (
+            f"Stage names should be distinct, got {names}"
+        )
+        # Both contain the child name
+        assert "child_wf" in names[0]
+        assert "child_wf" in names[1]
+
+    def test_repeated_same_child_with_authored_ids_uses_call_site_path_identity(self) -> None:
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child_wf(ctx, id="child.first")
+            state = yield child_wf(ctx, id="child.second")
+            return state
+
+        graph = project_graph(compile_pipeline(parent), key_mode="phase")
+        assert list(graph.stages.keys()) == [
+            "child_wf__child.first",
+            "child_wf__child.second",
+        ]
+
+    def test_subpipeline_step_run_uses_declared_io_mapping_and_output_bindings(
+        self, tmp_path
+    ) -> None:
+        @phase
+        def child_step(ctx: dict) -> dict:
+            assert "extra" not in ctx["state"]
+            return {"bar": ctx["state"]["foo"] * 2, "ignored": "nope"}
+
+        @pipeline(
+            inputs={
+                "type": "object",
+                "properties": {"foo": {"type": "integer"}},
+                "required": ["foo"],
+            },
+            outputs={
+                "type": "object",
+                "properties": {"bar": {"type": "integer"}},
+                "required": ["bar"],
+            },
+        )
+        def child_wf(ctx: dict) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield child_wf(ctx, outputs={"bar": "child_bar"})
+            return state
+
+        graph = project_graph(compile_pipeline(parent))
+        stage = list(graph.stages.values())[0]
+        result = stage.step.run(
+            StepContext(
+                artifact_root=str(tmp_path),
+                state={"foo": 3, "extra": 9},
+                inputs={},
+            )
+        )
+        assert result.outputs == {"child_bar": 6}
+
+    def test_two_different_children_with_same_stable_id_get_pc_fallback(self) -> None:
+        """Two distinct children sharing the same stable_id get pc-disambiguated."""
+
+        @phase
+        def step_a(ctx: object) -> dict:
+            return {"a": 1}
+
+        @phase
+        def step_b(ctx: object) -> dict:
+            return {"b": 2}
+
+        @workflow(name="wf_one", id="shared_id")
+        def wf_one(ctx: object) -> dict:
+            state = yield step_a(ctx)
+            return state
+
+        @workflow(name="wf_two", id="shared_id")
+        def wf_two(ctx: object) -> dict:
+            state = yield step_b(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield wf_one(ctx)
+            state = yield wf_two(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        graph = project_graph(prog, key_mode="phase")
+        assert len(graph.stages) == 2
+
+        names = list(graph.stages.keys())
+        # Both names should reference "shared_id" but differ via pc suffix
+        assert all("shared_id" in name for name in names), (
+            f"Expected stable_id 'shared_id' in all names, got {names}"
+        )
+        assert names[0] != names[1], (
+            f"Stage names should be distinct, got {names}"
+        )
+
+    def test_duplicate_subpipeline_names_in_pc_mode_always_distinct(self) -> None:
+        """In pc mode, duplicate subpipeline names are always unique (pc suffix)."""
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow(name="child_wf")
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child_wf(ctx)
+            state = yield child_wf(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        graph = project_graph(prog, key_mode="pc")
+        assert len(graph.stages) == 2
+        names = list(graph.stages.keys())
+        assert names[0] != names[1], (
+            f"PC mode must produce unique names, got {names}"
+        )
+
+    # ── regression: coexists with existing instruction types ────────────
+
+    def test_subpipeline_with_phase_before_and_after(self) -> None:
+        """Subpipeline node projects correctly between two phases."""
+
+        @phase
+        def before(ctx: object) -> dict:
+            return {"before": True}
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @phase
+        def after(ctx: object) -> dict:
+            return {"after": True}
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield before(ctx)
+            state = yield child_wf(ctx)
+            state = yield after(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        graph = project_graph(prog)
+        assert len(graph.stages) == 3
+        result = validate(graph)
+        assert len(result.defects) == 0
+
+    def test_subpipeline_with_decision_branching(self) -> None:
+        """Subpipeline followed by a decision with branches projects correctly."""
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @phase
+        def path_a(ctx: object) -> dict:
+            return {"path": "a"}
+
+        @phase
+        def path_b(ctx: object) -> dict:
+            return {"path": "b"}
+
+        @decision(vocabulary={"a", "b"})
+        def route(ctx: object) -> str:
+            return "a"
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child_wf(ctx)
+            if route(ctx) == "a":
+                state = yield path_a(ctx)
+            else:
+                state = yield path_b(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        graph = project_graph(prog)
+        # child_wf + route + path_a + path_b = 4 stages
+        assert len(graph.stages) == 4
+        result = validate(graph)
+        assert len(result.defects) == 0
+
+    def test_subpipeline_before_loop(self) -> None:
+        """Subpipeline placed before a loop body projects correctly."""
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @phase
+        def loop_body(ctx: object) -> dict:
+            return {"iter": 1}
+
+        @decision(vocabulary={"again", "done"})
+        def guard(ctx: object) -> str:
+            return "done"
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child_wf(ctx)
+            while guard(ctx) == "again":
+                state = yield loop_body(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        graph = project_graph(prog)
+        # child_wf + guard + loop_body = 3 stages
+        assert len(graph.stages) == 3
+        result = validate(graph)
+        assert len(result.defects) == 0
+
+    def test_subpipeline_with_parallel_block(self) -> None:
+        """Subpipeline coexisting with a parallel block in the same parent."""
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @phase
+        def branch_a(ctx: object) -> dict:
+            return {"a": 1}
+
+        @phase
+        def branch_b(ctx: object) -> dict:
+            return {"b": 2}
+
+        from arnold.pipeline.native import parallel as p_func
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child_wf(ctx)
+            for branch in p_func([branch_a, branch_b], name="batch"):
+                state = yield branch(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        graph = project_graph(prog)
+        assert len(graph.stages) >= 2  # at least child_wf + parallel stage
+        result = validate(graph)
+        assert len(result.defects) == 0
+
+    def test_subpipeline_projected_graph_has_entry(self) -> None:
+        """A projected pipeline with a subpipeline sets entry to the first stage."""
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow(name="child_wf")
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child_wf(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        graph = project_graph(prog)
+        assert graph.entry is not None
+        assert graph.entry != ""
+        assert "child_wf" in graph.entry
+
+    def test_pipeline_validates_with_subpipeline(self) -> None:
+        """A projected pipeline containing a subpipeline validates cleanly."""
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow(name="child_wf")
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child_wf(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        graph = project_graph(prog)
+        result = validate(graph)
+        assert len(result.defects) == 0
+
+    # ── native_program attachment ───────────────────────────────────────
+
+    def test_subpipeline_projected_graph_carries_native_program(self) -> None:
+        """Subpipeline projection preserves native_program on the Pipeline."""
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow(name="child_wf")
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child_wf(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        graph = project_graph(prog)
+        assert graph.native_program is prog
+
+
+class TestParallelMapProjection:
+    def test_parallel_map_becomes_dynamic_fanout_stage(self) -> None:
+        @phase
+        def mapper(ctx: dict) -> dict:
+            return {"item": ctx["item"]}
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield parallel_map(items="checks", step=mapper, name="batch")
+            return state
+
+        graph = project_graph(compile_pipeline(parent), key_mode="phase")
+        assert list(graph.stages.keys()) == ["batch"]
+        stage = graph.stages["batch"]
+        assert stage.step.kind == "native_parallel_map"
+        assert stage.step.parallel_map.items_ref == "checks"
+        # name="batch" is a display label (metadata-only per SD2); call_site_path
+        # is driven by explicit id= (none provided here).
+        assert stage.step.call_site_path == ()
+        assert stage.step.fanout_metadata.join_contract.result_kind == "collect"
+
+    def test_parallel_map_stage_run_preserves_item_order_and_paths(self, tmp_path) -> None:
+        seen_paths: list[str] = []
+
+        @phase
+        def mapper(ctx: dict) -> dict:
+            seen_paths.append("/".join(ctx["call_site_path"]))
+            return {"slug": ctx["state"]["slug"]}
+
+        def reducer(results: list[dict[str, str]]) -> dict:
+            return {"slugs": [item["slug"] for item in results]}
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield parallel_map(
+                items="checks",
+                step=mapper,
+                reducer=reducer,
+                path_template="item/{slug}",
+                name="batch",
+            )
+            return state
+
+        graph = project_graph(compile_pipeline(parent), key_mode="phase")
+        stage = graph.stages["batch"]
+        result = stage.step.run(
+            StepContext(
+                artifact_root=str(tmp_path),
+                state={"checks": [{"slug": "a"}, {"slug": "b"}]},
+                inputs={"checks": [{"slug": "a"}, {"slug": "b"}]},
+            )
+        )
+        # name="batch" is a display label (metadata-only per SD2); the runtime
+        # call_site_path for each item is driven by path_template + item identity,
+        # not by the display name.
+        assert seen_paths == ["item/a", "item/b"]
+        assert result.outputs == {"slugs": ["a", "b"]}
 
 
 # ──────────────────────────────────────────────────────────────────────

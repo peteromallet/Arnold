@@ -23,11 +23,12 @@
 set -uo pipefail
 
 if [[ $# -lt 1 ]]; then
-  echo "usage: arnold-meta-repair-loop <session>" >&2
+  echo "usage: arnold-meta-repair-loop <session> [trigger]" >&2
   exit 64
 fi
 
 SESSION="$1"
+WATCHDOG_TRIGGER="${2:-}"
 
 if [[ -f /workspace/.cloud-hot-env ]]; then
   set -a
@@ -54,6 +55,7 @@ SYNC_BRANCH="${MEGAPLAN_META_SYNC_BRANCH:-editible-install}"
 REPAIR_LOOP_BIN="${MEGAPLAN_META_REPAIR_LOOP_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop}"
 REPAIR_DATA_PATH="$REPAIR_DATA_DIR/${SESSION}.repair-data.json"
 RUN_DIR="${MEGAPLAN_META_RUN_DIR:-/workspace/.megaplan/meta-runs}"
+BRIEF_PREFLIGHT_MAX_CHARS="${MEGAPLAN_META_BRIEF_PREFLIGHT_MAX_CHARS:-900000}"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
 RUN_LOG="$RUN_DIR/${TS}-${SAFE_SESSION}.log"
@@ -151,20 +153,55 @@ log "recursion guard: $RECURSION_OUTPUT"
 
 # ---- classify failure + build redacted prompt via Python handoff -------------
 classification_and_prompt() {
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_DATA_DIR" "$REPAIR_DATA_PATH" "$META_REPAIR_ENABLED_VAR" <<'PY'
+  local force_emergency="${1:-0}"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_DATA_DIR" "$REPAIR_DATA_PATH" "$META_REPAIR_ENABLED_VAR" "$WATCHDOG_TRIGGER" "$force_emergency" <<'PY'
 import json, sys
 
-from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
+from arnold_pipelines.megaplan.cloud.meta_repair import (
+    MetaRepairClassification,
+    MetaRepairTrigger,
+    build_meta_repair_prompt,
+    evaluate_meta_repair_triggers,
+    load_redacted_evidence,
+)
 
-session, repair_data_dir, repair_data_path, enabled = sys.argv[1:5]
+session, repair_data_dir, repair_data_path, enabled, watchdog_trigger, force_emergency = sys.argv[1:7]
+force_emergency = force_emergency == "1"
 
 # Evaluate triggers without loading full evidence initially;
 # the wrapper provides the trigger context.
-classification, prompt = evaluate_meta_repair_triggers(
-    session,
-    repair_data_dir=repair_data_dir,
-    load_evidence=True,
-)
+trigger = None
+if watchdog_trigger:
+    try:
+        trigger = MetaRepairTrigger(watchdog_trigger)
+    except ValueError:
+        trigger = None
+
+if trigger is not None:
+    evidence = load_redacted_evidence(session, repair_data_dir=repair_data_dir)
+    classification = MetaRepairClassification(
+        session=session,
+        trigger=trigger,
+        rationale=(f"watchdog preclassified trigger={trigger.value}; meta loop must not reclassify stale evidence",),
+        evidence=evidence,
+    )
+    prompt = build_meta_repair_prompt(
+        classification,
+        repair_data_dir=repair_data_dir,
+        force_emergency=force_emergency,
+    )
+else:
+    classification, prompt = evaluate_meta_repair_triggers(
+        session,
+        repair_data_dir=repair_data_dir,
+        load_evidence=True,
+    )
+    if classification.should_dispatch:
+        prompt = build_meta_repair_prompt(
+            classification,
+            repair_data_dir=repair_data_dir,
+            force_emergency=force_emergency,
+        )
 
 if not classification.should_dispatch:
     print("NO_TRIGGER")
@@ -257,6 +294,85 @@ Then cite specific evidence, the root cause, the change(s) made
 PROMPT_POLICY
 } > "$BRIEF_PATH"
 redact_file_in_place "$BRIEF_PATH"
+BRIEF_SIZE="$(wc -c < "$BRIEF_PATH" | tr -d ' ')"
+if [[ "$BRIEF_SIZE" =~ ^[0-9]+$ ]] && (( BRIEF_SIZE > BRIEF_PREFLIGHT_MAX_CHARS )); then
+  log "meta-repair brief exceeded preflight char budget; rebuilding emergency brief chars=$BRIEF_SIZE limit=$BRIEF_PREFLIGHT_MAX_CHARS"
+  CLASSIFICATION_RESULT="$(classification_and_prompt 1 2>&1)" || true
+  if [[ "$CLASSIFICATION_RESULT" == NO_TRIGGER* ]]; then
+    log "emergency prompt rebuild returned no trigger; exiting"
+    exit 0
+  fi
+  TRIGGER_TYPE="$(echo "$CLASSIFICATION_RESULT" | sed -n 's/^TRIGGER://p')"
+  PROMPT="$(echo "$CLASSIFICATION_RESULT" | sed -n '/^PROMPT_START$/,/^PROMPT_END$/{//!p}')"
+  if [[ -z "$PROMPT" ]]; then
+    log "emergency prompt assembly produced empty output; exiting"
+    exit 1
+  fi
+  {
+    echo "# Meta-Repair Diagnosis: $SESSION"
+    echo
+    echo "**Trigger:** \`$TRIGGER_TYPE\`"
+    echo "**Session:** \`$SESSION\`"
+    echo "**Repair Data Directory:** \`$REPAIR_DATA_DIR\`"
+    echo
+    echo "$PROMPT"
+    echo
+    cat <<'PROMPT_POLICY'
+## Meta-Repair Policy
+
+You are diagnosing and repairing a failure in the Arnold repair system itself
+— NOT the end-user project.  Your job is to fix the repair tooling so that
+ordinary repair can succeed.
+
+### Scope and authority
+- You have `danger-full-access` sandbox scope.
+- You may read, patch, and test files in the Arnold checkout
+  (`$ARNOLD_SRC` on the `editible-install` branch).
+- You may inspect the repair data, watchdog reports, chain state, session
+  markers, and audit reports as evidence.
+- You MUST delegate broad mapping, log/history review, independent
+  root-cause probes, and bounded fix investigations to DeepSeek/Hermes
+  research subagents wherever practical.
+
+### Subagent dispatch
+- Read the subagent-launcher skill at the path stored in
+  `SUBAGENT_SKILL` for the exact dispatch contract.
+- Use provider=deepseek, model=deepseek:deepseek-v4-pro,
+  profile=partnered-5, max-tokens=92192.
+- Each subagent gets a focused query, project directory, and a bounded
+  scope.
+
+### Commit/push policy
+- You may commit and push fixes when ARNOLD_META_REPAIR_COMMIT_ENABLED is not
+  explicitly disabled.
+- Do not commit or push when ARNOLD_META_REPAIR_COMMIT_ENABLED=0/false/no/off.
+- Pushes require the same gate as commits.
+
+### Fix constraints
+- Fix only Arnold repair-system code (wrappers, Python modules under
+  arnold_pipelines/megaplan/cloud/, tests, contracts).
+- Do NOT modify the running workspace/project tree.
+- Keep fixes narrow, testable, and bounded.
+- Validate fixes with `python3 -m py_compile` and focused tests.
+
+### Retrigger
+- After applying any fix, retrigger the ordinary repair loop for
+  session `$SESSION` using the command stored in REPAIR_LOOP_BIN.
+- Verify that the retriggered ordinary repair reaches a terminal
+  SUCCESS outcome.
+- Do NOT claim success without a verified ordinary repair retrigger —
+  partial_liveness and "repairing" are not terminal success.
+
+### Output format
+Start with a verdict on its own line: FIXED, ESCALATE, or NO_FIX.
+Then cite specific evidence, the root cause, the change(s) made
+(if any), and the retrigger verification result.  Keep under 400 words.
+PROMPT_POLICY
+  } > "$BRIEF_PATH"
+  redact_file_in_place "$BRIEF_PATH"
+  BRIEF_SIZE="$(wc -c < "$BRIEF_PATH" | tr -d ' ')"
+  log "emergency brief rebuilt chars=$BRIEF_SIZE"
+fi
 
 # ---- commit gate check ------------------------------------------------------
 commit_gate_check() {
@@ -297,12 +413,17 @@ if command -v codex >/dev/null 2>&1; then
     export MEGAPLAN_REPAIR_PROFILE="$SUBAGENT_PROFILE"
     export ARNOLD_META_REPAIR_COMMIT_ENABLED="$META_REPAIR_COMMIT_ENABLED_VAR"
     export ARNOLD_SRC="$ARNOLD_SRC"
-    timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access - < "$BRIEF_PATH"
+    cd "$ARNOLD_SRC" || exit 1
+    timeout "$CODEX_TIMEOUT" codex exec --skip-git-repo-check --sandbox danger-full-access - < "$BRIEF_PATH"
   ) > "$RESP_PATH" 2>"$ERR_PATH" || true
   redact_file_in_place "$RESP_PATH"
   redact_file_in_place "$ERR_PATH"
   if [[ ! -s "$RESP_PATH" ]]; then
-    echo "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/Hermes subagents); see meta-repair log." > "$RESP_PATH"
+    if grep -qE 'Input exceeds the maximum length|input_too_large' "$ERR_PATH" 2>/dev/null; then
+      echo "Codex meta-repair prompt exceeded input limit; see meta-repair log." > "$RESP_PATH"
+    else
+      echo "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/Hermes subagents); see meta-repair log." > "$RESP_PATH"
+    fi
   fi
 else
   log "codex CLI missing; cannot dispatch meta-repair"
@@ -312,6 +433,11 @@ fi
 
 RESP_TEXT="$(cat "$RESP_PATH")"
 log "codex response $(wc -l <<<"$RESP_TEXT" | tr -d ' ') lines"
+
+if grep -qE 'Codex meta-repair orchestrator returned no output|Codex meta-repair prompt exceeded input limit|Not inside a trusted directory|--skip-git-repo-check was not specified|Input exceeds the maximum length|input_too_large' "$RESP_PATH" "$ERR_PATH" 2>/dev/null; then
+  log "codex launch failed before producing a recordable meta-repair response; leaving recursion guard unpoisoned"
+  exit 1
+fi
 
 # ---- parse verdict from response -------------------------------------------
 VERDICT="$(echo "$RESP_TEXT" | head -1 | tr -d '\r\n')"

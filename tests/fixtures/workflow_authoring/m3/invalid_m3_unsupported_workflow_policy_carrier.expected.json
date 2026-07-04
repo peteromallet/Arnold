@@ -1,5 +1,5 @@
 {
-  "grammar_version": "arnold.workflow.authoring.v1",
+  "grammar_version": "arnold.workflow.authoring.v2",
   "source_path": "tests/fixtures/workflow_authoring/m3/invalid_m3_unsupported_workflow_policy_carrier.py",
   "outcome": "invalid",
   "group": "negative",

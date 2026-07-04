@@ -1290,6 +1290,373 @@ class TestAuditorCrossReferences:
         assert events[1]["payload"]["next_expected_event"] == "six_hour_auditor.diagnosis"
 
 
+class TestLiveSignalFiltering:
+    def test_chain_log_awaiting_human_ignores_pytest_command_substring(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "blocked",
+                    "iteration": 2,
+                    "latest_failure": {
+                        "kind": "phase_failed",
+                        "message": "boom",
+                        "recorded_at": "2026-07-03T16:00:00+00:00",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "completed": [],
+                    "completed_count": 0,
+                    "current_milestone_index": 0,
+                    "current_plan_name": "demo-plan",
+                    "current_state": "",
+                    "events": [],
+                    "last_state": "between_milestones",
+                    "reason": "",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (workspace / ".megaplan" / "cloud-chain-demo-session.log").write_text(
+            "\n".join(
+                [
+                    "[chain] milestone demo starting",
+                    "[chain] plan demo-plan ended blocked: resume-clarify requires state 'awaiting_human_verify', got 'blocked'",
+                    '          "command": "python -m pytest tests/arnold_pipelines/megaplan/test_chain_awaiting_human_retry.py -q"',
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+        )
+
+        finding = findings["findings"][0]
+        assert finding["chain_log"]["repetition_summary"] == []
+        assert not any(
+            "chain log repeats awaiting_human" in reason for reason in finding["reasons"]
+        )
+
+    def test_meta_repair_summary_ignores_legacy_attempts_without_active_context(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "executing",
+                    "iteration": 1,
+                    "latest_failure": {
+                        "kind": "phase_failed",
+                        "message": "boom",
+                        "recorded_at": "2026-07-03T16:00:00+00:00",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir(parents=True, exist_ok=True)
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "attempts": [
+                        {"attempt_id": idx, "iteration": idx, "failure_classification": "timeout_or_hang"}
+                        for idx in range(1, 6)
+                    ],
+                    "iterations": [],
+                    "current_attempt_id": None,
+                    "current_signature": {},
+                    "current_recurrence": {},
+                    "outcome": "running",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "plan",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        finding = findings["findings"][0]
+        meta = finding["meta_repair_summary"]
+        assert meta["should_dispatch"] is False
+        assert meta["trigger"] == ""
+        assert meta["missing_meta_run_evidence"] is False
+        assert not any("meta-repair trigger" in reason for reason in finding["reasons"])
+
+    def test_meta_repair_summary_ignores_running_history_without_active_iteration_context(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "executing",
+                    "iteration": 1,
+                    "latest_failure": {
+                        "kind": "phase_failed",
+                        "message": "boom",
+                        "recorded_at": "2026-07-03T16:00:00+00:00",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir(parents=True, exist_ok=True)
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "attempts": [
+                        {
+                            "attempt_id": idx,
+                            "iteration": idx,
+                            "failure_classification": "timeout_or_hang",
+                            "dispatched_at": f"2026-07-03T16:0{idx}:00+00:00",
+                            "outcome": "running",
+                        }
+                        for idx in range(1, 6)
+                    ],
+                    "iterations": [],
+                    "current_attempt_id": None,
+                    "current_signature": {},
+                    "current_recurrence": {},
+                    "outcome": "running",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "plan",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        finding = findings["findings"][0]
+        meta = finding["meta_repair_summary"]
+        assert meta["should_dispatch"] is False
+        assert meta["trigger"] == ""
+        assert meta["missing_meta_run_evidence"] is False
+        assert "no active attempt/iteration context" in meta["rationale"][0]
+        assert not any("meta-repair trigger" in reason for reason in finding["reasons"])
+
+    def test_meta_repair_summary_flags_no_output_launch_failure_artifacts(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "executing",
+                    "iteration": 3,
+                    "latest_failure": {
+                        "kind": "phase_failed",
+                        "message": "repair timed out",
+                        "recorded_at": "2026-07-03T16:00:00+00:00",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+
+        repair_root = tmp_path / "repair-data"
+        meta_dir = repair_root / "meta"
+        meta_dir.mkdir(parents=True, exist_ok=True)
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "outcome": "repair_timeout",
+                    "attempts": [
+                        {
+                            "attempt_id": "attempt-1",
+                            "outcome": "repair_timeout",
+                            "failure_classification": "timeout_or_hang",
+                            "dispatched_at": "2026-07-03T16:00:00+00:00",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (meta_dir / "meta-launch-failed.json").write_text(
+            json.dumps(
+                {
+                    "meta_repair_id": "meta-launch-failed",
+                    "session": "demo-session",
+                    "trigger": "repair_timeout",
+                    "diagnosis": "Codex meta-repair orchestrator returned no output",
+                    "subagent_results": {
+                        "codex_response": "Not inside a trusted directory and --skip-git-repo-check was not specified."
+                    },
+                    "outcome": "UNKNOWN",
+                }
+            ),
+            encoding="utf-8",
+        )
+        meta_runs = tmp_path / "meta-runs"
+        meta_runs.mkdir()
+        (meta_runs / "20260703T211454Z-demo-session-resp.err").write_text(
+            "Not inside a trusted directory and --skip-git-repo-check was not specified.\n",
+            encoding="utf-8",
+        )
+        (meta_runs / "20260703T211454Z-demo-session-resp.txt").write_text(
+            "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/Hermes subagents).\n",
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "plan",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={
+                "MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root),
+                "MEGAPLAN_AUDIT_META_RUN_DIR": str(meta_runs),
+            },
+        )
+
+        finding = findings["findings"][0]
+        meta = finding["meta_repair_summary"]
+        assert meta["should_dispatch"] is True
+        assert meta["trigger"] == "repair_timeout"
+        assert meta["failed_meta_run_evidence"] is True
+        assert meta["failed_meta_record_count"] == 1
+        assert meta["failed_meta_run_count"] >= 1
+        assert any("failed launch/no-output evidence" in reason for reason in finding["reasons"])
+
+    def test_meta_repair_summary_ignores_partial_liveness_for_complete_chain_without_repair_context(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "done",
+                    "iteration": 1,
+                    "latest_failure": None,
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 1,
+                    "current_plan_name": "",
+                    "last_state": "done",
+                    "completed": [{"label": "m1-demo", "plan": "demo-plan", "status": "done"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        repair_root = tmp_path / "repair-data"
+        sidecar_events = tmp_path / "repair-data.d" / "events"
+        repair_root.mkdir(parents=True, exist_ok=True)
+        sidecar_events.mkdir(parents=True, exist_ok=True)
+        (repair_root / "index.json").write_text(json.dumps({}), encoding="utf-8")
+        (sidecar_events / "events.jsonl").write_text(
+            "".join(
+                json.dumps(
+                    {
+                        "session": "demo-session",
+                        "run_kind": "chain",
+                        "plan_name": "",
+                        "health": "alive",
+                        "outcome": "partial_liveness",
+                        "recorded_at": f"2026-07-03T22:0{idx}:00+00:00",
+                    }
+                )
+                + "\n"
+                for idx in range(4)
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        assert findings["findings"] == []
+        assert len(findings["green_checks"]) == 1
+        assert findings["green_checks"][0]["plan"] == "demo-plan"
+
+
 class TestRootCausePatternsJsonSchema:
     """Verify root_cause_patterns JSON payload shape invariants and stable keys."""
 

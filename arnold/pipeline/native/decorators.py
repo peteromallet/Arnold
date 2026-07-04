@@ -7,6 +7,8 @@ with the native runner's dict-based context and state propagation.
 
 from __future__ import annotations
 
+import inspect
+import builtins
 from typing import Any, Callable
 
 
@@ -16,7 +18,10 @@ from typing import Any, Callable
 def phase(
     name: str | None = None,
     *,
+    id: str | None = None,
     description: str | None = None,
+    inputs: dict[str, Any] | None = None,
+    outputs: dict[str, Any] | None = None,
     produces: tuple = (),
     consumes: tuple = (),
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
@@ -28,8 +33,20 @@ def phase(
     ----------
     name:
         Phase name (defaults to the function name).
+    id:
+        Stable semantic identity for this phase.  When ``None`` (default)
+        the compiler derives identity from the canonical callable name.
+        An explicit value is the durability contract — stable across
+        compilation, projection, trace emission, and replay.
     description:
         Optional human-readable description.
+    inputs:
+        Declared input schema metadata (``dict[str, Any]``).  Must be
+        serializable and comparable without executing the callable body.
+        When ``None`` (default) the compiler treats inputs as untyped.
+    outputs:
+        Declared output schema metadata (``dict[str, Any]``).  Same
+        serializability contract.  When ``None`` outputs are untyped.
     produces:
         Typed ports this phase produces.
     consumes:
@@ -39,7 +56,8 @@ def phase(
     -------
     Callable
         The decorated function with ``__phase_name__``, ``__phase_description__``,
-        ``__phase_produces__``, ``__phase_consumes__``, and ``__phase__``
+        ``__phase_produces__``, ``__phase_consumes__``, ``__step_id__``,
+        ``__step_inputs__``, ``__step_outputs__``, and ``__phase__``
         attributes attached.
     """
 
@@ -49,6 +67,9 @@ def phase(
         fn.__phase_description__ = description  # type: ignore[attr-defined]
         fn.__phase_produces__ = produces  # type: ignore[attr-defined]
         fn.__phase_consumes__ = consumes  # type: ignore[attr-defined]
+        fn.__step_id__ = id  # type: ignore[attr-defined]
+        fn.__step_inputs__ = inputs  # type: ignore[attr-defined]
+        fn.__step_outputs__ = outputs  # type: ignore[attr-defined]
         return fn
 
     if callable(name):
@@ -56,10 +77,63 @@ def phase(
     return decorator
 
 
+def step(
+    name: str | None = None,
+    *,
+    id: str | None = None,
+    description: str | None = None,
+    inputs: dict[str, Any] | None = None,
+    outputs: dict[str, Any] | None = None,
+    produces: tuple = (),
+    consumes: tuple = (),
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Mark a function as a step (preferred authoring alias for ``@phase``).
+
+    Identical to :func:`phase` — all parameters and dunder attributes are the
+    same.  ``@step`` is the public authoring name; ``@phase`` remains as a
+    compatibility alias.
+
+    Parameters
+    ----------
+    name:
+        Step name (defaults to the function name).
+    id:
+        Stable semantic identity (defaults to ``None`` — compiler-derived).
+    description:
+        Optional human-readable description.
+    inputs:
+        Declared input schema metadata (``dict[str, Any] | None``).
+    outputs:
+        Declared output schema metadata (``dict[str, Any] | None``).
+    produces:
+        Typed ports this step produces.
+    consumes:
+        Typed ports this step consumes.
+
+    Returns
+    -------
+    Callable
+        The decorated function with the same dunder attributes as ``@phase``,
+        including ``__step_id__``, ``__step_inputs__``, and ``__step_outputs__``.
+    """
+    return phase(
+        name=name,
+        id=id,
+        description=description,
+        inputs=inputs,
+        outputs=outputs,
+        produces=produces,
+        consumes=consumes,
+    )
+
+
 def pipeline(
     name: str | None = None,
     *,
+    id: str | None = None,
     description: str | None = None,
+    inputs: dict[str, Any] | None = None,
+    outputs: dict[str, Any] | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Mark a generator function as a native pipeline.
 
@@ -69,25 +143,84 @@ def pipeline(
     ----------
     name:
         Pipeline name (defaults to the function name).
+    id:
+        Stable workflow identity.  When ``None`` (default) the compiler
+        derives identity from the canonical callable name.  An explicit
+        value is the durability contract.
     description:
         Optional human-readable description.
+    inputs:
+        Declared workflow input schema metadata (``dict[str, Any]``).
+        Must be serializable and comparable without executing the body.
+        When ``None`` (default) inputs are untyped.
+    outputs:
+        Declared workflow output schema metadata (``dict[str, Any]``).
+        Same serializability contract.  When ``None`` outputs are untyped.
 
     Returns
     -------
     Callable
         The decorated function with ``__pipeline__``, ``__pipeline_name__``,
-        and ``__pipeline_description__`` attributes attached.
+        ``__pipeline_description__``, ``__workflow_id__``,
+        ``__workflow_inputs__``, and ``__workflow_outputs__`` attributes
+        attached.
     """
 
     def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
         fn.__pipeline__ = True  # type: ignore[attr-defined]
         fn.__pipeline_name__ = name if isinstance(name, str) else fn.__name__  # type: ignore[attr-defined]
         fn.__pipeline_description__ = description  # type: ignore[attr-defined]
+        fn.__workflow_id__ = id  # type: ignore[attr-defined]
+        fn.__workflow_inputs__ = inputs  # type: ignore[attr-defined]
+        fn.__workflow_outputs__ = outputs  # type: ignore[attr-defined]
         return fn
 
     if callable(name):
         return decorator(name)
     return decorator
+
+
+def workflow(
+    name: str | None = None,
+    *,
+    id: str | None = None,
+    description: str | None = None,
+    inputs: dict[str, Any] | None = None,
+    outputs: dict[str, Any] | None = None,
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Mark a function as a workflow (preferred authoring alias for ``@pipeline``).
+
+    Identical to :func:`pipeline` — all parameters and dunder attributes are the
+    same.  ``@workflow`` is the public authoring name; ``@pipeline`` remains as a
+    compatibility alias.
+
+    Parameters
+    ----------
+    name:
+        Workflow name (defaults to the function name).
+    id:
+        Stable workflow identity (defaults to ``None`` — compiler-derived).
+    description:
+        Optional human-readable description.
+    inputs:
+        Declared workflow input schema metadata (``dict[str, Any] | None``).
+    outputs:
+        Declared workflow output schema metadata (``dict[str, Any] | None``).
+
+    Returns
+    -------
+    Callable
+        The decorated function with the same dunder attributes as ``@pipeline``,
+        including ``__workflow_id__``, ``__workflow_inputs__``, and
+        ``__workflow_outputs__``.
+    """
+    return pipeline(
+        name=name,
+        id=id,
+        description=description,
+        inputs=inputs,
+        outputs=outputs,
+    )
 
 
 def decision(
@@ -153,6 +286,15 @@ def decision(
         fn.__decision_choices__ = choices  # type: ignore[attr-defined]
         fn.__decision_resume_input_schema__ = resume_input_schema  # type: ignore[attr-defined]
         fn.__decision_override_routes__ = override_routes  # type: ignore[attr-defined]
+        # Source-location and routing-body marker (attached unconditionally
+        # so the validator can produce line-specific diagnostics).
+        fn.__decision_source_file__ = inspect.getsourcefile(fn)  # type: ignore[attr-defined]
+        try:
+            _, start_lineno = inspect.getsourcelines(fn)
+            fn.__decision_first_lineno__ = start_lineno  # type: ignore[attr-defined]
+        except (OSError, TypeError):
+            fn.__decision_first_lineno__ = None  # type: ignore[attr-defined]
+        fn.__decision_routing_body__ = True  # type: ignore[attr-defined]
         return fn
 
     if callable(name):
@@ -172,6 +314,7 @@ class _ParallelBranchList(list):
     __parallel_branches__: tuple[Callable[..., Any], ...] = ()
     __parallel_reducer__: Callable[..., Any] | None = None
     __parallel_name__: str | None = None
+    __parallel_id__: str | None = None
 
 
 def parallel(
@@ -179,6 +322,7 @@ def parallel(
     *,
     reducer: Callable[..., Any] | None = None,
     name: str | None = None,
+    id: str | None = None,
 ) -> _ParallelBranchList:
     """Declare a parallel fan-out block for use in native pipelines.
 
@@ -200,6 +344,10 @@ def parallel(
     name:
         Optional human-readable name for the parallel block (defaults to
         a generated name like ``parallel_0``).
+    id:
+        Optional stable call-site identity for this parallel block.
+        When set, this becomes the ``call_site_path`` in the compiled
+        instruction rather than an auto-generated name.
 
     Returns
     -------
@@ -223,7 +371,7 @@ def parallel(
             raise TypeError(
                 f"parallel() branch {i} ({getattr(b, '__name__', b)!r}) is not a @phase-decorated function"
             )
-        bid = id(b)
+        bid = builtins.id(b)
         if bid in seen:
             raise ValueError(
                 f"parallel() contains duplicate branch: {getattr(b, '__name__', b)!r}"
@@ -234,7 +382,106 @@ def parallel(
     result.__parallel_branches__ = tuple(branches)
     result.__parallel_reducer__ = reducer
     result.__parallel_name__ = name
+    result.__parallel_id__ = id
     return result
+
+
+# ── Dynamic parallel_map helper ────────────────────────────────────────
+
+
+class _ParallelMapDeclaration:
+    """Carries ``parallel_map`` metadata for compiler introspection.
+
+    This is a lightweight marker object — not a list-like — because
+    ``parallel_map`` declares a runtime-list fan-out rather than a
+    compile-time-literal branch set.  The compiler inspects the
+    attributes to build a :class:`~arnold.pipeline.native.ir.ParallelMapInstruction`.
+    """
+
+    __parallel_map_items__: str = ""
+    __parallel_map_step__: Callable[..., Any] | None = None
+    __parallel_map_reducer__: Callable[..., Any] | None = None
+    __parallel_map_path_template__: str = ""
+    __parallel_map_name__: str | None = None
+    __parallel_map_id__: str | None = None
+
+
+def parallel_map(
+    *,
+    items: str,
+    step: Callable[..., Any],
+    reducer: Callable[..., Any] | None = None,
+    path_template: str = "",
+    name: str | None = None,
+    id: str | None = None,
+) -> _ParallelMapDeclaration:
+    """Declare a dynamic runtime-list fan-out for use in native pipelines.
+
+    Used inside a ``@pipeline``- or ``@workflow``-decorated function to
+    declare that a mapper callable should be applied to each item of a
+    collection resolved at runtime::
+
+        @workflow(id="batch_review")
+        def batch_review(checks: list[Check]):
+            parallel_map(
+                items="checks",
+                step=critique_lens,
+                reducer=merge_findings,
+                path_template="critique/{item_id}",
+            )
+
+    This is a **distinct** construct from :func:`parallel`: ``parallel``
+    declares statically-bounded branches known at compile time, while
+    ``parallel_map`` declares a dynamic fan-out whose cardinality is
+    resolved at execution time.
+
+    Parameters
+    ----------
+    items:
+        Reference to the runtime collection — a parameter name or state
+        key that resolves to an iterable at execution time.
+    step:
+        The ``@phase``- or ``@workflow``-decorated callable applied to
+        each item.
+    reducer:
+        Optional callable invoked after all items complete.  Receives
+        a list of per-item results (one per item, in iteration order)
+        and must return a dict to merge into working state.
+    path_template:
+        Optional template for per-item call-site paths
+        (e.g. ``'critique/{item_id}'``).  Variables in braces are
+        resolved from item attributes at execution time.
+    name:
+        Optional human-readable name for the parallel_map block
+        (defaults to a generated name like ``parallel_map_0``).
+    id:
+        Optional stable call-site identity for this parallel_map block.
+        When set, this becomes the ``call_site_path`` in the compiled
+        instruction rather than an auto-generated name.
+
+    Returns
+    -------
+    _ParallelMapDeclaration
+        A metadata-carrying object for compiler introspection.
+    """
+    if not isinstance(items, str) or not items:
+        raise TypeError(
+            f"parallel_map() 'items' must be a non-empty str, got {items!r}"
+        )
+    if not callable(step):
+        raise TypeError(
+            f"parallel_map() 'step' must be callable, got {type(step).__name__}"
+        )
+    result = _ParallelMapDeclaration()
+    result.__parallel_map_items__ = items
+    result.__parallel_map_step__ = step
+    result.__parallel_map_reducer__ = reducer
+    result.__parallel_map_path_template__ = path_template
+    result.__parallel_map_name__ = name
+    result.__parallel_map_id__ = id
+    return result
+
+
 # ── Native panel helper ────────────────────────────────────────────────
 
 
@@ -330,7 +577,12 @@ def is_phase(fn: Any) -> bool:
 
 
 def get_phase_meta(fn: Any) -> dict[str, Any] | None:
-    """Return phase metadata dict for *fn*, or ``None``."""
+    """Return phase metadata dict for *fn*, or ``None``.
+
+    Includes ``id``, ``inputs``, and ``outputs`` keys (may be ``None``)
+    in addition to the existing ``name``, ``description``, ``produces``,
+    and ``consumes`` keys.
+    """
     if not is_phase(fn):
         return None
     return {
@@ -338,6 +590,9 @@ def get_phase_meta(fn: Any) -> dict[str, Any] | None:
         "description": getattr(fn, "__phase_description__", None),
         "produces": getattr(fn, "__phase_produces__", ()),
         "consumes": getattr(fn, "__phase_consumes__", ()),
+        "id": getattr(fn, "__step_id__", None),
+        "inputs": getattr(fn, "__step_inputs__", None),
+        "outputs": getattr(fn, "__step_outputs__", None),
     }
 
 
@@ -347,7 +602,12 @@ def is_pipeline(fn: Any) -> bool:
 
 
 def get_pipeline_meta(fn: Any) -> dict[str, Any] | None:
-    """Return pipeline metadata dict for *fn*, or ``None``."""
+    """Return pipeline metadata dict for *fn*, or ``None``.
+
+    Includes ``id``, ``inputs``, and ``outputs`` keys (may be ``None``)
+    in addition to the existing ``name``, ``description``, ``phases``,
+    and ``decisions`` keys.
+    """
     if not is_pipeline(fn):
         return None
     return {
@@ -355,6 +615,9 @@ def get_pipeline_meta(fn: Any) -> dict[str, Any] | None:
         "description": getattr(fn, "__pipeline_description__", None) or "",
         "phases": [],
         "decisions": [],
+        "id": getattr(fn, "__workflow_id__", None),
+        "inputs": getattr(fn, "__workflow_inputs__", None),
+        "outputs": getattr(fn, "__workflow_outputs__", None),
     }
 
 
@@ -369,6 +632,10 @@ def get_decision_meta(fn: Any) -> dict[str, Any] | None:
     For ordinary decisions the human-gate keys are present at their
     defaults (``human_gate=False``, ``artifact_stage=""``, etc.).
     For human-gate decisions the keys carry the declared metadata.
+
+    Also includes source-location metadata (``source_file``,
+    ``first_lineno``) and a ``routing_body`` marker so the validator
+    can produce line-specific diagnostics.
     """
     if not is_decision(fn):
         return None
@@ -383,4 +650,37 @@ def get_decision_meta(fn: Any) -> dict[str, Any] | None:
         "choices": tuple(getattr(fn, "__decision_choices__", ())),
         "resume_input_schema": getattr(fn, "__decision_resume_input_schema__", None),
         "override_routes": getattr(fn, "__decision_override_routes__", None),
+        # Source-location metadata for validator diagnostics
+        "source_file": getattr(fn, "__decision_source_file__", None),
+        "first_lineno": getattr(fn, "__decision_first_lineno__", None),
+        "routing_body": bool(getattr(fn, "__decision_routing_body__", False)),
     }
+
+
+# ── Step / workflow aliased introspection helpers ──────────────────────
+
+
+def is_step(fn: Any) -> bool:
+    """Return ``True`` if *fn* is a ``@step``- or ``@phase``-decorated callable."""
+    return is_phase(fn)
+
+
+def get_step_meta(fn: Any) -> dict[str, Any] | None:
+    """Return step metadata dict (including ``id``, ``inputs``, ``outputs``).
+
+    Identical to :func:`get_phase_meta`.
+    """
+    return get_phase_meta(fn)
+
+
+def is_workflow(fn: Any) -> bool:
+    """Return ``True`` if *fn* is a ``@workflow``- or ``@pipeline``-decorated callable."""
+    return is_pipeline(fn)
+
+
+def get_workflow_meta(fn: Any) -> dict[str, Any] | None:
+    """Return workflow metadata dict (including ``id``, ``inputs``, ``outputs``).
+
+    Identical to :func:`get_pipeline_meta`.
+    """
+    return get_pipeline_meta(fn)

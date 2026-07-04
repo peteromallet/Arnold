@@ -225,6 +225,31 @@ def run_chain(
                     f"plan {plan_name} prepared for milestone {milestone.label}",
                     evidence=[{"label": milestone.label, "plan": plan_name}],
                 )
+            else:
+                raw_state = _plan_raw_state(
+                    root,
+                    plan_name,
+                    NormalizedOutcome(
+                        outcome=RunOutcome.BLOCKED,
+                        original_status=str(chain_state.last_state or ""),
+                        final_state=str(chain_state.last_state or ""),
+                        plan=plan_name,
+                        iterations=0,
+                        reason="resume_probe",
+                        last_phase=None,
+                    ),
+                )
+                if _blocked_plan_replay_would_be_redundant(chain_state, raw_state=raw_state):
+                    chain_spec.save_chain_state(spec_path, chain_state)
+                    return _result(
+                        "stopped",
+                        chain_state,
+                        supervisor_state,
+                        milestone_results,
+                        events,
+                        spec=spec,
+                        reason=f"milestone {milestone.label} remains blocked",
+                    )
 
             raw_outcome = driver.drive(_run_request(root, spec, plan_name, writer))
             normalized = normalize_driver_outcome(
@@ -774,6 +799,33 @@ def _plan_dir(root: Path, plan_name: str) -> Path:
         return resolve_plan_dir(root, plan_name)
     except CliError:
         return root / ".megaplan" / "plans" / plan_name
+
+
+def _plan_has_live_active_step(raw_state: Mapping[str, Any]) -> bool:
+    active_step = raw_state.get("active_step")
+    if not isinstance(active_step, Mapping):
+        return False
+    return bool(
+        active_step.get("phase")
+        or active_step.get("worker_pid")
+        or active_step.get("pid")
+        or active_step.get("session_id")
+    )
+
+
+def _blocked_plan_replay_would_be_redundant(
+    chain_state: chain_spec.ChainState,
+    *,
+    raw_state: Mapping[str, Any],
+) -> bool:
+    current_state = raw_state.get("current_state")
+    if not isinstance(current_state, str):
+        return False
+    return (
+        chain_state.last_state == "blocked"
+        and current_state == "blocked"
+        and not _plan_has_live_active_step(raw_state)
+    )
 
 
 def _execution_batch_sort_key(path: Path) -> tuple[int, str]:
