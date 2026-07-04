@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 from typing import Any, Mapping
@@ -16,6 +15,12 @@ from arnold.pipeline.native.checkpoint import (
     read_native_cursor,
 )
 from arnold.pipeline.native.ir import PATH_DELIMITER, ROOT_PATH, NativeProgram
+from arnold.pipeline.native.persistence import (
+    FileNativePersistenceBackend,
+    NativePersistenceBackend,
+    NativePersistenceScope,
+    bind_legacy_artifact_root,
+)
 from arnold.pipeline.native.runtime import NativeExecutionResult, run_native_pipeline
 
 
@@ -30,22 +35,55 @@ def _normalize_trace_path(path: Any) -> str:
         parts.insert(0, ROOT_PATH)
     return PATH_DELIMITER.join(parts)
 
+def _trace_backend_binding(
+    trace_dir: str | Path | None,
+    *,
+    persistence_backend: NativePersistenceBackend | None = None,
+    persistence_scope: NativePersistenceScope | None = None,
+) -> tuple[NativePersistenceBackend, NativePersistenceScope, Path | None]:
+    if persistence_backend is not None or persistence_scope is not None:
+        if persistence_backend is None or persistence_scope is None:
+            raise ValueError(
+                "persistence_backend and persistence_scope must be provided together"
+            )
+        return persistence_backend, persistence_scope, (
+            Path(trace_dir) if trace_dir is not None else None
+        )
+    if trace_dir is None:
+        raise ValueError("trace_dir is required when no persistence backend is provided")
+    trace_root = Path(trace_dir)
+    binding = bind_legacy_artifact_root(trace_root)
+    backend = FileNativePersistenceBackend(
+        lambda scope: trace_root
+        if scope == binding.scope
+        else (_ for _ in ()).throw(KeyError(scope))
+    )
+    return backend, binding.scope, trace_root
 
-def _read_json_object(path: Path) -> dict[str, Any]:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"{path} is not readable JSON: {exc}") from exc
+
+def _read_trace_json_object(
+    backend: NativePersistenceBackend,
+    scope: NativePersistenceScope,
+    *,
+    name: str,
+) -> dict[str, Any]:
+    payload = backend.read_trace_artifact(scope, name=name)  # type: ignore[arg-type]
+    if payload is None:
+        raise ValueError(f"{name} is not present in trace storage")
     if not isinstance(payload, dict):
-        raise ValueError(f"{path} must contain a JSON object")
-    return payload
+        raise ValueError(f"{name} must contain a JSON object")
+    return dict(payload)
 
 
-def _read_tree_node(trace_dir: Path, target_path: str) -> dict[str, Any] | None:
-    tree_payload = _read_json_object(trace_dir / "tree.json")
+def _read_tree_node(
+    backend: NativePersistenceBackend,
+    scope: NativePersistenceScope,
+    target_path: str,
+) -> dict[str, Any] | None:
+    tree_payload = _read_trace_json_object(backend, scope, name="tree.json")
     nodes = tree_payload.get("nodes")
     if not isinstance(nodes, list):
-        raise ValueError(f"{trace_dir / 'tree.json'} must contain a nodes list")
+        raise ValueError("tree.json must contain a nodes list")
     normalized_target = _normalize_trace_path(target_path)
     for node in nodes:
         if not isinstance(node, dict):
@@ -160,6 +198,22 @@ def _copy_source_artifacts(source_root: Path, artifact_root: Path) -> None:
     shutil.copytree(source_root, artifact_root)
 
 
+def _prepare_destination_root(
+    *,
+    source_root: Path | None,
+    artifact_root: Path,
+) -> None:
+    if artifact_root.exists():
+        raise ValueError(
+            f"Replay artifact root {artifact_root} must not exist; start_from_trace writes "
+            "into a fresh destination"
+        )
+    if source_root is None:
+        artifact_root.mkdir(parents=True, exist_ok=False)
+        return
+    _copy_source_artifacts(source_root, artifact_root)
+
+
 def _synthesize_resume_cursor(
     *,
     program: NativeProgram,
@@ -201,19 +255,23 @@ def _synthesize_resume_cursor(
 
 def start_from_trace(
     program: NativeProgram,
-    trace_dir: str | Path,
+    trace_dir: str | Path | None,
     target_path: str,
     artifact_root: str | Path,
     *,
     debug: bool = True,
     injected_state: Mapping[str, Any] | None = None,
+    persistence_backend: NativePersistenceBackend | None = None,
+    persistence_scope: NativePersistenceScope | None = None,
+    source_artifact_root: str | Path | None = None,
 ) -> NativeExecutionResult:
     """Replay a prior native trace snapshot into a fresh artifact root.
 
     The helper is intentionally conservative: it only replays from the trace's
-    current checkpoint location, copies the prior artifact root into a fresh
-    destination without mutating the source, and treats state injection as an
-    explicit debug/test-only escape hatch.
+    current checkpoint location, reads trace artifacts via a persistence
+    backend, copies the prior artifact root into a fresh destination when one
+    is available, and treats state injection as an explicit debug/test-only
+    escape hatch.
     """
 
     if injected_state is not None and not debug:
@@ -224,9 +282,13 @@ def start_from_trace(
     if injected_state is not None and not isinstance(injected_state, Mapping):
         raise ValueError("injected_state must be a mapping when provided")
 
-    trace_root = Path(trace_dir)
-    checkpoint = _read_json_object(trace_root / "checkpoint.json")
-    node = _read_tree_node(trace_root, target_path)
+    backend, scope, trace_root = _trace_backend_binding(
+        trace_dir,
+        persistence_backend=persistence_backend,
+        persistence_scope=persistence_scope,
+    )
+    checkpoint = _read_trace_json_object(backend, scope, name="checkpoint.json")
+    node = _read_tree_node(backend, scope, target_path)
     if node is None:
         node = _fallback_target_node(
             program=program,
@@ -234,7 +296,7 @@ def start_from_trace(
             target_path=target_path,
         )
     _assert_checkpoint_owns_target(checkpoint, node)
-    recorded_state = _read_json_object(trace_root / "state.json")
+    recorded_state = _read_trace_json_object(backend, scope, name="state.json")
 
     candidate_state = dict(recorded_state)
     if injected_state is not None:
@@ -253,13 +315,18 @@ def start_from_trace(
         candidate_state=candidate_state,
     )
 
-    source_root = trace_root.parent
     destination_root = Path(artifact_root)
-    if source_root.resolve() == destination_root.resolve():
+    if trace_root is not None and trace_root.parent.resolve() == destination_root.resolve():
         raise ValueError(
             "start_from_trace requires a fresh artifact root distinct from the source"
         )
-    _copy_source_artifacts(source_root, destination_root)
+    source_root = Path(source_artifact_root) if source_artifact_root is not None else (
+        trace_root.parent if trace_root is not None else None
+    )
+    _prepare_destination_root(
+        source_root=source_root,
+        artifact_root=destination_root,
+    )
 
     try:
         existing_cursor = read_native_cursor(destination_root)

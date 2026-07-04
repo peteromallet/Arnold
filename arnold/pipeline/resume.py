@@ -7,12 +7,19 @@ helper owns only durable JSON persistence; it does not interpret cursor bodies.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
-from arnold.runtime.state_persistence import atomic_write_json
+from arnold.pipeline.native.persistence import (
+    FileNativePersistenceBackend,
+    NativePersistenceBackend,
+    NativePersistenceScope,
+    ResolvedResumeSurface,
+    ResumeSurfaceObservation,
+    TypedResumeMetadata,
+    bind_legacy_artifact_root,
+)
 
 RESUME_CURSOR_FILENAME = "resume_cursor.json"
 COMPOSITE_RESUME_CURSOR_FILENAME = "composite_resume_cursor.json"
@@ -26,40 +33,6 @@ ResumeSurfaceSource = Literal[
     "resume_cursor",
     "none",
 ]
-
-
-@dataclass(frozen=True)
-class TypedResumeMetadata:
-    contract: Any
-    phase: str | None
-    pipeline: str | None
-    choices: list[str] | None
-    resume_input_schema: Mapping[str, Any]
-    cursor_data: Any
-    suspension_kind: str | None
-    awaitable: str | None
-
-
-@dataclass(frozen=True)
-class ResumeSurfaceObservation:
-    source: ResumeSurfaceSource
-    present: bool
-    valid: bool
-    kind: str
-    path: str | None = None
-    payload: Any = None
-    diagnostic: str | None = None
-
-
-@dataclass(frozen=True)
-class ResolvedResumeSurface:
-    source: ResumeSurfaceSource
-    kind: str
-    blocked: bool
-    payload: Any = None
-    path: str | None = None
-    diagnostic: str | None = None
-    observations: tuple[ResumeSurfaceObservation, ...] = ()
 
 
 def _is_valid_relative_cursor_path(value: Any) -> bool:
@@ -160,39 +133,28 @@ def persist_resume_cursor(
 ) -> Path:
     """Atomically write ``resume_cursor.json`` under *artifact_root*."""
 
-    path = Path(artifact_root) / RESUME_CURSOR_FILENAME
     payload: dict[str, Any] = {
         "stage": stage,
         "resume_cursor": resume_cursor,
     }
     payload.update(extra)
-    atomic_write_json(path, payload)
-    return path
+    backend, scope, root = _legacy_backend_for_artifact_root(artifact_root)
+    backend.write_resume_cursor(scope, payload=payload)
+    return root / RESUME_CURSOR_FILENAME
 
 
 def read_resume_cursor(artifact_root: str | Path) -> dict[str, Any] | None:
     """Read ``resume_cursor.json``; return ``None`` for absent or malformed data."""
 
-    path = Path(artifact_root) / RESUME_CURSOR_FILENAME
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return data if isinstance(data, dict) else None
+    backend, scope, _ = _legacy_backend_for_artifact_root(artifact_root)
+    return backend.read_resume_cursor(scope)
 
 
 def read_state_resume_cursor(artifact_root: str | Path) -> dict[str, Any] | None:
     """Read ``state.json::resume_cursor`` when it is a JSON object."""
 
-    data = _read_json_object(Path(artifact_root) / "state.json")
-    if not isinstance(data, dict):
-        return None
-    cursor = data.get("resume_cursor")
-    if not isinstance(cursor, dict):
-        return None
-    return dict(cursor)
+    backend, scope, _ = _legacy_backend_for_artifact_root(artifact_root)
+    return backend.read_state_resume_cursor(scope)
 
 
 def persist_composite_resume_cursor(
@@ -204,41 +166,36 @@ def persist_composite_resume_cursor(
 ) -> Path:
     """Atomically write a fan-out/composite resume cursor document."""
 
-    path = Path(artifact_root) / COMPOSITE_RESUME_CURSOR_FILENAME
     payload: dict[str, Any] = {
         "kind": "composite_suspension",
         "version": version,
         "children": children,
     }
     payload.update(extra)
-    atomic_write_json(path, payload)
-    return path
+    backend, scope, root = _legacy_backend_for_artifact_root(artifact_root)
+    backend.write_composite_resume_cursor(scope, payload=payload)
+    return root / COMPOSITE_RESUME_CURSOR_FILENAME
 
 
 def read_composite_resume_cursor(artifact_root: str | Path) -> dict[str, Any] | None:
     """Read ``composite_resume_cursor.json``; return ``None`` if invalid."""
 
-    path = Path(artifact_root) / COMPOSITE_RESUME_CURSOR_FILENAME
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return data if isinstance(data, dict) else None
+    backend, scope, _ = _legacy_backend_for_artifact_root(artifact_root)
+    return backend.read_composite_resume_cursor(scope)
 
 
 def read_awaiting_user_checkpoint(artifact_root: str | Path) -> dict[str, Any] | None:
     """Read ``awaiting_user.json`` when present and valid."""
 
-    data = _read_json_object(Path(artifact_root) / "awaiting_user.json")
-    return dict(data) if isinstance(data, dict) else None
+    backend, scope, _ = _legacy_backend_for_artifact_root(artifact_root)
+    return backend.read_human_gate(scope)
 
 
 def extract_suspended_contract_result(artifact_root: str | Path) -> Any | None:
     """Return the suspended ``contract_result`` from ``state.json``, if any."""
 
-    data = _read_json_object(Path(artifact_root) / "state.json")
+    backend, scope, root = _legacy_backend_for_artifact_root(artifact_root)
+    data = _read_state_payload(root, backend, scope)
     if not isinstance(data, dict):
         return None
     contract_result = data.get("contract_result")
@@ -261,43 +218,8 @@ def extract_suspended_contract_result(artifact_root: str | Path) -> Any | None:
 def extract_typed_resume_metadata(artifact_root: str | Path) -> TypedResumeMetadata | None:
     """Extract typed resume metadata from ``state.json::contract_result``."""
 
-    contract = extract_suspended_contract_result(artifact_root)
-    if contract is None:
-        return None
-
-    suspension = contract.suspension
-    cursor_data = _decode_json_cursor(suspension.resume_cursor if suspension else None)
-
-    phase: str | None = None
-    if isinstance(cursor_data, Mapping):
-        phase = cursor_data.get("phase") or cursor_data.get("stage")
-        if not isinstance(phase, str) or not phase:
-            phase = None
-
-    choices: list[str] | None = None
-    resume_input_schema: Mapping[str, Any] = (
-        dict(suspension.resume_input_schema)
-        if suspension and isinstance(suspension.resume_input_schema, Mapping)
-        else {}
-    )
-    props = resume_input_schema.get("properties")
-    if isinstance(props, Mapping):
-        choice_prop = props.get("choice")
-        if isinstance(choice_prop, Mapping):
-            enum = choice_prop.get("enum")
-            if isinstance(enum, list) and all(isinstance(choice, str) for choice in enum):
-                choices = [str(choice) for choice in enum]
-
-    return TypedResumeMetadata(
-        contract=contract,
-        phase=phase,
-        pipeline=suspension.thread_ref if suspension else None,
-        choices=choices,
-        resume_input_schema=resume_input_schema,
-        cursor_data=cursor_data,
-        suspension_kind=suspension.kind if suspension else None,
-        awaitable=suspension.awaitable if suspension else None,
-    )
+    backend, scope, root = _legacy_backend_for_artifact_root(artifact_root)
+    return _extract_typed_resume_metadata_from_backend(root, backend, scope)
 
 
 def resolve_resume_surface(artifact_root: str | Path) -> ResolvedResumeSurface:
@@ -309,13 +231,13 @@ def resolve_resume_surface(artifact_root: str | Path) -> ResolvedResumeSurface:
     ``resume_cursor.json``.
     """
 
-    root = Path(artifact_root)
+    backend, scope, root = _legacy_backend_for_artifact_root(artifact_root)
     observations = (
-        _inspect_state_resume_cursor(root),
-        _inspect_typed_contract(root),
-        _inspect_composite_resume_cursor(root),
-        _inspect_awaiting_user(root),
-        _inspect_resume_cursor(root),
+        _inspect_state_resume_cursor(root, backend, scope),
+        _inspect_typed_contract(root, backend, scope),
+        _inspect_composite_resume_cursor(root, backend, scope),
+        _inspect_awaiting_user(root, backend, scope),
+        _inspect_resume_cursor(root, backend, scope),
     )
 
     for observation in observations:
@@ -368,8 +290,46 @@ def _decode_json_cursor(raw: str | None) -> Any:
         return raw
 
 
-def _inspect_state_resume_cursor(root: Path) -> ResumeSurfaceObservation:
+def _legacy_backend_for_artifact_root(
+    artifact_root: str | Path,
+) -> tuple[NativePersistenceBackend, NativePersistenceScope, Path]:
+    binding = bind_legacy_artifact_root(artifact_root)
+    backend = FileNativePersistenceBackend(
+        lambda scope: binding.artifact_root
+        if scope == binding.scope
+        else (_ for _ in ()).throw(KeyError(scope))
+    )
+    return backend, binding.scope, binding.artifact_root
+
+
+def _read_state_payload(
+    root: Path,
+    backend: NativePersistenceBackend,
+    scope: NativePersistenceScope,
+) -> dict[str, Any] | None:
+    payload = backend.read_trace_artifact(scope, name="state.json")
+    if isinstance(payload, dict):
+        return dict(payload)
+    return _read_json_object(root / "state.json")
+
+
+def _inspect_state_resume_cursor(
+    root: Path,
+    backend: NativePersistenceBackend,
+    scope: NativePersistenceScope,
+) -> ResumeSurfaceObservation:
     path = root / "state.json"
+    cursor = backend.read_state_resume_cursor(scope)
+    if isinstance(cursor, dict):
+        return ResumeSurfaceObservation(
+            source="state_resume_cursor",
+            present=True,
+            valid=True,
+            kind="state_resume_cursor",
+            path=str(path),
+            payload=dict(cursor),
+        )
+
     present, payload, diagnostic = _read_json_payload(path)
     if not present:
         return ResumeSurfaceObservation(
@@ -418,9 +378,13 @@ def _inspect_state_resume_cursor(root: Path) -> ResumeSurfaceObservation:
     )
 
 
-def _inspect_typed_contract(root: Path) -> ResumeSurfaceObservation:
+def _inspect_typed_contract(
+    root: Path,
+    backend: NativePersistenceBackend,
+    scope: NativePersistenceScope,
+) -> ResumeSurfaceObservation:
     path = root / "state.json"
-    metadata = extract_typed_resume_metadata(root)
+    metadata = _extract_typed_resume_metadata_from_backend(root, backend, scope)
     if metadata is None:
         return ResumeSurfaceObservation(
             source="typed_contract",
@@ -439,8 +403,33 @@ def _inspect_typed_contract(root: Path) -> ResumeSurfaceObservation:
     )
 
 
-def _inspect_composite_resume_cursor(root: Path) -> ResumeSurfaceObservation:
+def _inspect_composite_resume_cursor(
+    root: Path,
+    backend: NativePersistenceBackend,
+    scope: NativePersistenceScope,
+) -> ResumeSurfaceObservation:
     path = root / COMPOSITE_RESUME_CURSOR_FILENAME
+    payload = backend.read_composite_resume_cursor(scope)
+    if isinstance(payload, dict):
+        if payload.get("kind") != "composite_suspension":
+            return ResumeSurfaceObservation(
+                source="composite_resume_cursor",
+                present=True,
+                valid=False,
+                kind="invalid_composite_resume_cursor",
+                path=str(path),
+                payload=payload,
+                diagnostic="composite_resume_cursor.json must declare kind='composite_suspension'",
+            )
+        return ResumeSurfaceObservation(
+            source="composite_resume_cursor",
+            present=True,
+            valid=True,
+            kind="composite_resume_cursor",
+            path=str(path),
+            payload=payload,
+        )
+
     present, payload, diagnostic = _read_json_payload(path)
     if not present:
         return ResumeSurfaceObservation(
@@ -480,8 +469,23 @@ def _inspect_composite_resume_cursor(root: Path) -> ResumeSurfaceObservation:
     )
 
 
-def _inspect_awaiting_user(root: Path) -> ResumeSurfaceObservation:
+def _inspect_awaiting_user(
+    root: Path,
+    backend: NativePersistenceBackend,
+    scope: NativePersistenceScope,
+) -> ResumeSurfaceObservation:
     path = root / "awaiting_user.json"
+    payload = backend.read_human_gate(scope)
+    if isinstance(payload, dict):
+        return ResumeSurfaceObservation(
+            source="awaiting_user",
+            present=True,
+            valid=True,
+            kind="awaiting_user",
+            path=str(path),
+            payload=payload,
+        )
+
     present, payload, diagnostic = _read_json_payload(path)
     if not present:
         return ResumeSurfaceObservation(
@@ -510,8 +514,34 @@ def _inspect_awaiting_user(root: Path) -> ResumeSurfaceObservation:
     )
 
 
-def _inspect_resume_cursor(root: Path) -> ResumeSurfaceObservation:
+def _inspect_resume_cursor(
+    root: Path,
+    backend: NativePersistenceBackend,
+    scope: NativePersistenceScope,
+) -> ResumeSurfaceObservation:
     path = root / RESUME_CURSOR_FILENAME
+    payload = backend.read_resume_cursor(scope)
+    if isinstance(payload, dict):
+        runtime = classify_resume_cursor_payload(payload)
+        if runtime == "corrupt_native":
+            return ResumeSurfaceObservation(
+                source="resume_cursor",
+                present=True,
+                valid=False,
+                kind="corrupt_native",
+                path=str(path),
+                payload=payload,
+                diagnostic="resume_cursor.json claims native ownership but the native payload is invalid",
+            )
+        return ResumeSurfaceObservation(
+            source="resume_cursor",
+            present=True,
+            valid=True,
+            kind=f"{runtime}_resume_cursor",
+            path=str(path),
+            payload=payload,
+        )
+
     present, payload, diagnostic = _read_json_payload(path)
     if not present:
         return ResumeSurfaceObservation(
@@ -549,6 +579,75 @@ def _inspect_resume_cursor(root: Path) -> ResumeSurfaceObservation:
         path=str(path),
         payload=payload,
     )
+
+
+def _extract_typed_resume_metadata_from_backend(
+    root: Path,
+    backend: NativePersistenceBackend,
+    scope: NativePersistenceScope,
+) -> TypedResumeMetadata | None:
+    contract = _extract_suspended_contract_result_from_backend(root, backend, scope)
+    if contract is None:
+        return None
+
+    suspension = contract.suspension
+    cursor_data = _decode_json_cursor(suspension.resume_cursor if suspension else None)
+
+    phase: str | None = None
+    if isinstance(cursor_data, Mapping):
+        phase = cursor_data.get("phase") or cursor_data.get("stage")
+        if not isinstance(phase, str) or not phase:
+            phase = None
+
+    choices: list[str] | None = None
+    resume_input_schema: Mapping[str, Any] = (
+        dict(suspension.resume_input_schema)
+        if suspension and isinstance(suspension.resume_input_schema, Mapping)
+        else {}
+    )
+    props = resume_input_schema.get("properties")
+    if isinstance(props, Mapping):
+        choice_prop = props.get("choice")
+        if isinstance(choice_prop, Mapping):
+            enum = choice_prop.get("enum")
+            if isinstance(enum, list) and all(isinstance(choice, str) for choice in enum):
+                choices = [str(choice) for choice in enum]
+
+    return TypedResumeMetadata(
+        contract=contract,
+        phase=phase,
+        pipeline=suspension.thread_ref if suspension else None,
+        choices=choices,
+        resume_input_schema=resume_input_schema,
+        cursor_data=cursor_data,
+        suspension_kind=suspension.kind if suspension else None,
+        awaitable=suspension.awaitable if suspension else None,
+    )
+
+
+def _extract_suspended_contract_result_from_backend(
+    root: Path,
+    backend: NativePersistenceBackend,
+    scope: NativePersistenceScope,
+) -> Any | None:
+    data = _read_state_payload(root, backend, scope)
+    if not isinstance(data, dict):
+        return None
+    contract_result = data.get("contract_result")
+    if not isinstance(contract_result, dict):
+        return None
+
+    from arnold.pipeline.types import ContractResult, ContractStatus
+
+    try:
+        contract = ContractResult.from_json(contract_result)
+    except (ValueError, TypeError, KeyError):
+        return None
+    if contract.status is not ContractStatus.SUSPENDED:
+        return None
+    if contract.suspension is None:
+        return None
+    return contract
 
 
 __all__ = [

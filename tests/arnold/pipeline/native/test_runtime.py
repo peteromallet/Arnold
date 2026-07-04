@@ -61,6 +61,113 @@ def _make_program(
     return NativeProgram(name=name, instructions=instructions)
 
 
+class _MemoryNativePersistenceBackend:
+    def __init__(self) -> None:
+        self.resume: dict[object, dict] = {}
+        self.human_gate: dict[object, dict] = {}
+        self.trace_artifacts: dict[tuple[object, str], object] = {}
+        self.events: dict[object, list[dict]] = {}
+        self.resume_writes: list[tuple[object, dict]] = []
+        self.human_gate_writes: list[tuple[object, dict]] = []
+        self.resume_deletes: list[object] = []
+        self.human_gate_deletes: list[object] = []
+
+    def write_resume_cursor(self, scope, *, payload):
+        self.resume[scope] = dict(payload)
+        self.resume_writes.append((scope, dict(payload)))
+        return None
+
+    def read_resume_cursor(self, scope):
+        payload = self.resume.get(scope)
+        return dict(payload) if payload is not None else None
+
+    def delete_resume_cursor(self, scope) -> None:
+        self.resume_deletes.append(scope)
+        self.resume.pop(scope, None)
+
+    def read_state_resume_cursor(self, scope):
+        return None
+
+    def write_composite_resume_cursor(self, scope, *, payload):
+        return None
+
+    def read_composite_resume_cursor(self, scope):
+        return None
+
+    def delete_composite_resume_cursor(self, scope) -> None:
+        return None
+
+    def write_human_gate(self, scope, *, payload):
+        self.human_gate[scope] = dict(payload)
+        self.human_gate_writes.append((scope, dict(payload)))
+        return None
+
+    def read_human_gate(self, scope):
+        payload = self.human_gate.get(scope)
+        return dict(payload) if payload is not None else None
+
+    def delete_human_gate(self, scope) -> None:
+        self.human_gate_deletes.append(scope)
+        self.human_gate.pop(scope, None)
+
+    def resolve_resume_surface(self, scope):
+        raise NotImplementedError
+
+    def append_audit_record(self, scope, *, payload):
+        raise NotImplementedError
+
+    def read_audit_records(self, scope):
+        return []
+
+    def emit_event(self, scope, *, kind, payload=None, phase=None, idempotency_key=None, event_scope=None):
+        entries = self.events.setdefault(scope, [])
+        event = {
+            "seq": len(entries),
+            "schema_version": 1,
+            "kind": kind,
+            "payload": dict(payload or {}),
+        }
+        if phase is not None:
+            event["phase"] = phase
+        if idempotency_key is not None:
+            event["idempotency_key"] = idempotency_key
+        if event_scope is not None:
+            event["scope"] = event_scope
+        entries.append(event)
+        return type("Row", (), {"sequence": event["seq"], "payload": event, "kind": kind})()
+
+    def read_events(self, scope, *, since_sequence=None, to_sequence=None, limit=None):
+        rows = []
+        for event in self.events.get(scope, []):
+            seq = event["seq"]
+            if since_sequence is not None and seq <= since_sequence:
+                continue
+            if to_sequence is not None and seq >= to_sequence:
+                continue
+            rows.append(type("Row", (), {"sequence": seq, "payload": dict(event), "kind": event["kind"]})())
+            if limit is not None and len(rows) >= limit:
+                break
+        return rows
+
+    def write_trace_artifact(self, scope, *, name, payload):
+        if isinstance(payload, dict):
+            stored = dict(payload)
+        elif isinstance(payload, list):
+            stored = list(payload)
+        else:
+            stored = payload
+        self.trace_artifacts[(scope, name)] = stored
+        return None
+
+    def read_trace_artifact(self, scope, *, name):
+        payload = self.trace_artifacts.get((scope, name))
+        if isinstance(payload, dict):
+            return dict(payload)
+        if isinstance(payload, list):
+            return list(payload)
+        return payload
+
+
 # ── sequential execution ──────────────────────────────────────────────
 
 
@@ -474,6 +581,68 @@ class TestPcAndStageTracking:
             "call_site_path": ("child_call",),
         }
         assert observed["child_root"] == str(tmp_path / "_child_child_call")
+
+    def test_subpipeline_composite_cursor_uses_injected_persistence_backend(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from arnold.pipeline.types import Suspension
+
+        backend = _MemoryNativePersistenceBackend()
+        calls = {"child": 0}
+
+        @phase
+        def child_step(ctx: dict) -> StepResult | dict:
+            calls["child"] += 1
+            if calls["child"] == 1:
+                return StepResult(
+                    outputs={"waiting": True},
+                    contract_result=ContractResult(
+                        status=ContractStatus.SUSPENDED,
+                        suspension=Suspension(
+                            kind="human",
+                            resume_cursor="child-review",
+                        ),
+                    ),
+                )
+            return {"child": "done"}
+
+        @workflow(
+            name="child_flow",
+            outputs={"type": "object", "required": ["child"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield child(ctx, id="child_call")
+            return state
+
+        prog = compile_pipeline(parent)
+        first = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            persistence_backend=backend,
+        )
+        assert first.suspended is True
+        assert not (tmp_path / "resume_cursor.json").exists()
+
+        parent_scope, parent_cursor = backend.resume_writes[-1]
+        assert parent_cursor["composite"]["kind"] == "parent_child"
+        assert parent_cursor["native"]["suspension_kind"] == "child_suspended"
+
+        resumed = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            resume=True,
+            persistence_backend=backend,
+        )
+        assert resumed.suspended is False
+        assert resumed.state["child"] == "done"
+        assert parent_scope in backend.resume_deletes
+        assert parent_scope not in backend.resume
 
     def test_repeated_subpipeline_call_sites_have_distinct_child_cursor_paths(
         self,
@@ -1058,6 +1227,43 @@ class TestMaxPhasesAndResume:
         assert cursor["native"]["pc"] == result.pc
         assert len(cursor["stages"]) == 1
 
+    def test_max_phases_uses_injected_persistence_backend(self, tmp_path: Path) -> None:
+        backend = _MemoryNativePersistenceBackend()
+
+        @phase
+        def a(ctx: dict) -> dict:
+            return {"x": 1}
+
+        @phase
+        def b(ctx: dict) -> dict:
+            return {"y": ctx["state"]["x"] + 1}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield a(ctx)
+            state = yield b(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        first = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            max_phases=1,
+            persistence_backend=backend,
+        )
+        assert first.suspended is True
+        assert not (tmp_path / "resume_cursor.json").exists()
+        assert backend.resume_writes[-1][1]["native"]["pc"] == 1
+
+        resumed = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            resume=True,
+            persistence_backend=backend,
+        )
+        assert resumed.suspended is False
+        assert resumed.state == {"x": 1, "y": 2}
+
     def test_resume_from_max_phases(self, tmp_path: Path) -> None:
         @phase
         def a(ctx: dict) -> dict:
@@ -1455,6 +1661,36 @@ class TestMaxPhasesAndResume:
         tree = json.loads((trace_dir / "tree.json").read_text(encoding="utf-8"))
         nodes = {node["path"]: node for node in tree["nodes"]}
         assert nodes["root/child_call"]["kind"] == "subpipeline"
+
+    def test_trace_dir_compatibility_uses_injected_backend_for_trace_artifacts(
+        self, tmp_path: Path
+    ) -> None:
+        backend = _MemoryNativePersistenceBackend()
+
+        @phase
+        def write(ctx: dict) -> dict:
+            Path(ctx["artifact_root"], "artifact.txt").write_text("ok", encoding="utf-8")
+            return {"ok": True}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield write(ctx)
+            return state
+
+        trace_dir = tmp_path / "trace"
+        result = run_native_pipeline(
+            compile_pipeline(my_pipe),
+            artifact_root=tmp_path,
+            trace_dir=trace_dir,
+            persistence_backend=backend,
+        )
+
+        assert result.suspended is False
+        trace_keys = {name for (_, name) in backend.trace_artifacts}
+        assert {"state.json", "stages.json", "tree.json", "artifacts.json", "checkpoint.json"} <= trace_keys
+        events = next(iter(backend.events.values()))
+        assert events[0]["kind"] == "pipeline.init"
+        assert any(event["kind"] == "checkpoint" for event in events)
 
 
 class TestCancellationBoundarySentinel:
@@ -3269,6 +3505,59 @@ class TestHumanGateSuspension:
         # Additive native restoration metadata
         assert cursor.get("suspension_kind") == "human_gate"
         assert cursor.get("choices") == ["continue", "stop"]
+
+    def test_human_gate_uses_injected_persistence_backend(self, tmp_path: Path) -> None:
+        backend = _MemoryNativePersistenceBackend()
+
+        @phase
+        def do_work(ctx: dict) -> dict:
+            return {"result": 42}
+
+        @decision(
+            vocabulary={"continue", "stop"},
+            human_gate=True,
+            artifact_stage="do_work",
+            choices=("continue", "stop"),
+        )
+        def human_decide(ctx: dict) -> str:
+            return "continue"
+
+        @phase
+        def after(ctx: dict) -> dict:
+            return {"after": True}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield do_work(ctx)
+            if human_decide(ctx) == "continue":
+                state = yield after(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        first = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            persistence_backend=backend,
+        )
+        assert first.suspended is True
+        assert not (tmp_path / "awaiting_user.json").exists()
+        assert not (tmp_path / "resume_cursor.json").exists()
+        assert backend.human_gate_writes[-1][1]["choices"] == ["continue", "stop"]
+        assert backend.resume_writes[-1][1]["native"]["suspension_kind"] == "human_gate"
+
+        resumed = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            resume=True,
+            human_input={"choice": "continue"},
+            persistence_backend=backend,
+        )
+        assert resumed.suspended is False
+        assert resumed.state["after"] is True
+        assert backend.human_gate_deletes
+        assert backend.resume_deletes
+        assert not backend.human_gate
+        assert not backend.resume
 
     def test_human_gate_resume_routes_by_choice(self, tmp_path: Path) -> None:
         """Resume after human-gate reads _resume_choice from awaiting_user.json

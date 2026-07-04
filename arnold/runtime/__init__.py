@@ -59,6 +59,8 @@ from arnold.runtime.errors import ArnoldError
 from arnold.runtime.outcome import RunOutcome, RunResultMetadata
 from arnold.runtime.effect import NONCOMPENSABLE, Effect, ReplayClass  # noqa: F401 — re-export for convenience
 from arnold.runtime.event_journal import (  # noqa: F401 — re-export for convenience
+    BackendEventJournal,
+    BackendEventSink,
     EventEnvelope,
     EventSink,
     NdjsonEventJournal,
@@ -74,6 +76,8 @@ from arnold.runtime.semantic_replay import (  # noqa: F401 — re-export for con
 
 __all__: list[str] = [
     "ArnoldError",
+    "BackendEventJournal",
+    "BackendEventSink",
     "Effect",
     "EventEnvelope",
     "EventSink",

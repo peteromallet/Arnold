@@ -52,6 +52,12 @@ from arnold.pipeline.native.pack_validation import (
     PackClosureValidationError,
     validate_shared_pack_closure,
 )
+from arnold.pipeline.native.persistence import (
+    FileNativePersistenceBackend,
+    NativePersistenceBackend,
+    NativePersistenceScope,
+    bind_legacy_artifact_root,
+)
 from arnold.pipeline.native.reconcile import (
     ReconcileDecision,
     ReconcileMetadata,
@@ -364,8 +370,19 @@ def _extract_child_inputs(
 ) -> dict[str, Any]:
     field_names = _schema_field_names(inputs_schema)
     if not field_names:
-        return {}
-    return {name: state[name] for name in field_names if name in state}
+        return {
+            key: value
+            for key, value in state.items()
+            if isinstance(key, str) and not key.startswith("__")
+        }
+    extracted = {name: state[name] for name in field_names if name in state}
+    if extracted:
+        return extracted
+    return {
+        key: value
+        for key, value in state.items()
+        if isinstance(key, str) and not key.startswith("__")
+    }
 
 
 def _extract_child_outputs(
@@ -375,14 +392,24 @@ def _extract_child_outputs(
 ) -> dict[str, Any]:
     field_names = _schema_field_names(outputs_schema)
     if not field_names:
-        return {}
+        return {
+            key: value
+            for key, value in state.items()
+            if isinstance(key, str) and not key.startswith("__")
+        }
     outputs: dict[str, Any] = {}
     for child_key in field_names:
         if child_key not in state:
             continue
         parent_key = output_bindings.get(child_key, child_key)
         outputs[parent_key] = state[child_key]
-    return outputs
+    if outputs:
+        return outputs
+    return {
+        key: value
+        for key, value in state.items()
+        if isinstance(key, str) and not key.startswith("__")
+    }
 
 
 def _resolve_parallel_map_items(
@@ -728,6 +755,7 @@ def run_native_pipeline(
     pack_manifest: PackManifest | None = None,
     pack_lockfile: PackLockfile | None = None,
     pack_registry: PackRegistry | None = None,
+    persistence_backend: NativePersistenceBackend | None = None,
     _subpipeline_depth: int = 0,
     _active_subpipelines: tuple[str, ...] = (),
     _parent_run_path: str | None = None,
@@ -804,6 +832,10 @@ def run_native_pipeline(
             and ``pack_registry`` for fail-closed provenance resolution.
         pack_registry: Optional in-process registry used to resolve
             ``pack_manifest`` dependencies against ``pack_lockfile``.
+        persistence_backend: Optional persistence backend used for native
+            suspension, human-gate, and composite parent/child cursor state.
+            When omitted, a file backend preserving the current artifact
+            layout is used.
 
     Returns:
         :class:`NativeExecutionResult` with final state, completed stages,
@@ -812,18 +844,6 @@ def run_native_pipeline(
     require_native_runtime()
     if _subpipeline_depth == 0:
         _validate_runtime_program_closure(program)
-
-    # Resolve hooks — always have a hooks instance so the runtime never
-    # needs None-guards around callback invocations.
-    _hooks: NativeRuntimeHooks = hooks if hooks is not None else NullNativeRuntimeHooks()
-
-    # ── Wrap with trace hooks when trace_dir is set ────────────────
-    if trace_dir is not None:
-        _hooks = NativeTraceHooks(
-            inner=_hooks,
-            trace_dir=trace_dir,
-            artifact_root=artifact_root,
-        )
 
     state: dict[str, Any] = dict(initial_state) if initial_state is not None else {}
     stages: list[str] = []
@@ -840,6 +860,27 @@ def run_native_pipeline(
         pack_lockfile=pack_lockfile,
         pack_registry=pack_registry,
     )
+    _persistence_backend, _persistence_scope = _runtime_persistence_binding(
+        artifact_root,
+        persistence_backend=persistence_backend,
+    )
+    _child_persistence_backend = (
+        _persistence_backend if persistence_backend is not None else None
+    )
+
+    # Resolve hooks — always have a hooks instance so the runtime never
+    # needs None-guards around callback invocations.
+    _hooks: NativeRuntimeHooks = hooks if hooks is not None else NullNativeRuntimeHooks()
+
+    # ── Wrap with trace hooks when trace_dir is set ────────────────
+    if trace_dir is not None:
+        _hooks = NativeTraceHooks(
+            inner=_hooks,
+            trace_dir=trace_dir,
+            artifact_root=artifact_root,
+            persistence_backend=persistence_backend,
+            persistence_scope=_persistence_scope if persistence_backend is not None else None,
+        )
 
     # ── envelope accumulation (matches graph executor pattern) ─────
     envelope: Any = initial_envelope
@@ -888,7 +929,12 @@ def run_native_pipeline(
 
         if resume:
             try:
-                resume_cursor_data = read_native_cursor(artifact_root)
+                resume_cursor_data = read_native_cursor(
+                    artifact_root,
+                    persistence_backend=_persistence_backend,
+                    persistence_scope=_persistence_scope,
+                    fallback_to_artifact_root=persistence_backend is None,
+                )
             except NativeCursorCorruptError as exc:
                 raise NativeRuntimeError(
                     f"Cannot resume native pipeline from corrupt cursor at "
@@ -1175,6 +1221,8 @@ def run_native_pipeline(
                     )
                     persist_native_cursor(
                         artifact_root,
+                        persistence_backend=_persistence_backend,
+                        persistence_scope=_persistence_scope,
                         stage=stage_id,
                         pc=pc,
                         stages=list(stages),
@@ -1266,6 +1314,8 @@ def run_native_pipeline(
                     )
                     _persist_suspension(
                         artifact_root=artifact_root,
+                        persistence_backend=_persistence_backend,
+                        persistence_scope=_persistence_scope,
                         program=program,
                         stage=stage_id,
                         pc=next_pc,
@@ -1356,10 +1406,8 @@ def run_native_pipeline(
                         _hg_artifact_stage if _hg_artifact_stage else _hg_name
                     )
     
-                    # Write awaiting_user.json via the neutral checkpoint helper.
                     from arnold.pipeline.steps.human_gate import (
                         make_human_suspension,
-                        write_human_gate_checkpoint,
                     )
                     from arnold.pipeline.types import ContractResult, ContractStatus
     
@@ -1372,25 +1420,29 @@ def run_native_pipeline(
                     if _hg_choices:
                         _resume_cursor_payload["choices"] = list(_hg_choices)
                     _resume_cursor = json.dumps(_resume_cursor_payload, sort_keys=True)
-                    _checkpoint = write_human_gate_checkpoint(
-                        _checkpoint_path,
-                        pipeline=program.name,
-                        version=NATIVE_CURSOR_VERSION,
-                        artifact_stage=_hg_artifact_stage_for_checkpoint,
-                        stage=_hg_name,
-                        choices=list(_hg_choices),
-                        resume_input_schema=_hg_resume_schema
-                        if isinstance(_hg_resume_schema, dict)
-                        else None,
-                        artifact_path=_resolve_native_human_gate_artifact_path(
+                    _checkpoint: dict[str, Any] = {
+                        "pipeline": program.name,
+                        "version": NATIVE_CURSOR_VERSION,
+                        "artifact_stage": _hg_artifact_stage_for_checkpoint,
+                        "prompt": "",
+                        "display_refs": [],
+                        "stage": _hg_name,
+                        "choices": list(_hg_choices),
+                        "artifact_path": _resolve_native_human_gate_artifact_path(
                             artifact_root,
                             _hg_artifact_stage_for_checkpoint,
                         ),
-                        message=(
+                        "message": (
                             f"Pipeline '{program.name}' paused at human-gate "
                             f"'{_hg_name}'.  Review the artifact and choose: "
                             f"{', '.join(_hg_choices)}"
                         ),
+                    }
+                    if isinstance(_hg_resume_schema, dict):
+                        _checkpoint["resume_input_schema"] = dict(_hg_resume_schema)
+                    _persistence_backend.write_human_gate(
+                        _persistence_scope,
+                        payload=_checkpoint,
                     )
     
                     # Construct the typed HumanSuspension envelope.
@@ -1450,6 +1502,8 @@ def run_native_pipeline(
     
                     persist_native_cursor(
                         artifact_root,
+                        persistence_backend=_persistence_backend,
+                        persistence_scope=_persistence_scope,
                         stage=_hg_stage_id,
                         pc=pc,
                         stages=list(stages),
@@ -1508,12 +1562,10 @@ def run_native_pipeline(
     
                 # ── Human-gate: resume routing ────────────────────────
                 if _is_human_gate and _human_gate_resume:
-                    from arnold.pipeline.steps.human_gate import (
-                        read_human_gate_checkpoint,
-                    )
-    
                     _hg_checkpoint_path = Path(artifact_root) / "awaiting_user.json"
-                    _hg_checkpoint = read_human_gate_checkpoint(_hg_checkpoint_path) or {}
+                    _hg_checkpoint = (
+                        _persistence_backend.read_human_gate(_persistence_scope) or {}
+                    )
                     _resume_selection = _select_native_human_gate_resume_label(
                         human_input=human_input,
                         override_input=_resume_override_input,
@@ -1547,25 +1599,15 @@ def run_native_pipeline(
                         # Clean up the checkpoint only after validating and
                         # accepting the label.  A failed unlink is treated as
                         # a failed resume so stale choices cannot be replayed.
-                        if _hg_checkpoint_path.exists():
-                            try:
-                                _hg_checkpoint_path.unlink()
-                            except OSError as exc:
-                                raise NativeRuntimeError(
-                                    "Accepted native human-gate resume label "
-                                    f"{_resume_label!r}, but could not clear "
-                                    f"{_hg_checkpoint_path}: {exc}"
-                                ) from exc
-                        _hg_cursor_path = Path(artifact_root) / "resume_cursor.json"
-                        if _hg_cursor_path.exists():
-                            try:
-                                _hg_cursor_path.unlink()
-                            except OSError as exc:
-                                raise NativeRuntimeError(
-                                    "Accepted native human-gate resume label "
-                                    f"{_resume_label!r}, but could not clear "
-                                    f"{_hg_cursor_path}: {exc}"
-                                ) from exc
+                        try:
+                            _persistence_backend.delete_human_gate(_persistence_scope)
+                            _persistence_backend.delete_resume_cursor(_persistence_scope)
+                        except OSError as exc:
+                            raise NativeRuntimeError(
+                                "Accepted native human-gate resume label "
+                                f"{_resume_label!r}, but could not clear "
+                                f"{_hg_checkpoint_path}: {exc}"
+                            ) from exc
     
                         state.pop("_pipeline_paused", None)
                         state.pop("_pipeline_paused_stage", None)
@@ -2079,6 +2121,7 @@ def run_native_pipeline(
                             _reconcile_child_resume_cursor(
                                 child_artifact_root=child_artifact_root,
                                 child_program=child_program,
+                                persistence_backend=_child_persistence_backend,
                             )
                         child_result = run_native_pipeline(
                             program=child_program,
@@ -2095,6 +2138,7 @@ def run_native_pipeline(
                             initial_envelope=envelope,
                             run_path=item_run_path,
                             phase_max_attempts=phase_max_attempts,
+                            persistence_backend=_child_persistence_backend,
                             _subpipeline_depth=_subpipeline_depth + 1,
                             _active_subpipelines=(
                                 *_active_subpipelines,
@@ -2115,6 +2159,9 @@ def run_native_pipeline(
                         if child_result.suspended:
                             _child_cursor = _persist_parent_child_entry_cursor(
                                 artifact_root=artifact_root,
+                                persistence_backend=_persistence_backend,
+                                persistence_scope=_persistence_scope,
+                                child_persistence_backend=_child_persistence_backend,
                                 child_artifact_root=child_artifact_root,
                                 program=program,
                                 instr=instr,
@@ -2150,7 +2197,7 @@ def run_native_pipeline(
                                 _hooks.emit_pipeline_suspended(
                                     reason="child_suspended",
                                     run_path=current_run_path,
-                                    step_path=_child_cursor.get("step_path"),
+                                    step_path=item_path,
                                     call_site_path=_child_cursor.get("call_site_path") or (),
                                 )
                             trace_status = "suspended"
@@ -2254,6 +2301,9 @@ def run_native_pipeline(
                     if composite_child_cursor is None:
                         _child_entry_cursor = _persist_parent_child_entry_cursor(
                             artifact_root=artifact_root,
+                            persistence_backend=_persistence_backend,
+                            persistence_scope=_persistence_scope,
+                            child_persistence_backend=_child_persistence_backend,
                             child_artifact_root=child_artifact_root,
                             program=program,
                             instr=instr,
@@ -2286,6 +2336,7 @@ def run_native_pipeline(
                         _reconcile_child_resume_cursor(
                             child_artifact_root=child_artifact_root,
                             child_program=child_program,
+                            persistence_backend=_child_persistence_backend,
                         )
                     child_result = run_native_pipeline(
                         program=child_program,
@@ -2306,6 +2357,7 @@ def run_native_pipeline(
                         trace_dir=None,
                         run_path=child_run_path,
                         phase_max_attempts=phase_max_attempts,
+                        persistence_backend=_child_persistence_backend,
                         _subpipeline_depth=_subpipeline_depth + 1,
                         _active_subpipelines=(*_active_subpipelines, child_identity),
                         _parent_run_path=current_run_path,
@@ -2324,6 +2376,9 @@ def run_native_pipeline(
                     if child_result.suspended:
                         _child_suspended_cursor = _persist_parent_child_entry_cursor(
                             artifact_root=artifact_root,
+                            persistence_backend=_persistence_backend,
+                            persistence_scope=_persistence_scope,
+                            child_persistence_backend=_child_persistence_backend,
                             child_artifact_root=child_artifact_root,
                             program=program,
                             instr=instr,
@@ -2346,7 +2401,7 @@ def run_native_pipeline(
                             _hooks.emit_pipeline_suspended(
                                 reason="child_suspended",
                                 run_path=current_run_path,
-                                step_path=_child_suspended_cursor.get("step_path"),
+                                step_path=_step_path_for_instr(current_run_path, instr),
                                 call_site_path=_child_suspended_cursor.get("call_site_path")
                                 or (),
                             )
@@ -2362,6 +2417,8 @@ def run_native_pipeline(
 
                     _clear_parent_child_entry_cursor(
                         artifact_root=artifact_root,
+                        persistence_backend=_persistence_backend,
+                        persistence_scope=_persistence_scope,
                         child_artifact_root=child_artifact_root,
                         pc=pc,
                     )
@@ -2429,6 +2486,22 @@ def run_native_pipeline(
 def _safe_name(name: str) -> str:
     """Return a name safe for use as a stage-name prefix."""
     return name.replace(" ", "_").replace("-", "_")
+
+
+def _runtime_persistence_binding(
+    artifact_root: str | Path,
+    *,
+    persistence_backend: NativePersistenceBackend | None,
+) -> tuple[NativePersistenceBackend, NativePersistenceScope]:
+    binding = bind_legacy_artifact_root(artifact_root)
+    if persistence_backend is not None:
+        return persistence_backend, binding.scope
+    backend = FileNativePersistenceBackend(
+        lambda scope: binding.artifact_root
+        if scope == binding.scope
+        else (_ for _ in ()).throw(KeyError(scope))
+    )
+    return backend, binding.scope
 
 
 def _resolve_decision_label(result: Any) -> str:
@@ -2795,9 +2868,19 @@ def _reconcile_child_resume_cursor(
     *,
     child_artifact_root: Path,
     child_program: NativeProgram,
+    persistence_backend: NativePersistenceBackend | None,
 ) -> None:
+    child_backend, child_scope = _runtime_persistence_binding(
+        child_artifact_root,
+        persistence_backend=persistence_backend,
+    )
     try:
-        child_cursor = read_native_cursor(child_artifact_root)
+        child_cursor = read_native_cursor(
+            child_artifact_root,
+            persistence_backend=child_backend,
+            persistence_scope=child_scope,
+            fallback_to_artifact_root=persistence_backend is None,
+        )
     except NativeCursorCorruptError as exc:
         raise NativeRuntimeError(
             f"Cannot resume child pipeline from corrupt cursor at "
@@ -3146,6 +3229,9 @@ def _restore_parallel_map_progress(
 def _persist_parent_child_entry_cursor(
     *,
     artifact_root: str | Path,
+    persistence_backend: NativePersistenceBackend,
+    persistence_scope: NativePersistenceScope,
+    child_persistence_backend: NativePersistenceBackend | None,
     child_artifact_root: Path,
     program: NativeProgram,
     instr: NativeInstruction,
@@ -3178,6 +3264,22 @@ def _persist_parent_child_entry_cursor(
         run_path=current_run_path,
         path_stack=path_stack,
     )
+    if suspension_kind == "child_suspended":
+        child_backend, child_scope = _runtime_persistence_binding(
+            child_artifact_root,
+            persistence_backend=child_persistence_backend,
+        )
+        child_cursor = read_native_cursor(
+            child_artifact_root,
+            persistence_backend=child_backend,
+            persistence_scope=child_scope,
+            fallback_to_artifact_root=child_persistence_backend is None,
+        )
+        if child_cursor is not None:
+            for key in ("run_path", "step_path", "call_site_path", "path_stack"):
+                value = child_cursor.get(key)
+                if value is not None:
+                    path_metadata[key] = value
     composite = {
         "kind": "parent_child",
         "parent": {
@@ -3215,6 +3317,8 @@ def _persist_parent_child_entry_cursor(
 
     persist_native_cursor(
         artifact_root,
+        persistence_backend=persistence_backend,
+        persistence_scope=persistence_scope,
         stage=stage_id,
         pc=pc,
         stages=list(stages),
@@ -3246,17 +3350,13 @@ def _persist_parent_child_entry_cursor(
 def _clear_parent_child_entry_cursor(
     *,
     artifact_root: str | Path,
+    persistence_backend: NativePersistenceBackend,
+    persistence_scope: NativePersistenceScope,
     child_artifact_root: Path,
     pc: int,
 ) -> None:
-    cursor_path = Path(artifact_root) / "resume_cursor.json"
-    if not cursor_path.exists():
-        return
-    try:
-        payload = json.loads(cursor_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return
-    if not isinstance(payload, dict):
+    payload = persistence_backend.read_resume_cursor(persistence_scope)
+    if payload is None:
         return
     native = payload.get("native")
     composite = payload.get("composite")
@@ -3272,10 +3372,7 @@ def _clear_parent_child_entry_cursor(
         child_artifact_root,
     ):
         return
-    try:
-        cursor_path.unlink()
-    except OSError:
-        return
+    persistence_backend.delete_resume_cursor(persistence_scope)
 
 
 def _reentry_stage_for_pc(program: NativeProgram, pc: int) -> str | None:
@@ -3302,6 +3399,8 @@ def _reentry_stage_for_pc(program: NativeProgram, pc: int) -> str | None:
 def _persist_suspension(
     *,
     artifact_root: str | Path,
+    persistence_backend: NativePersistenceBackend,
+    persistence_scope: NativePersistenceScope,
     program: NativeProgram,
     stage: str,
     pc: int,
@@ -3341,6 +3440,8 @@ def _persist_suspension(
 
         persist_native_cursor(
             artifact_root,
+            persistence_backend=persistence_backend,
+            persistence_scope=persistence_scope,
             stage=stage,
             pc=pc,
             stages=list(stages),
