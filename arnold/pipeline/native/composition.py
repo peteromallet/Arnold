@@ -23,6 +23,10 @@ from arnold.pipeline.native.ir import (
     ParallelInstruction,
     ParallelMapInstruction,
 )
+from arnold.pipeline.native.pack_validation import (
+    PackClosureValidationError,
+    validate_shared_pack_closure,
+)
 
 
 class _GraphBuilder:
@@ -239,6 +243,10 @@ class _GraphBuilder:
 
 def derive_composition_graph(program: NativeProgram) -> NativeCompositionGraph:
     """Derive a static composition graph from a compiled *program*."""
+    try:
+        validate_shared_pack_closure(program)
+    except PackClosureValidationError as exc:
+        raise ValueError(f"Invalid native composition closure: {exc}") from exc
     return _GraphBuilder(program).build()
 
 

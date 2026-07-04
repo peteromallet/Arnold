@@ -383,9 +383,17 @@ class NativeTraceHooks:
         parent_run_path: str | None = None,
         kind: str = "pipeline",
         call_site_path: tuple[str, ...] = (),
+        metadata: Mapping[str, Any] | None = None,
     ) -> None:
         normalized_run_path = _normalize_trace_path(run_path)
         parent_path = _normalize_trace_path(parent_run_path) if parent_run_path else _parent_trace_path(normalized_run_path)
+        node_metadata = {
+            "program_name": program.name,
+            "program_stable_id": program.stable_id,
+            "status": "running",
+        }
+        if metadata:
+            node_metadata.update(dict(metadata))
         self._active_runs.append(normalized_run_path)
         node = self._ensure_tree_node(
             path=normalized_run_path,
@@ -395,17 +403,28 @@ class NativeTraceHooks:
             parent_path=parent_path,
             parent_run_path=parent_run_path,
             call_site_path=call_site_path,
-            metadata={
-                "program_name": program.name,
-                "program_stable_id": program.stable_id,
-                "status": "running",
-            },
+            metadata=node_metadata,
         )
         if self._journal is not None:
             self._journal.emit(
                 "run.enter",
                 payload={"trace": dict(node), "program_name": program.name, "program_stable_id": program.stable_id},
                 phase=program.name,
+            )
+
+    def record_run_init(
+        self,
+        program: NativeProgram,
+        *,
+        run_path: str,
+        pack_provenance: Mapping[str, Any] | None = None,
+    ) -> None:
+        callback = getattr(self._inner, "record_run_init", None)
+        if callable(callback):
+            callback(
+                program,
+                run_path=run_path,
+                pack_provenance=pack_provenance,
             )
 
     def on_run_exit(

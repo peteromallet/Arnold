@@ -45,6 +45,13 @@ from arnold.pipeline.native.ir import (
     NativeProgram,
     ParallelInstruction,
 )
+from arnold.pipeline.native.pack_metadata import PackLockfile, PackManifest
+from arnold.pipeline.native.pack_registry import PackRegistry, ResolvedPackExport
+from arnold.pipeline.native.pack_validation import (
+    PACK_CLOSURE_MAX_DEPTH,
+    PackClosureValidationError,
+    validate_shared_pack_closure,
+)
 from arnold.pipeline.native.reconcile import (
     ReconcileDecision,
     ReconcileMetadata,
@@ -55,8 +62,90 @@ from arnold.pipeline.native.reconcile import (
 )
 from arnold.pipeline.native.trace import NativeTraceHooks
 
-_MAX_SUBPIPELINE_DEPTH = 32
+_MAX_SUBPIPELINE_DEPTH = PACK_CLOSURE_MAX_DEPTH
 _DEFAULT_PHASE_MAX_ATTEMPTS = 1
+
+
+def _pack_manifest_id(manifest: PackManifest) -> str:
+    return manifest.stable_id or manifest.name
+
+
+def _resolved_pack_export_record(resolved: ResolvedPackExport) -> dict[str, Any]:
+    lockfile_entry = resolved.lockfile_entry or resolved.registration.to_lockfile_entry()
+    return {
+        "stable_id": resolved.export.stable_id,
+        "version": lockfile_entry.version,
+        "interface_hash": lockfile_entry.interface_hash,
+        "pack_id": resolved.registration.pack_id,
+        "pack_version": resolved.manifest.version,
+        "export_name": resolved.export.name,
+        "export_kind": resolved.export.kind,
+    }
+
+
+def _resolve_runtime_pack_provenance(
+    *,
+    pack_manifest: PackManifest | None,
+    pack_lockfile: PackLockfile | None,
+    pack_registry: PackRegistry | None,
+) -> dict[str, Any] | None:
+    if pack_manifest is None:
+        if pack_lockfile is not None or pack_registry is not None:
+            raise NativeRuntimeError(
+                "pack_manifest is required when providing pack_lockfile or pack_registry"
+            )
+        return None
+
+    pack_provenance: dict[str, Any] = {
+        "manifest_stable_id": _pack_manifest_id(pack_manifest),
+        "manifest_version": pack_manifest.version,
+        "dependencies": [],
+    }
+    if not pack_manifest.dependencies:
+        return pack_provenance
+
+    if pack_registry is None:
+        raise NativeRuntimeError(
+            "pack_registry is required for runtime pack provenance when dependencies are declared"
+        )
+    if pack_lockfile is None:
+        raise NativeRuntimeError(
+            "pack_lockfile is required for runtime pack provenance when dependencies are declared"
+        )
+
+    resolved_dependencies: list[dict[str, Any]] = []
+    visited: set[str] = set()
+
+    def visit_dependency(stable_id: str) -> None:
+        if stable_id in visited:
+            return
+        try:
+            resolved = pack_registry.resolve_entry(stable_id, lockfile=pack_lockfile)
+        except (LookupError, ValueError) as exc:
+            raise NativeRuntimeError(
+                f"runtime pack provenance resolution failed for dependency "
+                f"{stable_id!r}: {exc}"
+            ) from exc
+        visited.add(stable_id)
+        resolved_dependencies.append(_resolved_pack_export_record(resolved))
+        for dependency in resolved.manifest.dependencies:
+            visit_dependency(dependency.stable_id)
+
+    for dependency in pack_manifest.dependencies:
+        visit_dependency(dependency.stable_id)
+
+    pack_provenance["dependencies"] = resolved_dependencies
+    return pack_provenance
+
+
+def _native_extra_with_pack_provenance(
+    native_extra: Mapping[str, Any] | None,
+    pack_provenance: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    merged = dict(native_extra or {})
+    if pack_provenance is not None:
+        merged["pack_provenance"] = dict(pack_provenance)
+    return merged or None
 
 
 @dataclass(frozen=True)
@@ -592,6 +681,33 @@ def _resolve_phase_max_attempts(
     return max_attempts
 
 
+def _raise_runtime_closure_error(exc: PackClosureValidationError) -> None:
+    message = str(exc)
+    if "pack closure cycle detected" in message:
+        cycle = message.rsplit(": ", 1)[-1]
+        raise NativeRuntimeError(
+            f"Runtime subpipeline cycle detected: {cycle}"
+        ) from exc
+    if "pack closure depth exceeded" in message:
+        depth_message = message.split("pack closure depth exceeded ", 1)[-1]
+        depth_limit, _, remainder = depth_message.partition(" at ")
+        child_identity = remainder.partition(" via ")[0] if remainder else ""
+        detail = (
+            f"Runtime subpipeline depth exceeded {depth_limit.strip()} at {child_identity}"
+            if child_identity
+            else f"Runtime subpipeline depth exceeded {depth_limit.strip()}"
+        )
+        raise NativeRuntimeError(detail) from exc
+    raise NativeRuntimeError(f"Invalid native program closure: {message}") from exc
+
+
+def _validate_runtime_program_closure(program: NativeProgram) -> None:
+    try:
+        validate_shared_pack_closure(program)
+    except PackClosureValidationError as exc:
+        _raise_runtime_closure_error(exc)
+
+
 def run_native_pipeline(
     program: NativeProgram,
     *,
@@ -609,6 +725,9 @@ def run_native_pipeline(
     trace_dir: str | Path | None = None,
     run_path: str | Path = ROOT_PATH,
     phase_max_attempts: Mapping[str, int] | int | None = None,
+    pack_manifest: PackManifest | None = None,
+    pack_lockfile: PackLockfile | None = None,
+    pack_registry: PackRegistry | None = None,
     _subpipeline_depth: int = 0,
     _active_subpipelines: tuple[str, ...] = (),
     _parent_run_path: str | None = None,
@@ -679,12 +798,20 @@ def run_native_pipeline(
             instructions.  ``None`` preserves the current single-attempt
             behavior.  An integer applies to every phase; a mapping may
             target phase names or declared ``__step_id__`` values.
+        pack_manifest: Optional pack manifest whose declared dependencies
+            should be resolved and recorded as runtime provenance.
+        pack_lockfile: Optional exact pin set used with ``pack_manifest``
+            and ``pack_registry`` for fail-closed provenance resolution.
+        pack_registry: Optional in-process registry used to resolve
+            ``pack_manifest`` dependencies against ``pack_lockfile``.
 
     Returns:
         :class:`NativeExecutionResult` with final state, completed stages,
         current pc, suspension status, and accumulated envelope.
     """
     require_native_runtime()
+    if _subpipeline_depth == 0:
+        _validate_runtime_program_closure(program)
 
     # Resolve hooks — always have a hooks instance so the runtime never
     # needs None-guards around callback invocations.
@@ -708,6 +835,11 @@ def run_native_pipeline(
         _normalize_run_path(_parent_run_path) if _parent_run_path else None
     )
     path_stack: list[_PathFrame] = []
+    pack_provenance = _resolve_runtime_pack_provenance(
+        pack_manifest=pack_manifest,
+        pack_lockfile=pack_lockfile,
+        pack_registry=pack_registry,
+    )
 
     # ── envelope accumulation (matches graph executor pattern) ─────
     envelope: Any = initial_envelope
@@ -718,13 +850,33 @@ def run_native_pipeline(
 
     trace_status = "running"
     if isinstance(_hooks, NativeTraceHooks):
+        record_run_init = getattr(_hooks, "record_run_init", None)
+        if callable(record_run_init):
+            record_run_init(
+                program,
+                run_path=trace_run_path,
+                pack_provenance=pack_provenance,
+            )
         _hooks.on_run_enter(
             program,
             run_path=trace_run_path,
             parent_run_path=trace_parent_run_path,
             kind=_trace_run_kind,
             call_site_path=_call_site_path_for_run_path(trace_run_path),
+            metadata=(
+                {"pack_provenance": dict(pack_provenance)}
+                if pack_provenance is not None
+                else None
+            ),
         )
+    else:
+        record_run_init = getattr(_hooks, "record_run_init", None)
+        if callable(record_run_init):
+            record_run_init(
+                program,
+                run_path=trace_run_path,
+                pack_provenance=pack_provenance,
+            )
 
     try:
         # ── resolve starting pc and restore state from cursor ────────────
@@ -1033,7 +1185,10 @@ def run_native_pipeline(
                         cursor_id=_cursor_id,
                         stage_reentry_points=_stage_reentry_points_for(stages),
                         effect=_hook_checkpoint_effect_metadata(_hooks),
-                        native_extra={"suspension_kind": "phase_suspended"},
+                        native_extra=_native_extra_with_pack_provenance(
+                            {"suspension_kind": "phase_suspended"},
+                            pack_provenance,
+                        ),
                         **_phase_path_metadata,
                         **_phase_extra,
                     )
@@ -1049,7 +1204,10 @@ def run_native_pipeline(
                         cursor_id=_cursor_id,
                         effect=_hook_checkpoint_effect_metadata(_hooks),
                         resume_cursor=_phase_resume_cursor,
-                        native_extra={"suspension_kind": "phase_suspended"},
+                        native_extra=_native_extra_with_pack_provenance(
+                            {"suspension_kind": "phase_suspended"},
+                            pack_provenance,
+                        ),
                         extra={**_phase_path_metadata, **_phase_extra},
                     )
                     _hooks.on_checkpoint(_phase_cursor, dict(state))
@@ -1120,6 +1278,7 @@ def run_native_pipeline(
                         cursor_id=_cursor_id,
                         path_metadata=_suspension_path_metadata,
                         effect=_hook_checkpoint_effect_metadata(_hooks),
+                        pack_provenance=pack_provenance,
                     )
                     # ── Hook: on_checkpoint (after cursor persistence) ──
                     _cursor = _build_cursor_dict(
@@ -1133,6 +1292,10 @@ def run_native_pipeline(
                         envelope=envelope,
                         cursor_id=_cursor_id,
                         effect=_hook_checkpoint_effect_metadata(_hooks),
+                        native_extra=_native_extra_with_pack_provenance(
+                            None,
+                            pack_provenance,
+                        ),
                         extra=_suspension_path_metadata,
                     )
                     _hooks.on_checkpoint(_cursor, dict(state))
@@ -1297,7 +1460,10 @@ def run_native_pipeline(
                         cursor_id=_cursor_id,
                         stage_reentry_points=_hg_stage_reentry,
                         effect=_hook_checkpoint_effect_metadata(_hooks),
-                        native_extra={"suspension_kind": "human_gate"},
+                        native_extra=_native_extra_with_pack_provenance(
+                            {"suspension_kind": "human_gate"},
+                            pack_provenance,
+                        ),
                         **_hg_path_metadata,
                         **_hg_cursor_extra,
                     )
@@ -1315,7 +1481,10 @@ def run_native_pipeline(
                         cursor_id=_cursor_id,
                         effect=_hook_checkpoint_effect_metadata(_hooks),
                         resume_cursor=_resume_cursor,
-                        native_extra={"suspension_kind": "human_gate"},
+                        native_extra=_native_extra_with_pack_provenance(
+                            {"suspension_kind": "human_gate"},
+                            pack_provenance,
+                        ),
                         extra={**_hg_path_metadata, **_hg_cursor_extra},
                     )
                     _hooks.on_checkpoint(_hg_cursor, dict(_pause_state))
@@ -1961,6 +2130,7 @@ def run_native_pipeline(
                                 cursor_id=_cursor_id,
                                 suspension_kind="child_suspended",
                                 effect=_hook_checkpoint_effect_metadata(_hooks),
+                                pack_provenance=pack_provenance,
                                 parent_frame_extra={
                                     _parallel_map_progress_key(pc): {
                                         "completed_results": _jsonable_value(
@@ -2098,6 +2268,7 @@ def run_native_pipeline(
                             envelope=envelope,
                             cursor_id=_cursor_id,
                             effect=_hook_checkpoint_effect_metadata(_hooks),
+                            pack_provenance=pack_provenance,
                         )
                         _hooks.on_checkpoint(_child_entry_cursor, dict(state))
                         _check_cancellation_boundary(
@@ -2168,6 +2339,7 @@ def run_native_pipeline(
                             cursor_id=_cursor_id,
                             suspension_kind="child_suspended",
                             effect=_hook_checkpoint_effect_metadata(_hooks),
+                            pack_provenance=pack_provenance,
                         )
                         _hooks.on_checkpoint(_child_suspended_cursor, dict(state))
                         if isinstance(_hooks, NativeTraceHooks):
@@ -2235,6 +2407,7 @@ def run_native_pipeline(
             final=True,
             cursor_id=_cursor_id,
             effect=_hook_checkpoint_effect_metadata(_hooks),
+            native_extra=_native_extra_with_pack_provenance(None, pack_provenance),
             extra=_cursor_path_metadata(
                 program=program,
                 pc=pc,
@@ -2989,6 +3162,7 @@ def _persist_parent_child_entry_cursor(
     suspension_kind: str | None = None,
     effect: dict[str, Any] | None = None,
     parent_frame_extra: Mapping[str, Any] | None = None,
+    pack_provenance: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     stage_id = f"{_safe_name(program.name)}__{instr.name}__pc{pc}"
     parent_frames = dict(frames)
@@ -3027,10 +3201,13 @@ def _persist_parent_child_entry_cursor(
         },
     }
 
-    native_extra = (
-        {"suspension_kind": suspension_kind}
-        if suspension_kind is not None
-        else None
+    native_extra = _native_extra_with_pack_provenance(
+        (
+            {"suspension_kind": suspension_kind}
+            if suspension_kind is not None
+            else None
+        ),
+        pack_provenance,
     )
     extra: dict[str, Any] = {**path_metadata, "composite": composite}
     if suspension_kind is not None:
@@ -3137,6 +3314,7 @@ def _persist_suspension(
     cursor_id: str | None = None,
     path_metadata: Mapping[str, Any] | None = None,
     effect: dict[str, Any] | None = None,
+    pack_provenance: Mapping[str, Any] | None = None,
 ) -> None:
     """Persist a resume cursor at the suspension point.
 
@@ -3172,6 +3350,7 @@ def _persist_suspension(
             cursor_id=cursor_id,
             stage_reentry_points=stage_reentry_points,
             effect=effect,
+            native_extra=_native_extra_with_pack_provenance(None, pack_provenance),
             **dict(path_metadata or _cursor_path_metadata(
                 program=program,
                 pc=pc,
