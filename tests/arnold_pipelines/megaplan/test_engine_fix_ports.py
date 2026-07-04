@@ -401,6 +401,44 @@ def test_execute_completion_authority_prefers_fresh_execution_evidence_over_stal
     assert missing == []
 
 
+def test_execute_completion_authority_accepts_explained_noop_done_task(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    plan_dir = project_dir / ".megaplan" / "plans" / "plan-explained-noop"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"config": {"project_dir": str(project_dir)}}) + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "executor_notes": (
+                            "No code change needed. The existing progress-auditor "
+                            "fixture already covers this case at the correct layer."
+                        ),
+                        "files_changed": [],
+                        "commands_run": [],
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ok, missing = _execute_completion_authority(plan_dir)
+
+    assert ok is True
+    assert missing == []
+
+
 def test_execute_completion_authority_prefers_recorded_head_when_repo_head_moved_elsewhere(
     tmp_path: Path,
 ) -> None:

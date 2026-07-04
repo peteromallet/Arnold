@@ -373,6 +373,14 @@ def effective_execute_completed_task_ids(
         and _is_explained_skip(task)
     }
     completed |= explained_skips
+    explained_noops = {
+        task_id
+        for task in tasks
+        if isinstance(task, Mapping)
+        and isinstance(task_id := _task_id(task), str)
+        and _is_explained_noop_completion(task)
+    }
+    completed |= explained_noops
 
     authoritative_commands = {
         command
@@ -412,6 +420,33 @@ def _is_explained_skip(task: Mapping[str, Any]) -> bool:
             and not is_rubber_stamp(task["executor_notes"], strict=True)
         )
     )
+
+
+def _is_explained_noop_completion(task: Mapping[str, Any]) -> bool:
+    status = _optional_str(task.get("status"))
+    if status not in {"done", "completed"}:
+        return False
+    if _declared_task_outputs(task):
+        return False
+    notes = task.get("executor_notes")
+    return (
+        isinstance(notes, str)
+        and notes.strip()
+        and not is_rubber_stamp(notes, strict=True)
+    )
+
+
+def _declared_task_outputs(task: Mapping[str, Any]) -> tuple[str, ...]:
+    declared: list[str] = []
+    for key in ("files_changed", "commands_run", "evidence_files", "sections_written"):
+        values = task.get(key)
+        if isinstance(values, str):
+            if values.strip():
+                declared.append(key)
+        elif isinstance(values, Sequence):
+            if any(isinstance(item, str) and item.strip() for item in values):
+                declared.append(key)
+    return tuple(declared)
 
 
 def _execution_baseline_head(state: Mapping[str, Any] | None) -> str | None:
