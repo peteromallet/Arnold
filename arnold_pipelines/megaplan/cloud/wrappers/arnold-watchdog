@@ -3767,6 +3767,13 @@ classification, _ = evaluate_meta_repair_triggers(
     load_evidence=True,
 )
 
+if (
+    current_health == "alive"
+    and classification.trigger_label == "persistent_recurring_retry"
+):
+    print("NO_TRIGGER")
+    raise SystemExit(0)
+
 if classification.should_dispatch and classification.trigger_label:
     print(f"TRIGGER:{classification.trigger_label}")
 else:

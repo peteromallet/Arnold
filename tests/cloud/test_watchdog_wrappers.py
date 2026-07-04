@@ -7649,6 +7649,64 @@ def test_marker_requires_repair_despite_alive_ignores_stale_failure_after_finali
     assert result.stdout.strip() == ""
 
 
+def test_compute_meta_repair_trigger_skips_recurring_retry_when_session_alive(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "outcome": "repairing",
+                "attempts": [
+                    {"attempt_id": 1, "failure_classification": "phase_failed"},
+                    {"attempt_id": 2, "failure_classification": "phase_failed"},
+                    {"attempt_id": 3, "failure_classification": "phase_failed"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    observation = json.dumps(
+        {
+            "authoritative_source": "chain_state",
+            "current_refs": {
+                "current_plan_name": "m4-clip-type-shader-and-20260704-0427",
+                "chain_last_state": "finalized",
+                "plan_current_state": "finalized",
+            },
+            "plan_state": {
+                "present": True,
+                "current_state": "finalized",
+            },
+            "chain_state": {
+                "present": True,
+                "last_state": "finalized",
+            },
+            "active_step_heartbeat": {
+                "active": False,
+            },
+        }
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            (
+                f"compute_meta_repair_trigger demo-session "
+                f"{shlex.quote(observation)} alive"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "NO_TRIGGER"
+
+
 def test_launch_chain_tick_dispatches_meta_repair_on_true_blocker_discord_failure(tmp_path: Path) -> None:
     paths = _prepare_meta_repair_launch_chain_tick_fixture(
         tmp_path,
