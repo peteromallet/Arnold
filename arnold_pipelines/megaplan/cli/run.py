@@ -62,6 +62,9 @@ def render_pipeline_description(
     source_path = metadata.get("source_path")
     if source_path:
         lines.append(f"Source:   {source_path}")
+    authored_source_path = metadata.get("authored_source_path")
+    if authored_source_path:
+        lines.append(f"Authored: {authored_source_path}")
     description = metadata.get("description")
     if description:
         lines.append("")

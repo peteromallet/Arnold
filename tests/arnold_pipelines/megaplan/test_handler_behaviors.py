@@ -249,6 +249,130 @@ class TestGateOutcomeSemantics:
         assert outcome["blocking_unresolved_ids"]
 
 
+class TestTiebreakerOutcomeSemantics:
+    def test_pick_promotes_proceed_signal(self) -> None:
+        from arnold_pipelines.megaplan.handlers._tiebreaker_impl import _route_signal_for_tiebreaker_action
+
+        assert _route_signal_for_tiebreaker_action("pick") == "proceed"
+
+    def test_replan_promotes_iterate_signal(self) -> None:
+        from arnold_pipelines.megaplan.handlers._tiebreaker_impl import _route_signal_for_tiebreaker_action
+
+        assert _route_signal_for_tiebreaker_action("replan") == "iterate"
+
+    def test_escalate_stays_escalate_signal(self) -> None:
+        from arnold_pipelines.megaplan.handlers._tiebreaker_impl import _route_signal_for_tiebreaker_action
+
+        assert _route_signal_for_tiebreaker_action("escalate") == "escalate"
+
+
+class TestReviewOutcomeSemantics:
+    def test_resolve_review_outcome_emits_rework_signal(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.review import _resolve_review_outcome
+
+        decision = _resolve_review_outcome(
+            tmp_path,
+            "needs_rework",
+            verdict_count=1,
+            total_tasks=1,
+            check_count=0,
+            total_checks=0,
+            missing_evidence=[],
+            robustness="full",
+            state={"history": [], "config": {}, "current_state": "executed"},
+            issues=[],
+            criteria=[],
+            infrastructure_failure=False,
+            rework_items=[{"issue": "x", "deterministic_check": {"command": "pytest", "baseline_status": "failed", "post_status": "failed"}}],
+        )
+
+        assert decision.route_signal == "rework"
+        assert decision.result == "needs_rework"
+
+    def test_resolve_review_outcome_emits_deferred_human_signal(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.review import _resolve_review_outcome
+        from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_HUMAN_VERIFY
+
+        decision = _resolve_review_outcome(
+            tmp_path,
+            "approved",
+            verdict_count=1,
+            total_tasks=1,
+            check_count=0,
+            total_checks=0,
+            missing_evidence=[],
+            robustness="full",
+            state={"history": [], "config": {}, "current_state": "executed"},
+            issues=[],
+            criteria=[{"priority": "must", "pass": "deferred_human"}],
+            infrastructure_failure=False,
+            rework_items=[],
+        )
+
+        assert decision.route_signal == "deferred_human"
+        assert decision.next_state == STATE_AWAITING_HUMAN_VERIFY
+
+
+class TestOverrideOutcomeSemantics:
+    def test_build_override_action_output_marks_additive_actions_without_branch_targets(self) -> None:
+        from arnold_pipelines.megaplan.handlers.override import _build_override_action_output
+
+        state = {"config": {}, "meta": {}, "current_state": "critiqued"}
+        args = argparse.Namespace()
+        output = _build_override_action_output(
+            "add-note",
+            plan_dir=Path("."),
+            state=state,
+            args=args,
+        )
+
+        assert output.route_signal == "add_note"
+        assert output.state == "critiqued"
+        assert output.next_step not in {"finalize", "revise", "halt"}
+
+    def test_build_override_action_output_preserves_force_proceed_priority(self) -> None:
+        from arnold_pipelines.megaplan.handlers.override import _build_override_action_output
+        from arnold_pipelines.megaplan.planning.state import STATE_DONE
+
+        state = {
+            "config": {},
+            "current_state": STATE_DONE,
+            "meta": {"overrides": [{"action": "force-proceed", "debt_entries_added": 7}]},
+        }
+        output = _build_override_action_output(
+            "force-proceed",
+            plan_dir=Path("."),
+            state=state,
+            args=argparse.Namespace(reason="ship it"),
+            artifacts={"orchestrator_guidance": "ignored", "debt_entries_added": 99},
+        )
+
+        assert output.state == STATE_DONE
+        assert output.route_signal == "force_proceed"
+        assert output.next_step is None
+
+    def test_build_override_action_output_raises_unknown_error(self) -> None:
+        from arnold_pipelines.megaplan.handlers.override import (
+            UnknownOverrideActionError,
+            _build_override_action_output,
+        )
+
+        with pytest.raises(UnknownOverrideActionError, match="Unknown override action: nope"):
+            _build_override_action_output(
+                "nope",
+                plan_dir=Path("."),
+                state={"config": {}, "meta": {}, "current_state": "critiqued"},
+                args=argparse.Namespace(),
+            )
+
+    def test_normalize_override_response_adds_route_signal_and_action(self) -> None:
+        from arnold_pipelines.megaplan.handlers.override import _normalize_override_response
+
+        response = _normalize_override_response("set-profile", {"success": True, "step": "override"})
+        assert response["override_action"] == "set-profile"
+        assert response["route_signal"] == "set_profile"
+
+
 class TestFinalizeSemanticChecks:
     def test_finalize_payload_requires_pending_status(self, tmp_path: Path) -> None:
         from arnold_pipelines.megaplan.handlers.finalize import _finalize_semantic_postcheck

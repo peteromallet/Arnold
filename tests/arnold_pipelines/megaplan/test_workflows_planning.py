@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ast
 import importlib
 import sys
+from ast import literal_eval
 from pathlib import Path
 
 import yaml
@@ -11,6 +13,7 @@ import yaml
 from arnold.workflow import check_workflow_source
 from arnold.workflow.compiler import compile_pipeline
 from arnold.workflow.dsl import Pipeline
+from arnold_pipelines.megaplan.workflows.override_matrix import OVERRIDE_ACTION_MATRIX
 
 from arnold_pipelines.megaplan import pipeline as pipeline_facade
 from arnold_pipelines.megaplan import workflows
@@ -18,6 +21,64 @@ from arnold_pipelines.megaplan.workflows import planning
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_topology.yaml"
+
+
+def _workflow_tree() -> ast.Module:
+    return ast.parse(planning.AUTHORING_SOURCE_PATH.read_text(encoding="utf-8"))
+
+
+def _function_node(name: str) -> ast.FunctionDef:
+    for node in _workflow_tree().body:
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    raise AssertionError(f"{name} not found in {planning.AUTHORING_SOURCE_PATH}")
+
+
+def _module_constant(name: str):
+    for node in _workflow_tree().body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == name:
+                    return literal_eval(node.value)
+    raise AssertionError(f"{name} not found in {planning.AUTHORING_SOURCE_PATH}")
+
+
+def _called_names(node: ast.AST) -> set[str]:
+    calls: set[str] = set()
+    for child in ast.walk(node):
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
+            calls.add(child.func.id)
+    return calls
+
+
+def _referenced_names(node: ast.AST) -> set[str]:
+    names: set[str] = set()
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name):
+            names.add(child.id)
+    return names
+
+
+def _branch_names(node: ast.AST) -> set[str]:
+    names: set[str] = set()
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Compare) or not isinstance(child.left, ast.Name):
+            continue
+        names.add(child.left.id)
+    return names
+
+
+def _call_ids(node: ast.AST, call_name: str) -> set[str]:
+    ids: set[str] = set()
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call) or not isinstance(child.func, ast.Name):
+            continue
+        if child.func.id != call_name:
+            continue
+        for keyword in child.keywords:
+            if keyword.arg == "id" and isinstance(keyword.value, ast.Constant):
+                ids.add(str(keyword.value.value))
+    return ids
 
 
 class TestAuthoredWorkflow:
@@ -148,3 +209,438 @@ class TestAuthoredWorkflow:
         component_ids = {c.id.removeprefix("megaplan:") for c in workflows.ALL_STEP_COMPONENTS}
         step_ids = {step.id for step in pipeline.steps}
         assert step_ids == component_ids
+
+    def test_rendered_pipeline_metadata_exposes_declared_policy_surface(self) -> None:
+        pipeline = planning.build_pipeline()
+        assert pipeline.metadata["policy_refs"] == (
+            "megaplan:default",
+            "megaplan:model-routing",
+            "megaplan:robustness",
+            "megaplan:artifact-contract",
+            "megaplan:suspension",
+        )
+
+        execute = next(step for step in pipeline.steps if step.id == "execute")
+        review = next(step for step in pipeline.steps if step.id == "review")
+        override = next(step for step in pipeline.steps if step.id == "override")
+
+        assert execute.metadata["policy_refs"] == workflows.EXECUTE.metadata["policy_refs"]
+        assert review.metadata["policy_refs"] == workflows.REVIEW.metadata["policy_refs"]
+        assert override.metadata["override_actions"] == tuple(
+            sorted(entry.action for entry in OVERRIDE_ACTION_MATRIX)
+        )
+        assert workflows.GATE_POLICY.metadata["route_surface"]["route_groups"] == _module_constant("GATE_ROUTE_GROUPS")
+        assert (
+            workflows.GATE_POLICY.metadata["route_surface"]["fallback_route_signals"]
+            == _module_constant("GATE_FALLBACK_ROUTE_SIGNALS")
+        )
+        expected_diagnostics = {
+            key: {"owner": value["owner"], "effect": value["effect"]}
+            for key, value in _module_constant("CRITIQUE_GATE_DIAGNOSTICS").items()
+        }
+        assert workflows.GATE_POLICY.metadata["route_surface"]["critique_gate_diagnostics"] == expected_diagnostics
+
+    def test_compiled_views_expose_review_override_execute_policy_surfaces(self) -> None:
+        pipeline = planning.build_pipeline()
+        manifest = compile_pipeline(pipeline)
+        nodes = {node.id: node for node in manifest.nodes}
+
+        execute = nodes["execute"]
+        assert execute.policy.retry is not None
+        assert execute.policy.retry.max_attempts == 2
+        assert execute.policy.escalation is not None
+        assert execute.policy.escalation.targets == ("override",)
+        assert {overlay.overlay_id for overlay in execute.policy.topology_overlays} == {
+            "execute:task-complexity-route"
+        }
+        assert {effect.effect_id for effect in execute.policy.effects} == {
+            "artifact.execute.receipt",
+            "artifact.execute.checkpoint",
+        }
+        assert {route.route_id for route in execute.policy.suspension_routes} == {"execute:resume"}
+
+        review = nodes["review"]
+        assert review.policy.retry is not None
+        assert review.policy.retry.max_attempts == workflows.M4_LOOP_MAX_ITERATIONS
+        assert review.policy.escalation is not None
+        assert review.policy.escalation.policy_ref == "megaplan:override"
+        assert {
+            transition.transition_id for transition in review.policy.control_transitions
+        } >= {
+            "review:rework",
+            "review:done",
+            "review:blocked",
+            "review:force_proceeded",
+            "review:deferred_human",
+        }
+        assert {overlay.overlay_id for overlay in review.policy.topology_overlays} == {
+            "review:cap-exhausted"
+        }
+
+        override = nodes["override"]
+        assert {
+            requirement.action for requirement in override.policy.authority
+        } == {"apply", "resume"}
+        route_surface = workflows.OVERRIDE_POLICY.metadata["route_surface"]
+        assert route_surface["matrix_ref"].endswith("override_matrix:OVERRIDE_ACTION_MATRIX")
+        assert {
+            action["action"] for action in route_surface["actions"]
+        } == {entry.action for entry in OVERRIDE_ACTION_MATRIX}
+        assert {overlay.overlay_id for overlay in override.policy.topology_overlays} == {
+            f"override:{entry.action}" for entry in OVERRIDE_ACTION_MATRIX
+        }
+        assert {effect.effect_id for effect in override.policy.effects} == {
+            "override.add_note",
+            "override.set_robustness",
+            "override.set_profile",
+            "override.set_model",
+            "override.set_vendor",
+        }
+
+        assert {
+            overlay.overlay_id for overlay in manifest.policy.topology_overlays
+        } >= {
+            "model-routing:phase",
+            "model-routing:task-complexity",
+            "suspension:gate-human",
+            "suspension:review-human",
+            "suspension:execute-resume",
+        }
+        assert {route.route_id for route in manifest.policy.suspension_routes} >= {
+            "gate:human",
+            "review:human",
+            "revise:loop",
+            "tiebreaker:loop",
+            "execute:resume",
+        }
+        assert {effect.effect_id for effect in manifest.policy.effects} >= {
+            "artifact.finalize.plan",
+            "artifact.execute.receipt",
+            "artifact.review.receipt",
+        }
+
+    def test_tiebreaker_component_declares_visible_iterate_proceed_escalate_routes(self) -> None:
+        bindings = {
+            binding["label"]: binding["target_ref"]
+            for binding in planning.AUTHOR_TIEBREAKER_DECIDE.metadata["route_bindings"]
+        }
+        assert bindings == {"iterate": "critique"}
+        compiled = next(
+            step for step in workflows.ALL_STEP_COMPONENTS if step.id == "megaplan:tiebreaker_decide"
+        )
+        route_labels = {binding["label"] for binding in compiled.metadata["route_bindings"]}
+        assert {"iterate", "proceed", "escalate"} <= route_labels
+
+
+class TestPlanningSubworkflowSourceShape:
+    def test_planning_spine_names_declared_interfaces(self) -> None:
+        func = _function_node("planning_workflow")
+        assert {"SOURCE_PREP", "SOURCE_PLAN"} <= _called_names(func)
+
+    def test_critique_gate_revise_spine_uses_parallel_map_and_loop_cursor(self) -> None:
+        func = _function_node("planning_workflow")
+        assert {"SOURCE_GATE", "SOURCE_REVISE", "loop", "parallel_map"} <= _called_names(func)
+        assert {"SOURCE_CRITIQUE", "SOURCE_CRITIQUE_PANEL_WORKFLOW"} <= _referenced_names(func)
+        loop_calls = [
+            call
+            for call in ast.walk(func)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "loop"
+        ]
+        assert len(loop_calls) == 1
+        keywords = {keyword.arg: keyword.value for keyword in loop_calls[0].keywords}
+        assert isinstance(keywords["reentry_id"], ast.Constant)
+        assert keywords["reentry_id"].value == "critique"
+
+    def test_workflow_branches_on_route_signal_outputs_not_payload_objects(self) -> None:
+        func = _function_node("planning_workflow")
+        branch_names = _branch_names(func)
+        assert {"gate_route_signal", "review_route_signal", "decision", "override_result"} <= branch_names
+        assert "gate_payload" not in branch_names
+        assert "review_payload" not in branch_names
+
+    def test_gate_route_surface_declares_retry_fallback_and_diagnostics(self) -> None:
+        assert _module_constant("GATE_ROUTE_GROUPS") == {
+            "finalize": ("proceed", "force_proceed"),
+            "revise": ("iterate", "retry_gate", "reprompt_downgrade"),
+            "tiebreaker": ("tiebreaker",),
+            "override": ("escalate", "blocked_preflight"),
+            "halt": ("abort", "suspend"),
+        }
+        assert _module_constant("GATE_FALLBACK_ROUTE_SIGNALS") == {
+            "blocking_flag_reprompt": "retry_gate",
+            "reprompt_downgrade": "iterate",
+            "preflight_failed": "blocked_preflight",
+            "unknown_recommendation": "escalate",
+            "critique_cap": "force_proceed",
+        }
+        assert _module_constant("CRITIQUE_GATE_DIAGNOSTICS") == {
+            "bare_skip": {
+                "owner": "critique-fanout",
+                "surface": "SOURCE_CRITIQUE_PANEL_WORKFLOW",
+                "effect": "skip_empty_or_bare_findings",
+            },
+            "evaluator_retry": {
+                "owner": "critique-fanout",
+                "surface": "SOURCE_CRITIQUE_PANEL_WORKFLOW",
+                "effect": "retry_unverifiable_or_unavailable_evaluators",
+            },
+            "malformed_payload": {
+                "owner": "gate",
+                "surface": "SOURCE_GATE",
+                "effect": "normalize_to_inferred_recommendation",
+            },
+            "empty_payload": {
+                "owner": "gate",
+                "surface": "SOURCE_GATE",
+                "effect": "normalize_to_inferred_recommendation",
+            },
+            "worker_unavailable": {
+                "owner": "gate",
+                "surface": "SOURCE_GATE",
+                "effect": "escalate_or_retry_via_preflight_policy",
+            },
+            "debt_recorded": {
+                "owner": "gate",
+                "surface": "SOURCE_GATE",
+                "effect": "publish_debt_payload_on_proceed",
+            },
+        }
+
+    def test_critique_route_surface_declares_fanout_skip_retry_and_wrapping(self) -> None:
+        assert _module_constant("CRITIQUE_FANOUT_CONTRACT") == {
+            "parallel_map_id": "critique-fanout",
+            "fanout_ref": "megaplan.policy.critique_lenses",
+            "step_ref": "SOURCE_CRITIQUE_PANEL_WORKFLOW",
+            "reducer_ref": "SOURCE_CRITIQUE",
+            "path_template": "critique/{item_id}",
+            "route_signal": "critique_payload",
+        }
+        assert _module_constant("CRITIQUE_SKIP_AND_RETRY_POLICY") == {
+            "bare_robustness": {
+                "route_signal": "skip_to_finalize",
+                "effect": "workflow_handles_plan_to_finalize_without_handler_fanout",
+            },
+            "evaluator_retry": {
+                "phase": "critique_evaluator",
+                "max_attempts": 2,
+                "on_exhausted": "blocked",
+            },
+            "payload_recovery": {
+                "scratch_ref": "critique_output.json",
+                "promote_to": "critique_v{iteration}.json",
+            },
+        }
+        assert _module_constant("CRITIQUE_EXTERNAL_CALL_SURFACE") == {
+            "runtime_wrapper_ref": "arnold_pipelines.megaplan.orchestration.critique_runtime",
+            "retained_handler_ref": "arnold_pipelines.megaplan.handlers.critique:handle_critique",
+            "worker_phase": "critique",
+            "evaluator_phase": "critique_evaluator",
+        }
+        assert _module_constant("TIEBREAKER_SUBWORKFLOW_SURFACE") == {
+            "run_step_ref": "SOURCE_TIEBREAKER_RUN",
+            "decision_step_ref": "SOURCE_TIEBREAKER_DECIDE",
+            "runtime_wrapper_ref": "arnold_pipelines.megaplan.orchestration.tiebreaker_runtime",
+            "retained_handler_refs": (
+                "arnold_pipelines.megaplan.handlers.tiebreaker:handle_tiebreaker_run",
+                "arnold_pipelines.megaplan.handlers.tiebreaker:handle_tiebreaker_decide",
+            ),
+            "run_completion_route": {
+                "route_signal": "default",
+                "target_ref": "tiebreaker_decide",
+                "failure_behavior": "complete_decision_cycle_with_recorded_artifacts",
+            },
+            "decision_routes": {
+                "pick": {"route_signal": "proceed", "target_ref": "finalize"},
+                "replan": {"route_signal": "iterate", "target_ref": "critique-fanout"},
+                "escalate": {"route_signal": "escalate", "target_ref": "override"},
+            },
+            "fallback_route_signal": "escalate",
+        }
+        assert _module_constant("FINALIZE_FALLBACK_ROUTE_SURFACE") == {
+            "success_route": {"route_signal": "default", "target_ref": "execute"},
+            "fallback_routes": {
+                "plan_contract_revise_needed": {
+                    "route_signal": "revise",
+                    "target_ref": "revise",
+                    "policy_ref": "megaplan:finalize",
+                    "reason": "missing_scoped_baseline_test_contract",
+                },
+            },
+        }
+
+    def test_planning_workflow_keeps_direct_branch_literals_while_source_constants_expand_surface(self) -> None:
+        func = _function_node("planning_workflow")
+        assert "GATE_ROUTE_GROUPS" not in _referenced_names(func)
+        strings = {
+            child.value
+            for child in ast.walk(func)
+            if isinstance(child, ast.Constant) and isinstance(child.value, str)
+        }
+        assert {"proceed", "iterate", "tiebreaker", "escalate", "blocked_preflight", "force_proceed"} <= strings
+
+    def test_tiebreaker_branch_invokes_nested_child_workflow(self) -> None:
+        func = _function_node("planning_workflow")
+        assert {"SOURCE_TIEBREAKER_WORKFLOW"} <= _called_names(func)
+        assert "decision" in _branch_names(func)
+        assert _call_ids(func, "SOURCE_TIEBREAKER_WORKFLOW") == {"tiebreaker"}
+        loop_calls = [
+            call
+            for call in ast.walk(func)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "loop"
+        ]
+        assert len(loop_calls) == 1
+        keywords = {keyword.arg: keyword.value for keyword in loop_calls[0].keywords}
+        assert isinstance(keywords["reentry_id"], ast.Constant)
+        assert keywords["reentry_id"].value == "critique"
+        route_surface = workflows.TIEBREAKER_POLICY.metadata["route_surface"]
+        source_surface = _module_constant("TIEBREAKER_SUBWORKFLOW_SURFACE")
+        assert route_surface == {
+            "run_completion_route": source_surface["run_completion_route"],
+            "decision_routes": source_surface["decision_routes"],
+            "fallback_route_signal": source_surface["fallback_route_signal"],
+        }
+        topology_contract = workflows.SOURCE_TIEBREAKER_WORKFLOW.metadata["topology_contract"]
+        assert topology_contract["run_completion_route"] == source_surface["run_completion_route"]
+        assert topology_contract["fallback_route_signal"] == source_surface["fallback_route_signal"]
+
+    def test_finalize_policy_declares_revise_fallback_outside_handler_control_flow(self) -> None:
+        route_surface = workflows.FINALIZE_POLICY.metadata["route_surface"]
+        assert route_surface["success_route"] == _module_constant("FINALIZE_FALLBACK_ROUTE_SURFACE")["success_route"]
+        assert route_surface["fallback_routes"]["plan_contract_revise_needed"] == {
+            "route_signal": "revise",
+            "target_ref": "revise",
+            "reason": "missing_scoped_baseline_test_contract",
+        }
+
+    def test_execute_route_surface_declares_gates_fanout_retry_and_recovery(self) -> None:
+        source_surface = _module_constant("EXECUTE_GATE_AND_FANOUT_SURFACE")
+        policy_surface = workflows.EXECUTE_POLICY.metadata["route_surface"]
+        child_contract = workflows.SOURCE_EXECUTE_BATCH_WORKFLOW.metadata["topology_contract"]
+
+        assert policy_surface == source_surface
+        assert source_surface["approval_gates"] == {
+            "destructive_confirmation": {
+                "required_unless": "prose_mode",
+                "signal_ref": "args.confirm_destructive",
+                "failure_code": "missing_confirmation",
+            },
+            "operator_approval": {
+                "required_unless": "state.config.auto_approve",
+                "signal_ref": "state.meta.user_approved_gate",
+                "grant_signal_ref": "args.user_approved",
+                "failure_code": "missing_approval",
+            },
+            "mutating_preflight": {
+                "policy_ref": (
+                    "arnold_pipelines.megaplan.runtime.execution_environment:"
+                    "preflight_mutating_phase"
+                ),
+                "phase": "execute",
+            },
+        }
+        assert source_surface["fanout_contract"] == {
+            "parallel_map_id": "execute-batches",
+            "fanout_ref": "megaplan.execute.batches",
+            "step_ref": "SOURCE_EXECUTE_BATCH_WORKFLOW",
+            "reducer_ref": "SOURCE_EXECUTE",
+            "path_template": "execute/{index}",
+            "route_signal": "execute_payload",
+        }
+        assert source_surface["retry_and_reentry"]["blocked_route"] == {
+            "route_signal": "blocked",
+            "target_ref": "override",
+            "recoverable_state": "blocked",
+            "resume_cursor": {
+                "phase": "execute",
+                "retry_strategy": "fresh_session",
+            },
+        }
+        assert child_contract["fanout_contract"] == source_surface["fanout_contract"]
+        assert child_contract["approval_gates"] == source_surface["approval_gates"]
+
+    def test_review_route_surface_declares_rework_retry_cap_recovery_and_escalation(self) -> None:
+        source_surface = _module_constant("REVIEW_ROUTE_SURFACE")
+        policy_surface = workflows.REVIEW_POLICY.metadata["route_surface"]
+        child_contract = workflows.SOURCE_REVIEW_PANEL_WORKFLOW.metadata["topology_contract"]
+
+        assert policy_surface == source_surface
+        assert source_surface["fan_in_contract"] == {
+            "parallel_map_id": "review-fan-in",
+            "fan_in_ref": "review.checks",
+            "step_ref": "SOURCE_REVIEW_PANEL_WORKFLOW",
+            "reducer_ref": "SOURCE_REVIEW",
+            "path_template": "review/{item_id}",
+            "route_signal": "review_route_signal",
+        }
+        assert source_surface["route_groups"] == {
+            "halt": ("pass", "force_proceeded", "deferred_human"),
+            "rework": ("rework",),
+            "recoverable_block": ("blocked",),
+        }
+        assert source_surface["rework_cycle"] == {
+            "route_signal": "rework",
+            "target_ref": "execute",
+            "state_ref": "finalized",
+            "fresh_execute_session": True,
+        }
+        assert source_surface["retry_and_cap"]["cap_exhausted_with_blockers"] == {
+            "route_signal": "blocked",
+            "target_ref": "override",
+            "state_ref": "blocked",
+            "resume_cursor": {
+                "phase": "review",
+                "retry_strategy": "manual_review",
+            },
+        }
+        assert source_surface["escalation"] == {
+            "policy_ref": "megaplan:override",
+            "route_signal": "blocked",
+            "actions": ("recover-blocked", "force-proceed"),
+        }
+        assert child_contract["fan_in_contract"] == source_surface["fan_in_contract"]
+        assert child_contract["escalation"] == {
+            "policy_ref": "megaplan:override",
+            "actions": ("recover-blocked", "force-proceed"),
+        }
+
+    def test_finalize_execute_review_spine_uses_parallel_maps(self) -> None:
+        func = _function_node("planning_workflow")
+        assert {
+            "SOURCE_FINALIZE",
+            "SOURCE_EXECUTE",
+            "SOURCE_HALT",
+            "SOURCE_REVISE",
+            "parallel_map",
+        } <= _called_names(func)
+        assert {
+            "SOURCE_EXECUTE_BATCH_WORKFLOW",
+            "SOURCE_REVIEW",
+            "SOURCE_REVIEW_PANEL_WORKFLOW",
+        } <= _referenced_names(func)
+        assert "review_route_signal" in _branch_names(func)
+        assert {"halt", "review_halt"} <= _call_ids(func, "SOURCE_HALT")
+        assert "review_revise" in _call_ids(func, "SOURCE_REVISE")
+
+    def test_override_escalation_spine_names_declared_interfaces(self) -> None:
+        func = _function_node("planning_workflow")
+        assert {
+            "SOURCE_OVERRIDE",
+            "SOURCE_HALT",
+            "SOURCE_FINALIZE",
+            "SOURCE_EXECUTE",
+            "SOURCE_REVISE",
+        } <= _called_names(func)
+        assert "override_result" in _branch_names(func)
+        assert {"override_halt", "override_unknown"} <= _call_ids(func, "SOURCE_HALT")
+        assert "override_revise" in _call_ids(func, "SOURCE_REVISE")
+
+    def test_parent_visible_suspension_points_remain_on_top_level_spine(self) -> None:
+        func = _function_node("planning_workflow")
+        assert "gate_suspend" in _call_ids(func, "SOURCE_HALT")
+        assert "SOURCE_SUSPEND" not in _called_names(func)
+        source = planning.AUTHORING_SOURCE_PATH.read_text(encoding="utf-8")
+        assert "V1 source compiler lowers only the decorated workflow body" in source

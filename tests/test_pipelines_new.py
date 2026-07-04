@@ -1,11 +1,20 @@
-"""T11 — pipelines new scaffold tests (aligned for native-first).
+"""T11 / M6 — pipelines new scaffold tests (native-first compositional contract).
 
 Verifies that ``pipelines new <name>`` via both module paths:
 * ``python -m arnold_pipelines.megaplan pipelines new <name>``
 * ``python -m arnold_pipelines.megaplan.cli.arnold pipelines new <name>``
 
-creates a native-first projected shell module and SKILL.md stub,
+creates a native-first compositional shell module and SKILL.md stub,
 and that the emitted package passes authoring validation.
+
+M6 scaffold contract (fail-to-pass guards until T16 updates the generator):
+* Nested workflow source (child workflow within parent)
+* Declared interfaces (module-level inputs/outputs)
+* Stable IDs on pipeline/workflow/phase decorators
+* A ``parallel_map`` call with stable ``path_template``
+* A path-resume example using ``start_from_trace(...)``
+* No shim, graph fallback, compatibility wrapper, or legacy guidance
+* Overwrite refusal and import-smoke behavior preserved
 """
 
 from __future__ import annotations
@@ -21,6 +30,88 @@ from pathlib import Path
 import pytest
 
 from arnold.pipelines._authoring import validate_package_module
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+
+def _scaffold_module(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    name: str,
+) -> tuple[Path, Path]:
+    """Scaffold a pipeline module via the CLI handler and return
+    ``(module_path, skill_dir)``.  Patches ``_SCAN_ROOTS`` so files land in
+    *tmp_path* rather than the real in-tree directory.
+    """
+    from arnold_pipelines.megaplan import cli as cli_mod
+    from arnold_pipelines.megaplan.runtime import discovery as discovery_mod
+
+    pipelines_dir = tmp_path / "pipelines"
+    pipelines_dir.mkdir()
+    monkeypatch.setattr(
+        discovery_mod,
+        "_SCAN_ROOTS",
+        ((tmp_path, "arnold_pipelines"), (pipelines_dir, "arnold_pipelines.megaplan.pipelines")),
+    )
+
+    rc = cli_mod._handle_pipelines(
+        os.getcwd(),
+        Namespace(pipelines_action="new", pipeline_name=name, driver=None),
+    )
+    assert rc == 0
+
+    module_stem = name.replace("-", "_")
+    module_path = pipelines_dir / f"{module_stem}.py"
+    skill_dir = pipelines_dir / name
+    return module_path, skill_dir
+
+
+# ── Forbidden shim / fallback surface ─────────────────────────────────────
+
+_FORBIDDEN_SHIM_PATTERNS: tuple[str, ...] = (
+    "Deprecated hand-built graph scaffold",
+    "_legacy",
+    "graph fallback",
+    "compatibility wrapper",
+    "compatibility namespace",
+    "shim package",
+    "temporary wrapper",
+    "direct manifest authoring",
+    "native_program as source authority",
+    "native_program-as-source",
+)
+
+# ── Required M6 compositional surface ─────────────────────────────────────
+
+_REQUIRED_M6_CONTENT_MARKERS: tuple[str, ...] = (
+    "@pipeline",
+    "@phase",
+    "compile_pipeline(",
+    "project_graph(",
+    "build_pipeline",
+)
+
+_REQUIRED_M6_DECLARED_INTERFACES: tuple[str, ...] = (
+    "inputs",
+    "outputs",
+)
+
+_REQUIRED_M6_STABLE_ID_MARKER: str = "id="
+
+_REQUIRED_M6_PARALLEL_MAP_MARKER: str = "parallel_map("
+_REQUIRED_M6_PATH_TEMPLATE_MARKER: str = "path_template="
+_REQUIRED_M6_PATH_RESUME_MARKERS: tuple[str, ...] = (
+    "resume_from_trace_example",
+    "start_from_trace(",
+)
+
+# Nested workflow markers — at least one of these should be present.
+# ``@workflow`` is the preferred public authoring decorator for child workflows.
+# Multiple ``@pipeline`` decorators also count as nested workflow evidence.
+_REQUIRED_M6_NESTED_WORKFLOW_MARKERS: tuple[str, ...] = (
+    "@workflow",       # explicit child workflow decorator
+)
 
 
 def _run_pipelines(*args: str) -> subprocess.CompletedProcess[str]:
@@ -202,6 +293,158 @@ def test_pipelines_new_missing_name_errors() -> None:
     """``new`` with no name exits non-zero."""
     result = _run_pipelines("new")
     assert result.returncode != 0
+
+
+# ── M6 scaffold contract guards (fail-to-pass until T16) ───────────────────
+
+
+def test_m6_scaffold_emits_declared_interfaces(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """M6: The scaffolded module MUST declare module-level ``inputs`` and
+    ``outputs`` as part of its compositional contract.
+    """
+    name = "t4-m6-interfaces"
+    module_path, _skill_dir = _scaffold_module(monkeypatch, tmp_path, name)
+    content = module_path.read_text(encoding="utf-8")
+
+    for marker in _REQUIRED_M6_DECLARED_INTERFACES:
+        assert marker in content, (
+            f"M6 scaffold contract: module-level '{marker}' declaration missing "
+            f"from generated module {module_path}"
+        )
+
+
+def test_m6_scaffold_emits_stable_ids(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """M6: The scaffolded module MUST include stable ``id=`` on at least one
+    pipeline, workflow, or phase decorator.
+    """
+    name = "t4-m6-stable-ids"
+    module_path, _skill_dir = _scaffold_module(monkeypatch, tmp_path, name)
+    content = module_path.read_text(encoding="utf-8")
+
+    assert _REQUIRED_M6_STABLE_ID_MARKER in content, (
+        f"M6 scaffold contract: stable 'id=' missing from decorator(s) "
+        f"in generated module {module_path}"
+    )
+
+
+def test_m6_scaffold_emits_nested_workflow_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """M6: The scaffolded module MUST contain evidence of nested workflow
+    composition — either an explicit ``@workflow``-decorated child or
+    multiple ``@pipeline``-decorated functions (parent + child).
+    """
+    name = "t4-m6-nested"
+    module_path, _skill_dir = _scaffold_module(monkeypatch, tmp_path, name)
+    content = module_path.read_text(encoding="utf-8")
+
+    # Check for explicit @workflow decorator (preferred).
+    has_workflow = "@workflow" in content
+    # Check for multiple @pipeline decorators (parent + child).
+    pipeline_count = content.count("@pipeline")
+
+    assert has_workflow or pipeline_count >= 2, (
+        f"M6 scaffold contract: no nested workflow source detected. "
+        f"Expected @workflow decorator or multiple @pipeline decorators "
+        f"(found {pipeline_count}) in generated module {module_path}"
+    )
+
+
+def test_m6_scaffold_emits_parallel_map_with_path_template(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """M6: The scaffolded module MUST contain a ``parallel_map(...)`` call
+    with a ``path_template=`` argument.
+    """
+    name = "t4-m6-parallel-map"
+    module_path, _skill_dir = _scaffold_module(monkeypatch, tmp_path, name)
+    content = module_path.read_text(encoding="utf-8")
+
+    assert _REQUIRED_M6_PARALLEL_MAP_MARKER in content, (
+        f"M6 scaffold contract: 'parallel_map(' call missing "
+        f"from generated module {module_path}"
+    )
+    assert _REQUIRED_M6_PATH_TEMPLATE_MARKER in content, (
+        f"M6 scaffold contract: 'path_template=' missing from parallel_map call "
+        f"in generated module {module_path}"
+    )
+
+
+def test_m6_scaffold_emits_path_resume_example(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """M6: The scaffolded module MUST include a path-addressed resume example."""
+    name = "t4-m6-path-resume"
+    module_path, _skill_dir = _scaffold_module(monkeypatch, tmp_path, name)
+    content = module_path.read_text(encoding="utf-8")
+
+    for marker in _REQUIRED_M6_PATH_RESUME_MARKERS:
+        assert marker in content, (
+            f"M6 scaffold contract: {marker!r} missing from generated module {module_path}"
+        )
+
+
+def test_m6_scaffold_rejects_shim_and_fallback_patterns(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """M6: The scaffolded module MUST NOT contain any shim, graph fallback,
+    compatibility wrapper, legacy guidance, or direct-manifest-authoring
+    instruction.
+    """
+    name = "t4-m6-no-shim"
+    module_path, skill_dir = _scaffold_module(monkeypatch, tmp_path, name)
+
+    # Check generated Python module for forbidden patterns.
+    content = module_path.read_text(encoding="utf-8")
+    for forbidden in _FORBIDDEN_SHIM_PATTERNS:
+        assert forbidden not in content, (
+            f"M6 scaffold contract: forbidden pattern {forbidden!r} found "
+            f"in generated module {module_path}"
+        )
+
+    # SKILL.md may reference forbidden patterns in prohibitive context
+    # (e.g. "Do not add _legacy.py").  We only guard the Python module.
+
+
+def test_m6_scaffold_preserves_legacy_path_absence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """M6: The scaffold MUST NOT recreate, reference, or import from the
+    deleted legacy path ``arnold/pipelines/_template/``.
+    """
+    name = "t4-m6-no-legacy-path"
+    module_path, _skill_dir = _scaffold_module(monkeypatch, tmp_path, name)
+    content = module_path.read_text(encoding="utf-8")
+
+    legacy_refs = [
+        "arnold/pipelines/_template",
+        "arnold.pipelines._template",
+    ]
+    for ref in legacy_refs:
+        assert ref not in content, (
+            f"M6 scaffold contract: legacy path reference {ref!r} found "
+            f"in generated module {module_path}"
+        )
+
+    # Also verify the legacy path directory is empty (deleted content).
+    legacy_dir = Path("/workspace/arnold/arnold/pipelines/_template")
+    if legacy_dir.exists():
+        remaining = list(legacy_dir.iterdir())
+        assert not remaining, (
+            f"M6 scaffold contract: legacy path {legacy_dir} still contains "
+            f"files: {[p.name for p in remaining]}. It should be empty."
+        )
 
 
 # ── Subprocess-level tests (both module paths) ────────────────────────────

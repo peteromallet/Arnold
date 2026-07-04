@@ -169,3 +169,159 @@ This confirms SD2: editing stale `arnold/pipelines/megaplan/` paths would create
 | Substrate files (verification-only) | 2 | `routing.py` and `executor.py` — already clean |
 
 **Doctrine gate label:** M3.5 = SUBSTRATE PROOF ONLY. Do not claim final native representation report conformance while handler-backed product semantics remain opaque.
+
+---
+
+## 10. M1 Compositional Migration — Source-Path Entries
+
+**Milestone:** M1 — Megaplan Compositional Migration
+**Status:** Launch-gate authority (pre-implementation reconciliation)
+**Date:** 2026-07-03
+
+### 10.1 Purpose
+
+The M1 milestone migrates canonical Megaplan into the compositional workflow format. This section provides the pre-implementation source-path reconciliation required by the M1 launch gate. It identifies the live canonical source files, package/CLI/auto-drive entrypoints, native compiler/runtime/projection paths, and explicitly marks `native_runner.py` / `native_hooks.py` as nonexistent before implementation starts.
+
+### 10.2 Live M1 Workflow Source Files
+
+The canonical Megaplan workflow for M1 is authored as a composition of native workflows. The following live files are the authoritative source:
+
+| # | Live Path | Role | Notes |
+|---|----------|------|-------|
+| W1 | `arnold_pipelines/megaplan/workflows/workflow.py` | Canonical authored workflow source | Declares `planning_workflow` using `@workflow` and `loop` decorators from `arnold.workflow.authoring`. This is the compositional source — not a flat stage list. |
+| W2 | `arnold_pipelines/megaplan/workflows/planning.py` | DSL pipeline builder | `build_pipeline()` returns the DSL `Pipeline`; also defines `AUTHOR_REVISE` and `AUTHOR_TIEBREAKER_DECIDE` variant components used by `workflow.py`. |
+| W3 | `arnold_pipelines/megaplan/workflows/components.py` | StepComponent definitions | 12 `StepComponent` definitions (`SOURCE_PREP`, `SOURCE_PLAN`, `SOURCE_CRITIQUE`, `SOURCE_GATE`, `SOURCE_REVISE`, `SOURCE_TIEBREAKER_RUN`, `SOURCE_FINALIZE`, `SOURCE_EXECUTE`, `SOURCE_REVIEW`, `SOURCE_OVERRIDE`, `SOURCE_HALT`, `TIEBREAKER_DECIDE`) with handler_ref strings and route_bindings. |
+| W4 | `arnold_pipelines/megaplan/workflows/__init__.py` | Workflows package init | Package marker. |
+
+### 10.3 Package Facade and Compatibility Shell
+
+| # | Live Path | Role | Notes |
+|---|----------|------|-------|
+| P1 | `arnold_pipelines/megaplan/pipeline.py` | Thin facade | Re-exports `build_pipeline` from `workflows.planning`; provides `build_and_compile_pipeline()` wrapping `_compatibility.build_compatibility_shell()`. |
+| P2 | `arnold_pipelines/megaplan/__init__.py` | Plugin root | Package metadata (`name`, `entrypoint`, `capabilities`), content-type registration, model-seam adapter installation. |
+| P3 | `arnold_pipelines/megaplan/_compatibility.py` | Compatibility projection helper | `build_compatibility_shell()` — projects the authored workflow to a native-backed shell. Created per M3.5 T3; live as of 2026-07-01. |
+
+### 10.4 CLI and Auto-Drive Entrypoints
+
+| # | Live Path | Role | Notes |
+|---|----------|------|-------|
+| C1 | `arnold_pipelines/megaplan/cli/__init__.py` | Monolithic CLI (2987 lines) | All CLI surface: `describe`, `run`, `auto`, phase commands. Standalone entrypoint via `python -m arnold_pipelines.megaplan`. |
+| C2 | `arnold_pipelines/megaplan/cli/run.py` | Run subcommand handler | `cli_run()` — subprocess CL entry. |
+| C3 | `arnold_pipelines/megaplan/cli/parser.py` | CLI argument parser | Parser for megaplan commands. |
+| C4 | `arnold_pipelines/megaplan/cli/projection.py` | CLI projection module | Projection helpers for CLI output. |
+| C5 | `arnold_pipelines/megaplan/auto.py` | Auto-drive (4670 lines) | In-process auto-drive, resume, recovery. Dispatches via `registry.dispatch_operation_for()`. |
+| C6 | `arnold_pipelines/megaplan/registry.py` | Operation registry | `dispatch_operation_for()` and `_builtin_megaplan_builder()`. |
+| C7 | `arnold_pipelines/megaplan/routing.py` | Megaplan routing | Megaplan-specific routing module. |
+| C8 | `arnold_pipelines/megaplan/__main__.py` | Module entrypoint | `python -m arnold_pipelines.megaplan` entry. |
+
+### 10.5 Native Compiler, Runtime, and Projection Paths
+
+These are the neutral (non-megaplan-specific) native substrate files that M1 depends on. Per SD2, a non-Megaplan fixture must pass through these paths before Megaplan workflow edits proceed.
+
+| # | Live Path | Role | Notes |
+|---|----------|------|-------|
+| N1 | `arnold/pipeline/native/compiler.py` | AST-to-NativeProgram lowering (1204 lines) | Parses `@pipeline`-decorated functions; emits `NativeProgram` with program counters and branch labels. M1 may add narrow Megaplan-specific support marked `TEMPORARY_MEGAPLAN_ONLY`. |
+| N2 | `arnold/pipeline/native/runtime.py` | Native runtime executor | Executes `NativeProgram` against the neutral runtime substrate. M1 must support Megaplan composition shape without changing unrelated runtime behavior. |
+| N3 | `arnold/pipeline/native/graph_projection.py` | NativeProgram→Pipeline graph projection (911 lines) | Walks compiled `NativeProgram`, builds `Pipeline` with stage/edge metadata, guarded-loop conditions, and typed-port binding. |
+| N4 | `arnold/pipeline/native/ir.py` | Native IR definitions | `NativeProgram`, `NativeInstruction`, `NativeDecision`, `NativeLoopGuard`, `ParallelInstruction` types. |
+| N5 | `arnold/pipeline/native/decorators.py` | `@phase` / `@decision` / `@pipeline` decorators | Runtime metadata for native pipeline authoring. |
+| N6 | `arnold/pipeline/native/hooks.py` | Native hook dispatch | Neutral hook system for native pipeline lifecycle. |
+| N7 | `arnold/pipeline/native/routing.py` | Native routing (176 lines) | Generic native/graph dispatch. Verified clean of megaplan references (M3.5 verification-only). |
+| N8 | `arnold/pipeline/native/checkpoint.py` | Checkpoint/resume support | Checkpointing for native pipeline execution. |
+| N9 | `arnold/pipeline/native/context.py` | Execution context | Native pipeline execution context. |
+| N10 | `arnold/pipeline/native/trace.py` | Execution tracing | Trace support for native pipeline runs. |
+| N11 | `arnold/pipeline/native/flags.py` | Feature flags | Native pipeline feature flags. |
+| N12 | `arnold/pipeline/native/__init__.py` | Package init | Native pipeline package. |
+| N13 | `arnold/pipeline/types.py` | Pipeline type definitions | Defines `Pipeline.native_program: NativeProgram \| None`. |
+| N14 | `arnold/workflow/source_compiler.py` | Workflow source compiler | `lower_workflow_file()` — compiles workflow source files. |
+| N15 | `arnold/workflow/compiler.py` | Workflow compiler | General workflow compilation support. |
+
+### 10.6 Non-Existent Files — Explicitly Marked
+
+These paths are referenced in the M1 brief but do **not** exist on the filesystem. They must not be created unless a concrete import contract forces it, and the live equivalents are named below.
+
+| # | Non-Existent Path | Live Equivalent | Resolution |
+|---|------------------|-----------------|------------|
+| NX1 | `arnold_pipelines/megaplan/native_runner.py` | `arnold_pipelines/megaplan/auto.py` (in-process auto-drive) + `arnold_pipelines/megaplan/cli/run.py` (subprocess entry) | **Does not exist.** The live runtime equivalent is `auto.py` for in-process auto-drive and `cli/run.py` for subprocess entry. Do **not** create `native_runner.py` unless a concrete import contract forces it. |
+| NX2 | `arnold_pipelines/megaplan/native_hooks.py` | `arnold/pipeline/native/hooks.py` (neutral native hooks) + `arnold_pipelines/megaplan/handlers/` (megaplan-specific handler bridge modules) | **Does not exist.** Megaplan-specific hook behavior lives in the handler bridge modules (`handlers/init.py`, `handlers/gate.py`, `handlers/finalize.py`, `handlers/critique.py`, `handlers/review.py`, `handlers/execute.py`, `handlers/tiebreaker.py`, `handlers/override.py`, `handlers/plan.py`, `handlers/shared.py`, `handlers/tickets.py`, `handlers/anchors.py`, `handlers/verifiability.py`, `handlers/structured_output.py`). The neutral hook dispatch lives at `arnold/pipeline/native/hooks.py`. Do **not** create `native_hooks.py` unless a concrete import contract forces it. |
+
+### 10.7 Stale `arnold/pipelines/...` Reference Classification
+
+The dot-separated `arnold/pipelines/` prefix is the stale package root (excluded from wheel per `pyproject.toml`). All live megaplan source lives under underscore-separated `arnold_pipelines/`. The following classification covers every stale reference discovered in the codebase:
+
+#### 10.7.1 Dead Paths
+
+Directories or files referenced under `arnold/pipelines/` that do not exist on the filesystem and will never be recreated. These are listed in the M6 deletion inventory (`arnold/conformance/deleted_surfaces.py`).
+
+| # | Stale Path | Classification | Evidence |
+|---|-----------|---------------|----------|
+| D1 | `arnold/pipelines/megaplan/` | **Dead path** | Directory does not exist. M6 deletion target (`deleted_surfaces.py` line 38). Conformance allowlists reference it for legacy-gate purposes only. |
+| D2 | `arnold/pipelines/megaplan/data/` | **Dead path** | Directory does not exist. M6 deletion target (`deleted_surfaces.py` line 66). |
+| D3 | `arnold/pipelines/jokes/` | **Dead path** | M6 deletion target (`deleted_surfaces.py` line 39). |
+| D4 | `arnold/pipelines/creative/` | **Dead path** | M6 deletion target (`deleted_surfaces.py` line 40). |
+| D5 | `arnold/pipelines/doc/` | **Dead path** | M6 deletion target (`deleted_surfaces.py` line 41). |
+| D6 | `arnold/pipelines/live_supervisor/` | **Dead path** | M6 deletion target (`deleted_surfaces.py` line 42). |
+| D7 | `arnold/pipelines/select_tournament/` | **Dead path** | M6 deletion target (`deleted_surfaces.py` line 43). |
+| D8 | `arnold/pipelines/simplify_writing/` | **Dead path** | M6 archive target (`deleted_surfaces.py` line 44). |
+| D9 | `arnold/pipelines/vibecomfy_executor/` | **Dead path** | M6 archive target (`deleted_surfaces.py` line 45). |
+| D10 | `arnold/pipelines/writing_panel_strict.py` | **Dead path** | M6 deletion target (`deleted_surfaces.py` line 46). |
+| D11 | `arnold/pipelines/epic_blitz/` | **Dead path** | M6 archive target (`deleted_surfaces.py` line 47). |
+| D12 | `arnold/pipelines/briefs/` | **Dead path** | M6 archive target (`deleted_surfaces.py` line 51). |
+| D13 | `arnold/pipelines/_template/` | **Dead path** | Does not exist; only referenced in `discovery.py` as legacy mapping. |
+
+#### 10.7.2 Compatibility Aliases
+
+Stale `arnold/pipelines/` paths that still resolve to live `arnold_pipelines/` equivalents through discovery/registry compatibility mappings. These are NOT dead — they serve as aliases for backward compatibility in discovery.
+
+| # | Stale Path | Live Equivalent | Classification | Notes |
+|---|-----------|----------------|---------------|-------|
+| A1 | `arnold/pipelines/megaplan/pipelines/doc` | `arnold_pipelines/megaplan/pipelines/doc/` | **Compatibility alias** | Discovery alias in `arnold_pipelines/discovery.py` line 155. |
+| A2 | `arnold/pipelines/megaplan/pipelines/creative` | `arnold_pipelines/megaplan/pipelines/creative/` | **Compatibility alias** | Discovery alias in `discovery.py` line 163. |
+| A3 | `arnold/pipelines/megaplan/pipelines/jokes` | `arnold_pipelines/megaplan/pipelines/jokes/` | **Compatibility alias** | Discovery alias in `discovery.py` line 171. |
+| A4 | `arnold/pipelines/megaplan/pipelines/live_supervisor` | `arnold_pipelines/megaplan/pipelines/live_supervisor/` | **Compatibility alias** | Discovery alias in `discovery.py` line 179. |
+| A5 | `arnold/pipelines/megaplan/pipelines/epic_blitz.py` | `arnold_pipelines/megaplan/pipelines/epic_blitz.py` | **Compatibility alias** | Discovery alias in `discovery.py` line 187. |
+| A6 | `arnold/pipelines/megaplan/pipelines/select_tournament` | `arnold_pipelines/megaplan/pipelines/select_tournament/` | **Compatibility alias** | Discovery alias in `discovery.py` line 196. |
+| A7 | `arnold/pipelines/megaplan/pipelines/writing_panel_strict` | `arnold_pipelines/megaplan/pipelines/writing_panel_strict/` | **Compatibility alias** | Discovery alias in `discovery.py` line 204. |
+| A8 | `arnold/pipelines/folder_audit` | `arnold/pipelines/folder_audit/` (live dot-separated) | **Compatibility alias** | Discovery alias in `discovery.py` line 212. Live under `arnold/pipelines/` still. |
+| A9 | `arnold/pipelines/deliberation` | `arnold/pipelines/deliberation/` (live dot-separated) | **Compatibility alias** | Discovery alias in `discovery.py` line 222. Live under `arnold/pipelines/` still. |
+| A10 | `arnold/pipelines/_deliberation_example` | `arnold/pipelines/_deliberation_example/` (live dot-separated) | **Compatibility alias** | Discovery alias in `discovery.py` line 380. Live under `arnold/pipelines/` still. |
+
+#### 10.7.3 Migration Targets
+
+Paths that exist under the live `arnold_pipelines/` prefix but are also referenced under stale `arnold/pipelines/` in code or docs. These are the target of M1 migration — the stale reference must be updated or removed.
+
+| # | Stale Reference | Live Migration Target | Classification | Notes |
+|---|----------------|----------------------|---------------|-------|
+| M1 | `arnold/pipelines/megaplan/__init__.py` | `arnold_pipelines/megaplan/__init__.py` | **Migration target** | Package root. Live at underscore path. |
+| M2 | `arnold/pipelines/megaplan/pipeline.py` | `arnold_pipelines/megaplan/pipeline.py` | **Migration target** | Facade. Live at underscore path. |
+| M3 | `arnold/pipelines/megaplan/workflows/planning.py` | `arnold_pipelines/megaplan/workflows/planning.py` | **Migration target** | DSL builder. Live at underscore path. |
+| M4 | `arnold/pipelines/megaplan/workflows/workflow.py` | `arnold_pipelines/megaplan/workflows/workflow.py` | **Migration target** | Canonical authored source. Live at underscore path. |
+| M5 | `arnold/pipelines/megaplan/workflows/components.py` | `arnold_pipelines/megaplan/workflows/components.py` | **Migration target** | StepComponents. Live at underscore path. |
+| M6 | `arnold/pipelines/megaplan/auto.py` | `arnold_pipelines/megaplan/auto.py` | **Migration target** | Auto-drive. Live at underscore path. |
+| M7 | `arnold/pipelines/megaplan/registry.py` | `arnold_pipelines/megaplan/registry.py` | **Migration target** | Registry. Live at underscore path. |
+| M8 | `arnold/pipelines/megaplan/cli/__init__.py` | `arnold_pipelines/megaplan/cli/__init__.py` | **Migration target** | CLI. Live at underscore path. |
+| M9 | `arnold/pipelines/megaplan/cli/parser.py` | `arnold_pipelines/megaplan/cli/parser.py` | **Migration target** | CLI parser. Live at underscore path. |
+| M10 | `arnold/pipelines/megaplan/cli/run.py` | `arnold_pipelines/megaplan/cli/run.py` | **Migration target** | CLI run. Live at underscore path. |
+| M11 | `arnold/pipelines/megaplan/routing.py` | `arnold_pipelines/megaplan/routing.py` | **Migration target** | Routing. Live at underscore path. |
+| M12 | `arnold/pipelines/megaplan/runtime/bridge.py` | `arnold_pipelines/megaplan/runtime/bridge.py` | **Migration target** | Bridge. Live at underscore path. |
+| M13 | `arnold/pipelines/megaplan/runtime/discovery.py` | `arnold_pipelines/megaplan/runtime/discovery.py` | **Migration target** | Runtime discovery. Live at underscore path. |
+| M14 | `arnold/pipelines/megaplan/planning/operations.py` | `arnold_pipelines/megaplan/planning/operations.py` | **Migration target** | Operations. Live at underscore path. |
+
+### 10.8 Conformance Allowlist References
+
+The `arnold/conformance/legacy_reference_allowlist.json` and `arnold/conformance/checks.py` contain numerous references to `arnold/pipelines/megaplan` as **legacy allowlist entries**. These are intentional — the conformance system tracks legacy references to ensure they are not reintroduced as live code paths. These are classified as **dead path gate entries** — they exist only to detect regressions where new code references the stale path. They are not migration targets and do not require updates during M1.
+
+### 10.9 Summary — M1 Source-Path Reconciliation
+
+| Category | Count | Resolution |
+|----------|-------|------------|
+| Live workflow source files | 4 | `workflow.py`, `planning.py`, `components.py`, `__init__.py` |
+| Package facade / compatibility | 3 | `pipeline.py`, `__init__.py`, `_compatibility.py` |
+| CLI / auto-drive entrypoints | 8 | `cli/__init__.py`, `cli/run.py`, `cli/parser.py`, `cli/projection.py`, `auto.py`, `registry.py`, `routing.py`, `__main__.py` |
+| Native compiler/runtime/projection | 15 | `compiler.py`, `runtime.py`, `graph_projection.py`, `ir.py`, `decorators.py`, `hooks.py`, `routing.py`, `checkpoint.py`, `context.py`, `trace.py`, `flags.py`, `__init__.py`, `types.py`, `source_compiler.py`, `compiler.py` (workflow) |
+| Nonexistent files | 2 | `native_runner.py`, `native_hooks.py` — explicitly marked nonexistent |
+| Dead paths | 13 | Stale `arnold/pipelines/` paths that do not exist and will not be recreated |
+| Compatibility aliases | 10 | Discovery aliases mapping stale→live paths |
+| Migration targets | 14 | Stale `arnold/pipelines/megaplan/...` references mapped to live `arnold_pipelines/megaplan/...` |
+
+**M1 doctrine gate label:** The source-path reconciliation table exists before workflow edits land and proves that package registration, CLI, auto-drive, and tests inspect the same live canonical workflow source. No stale path will be created or edited for runtime behavior.

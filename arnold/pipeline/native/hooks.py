@@ -10,6 +10,25 @@ graph executor's ``ExecutorHooks`` protocol where possible, adapted
 for the native runtime's dict-based context and ``NativeInstruction``
 types.
 
+Wrapping / delegation pattern
+-----------------------------
+The frozen ``NativeRuntimeHooks`` protocol is intentionally minimal.
+Extension behaviour (trace emission, file-backed audit, retry wiring)
+is added through **wrapping** — a hook wrapper accepts an inner
+``NativeRuntimeHooks`` instance and delegates every callback to it
+while adding its own behaviour:
+
+* :class:`~arnold.pipeline.native.trace.NativeTraceHooks` — emits
+  native-trace artifacts (``state.json``, ``events.ndjson``, etc.)
+  when a ``trace_dir`` is configured.
+* :class:`~arnold.pipeline.native.audit.AuditHooks` — writes
+  file-backed audit records (``audit.ndjson``) recording per-attempt
+  step outcomes, timestamps, and error details when an ``audit_dir``
+  is configured.
+
+Both wrappers are pure pass-throughs when their output directory is
+``None``, so callers pay zero overhead beyond attribute access.
+
 Boundary discipline
 -------------------
 No ``megaplan`` imports.  No forbidden vocabulary literals.

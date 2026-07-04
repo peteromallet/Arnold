@@ -20,6 +20,7 @@ Parity with graph executor
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -38,6 +39,8 @@ from arnold.pipeline.native.hooks import (
     NullNativeRuntimeHooks,
 )
 from arnold.pipeline.native.ir import (
+    PATH_DELIMITER,
+    ROOT_PATH,
     NativeInstruction,
     NativeProgram,
     ParallelInstruction,
@@ -45,6 +48,15 @@ from arnold.pipeline.native.ir import (
 from arnold.pipeline.native.trace import NativeTraceHooks
 
 _MAX_SUBPIPELINE_DEPTH = 32
+_DEFAULT_PHASE_MAX_ATTEMPTS = 1
+
+
+@dataclass(frozen=True)
+class _PathFrame:
+    segment: str
+    parent_run_path: str
+    kind: str = "loop"
+    header_pc: int | None = None
 
 
 class NativeRuntimeError(Exception):
@@ -80,6 +92,44 @@ class NativeExecutionResult:
         self.suspended = suspended
         self.cursor_path = cursor_path
         self.envelope = envelope
+
+
+def _cancellation_requested(envelope: Any) -> bool:
+    if envelope is None:
+        return False
+    if isinstance(envelope, Mapping):
+        return bool(envelope.get("cancellation"))
+    value = getattr(envelope, "cancellation", None)
+    if value is not None:
+        return bool(value)
+    cross_cutting = getattr(envelope, "cross_cutting", None)
+    if cross_cutting is not None:
+        return bool(getattr(cross_cutting, "cancellation", False))
+    return False
+
+
+def _check_cancellation_boundary(
+    *,
+    boundary: str,
+    instr: NativeInstruction | None,
+    state: Mapping[str, Any],
+    envelope: Any,
+    run_path: str,
+    step_path: str | None = None,
+    call_site_path: tuple[str, ...] = (),
+) -> None:
+    """Observe a future cancellation boundary without changing control flow."""
+
+    _ = (
+        boundary,
+        instr.op if instr is not None else None,
+        instr.name if instr is not None else None,
+        run_path,
+        step_path,
+        call_site_path,
+        bool(state),
+        _cancellation_requested(envelope),
+    )
 
 
 def _normalize_phase_result(result: Any, stage_id: str) -> tuple[dict[str, Any], Any]:
@@ -302,6 +352,160 @@ def _parallel_map_item_coordinate(
         ) from exc
 
 
+def _validate_path_segment(segment: str) -> str:
+    text = str(segment).strip()
+    if not text:
+        raise NativeRuntimeError("Native path segments must be non-empty")
+    if PATH_DELIMITER in text:
+        raise NativeRuntimeError(
+            f"Native path segment {text!r} must not contain {PATH_DELIMITER!r}"
+        )
+    return text
+
+
+def _normalize_call_site_segments(segments: Iterable[Any]) -> tuple[str, ...]:
+    normalized: list[str] = []
+    for raw in segments:
+        text = str(raw).strip()
+        if not text:
+            continue
+        parts = [part for part in text.split(PATH_DELIMITER) if part]
+        for part in parts:
+            normalized.append(_validate_path_segment(part))
+    return tuple(normalized)
+
+
+def _normalize_run_path(run_path: str | Path) -> str:
+    text = str(run_path).strip()
+    if not text:
+        return ROOT_PATH
+    segments = _normalize_call_site_segments(text.split(PATH_DELIMITER))
+    if not segments:
+        return ROOT_PATH
+    if segments[0] != ROOT_PATH:
+        segments = (ROOT_PATH, *segments)
+    return PATH_DELIMITER.join(segments)
+
+
+def _path_segments_from_run_path(run_path: str) -> tuple[str, ...]:
+    normalized = _normalize_run_path(run_path)
+    return tuple(normalized.split(PATH_DELIMITER))
+
+
+def _call_site_path_for_run_path(run_path: str) -> tuple[str, ...]:
+    segments = _path_segments_from_run_path(run_path)
+    if not segments or segments[0] != ROOT_PATH:
+        return segments
+    return segments[1:]
+
+
+def _append_run_path_segments(run_path: str, *segments: str) -> str:
+    base = _path_segments_from_run_path(run_path)
+    appended = (*base, *_normalize_call_site_segments(segments))
+    return PATH_DELIMITER.join(appended)
+
+
+def _step_path_for_instr(run_path: str, instr: NativeInstruction) -> str:
+    step_name = _validate_path_segment(instr.name or instr.op)
+    return _append_run_path_segments(run_path, step_name)
+
+
+def _serialize_path_stack(path_stack: list[_PathFrame]) -> list[dict[str, Any]]:
+    serialized: list[dict[str, Any]] = []
+    for frame in path_stack:
+        item = {
+            "kind": frame.kind,
+            "segment": frame.segment,
+            "parent_run_path": frame.parent_run_path,
+        }
+        if isinstance(frame.header_pc, int):
+            item["header_pc"] = frame.header_pc
+        serialized.append(item)
+    return serialized
+
+
+def _deserialize_path_stack(raw: Any) -> list[_PathFrame]:
+    if not isinstance(raw, list):
+        return []
+    restored: list[_PathFrame] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            continue
+        kind = item.get("kind")
+        if kind is None:
+            kind = "loop"
+        if not isinstance(kind, str) or not kind:
+            continue
+        header_pc = item.get("header_pc")
+        segment = item.get("segment")
+        parent_run_path = item.get("parent_run_path")
+        if not isinstance(segment, str) or not segment:
+            continue
+        if not isinstance(parent_run_path, str) or not parent_run_path:
+            continue
+        normalized_header_pc = header_pc if isinstance(header_pc, int) else None
+        if kind == "loop" and normalized_header_pc is None:
+            continue
+        restored.append(
+            _PathFrame(
+                segment=_validate_path_segment(segment),
+                parent_run_path=_normalize_run_path(parent_run_path),
+                kind=kind,
+                header_pc=normalized_header_pc,
+            )
+        )
+    return restored
+
+
+def _cursor_path_metadata(
+    *,
+    program: NativeProgram,
+    pc: int,
+    run_path: str,
+    path_stack: list[_PathFrame],
+) -> dict[str, Any]:
+    current_run_path = _normalize_run_path(run_path)
+    current_path_stack = list(path_stack)
+    instructions = program.instructions
+    visited: set[int] = set()
+    cur = pc
+
+    while 0 <= cur < len(instructions):
+        if cur in visited:
+            break
+        visited.add(cur)
+        instr = instructions[cur]
+        if instr.op == "jump":
+            next_pc = instr.next_pc if instr.next_pc is not None else cur + 1
+            if (
+                next_pc <= cur
+                and current_path_stack
+                and current_path_stack[-1].kind == "loop"
+                and next_pc == current_path_stack[-1].header_pc
+            ):
+                frame = current_path_stack.pop()
+                current_run_path = frame.parent_run_path
+            cur = next_pc
+            continue
+        if instr.op == "halt":
+            break
+        if instr.op in {"phase", "decision", "parallel", "parallel_map", "subpipeline"}:
+            return {
+                "run_path": current_run_path,
+                "step_path": _step_path_for_instr(current_run_path, instr),
+                "call_site_path": list(_call_site_path_for_run_path(current_run_path)),
+                "path_stack": _serialize_path_stack(current_path_stack),
+            }
+        cur += 1
+
+    return {
+        "run_path": current_run_path,
+        "step_path": None,
+        "call_site_path": list(_call_site_path_for_run_path(current_run_path)),
+        "path_stack": _serialize_path_stack(current_path_stack),
+    }
+
+
 def _parallel_map_item_state(
     parent_state: Mapping[str, Any],
     *,
@@ -316,6 +520,68 @@ def _parallel_map_item_state(
     item_state["__parallel_map_item__"] = item
     item_state["__parallel_map_index__"] = index
     return item_state
+
+
+def _loop_identity(
+    instr: NativeInstruction,
+    program: NativeProgram,
+) -> str:
+    loop_identity = instr.name
+    for loop_guard in program.loop_guards:
+        if loop_guard.guard is instr.func:
+            loop_identity = loop_guard.stable_id or loop_guard.name or instr.name
+            break
+    return _validate_path_segment(loop_identity)
+
+
+def _loop_counter_key(
+    *,
+    instr: NativeInstruction,
+    program: NativeProgram,
+    run_path: str,
+) -> str:
+    return _append_run_path_segments(run_path, _loop_identity(instr, program))
+
+
+def _loop_iteration_count(
+    *,
+    instr: NativeInstruction,
+    program: NativeProgram,
+    loops: Mapping[str, int],
+    run_path: str,
+) -> int:
+    scoped_key = _loop_counter_key(instr=instr, program=program, run_path=run_path)
+    value = loops.get(scoped_key)
+    if isinstance(value, int):
+        return value
+    legacy_value = loops.get(instr.name)
+    if isinstance(legacy_value, int):
+        return legacy_value
+    return 0
+
+
+def _resolve_phase_max_attempts(
+    instr: NativeInstruction,
+    phase_max_attempts: Mapping[str, int] | int | None,
+) -> int:
+    """Return the configured attempt budget for a phase instruction."""
+    max_attempts = getattr(instr.func, "__phase_max_attempts__", None)
+    if max_attempts is None and isinstance(phase_max_attempts, Mapping):
+        stage_id = getattr(instr.func, "__step_id__", None)
+        for key in (instr.name, stage_id):
+            if isinstance(key, str) and key in phase_max_attempts:
+                max_attempts = phase_max_attempts[key]
+                break
+    elif max_attempts is None:
+        max_attempts = phase_max_attempts
+
+    if max_attempts is None:
+        return _DEFAULT_PHASE_MAX_ATTEMPTS
+    if not isinstance(max_attempts, int) or max_attempts < 1:
+        raise NativeRuntimeError(
+            f"Native phase {instr.name!r} max_attempts must be an integer >= 1"
+        )
+    return max_attempts
 
 
 def run_native_pipeline(
@@ -333,8 +599,12 @@ def run_native_pipeline(
     telemetry_path: str | Path | None = None,
     initial_envelope: Any = None,
     trace_dir: str | Path | None = None,
+    run_path: str | Path = ROOT_PATH,
+    phase_max_attempts: Mapping[str, int] | int | None = None,
     _subpipeline_depth: int = 0,
     _active_subpipelines: tuple[str, ...] = (),
+    _parent_run_path: str | None = None,
+    _trace_run_kind: str = "pipeline",
 ) -> NativeExecutionResult:
     """Execute a compiled native pipeline program sequentially.
 
@@ -397,6 +667,10 @@ def run_native_pipeline(
             artifact inventory, stage sequence, and final checkpoint
             notification.  When ``None`` (the default), no trace files
             are emitted and behaviour is identical to previous versions.
+        phase_max_attempts: Optional additive retry policy for phase
+            instructions.  ``None`` preserves the current single-attempt
+            behavior.  An integer applies to every phase; a mapping may
+            target phase names or declared ``__step_id__`` values.
 
     Returns:
         :class:`NativeExecutionResult` with final state, completed stages,
@@ -420,6 +694,12 @@ def run_native_pipeline(
     stages: list[str] = []
     owned_keys: frozenset[str] = frozenset()
     prefix = _safe_name(program.name)
+    current_run_path = _normalize_run_path(run_path)
+    trace_run_path = current_run_path
+    trace_parent_run_path = (
+        _normalize_run_path(_parent_run_path) if _parent_run_path else None
+    )
+    path_stack: list[_PathFrame] = []
 
     # ── envelope accumulation (matches graph executor pattern) ─────
     envelope: Any = initial_envelope
@@ -428,953 +708,1469 @@ def run_native_pipeline(
     if not instructions:
         return NativeExecutionResult(state=state, stages=stages, pc=0, envelope=envelope)
 
-    # ── resolve starting pc and restore state from cursor ────────────
-    start_pc = 0
-    loops: dict[str, int] = {}
-    frames: dict[str, Any] = {}
-    resume_cursor_data: dict[str, Any] | None = None
-
-    if resume:
-        try:
-            resume_cursor_data = read_native_cursor(artifact_root)
-        except NativeCursorCorruptError as exc:
-            raise NativeRuntimeError(
-                f"Cannot resume native pipeline from corrupt cursor at "
-                f"{exc.cursor_path or Path(artifact_root) / 'resume_cursor.json'}: "
-                f"{exc.detail}"
-            ) from exc
-        # A missing cursor or graph-owned cursor is explicit: native resume starts
-        # from pc 0 only when there is no valid native cursor to restore.
-        if resume_cursor_data is not None:
-            start_pc = resume_cursor_data["native"]["pc"]
-            stages = list(resume_cursor_data.get("stages", []))
-            if isinstance(_hooks, NativeTraceHooks):
-                _hooks.seed_stage_sequence(stages)
-            loops = dict(resume_cursor_data.get("loops", {}))
-            frames = dict(resume_cursor_data.get("frames", {}))
-            # Restore working state from cursor if present
-            saved_state = frames.pop("__state__", None)
-            if saved_state is not None:
-                if not isinstance(saved_state, dict):
-                    raise NativeRuntimeError(
-                        "Cannot resume native pipeline from malformed cursor: "
-                        "frames.__state__ must be an object"
-                    )
-                restored_state = dict(saved_state)
-                restored_state.update(initial_state or {})
-                state = restored_state
-            # Restore envelope from cursor frames if present
-            saved_envelope = frames.pop("__envelope__", None)
-            if saved_envelope is not None:
-                envelope = _deserialize_envelope(saved_envelope)
-
-    # ── resolve cursor_id (stable across suspension/resume) ──────────
-    if override is not None and override_input is not None:
-        raise NativeRuntimeError(
-            "Pass only one of override= or override_input= when resuming a native human gate"
+    trace_status = "running"
+    if isinstance(_hooks, NativeTraceHooks):
+        _hooks.on_run_enter(
+            program,
+            run_path=trace_run_path,
+            parent_run_path=trace_parent_run_path,
+            kind=_trace_run_kind,
+            call_site_path=_call_site_path_for_run_path(trace_run_path),
         )
-    _resume_override_input = override_input if override_input is not None else override
 
-    _cursor_id: str | None = None
-    _human_gate_resume: bool = False
-    if resume_cursor_data is not None:
-        _cursor_id = resume_cursor_data.get("cursor_id")
-        # Detect human-gate resume: native.suspension_kind == "human_gate"
-        _native = resume_cursor_data.get("native", {})
-        if isinstance(_native, dict) and _native.get("suspension_kind") == "human_gate":
-            _human_gate_resume = True
-    if _cursor_id is None:
-        _cursor_id = uuid4().hex
+    try:
+        # ── resolve starting pc and restore state from cursor ────────────
+        start_pc = 0
+        loops: dict[str, int] = {}
+        frames: dict[str, Any] = {}
+        resume_cursor_data: dict[str, Any] | None = None
+        composite_resume: dict[str, Any] | None = None
 
-    # ── pre-validate pc ──────────────────────────────────────────────
-    if start_pc < 0 or start_pc >= len(instructions):
-        return NativeExecutionResult(state=state, stages=stages, pc=start_pc, envelope=envelope)
-
-    telemetry_path_str: str | None = None
-    if telemetry_path is not None:
-        telemetry_path_str = str(telemetry_path)
-    if not _active_subpipelines:
-        _active_subpipelines = (program.stable_id or program.name,)
-    parameter_values = _extract_child_inputs(state, program.inputs_schema)
-
-    phase_count = 0
-    pc = start_pc
-    forward_visited: set[int] = set()
-
-    while 0 <= pc < len(instructions):
-        instr = instructions[pc]
-
-        if instr.op == "halt":
-            break
-
-        elif instr.op == "phase":
-            if instr.func is None:
-                # Phase with no callable — skip
-                pc = instr.next_pc if instr.next_pc is not None else pc + 1
-                continue
-
-            stage_id = f"{prefix}__{instr.name}__pc{pc}"
-
-            # Build lightweight context (dict-based, no StepContext dependency)
-            ctx: dict[str, Any] = {
-                "state": dict(state),
-                "inputs": dict(state),
-            }
-            if isinstance(artifact_root, Path):
-                ctx["artifact_root"] = str(artifact_root)
-            else:
-                ctx["artifact_root"] = str(artifact_root)
-
-            # Include contract_results in context (matching _build_ctx pattern)
-            contract_results_published = state.get("__contract_results__")
-            if isinstance(contract_results_published, dict):
-                ctx["contract_results"] = dict(contract_results_published)
-
-            # ── Hook: on_step_start (may rewrite ctx) ─────────────
-            ctx = _hooks.on_step_start(instr, ctx)
-
-            # Invoke the phase
+        if resume:
             try:
-                result = instr.func(ctx)
-            except BaseException as exc:
-                _hooks.on_step_error(instr, ctx, exc)
-                raise
-
-            # ── Hook: on_step_end (may rewrite result) ────────────
-            result = _hooks.on_step_end(instr, ctx, result)
-
-            # ── Callable return normalization (matching graph executor) ──
-            outputs, contract_result = _normalize_phase_result(result, stage_id)
-            state_patch = _extract_state_patch(result)
-
-            # ── Resolve handoff value for typed enforcement ────────
-            # Graph executor pattern: prefers contract_result, falls back
-            # to outputs[stage.name], then None.
-            handoff_value: Any = None
-            if contract_result is not None:
-                handoff_value = contract_result
-            elif outputs:
-                handoff_value = outputs.get(instr.name)
-            if handoff_value is None and outputs:
-                # Last resort: use the full outputs dict as handoff value
-                # (matches native runtime's existing behavior for plain dicts)
-                handoff_value = outputs
-
-            # ── Typed step-IO handoff enforcement ──────────────────
-            # Runs BEFORE the outputs/state merge so state is unchanged
-            # when an enforce-block fires — matches graph executor behavior.
-            artifact_root_str = str(artifact_root) if not isinstance(artifact_root, str) else artifact_root
-            if handoff_value is not None:
-                _enforce_native_typed_handoff(
-                    instr=instr,
-                    handoff_value=handoff_value,
-                    instructions=instructions,
-                    artifact_root=artifact_root_str,
-                    schema_registry=schema_registry,
-                    telemetry_path=telemetry_path_str,
-                )
-
-            if outputs:
-                state.update(outputs)
-
-            # ── Publish contract_result into routing surface ───────
-            # Matches graph executor: ``state["__contract_results__"][stage.name] = contract_result``
-            if contract_result is not None:
-                published = state.get("__contract_results__")
-                if not isinstance(published, dict):
-                    published = {}
-                    state["__contract_results__"] = published
-                published[instr.name] = contract_result
-
-            # Match the graph executor: StepResult.state_patch is merged
-            # after outputs/contract_result publication and before routing.
-            if state_patch:
-                state.update(state_patch)
-                owned_keys = frozenset(owned_keys | frozenset(state_patch.keys()))
-
-            # ── Hook: merge_state (may rewrite state / owned_keys) ──
-            state, owned_keys = _hooks.merge_state(instr, state, outputs, owned_keys)
-
-            # ── Envelope accumulation ─────────────────────────────
-            step_envelope: Any = None
-            if hasattr(result, "envelope"):
-                step_envelope = result.envelope
-            elif isinstance(result, dict):
-                step_envelope = result.get("envelope")
-            envelope = _hooks.join_envelope(instr, envelope, step_envelope)
-
-            # A phase can return a suspended ContractResult directly.  Persist a
-            # same-pc cursor and leave completion bookkeeping untouched so resume
-            # re-enters the suspending phase.
-            if _contract_result_is_suspended(contract_result):
-                _phase_resume_cursor = _contract_resume_cursor(contract_result)
-                _phase_contract_payload = _serialize_contract_result(contract_result)
-                _phase_suspension_payload = _serialize_contract_suspension(
-                    contract_result
-                )
-                _phase_frames = dict(frames)
-                _phase_frames["__state__"] = _jsonable_value(dict(state))
-                if envelope is not None:
-                    _phase_frames["__envelope__"] = _serialize_envelope(envelope)
-                _phase_extra = {
-                    "suspension_kind": "phase_suspended",
-                    "contract_result": _phase_contract_payload,
-                    "suspension": _phase_suspension_payload,
-                }
-                persist_native_cursor(
-                    artifact_root,
-                    stage=stage_id,
-                    pc=pc,
-                    stages=list(stages),
-                    reentry_stage=stage_id,
-                    loops=dict(loops),
-                    frames=_phase_frames,
-                    resume_cursor=_phase_resume_cursor,
-                    cursor_id=_cursor_id,
-                    stage_reentry_points=_stage_reentry_points_for(stages),
-                    native_extra={"suspension_kind": "phase_suspended"},
-                    **_phase_extra,
-                )
-                _phase_cursor = _build_cursor_dict(
-                    stage=stage_id,
-                    pc=pc,
-                    reentry_stage=stage_id,
-                    stages=list(stages),
-                    loops=dict(loops),
-                    frames=_phase_frames,
-                    state=state,
-                    envelope=envelope,
-                    cursor_id=_cursor_id,
-                    resume_cursor=_phase_resume_cursor,
-                    native_extra={"suspension_kind": "phase_suspended"},
-                    extra=_phase_extra,
-                )
-                _hooks.on_checkpoint(_phase_cursor, dict(state))
-                return NativeExecutionResult(
-                    state=dict(state),
-                    stages=list(stages),
-                    pc=pc,
-                    suspended=True,
-                    cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
-                    envelope=envelope,
-                )
-
-            # ── Hook: should_suspend (terminal exit) ────────────────
-            do_suspend, suspend_reason = _hooks.should_suspend(instr, state, result)
-            if do_suspend:
-                if _should_emit_stage_complete(instr):
-                    _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
-                if hasattr(_hooks, "halt_reason"):
-                    _hooks.halt_reason = suspend_reason  # type: ignore[attr-defined]
-                return NativeExecutionResult(
-                    state=dict(state),
-                    stages=list(stages),
-                    pc=pc,
-                    suspended=True,
-                    cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
-                    envelope=envelope,
-                )
-
-            # Record completed stage only after successful phase completion
-            stages.append(stage_id)
-            phase_count += 1
-
-            # Check max_phases limit (check AFTER merging, same as graph executor
-            # which fires terminal exits after step completion)
-            if max_phases is not None and phase_count >= max_phases:
-                # ── Hook: on_stage_complete before suspension ──────
-                if _should_emit_stage_complete(instr):
-                    _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
-                # Advance pc to the next instruction for the resume point
-                next_pc = instr.next_pc if instr.next_pc is not None else pc + 1
-                reentry_stage = _reentry_stage_for_pc(program, next_pc)
-                _persist_suspension(
-                    artifact_root=artifact_root,
-                    stage=stage_id,
-                    pc=next_pc,
-                    reentry_stage=reentry_stage,
-                    stages=stages,
-                    loops=loops,
-                    frames=frames,
-                    state=state,
-                    envelope=envelope,
-                    cursor_id=_cursor_id,
-                )
-                # ── Hook: on_checkpoint (after cursor persistence) ──
-                _cursor = _build_cursor_dict(
-                    stage=stage_id,
-                    pc=next_pc,
-                    reentry_stage=reentry_stage,
-                    stages=list(stages),
-                    loops=dict(loops),
-                    frames=dict(frames),
-                    state=state,
-                    envelope=envelope,
-                    cursor_id=_cursor_id,
-                )
-                _hooks.on_checkpoint(_cursor, dict(state))
-                return NativeExecutionResult(
-                    state=dict(state),
-                    stages=list(stages),
-                    pc=next_pc,
-                    suspended=True,
-                    cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
-                    envelope=envelope,
-                )
-
-            # ── Hook: on_stage_complete (normal completion) ────────
-            if _should_emit_stage_complete(instr):
-                _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
-
-            # Advance to next instruction
-            pc = instr.next_pc if instr.next_pc is not None else pc + 1
-            forward_visited.clear()
-
-        elif instr.op == "decision":
-            if instr.func is None:
-                # No callable — can't route; halt
-                break
-
-            # ── Human-gate detection ──────────────────────────────
-            # Inspect the decision callable's dunder attributes (set by
-            # @decision(human_gate=True, ...)) to determine if this is a
-            # human-gate suspension point BEFORE building context or
-            # calling the decision body.
-            _is_human_gate = bool(getattr(instr.func, "__decision_human_gate__", False))
-
-            # ── Human-gate: initial suspension ────────────────────
-            if _is_human_gate and not _human_gate_resume:
-                _hg_artifact_stage = str(getattr(instr.func, "__decision_artifact_stage__", "") or "")
-                _hg_choices = tuple(getattr(instr.func, "__decision_choices__", ()) or ())
-                _hg_resume_schema = getattr(instr.func, "__decision_resume_input_schema__", None)
-                _hg_override_routes = getattr(instr.func, "__decision_override_routes__", None)
-                _hg_name = getattr(instr.func, "__decision_name__", instr.name)
-                _hg_artifact_stage_for_checkpoint = (
-                    _hg_artifact_stage if _hg_artifact_stage else _hg_name
-                )
-
-                # Write awaiting_user.json via the neutral checkpoint helper.
-                from arnold.pipeline.steps.human_gate import (
-                    make_human_suspension,
-                    write_human_gate_checkpoint,
-                )
-                from arnold.pipeline.types import ContractResult, ContractStatus
-
-                _checkpoint_path = Path(artifact_root) / "awaiting_user.json"
-                _resume_cursor_payload: dict[str, Any] = {
-                    "phase": _hg_name,
-                    "retry_strategy": "awaiting_user",
-                    "kind": "awaiting_user",
-                }
-                if _hg_choices:
-                    _resume_cursor_payload["choices"] = list(_hg_choices)
-                _resume_cursor = json.dumps(_resume_cursor_payload, sort_keys=True)
-                _checkpoint = write_human_gate_checkpoint(
-                    _checkpoint_path,
-                    pipeline=program.name,
-                    version=NATIVE_CURSOR_VERSION,
-                    artifact_stage=_hg_artifact_stage_for_checkpoint,
-                    stage=_hg_name,
-                    choices=list(_hg_choices),
-                    resume_input_schema=_hg_resume_schema
-                    if isinstance(_hg_resume_schema, dict)
-                    else None,
-                    artifact_path=_resolve_native_human_gate_artifact_path(
-                        artifact_root,
-                        _hg_artifact_stage_for_checkpoint,
-                    ),
-                    message=(
-                        f"Pipeline '{program.name}' paused at human-gate "
-                        f"'{_hg_name}'.  Review the artifact and choose: "
-                        f"{', '.join(_hg_choices)}"
-                    ),
-                )
-
-                # Construct the typed HumanSuspension envelope.
-                _suspension = make_human_suspension(
-                    _checkpoint,
-                    resume_cursor=_resume_cursor,
-                )
-                _contract_result = ContractResult(
-                    status=ContractStatus.SUSPENDED,
-                    suspension=_suspension,
-                    payload={
-                        "source": "awaiting_user.json",
-                        "awaiting_user": dict(_checkpoint),
-                    },
-                )
-
-                # Build a stage-like identifier for the cursor.
-                _hg_stage_id = f"{_safe_name(program.name)}__{_hg_name}__pc{pc}"
-
-                # ── Persist cursor with graph-compatible top-level fields
-                # plus additive native restoration metadata.
-                _hg_cursor_extra: dict[str, Any] = {
-                    "suspension_kind": "human_gate",
-                    "artifact_stage": _hg_artifact_stage_for_checkpoint,
-                    "choices": list(_hg_choices),
-                    "contract_result": _contract_result.to_json(),
-                    "suspension": _suspension.to_json(),
-                }
-                if isinstance(_hg_resume_schema, dict):
-                    _hg_cursor_extra["resume_input_schema"] = _hg_resume_schema
-                if isinstance(_hg_override_routes, dict):
-                    _hg_cursor_extra["override_routes"] = dict(_hg_override_routes)
-
-                _pause_state = dict(state)
-                _pause_state.update(
-                    {
-                        "_pipeline_paused": True,
-                        "_pipeline_paused_stage": _hg_name,
-                        "awaiting_user": str(_checkpoint_path),
-                    }
-                )
-
-                # Mark loop frames with state for resume restoration.
-                _hg_frames = dict(frames)
-                _hg_frames["__state__"] = dict(_pause_state)
-                if envelope is not None:
-                    _hg_frames["__envelope__"] = _serialize_envelope(envelope)
-
-                # Build stage_reentry_points from completed stages.
-                _hg_stage_reentry = _stage_reentry_points_for(stages)
-
-                persist_native_cursor(
-                    artifact_root,
-                    stage=_hg_stage_id,
-                    pc=pc,
-                    stages=list(stages),
-                    reentry_stage=_hg_stage_id,
-                    loops=dict(loops),
-                    frames=_hg_frames,
-                    resume_cursor=_resume_cursor,
-                    cursor_id=_cursor_id,
-                    stage_reentry_points=_hg_stage_reentry,
-                    native_extra={"suspension_kind": "human_gate"},
-                    **_hg_cursor_extra,
-                )
-
-                # ── Hook: on_checkpoint (after cursor persistence) ──
-                _hg_cursor = _build_cursor_dict(
-                    stage=_hg_stage_id,
-                    pc=pc,
-                    reentry_stage=_hg_stage_id,
-                    stages=list(stages),
-                    loops=dict(loops),
-                    frames=_hg_frames,
-                    state=_pause_state,
-                    envelope=envelope,
-                    cursor_id=_cursor_id,
-                    resume_cursor=_resume_cursor,
-                    native_extra={"suspension_kind": "human_gate"},
-                    extra=_hg_cursor_extra,
-                )
-                _hooks.on_checkpoint(_hg_cursor, dict(_pause_state))
-
-                return NativeExecutionResult(
-                    state=dict(_pause_state),
-                    stages=list(stages),
-                    pc=pc,
-                    suspended=True,
-                    cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
-                    envelope=envelope,
-                )
-
-            # ── Human-gate: resume routing ────────────────────────
-            if _is_human_gate and _human_gate_resume:
-                from arnold.pipeline.steps.human_gate import (
-                    read_human_gate_checkpoint,
-                )
-
-                _hg_checkpoint_path = Path(artifact_root) / "awaiting_user.json"
-                _hg_checkpoint = read_human_gate_checkpoint(_hg_checkpoint_path) or {}
-                _resume_selection = _select_native_human_gate_resume_label(
-                    human_input=human_input,
-                    override_input=_resume_override_input,
-                    checkpoint=_hg_checkpoint,
-                )
-                if _resume_selection is not None:
-                    _resume_source, _resume_label = _resume_selection
-                    _hg_choices = _native_human_gate_choices(
-                        cursor=resume_cursor_data,
-                        func=instr.func,
-                    )
-                    _hg_override_routes = _native_human_gate_override_routes(
-                        cursor=resume_cursor_data,
-                        func=instr.func,
-                    )
-                    target_pc = _resolve_native_human_gate_target_pc(
-                        instr=instr,
-                        instructions=instructions,
-                        label=_resume_label,
-                        source=_resume_source,
-                        choices=_hg_choices,
-                        override_routes=_hg_override_routes,
-                    )
-                    if target_pc is not None and not (0 <= target_pc < len(instructions)):
-                        raise NativeRuntimeError(
-                            f"Native human-gate decision '{instr.name}' accepted "
-                            f"label {_resume_label!r}, but its target pc "
-                            f"{target_pc!r} is outside the program"
-                        )
-
-                    # Clean up the checkpoint only after validating and
-                    # accepting the label.  A failed unlink is treated as
-                    # a failed resume so stale choices cannot be replayed.
-                    if _hg_checkpoint_path.exists():
-                        try:
-                            _hg_checkpoint_path.unlink()
-                        except OSError as exc:
-                            raise NativeRuntimeError(
-                                "Accepted native human-gate resume label "
-                                f"{_resume_label!r}, but could not clear "
-                                f"{_hg_checkpoint_path}: {exc}"
-                            ) from exc
-                    _hg_cursor_path = Path(artifact_root) / "resume_cursor.json"
-                    if _hg_cursor_path.exists():
-                        try:
-                            _hg_cursor_path.unlink()
-                        except OSError as exc:
-                            raise NativeRuntimeError(
-                                "Accepted native human-gate resume label "
-                                f"{_resume_label!r}, but could not clear "
-                                f"{_hg_cursor_path}: {exc}"
-                            ) from exc
-
-                    state.pop("_pipeline_paused", None)
-                    state.pop("_pipeline_paused_stage", None)
-                    state.pop("awaiting_user", None)
-                    _human_gate_resume = False
-
-                    if target_pc is not None:
-                        _maybe_count_loop_iteration(
-                            instr=instr,
-                            label=_resume_label,
-                            target_pc=target_pc,
-                            program=program,
-                            loops=loops,
-                        )
-                        if _is_loop_body_entry(instr, target_pc, program):
-                            iteration = loops.get(instr.name, 0)
-                            do_halt, halt_reason = _hooks.should_halt_loop(
-                                instr,
-                                state,
-                                iteration,
-                            )
-                            if do_halt:
-                                if _should_emit_stage_complete(instr):
-                                    _hooks.on_stage_complete(
-                                        instr,
-                                        {},
-                                        _resume_label,
-                                        state,
-                                        owned_keys,
-                                    )
-                                if hasattr(_hooks, "halt_reason"):
-                                    _hooks.halt_reason = halt_reason  # type: ignore[attr-defined]
-                                return NativeExecutionResult(
-                                    state=dict(state),
-                                    stages=list(stages),
-                                    pc=pc,
-                                    envelope=envelope,
-                                )
-
-                    if _should_emit_stage_complete(instr):
-                        _hooks.on_stage_complete(
-                            instr,
-                            {},
-                            (
-                                {"__override_route__": _resume_label}
-                                if _resume_source == "override"
-                                else _resume_label
-                            ),
-                            state,
-                            owned_keys,
-                        )
-
-                    _hg_stage_id = f"{_safe_name(program.name)}__{instr.name}__pc{pc}"
-                    stages.append(_hg_stage_id)
-                    if target_pc is None:
-                        break
-                    pc = target_pc
-                    forward_visited.clear()
-                    continue
-
-                # No valid persisted choice yet: remain suspended and keep
-                # both durable files intact for a later process to resume.
-                return NativeExecutionResult(
-                    state=dict(state),
-                    stages=list(stages),
-                    pc=pc,
-                    suspended=True,
-                    cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
-                    envelope=envelope,
-                )
-
-            ctx: dict[str, Any] = {
-                "state": dict(state),
-                "inputs": dict(state),
-            }
-            if isinstance(artifact_root, Path):
-                ctx["artifact_root"] = str(artifact_root)
-            else:
-                ctx["artifact_root"] = str(artifact_root)
-
-            # ── Hook: on_step_start (may rewrite ctx) ─────────────
-            ctx = _hooks.on_step_start(instr, ctx)
-
-            # ── Control override short-circuit ──────────────────────
-            # When a hook (e.g. MegaplanNativeRuntimeHooks) resolves a
-            # catalog-driven control override, the context will carry
-            # ``__override_route__``.  Skip the decision body and route
-            # directly.  Priority: halt > override > decision > normal.
-            control_override: str | None = ctx.pop("__override_route__", None)
-            if control_override is None:
-                # Backward-compat for older hook implementations that use
-                # the original key name.
-                control_override = ctx.pop("__control_override__", None)
-
-            if control_override is not None:
-                # Resolve the override route to a branch label.  First
-                # try the action name itself (e.g. "abort",
-                # "force_proceed"); if that is not in the vocabulary, fall
-                # back to "override"; otherwise execute the decision body
-                # normally so the program does not silently misroute.
-                override_label: str | None = control_override
-                if instr.branches and control_override not in instr.branches:
-                    override_label = (
-                        "override" if "override" in instr.branches else None
-                    )
-
-                if override_label is not None:
-                    # Build a synthetic result carrying the override
-                    # metadata.  The decision body is intentionally
-                    # **not** called — this is the control-override
-                    # short-circuit.
-                    result: Any = {"__override_route__": control_override}
-                    result = _hooks.on_step_end(instr, ctx, result)
-                    label: str = override_label
+                resume_cursor_data = read_native_cursor(artifact_root)
+            except NativeCursorCorruptError as exc:
+                raise NativeRuntimeError(
+                    f"Cannot resume native pipeline from corrupt cursor at "
+                    f"{exc.cursor_path or Path(artifact_root) / 'resume_cursor.json'}: "
+                    f"{exc.detail}"
+                ) from exc
+            # A missing cursor or graph-owned cursor is explicit: native resume starts
+            # from pc 0 only when there is no valid native cursor to restore.
+            if resume_cursor_data is not None:
+                raw_composite = resume_cursor_data.get("composite")
+                if (
+                    isinstance(raw_composite, dict)
+                    and raw_composite.get("kind") == "parent_child"
+                ):
+                    composite_resume = raw_composite
+                    parent_frame = raw_composite["parent"]
+                    start_pc = parent_frame["pc"]
+                    stages = list(parent_frame.get("stages", []))
+                    loops = dict(parent_frame.get("loops", {}))
+                    frames = dict(parent_frame.get("frames", {}))
+                    restored_state = dict(parent_frame.get("state", {}))
+                    restored_state.update(initial_state or {})
+                    state = restored_state
+                    saved_envelope = parent_frame.get("envelope")
+                    if saved_envelope is not None:
+                        envelope = _deserialize_envelope(saved_envelope)
+                    saved_run_path = parent_frame.get("run_path")
+                    if isinstance(saved_run_path, str) and saved_run_path:
+                        current_run_path = _normalize_run_path(saved_run_path)
+                        trace_run_path = current_run_path
+                    path_stack = _deserialize_path_stack(parent_frame.get("path_stack"))
                 else:
-                    # No matching branch for the override — execute the
-                    # decision body normally.
+                    start_pc = resume_cursor_data["native"]["pc"]
+                    stages = list(resume_cursor_data.get("stages", []))
+                    loops = dict(resume_cursor_data.get("loops", {}))
+                    frames = dict(resume_cursor_data.get("frames", {}))
+                    # Restore working state from cursor if present
+                    saved_state = frames.pop("__state__", None)
+                    if saved_state is not None:
+                        if not isinstance(saved_state, dict):
+                            raise NativeRuntimeError(
+                                "Cannot resume native pipeline from malformed cursor: "
+                                "frames.__state__ must be an object"
+                            )
+                        restored_state = dict(saved_state)
+                        restored_state.update(initial_state or {})
+                        state = restored_state
+                    # Restore envelope from cursor frames if present
+                    saved_envelope = frames.pop("__envelope__", None)
+                    if saved_envelope is not None:
+                        envelope = _deserialize_envelope(saved_envelope)
+                    saved_run_path = resume_cursor_data.get("run_path")
+                    if isinstance(saved_run_path, str) and saved_run_path:
+                        current_run_path = _normalize_run_path(saved_run_path)
+                        trace_run_path = current_run_path
+                    path_stack = _deserialize_path_stack(resume_cursor_data.get("path_stack"))
+                    if isinstance(_hooks, NativeTraceHooks):
+                        resumed_step_path = None
+                        resumed_pc = (
+                            composite_resume["parent"]["pc"]
+                            if composite_resume is not None
+                            else start_pc
+                        )
+                        if 0 <= resumed_pc < len(instructions):
+                            resumed_step_path = _step_path_for_instr(
+                                current_run_path,
+                                instructions[resumed_pc],
+                            )
+                        _hooks.seed_stage_sequence(stages)
+                        _hooks.emit_pipeline_resumed(
+                            reason=(
+                                "child_suspended"
+                                if composite_resume is not None
+                                else "native_resume"
+                            ),
+                            run_path=current_run_path,
+                            step_path=resumed_step_path,
+                            call_site_path=_call_site_path_for_run_path(current_run_path),
+                        )
+
+        # ── resolve cursor_id (stable across suspension/resume) ──────────
+        if override is not None and override_input is not None:
+            raise NativeRuntimeError(
+                "Pass only one of override= or override_input= when resuming a native human gate"
+            )
+        _resume_override_input = override_input if override_input is not None else override
+
+        _cursor_id: str | None = None
+        _human_gate_resume: bool = False
+        if resume_cursor_data is not None:
+            _cursor_id = resume_cursor_data.get("cursor_id")
+            # Detect human-gate resume: native.suspension_kind == "human_gate"
+            _native = resume_cursor_data.get("native", {})
+            if isinstance(_native, dict) and _native.get("suspension_kind") == "human_gate":
+                _human_gate_resume = True
+        if _cursor_id is None:
+            _cursor_id = uuid4().hex
+
+        # ── pre-validate pc ──────────────────────────────────────────────
+        if start_pc < 0 or start_pc >= len(instructions):
+            trace_status = "completed"
+            return NativeExecutionResult(state=state, stages=stages, pc=start_pc, envelope=envelope)
+
+        telemetry_path_str: str | None = None
+        if telemetry_path is not None:
+            telemetry_path_str = str(telemetry_path)
+        if not _active_subpipelines:
+            _active_subpipelines = (program.stable_id or program.name,)
+        parameter_values = _extract_child_inputs(state, program.inputs_schema)
+
+        phase_count = 0
+        pc = start_pc
+        forward_visited: set[int] = set()
+
+        while 0 <= pc < len(instructions):
+            instr = instructions[pc]
+
+            if instr.op == "halt":
+                break
+    
+            elif instr.op == "phase":
+                if instr.func is None:
+                    # Phase with no callable — skip
+                    pc = instr.next_pc if instr.next_pc is not None else pc + 1
+                    continue
+    
+                stage_id = f"{prefix}__{instr.name}__pc{pc}"
+                current_call_site_path = _call_site_path_for_run_path(current_run_path)
+                current_step_path = _step_path_for_instr(current_run_path, instr)
+                _check_cancellation_boundary(
+                    boundary="step_enter",
+                    instr=instr,
+                    state=state,
+                    envelope=envelope,
+                    run_path=current_run_path,
+                    step_path=current_step_path,
+                    call_site_path=current_call_site_path,
+                )
+    
+                max_attempts = _resolve_phase_max_attempts(
+                    instr,
+                    phase_max_attempts,
+                )
+                result: Any = None
+                ctx: dict[str, Any] | None = None
+                for attempt in range(1, max_attempts + 1):
+                    # Build lightweight context (dict-based, no StepContext dependency)
+                    ctx = {
+                        "state": dict(state),
+                        "inputs": dict(state),
+                        "run_path": current_run_path,
+                        "parent_run_path": trace_parent_run_path,
+                        "step_path": current_step_path,
+                        "call_site_path": current_call_site_path,
+                        "attempt": attempt,
+                        "max_attempts": max_attempts,
+                    }
+                    if isinstance(artifact_root, Path):
+                        ctx["artifact_root"] = str(artifact_root)
+                    else:
+                        ctx["artifact_root"] = str(artifact_root)
+
+                    # Include contract_results in context (matching _build_ctx pattern)
+                    contract_results_published = state.get("__contract_results__")
+                    if isinstance(contract_results_published, dict):
+                        ctx["contract_results"] = dict(contract_results_published)
+
+                    # ── Hook: on_step_start (may rewrite ctx) ─────────────
+                    ctx = _hooks.on_step_start(instr, ctx)
+
+                    # Invoke the phase
+                    try:
+                        result = instr.func(ctx)
+                        break
+                    except BaseException as exc:
+                        _hooks.on_step_error(instr, ctx, exc)
+                        if attempt >= max_attempts:
+                            raise
+                assert ctx is not None
+
+                # ── Hook: on_step_end (may rewrite result) ────────────
+                result = _hooks.on_step_end(instr, ctx, result)
+    
+                # ── Callable return normalization (matching graph executor) ──
+                outputs, contract_result = _normalize_phase_result(result, stage_id)
+                state_patch = _extract_state_patch(result)
+    
+                # ── Resolve handoff value for typed enforcement ────────
+                # Graph executor pattern: prefers contract_result, falls back
+                # to outputs[stage.name], then None.
+                handoff_value: Any = None
+                if contract_result is not None:
+                    handoff_value = contract_result
+                elif outputs:
+                    handoff_value = outputs.get(instr.name)
+                if handoff_value is None and outputs:
+                    # Last resort: use the full outputs dict as handoff value
+                    # (matches native runtime's existing behavior for plain dicts)
+                    handoff_value = outputs
+    
+                # ── Typed step-IO handoff enforcement ──────────────────
+                # Runs BEFORE the outputs/state merge so state is unchanged
+                # when an enforce-block fires — matches graph executor behavior.
+                artifact_root_str = str(artifact_root) if not isinstance(artifact_root, str) else artifact_root
+                if handoff_value is not None:
+                    _enforce_native_typed_handoff(
+                        instr=instr,
+                        handoff_value=handoff_value,
+                        instructions=instructions,
+                        artifact_root=artifact_root_str,
+                        schema_registry=schema_registry,
+                        telemetry_path=telemetry_path_str,
+                    )
+    
+                if outputs:
+                    state.update(outputs)
+    
+                # ── Publish contract_result into routing surface ───────
+                # Matches graph executor: ``state["__contract_results__"][stage.name] = contract_result``
+                if contract_result is not None:
+                    published = state.get("__contract_results__")
+                    if not isinstance(published, dict):
+                        published = {}
+                        state["__contract_results__"] = published
+                    published[instr.name] = contract_result
+    
+                # Match the graph executor: StepResult.state_patch is merged
+                # after outputs/contract_result publication and before routing.
+                if state_patch:
+                    state.update(state_patch)
+                    owned_keys = frozenset(owned_keys | frozenset(state_patch.keys()))
+    
+                # ── Hook: merge_state (may rewrite state / owned_keys) ──
+                state, owned_keys = _hooks.merge_state(instr, state, outputs, owned_keys)
+    
+                # ── Envelope accumulation ─────────────────────────────
+                step_envelope: Any = None
+                if hasattr(result, "envelope"):
+                    step_envelope = result.envelope
+                elif isinstance(result, dict):
+                    step_envelope = result.get("envelope")
+                envelope = _hooks.join_envelope(instr, envelope, step_envelope)
+    
+                # A phase can return a suspended ContractResult directly.  Persist a
+                # same-pc cursor and leave completion bookkeeping untouched so resume
+                # re-enters the suspending phase.
+                if _contract_result_is_suspended(contract_result):
+                    _phase_resume_cursor = _contract_resume_cursor(contract_result)
+                    _phase_contract_payload = _serialize_contract_result(contract_result)
+                    _phase_suspension_payload = _serialize_contract_suspension(
+                        contract_result
+                    )
+                    _phase_frames = dict(frames)
+                    _phase_frames["__state__"] = _jsonable_value(dict(state))
+                    if envelope is not None:
+                        _phase_frames["__envelope__"] = _serialize_envelope(envelope)
+                    _phase_extra = {
+                        "suspension_kind": "phase_suspended",
+                        "contract_result": _phase_contract_payload,
+                        "suspension": _phase_suspension_payload,
+                    }
+                    _phase_path_metadata = _cursor_path_metadata(
+                        program=program,
+                        pc=pc,
+                        run_path=current_run_path,
+                        path_stack=path_stack,
+                    )
+                    persist_native_cursor(
+                        artifact_root,
+                        stage=stage_id,
+                        pc=pc,
+                        stages=list(stages),
+                        reentry_stage=stage_id,
+                        loops=dict(loops),
+                        frames=_phase_frames,
+                        resume_cursor=_phase_resume_cursor,
+                        cursor_id=_cursor_id,
+                        stage_reentry_points=_stage_reentry_points_for(stages),
+                        native_extra={"suspension_kind": "phase_suspended"},
+                        **_phase_path_metadata,
+                        **_phase_extra,
+                    )
+                    _phase_cursor = _build_cursor_dict(
+                        stage=stage_id,
+                        pc=pc,
+                        reentry_stage=stage_id,
+                        stages=list(stages),
+                        loops=dict(loops),
+                        frames=_phase_frames,
+                        state=state,
+                        envelope=envelope,
+                        cursor_id=_cursor_id,
+                        resume_cursor=_phase_resume_cursor,
+                        native_extra={"suspension_kind": "phase_suspended"},
+                        extra={**_phase_path_metadata, **_phase_extra},
+                    )
+                    _hooks.on_checkpoint(_phase_cursor, dict(state))
+                    if isinstance(_hooks, NativeTraceHooks):
+                        _hooks.emit_pipeline_suspended(
+                            reason="phase_suspended",
+                            run_path=current_run_path,
+                            step_path=current_step_path,
+                            call_site_path=current_call_site_path,
+                        )
+                    trace_status = "suspended"
+                    return NativeExecutionResult(
+                        state=dict(state),
+                        stages=list(stages),
+                        pc=pc,
+                        suspended=True,
+                        cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
+                        envelope=envelope,
+                    )
+    
+                # ── Hook: should_suspend (terminal exit) ────────────────
+                do_suspend, suspend_reason = _hooks.should_suspend(instr, state, result)
+                if do_suspend:
+                    if _should_emit_stage_complete(instr):
+                        _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
+                    if hasattr(_hooks, "halt_reason"):
+                        _hooks.halt_reason = suspend_reason  # type: ignore[attr-defined]
+                    trace_status = "suspended"
+                    return NativeExecutionResult(
+                        state=dict(state),
+                        stages=list(stages),
+                        pc=pc,
+                        suspended=True,
+                        cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
+                        envelope=envelope,
+                    )
+    
+                # Record completed stage only after successful phase completion
+                stages.append(stage_id)
+                phase_count += 1
+    
+                # Check max_phases limit (check AFTER merging, same as graph executor
+                # which fires terminal exits after step completion)
+                if max_phases is not None and phase_count >= max_phases:
+                    # ── Hook: on_stage_complete before suspension ──────
+                    if _should_emit_stage_complete(instr):
+                        _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
+                    # Advance pc to the next instruction for the resume point
+                    next_pc = instr.next_pc if instr.next_pc is not None else pc + 1
+                    reentry_stage = _reentry_stage_for_pc(program, next_pc)
+                    _suspension_path_metadata = _cursor_path_metadata(
+                        program=program,
+                        pc=next_pc,
+                        run_path=current_run_path,
+                        path_stack=path_stack,
+                    )
+                    _persist_suspension(
+                        artifact_root=artifact_root,
+                        program=program,
+                        stage=stage_id,
+                        pc=next_pc,
+                        reentry_stage=reentry_stage,
+                        stages=stages,
+                        loops=loops,
+                        frames=frames,
+                        state=state,
+                        envelope=envelope,
+                        cursor_id=_cursor_id,
+                        path_metadata=_suspension_path_metadata,
+                    )
+                    # ── Hook: on_checkpoint (after cursor persistence) ──
+                    _cursor = _build_cursor_dict(
+                        stage=stage_id,
+                        pc=next_pc,
+                        reentry_stage=reentry_stage,
+                        stages=list(stages),
+                        loops=dict(loops),
+                        frames=dict(frames),
+                        state=state,
+                        envelope=envelope,
+                        cursor_id=_cursor_id,
+                        extra=_suspension_path_metadata,
+                    )
+                    _hooks.on_checkpoint(_cursor, dict(state))
+                    if isinstance(_hooks, NativeTraceHooks):
+                        _hooks.emit_pipeline_suspended(
+                            reason="max_phases",
+                            run_path=current_run_path,
+                            step_path=_cursor.get("step_path"),
+                            call_site_path=current_call_site_path,
+                        )
+                    trace_status = "suspended"
+                    return NativeExecutionResult(
+                        state=dict(state),
+                        stages=list(stages),
+                        pc=next_pc,
+                        suspended=True,
+                        cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
+                        envelope=envelope,
+                    )
+    
+                # ── Hook: on_stage_complete (normal completion) ────────
+                if _should_emit_stage_complete(instr):
+                    _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
+                _check_cancellation_boundary(
+                    boundary="step_exit",
+                    instr=instr,
+                    state=state,
+                    envelope=envelope,
+                    run_path=current_run_path,
+                    step_path=current_step_path,
+                    call_site_path=current_call_site_path,
+                )
+
+                # Advance to next instruction
+                pc = instr.next_pc if instr.next_pc is not None else pc + 1
+                forward_visited.clear()
+    
+            elif instr.op == "decision":
+                if instr.func is None:
+                    # No callable — can't route; halt
+                    break
+    
+                # ── Human-gate detection ──────────────────────────────
+                # Inspect the decision callable's dunder attributes (set by
+                # @decision(human_gate=True, ...)) to determine if this is a
+                # human-gate suspension point BEFORE building context or
+                # calling the decision body.
+                _is_human_gate = bool(getattr(instr.func, "__decision_human_gate__", False))
+    
+                # ── Human-gate: initial suspension ────────────────────
+                if _is_human_gate and not _human_gate_resume:
+                    _hg_artifact_stage = str(getattr(instr.func, "__decision_artifact_stage__", "") or "")
+                    _hg_choices = tuple(getattr(instr.func, "__decision_choices__", ()) or ())
+                    _hg_resume_schema = getattr(instr.func, "__decision_resume_input_schema__", None)
+                    _hg_override_routes = getattr(instr.func, "__decision_override_routes__", None)
+                    _hg_name = getattr(instr.func, "__decision_name__", instr.name)
+                    _hg_artifact_stage_for_checkpoint = (
+                        _hg_artifact_stage if _hg_artifact_stage else _hg_name
+                    )
+    
+                    # Write awaiting_user.json via the neutral checkpoint helper.
+                    from arnold.pipeline.steps.human_gate import (
+                        make_human_suspension,
+                        write_human_gate_checkpoint,
+                    )
+                    from arnold.pipeline.types import ContractResult, ContractStatus
+    
+                    _checkpoint_path = Path(artifact_root) / "awaiting_user.json"
+                    _resume_cursor_payload: dict[str, Any] = {
+                        "phase": _hg_name,
+                        "retry_strategy": "awaiting_user",
+                        "kind": "awaiting_user",
+                    }
+                    if _hg_choices:
+                        _resume_cursor_payload["choices"] = list(_hg_choices)
+                    _resume_cursor = json.dumps(_resume_cursor_payload, sort_keys=True)
+                    _checkpoint = write_human_gate_checkpoint(
+                        _checkpoint_path,
+                        pipeline=program.name,
+                        version=NATIVE_CURSOR_VERSION,
+                        artifact_stage=_hg_artifact_stage_for_checkpoint,
+                        stage=_hg_name,
+                        choices=list(_hg_choices),
+                        resume_input_schema=_hg_resume_schema
+                        if isinstance(_hg_resume_schema, dict)
+                        else None,
+                        artifact_path=_resolve_native_human_gate_artifact_path(
+                            artifact_root,
+                            _hg_artifact_stage_for_checkpoint,
+                        ),
+                        message=(
+                            f"Pipeline '{program.name}' paused at human-gate "
+                            f"'{_hg_name}'.  Review the artifact and choose: "
+                            f"{', '.join(_hg_choices)}"
+                        ),
+                    )
+    
+                    # Construct the typed HumanSuspension envelope.
+                    _suspension = make_human_suspension(
+                        _checkpoint,
+                        resume_cursor=_resume_cursor,
+                    )
+                    _contract_result = ContractResult(
+                        status=ContractStatus.SUSPENDED,
+                        suspension=_suspension,
+                        payload={
+                            "source": "awaiting_user.json",
+                            "awaiting_user": dict(_checkpoint),
+                        },
+                    )
+    
+                    # Build a stage-like identifier for the cursor.
+                    _hg_stage_id = f"{_safe_name(program.name)}__{_hg_name}__pc{pc}"
+    
+                    # ── Persist cursor with graph-compatible top-level fields
+                    # plus additive native restoration metadata.
+                    _hg_cursor_extra: dict[str, Any] = {
+                        "suspension_kind": "human_gate",
+                        "artifact_stage": _hg_artifact_stage_for_checkpoint,
+                        "choices": list(_hg_choices),
+                        "contract_result": _contract_result.to_json(),
+                        "suspension": _suspension.to_json(),
+                    }
+                    if isinstance(_hg_resume_schema, dict):
+                        _hg_cursor_extra["resume_input_schema"] = _hg_resume_schema
+                    if isinstance(_hg_override_routes, dict):
+                        _hg_cursor_extra["override_routes"] = dict(_hg_override_routes)
+    
+                    _pause_state = dict(state)
+                    _pause_state.update(
+                        {
+                            "_pipeline_paused": True,
+                            "_pipeline_paused_stage": _hg_name,
+                            "awaiting_user": str(_checkpoint_path),
+                        }
+                    )
+    
+                    # Mark loop frames with state for resume restoration.
+                    _hg_frames = dict(frames)
+                    _hg_frames["__state__"] = dict(_pause_state)
+                    if envelope is not None:
+                        _hg_frames["__envelope__"] = _serialize_envelope(envelope)
+    
+                    # Build stage_reentry_points from completed stages.
+                    _hg_stage_reentry = _stage_reentry_points_for(stages)
+                    _hg_path_metadata = _cursor_path_metadata(
+                        program=program,
+                        pc=pc,
+                        run_path=current_run_path,
+                        path_stack=path_stack,
+                    )
+    
+                    persist_native_cursor(
+                        artifact_root,
+                        stage=_hg_stage_id,
+                        pc=pc,
+                        stages=list(stages),
+                        reentry_stage=_hg_stage_id,
+                        loops=dict(loops),
+                        frames=_hg_frames,
+                        resume_cursor=_resume_cursor,
+                        cursor_id=_cursor_id,
+                        stage_reentry_points=_hg_stage_reentry,
+                        native_extra={"suspension_kind": "human_gate"},
+                        **_hg_path_metadata,
+                        **_hg_cursor_extra,
+                    )
+    
+                    # ── Hook: on_checkpoint (after cursor persistence) ──
+                    _hg_cursor = _build_cursor_dict(
+                        stage=_hg_stage_id,
+                        pc=pc,
+                        reentry_stage=_hg_stage_id,
+                        stages=list(stages),
+                        loops=dict(loops),
+                        frames=_hg_frames,
+                        state=_pause_state,
+                        envelope=envelope,
+                        cursor_id=_cursor_id,
+                        resume_cursor=_resume_cursor,
+                        native_extra={"suspension_kind": "human_gate"},
+                        extra={**_hg_path_metadata, **_hg_cursor_extra},
+                    )
+                    _hooks.on_checkpoint(_hg_cursor, dict(_pause_state))
+                    if isinstance(_hooks, NativeTraceHooks):
+                        _hooks.emit_pipeline_suspended(
+                            reason="human_gate",
+                            run_path=current_run_path,
+                            step_path=_hg_cursor.get("step_path"),
+                            call_site_path=_call_site_path_for_run_path(current_run_path),
+                        )
+
+                    trace_status = "suspended"
+                    return NativeExecutionResult(
+                        state=dict(_pause_state),
+                        stages=list(stages),
+                        pc=pc,
+                        suspended=True,
+                        cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
+                        envelope=envelope,
+                    )
+    
+                # ── Human-gate: resume routing ────────────────────────
+                if _is_human_gate and _human_gate_resume:
+                    from arnold.pipeline.steps.human_gate import (
+                        read_human_gate_checkpoint,
+                    )
+    
+                    _hg_checkpoint_path = Path(artifact_root) / "awaiting_user.json"
+                    _hg_checkpoint = read_human_gate_checkpoint(_hg_checkpoint_path) or {}
+                    _resume_selection = _select_native_human_gate_resume_label(
+                        human_input=human_input,
+                        override_input=_resume_override_input,
+                        checkpoint=_hg_checkpoint,
+                    )
+                    if _resume_selection is not None:
+                        _resume_source, _resume_label = _resume_selection
+                        _hg_choices = _native_human_gate_choices(
+                            cursor=resume_cursor_data,
+                            func=instr.func,
+                        )
+                        _hg_override_routes = _native_human_gate_override_routes(
+                            cursor=resume_cursor_data,
+                            func=instr.func,
+                        )
+                        target_pc = _resolve_native_human_gate_target_pc(
+                            instr=instr,
+                            instructions=instructions,
+                            label=_resume_label,
+                            source=_resume_source,
+                            choices=_hg_choices,
+                            override_routes=_hg_override_routes,
+                        )
+                        if target_pc is not None and not (0 <= target_pc < len(instructions)):
+                            raise NativeRuntimeError(
+                                f"Native human-gate decision '{instr.name}' accepted "
+                                f"label {_resume_label!r}, but its target pc "
+                                f"{target_pc!r} is outside the program"
+                            )
+    
+                        # Clean up the checkpoint only after validating and
+                        # accepting the label.  A failed unlink is treated as
+                        # a failed resume so stale choices cannot be replayed.
+                        if _hg_checkpoint_path.exists():
+                            try:
+                                _hg_checkpoint_path.unlink()
+                            except OSError as exc:
+                                raise NativeRuntimeError(
+                                    "Accepted native human-gate resume label "
+                                    f"{_resume_label!r}, but could not clear "
+                                    f"{_hg_checkpoint_path}: {exc}"
+                                ) from exc
+                        _hg_cursor_path = Path(artifact_root) / "resume_cursor.json"
+                        if _hg_cursor_path.exists():
+                            try:
+                                _hg_cursor_path.unlink()
+                            except OSError as exc:
+                                raise NativeRuntimeError(
+                                    "Accepted native human-gate resume label "
+                                    f"{_resume_label!r}, but could not clear "
+                                    f"{_hg_cursor_path}: {exc}"
+                                ) from exc
+    
+                        state.pop("_pipeline_paused", None)
+                        state.pop("_pipeline_paused_stage", None)
+                        state.pop("awaiting_user", None)
+                        _human_gate_resume = False
+    
+                        if target_pc is not None:
+                            _maybe_count_loop_iteration(
+                                instr=instr,
+                                label=_resume_label,
+                                target_pc=target_pc,
+                                program=program,
+                                loops=loops,
+                                run_path=current_run_path,
+                            )
+                            if _is_loop_body_entry(instr, target_pc, program):
+                                iteration_segment = _loop_iteration_segment(
+                                    instr,
+                                    program,
+                                    loops,
+                                    current_run_path,
+                                )
+                                loop_parent_run_path = current_run_path
+                                path_stack.append(
+                                    _PathFrame(
+                                        segment=iteration_segment,
+                                        parent_run_path=current_run_path,
+                                        kind="loop",
+                                        header_pc=instr.pc,
+                                    )
+                                )
+                                current_run_path = _append_run_path_segments(
+                                    current_run_path,
+                                    iteration_segment,
+                                )
+                                iteration = _loop_iteration_count(
+                                    instr=instr,
+                                    program=program,
+                                    loops=loops,
+                                    run_path=loop_parent_run_path,
+                                )
+                                do_halt, halt_reason = _hooks.should_halt_loop(
+                                    instr,
+                                    state,
+                                    iteration,
+                                )
+                                if do_halt:
+                                    if _should_emit_stage_complete(instr):
+                                        _hooks.on_stage_complete(
+                                            instr,
+                                            {},
+                                            _resume_label,
+                                            state,
+                                            owned_keys,
+                                        )
+                                    if hasattr(_hooks, "halt_reason"):
+                                        _hooks.halt_reason = halt_reason  # type: ignore[attr-defined]
+                                    return NativeExecutionResult(
+                                        state=dict(state),
+                                        stages=list(stages),
+                                        pc=pc,
+                                        envelope=envelope,
+                                    )
+    
+                        if _should_emit_stage_complete(instr):
+                            _hooks.on_stage_complete(
+                                instr,
+                                {},
+                                (
+                                    {"__override_route__": _resume_label}
+                                    if _resume_source == "override"
+                                    else _resume_label
+                                ),
+                                state,
+                                owned_keys,
+                            )
+    
+                        _hg_stage_id = f"{_safe_name(program.name)}__{instr.name}__pc{pc}"
+                        stages.append(_hg_stage_id)
+                        if target_pc is None:
+                            break
+                        pc = target_pc
+                        forward_visited.clear()
+                        continue
+    
+                    # No valid persisted choice yet: remain suspended and keep
+                    # both durable files intact for a later process to resume.
+                    return NativeExecutionResult(
+                        state=dict(state),
+                        stages=list(stages),
+                        pc=pc,
+                        suspended=True,
+                        cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
+                        envelope=envelope,
+                    )
+    
+                ctx: dict[str, Any] = {
+                    "state": dict(state),
+                    "inputs": dict(state),
+                    "run_path": current_run_path,
+                    "parent_run_path": trace_parent_run_path,
+                    "step_path": _step_path_for_instr(current_run_path, instr),
+                    "call_site_path": _call_site_path_for_run_path(current_run_path),
+                }
+                if isinstance(artifact_root, Path):
+                    ctx["artifact_root"] = str(artifact_root)
+                else:
+                    ctx["artifact_root"] = str(artifact_root)
+    
+                # ── Hook: on_step_start (may rewrite ctx) ─────────────
+                ctx = _hooks.on_step_start(instr, ctx)
+    
+                # ── Control override short-circuit ──────────────────────
+                # When a hook (e.g. MegaplanNativeRuntimeHooks) resolves a
+                # catalog-driven control override, the context will carry
+                # ``__override_route__``.  Skip the decision body and route
+                # directly.  Priority: halt > override > decision > normal.
+                control_override: str | None = ctx.pop("__override_route__", None)
+                if control_override is None:
+                    # Backward-compat for older hook implementations that use
+                    # the original key name.
+                    control_override = ctx.pop("__control_override__", None)
+    
+                if control_override is not None:
+                    # Resolve the override route to a branch label.  First
+                    # try the action name itself (e.g. "abort",
+                    # "force_proceed"); if that is not in the vocabulary, fall
+                    # back to "override"; otherwise execute the decision body
+                    # normally so the program does not silently misroute.
+                    override_label: str | None = control_override
+                    if instr.branches and control_override not in instr.branches:
+                        override_label = (
+                            "override" if "override" in instr.branches else None
+                        )
+    
+                    if override_label is not None:
+                        # Build a synthetic result carrying the override
+                        # metadata.  The decision body is intentionally
+                        # **not** called — this is the control-override
+                        # short-circuit.
+                        result: Any = {"__override_route__": control_override}
+                        result = _hooks.on_step_end(instr, ctx, result)
+                        label: str = override_label
+                    else:
+                        # No matching branch for the override — execute the
+                        # decision body normally.
+                        try:
+                            result = instr.func(ctx)
+                        except BaseException as exc:
+                            _hooks.on_step_error(instr, ctx, exc)
+                            raise
+                        result = _hooks.on_step_end(instr, ctx, result)
+                        label = _resolve_decision_label(result)
+                else:
+                    # ── Normal decision execution (no override) ──────────
                     try:
                         result = instr.func(ctx)
                     except BaseException as exc:
                         _hooks.on_step_error(instr, ctx, exc)
                         raise
+    
+                    # ── Hook: on_step_end (may rewrite result) ────────────
                     result = _hooks.on_step_end(instr, ctx, result)
+    
+                    # Resolve branch label
                     label = _resolve_decision_label(result)
-            else:
-                # ── Normal decision execution (no override) ──────────
-                try:
-                    result = instr.func(ctx)
-                except BaseException as exc:
-                    _hooks.on_step_error(instr, ctx, exc)
-                    raise
-
-                # ── Hook: on_step_end (may rewrite result) ────────────
-                result = _hooks.on_step_end(instr, ctx, result)
-
-                # Resolve branch label
-                label = _resolve_decision_label(result)
-
-            # ── Envelope accumulation for decisions ───────────────
-            step_envelope: Any = None
-            if hasattr(result, "envelope"):
-                step_envelope = result.envelope
-            elif isinstance(result, dict):
-                step_envelope = result.get("envelope")
-            envelope = _hooks.join_envelope(instr, envelope, step_envelope)
-
-            # ── Validate decision return value against declared vocabulary ──
-            if instr.branches and label not in instr.branches:
-                raise NativeRuntimeError(
-                    f"Decision '{instr.name}' returned label {label!r} "
-                    f"which is not in its declared vocabulary: "
-                    f"{sorted(instr.branches.keys())}"
+    
+                # ── Envelope accumulation for decisions ───────────────
+                step_envelope: Any = None
+                if hasattr(result, "envelope"):
+                    step_envelope = result.envelope
+                elif isinstance(result, dict):
+                    step_envelope = result.get("envelope")
+                envelope = _hooks.join_envelope(instr, envelope, step_envelope)
+    
+                # ── Validate decision return value against declared vocabulary ──
+                if instr.branches and label not in instr.branches:
+                    raise NativeRuntimeError(
+                        f"Decision '{instr.name}' returned label {label!r} "
+                        f"which is not in its declared vocabulary: "
+                        f"{sorted(instr.branches.keys())}"
+                    )
+    
+                target_pc = instr.branches.get(label) if instr.branches else None
+    
+                if target_pc is not None and 0 <= target_pc < len(instructions):
+                    # ── Track loop iteration for loop guard decisions ──────
+                    _maybe_count_loop_iteration(
+                        instr=instr,
+                        label=label,
+                        target_pc=target_pc,
+                        program=program,
+                        loops=loops,
+                        run_path=current_run_path,
+                    )
+    
+                    # ── Hook: should_halt_loop (before loop body) ──────────
+                    # Fire when the decision is a loop guard routing to its body
+                    if _is_loop_body_entry(instr, target_pc, program):
+                        iteration_segment = _loop_iteration_segment(
+                            instr,
+                            program,
+                            loops,
+                            current_run_path,
+                        )
+                        loop_parent_run_path = current_run_path
+                        path_stack.append(
+                            _PathFrame(
+                                segment=iteration_segment,
+                                parent_run_path=current_run_path,
+                                kind="loop",
+                                header_pc=instr.pc,
+                            )
+                        )
+                        current_run_path = _append_run_path_segments(
+                            current_run_path,
+                            iteration_segment,
+                        )
+                        iteration = _loop_iteration_count(
+                            instr=instr,
+                            program=program,
+                            loops=loops,
+                            run_path=loop_parent_run_path,
+                        )
+                        do_halt, halt_reason = _hooks.should_halt_loop(instr, state, iteration)
+                        if do_halt:
+                            if _should_emit_stage_complete(instr):
+                                _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
+                            if hasattr(_hooks, "halt_reason"):
+                                _hooks.halt_reason = halt_reason  # type: ignore[attr-defined]
+                            trace_status = "completed"
+                            return NativeExecutionResult(
+                                state=dict(state),
+                                stages=list(stages),
+                                pc=pc,
+                                envelope=envelope,
+                            )
+    
+                    # ── Hook: on_stage_complete (normal decision completion) ──
+                    if _should_emit_stage_complete(instr):
+                        _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
+    
+                    pc = target_pc
+                    forward_visited.clear()
+                else:
+                    # No valid branch — halt
+                    break
+    
+            elif instr.op == "jump":
+                next_pc = instr.next_pc if instr.next_pc is not None else pc + 1
+                # Detect forward progress stall
+                if next_pc == pc:
+                    break
+                if (
+                    next_pc <= pc
+                    and path_stack
+                    and path_stack[-1].kind == "loop"
+                    and next_pc == path_stack[-1].header_pc
+                ):
+                    frame = path_stack.pop()
+                    current_run_path = frame.parent_run_path
+                # Back-edge detection: if next_pc <= pc, this is a loop back-edge,
+                # so clear the forward_visited set to allow revisiting.
+                if next_pc <= pc:
+                    forward_visited.clear()
+                elif next_pc in forward_visited:
+                    # Forward jump to an already visited pc → possible infinite loop
+                    break
+                forward_visited.add(pc)
+                pc = next_pc
+    
+            elif instr.op == "parallel":
+                # M5a: parallel blocks are compiled into sequential branch
+                # instructions after this marker.  The marker itself is a
+                # no-op at runtime; future milestones may add true fan-out.
+                pc = instr.next_pc if instr.next_pc is not None else pc + 1
+                continue
+    
+            elif instr.op == "parallel_map":
+                parallel_block = getattr(instr, "subprogram", None)
+                if parallel_block is None:
+                    pc = instr.next_pc if instr.next_pc is not None else pc + 1
+                    forward_visited.clear()
+                    continue
+    
+                items = _resolve_parallel_map_items(
+                    items_ref=parallel_block.items_ref,
+                    state=state,
+                    parameter_values=parameter_values,
                 )
+                mapper_results: list[Any] = []
+                mapper_envelope: Any = None
+                resume_from_index = 0
+                composite_child_root: Path | None = None
+                composite_child_index: int | None = None
+                mapper = parallel_block.mapper
+                if mapper is None:
+                    raise NativeRuntimeError(
+                        f"parallel_map {parallel_block.name or instr.name!r} has no mapper"
+                    )
+                compiled_mapper_program: NativeProgram | None = None
+                if not getattr(mapper, "__phase__", False):
+                    from arnold.pipeline.native.compiler import compile_pipeline
 
-            target_pc = instr.branches.get(label) if instr.branches else None
-
-            if target_pc is not None and 0 <= target_pc < len(instructions):
-                # ── Track loop iteration for loop guard decisions ──────
-                _maybe_count_loop_iteration(
-                    instr=instr,
-                    label=label,
-                    target_pc=target_pc,
-                    program=program,
-                    loops=loops,
+                    compiled_mapper_program = compile_pipeline(mapper)
+                parallel_map_path = _append_run_path_segments(
+                    current_run_path,
+                    *instr.call_site_path,
                 )
+                if isinstance(_hooks, NativeTraceHooks):
+                    _hooks.on_parallel_map_enter(
+                        instr,
+                        run_path=current_run_path,
+                        path=parallel_map_path,
+                        parent_run_path=trace_parent_run_path,
+                        call_site_path=tuple(
+                            _normalize_call_site_segments(
+                                (*_call_site_path_for_run_path(current_run_path), *instr.call_site_path)
+                            )
+                        ),
+                    )
 
-                # ── Hook: should_halt_loop (before loop body) ──────────
-                # Fire when the decision is a loop guard routing to its body
-                if _is_loop_body_entry(instr, target_pc, program):
-                    iteration = loops.get(instr.name, 0)
-                    do_halt, halt_reason = _hooks.should_halt_loop(instr, state, iteration)
-                    if do_halt:
-                        if _should_emit_stage_complete(instr):
-                            _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
-                        if hasattr(_hooks, "halt_reason"):
-                            _hooks.halt_reason = halt_reason  # type: ignore[attr-defined]
-                        return NativeExecutionResult(
-                            state=dict(state),
-                            stages=list(stages),
-                            pc=pc,
+                for index, item in enumerate(items):
+                    item_coordinate = _parallel_map_item_coordinate(
+                        path_template=parallel_block.path_template,
+                        item=item,
+                        index=index,
+                        items_ref=parallel_block.items_ref,
+                    )
+                    item_path = _normalize_call_site_segments(
+                        (*_call_site_path_for_run_path(current_run_path), *instr.call_site_path, item_coordinate)
+                    )
+                    item_run_path = _append_run_path_segments(current_run_path, *instr.call_site_path, item_coordinate)
+                    item_state = _parallel_map_item_state(
+                        state,
+                        item=item,
+                        index=index,
+                        items_ref=parallel_block.items_ref,
+                        item_path=item_path,
+                    )
+                    if composite_resume is not None and index == 0:
+                        target_child_root = _composite_resume_child_root(
+                            artifact_root=artifact_root,
+                            composite=composite_resume,
+                            parent_pc=pc,
+                            child_run_path=item_run_path,
+                        )
+                        if target_child_root is None:
+                            raw_child = composite_resume.get("child")
+                            if isinstance(raw_child, Mapping):
+                                raw_run_path = raw_child.get("run_path")
+                                if isinstance(raw_run_path, str):
+                                    raw_segments = _path_segments_from_run_path(raw_run_path)
+                                    current_segments = _path_segments_from_run_path(
+                                        current_run_path
+                                    )
+                                    if raw_segments[: len(current_segments)] == current_segments:
+                                        for candidate_index, candidate_item in enumerate(items):
+                                            candidate_coordinate = _parallel_map_item_coordinate(
+                                                path_template=parallel_block.path_template,
+                                                item=candidate_item,
+                                                index=candidate_index,
+                                                items_ref=parallel_block.items_ref,
+                                            )
+                                            candidate_run_path = _append_run_path_segments(
+                                                current_run_path,
+                                                *instr.call_site_path,
+                                                candidate_coordinate,
+                                            )
+                                            target_child_root = _composite_resume_child_root(
+                                                artifact_root=artifact_root,
+                                                composite=composite_resume,
+                                                parent_pc=pc,
+                                                child_run_path=candidate_run_path,
+                                            )
+                                            if target_child_root is not None:
+                                                composite_child_index = candidate_index
+                                                break
+                        else:
+                            composite_child_index = index
+                        if target_child_root is not None:
+                            (
+                                mapper_results,
+                                mapper_envelope,
+                                resume_from_index,
+                            ) = _restore_parallel_map_progress(frames, pc=pc)
+                            composite_child_root = target_child_root
+                    if index < resume_from_index:
+                        continue
+
+                    if getattr(mapper, "__phase__", False):
+                        mapper_instr = NativeInstruction(
+                            pc=instr.pc,
+                            op="phase",
+                            name=parallel_block.mapper_name
+                            or getattr(mapper, "__name__", "mapper"),
+                            func=mapper,
+                        )
+                        ctx = {
+                            "state": dict(item_state),
+                            "inputs": dict(item_state),
+                            "artifact_root": str(artifact_root),
+                            "item": item,
+                            "item_index": index,
+                            "run_path": item_run_path,
+                            "parent_run_path": current_run_path,
+                            "step_path": _append_run_path_segments(
+                                item_run_path,
+                                _validate_path_segment(
+                                    parallel_block.mapper_name
+                                    or getattr(mapper, "__name__", "mapper")
+                                ),
+                            ),
+                            "call_site_path": item_path,
+                        }
+                        if isinstance(_hooks, NativeTraceHooks):
+                            _hooks.trace_only_step_start(mapper_instr, ctx)
+                        try:
+                            result = mapper(ctx)
+                        except BaseException as exc:
+                            if isinstance(_hooks, NativeTraceHooks):
+                                _hooks.trace_only_step_error(mapper_instr, ctx, exc)
+                            raise
+                        if isinstance(_hooks, NativeTraceHooks):
+                            _hooks.trace_only_step_end(mapper_instr, ctx)
+                        outputs, _ = _normalize_phase_result(result, parallel_block.name or instr.name)
+                        item_result = dict(outputs)
+                        item_result.update(_extract_state_patch(result))
+                        mapper_envelope = _hooks.join_envelope(
+                            instr,
+                            mapper_envelope,
+                            getattr(result, "envelope", None),
+                        )
+                        if isinstance(_hooks, NativeTraceHooks):
+                            _hooks.trace_only_stage_complete(mapper_instr, ctx)
+                    else:
+                        assert compiled_mapper_program is not None
+                        child_program = compiled_mapper_program
+                        child_name = getattr(child_program, "name", getattr(mapper, "__name__", "item"))
+                        child_identity = child_program.stable_id or child_program.name
+                        if child_identity in _active_subpipelines:
+                            cycle = " -> ".join((*_active_subpipelines, child_identity))
+                            raise NativeRuntimeError(
+                                f"Runtime subpipeline cycle detected: {cycle}"
+                            )
+                        if _subpipeline_depth >= _MAX_SUBPIPELINE_DEPTH:
+                            raise NativeRuntimeError(
+                                "Runtime subpipeline depth exceeded "
+                                f"{_MAX_SUBPIPELINE_DEPTH} at {child_identity}"
+                            )
+                        child_artifact_root = (
+                            composite_child_root.parent
+                            if composite_child_root is not None
+                            and index == composite_child_index
+                            else Path(artifact_root)
+                            / f"_child_{child_name}"
+                            / _safe_name(item_coordinate)
+                        )
+                        child_artifact_root.mkdir(parents=True, exist_ok=True)
+                        child_initial_state = _extract_child_inputs(
+                            item_state,
+                            child_program.inputs_schema,
+                        )
+                        resume_child = (
+                            composite_child_root is not None
+                            and index == composite_child_index
+                        )
+                        _check_cancellation_boundary(
+                            boundary="child_enter",
+                            instr=instr,
+                            state=item_state,
                             envelope=envelope,
+                            run_path=item_run_path,
+                            step_path=item_path,
+                            call_site_path=(parallel_block.name or instr.name or "parallel_map", item_coordinate),
+                        )
+                        child_result = run_native_pipeline(
+                            program=child_program,
+                            artifact_root=child_artifact_root,
+                            initial_state=child_initial_state,
+                            max_phases=None,
+                            resume=resume_child,
+                            human_input=human_input if resume_child else None,
+                            override_input=_resume_override_input if resume_child else None,
+                            hooks=_hooks,
+                            trace_dir=None,
+                            schema_registry=schema_registry,
+                            telemetry_path=telemetry_path,
+                            initial_envelope=envelope,
+                            run_path=item_run_path,
+                            phase_max_attempts=phase_max_attempts,
+                            _subpipeline_depth=_subpipeline_depth + 1,
+                            _active_subpipelines=(
+                                *_active_subpipelines,
+                                child_identity,
+                            ),
+                            _parent_run_path=current_run_path,
+                            _trace_run_kind="parallel_map_item",
+                        )
+                        _check_cancellation_boundary(
+                            boundary="child_exit",
+                            instr=instr,
+                            state=child_result.state,
+                            envelope=child_result.envelope,
+                            run_path=item_run_path,
+                            step_path=item_path,
+                            call_site_path=(parallel_block.name or instr.name or "parallel_map", item_coordinate),
+                        )
+                        if child_result.suspended:
+                            _child_cursor = _persist_parent_child_entry_cursor(
+                                artifact_root=artifact_root,
+                                child_artifact_root=child_artifact_root,
+                                program=program,
+                                instr=instr,
+                                pc=pc,
+                                current_run_path=current_run_path,
+                                child_run_path=item_run_path,
+                                path_stack=path_stack,
+                                stages=stages,
+                                loops=loops,
+                                frames=frames,
+                                state=state,
+                                envelope=envelope,
+                                cursor_id=_cursor_id,
+                                suspension_kind="child_suspended",
+                                parent_frame_extra={
+                                    _parallel_map_progress_key(pc): {
+                                        "completed_results": _jsonable_value(
+                                            list(mapper_results)
+                                        ),
+                                        "mapper_envelope": _serialize_envelope(
+                                            mapper_envelope
+                                        )
+                                        if mapper_envelope is not None
+                                        else None,
+                                        "next_index": index,
+                                    }
+                                },
+                            )
+                            _hooks.on_checkpoint(_child_cursor, dict(state))
+                            if isinstance(_hooks, NativeTraceHooks):
+                                _hooks.emit_pipeline_suspended(
+                                    reason="child_suspended",
+                                    run_path=current_run_path,
+                                    step_path=_child_cursor.get("step_path"),
+                                    call_site_path=_child_cursor.get("call_site_path") or (),
+                                )
+                            trace_status = "suspended"
+                            return NativeExecutionResult(
+                                state=dict(state),
+                                stages=list(stages),
+                                pc=pc,
+                                suspended=True,
+                                cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
+                                envelope=envelope,
+                            )
+                        item_result = _extract_child_outputs(
+                            child_result.state,
+                            child_program.outputs_schema,
+                            {},
+                        )
+                        mapper_envelope = _hooks.join_envelope(
+                            instr,
+                            mapper_envelope,
+                            child_result.envelope,
                         )
 
-                # ── Hook: on_stage_complete (normal decision completion) ──
-                if _should_emit_stage_complete(instr):
-                    _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
+                    mapper_results.append(item_result)
 
-                pc = target_pc
-                forward_visited.clear()
-            else:
-                # No valid branch — halt
-                break
-
-        elif instr.op == "jump":
-            next_pc = instr.next_pc if instr.next_pc is not None else pc + 1
-            # Detect forward progress stall
-            if next_pc == pc:
-                break
-            # Back-edge detection: if next_pc <= pc, this is a loop back-edge,
-            # so clear the forward_visited set to allow revisiting.
-            if next_pc <= pc:
-                forward_visited.clear()
-            elif next_pc in forward_visited:
-                # Forward jump to an already visited pc → possible infinite loop
-                break
-            forward_visited.add(pc)
-            pc = next_pc
-
-        elif instr.op == "parallel":
-            # M5a: parallel blocks are compiled into sequential branch
-            # instructions after this marker.  The marker itself is a
-            # no-op at runtime; future milestones may add true fan-out.
-            pc = instr.next_pc if instr.next_pc is not None else pc + 1
-            continue
-
-        elif instr.op == "parallel_map":
-            parallel_block = getattr(instr, "subprogram", None)
-            if parallel_block is None:
-                pc = instr.next_pc if instr.next_pc is not None else pc + 1
-                forward_visited.clear()
-                continue
-
-            items = _resolve_parallel_map_items(
-                items_ref=parallel_block.items_ref,
-                state=state,
-                parameter_values=parameter_values,
-            )
-            mapper_results: list[Any] = []
-            mapper_envelope: Any = None
-            mapper = parallel_block.mapper
-            if mapper is None:
-                raise NativeRuntimeError(
-                    f"parallel_map {parallel_block.name or instr.name!r} has no mapper"
-                )
-            compiled_mapper_program: NativeProgram | None = None
-            if not getattr(mapper, "__phase__", False):
-                from arnold.pipeline.native.compiler import compile_pipeline
-
-                compiled_mapper_program = compile_pipeline(mapper)
-
-            for index, item in enumerate(items):
-                item_coordinate = _parallel_map_item_coordinate(
-                    path_template=parallel_block.path_template,
-                    item=item,
-                    index=index,
-                    items_ref=parallel_block.items_ref,
-                )
-                item_path = (*instr.call_site_path, item_coordinate)
-                item_state = _parallel_map_item_state(
-                    state,
-                    item=item,
-                    index=index,
-                    items_ref=parallel_block.items_ref,
-                    item_path=item_path,
-                )
-
-                if getattr(mapper, "__phase__", False):
-                    ctx = {
-                        "state": dict(item_state),
-                        "inputs": dict(item_state),
-                        "artifact_root": str(artifact_root),
-                        "item": item,
-                        "item_index": index,
-                        "call_site_path": item_path,
-                    }
-                    result = mapper(ctx)
-                    outputs, _ = _normalize_phase_result(result, parallel_block.name or instr.name)
-                    item_result = dict(outputs)
-                    item_result.update(_extract_state_patch(result))
+                if parallel_block.reducer is not None:
+                    reducer_result = parallel_block.reducer(mapper_results)
+                    outputs, _ = _normalize_phase_result(
+                        reducer_result,
+                        parallel_block.name or instr.name,
+                    )
+                    state_patch = _extract_state_patch(reducer_result)
+                    parallel_outputs = dict(outputs)
+                    parallel_outputs.update(state_patch)
                     mapper_envelope = _hooks.join_envelope(
                         instr,
                         mapper_envelope,
-                        getattr(result, "envelope", None),
+                        getattr(reducer_result, "envelope", None),
                     )
                 else:
-                    assert compiled_mapper_program is not None
-                    child_program = compiled_mapper_program
-                    child_name = getattr(child_program, "name", getattr(mapper, "__name__", "item"))
+                    parallel_outputs = {instr.name: mapper_results}
+    
+                state.update(parallel_outputs)
+                state, owned_keys = _hooks.merge_state(
+                    instr,
+                    state,
+                    parallel_outputs,
+                    owned_keys,
+                )
+                envelope = _hooks.join_envelope(instr, envelope, mapper_envelope)
+                if isinstance(_hooks, NativeTraceHooks):
+                    _hooks.on_parallel_map_exit(
+                        instr,
+                        run_path=current_run_path,
+                        path=parallel_map_path,
+                    )
+                pc = instr.next_pc if instr.next_pc is not None else pc + 1
+                forward_visited.clear()
+                continue
+    
+            elif instr.op == "subpipeline":
+                child_program = getattr(instr, 'subprogram', None)
+                if child_program is not None:
+                    child_name = instr.name or "child"
                     child_identity = child_program.stable_id or child_program.name
+    
                     if child_identity in _active_subpipelines:
                         cycle = " -> ".join((*_active_subpipelines, child_identity))
-                        raise NativeRuntimeError(
-                            f"Runtime subpipeline cycle detected: {cycle}"
-                        )
+                        raise NativeRuntimeError(f"Runtime subpipeline cycle detected: {cycle}")
                     if _subpipeline_depth >= _MAX_SUBPIPELINE_DEPTH:
                         raise NativeRuntimeError(
                             "Runtime subpipeline depth exceeded "
                             f"{_MAX_SUBPIPELINE_DEPTH} at {child_identity}"
                         )
-                    child_artifact_root = Path(artifact_root) / f"_child_{child_name}" / _safe_name(
-                        item_coordinate
+    
+                    # ── Isolate artifact root ──────────────────────────
+                    child_artifact_root = _child_artifact_root(
+                        artifact_root,
+                        child_name=child_name,
+                        call_site_path=instr.call_site_path,
                     )
+                    child_run_path = _append_run_path_segments(
+                        current_run_path,
+                        *instr.call_site_path,
+                    )
+                    composite_child_cursor = _composite_resume_child_root(
+                        artifact_root=artifact_root,
+                        composite=composite_resume,
+                        parent_pc=pc,
+                        child_run_path=child_run_path,
+                    )
+                    if composite_child_cursor is not None:
+                        child_artifact_root = composite_child_cursor.parent
                     child_artifact_root.mkdir(parents=True, exist_ok=True)
-                    child_initial_state = _extract_child_inputs(item_state, child_program.inputs_schema)
+    
+                    # ── Schema-filter child inputs from parent state ───
+                    child_initial_state = _extract_child_inputs(
+                        state,
+                        child_program.inputs_schema,
+                    )
+
+                    if composite_child_cursor is None:
+                        _child_entry_cursor = _persist_parent_child_entry_cursor(
+                            artifact_root=artifact_root,
+                            child_artifact_root=child_artifact_root,
+                            program=program,
+                            instr=instr,
+                            pc=pc,
+                            current_run_path=current_run_path,
+                            child_run_path=child_run_path,
+                            path_stack=path_stack,
+                            stages=stages,
+                            loops=loops,
+                            frames=frames,
+                            state=state,
+                            envelope=envelope,
+                            cursor_id=_cursor_id,
+                        )
+                        _hooks.on_checkpoint(_child_entry_cursor, dict(state))
+                        _check_cancellation_boundary(
+                            boundary="child_enter",
+                            instr=instr,
+                            state=state,
+                            envelope=envelope,
+                            run_path=child_run_path,
+                            step_path=_step_path_for_instr(current_run_path, instr),
+                            call_site_path=tuple(instr.call_site_path),
+                        )
+
+                    # ── Execute child subpipeline ───────────────────────
                     child_result = run_native_pipeline(
                         program=child_program,
                         artifact_root=child_artifact_root,
                         initial_state=child_initial_state,
                         max_phases=None,
-                        resume=False,
-                        hooks=hooks,
+                        resume=composite_child_cursor is not None,
+                        human_input=human_input
+                        if composite_child_cursor is not None
+                        else None,
+                        override_input=_resume_override_input
+                        if composite_child_cursor is not None
+                        else None,
+                        hooks=_hooks,
                         schema_registry=schema_registry,
                         telemetry_path=telemetry_path,
                         initial_envelope=envelope,
                         trace_dir=None,
+                        run_path=child_run_path,
+                        phase_max_attempts=phase_max_attempts,
                         _subpipeline_depth=_subpipeline_depth + 1,
                         _active_subpipelines=(*_active_subpipelines, child_identity),
+                        _parent_run_path=current_run_path,
+                        _trace_run_kind="subpipeline",
                     )
-                    item_result = _extract_child_outputs(
+                    _check_cancellation_boundary(
+                        boundary="child_exit",
+                        instr=instr,
+                        state=child_result.state,
+                        envelope=child_result.envelope,
+                        run_path=child_run_path,
+                        step_path=_step_path_for_instr(current_run_path, instr),
+                        call_site_path=tuple(instr.call_site_path),
+                    )
+
+                    if child_result.suspended:
+                        _child_suspended_cursor = _persist_parent_child_entry_cursor(
+                            artifact_root=artifact_root,
+                            child_artifact_root=child_artifact_root,
+                            program=program,
+                            instr=instr,
+                            pc=pc,
+                            current_run_path=current_run_path,
+                            child_run_path=child_run_path,
+                            path_stack=path_stack,
+                            stages=stages,
+                            loops=loops,
+                            frames=frames,
+                            state=state,
+                            envelope=envelope,
+                            cursor_id=_cursor_id,
+                            suspension_kind="child_suspended",
+                        )
+                        _hooks.on_checkpoint(_child_suspended_cursor, dict(state))
+                        if isinstance(_hooks, NativeTraceHooks):
+                            _hooks.emit_pipeline_suspended(
+                                reason="child_suspended",
+                                run_path=current_run_path,
+                                step_path=_child_suspended_cursor.get("step_path"),
+                                call_site_path=_child_suspended_cursor.get("call_site_path")
+                                or (),
+                            )
+                        trace_status = "suspended"
+                        return NativeExecutionResult(
+                            state=dict(state),
+                            stages=list(stages),
+                            pc=pc,
+                            suspended=True,
+                            cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
+                            envelope=envelope,
+                        )
+
+                    _clear_parent_child_entry_cursor(
+                        artifact_root=artifact_root,
+                        child_artifact_root=child_artifact_root,
+                        pc=pc,
+                    )
+
+                    # ── Merge declared child outputs back into parent state ─
+                    child_outputs = _extract_child_outputs(
                         child_result.state,
                         child_program.outputs_schema,
-                        {},
+                        getattr(instr, "output_bindings", {}),
                     )
-                    mapper_envelope = _hooks.join_envelope(
-                        instr,
-                        mapper_envelope,
-                        child_result.envelope,
+                    state.update(child_outputs)
+                    state, owned_keys = _hooks.merge_state(
+                        instr, state, child_outputs, owned_keys,
                     )
-
-                mapper_results.append(item_result)
-
-            if parallel_block.reducer is not None:
-                reducer_result = parallel_block.reducer(mapper_results)
-                outputs, _ = _normalize_phase_result(
-                    reducer_result,
-                    parallel_block.name or instr.name,
-                )
-                state_patch = _extract_state_patch(reducer_result)
-                parallel_outputs = dict(outputs)
-                parallel_outputs.update(state_patch)
-                mapper_envelope = _hooks.join_envelope(
-                    instr,
-                    mapper_envelope,
-                    getattr(reducer_result, "envelope", None),
-                )
+    
+                    # ── Join child envelope ────────────────────────────
+                    envelope = _hooks.join_envelope(
+                        instr, envelope, child_result.envelope,
+                    )
+    
+                    # ── Advance pc ──────────────────────────────────────
+                    pc = instr.next_pc if instr.next_pc is not None else pc + 1
+                    forward_visited.clear()
+                else:
+                    # No child program attached — skip
+                    pc = instr.next_pc if instr.next_pc is not None else pc + 1
+                    forward_visited.clear()
+    
             else:
-                parallel_outputs = {instr.name: mapper_results}
+                # Unknown op — treat as no-op and advance
+                pc += 1
+    
+        # ── Hook: on_checkpoint (clean completion) ────────────────────────
+        _clean_cursor = _build_cursor_dict(
+            stage=stages[-1] if stages else "",
+            pc=pc,
+            reentry_stage=_reentry_stage_for_pc(program, pc),
+            stages=list(stages),
+            loops=dict(loops),
+            frames=dict(frames),
+            state=state,
+            envelope=envelope,
+            final=True,
+            cursor_id=_cursor_id,
+            extra=_cursor_path_metadata(
+                program=program,
+                pc=pc,
+                run_path=current_run_path,
+                path_stack=path_stack,
+            ),
+        )
+        _hooks.on_checkpoint(_clean_cursor, dict(state))
 
-            state.update(parallel_outputs)
-            state, owned_keys = _hooks.merge_state(
-                instr,
-                state,
-                parallel_outputs,
-                owned_keys,
-            )
-            envelope = _hooks.join_envelope(instr, envelope, mapper_envelope)
-            pc = instr.next_pc if instr.next_pc is not None else pc + 1
-            forward_visited.clear()
-            continue
-
-        elif instr.op == "subpipeline":
-            child_program = getattr(instr, 'subprogram', None)
-            if child_program is not None:
-                child_name = instr.name or "child"
-                child_identity = child_program.stable_id or child_program.name
-
-                if child_identity in _active_subpipelines:
-                    cycle = " -> ".join((*_active_subpipelines, child_identity))
-                    raise NativeRuntimeError(f"Runtime subpipeline cycle detected: {cycle}")
-                if _subpipeline_depth >= _MAX_SUBPIPELINE_DEPTH:
-                    raise NativeRuntimeError(
-                        "Runtime subpipeline depth exceeded "
-                        f"{_MAX_SUBPIPELINE_DEPTH} at {child_identity}"
-                    )
-
-                # ── Isolate artifact root ──────────────────────────
-                child_artifact_root = Path(artifact_root) / f"_child_{child_name}"
-                child_artifact_root.mkdir(parents=True, exist_ok=True)
-
-                # ── Schema-filter child inputs from parent state ───
-                child_initial_state = _extract_child_inputs(
-                    state,
-                    child_program.inputs_schema,
-                )
-
-                # ── Execute child subpipeline ───────────────────────
-                child_result = run_native_pipeline(
-                    program=child_program,
-                    artifact_root=child_artifact_root,
-                    initial_state=child_initial_state,
-                    max_phases=None,
-                    resume=False,
-                    hooks=hooks,
-                    schema_registry=schema_registry,
-                    telemetry_path=telemetry_path,
-                    initial_envelope=envelope,
-                    trace_dir=None,
-                    _subpipeline_depth=_subpipeline_depth + 1,
-                    _active_subpipelines=(*_active_subpipelines, child_identity),
-                )
-
-                # ── Merge declared child outputs back into parent state ─
-                child_outputs = _extract_child_outputs(
-                    child_result.state,
-                    child_program.outputs_schema,
-                    getattr(instr, "output_bindings", {}),
-                )
-                state.update(child_outputs)
-                state, owned_keys = _hooks.merge_state(
-                    instr, state, child_outputs, owned_keys,
-                )
-
-                # ── Join child envelope ────────────────────────────
-                envelope = _hooks.join_envelope(
-                    instr, envelope, child_result.envelope,
-                )
-
-                # ── Advance pc ──────────────────────────────────────
-                pc = instr.next_pc if instr.next_pc is not None else pc + 1
-                forward_visited.clear()
-            else:
-                # No child program attached — skip
-                pc = instr.next_pc if instr.next_pc is not None else pc + 1
-                forward_visited.clear()
-
-        else:
-            # Unknown op — treat as no-op and advance
-            pc += 1
-
-    # ── Hook: on_checkpoint (clean completion) ────────────────────────
-    _clean_cursor = _build_cursor_dict(
-        stage=stages[-1] if stages else "",
-        pc=pc,
-        reentry_stage=_reentry_stage_for_pc(program, pc),
-        stages=list(stages),
-        loops=dict(loops),
-        frames=dict(frames),
-        state=state,
-        envelope=envelope,
-        final=True,
-        cursor_id=_cursor_id,
-    )
-    _hooks.on_checkpoint(_clean_cursor, dict(state))
-
-    return NativeExecutionResult(state=state, stages=stages, pc=pc, envelope=envelope)
+        trace_status = "completed"
+        return NativeExecutionResult(state=state, stages=stages, pc=pc, envelope=envelope)
+    finally:
+        if isinstance(_hooks, NativeTraceHooks):
+            _hooks.on_run_exit(program, run_path=trace_run_path, status=trace_status)
 
 
 # ── helpers ───────────────────────────────────────────────────────────
@@ -1619,6 +2415,7 @@ def _maybe_count_loop_iteration(
     target_pc: int,
     program: NativeProgram,
     loops: dict[str, int],
+    run_path: str,
 ) -> None:
     """Increment the loop counter when a loop-guard decision enters its body.
 
@@ -1633,7 +2430,16 @@ def _maybe_count_loop_iteration(
             # Body branch has the smallest target PC.
             body_pc = min(instr.branches.values())
             if target_pc == body_pc:
-                loops[instr.name] = loops.get(instr.name, 0) + 1
+                scoped_key = _loop_counter_key(
+                    instr=instr,
+                    program=program,
+                    run_path=run_path,
+                )
+                current = loops.get(scoped_key)
+                if not isinstance(current, int):
+                    legacy = loops.pop(instr.name, None)
+                    current = legacy if isinstance(legacy, int) else 0
+                loops[scoped_key] = current + 1
             break
 
 
@@ -1652,6 +2458,23 @@ def _is_loop_body_entry(
             body_pc = min(instr.branches.values())
             return target_pc == body_pc
     return False
+
+
+def _loop_iteration_segment(
+    instr: NativeInstruction,
+    program: NativeProgram,
+    loops: Mapping[str, int],
+    run_path: str,
+) -> str:
+    """Return the stable path segment for the active loop iteration."""
+    loop_identity = _loop_identity(instr, program)
+    iteration = _loop_iteration_count(
+        instr=instr,
+        program=program,
+        loops=loops,
+        run_path=run_path,
+    )
+    return _validate_path_segment(f"{loop_identity}[{iteration}]")
 
 
 def _stage_reentry_points_for(stages: list[str]) -> dict[str, Any]:
@@ -1745,6 +2568,210 @@ def _build_cursor_dict(
     return cursor
 
 
+def _child_artifact_root(
+    artifact_root: str | Path,
+    *,
+    child_name: str,
+    call_site_path: Iterable[Any],
+) -> Path:
+    segments = _normalize_call_site_segments(call_site_path)
+    if not segments:
+        segments = (_safe_name(child_name),)
+    child_dir = "_child_" + "_".join(_safe_name(segment) for segment in segments)
+    return Path(artifact_root) / child_dir
+
+
+def _child_cursor_path_for_parent(
+    artifact_root: str | Path,
+    child_artifact_root: Path,
+) -> str:
+    child_cursor_path = child_artifact_root / "resume_cursor.json"
+    try:
+        return child_cursor_path.relative_to(Path(artifact_root)).as_posix()
+    except ValueError:
+        return child_cursor_path.as_posix()
+
+
+def _composite_resume_child_root(
+    *,
+    artifact_root: str | Path,
+    composite: Mapping[str, Any] | None,
+    parent_pc: int,
+    child_run_path: str,
+) -> Path | None:
+    if not isinstance(composite, Mapping):
+        return None
+    parent = composite.get("parent")
+    child = composite.get("child")
+    if not isinstance(parent, Mapping) or not isinstance(child, Mapping):
+        return None
+    if parent.get("pc") != parent_pc:
+        return None
+    saved_child_run_path = child.get("run_path")
+    if (
+        isinstance(saved_child_run_path, str)
+        and _normalize_run_path(saved_child_run_path) != _normalize_run_path(child_run_path)
+    ):
+        return None
+    cursor_path = child.get("cursor_path")
+    if not isinstance(cursor_path, str) or not cursor_path:
+        return None
+    return Path(artifact_root) / cursor_path
+
+
+def _parallel_map_progress_key(pc: int) -> str:
+    return f"__parallel_map_progress_pc_{pc}__"
+
+
+def _restore_parallel_map_progress(
+    frames: dict[str, Any],
+    *,
+    pc: int,
+) -> tuple[list[Any], Any, int]:
+    raw_progress = frames.pop(_parallel_map_progress_key(pc), None)
+    if not isinstance(raw_progress, Mapping):
+        return [], None, 0
+    raw_results = raw_progress.get("completed_results")
+    completed_results = list(raw_results) if isinstance(raw_results, list) else []
+    raw_next_index = raw_progress.get("next_index")
+    next_index = raw_next_index if isinstance(raw_next_index, int) else len(completed_results)
+    if next_index < 0:
+        next_index = 0
+    raw_envelope = raw_progress.get("mapper_envelope")
+    mapper_envelope = (
+        _deserialize_envelope(raw_envelope) if raw_envelope is not None else None
+    )
+    return completed_results, mapper_envelope, next_index
+
+
+def _persist_parent_child_entry_cursor(
+    *,
+    artifact_root: str | Path,
+    child_artifact_root: Path,
+    program: NativeProgram,
+    instr: NativeInstruction,
+    pc: int,
+    current_run_path: str,
+    child_run_path: str,
+    path_stack: list[_PathFrame],
+    stages: list[str],
+    loops: dict[str, int],
+    frames: dict[str, Any],
+    state: dict[str, Any],
+    envelope: Any,
+    cursor_id: str | None,
+    suspension_kind: str | None = None,
+    parent_frame_extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    stage_id = f"{_safe_name(program.name)}__{instr.name}__pc{pc}"
+    parent_frames = dict(frames)
+    if parent_frame_extra:
+        parent_frames.update(dict(parent_frame_extra))
+    frames_with_state = dict(frames)
+    frames_with_state["__state__"] = _jsonable_value(dict(state))
+    if envelope is not None:
+        frames_with_state["__envelope__"] = _serialize_envelope(envelope)
+    path_metadata = _cursor_path_metadata(
+        program=program,
+        pc=pc,
+        run_path=current_run_path,
+        path_stack=path_stack,
+    )
+    composite = {
+        "kind": "parent_child",
+        "parent": {
+            "pc": pc,
+            "run_path": current_run_path,
+            "path_stack": _serialize_path_stack(path_stack),
+            "state": _jsonable_value(dict(state)),
+            "stages": list(stages),
+            "loops": dict(loops),
+            "frames": _jsonable_value(parent_frames),
+            "envelope": _serialize_envelope(envelope) if envelope is not None else None,
+            "cursor_id": cursor_id,
+        },
+        "child": {
+            "cursor_path": _child_cursor_path_for_parent(
+                artifact_root,
+                child_artifact_root,
+            ),
+            "run_path": child_run_path,
+            "call_site_path": list(_call_site_path_for_run_path(child_run_path)),
+        },
+    }
+
+    native_extra = (
+        {"suspension_kind": suspension_kind}
+        if suspension_kind is not None
+        else None
+    )
+    extra: dict[str, Any] = {**path_metadata, "composite": composite}
+    if suspension_kind is not None:
+        extra["suspension_kind"] = suspension_kind
+
+    persist_native_cursor(
+        artifact_root,
+        stage=stage_id,
+        pc=pc,
+        stages=list(stages),
+        reentry_stage=stage_id,
+        loops=dict(loops),
+        frames=frames_with_state,
+        cursor_id=cursor_id,
+        stage_reentry_points=_stage_reentry_points_for(stages),
+        native_extra=native_extra,
+        **extra,
+    )
+    return _build_cursor_dict(
+        stage=stage_id,
+        pc=pc,
+        reentry_stage=stage_id,
+        stages=list(stages),
+        loops=dict(loops),
+        frames=frames_with_state,
+        state=state,
+        envelope=envelope,
+        cursor_id=cursor_id,
+        native_extra=native_extra,
+        extra=extra,
+    )
+
+
+def _clear_parent_child_entry_cursor(
+    *,
+    artifact_root: str | Path,
+    child_artifact_root: Path,
+    pc: int,
+) -> None:
+    cursor_path = Path(artifact_root) / "resume_cursor.json"
+    if not cursor_path.exists():
+        return
+    try:
+        payload = json.loads(cursor_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(payload, dict):
+        return
+    native = payload.get("native")
+    composite = payload.get("composite")
+    if not isinstance(native, dict) or native.get("pc") != pc:
+        return
+    if not isinstance(composite, dict) or composite.get("kind") != "parent_child":
+        return
+    child = composite.get("child")
+    if not isinstance(child, dict):
+        return
+    if child.get("cursor_path") != _child_cursor_path_for_parent(
+        artifact_root,
+        child_artifact_root,
+    ):
+        return
+    try:
+        cursor_path.unlink()
+    except OSError:
+        return
+
+
 def _reentry_stage_for_pc(program: NativeProgram, pc: int) -> str | None:
     """Return the stable native stage identifier for *pc*, following jumps."""
     instructions = program.instructions
@@ -1769,6 +2796,7 @@ def _reentry_stage_for_pc(program: NativeProgram, pc: int) -> str | None:
 def _persist_suspension(
     *,
     artifact_root: str | Path,
+    program: NativeProgram,
     stage: str,
     pc: int,
     reentry_stage: str | None,
@@ -1778,6 +2806,7 @@ def _persist_suspension(
     state: dict[str, Any],
     envelope: Any = None,
     cursor_id: str | None = None,
+    path_metadata: Mapping[str, Any] | None = None,
 ) -> None:
     """Persist a resume cursor at the suspension point.
 
@@ -1812,6 +2841,12 @@ def _persist_suspension(
             frames=frames_with_state,
             cursor_id=cursor_id,
             stage_reentry_points=stage_reentry_points,
+            **dict(path_metadata or _cursor_path_metadata(
+                program=program,
+                pc=pc,
+                run_path=ROOT_PATH,
+                path_stack=[],
+            )),
         )
     except Exception:
         # Best-effort: if persist fails, execution result still carries

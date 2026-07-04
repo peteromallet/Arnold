@@ -8,240 +8,226 @@
     "nodes": [
       "prep",
       "plan",
-      "critique",
+      "critique-fanout",
       "gate",
       "finalize",
-      "execute",
-      "review",
+      "execute-batches",
+      "review-fan-in",
       "halt",
+      "review_revise",
+      "review_halt",
       "revise",
-      "critique",
-      "revise",
-      "critique",
-      "tiebreaker_run",
-      "tiebreaker_decide",
-      "critique",
-      "finalize",
-      "execute",
+      "tiebreaker",
+      "tiebreaker_finalize",
+      "tiebreaker-execute-batches",
+      "tiebreaker_override",
       "override",
-      "override",
-      "halt",
-      "finalize",
-      "execute",
-      "revise",
-      "halt",
-      "halt",
-      "override",
-      "finalize",
-      "execute"
+      "override_halt",
+      "override_finalize",
+      "override_execute",
+      "override_revise",
+      "override_unknown",
+      "gate_abort",
+      "gate_suspend",
+      "blocked_override",
+      "force_finalize",
+      "force_execute",
+      "fallback_finalize",
+      "fallback_execute"
     ],
     "routes": [
       {
+        "id": "prep-plan",
         "source": "prep",
         "target": "plan",
-        "id": "prep-plan",
         "metadata": {
           "source_form": "function"
         }
       },
       {
+        "id": "plan-critique-fanout",
         "source": "plan",
-        "target": "critique",
-        "id": "plan-critique",
+        "target": "critique-fanout",
         "metadata": {
           "source_form": "function"
         }
       },
       {
-        "source": "critique",
+        "id": "critique-fanout-gate",
+        "source": "critique-fanout",
         "target": "gate",
-        "id": "critique-gate",
         "metadata": {
           "source_form": "function"
         }
       },
       {
+        "id": "gate-finalize",
         "source": "gate",
         "target": "finalize",
-        "id": "gate-finalize",
         "label": "proceed",
-        "condition_ref": "gate.gate_payload.eq.proceed",
+        "condition_ref": "gate.gate_route_signal.eq.proceed",
         "metadata": {
           "source_form": "function"
         }
       },
       {
-        "source": "gate",
-        "target": "revise",
         "id": "gate-revise",
-        "label": "iterate",
-        "condition_ref": "gate.gate_payload.eq.iterate",
-        "metadata": {
-          "source_form": "function"
-        }
-      },
-      {
         "source": "gate",
-        "target": "tiebreaker_run",
-        "id": "gate-tiebreaker_run",
-        "label": "tiebreaker",
-        "condition_ref": "gate.gate_payload.eq.tiebreaker",
-        "metadata": {
-          "source_form": "function"
-        }
-      },
-      {
-        "source": "gate",
-        "target": "override",
-        "id": "gate-override",
-        "label": "escalate",
-        "condition_ref": "gate.gate_payload.eq.escalate",
-        "metadata": {
-          "source_form": "function"
-        }
-      },
-      {
-        "source": "gate",
-        "target": "halt",
-        "id": "gate-halt",
-        "label": "abort",
-        "condition_ref": "gate.gate_payload.eq.abort",
-        "metadata": {
-          "source_form": "function"
-        }
-      },
-      {
-        "source": "gate",
-        "target": "halt",
-        "id": "gate-halt",
-        "label": "suspend",
-        "condition_ref": "gate.gate_payload.eq.suspend",
-        "metadata": {
-          "source_form": "function"
-        }
-      },
-      {
-        "source": "gate",
-        "target": "override",
-        "id": "gate-override",
-        "label": "blocked_preflight",
-        "condition_ref": "gate.gate_payload.eq.blocked_preflight",
-        "metadata": {
-          "source_form": "function"
-        }
-      },
-      {
-        "source": "gate",
-        "target": "finalize",
-        "id": "gate-finalize",
-        "label": "else",
-        "condition_ref": "gate.gate_payload.else",
-        "metadata": {
-          "source_form": "function"
-        }
-      },
-      {
-        "source": "finalize",
-        "target": "execute",
-        "id": "finalize-execute",
-        "metadata": {
-          "source_form": "function"
-        }
-      },
-      {
-        "source": "execute",
-        "target": "review",
-        "id": "execute-review",
-        "metadata": {
-          "source_form": "function"
-        }
-      },
-      {
-        "source": "review",
-        "target": "halt",
-        "id": "review-halt",
-        "label": "pass",
-        "condition_ref": "review.review_payload.eq.pass",
-        "metadata": {
-          "source_form": "function"
-        }
-      },
-      {
-        "source": "review",
         "target": "revise",
-        "id": "review-revise",
-        "label": "else",
-        "condition_ref": "review.review_payload.else",
-        "metadata": {
-          "source_form": "function"
-        }
-      },
-      {
-        "source": "revise",
-        "target": "critique",
-        "id": "revise-critique",
-        "metadata": {
-          "source_form": "function"
-        }
-      },
-      {
-        "source": "revise",
-        "target": "critique",
-        "id": "revise-critique",
-        "metadata": {
-          "source_form": "function"
-        }
-      },
-      {
-        "source": "tiebreaker_run",
-        "target": "tiebreaker_decide",
-        "id": "tiebreaker_run-tiebreaker_decide",
-        "metadata": {
-          "source_form": "function"
-        }
-      },
-      {
-        "source": "tiebreaker_decide",
-        "target": "critique",
-        "id": "tiebreaker_decide-critique",
         "label": "iterate",
-        "condition_ref": "tiebreaker_decide.decision.eq.iterate",
+        "condition_ref": "gate.gate_route_signal.eq.iterate",
         "metadata": {
           "source_form": "function"
         }
       },
       {
-        "source": "tiebreaker_decide",
-        "target": "finalize",
-        "id": "tiebreaker_decide-finalize",
-        "label": "proceed",
-        "condition_ref": "tiebreaker_decide.decision.eq.proceed",
+        "id": "gate-tiebreaker",
+        "source": "gate",
+        "target": "tiebreaker",
+        "label": "tiebreaker",
+        "condition_ref": "gate.gate_route_signal.eq.tiebreaker",
         "metadata": {
           "source_form": "function"
         }
       },
       {
-        "source": "tiebreaker_decide",
+        "id": "gate-override",
+        "source": "gate",
         "target": "override",
-        "id": "tiebreaker_decide-override",
+        "label": "escalate",
+        "condition_ref": "gate.gate_route_signal.eq.escalate",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "gate-gate_abort",
+        "source": "gate",
+        "target": "gate_abort",
+        "label": "abort",
+        "condition_ref": "gate.gate_route_signal.eq.abort",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "gate-gate_suspend",
+        "source": "gate",
+        "target": "gate_suspend",
+        "label": "suspend",
+        "condition_ref": "gate.gate_route_signal.eq.suspend",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "gate-blocked_override",
+        "source": "gate",
+        "target": "blocked_override",
+        "label": "blocked_preflight",
+        "condition_ref": "gate.gate_route_signal.eq.blocked_preflight",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "gate-force_finalize",
+        "source": "gate",
+        "target": "force_finalize",
+        "label": "force_proceed",
+        "condition_ref": "gate.gate_route_signal.eq.force_proceed",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "gate-fallback_finalize",
+        "source": "gate",
+        "target": "fallback_finalize",
         "label": "else",
-        "condition_ref": "tiebreaker_decide.decision.else",
+        "condition_ref": "gate.gate_route_signal.else",
         "metadata": {
           "source_form": "function"
         }
       },
       {
+        "id": "finalize-execute-batches",
         "source": "finalize",
-        "target": "execute",
-        "id": "finalize-execute",
+        "target": "execute-batches",
         "metadata": {
           "source_form": "function"
         }
       },
       {
-        "source": "override",
+        "id": "execute-batches-review-fan-in",
+        "source": "execute-batches",
+        "target": "review-fan-in",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "review-fan-in-halt",
+        "source": "review-fan-in",
         "target": "halt",
-        "id": "override-halt",
+        "label": "pass",
+        "condition_ref": "review-fan-in.review_route_signal.eq.pass",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "review-fan-in-review_revise",
+        "source": "review-fan-in",
+        "target": "review_revise",
+        "label": "rework",
+        "condition_ref": "review-fan-in.review_route_signal.eq.rework",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "review-fan-in-review_halt",
+        "source": "review-fan-in",
+        "target": "review_halt",
+        "label": "else",
+        "condition_ref": "review-fan-in.review_route_signal.else",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker-tiebreaker_finalize",
+        "source": "tiebreaker",
+        "target": "tiebreaker_finalize",
+        "label": "proceed",
+        "condition_ref": "tiebreaker.decision.eq.proceed",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker-tiebreaker_override",
+        "source": "tiebreaker",
+        "target": "tiebreaker_override",
+        "label": "escalate",
+        "condition_ref": "tiebreaker.decision.eq.escalate",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_finalize-tiebreaker-execute-batches",
+        "source": "tiebreaker_finalize",
+        "target": "tiebreaker-execute-batches",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "override-override_halt",
+        "source": "override",
+        "target": "override_halt",
         "label": "abort",
         "condition_ref": "override.override_result.eq.abort",
         "metadata": {
@@ -249,9 +235,9 @@
         }
       },
       {
+        "id": "override-override_finalize",
         "source": "override",
-        "target": "finalize",
-        "id": "override-finalize",
+        "target": "override_finalize",
         "label": "force_proceed",
         "condition_ref": "override.override_result.eq.force_proceed",
         "metadata": {
@@ -259,9 +245,19 @@
         }
       },
       {
+        "id": "override-override_revise",
         "source": "override",
-        "target": "revise",
-        "id": "override-revise",
+        "target": "override_revise",
+        "label": "replan",
+        "condition_ref": "override.override_result.eq.replan",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "override-override_unknown",
+        "source": "override",
+        "target": "override_unknown",
         "label": "else",
         "condition_ref": "override.override_result.else",
         "metadata": {
@@ -269,127 +265,104 @@
         }
       },
       {
-        "source": "finalize",
-        "target": "execute",
-        "id": "finalize-execute",
+        "id": "override_finalize-override_execute",
+        "source": "override_finalize",
+        "target": "override_execute",
         "metadata": {
           "source_form": "function"
         }
       },
       {
-        "source": "finalize",
-        "target": "execute",
-        "id": "finalize-execute",
+        "id": "force_finalize-force_execute",
+        "source": "force_finalize",
+        "target": "force_execute",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "fallback_finalize-fallback_execute",
+        "source": "fallback_finalize",
+        "target": "fallback_execute",
         "metadata": {
           "source_form": "function"
         }
       }
     ],
-    "workflow_policy": {
-      "timing": {}
-    },
     "step_metadata": {
-      "prep": {
-        "component_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_PREP",
-        "source_form": "function",
-        "terminal": false,
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_prep"
+      "critique-fanout": {
+        "parallel_map": true,
+        "items_ref": "megaplan.policy.critique_lenses",
+        "mapper_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_CRITIQUE_PANEL_WORKFLOW",
+        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_CRITIQUE",
+        "path_template": "critique/{item_id}",
+        "iteration_coordinate": "{item_id}",
+        "call_site_path": "critique-fanout"
       },
-      "plan": {
-        "component_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_PLAN",
-        "source_form": "function",
-        "terminal": false,
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_plan"
+      "execute-batches": {
+        "parallel_map": true,
+        "items_ref": "megaplan.execute.batches",
+        "mapper_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_EXECUTE_BATCH_WORKFLOW",
+        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_EXECUTE",
+        "path_template": "execute/{index}",
+        "iteration_coordinate": "{index}",
+        "call_site_path": "execute-batches"
       },
-      "critique": {
-        "component_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_CRITIQUE",
-        "source_form": "function",
-        "terminal": false,
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_critique"
+      "review-fan-in": {
+        "parallel_map": true,
+        "items_ref": "execute_payload",
+        "mapper_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_REVIEW_PANEL_WORKFLOW",
+        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_REVIEW",
+        "path_template": "review/{item_id}",
+        "iteration_coordinate": "{item_id}",
+        "call_site_path": "review-fan-in"
       },
-      "gate": {
-        "component_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_GATE",
-        "source_form": "function",
-        "terminal": false,
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_gate"
+      "tiebreaker": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_TIEBREAKER_WORKFLOW",
+        "executable_workflow": true,
+        "child_workflow_id": "tiebreaker_child",
+        "call_site_path": "megaplan/tiebreaker",
+        "parent_path": "megaplan",
+        "inputs_schema": [
+          "gate_payload"
+        ],
+        "outputs_schema": [
+          "decision"
+        ]
       },
-      "finalize": {
-        "component_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_FINALIZE",
-        "source_form": "function",
-        "terminal": false,
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_finalize"
-      },
-      "execute": {
-        "component_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_EXECUTE",
-        "source_form": "function",
-        "terminal": false,
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_execute"
-      },
-      "review": {
-        "component_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_REVIEW",
-        "source_form": "function",
-        "terminal": false,
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_review"
-      },
-      "halt": {
-        "component_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_HALT",
-        "source_form": "function",
-        "terminal": true
-      },
-      "revise": {
-        "component_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_REVISE",
-        "source_form": "function",
-        "terminal": false,
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_revise"
-      },
-      "tiebreaker_run": {
-        "component_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_TIEBREAKER_RUN",
-        "source_form": "function",
-        "terminal": false,
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run"
-      },
-      "tiebreaker_decide": {
-        "component_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_TIEBREAKER_DECIDE",
-        "source_form": "function",
-        "terminal": false,
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_decide"
-      },
-      "override": {
-        "component_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_OVERRIDE",
-        "source_form": "function",
-        "terminal": false,
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_override"
+      "tiebreaker-execute-batches": {
+        "parallel_map": true,
+        "items_ref": "megaplan.execute.batches",
+        "mapper_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_EXECUTE_BATCH_WORKFLOW",
+        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_EXECUTE",
+        "path_template": "execute/{index}",
+        "iteration_coordinate": "{index}",
+        "call_site_path": "tiebreaker-execute-batches"
       }
     },
-    "capabilities": {
-      "gate": [
-        {
-          "id": "human:gate",
-          "route": "default",
-          "required": false
-        }
-      ],
-      "review": [
-        {
-          "id": "human:review",
-          "route": "default",
-          "required": false
-        }
-      ],
-      "revise": [
-        {
-          "id": "megaplan:planning",
-          "route": "default",
-          "required": true
-        }
-      ],
-      "tiebreaker_decide": [
-        {
-          "id": "megaplan:planning",
-          "route": "default",
-          "required": true
-        }
-      ]
+    "fanout_policies": {
+      "critique-fanout": {
+        "mode": "dynamic",
+        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_CRITIQUE"
+      },
+      "execute-batches": {
+        "mode": "dynamic",
+        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_EXECUTE"
+      },
+      "review-fan-in": {
+        "mode": "dynamic",
+        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_REVIEW"
+      },
+      "tiebreaker-execute-batches": {
+        "mode": "dynamic",
+        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_EXECUTE"
+      }
+    },
+    "subflows": {
+      "tiebreaker": {
+        "manifest_hash": "sha256:de851fe19389f02de8a1edc5d4b616100c2d40a28fef95de74d0ac0d8798a075",
+        "alias": "tiebreaker_child"
+      }
     }
   },
   "expected_diagnostics": []

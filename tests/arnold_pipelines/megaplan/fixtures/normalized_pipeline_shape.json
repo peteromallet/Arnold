@@ -7,12 +7,44 @@
     "version": "m4-phase3",
     "metadata": {
       "product": "megaplan",
-      "max_critique_iterations": 4
+      "max_critique_iterations": 4,
+      "policy_refs": [
+        "megaplan:default",
+        "megaplan:model-routing",
+        "megaplan:robustness",
+        "megaplan:artifact-contract",
+        "megaplan:suspension"
+      ]
     },
     "policy": {
       "timing": {
         "timeout_seconds": 300.0
-      }
+      },
+      "suspension_routes": [
+        {
+          "route_id": "gate:human",
+          "capability_id": "human:gate"
+        },
+        {
+          "route_id": "review:human",
+          "capability_id": "human:review"
+        },
+        {
+          "route_id": "revise:loop",
+          "capability_id": "megaplan:planning",
+          "reentry_id": "revise:loop"
+        },
+        {
+          "route_id": "tiebreaker:loop",
+          "capability_id": "megaplan:planning",
+          "reentry_id": "tiebreaker:loop"
+        },
+        {
+          "route_id": "execute:resume",
+          "capability_id": "megaplan:planning",
+          "reentry_id": "execute:resume"
+        }
+      ]
     }
   },
   "counts": {
@@ -335,7 +367,11 @@
       "terminal": false,
       "subpipeline": null,
       "metadata": {
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_finalize"
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_finalize",
+        "policy_refs": [
+          "megaplan:default",
+          "megaplan:artifact-contract"
+        ]
       }
     },
     {
@@ -356,13 +392,26 @@
       "policy": {
         "timing": {
           "timeout_seconds": 300.0
-        }
+        },
+        "suspension_routes": [
+          {
+            "route_id": "execute:resume",
+            "capability_id": "megaplan:planning",
+            "reentry_id": "execute:resume"
+          }
+        ]
       },
       "handler_ref": "arnold_pipelines.megaplan.handlers:handle_execute",
       "terminal": false,
       "subpipeline": null,
       "metadata": {
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_execute"
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_execute",
+        "policy_refs": [
+          "megaplan:execute",
+          "megaplan:model-routing",
+          "megaplan:artifact-contract",
+          "megaplan:suspension"
+        ]
       }
     },
     {
@@ -398,6 +447,27 @@
             "trigger_ref": "review.verdict",
             "target_ref": "halt",
             "policy_ref": "megaplan:review"
+          },
+          {
+            "transition_id": "review:blocked",
+            "transition_type": "escalation",
+            "trigger_ref": "review.verdict",
+            "target_ref": "override",
+            "policy_ref": "megaplan:review"
+          },
+          {
+            "transition_id": "review:force_proceeded",
+            "transition_type": "override",
+            "trigger_ref": "review.verdict",
+            "target_ref": "halt",
+            "policy_ref": "megaplan:review"
+          },
+          {
+            "transition_id": "review:deferred_human",
+            "transition_type": "fallback",
+            "trigger_ref": "review.verdict",
+            "target_ref": "halt",
+            "policy_ref": "megaplan:review"
           }
         ],
         "suspension_routes": [
@@ -411,7 +481,12 @@
       "terminal": false,
       "subpipeline": null,
       "metadata": {
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_review"
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_review",
+        "policy_refs": [
+          "megaplan:review",
+          "megaplan:artifact-contract",
+          "megaplan:suspension"
+        ]
       }
     },
     {
@@ -460,7 +535,24 @@
       "terminal": false,
       "subpipeline": null,
       "metadata": {
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_override"
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_override",
+        "policy_refs": [
+          "megaplan:override",
+          "megaplan:model-routing"
+        ],
+        "override_actions": [
+          "abort",
+          "add-note",
+          "adopt-execution",
+          "force-proceed",
+          "recover-blocked",
+          "replan",
+          "resume-clarify",
+          "set-model",
+          "set-profile",
+          "set-robustness",
+          "set-vendor"
+        ]
       }
     }
   ],

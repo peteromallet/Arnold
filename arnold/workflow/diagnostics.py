@@ -65,7 +65,7 @@ class DiagnosticSeverity(StrEnum):
 
 
 class DiagnosticCode(StrEnum):
-    """Stable V1 diagnostic codes for static authoring checks."""
+    """Stable diagnostic codes for static authoring checks."""
 
     INVALID_IMPORT_SOURCE = "AWF001_INVALID_IMPORT_SOURCE"
     UNSUPPORTED_SYNTAX = "AWF002_UNSUPPORTED_SYNTAX"
@@ -90,10 +90,50 @@ class DiagnosticCode(StrEnum):
     LOOP_POLICY_BINDING_MISMATCH = "AWF021_LOOP_POLICY_BINDING_MISMATCH"
     MISSING_PROMPT_DEPENDENCY = "AWF022_MISSING_PROMPT_DEPENDENCY"
     MISSING_RESOURCE_DEPENDENCY = "AWF023_MISSING_RESOURCE_DEPENDENCY"
+    MANUAL_GRAPH_NODES = "AWF200_MANUAL_GRAPH_NODES"
+    MANUAL_PATH_STRINGS = "AWF201_MANUAL_PATH_STRINGS"
+    VALIDATOR_DIRECTIVES = "AWF202_VALIDATOR_DIRECTIVES"
+    DIRECT_MANIFEST_AUTHORING = "AWF203_DIRECT_MANIFEST_AUTHORING"
+    NATIVE_PROGRAM_PROJECTION = "AWF204_NATIVE_PROGRAM_PROJECTION"
+    MEGAPLAN_ONLY_HELPERS = "AWF205_MEGAPLAN_ONLY_HELPERS"
+    TRACE_OBJECT_AUTHORING = "AWF206_TRACE_OBJECT_AUTHORING"
+    DYNAMIC_DISPATCH = "AWF207_DYNAMIC_DISPATCH"
+    SINGLE_HANDLER_WRAPPER = "AWF208_SINGLE_HANDLER_WRAPPER"
+    RUNTIME_TOPOLOGY_MUTATION = "AWF209_RUNTIME_TOPOLOGY_MUTATION"
+    MISSING_PARALLEL_MAP_REDUCER = "AWF210_MISSING_PARALLEL_MAP_REDUCER"
+    INVALID_PARALLEL_MAP_ITEMS = "AWF211_INVALID_PARALLEL_MAP_ITEMS"
+    INVALID_PARALLEL_MAP_PATH_TEMPLATE = "AWF212_INVALID_PARALLEL_MAP_PATH_TEMPLATE"
+    UNDECLARED_LOOP_EXIT = "AWF213_UNDECLARED_LOOP_EXIT"
+    INVALID_LOOP_BOUNDARY = "AWF214_INVALID_LOOP_BOUNDARY"
+    UNDECLARED_POLICY_METADATA = "AWF215_UNDECLARED_POLICY_METADATA"
+    INVALID_POLICY_METADATA = "AWF216_INVALID_POLICY_METADATA"
+    INVALID_WORKFLOW_INVOCATION = "AWF217_INVALID_WORKFLOW_INVOCATION"
+    INVALID_WORKFLOW_REFERENCE = "AWF218_INVALID_WORKFLOW_REFERENCE"
+    INVALID_COMPOSITION_METADATA = "AWF219_INVALID_COMPOSITION_METADATA"
+    MISSING_CALL_SITE_ID = "AWF220_MISSING_CALL_SITE_ID"
+    AMBIGUOUS_CALL_SITE_ID = "AWF221_AMBIGUOUS_CALL_SITE_ID"
+    NON_LITERAL_CALL_SITE_ID = "AWF222_NON_LITERAL_CALL_SITE_ID"
+    DUPLICATE_CALL_SITE_PATH = "AWF223_DUPLICATE_CALL_SITE_PATH"
+    MISSING_ITERATION_COORDINATE = "AWF224_MISSING_ITERATION_COORDINATE"
+    INVALID_ITERATION_COORDINATE = "AWF225_INVALID_ITERATION_COORDINATE"
+    MISSING_ITEM_COORDINATE = "AWF226_MISSING_ITEM_COORDINATE"
+    REPLAY_PATH_MISMATCH = "AWF227_REPLAY_PATH_MISMATCH"
+    INVALID_PARENT_PATH = "AWF228_INVALID_PARENT_PATH"
+    INVALID_CALL_SITE_PATH = "AWF229_INVALID_CALL_SITE_PATH"
+    CHILD_INPUT_SCHEMA_MISMATCH = "AWF230_CHILD_INPUT_SCHEMA_MISMATCH"
+    CHILD_OUTPUT_SCHEMA_MISMATCH = "AWF231_CHILD_OUTPUT_SCHEMA_MISMATCH"
+    PARALLEL_MAP_ITEM_SCHEMA_MISMATCH = "AWF232_PARALLEL_MAP_ITEM_SCHEMA_MISMATCH"
+    PARALLEL_MAP_REDUCER_SCHEMA_MISMATCH = "AWF233_PARALLEL_MAP_REDUCER_SCHEMA_MISMATCH"
+    LOOP_EXIT_SCHEMA_MISMATCH = "AWF234_LOOP_EXIT_SCHEMA_MISMATCH"
+    POLICY_SCHEMA_MISMATCH = "AWF235_POLICY_SCHEMA_MISMATCH"
+    WORKFLOW_INPUT_BINDING_MISMATCH = "AWF236_WORKFLOW_INPUT_BINDING_MISMATCH"
+    WORKFLOW_OUTPUT_BINDING_MISMATCH = "AWF237_WORKFLOW_OUTPUT_BINDING_MISMATCH"
+    RESUME_SCHEMA_MISMATCH = "AWF238_RESUME_SCHEMA_MISMATCH"
+    COMPOSITION_EFFECT_SCHEMA_MISMATCH = "AWF239_COMPOSITION_EFFECT_SCHEMA_MISMATCH"
 
 
 class DiagnosticFamily(StrEnum):
-    """Required diagnostic families named by the V1 contract."""
+    """Required diagnostic families named by the authoring contract."""
 
     INVALID_IMPORT_SOURCE = "invalid_import_source"
     UNSUPPORTED_SYNTAX = "unsupported_syntax"
@@ -118,6 +158,46 @@ class DiagnosticFamily(StrEnum):
     LOOP_POLICY_BINDING_MISMATCH = "loop_policy_binding_mismatch"
     MISSING_PROMPT_DEPENDENCY = "missing_prompt_dependency"
     MISSING_RESOURCE_DEPENDENCY = "missing_resource_dependency"
+    MANUAL_GRAPH_NODES = "manual_graph_nodes"
+    MANUAL_PATH_STRINGS = "manual_path_strings"
+    VALIDATOR_DIRECTIVES = "validator_directives"
+    DIRECT_MANIFEST_AUTHORING = "direct_manifest_authoring"
+    NATIVE_PROGRAM_PROJECTION = "native_program_projection"
+    MEGAPLAN_ONLY_HELPERS = "megaplan_only_helpers"
+    TRACE_OBJECT_AUTHORING = "trace_object_authoring"
+    DYNAMIC_DISPATCH = "dynamic_dispatch"
+    SINGLE_HANDLER_WRAPPER = "single_handler_wrapper"
+    RUNTIME_TOPOLOGY_MUTATION = "runtime_topology_mutation"
+    MISSING_PARALLEL_MAP_REDUCER = "missing_parallel_map_reducer"
+    INVALID_PARALLEL_MAP_ITEMS = "invalid_parallel_map_items"
+    INVALID_PARALLEL_MAP_PATH_TEMPLATE = "invalid_parallel_map_path_template"
+    UNDECLARED_LOOP_EXIT = "undeclared_loop_exit"
+    INVALID_LOOP_BOUNDARY = "invalid_loop_boundary"
+    UNDECLARED_POLICY_METADATA = "undeclared_policy_metadata"
+    INVALID_POLICY_METADATA = "invalid_policy_metadata"
+    INVALID_WORKFLOW_INVOCATION = "invalid_workflow_invocation"
+    INVALID_WORKFLOW_REFERENCE = "invalid_workflow_reference"
+    INVALID_COMPOSITION_METADATA = "invalid_composition_metadata"
+    MISSING_CALL_SITE_ID = "missing_call_site_id"
+    AMBIGUOUS_CALL_SITE_ID = "ambiguous_call_site_id"
+    NON_LITERAL_CALL_SITE_ID = "non_literal_call_site_id"
+    DUPLICATE_CALL_SITE_PATH = "duplicate_call_site_path"
+    MISSING_ITERATION_COORDINATE = "missing_iteration_coordinate"
+    INVALID_ITERATION_COORDINATE = "invalid_iteration_coordinate"
+    MISSING_ITEM_COORDINATE = "missing_item_coordinate"
+    REPLAY_PATH_MISMATCH = "replay_path_mismatch"
+    INVALID_PARENT_PATH = "invalid_parent_path"
+    INVALID_CALL_SITE_PATH = "invalid_call_site_path"
+    CHILD_INPUT_SCHEMA_MISMATCH = "child_input_schema_mismatch"
+    CHILD_OUTPUT_SCHEMA_MISMATCH = "child_output_schema_mismatch"
+    PARALLEL_MAP_ITEM_SCHEMA_MISMATCH = "parallel_map_item_schema_mismatch"
+    PARALLEL_MAP_REDUCER_SCHEMA_MISMATCH = "parallel_map_reducer_schema_mismatch"
+    LOOP_EXIT_SCHEMA_MISMATCH = "loop_exit_schema_mismatch"
+    POLICY_SCHEMA_MISMATCH = "policy_schema_mismatch"
+    WORKFLOW_INPUT_BINDING_MISMATCH = "workflow_input_binding_mismatch"
+    WORKFLOW_OUTPUT_BINDING_MISMATCH = "workflow_output_binding_mismatch"
+    RESUME_SCHEMA_MISMATCH = "resume_schema_mismatch"
+    COMPOSITION_EFFECT_SCHEMA_MISMATCH = "composition_effect_schema_mismatch"
 
 
 @dataclass(frozen=True)
@@ -134,6 +214,21 @@ class DiagnosticCodeSpec:
         object.__setattr__(self, "code", DiagnosticCode(self.code))
         object.__setattr__(self, "family", DiagnosticFamily(self.family))
         object.__setattr__(self, "severity", DiagnosticSeverity(self.severity))
+
+
+def _v2_spec(
+    code: DiagnosticCode,
+    family: DiagnosticFamily,
+    message_template: str,
+    remediation: str,
+) -> DiagnosticCodeSpec:
+    return DiagnosticCodeSpec(
+        code=code,
+        family=family,
+        severity=DiagnosticSeverity.ERROR,
+        message_template=message_template,
+        remediation=remediation,
+    )
 
 
 DIAGNOSTIC_CODE_SPECS = (
@@ -307,6 +402,246 @@ DIAGNOSTIC_CODE_SPECS = (
         message_template="step component declares a static resource dependency that is not satisfied",
         remediation="declare the required resource in component metadata resources or remove the dependency",
     ),
+    _v2_spec(
+        DiagnosticCode.MANUAL_GRAPH_NODES,
+        DiagnosticFamily.MANUAL_GRAPH_NODES,
+        "manual graph nodes are outside the V2 authoring grammar",
+        "declare topology with workflow source forms rather than Stage, Edge, or PipelineBuilder objects",
+    ),
+    _v2_spec(
+        DiagnosticCode.MANUAL_PATH_STRINGS,
+        DiagnosticFamily.MANUAL_PATH_STRINGS,
+        "manual path strings are rejected under the V2 authoring grammar",
+        "derive stable identity from authored call-site ids instead of string-built paths",
+    ),
+    _v2_spec(
+        DiagnosticCode.VALIDATOR_DIRECTIVES,
+        DiagnosticFamily.VALIDATOR_DIRECTIVES,
+        "validator directives cannot author or rewrite V2 workflow topology",
+        "keep validators out of workflow source and declare routing or effects explicitly",
+    ),
+    _v2_spec(
+        DiagnosticCode.DIRECT_MANIFEST_AUTHORING,
+        DiagnosticFamily.DIRECT_MANIFEST_AUTHORING,
+        "workflow manifests are compiled output and cannot be hand-authored in V2 source",
+        "author workflow source forms and let the compiler produce the manifest",
+    ),
+    _v2_spec(
+        DiagnosticCode.NATIVE_PROGRAM_PROJECTION,
+        DiagnosticFamily.NATIVE_PROGRAM_PROJECTION,
+        "native_program projection cannot be treated as the V2 source of truth",
+        "preserve topology and identity in authored source rather than reading them back from native_program",
+    ),
+    _v2_spec(
+        DiagnosticCode.MEGAPLAN_ONLY_HELPERS,
+        DiagnosticFamily.MEGAPLAN_ONLY_HELPERS,
+        "Megaplan-only helpers are rejected under the general V2 authoring contract",
+        "replace bespoke helpers with general workflow, loop, route, or parallel_map constructs",
+    ),
+    _v2_spec(
+        DiagnosticCode.TRACE_OBJECT_AUTHORING,
+        DiagnosticFamily.TRACE_OBJECT_AUTHORING,
+        "trace objects and audit record schemas cannot be hand-authored in V2 source",
+        "declare topology and metadata only; runtime trace shapes are compiler- and runtime-owned",
+    ),
+    _v2_spec(
+        DiagnosticCode.DYNAMIC_DISPATCH,
+        DiagnosticFamily.DYNAMIC_DISPATCH,
+        "dynamic dispatch is outside the statically enumerable V2 grammar",
+        "invoke imported steps or workflows directly with literal identities",
+    ),
+    _v2_spec(
+        DiagnosticCode.SINGLE_HANDLER_WRAPPER,
+        DiagnosticFamily.SINGLE_HANDLER_WRAPPER,
+        "single-handler wrappers cannot stand in for explicit V2 workflow topology",
+        "spell out the workflow structure instead of hiding it behind one wrapper call",
+    ),
+    _v2_spec(
+        DiagnosticCode.RUNTIME_TOPOLOGY_MUTATION,
+        DiagnosticFamily.RUNTIME_TOPOLOGY_MUTATION,
+        "runtime topology mutation is rejected under the V2 authoring grammar",
+        "keep workflow structure static and move runtime-only branching into declared routes",
+    ),
+    _v2_spec(
+        DiagnosticCode.MISSING_PARALLEL_MAP_REDUCER,
+        DiagnosticFamily.MISSING_PARALLEL_MAP_REDUCER,
+        "parallel_map is missing a required reducer",
+        "provide a literal reducer callable or imported reducer reference",
+    ),
+    _v2_spec(
+        DiagnosticCode.INVALID_PARALLEL_MAP_ITEMS,
+        DiagnosticFamily.INVALID_PARALLEL_MAP_ITEMS,
+        "parallel_map items must be a statically declared collection reference",
+        "bind items to a declared parameter or prior output with a literal reference",
+    ),
+    _v2_spec(
+        DiagnosticCode.INVALID_PARALLEL_MAP_PATH_TEMPLATE,
+        DiagnosticFamily.INVALID_PARALLEL_MAP_PATH_TEMPLATE,
+        "parallel_map path_template must be a literal stable coordinate template",
+        "use a literal path template or rely on the default item index coordinate",
+    ),
+    _v2_spec(
+        DiagnosticCode.UNDECLARED_LOOP_EXIT,
+        DiagnosticFamily.UNDECLARED_LOOP_EXIT,
+        "loop exit is not declared by the accepted V2 loop boundary",
+        "declare loop exits through the canonical loop policy and accepted exit syntax",
+    ),
+    _v2_spec(
+        DiagnosticCode.INVALID_LOOP_BOUNDARY,
+        DiagnosticFamily.INVALID_LOOP_BOUNDARY,
+        "loop boundary metadata is malformed for the V2 authoring grammar",
+        "keep loop bounds, reentry ids, and exit conditions literal and compiler-visible",
+    ),
+    _v2_spec(
+        DiagnosticCode.UNDECLARED_POLICY_METADATA,
+        DiagnosticFamily.UNDECLARED_POLICY_METADATA,
+        "policy metadata is referenced without a declared V2 policy carrier",
+        "attach named policy metadata at the workflow, step, or child-call boundary",
+    ),
+    _v2_spec(
+        DiagnosticCode.INVALID_POLICY_METADATA,
+        DiagnosticFamily.INVALID_POLICY_METADATA,
+        "policy metadata is malformed for the V2 authoring contract",
+        "use supported policy categories with literal configuration fields only",
+    ),
+    _v2_spec(
+        DiagnosticCode.INVALID_WORKFLOW_INVOCATION,
+        DiagnosticFamily.INVALID_WORKFLOW_INVOCATION,
+        "workflow invocation does not match the accepted V2 callable form",
+        "call imported workflow components directly with literal ids and declared bindings",
+    ),
+    _v2_spec(
+        DiagnosticCode.INVALID_WORKFLOW_REFERENCE,
+        DiagnosticFamily.INVALID_WORKFLOW_REFERENCE,
+        "workflow reference cannot be resolved to an invocable V2 workflow component",
+        "import a statically resolvable workflow component instead of building one dynamically",
+    ),
+    _v2_spec(
+        DiagnosticCode.INVALID_COMPOSITION_METADATA,
+        DiagnosticFamily.INVALID_COMPOSITION_METADATA,
+        "composition metadata is malformed for a V2 workflow boundary",
+        "keep child-call metadata literal, scoped, and aligned with the declared interface",
+    ),
+    _v2_spec(
+        DiagnosticCode.MISSING_CALL_SITE_ID,
+        DiagnosticFamily.MISSING_CALL_SITE_ID,
+        "call site is missing the literal id required for stable path identity",
+        "add a literal id keyword to the step or workflow call site",
+    ),
+    _v2_spec(
+        DiagnosticCode.AMBIGUOUS_CALL_SITE_ID,
+        DiagnosticFamily.AMBIGUOUS_CALL_SITE_ID,
+        "call site id does not uniquely determine a stable path",
+        "use one unambiguous literal id segment per authored call site",
+    ),
+    _v2_spec(
+        DiagnosticCode.NON_LITERAL_CALL_SITE_ID,
+        DiagnosticFamily.NON_LITERAL_CALL_SITE_ID,
+        "call site id must be a literal string in the V2 authoring grammar",
+        "replace computed or indirect ids with literal call-site ids",
+    ),
+    _v2_spec(
+        DiagnosticCode.DUPLICATE_CALL_SITE_PATH,
+        DiagnosticFamily.DUPLICATE_CALL_SITE_PATH,
+        "multiple call sites lower to the same stable path identity",
+        "choose distinct authored ids so each call site has its own path segment",
+    ),
+    _v2_spec(
+        DiagnosticCode.MISSING_ITERATION_COORDINATE,
+        DiagnosticFamily.MISSING_ITERATION_COORDINATE,
+        "repeated execution boundary is missing an iteration coordinate",
+        "record a loop or fanout coordinate beneath the static call-site path",
+    ),
+    _v2_spec(
+        DiagnosticCode.INVALID_ITERATION_COORDINATE,
+        DiagnosticFamily.INVALID_ITERATION_COORDINATE,
+        "iteration coordinate is malformed for V2 replay identity",
+        "use bracketed monotonic coordinates such as [0] or [n]",
+    ),
+    _v2_spec(
+        DiagnosticCode.MISSING_ITEM_COORDINATE,
+        DiagnosticFamily.MISSING_ITEM_COORDINATE,
+        "parallel_map item is missing a stable item coordinate",
+        "emit an item coordinate from the path_template or list index",
+    ),
+    _v2_spec(
+        DiagnosticCode.REPLAY_PATH_MISMATCH,
+        DiagnosticFamily.REPLAY_PATH_MISMATCH,
+        "recorded replay path does not match the authored V2 path identity",
+        "preserve the authored static path and recorded coordinates across replay",
+    ),
+    _v2_spec(
+        DiagnosticCode.INVALID_PARENT_PATH,
+        DiagnosticFamily.INVALID_PARENT_PATH,
+        "parent workflow path is malformed for V2 provenance",
+        "propagate the parent path from authored call-site identity only",
+    ),
+    _v2_spec(
+        DiagnosticCode.INVALID_CALL_SITE_PATH,
+        DiagnosticFamily.INVALID_CALL_SITE_PATH,
+        "call_site_path provenance is malformed for the V2 authoring contract",
+        "store slash-delimited authored id segments plus bracketed coordinates only",
+    ),
+    _v2_spec(
+        DiagnosticCode.CHILD_INPUT_SCHEMA_MISMATCH,
+        DiagnosticFamily.CHILD_INPUT_SCHEMA_MISMATCH,
+        "parent bindings do not satisfy the child workflow input schema",
+        "align parent-to-child bindings with the child workflow's declared inputs",
+    ),
+    _v2_spec(
+        DiagnosticCode.CHILD_OUTPUT_SCHEMA_MISMATCH,
+        DiagnosticFamily.CHILD_OUTPUT_SCHEMA_MISMATCH,
+        "child workflow outputs do not match the declared merge contract",
+        "merge only declared child outputs and keep their names or bindings consistent",
+    ),
+    _v2_spec(
+        DiagnosticCode.PARALLEL_MAP_ITEM_SCHEMA_MISMATCH,
+        DiagnosticFamily.PARALLEL_MAP_ITEM_SCHEMA_MISMATCH,
+        "parallel_map item values do not satisfy the mapper input contract",
+        "align the items collection schema with the mapper's declared input",
+    ),
+    _v2_spec(
+        DiagnosticCode.PARALLEL_MAP_REDUCER_SCHEMA_MISMATCH,
+        DiagnosticFamily.PARALLEL_MAP_REDUCER_SCHEMA_MISMATCH,
+        "parallel_map reducer inputs do not match the mapper result schema",
+        "reduce the ordered mapper result shape the reducer declares",
+    ),
+    _v2_spec(
+        DiagnosticCode.LOOP_EXIT_SCHEMA_MISMATCH,
+        DiagnosticFamily.LOOP_EXIT_SCHEMA_MISMATCH,
+        "loop exit data does not satisfy the declared continuation or result schema",
+        "keep loop exit payloads aligned with the declared loop boundary contract",
+    ),
+    _v2_spec(
+        DiagnosticCode.POLICY_SCHEMA_MISMATCH,
+        DiagnosticFamily.POLICY_SCHEMA_MISMATCH,
+        "policy metadata does not satisfy the declared policy schema",
+        "provide policy configuration fields that match the declared policy contract",
+    ),
+    _v2_spec(
+        DiagnosticCode.WORKFLOW_INPUT_BINDING_MISMATCH,
+        DiagnosticFamily.WORKFLOW_INPUT_BINDING_MISMATCH,
+        "workflow call input bindings do not match the invoked interface",
+        "bind only declared inputs and satisfy their required names and schemas",
+    ),
+    _v2_spec(
+        DiagnosticCode.WORKFLOW_OUTPUT_BINDING_MISMATCH,
+        DiagnosticFamily.WORKFLOW_OUTPUT_BINDING_MISMATCH,
+        "workflow call output bindings do not match the invoked interface",
+        "map only declared outputs and keep bound names unique and schema-compatible",
+    ),
+    _v2_spec(
+        DiagnosticCode.RESUME_SCHEMA_MISMATCH,
+        DiagnosticFamily.RESUME_SCHEMA_MISMATCH,
+        "resume or suspension payloads do not match the declared schema boundary",
+        "align suspension and resume refs with their declared payload schemas",
+    ),
+    _v2_spec(
+        DiagnosticCode.COMPOSITION_EFFECT_SCHEMA_MISMATCH,
+        DiagnosticFamily.COMPOSITION_EFFECT_SCHEMA_MISMATCH,
+        "composition-side effect metadata does not satisfy the declared schema",
+        "keep composition effect payloads within the declared workflow interface",
+    ),
 )
 
 DIAGNOSTIC_SPECS = DIAGNOSTIC_CODE_SPECS
@@ -327,6 +662,10 @@ class AuthoringDiagnostic:
     source_span: SourceSpan | None = None
     import_ref: ImportRef | None = None
     component_ref: str | None = None
+    call_site_path: str | None = None
+    invocable_id: str | None = None
+    policy_category: str | None = None
+    rejection_category: str | None = None
     remediation: str | None = None
     details: Mapping[str, Any] = field(default_factory=dict)
 
@@ -340,6 +679,14 @@ class AuthoringDiagnostic:
             raise ValueError(f"grammar_version must be {GRAMMAR_VERSION!r}")
         if self.component_ref is not None and not self.component_ref:
             raise ValueError("component_ref must be non-empty when provided")
+        if self.call_site_path is not None and not self.call_site_path:
+            raise ValueError("call_site_path must be non-empty when provided")
+        if self.invocable_id is not None and not self.invocable_id:
+            raise ValueError("invocable_id must be non-empty when provided")
+        if self.policy_category is not None and not self.policy_category:
+            raise ValueError("policy_category must be non-empty when provided")
+        if self.rejection_category is not None and not self.rejection_category:
+            raise ValueError("rejection_category must be non-empty when provided")
 
     def to_dict(self) -> dict[str, Any]:
         """Return a sidecar-safe diagnostic payload with primitive values."""
@@ -365,6 +712,14 @@ class AuthoringDiagnostic:
             }
         if self.component_ref is not None:
             payload["component_ref"] = self.component_ref
+        if self.call_site_path is not None:
+            payload["call_site_path"] = self.call_site_path
+        if self.invocable_id is not None:
+            payload["invocable_id"] = self.invocable_id
+        if self.policy_category is not None:
+            payload["policy_category"] = self.policy_category
+        if self.rejection_category is not None:
+            payload["rejection_category"] = self.rejection_category
         if self.remediation is not None:
             payload["remediation"] = self.remediation
         if self.details:

@@ -16,6 +16,10 @@ class TestWorkflowComponents:
         for component in workflows.ALL_STEP_COMPONENTS:
             assert isinstance(component, StepComponent)
             assert component.kind == ComponentKind.STEP
+        for component in workflows.WORKFLOW_COMPONENTS:
+            assert component.kind == ComponentKind.WORKFLOW
+            assert component.metadata["input_names"]
+            assert component.metadata["output_names"]
         for prompt in workflows.PROMPT_COMPONENTS:
             assert isinstance(prompt, PromptComponent)
             assert prompt.kind == ComponentKind.PROMPT
@@ -122,8 +126,14 @@ class TestWorkflowComponents:
             "megaplan:gate",
             "megaplan:revise-loop",
             "megaplan:tiebreaker",
+            "megaplan:finalize",
             "megaplan:review",
+            "megaplan:execute",
             "megaplan:override",
+            "megaplan:model-routing",
+            "megaplan:robustness",
+            "megaplan:artifact-contract",
+            "megaplan:suspension",
         }
 
         for component in workflows.ALL_STEP_COMPONENTS:
@@ -131,9 +141,11 @@ class TestWorkflowComponents:
             assert component.id.removeprefix("megaplan:") in component.policy.metadata["canonical_carriers"]
 
         for policy in workflows.POLICY_COMPONENTS:
-            explicit_policies = [
-                steps_by_id[carrier].policy for carrier in policy.metadata["canonical_carriers"]
-            ]
+            carriers = tuple(policy.metadata.get("canonical_carriers", ()))
+            if not carriers:
+                assert policy.metadata.get("authoring_surface") is True
+                continue
+            explicit_policies = [steps_by_id[carrier].policy for carrier in carriers]
             assert all(explicit.timing is not None for explicit in explicit_policies)
             assert policy.config["timeout_seconds_ref"] == "build_pipeline.timeout_seconds"
             if "suspension_routes" in policy.config:
@@ -144,6 +156,10 @@ class TestWorkflowComponents:
                             "route_id": route.route_id,
                             "capability_id": route.capability_id,
                             "reentry_id": route.reentry_id,
+                            "payload_schema_hash": route.payload_schema_hash,
+                            "resume_schema_hash": route.resume_schema_hash,
+                            "resume_schema_ref": route.resume_schema_ref,
+                            "resume_payload_ref": route.resume_payload_ref,
                         }.items()
                         if value is not None
                     }
@@ -166,6 +182,11 @@ class TestWorkflowComponents:
                 assert tuple(explicit.loop.until_ref for explicit in explicit_policies) == (
                     policy.config["until_ref"],
                 )
+            if "retry" in policy.config:
+                assert all(explicit.retry is not None for explicit in explicit_policies)
+                assert explicit_policies[0].retry.max_attempts == policy.config["retry"]["max_attempts"]
+            if "escalation" in policy.config:
+                assert all(explicit.escalation is not None for explicit in explicit_policies)
 
     def test_runtime_branch_vocabulary_is_declared(self) -> None:
         gate = workflows.STEP_COMPONENTS_BY_ID["gate"]
@@ -182,7 +203,107 @@ class TestWorkflowComponents:
         assert workflows.STEP_COMPONENTS_BY_ID["review"].metadata["runtime_branch_vocabulary"] == (
             "pass",
             "rework",
+            "blocked",
+            "force_proceeded",
+            "deferred_human",
         )
+
+    def test_gate_policy_metadata_exposes_handler_free_route_surface(self) -> None:
+        route_surface = workflows.GATE_POLICY.metadata["route_surface"]
+        assert route_surface["route_groups"] == {
+            "finalize": ("proceed", "force_proceed"),
+            "revise": ("iterate", "retry_gate", "reprompt_downgrade"),
+            "tiebreaker": ("tiebreaker",),
+            "override": ("escalate", "blocked_preflight"),
+            "halt": ("abort", "suspend"),
+        }
+        assert route_surface["fallback_route_signals"] == {
+            "blocking_flag_reprompt": "retry_gate",
+            "reprompt_downgrade": "iterate",
+            "preflight_failed": "blocked_preflight",
+            "unknown_recommendation": "escalate",
+            "critique_cap": "force_proceed",
+        }
+        assert route_surface["critique_gate_diagnostics"] == {
+            "bare_skip": {
+                "owner": "critique-fanout",
+                "effect": "skip_empty_or_bare_findings",
+            },
+            "evaluator_retry": {
+                "owner": "critique-fanout",
+                "effect": "retry_unverifiable_or_unavailable_evaluators",
+            },
+            "malformed_payload": {
+                "owner": "gate",
+                "effect": "normalize_to_inferred_recommendation",
+            },
+            "empty_payload": {
+                "owner": "gate",
+                "effect": "normalize_to_inferred_recommendation",
+            },
+            "worker_unavailable": {
+                "owner": "gate",
+                "effect": "escalate_or_retry_via_preflight_policy",
+            },
+            "debt_recorded": {
+                "owner": "gate",
+                "effect": "publish_debt_payload_on_proceed",
+            },
+        }
+
+    def test_default_policy_metadata_exposes_critique_fanout_and_external_call_surface(self) -> None:
+        critique_surface = workflows.DEFAULT_POLICY.metadata["critique_surface"]
+        assert critique_surface["fanout_contract"] == {
+            "parallel_map_id": "critique-fanout",
+            "fanout_ref": "megaplan.policy.critique_lenses",
+            "step_ref": "SOURCE_CRITIQUE_PANEL_WORKFLOW",
+            "reducer_ref": "SOURCE_CRITIQUE",
+            "path_template": "critique/{item_id}",
+            "route_signal": "critique_payload",
+        }
+        assert critique_surface["skip_and_retry_policy"] == {
+            "bare_robustness": {
+                "route_signal": "skip_to_finalize",
+                "effect": "workflow_handles_plan_to_finalize_without_handler_fanout",
+            },
+            "evaluator_retry": {
+                "phase": "critique_evaluator",
+                "max_attempts": 2,
+                "on_exhausted": "blocked",
+            },
+            "payload_recovery": {
+                "scratch_ref": "critique_output.json",
+                "promote_to": "critique_v{iteration}.json",
+            },
+        }
+        assert critique_surface["external_call_wrapping"] == {
+            "runtime_wrapper_ref": "arnold_pipelines.megaplan.orchestration.critique_runtime",
+            "retained_handler_ref": "arnold_pipelines.megaplan.handlers.critique:handle_critique",
+            "worker_phase": "critique",
+            "evaluator_phase": "critique_evaluator",
+        }
+
+    def test_critique_panel_workflow_metadata_exposes_fanout_skip_retry_and_wrapping(self) -> None:
+        contract = workflows.SOURCE_CRITIQUE_PANEL_WORKFLOW.metadata["topology_contract"]
+        assert contract == {
+            "kind": "critique_fanout",
+            "fanout_ref": "megaplan.policy.critique_lenses",
+            "parallel_map_id": "critique-fanout",
+            "path_template": "critique/{item_id}",
+            "route_signal": "critique_payload",
+            "skip_and_retry_policy": {
+                "bare_robustness": "skip_to_finalize",
+                "evaluator_retry_attempts": 2,
+                "on_exhausted": "blocked",
+                "payload_recovery_ref": "critique_output.json",
+            },
+            "external_call_wrapping": {
+                "runtime_wrapper_ref": "arnold_pipelines.megaplan.orchestration.critique_runtime",
+                "retained_handler_ref": "arnold_pipelines.megaplan.handlers.critique:handle_critique",
+                "worker_phase": "critique",
+                "evaluator_phase": "critique_evaluator",
+            },
+        }
 
     def test_importing_components_does_not_load_legacy_package(self) -> None:
         before = set(sys.modules.keys())
@@ -341,12 +462,21 @@ class TestPolicyPlacement:
     def test_override_has_override_policy(self) -> None:
         """OVERRIDE component must use OVERRIDE_POLICY."""
         assert workflows.OVERRIDE.policy is workflows.OVERRIDE_POLICY
+        route_surface = workflows.OVERRIDE_POLICY.metadata["route_surface"]
+        assert route_surface["matrix_ref"].endswith("override_matrix:OVERRIDE_ACTION_MATRIX")
+        assert {
+            action["action"] for action in route_surface["actions"]
+        } == set(workflows.OVERRIDE.metadata["override_actions"])
+
+    def test_execute_has_execute_policy(self) -> None:
+        """EXECUTE component must use EXECUTE_POLICY."""
+        assert workflows.EXECUTE.policy is workflows.EXECUTE_POLICY
 
     def test_default_policy_components(self) -> None:
         """Components without special policy must use DEFAULT_POLICY."""
         default_policy_ids = {
             "megaplan:prep", "megaplan:plan", "megaplan:critique",
-            "megaplan:tiebreaker_run", "megaplan:finalize", "megaplan:execute",
+            "megaplan:tiebreaker_run", "megaplan:finalize",
             "megaplan:halt",
         }
         for component in workflows.ALL_STEP_COMPONENTS:
@@ -366,6 +496,162 @@ class TestPolicyPlacement:
             assert component.policy is not None, (
                 f"{component.id} must have a policy"
             )
+
+    def test_execute_review_and_override_declare_policy_refs(self) -> None:
+        assert workflows.EXECUTE.metadata["policy_refs"] == (
+            "megaplan:execute",
+            "megaplan:model-routing",
+            "megaplan:artifact-contract",
+            "megaplan:suspension",
+        )
+        assert workflows.REVIEW.metadata["policy_refs"] == (
+            "megaplan:review",
+            "megaplan:artifact-contract",
+            "megaplan:suspension",
+        )
+        assert workflows.OVERRIDE.metadata["policy_refs"] == (
+            "megaplan:override",
+            "megaplan:model-routing",
+        )
+
+    def test_tiebreaker_and_finalize_policy_metadata_expose_route_surface(self) -> None:
+        assert workflows.FINALIZE.metadata["policy_refs"] == (
+            "megaplan:default",
+            "megaplan:artifact-contract",
+        )
+        assert workflows.TIEBREAKER_POLICY.metadata["route_surface"] == {
+            "run_completion_route": {
+                "route_signal": "default",
+                "target_ref": "tiebreaker_decide",
+                "failure_behavior": "complete_decision_cycle_with_recorded_artifacts",
+            },
+            "decision_routes": {
+                "pick": {"route_signal": "proceed", "target_ref": "finalize"},
+                "replan": {"route_signal": "iterate", "target_ref": "critique-fanout"},
+                "escalate": {"route_signal": "escalate", "target_ref": "override"},
+            },
+            "fallback_route_signal": "escalate",
+        }
+        assert workflows.FINALIZE_POLICY.metadata["route_surface"] == {
+            "success_route": {"route_signal": "default", "target_ref": "execute"},
+            "fallback_routes": {
+                "plan_contract_revise_needed": {
+                    "route_signal": "revise",
+                    "target_ref": "revise",
+                    "reason": "missing_scoped_baseline_test_contract",
+                },
+            },
+        }
+        assert workflows.FINALIZE_POLICY.metadata["authoring_surface"] is True
+        assert workflows.FINALIZE_POLICY.metadata["carrier_step_ref"] == "finalize"
+
+    def test_execute_policy_metadata_exposes_gates_fanout_retry_and_recovery(self) -> None:
+        route_surface = workflows.EXECUTE_POLICY.metadata["route_surface"]
+        assert route_surface["approval_gates"]["destructive_confirmation"] == {
+            "required_unless": "prose_mode",
+            "signal_ref": "args.confirm_destructive",
+            "failure_code": "missing_confirmation",
+        }
+        assert route_surface["approval_gates"]["operator_approval"] == {
+            "required_unless": "state.config.auto_approve",
+            "signal_ref": "state.meta.user_approved_gate",
+            "grant_signal_ref": "args.user_approved",
+            "failure_code": "missing_approval",
+        }
+        assert route_surface["fanout_contract"] == {
+            "parallel_map_id": "execute-batches",
+            "fanout_ref": "megaplan.execute.batches",
+            "step_ref": "SOURCE_EXECUTE_BATCH_WORKFLOW",
+            "reducer_ref": "SOURCE_EXECUTE",
+            "path_template": "execute/{index}",
+            "route_signal": "execute_payload",
+        }
+        assert route_surface["retry_and_reentry"] == {
+            "review_rework_reexecution": {
+                "detect_ref": "last review history result needs_rework",
+                "effect": "force_fresh_execute_session",
+            },
+            "blocked_retry": {
+                "detect_ref": "last execute history result blocked",
+                "effect": "force_fresh_execute_session",
+            },
+            "blocked_route": {
+                "route_signal": "blocked",
+                "target_ref": "override",
+                "recoverable_state": "blocked",
+                "resume_cursor": {
+                    "phase": "execute",
+                    "retry_strategy": "fresh_session",
+                },
+            },
+        }
+
+    def test_review_policy_metadata_exposes_rework_cap_recovery_and_escalation(self) -> None:
+        route_surface = workflows.REVIEW_POLICY.metadata["route_surface"]
+        assert route_surface["fan_in_contract"] == {
+            "parallel_map_id": "review-fan-in",
+            "fan_in_ref": "review.checks",
+            "step_ref": "SOURCE_REVIEW_PANEL_WORKFLOW",
+            "reducer_ref": "SOURCE_REVIEW",
+            "path_template": "review/{item_id}",
+            "route_signal": "review_route_signal",
+        }
+        assert route_surface["route_groups"] == {
+            "halt": ("pass", "force_proceeded", "deferred_human"),
+            "rework": ("rework",),
+            "recoverable_block": ("blocked",),
+        }
+        assert route_surface["retry_and_cap"]["infrastructure_retry"] == {
+            "route_signal": "blocked",
+            "target_ref": "review",
+            "state_ref": "executed",
+            "retry_on": (
+                "review_incomplete",
+                "review_process_error",
+                "missing_reviewer_evidence",
+            ),
+        }
+        assert route_surface["retry_and_cap"]["cap_exhausted_with_blockers"] == {
+            "route_signal": "blocked",
+            "target_ref": "override",
+            "state_ref": "blocked",
+            "resume_cursor": {
+                "phase": "review",
+                "retry_strategy": "manual_review",
+            },
+        }
+        assert route_surface["escalation"] == {
+            "policy_ref": "megaplan:override",
+            "route_signal": "blocked",
+            "actions": ("recover-blocked", "force-proceed"),
+        }
+
+    def test_execute_and_review_child_workflows_expose_route_contracts(self) -> None:
+        execute_contract = workflows.SOURCE_EXECUTE_BATCH_WORKFLOW.metadata["topology_contract"]
+        review_contract = workflows.SOURCE_REVIEW_PANEL_WORKFLOW.metadata["topology_contract"]
+
+        assert execute_contract["approval_gates"] == workflows.EXECUTE_POLICY.metadata["route_surface"]["approval_gates"]
+        assert execute_contract["fanout_contract"] == workflows.EXECUTE_POLICY.metadata["route_surface"]["fanout_contract"]
+        assert execute_contract["retry_and_reentry"] == {
+            "review_rework_reexecution": "force_fresh_execute_session",
+            "blocked_retry": "force_fresh_execute_session",
+            "blocked_route": {
+                "route_signal": "blocked",
+                "recoverable_state": "blocked",
+                "resume_phase": "execute",
+            },
+        }
+        assert review_contract["fan_in_contract"] == workflows.REVIEW_POLICY.metadata["route_surface"]["fan_in_contract"]
+        assert review_contract["rework_cycle"] == {
+            "route_signal": "rework",
+            "target_ref": "execute",
+            "fresh_execute_session": True,
+        }
+        assert review_contract["retry_and_cap"] == {
+            "infrastructure_retry": "review",
+            "cap_exhausted_non_blocking": "force_proceeded",
+            "cap_exhausted_with_blockers": "recoverable_block",
+        }
 
 
 class TestLegacyAliases:
@@ -493,6 +779,8 @@ class TestStableIdsAuthoritative:
         for name in sorted(dir(workflows.components)):
             if name.startswith("SOURCE_"):
                 source_comp = getattr(workflows.components, name)
+                if not isinstance(source_comp, StepComponent):
+                    continue
                 step_id = name.removeprefix("SOURCE_").lower()
                 source_id_mappings[name] = (source_comp.id, step_id)
         # Each SOURCE_ component should have an id matching megaplan:{step_id}

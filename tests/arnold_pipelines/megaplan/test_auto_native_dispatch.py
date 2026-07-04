@@ -193,7 +193,10 @@ def test_compiled_native_phase_functions_execute_handler_payload(
 # ── Stable ID dispatch ───────────────────────────────────────────────────
 
 
-def test_stable_id_resolution_resolves_megaplan_prefixed_ids() -> None:
+def test_stable_id_resolution_resolves_megaplan_prefixed_ids(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     """_resolve_phase_name maps stable IDs to flat phase names."""
     from arnold_pipelines.megaplan.auto import _resolve_phase_name
 

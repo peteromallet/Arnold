@@ -147,44 +147,67 @@ builder objects, executor objects, or `_forward_m2_m3` graph objects.
 ```python
 from typing import Any
 
-from arnold.pipeline.native import compile_pipeline, phase, pipeline, project_graph
+from arnold.pipeline import step, workflow, decision
+from arnold.pipeline.native import compile_pipeline, parallel_map, project_graph
 from arnold.pipeline.types import Pipeline
 
 name = "hello-world"
-description = "A minimal native-first package."
+description = "A compositional native-first package with nested workflows."
 arnold_api_version = "1.0"
 capabilities = ("example", "hello-world")
 driver = ("native", "project+validate")
 entrypoint = "build_pipeline"
 default_profile = None
 supported_modes = ("native",)
+authoring_style = "compositional"
 
 
-@phase(name="greet")
+@step(
+    name="greet",
+    id="hello-world.greet",
+    inputs={"type": "object", "required": ["name"]},
+    outputs={"type": "object", "required": ["message"]},
+)
 def greet(ctx: object) -> Any:
     return {"message": "hello"}
 
 
-@phase(name="respond")
+@step(
+    name="respond",
+    id="hello-world.respond",
+    inputs={"type": "object", "required": ["message"]},
+    outputs={"type": "object", "required": ["reply"]},
+)
 def respond(ctx: object) -> Any:
-    return {"message": "world"}
+    return {"reply": "world"}
 
 
-@pipeline(name="hello-world", description=description)
-def hello_world(ctx: object) -> Any:
-    yield greet(ctx)
-    yield respond(ctx)
+@decision(name="approve", vocabulary={"ship", "revise"})
+def approve(ctx: object) -> str:
+    return "ship"
+
+
+@workflow(
+    name="hello-world",
+    id="hello-world.root",
+    inputs={"type": "object", "required": ["name"]},
+    outputs={"type": "object", "required": ["reply"]},
+)
+def hello_world_native(ctx: object) -> Any:
+    state = yield greet(ctx, id="greet-step", outputs={"message": "message"})
+    state = yield respond(ctx, id="respond-step", outputs={"reply": "reply"})
+    return state
 
 
 def build_pipeline() -> Pipeline:
-    native = compile_pipeline(hello_world)
+    native = compile_pipeline(hello_world_native)
     return project_graph(native, key_mode="phase")
 ```
 
 The returned `Pipeline` carries a non-null `native_program`. Pattern
-constructors from `arnold.pipeline.native` (`parallel`, `native_panel`,
-`decision`) may be used to build composite topologies inside the
-`@pipeline`-decorated generator.
+constructors from `arnold.pipeline.native` (`parallel`, `parallel_map`,
+`decision`, `start_from_trace`) may be used to build composite topologies
+inside the `@workflow`-decorated generator.
 
 ## M6 Dispatch Substrate Boundary
 
@@ -201,6 +224,46 @@ Package authors should:
 - Expect future Megaplan layers to add composition semantics without
   requiring package rewrites.
 
+## Platform Boundaries For Package Authors
+
+Package authors operate within explicit platform boundaries that separate
+workflow semantics from execution mechanics. These boundaries are enforced
+by the native runtime and the composition contract — do not cross them in
+package code.
+
+### What The Package Owns
+
+The package module owns:
+- **Topology** — the declared `@workflow`/`@step`/`@decision` call structure.
+- **Stable identity** — the `id=` values on every invocable and call site.
+- **Declared schemas** — `inputs` and `outputs` at every invocable boundary.
+- **Policy references** — named policy objects bound at call sites.
+- **Metadata** — `name`, `description`, `arnold_api_version`, `capabilities`,
+  `driver`, `entrypoint`, `supported_modes`.
+
+### What The Platform Owns
+
+The platform (native runtime, executor, artifact store, worker fleet) owns:
+- **Credential resolution** — API keys, secrets, environment injection.
+- **Model binding** — resolving profiles to concrete model invocations.
+- **Worker dispatch** — queuing, fleet allocation, co-location decisions.
+- **Artifact storage** — content-addressed persistence, replication, cleanup.
+- **Suspension/resume mechanics** — checkpoint writes, cursor advancement,
+  trace reconstruction.
+- **Policy enforcement** — timeout timers, retry loops, escalation routing.
+
+### Crossing The Boundary
+
+Package code that reads environment variables for secrets, assumes local
+filesystem paths survive worker migration, calls into worker-fleet APIs,
+or dispatches to model providers directly is crossing the platform boundary.
+Such code will fail validation under `authoring_style = "compositional"`.
+
+Instead, declare intent (credential requirements, artifact content types,
+target worker pool hints) as metadata and let the platform execute.
+
+## Cross-References
+
 ## Reference Package Summary
 
 | Field | evidence_pack (migrated) | _template (native-first) |
@@ -214,8 +277,6 @@ Package authors should:
 | `build_pipeline` | native program + projected shell | native program + projected shell |
 | `default_profile` | `None` | `None` |
 | `supported_modes` | `("native",)` | `("native",)` |
-
-## Cross-References
 
 - [`package-contract.md`](package-contract.md) — narrative contract for package
   layout, entrypoint rules, static identity, and Capsule interaction.
