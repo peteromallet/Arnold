@@ -238,3 +238,68 @@ def test_megaplan_resident_hot_context_includes_local_epic_chain_state(
     assert local_state["epic_chains"][0]["current_epic_id"] == "native-python"
     assert local_state["active_chains"][0]["current_plan_name"] == "m1-demo"
     assert local_state["active_chains"][0]["plan_state"]["current_state"] == "initialized"
+
+
+def test_megaplan_resident_hot_context_prefers_cloud_status_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Broad-status context carries the canonical snapshot, labeled degraded when absent."""
+    import json
+    from datetime import datetime, timezone
+
+    project = tmp_path / "project"
+    project.mkdir()
+    snapshot_path = tmp_path / "cloud-status.json"
+    snapshot = {
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "source": "cloud-local-observer",
+        "summary": {"running": 1, "blocked": 0, "repairing": 0, "complete": 0, "attention": 0},
+        "sessions": [
+            {
+                "session": "demo",
+                "status": "running",
+                "current_plan": "m1",
+                "operator_next": "executing",
+                "latest_activity": "2026-07-04T22:00:00Z",
+            }
+        ],
+        "degraded": None,
+    }
+    snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+    profile = MegaplanResidentProfile(
+        store=FileStore(tmp_path / "store"),
+        config=ResidentConfig(status_snapshot_path=snapshot_path),
+        cloud_backend=FakeCloudBackend(),
+    )
+    monkeypatch.chdir(project)
+
+    context = asyncio.run(profile.load_hot_context("missing-conversation"))
+
+    assert context["cloud_status_snapshot"] is not None
+    assert context["cloud_status_snapshot"]["summary"]["running"] == 1
+    assert context["cloud_status_degraded"] is None
+    summary = context["plan_activity_summary"]
+    assert summary["degraded"] is False
+    assert [e["session"] for e in summary["active_working"]] == ["demo"]
+
+
+def test_megaplan_resident_hot_context_labels_missing_snapshot_degraded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    profile = MegaplanResidentProfile(
+        store=FileStore(tmp_path / "store"),
+        config=ResidentConfig(status_snapshot_path=tmp_path / "absent.json"),
+        cloud_backend=FakeCloudBackend(),
+    )
+    monkeypatch.chdir(project)
+
+    context = asyncio.run(profile.load_hot_context("missing-conversation"))
+
+    assert context["cloud_status_snapshot"] is None
+    assert context["cloud_status_degraded"] is not None
+    assert "missing" in context["cloud_status_degraded"]
+    assert context["plan_activity_summary"]["degraded"] is True

@@ -1,0 +1,379 @@
+"""Fixture-driven tests for the canonical cloud status snapshot.
+
+These lock in the contract from
+``docs/ops/elegant-cloud-status-resident-plan.md``: the snapshot is produced by
+local observation only, classifies sessions into a stable vocabulary, and is the
+single source every status consumer reads.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+from arnold_pipelines.megaplan.cloud import status_format as sf
+from arnold_pipelines.megaplan.cloud import status_snapshot as ss
+
+
+NOW = datetime(2026, 7, 4, 22, 13, 15, tzinfo=timezone.utc)
+
+
+def _dead_probe(_marker):
+    return {"tmux": False, "process": False}
+
+
+class Fixture:
+    """Builds a marker directory with canonical markers + sidecars."""
+
+    def __init__(self, tmp_path: Path):
+        self.root = tmp_path
+        self.marker_dir = tmp_path / "cloud-sessions"
+        self.repair_dir = self.marker_dir / "repair-data"
+        self.marker_dir.mkdir(parents=True, exist_ok=True)
+        self.repair_dir.mkdir(parents=True, exist_ok=True)
+
+    def add_session(
+        self,
+        name: str,
+        *,
+        workspace: str | None = None,
+        remote_spec: str | None = None,
+        run_kind: str = "chain",
+        plan_name: str = "",
+        started_at: str = "2026-07-04T20:00:00Z",
+    ) -> Path:
+        ws = workspace or str(self.root / name)
+        Path(ws).mkdir(parents=True, exist_ok=True)
+        remote = remote_spec if remote_spec is not None else f"/spec/{name}"
+        payload = {
+            "session": name,
+            "workspace": ws,
+            "remote_spec": remote,
+            "started_at": started_at,
+            "run_kind": run_kind,
+        }
+        if plan_name:
+            payload["plan_name"] = plan_name
+        path = self.marker_dir / f"{name}.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return Path(ws)
+
+    def add_chain_health(
+        self,
+        name: str,
+        *,
+        chain_complete: bool = False,
+        completed_count: int = 0,
+        milestone_count: int = 1,
+        current_plan_name: str | None = None,
+        last_state: str = "executed",
+        updated_at: datetime | None = None,
+        pr_number: int | None = None,
+        pr_state: str | None = None,
+    ) -> None:
+        payload = {
+            "chain_complete": chain_complete,
+            "completed_count": completed_count,
+            "milestone_count": milestone_count,
+            "last_state": last_state,
+            "updated_at": (updated_at or NOW - timedelta(seconds=60)).isoformat(),
+        }
+        if current_plan_name is not None:
+            payload["current_plan_name"] = current_plan_name
+        if pr_number is not None:
+            payload["pr_number"] = pr_number
+        if pr_state is not None:
+            payload["pr_state"] = pr_state
+        (self.marker_dir / f"{name}.chain-health.progress.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+
+    def add_repair_progress(self, name: str, *, updated_at: datetime | None = None) -> None:
+        (self.marker_dir / f"{name}.repair-progress.json").write_text(
+            json.dumps(
+                {
+                    "advancement_since_last_dispatch": False,
+                    "updated_at": (updated_at or NOW - timedelta(minutes=5)).isoformat(),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def add_needs_human(self, name: str, *, summary: str = "awaiting human action") -> None:
+        (self.repair_dir / f"{name}.needs-human.json").write_text(
+            json.dumps(
+                {"session": name, "summary": summary, "recorded_at": NOW.isoformat()},
+            ),
+            encoding="utf-8",
+        )
+
+    def add_watchdog_report(
+        self, *, items: list[dict] | None = None, sessions_seen: int | None = None
+    ) -> Path:
+        path = self.root / "watchdog-report.json"
+        payload = {
+            "timestamp_utc": NOW.isoformat(),
+            "sessions_seen": sessions_seen if sessions_seen is not None else len(items or []),
+            "items": items or [],
+            "issues": [],
+        }
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def build(self, **overrides):
+        kwargs = dict(
+            marker_dir=self.marker_dir,
+            repair_data_dir=self.repair_dir,
+            workspace_root=self.root,
+            now=NOW,
+            liveness_probe=_dead_probe,
+        )
+        kwargs.update(overrides)
+        return ss.build_cloud_status_snapshot(**kwargs)
+
+
+@pytest.fixture
+def fx(tmp_path):
+    return Fixture(tmp_path)
+
+
+def _by_session(snapshot, name):
+    for entry in snapshot["sessions"]:
+        if entry["session"] == name:
+            return entry
+    raise AssertionError(f"session {name!r} missing from snapshot")
+
+
+# --- classification contract ----------------------------------------------
+
+
+def test_two_running_plus_one_repairing(fx):
+    fx.add_session("a", plan_name="planA")
+    fx.add_chain_health("a", current_plan_name="planA", completed_count=2, milestone_count=5)
+    fx.add_session("b", plan_name="planB")
+    fx.add_chain_health("b", current_plan_name="planB", completed_count=1, milestone_count=5)
+
+    fx.add_session("c", plan_name="planC")
+    fx.add_chain_health(
+        "c",
+        current_plan_name="planC",
+        last_state="error",
+        updated_at=NOW - timedelta(hours=3),
+    )
+    fx.add_repair_progress("c")
+
+    snap = fx.build()
+    assert snap["summary"]["running"] == 2
+    assert snap["summary"]["repairing"] == 1
+
+
+def test_completed_not_counted_as_active_even_with_stale_failure(fx):
+    fx.add_session("done", plan_name="planDone")
+    fx.add_chain_health(
+        "done",
+        chain_complete=True,
+        completed_count=4,
+        milestone_count=4,
+        last_state="done",
+        updated_at=NOW - timedelta(hours=5),
+    )
+    # Stale plan-state finalized must not drag a complete chain back into active.
+    plan_state_dir = fx.root / "done" / ".megaplan" / "plans" / "planDone"
+    plan_state_dir.mkdir(parents=True, exist_ok=True)
+    (plan_state_dir / "state.json").write_text(
+        json.dumps({"current_state": "finalized"}), encoding="utf-8"
+    )
+
+    snap = fx.build()
+    entry = _by_session(snap, "done")
+    assert entry["status"] == "complete"
+    assert entry["should_run"] is False
+    assert all(s["status"] != "running" for s in snap["sessions"])
+
+
+def test_missing_workspace_becomes_attention_not_complete(fx):
+    # No workspace dir created; point the marker at a path that does not exist.
+    (fx.marker_dir / "ghost.json").write_text(
+        json.dumps(
+            {
+                "session": "ghost",
+                "workspace": str(fx.root / "does-not-exist"),
+                "remote_spec": "/spec/ghost",
+                "started_at": "2026-07-04T20:00:00Z",
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+    snap = fx.build()
+    entry = _by_session(snap, "ghost")
+    assert entry["status"] == "attention"
+    assert entry["status"] != "complete"
+
+
+def test_repair_marker_plus_blocked_watchdog_item_is_repairing(fx):
+    fx.add_session("stuck", plan_name="planStuck")
+    fx.add_chain_health(
+        "stuck",
+        current_plan_name="planStuck",
+        last_state="error",
+        updated_at=NOW - timedelta(hours=4),
+    )
+    fx.add_repair_progress("stuck")
+    fx.add_watchdog_report(
+        items=[{"session": "stuck", "status": "restarted", "action": "repair", "message": "restarted"}]
+    )
+    snap = fx.build(watchdog_report_path=fx.root / "watchdog-report.json")
+    entry = _by_session(snap, "stuck")
+    assert entry["status"] == "repairing"
+    assert entry["repairing"] is True
+
+
+def test_blocked_session_when_needs_human_marker_present(fx):
+    fx.add_session("gated", plan_name="planGated")
+    fx.add_chain_health(
+        "gated",
+        current_plan_name="planGated",
+        last_state="awaiting_human",
+        updated_at=NOW - timedelta(hours=1),
+    )
+    fx.add_needs_human("gated", summary="merge the PR before continuing")
+    snap = fx.build()
+    entry = _by_session(snap, "gated")
+    assert entry["status"] == "blocked"
+    assert "merge the PR" in entry["operator_next"]
+
+
+def test_summary_counts_partition_all_sessions(fx):
+    fx.add_session("r1"); fx.add_chain_health("r1")
+    fx.add_session("r2"); fx.add_chain_health("r2")
+    fx.add_session("rep"); fx.add_chain_health("rep", last_state="error", updated_at=NOW - timedelta(hours=3)); fx.add_repair_progress("rep")
+    fx.add_session("blk"); fx.add_chain_health("blk", last_state="awaiting_human"); fx.add_needs_human("blk")
+    fx.add_session("dn"); fx.add_chain_health("dn", chain_complete=True, completed_count=2, milestone_count=2, last_state="done")
+    fx.add_session("att"); fx.add_chain_health("att", last_state="executed", updated_at=NOW - timedelta(hours=8))
+
+    snap = fx.build()
+    summary = snap["summary"]
+    total = sum(summary.values())
+    assert total == 6, summary
+    assert summary == {"running": 2, "repairing": 1, "blocked": 1, "complete": 1, "attention": 1}
+
+
+# --- degraded mode + freshness -------------------------------------------
+
+
+def test_missing_watchdog_report_marks_degraded_but_still_builds(fx):
+    fx.add_session("a"); fx.add_chain_health("a")
+    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
+    assert snap["degraded"] is not None
+    assert snap["degraded"]["reasons"]
+    assert _by_session(snap, "a")["status"] == "running"
+
+
+def test_plan_activity_summary_prefers_snapshot_over_no_snapshot():
+    derived_none = ss.plan_activity_summary(None)
+    assert derived_none["degraded"] is True
+    assert derived_none["active_working"] == []
+
+    snap = {
+        "sessions": [
+            {"session": "r", "status": "running", "current_plan": "m1", "operator_next": "x", "latest_activity": "t"},
+            {"session": "d", "status": "complete", "current_plan": "m9", "operator_next": "", "latest_activity": "t"},
+            {"session": "a", "status": "attention", "current_plan": "m3", "operator_next": "stalled", "latest_activity": "t"},
+        ]
+    }
+    derived = ss.plan_activity_summary(snap)
+    assert derived["degraded"] is False
+    assert [e["session"] for e in derived["active_working"]] == ["r"]
+    assert [e["session"] for e in derived["recently_completed"]] == ["d"]
+    assert [e["session"] for e in derived["should_be_working_but_needs_attention"]] == ["a"]
+
+
+def test_write_load_roundtrip_and_freshness(tmp_path, fx):
+    fx.add_session("a"); fx.add_chain_health("a")
+    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
+    target = tmp_path / "status" / "cloud-status.json"
+    previous = tmp_path / "status" / "cloud-status.previous.json"
+
+    written = ss.write_cloud_status_snapshot(snap, path=target, previous_path=previous)
+    assert written == target
+
+    loaded, reason = ss.load_cloud_status_snapshot(target, max_age_s=60, now=NOW)
+    assert reason is None
+    assert loaded["summary"] == snap["summary"]
+
+    # Second write rotates the prior snapshot into previous_path.
+    snap2 = dict(snap)
+    snap2 = json.loads(json.dumps(snap))
+    snap2["generated_at"] = (NOW + timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    ss.write_cloud_status_snapshot(snap2, path=target, previous_path=previous)
+    assert previous.exists()
+    rotated, _ = ss.load_cloud_status_snapshot(previous)
+    assert rotated["summary"] == snap["summary"]
+
+    stale, reason = ss.load_cloud_status_snapshot(target, max_age_s=60, now=NOW + timedelta(hours=2))
+    assert stale is not None
+    assert reason is not None
+    assert "stale" in reason
+
+
+def test_load_missing_snapshot_returns_degraded_reason(tmp_path):
+    loaded, reason = ss.load_cloud_status_snapshot(tmp_path / "nope.json")
+    assert loaded is None
+    assert "missing" in reason
+
+
+# --- formatter contract ---------------------------------------------------
+
+
+def test_discord_short_chunks_under_limit(fx):
+    for i in range(60):
+        fx.add_session(f"very-long-running-session-name-{i:03d}")
+        fx.add_chain_health(f"very-long-running-session-name-{i:03d}", current_plan_name=f"milestone-plan-{i:03d}")
+    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
+    chunks = sf.format_cloud_status_short(snap)
+    assert chunks
+    assert all(len(c) <= 2000 for c in chunks)
+    assert any("running" in c for c in chunks)
+
+
+def test_discord_short_splits_on_small_cap(fx):
+    fx.add_session("a"); fx.add_chain_health("a", current_plan_name="plan-a")
+    fx.add_session("b"); fx.add_chain_health("b", current_plan_name="plan-b")
+    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
+    chunks = sf.format_cloud_status_short(snap, max_chars=80)
+    assert len(chunks) >= 2
+    assert all(len(c) <= 80 for c in chunks)
+
+
+def test_discord_short_degraded_when_snapshot_absent():
+    chunks = sf.format_cloud_status_short(None)
+    assert len(chunks) == 1
+    assert "degraded" in chunks[0]
+
+
+def test_attention_only_empty_when_nothing_noteworthy(fx):
+    fx.add_session("a"); fx.add_chain_health("a")
+    fx.add_session("d"); fx.add_chain_health("d", chain_complete=True, completed_count=1, milestone_count=1, last_state="done")
+    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
+    assert sf.format_attention_only(snap) == ""
+
+
+def test_attention_only_lists_blocked_and_repairing(fx):
+    fx.add_session("rep"); fx.add_chain_health("rep", last_state="error", updated_at=NOW - timedelta(hours=3)); fx.add_repair_progress("rep")
+    fx.add_session("blk"); fx.add_chain_health("blk", last_state="awaiting_human"); fx.add_needs_human("blk")
+    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
+    body = sf.format_attention_only(snap)
+    assert "rep" in body and "blk" in body
+
+
+def test_detailed_cites_evidence_source_and_timestamp(fx):
+    fx.add_session("a"); fx.add_chain_health("a", current_plan_name="m1")
+    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
+    detailed = sf.format_cloud_status_detailed(snap)
+    assert "Cloud status —" in detailed
+    assert snap["generated_at"] in detailed
+    assert "cloud-local-observer" in detailed

@@ -31,6 +31,7 @@ REPORT_WEBHOOK="${CLOUD_WATCHDOG_REPORT_WEBHOOK:-}"
 INTERVAL="${CLOUD_WATCHDOG_INTERVAL_SECS:-3600}"
 MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
+STATUS_DIR="${CLOUD_WATCHDOG_STATUS_DIR:-/workspace/.megaplan/status}"
 REPAIR_ENABLED="${ARNOLD_REPAIR_TRIGGER_ENABLED:-1}"
 PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-1}"
 CODEX_TIMEOUT="${CLOUD_WATCHDOG_CODEX_TIMEOUT_SECS:-7200}"
@@ -1306,6 +1307,29 @@ PY
     fi
   fi
   rm -f "$report_tmp"
+}
+
+write_status_snapshot() {
+  # Produce the canonical cloud-status.json after each sweep. Built from local
+  # observation only (marker dir + the report emit_report just wrote). Never let
+  # a snapshot failure break the watchdog sweep — log and move on.
+  local marker_dir="${1:-$MARKER_DIR}"
+  local report_path="${2:-$REPORT_PATH}"
+  local status_dir="${3:-$STATUS_DIR}"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$marker_dir" "$report_path" "$status_dir" <<'PY' 2>>"${LOG:-/dev/null}" || log "status snapshot write failed"
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud import status_snapshot
+
+marker_dir, report_path, status_dir = (Path(p) for p in sys.argv[1:4])
+status_snapshot.build_and_write_snapshot(
+    marker_dir=marker_dir,
+    watchdog_report_path=report_path,
+    path=status_dir / "cloud-status.json",
+    previous_path=status_dir / "cloud-status.previous.json",
+)
+PY
 }
 
 sync_cloud_runtime_wrappers() {
@@ -6294,6 +6318,7 @@ scan_once() {
   if [[ ! -d "$MARKER_DIR" ]]; then
     log "scan complete: marker directory missing"
     emit_report "$report_items" 0
+    write_status_snapshot
     rm -f "$report_items"
     return 0
   fi
@@ -6345,6 +6370,7 @@ PY
   reap_stale_repairs "$report_items"
   log "scan complete markers=$found"
   emit_report "$report_items" "$found"
+  write_status_snapshot
   rm -f "$report_items"
 }
 
