@@ -48,6 +48,19 @@ def test_cloud_refresh_uses_editible_install_branch() -> None:
     assert 'git -C "$SRC" pull --ff-only origin "$REF"' in command
 
 
+def test_cloud_refresh_can_prepare_clean_runtime_mirror() -> None:
+    command = _megaplan_refresh_command(
+        runtime_src_path="/workspace/project/.megaplan/runtime/editable-engine"
+    )
+
+    assert "RUNTIME_SRC=/workspace/project/.megaplan/runtime/editable-engine" in command
+    assert 'source checkout dirty; using clean runtime mirror at $RUNTIME_SRC' in command
+    assert 'git clone --shared --no-checkout "$SRC" "$RUNTIME_SRC"' in command
+    assert 'git -C "$RUNTIME_SRC" checkout --detach "origin/$REF"' in command
+    assert 'export MEGAPLAN_RUNTIME_SRC="$RUNTIME_SRC"' in command
+    assert 'pip install -e "$MEGAPLAN_RUNTIME_SRC"' in command
+
+
 def test_cloud_refresh_force_clean_resets_only_editable_source() -> None:
     command = _megaplan_refresh_command(force_clean_editable_install=True)
 
@@ -66,6 +79,9 @@ def test_cloud_chain_start_requires_successful_editable_refresh() -> None:
 
     assert "} >> .megaplan/cloud-chain.log 2>&1 && " in command
     assert "} >> .megaplan/cloud-chain.log 2>&1 || true" not in command
+    assert 'RUNTIME_SRC=/workspace/project/.megaplan/runtime/editable-engine' in command
+    assert 'ENGINE_DIR="${MEGAPLAN_RUNTIME_SRC:-}"' in command
+    assert 'PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}"' in command
 
 
 def test_cloud_chain_start_can_force_clean_editable_refresh() -> None:
