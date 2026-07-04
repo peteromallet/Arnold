@@ -727,7 +727,17 @@ def _attempt_has_runtime_context(item):
             return True
     return False
 
-def _meta_repair_summary(session, repair_data, meta_refs, *, run_kind="", current_state="", chain_state_summary=None):
+def _meta_repair_summary(
+    session,
+    repair_data,
+    meta_refs,
+    *,
+    run_kind="",
+    current_state="",
+    chain_state_summary=None,
+    chain_log_summary=None,
+    events_mtime_age_min=None,
+):
     repair_root = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_REPAIR_DATA_DIR", "/workspace/.megaplan/cloud-sessions/repair-data"))
     repair_payload = _load_json(repair_root / f"{session}.repair-data.json")
     if not isinstance(repair_payload, dict):
@@ -859,6 +869,24 @@ def _meta_repair_summary(session, repair_data, meta_refs, *, run_kind="", curren
         should_dispatch = False
         trigger = "classification_error"
         rationale = [_redact_scalar(exc)]
+    normalized_kind = str(run_kind or "").strip().lower()
+    normalized_state = str(current_state or "").strip().lower()
+    live_event_activity = isinstance(events_mtime_age_min, int) and events_mtime_age_min <= 5
+    chain_log_age = None
+    if isinstance(chain_log_summary, dict):
+        chain_log_age = chain_log_summary.get("mtime_age_min")
+    live_chain_activity = isinstance(chain_log_age, int) and chain_log_age <= 5
+    non_terminal_state = normalized_state not in {"done", "complete", "completed", "finalized"}
+    live_target_activity = non_terminal_state and (
+        live_event_activity or (normalized_kind == "chain" and live_chain_activity)
+    )
+    if should_dispatch and trigger in {"persistent_recurring_retry", "partial_liveness_recurrence"} and live_target_activity:
+        should_dispatch = False
+        trigger = ""
+        rationale = [
+            "watchdog-corroborated live target activity supersedes recurring meta-repair dispatch: "
+            f"events_mtime_age_min={events_mtime_age_min!r}, chain_log_mtime_age_min={chain_log_age!r}"
+        ]
     failed_run_refs = [item for item in run_refs if item.get("launch_failure")]
     failed_meta_records = []
     for item in meta_refs or []:
@@ -1758,6 +1786,8 @@ def _plan_evidence(entry):
         run_kind=run_kind,
         current_state=state.get("current_state") or "",
         chain_state_summary=chain_state,
+        chain_log_summary=chain_log,
+        events_mtime_age_min=int((now.timestamp() - events_mtime) // 60) if events_mtime else None,
     )
     prior_incident_ids = [item.get("incident_id") for item in cross_refs.get("prior_incident_refs", []) if item.get("incident_id")]
     prior_watchdog_report_refs = _collect_watchdog_report_refs(session, plan, workspace_path)

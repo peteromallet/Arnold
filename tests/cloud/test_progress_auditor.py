@@ -1656,6 +1656,87 @@ class TestLiveSignalFiltering:
         assert len(findings["green_checks"]) == 1
         assert findings["green_checks"][0]["plan"] == "demo-plan"
 
+    def test_meta_repair_summary_ignores_partial_liveness_for_live_chain_without_repair_context(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        megaplan_dir = workspace / ".megaplan"
+        plan_dir = megaplan_dir / "plans" / "demo-plan"
+        chain_dir = megaplan_dir / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "initialized",
+                    "iteration": 0,
+                    "latest_failure": None,
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text(
+            json.dumps({"kind": "llm_token_heartbeat", "ts_utc": "2026-07-04T13:32:23+00:00"}) + "\n",
+            encoding="utf-8",
+        )
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 0,
+                    "current_plan_name": "demo-plan",
+                    "last_state": "",
+                    "completed": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (megaplan_dir / "cloud-chain-demo-session.log").write_text(
+            "L1: [tool] running 2 tools concurrently\nL2: [done] 2/2 tools completed\n",
+            encoding="utf-8",
+        )
+
+        repair_root = tmp_path / "repair-data"
+        sidecar_events = tmp_path / "repair-data.d" / "events"
+        repair_root.mkdir(parents=True, exist_ok=True)
+        sidecar_events.mkdir(parents=True, exist_ok=True)
+        (repair_root / "index.json").write_text(json.dumps({}), encoding="utf-8")
+        (sidecar_events / "events.jsonl").write_text(
+            "".join(
+                json.dumps(
+                    {
+                        "session": "demo-session",
+                        "run_kind": "chain",
+                        "plan_name": "",
+                        "health": "alive",
+                        "outcome": "partial_liveness",
+                        "recorded_at": f"2026-07-04T12:1{idx}:00+00:00",
+                    }
+                )
+                + "\n"
+                for idx in range(2)
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        assert findings["findings"] == []
+        assert len(findings["green_checks"]) == 1
+        assert findings["green_checks"][0]["plan"] == "demo-plan"
+
 
 class TestRootCausePatternsJsonSchema:
     """Verify root_cause_patterns JSON payload shape invariants and stable keys."""
