@@ -73,6 +73,7 @@ from arnold_pipelines.megaplan._core import (
 
 from .shared import (
     _attach_next_step_runtime,
+    _active_step_fallback_fields,
     _agent_mode_parts,
     _emit_phase_notice,
     _emit_receipt,
@@ -1480,7 +1481,14 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
 
             run_id = None
             try:
-                run_id = set_active_step(state, step="review", agent=agent_type, mode=mode, model=model)
+                run_id = set_active_step(
+                    state,
+                    step="review",
+                    agent=agent_type,
+                    mode=mode,
+                    model=model,
+                    **_active_step_fallback_fields("review", args, agent=agent_type, model=model),
+                )
                 _emit_phase_notice("review")
                 save_state_merge_meta(plan_dir, state)
                 checks = review_checks.checks_for_robustness("extreme")

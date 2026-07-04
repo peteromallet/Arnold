@@ -28,9 +28,55 @@ from typing import Any, Callable, Mapping
 
 from .hermes_fanout import GenericScatterResult, scatter_gather_processes
 from arnold_pipelines.megaplan.agent_runtime import AgentRequest, AgentSpec, ResultProvenance
+from arnold_pipelines.megaplan.fallback_chains import (
+    ExecuteFallbackUnsafe,
+    classify_retryability,
+    is_retryable_classification,
+    normalize_fallback_spec_list,
+    provider_family,
+)
 from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan.model_seam import ModelBudgetError, ModelTier, render_step_message
-from arnold_pipelines.megaplan.types import AgentMode, PlanState, resolved_default_model_for_agent
+from arnold_pipelines.megaplan.types import (
+    AgentMode,
+    PlanState,
+    format_agent_spec,
+    parse_agent_spec,
+    resolved_default_model_for_agent,
+)
+
+
+def _resolved_mode_spec(resolved: AgentMode) -> str:
+    return format_agent_spec(
+        AgentSpec(agent=resolved.agent, model=resolved.model, effort=resolved.effort)
+    )
+
+
+def _normalize_failed_attempt_reasons(
+    value: list[str] | tuple[str, ...] | None,
+) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)):
+        raise TypeError("failed_attempt_reasons must be a list[str] or tuple[str, ...]")
+    normalized: list[str] = []
+    for index, reason in enumerate(value):
+        if not isinstance(reason, str):
+            raise TypeError(f"failed_attempt_reasons[{index}] must be a string")
+        if not reason:
+            raise ValueError(f"failed_attempt_reasons[{index}] must be a non-empty string")
+        normalized.append(reason)
+    return tuple(normalized)
+
+
+def _normalize_fallback_trigger(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError("fallback_trigger must be a string when provided")
+    if not value:
+        raise ValueError("fallback_trigger must be a non-empty string when provided")
+    return value
 
 
 @dataclass
@@ -75,6 +121,46 @@ class WorkerUnit:
     extra: dict[str, Any] = field(default_factory=dict)
     """Opaque caller metadata forwarded to parse/reduce hooks."""
 
+    configured_specs: tuple[str, ...] = ()
+    """Configured ordered fallback chain for this unit's selected route."""
+
+    attempt_index: int = 0
+    """0-based selected attempt inside ``configured_specs``."""
+
+    attempted_specs: tuple[str, ...] = ()
+    """Ordered specs already attempted for this worker unit."""
+
+    failed_attempt_reasons: tuple[str, ...] = ()
+    """Ordered machine-readable reasons aligned to failed attempted specs."""
+
+    fallback_trigger: str | None = None
+    """Machine-readable trigger that advanced to the current attempt."""
+
+    def __post_init__(self) -> None:
+        self.configured_specs = normalize_fallback_spec_list(
+            self.configured_specs or (_resolved_mode_spec(self.resolved),),
+            path="WorkerUnit.configured_specs",
+        )
+        self.attempted_specs = normalize_fallback_spec_list(
+            self.attempted_specs or self.configured_specs[: self.attempt_index + 1],
+            path="WorkerUnit.attempted_specs",
+        )
+        self.failed_attempt_reasons = _normalize_failed_attempt_reasons(
+            self.failed_attempt_reasons
+        )
+        self.fallback_trigger = _normalize_fallback_trigger(self.fallback_trigger)
+        if self.attempt_index < 0:
+            raise ValueError("attempt_index must be non-negative")
+        if self.attempt_index >= len(self.configured_specs):
+            raise ValueError(
+                f"attempt_index {self.attempt_index} is out of range for "
+                f"{len(self.configured_specs)} configured_specs"
+            )
+        if len(self.failed_attempt_reasons) > len(self.attempted_specs):
+            raise ValueError(
+                "failed_attempt_reasons cannot exceed attempted_specs length"
+            )
+
 
 @dataclass
 class WorkerUnitResult:
@@ -102,6 +188,41 @@ class WorkerUnitResult:
     model: str | None = None
     resolved_model: str | None = None
     effort: str | None = None
+    configured_specs: tuple[str, ...] = ()
+    attempt_index: int = 0
+    attempted_specs: tuple[str, ...] = ()
+    failed_attempt_reasons: tuple[str, ...] = ()
+    fallback_trigger: str | None = None
+
+    def __post_init__(self) -> None:
+        selected_spec = AgentSpec(
+            agent=self.agent or "unknown",
+            model=self.model,
+            effort=self.effort,
+        )
+        self.configured_specs = normalize_fallback_spec_list(
+            self.configured_specs or (format_agent_spec(selected_spec),),
+            path="WorkerUnitResult.configured_specs",
+        )
+        self.attempted_specs = normalize_fallback_spec_list(
+            self.attempted_specs or self.configured_specs[: self.attempt_index + 1],
+            path="WorkerUnitResult.attempted_specs",
+        )
+        self.failed_attempt_reasons = _normalize_failed_attempt_reasons(
+            self.failed_attempt_reasons
+        )
+        self.fallback_trigger = _normalize_fallback_trigger(self.fallback_trigger)
+        if self.attempt_index < 0:
+            raise ValueError("attempt_index must be non-negative")
+        if self.attempt_index >= len(self.configured_specs):
+            raise ValueError(
+                f"attempt_index {self.attempt_index} is out of range for "
+                f"{len(self.configured_specs)} configured_specs"
+            )
+        if len(self.failed_attempt_reasons) > len(self.attempted_specs):
+            raise ValueError(
+                "failed_attempt_reasons cannot exceed attempted_specs length"
+            )
 
     @classmethod
     def from_worker_result(cls, worker: Any, unit: WorkerUnit) -> WorkerUnitResult:
@@ -129,6 +250,11 @@ class WorkerUnitResult:
             model=resolved.model,
             resolved_model=resolved.resolved_model,
             effort=resolved.effort,
+            configured_specs=unit.configured_specs,
+            attempt_index=unit.attempt_index,
+            attempted_specs=unit.attempted_specs,
+            failed_attempt_reasons=unit.failed_attempt_reasons,
+            fallback_trigger=unit.fallback_trigger,
         )
 
 
@@ -184,6 +310,11 @@ def _worker_unit_to_agent_request(
             "model": model_name,
             "tier": tier.value if isinstance(tier, ModelTier) else str(tier),
             "extra": dict(unit.extra),
+            "configured_specs": list(unit.configured_specs),
+            "attempt_index": unit.attempt_index,
+            "attempted_specs": list(unit.attempted_specs),
+            "failed_attempt_reasons": list(unit.failed_attempt_reasons),
+            "fallback_trigger": unit.fallback_trigger,
         },
         "fanout": {
             "parse_result": parse_result,
@@ -214,6 +345,11 @@ def _worker_unit_to_agent_request(
             "read_only": unit.read_only,
             "model": model_name,
             "tier": tier.value if isinstance(tier, ModelTier) else str(tier),
+            "configured_specs": list(unit.configured_specs),
+            "attempt_index": unit.attempt_index,
+            "attempted_specs": list(unit.attempted_specs),
+            "failed_attempt_reasons": list(unit.failed_attempt_reasons),
+            "fallback_trigger": unit.fallback_trigger,
         },
     )
     return AgentRequest(
@@ -283,29 +419,17 @@ def scatter_worker_unit(
         tier=tier,
     )
 
-    worker, _agent, _mode, _refreshed = run_step_with_worker(
-        unit.step,
-        state,
-        plan_dir,
-        args,
+    worker, dispatched_unit = _run_worker_unit_with_ordered_fallback(
+        unit,
+        state=state,
+        plan_dir=plan_dir,
         root=root,
-        resolved=unit.resolved,
+        args=args,
+        run_step_with_worker=run_step_with_worker,
         prompt_override=rendered.prompt if rendered is not None else unit.prompt,
-        read_only=unit.read_only,
-        output_path=unit.output_path,
         worker_options=dict(worker_options) if worker_options is not None else None,
-        ledger_step_label=(
-            unit.extra.get("ledger_step_label")
-            or unit.extra.get("check_id")
-            or unit.extra.get("area_id")
-            or unit.step
-        ),
-        ledger_selected_spec=unit.extra.get("ledger_selected_spec"),
-        ledger_tier=unit.extra.get("ledger_tier"),
-        ledger_complexity=unit.extra.get("ledger_complexity"),
-        ledger_tier_routing_active=bool(unit.extra.get("ledger_tier_routing_active", False)),
     )
-    unit_result = WorkerUnitResult.from_worker_result(worker, unit)
+    unit_result = WorkerUnitResult.from_worker_result(worker, dispatched_unit)
     return (
         index,
         unit_result,
@@ -314,6 +438,188 @@ def scatter_worker_unit(
         unit_result.completion_tokens,
         unit_result.total_tokens,
     )
+
+
+def _agent_mode_for_fallback_spec(base: AgentMode, spec: str) -> AgentMode:
+    parsed = parse_agent_spec(spec)
+    resolved_model = parsed.model
+    if resolved_model is None and parsed.agent in {"claude", "codex"}:
+        resolved_model = resolved_default_model_for_agent(parsed.agent)
+    return AgentMode(
+        agent=parsed.agent,
+        mode=base.mode,
+        refreshed=base.refreshed,
+        model=parsed.model,
+        effort=parsed.effort,
+        resolved_model=resolved_model,
+    )
+
+
+def _next_fallback_index(
+    unit: WorkerUnit,
+    failed_index: int,
+    classification: str,
+) -> int | None:
+    if not is_retryable_classification(classification):  # type: ignore[arg-type]
+        return None
+    candidate_index = failed_index + 1
+    if candidate_index >= len(unit.configured_specs):
+        return None
+    if provider_family(unit.configured_specs[candidate_index]) == provider_family(
+        unit.configured_specs[failed_index]
+    ):
+        return None
+    return candidate_index
+
+
+def _run_worker_unit_with_ordered_fallback(
+    unit: WorkerUnit,
+    *,
+    state: PlanState,
+    plan_dir: Path,
+    root: Path,
+    args: argparse.Namespace,
+    run_step_with_worker: Callable[..., Any],
+    prompt_override: str,
+    worker_options: dict[str, Any] | None,
+) -> tuple[Any, WorkerUnit]:
+    if unit.step in {"execute", "loop_execute"}:
+        if unit.attempt_index > 0:
+            raise ExecuteFallbackUnsafe(
+                phase=unit.step,
+                configured_specs=unit.configured_specs,
+                attempted_index=unit.attempt_index,
+            )
+        try:
+            return (
+                _dispatch_worker_unit_attempt(
+                    unit,
+                    state=state,
+                    plan_dir=plan_dir,
+                    root=root,
+                    args=args,
+                    run_step_with_worker=run_step_with_worker,
+                    prompt_override=prompt_override,
+                    worker_options=worker_options,
+                ),
+                unit,
+            )
+        except Exception as exc:
+            classification = classify_retryability(exc)
+            next_index = _next_fallback_index(unit, unit.attempt_index, classification)
+            if next_index is None:
+                raise
+            raise ExecuteFallbackUnsafe(
+                phase=unit.step,
+                configured_specs=unit.configured_specs,
+                attempted_index=next_index,
+            ) from exc
+
+    if len(unit.configured_specs) == 1:
+        return (
+            _dispatch_worker_unit_attempt(
+                unit,
+                state=state,
+                plan_dir=plan_dir,
+                root=root,
+                args=args,
+                run_step_with_worker=run_step_with_worker,
+                prompt_override=prompt_override,
+                worker_options=worker_options,
+            ),
+            unit,
+        )
+
+    current = unit
+    while True:
+        try:
+            return (
+                _dispatch_worker_unit_attempt(
+                    current,
+                    state=state,
+                    plan_dir=plan_dir,
+                    root=root,
+                    args=args,
+                    run_step_with_worker=run_step_with_worker,
+                    prompt_override=prompt_override,
+                    worker_options=worker_options,
+                ),
+                current,
+            )
+        except Exception as exc:
+            classification = classify_retryability(exc)
+            next_index = _next_fallback_index(current, current.attempt_index, classification)
+            if next_index is None:
+                raise
+            next_spec = current.configured_specs[next_index]
+            current = WorkerUnit(
+                step=current.step,
+                resolved=_agent_mode_for_fallback_spec(current.resolved, next_spec),
+                prompt=current.prompt,
+                output_path=current.output_path,
+                read_only=current.read_only,
+                validation_step=current.validation_step,
+                schema=current.schema,
+                model=current.model,
+                tier=current.tier,
+                extra=dict(current.extra),
+                configured_specs=current.configured_specs,
+                attempt_index=next_index,
+                attempted_specs=(
+                    *current.attempted_specs,
+                    *current.configured_specs[current.attempt_index + 1 : next_index + 1],
+                ),
+                failed_attempt_reasons=(
+                    *current.failed_attempt_reasons,
+                    classification,
+                ),
+                fallback_trigger=classification,
+            )
+
+
+def _dispatch_worker_unit_attempt(
+    unit: WorkerUnit,
+    *,
+    state: PlanState,
+    plan_dir: Path,
+    root: Path,
+    args: argparse.Namespace,
+    run_step_with_worker: Callable[..., Any],
+    prompt_override: str,
+    worker_options: dict[str, Any] | None,
+) -> Any:
+    options = dict(worker_options or {})
+    if len(unit.configured_specs) > 1:
+        options["_suppress_ambient_agent_fallback"] = True
+    worker, _agent, _mode, _refreshed = run_step_with_worker(
+        unit.step,
+        state,
+        plan_dir,
+        args,
+        root=root,
+        resolved=unit.resolved,
+        prompt_override=prompt_override,
+        read_only=unit.read_only,
+        output_path=unit.output_path,
+        worker_options=options or None,
+        ledger_step_label=(
+            unit.extra.get("ledger_step_label")
+            or unit.extra.get("check_id")
+            or unit.extra.get("area_id")
+            or unit.step
+        ),
+        ledger_selected_spec=unit.extra.get("ledger_selected_spec")
+        or unit.configured_specs[unit.attempt_index],
+        ledger_tier=unit.extra.get("ledger_tier"),
+        ledger_complexity=unit.extra.get("ledger_complexity"),
+        ledger_tier_routing_active=bool(unit.extra.get("ledger_tier_routing_active", False)),
+        ledger_configured_specs=unit.configured_specs,
+        ledger_attempt_index=unit.attempt_index,
+        ledger_attempted_specs=unit.attempted_specs,
+        ledger_failed_attempt_reasons=unit.failed_attempt_reasons,
+        ledger_fallback_trigger=unit.fallback_trigger,
+    )
+    return worker
 
 
 def _scatter_worker_unit_from_packed(
@@ -336,6 +642,11 @@ def _scatter_worker_unit_from_packed(
         model=packed.get("model"),
         tier=packed.get("tier"),
         extra=packed.get("extra", {}),
+        configured_specs=tuple(packed.get("configured_specs", ())),
+        attempt_index=packed.get("attempt_index", 0),
+        attempted_specs=tuple(packed.get("attempted_specs", ())),
+        failed_attempt_reasons=tuple(packed.get("failed_attempt_reasons", ())),
+        fallback_trigger=packed.get("fallback_trigger"),
     )
     return scatter_worker_unit(
         index,
@@ -447,6 +758,11 @@ def scatter_worker_units(
                 "model": u.model,
                 "tier": u.tier.value if isinstance(u.tier, ModelTier) else u.tier,
                 "extra": u.extra,
+                "configured_specs": list(u.configured_specs),
+                "attempt_index": u.attempt_index,
+                "attempted_specs": list(u.attempted_specs),
+                "failed_attempt_reasons": list(u.failed_attempt_reasons),
+                "fallback_trigger": u.fallback_trigger,
                 "state": state,
                 "plan_dir": str(plan_dir),
                 "root": str(root),
@@ -473,6 +789,11 @@ def scatter_worker_units(
             "model_seam_model": packed.get("model"),
             "tier": packed.get("tier"),
             "extra": packed.get("extra"),
+            "configured_specs": packed.get("configured_specs"),
+            "attempt_index": packed.get("attempt_index"),
+            "attempted_specs": packed.get("attempted_specs"),
+            "failed_attempt_reasons": packed.get("failed_attempt_reasons"),
+            "fallback_trigger": packed.get("fallback_trigger"),
             "mode_labels": mode_labels,
             "role": packed.get("role"),
             "original_index": packed.get("original_index"),

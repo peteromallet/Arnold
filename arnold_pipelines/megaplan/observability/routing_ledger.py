@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from arnold_pipelines.megaplan.fallback_chains import fallback_observability_fields
 from arnold_pipelines.megaplan.types import AgentSpec, format_agent_spec
 
 log = logging.getLogger("megaplan")
@@ -86,6 +87,11 @@ def record_step_routing(
     tier: int | None = None,
     complexity: int | None = None,
     tier_routing_active: bool = False,
+    configured_specs: list[str] | tuple[str, ...] | str | None = None,
+    attempt_index: int = 0,
+    attempted_specs: list[str] | tuple[str, ...] | str | None = None,
+    failed_attempt_reasons: list[str] | tuple[str, ...] | None = None,
+    fallback_trigger: str | None = None,
 ) -> None:
     """Append one routing ledger row; never raise to phase control flow."""
     try:
@@ -101,6 +107,15 @@ def record_step_routing(
             "complexity": complexity,
             "tier_routing_active": bool(tier_routing_active),
         }
+        record.update(
+            fallback_observability_fields(
+                configured_specs or selected_spec,
+                attempt_index=attempt_index,
+                attempted_specs=attempted_specs,
+                failed_attempt_reasons=failed_attempt_reasons,
+                fallback_trigger=fallback_trigger,
+            )
+        )
         lock_path = plan_dir / _LOCK_FILE
         ledger_path = plan_dir / LEDGER_FILE
         line = json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"

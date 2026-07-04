@@ -65,6 +65,7 @@ from arnold_pipelines.megaplan.handlers.shared import (
     _write_plan_version,
 )
 from arnold_pipelines.megaplan.handlers.tiebreaker import _build_tiebreaker_reprompt
+from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
 
 log = logging.getLogger("megaplan")
 _ORIGINAL_VALIDATE_CRITIQUE_CHECKS = validate_critique_checks
@@ -220,7 +221,11 @@ def _apply_adaptive_critique_routing(
         _raw = _critique_tiers.get(complexity)
         if _raw is None:
             _raw = _critique_tiers.get(str(complexity))
-        return str(_raw) if _raw else None
+        if isinstance(_raw, str):
+            return _raw or None
+        if isinstance(_raw, list):
+            return select_fallback_spec(_raw, 0, path=f"tier_models.critique.{complexity}")
+        return None
 
     def _resolved_pin_agent_mode() -> _TierAgentMode:
         nonlocal _pin_agent_mode

@@ -7,18 +7,42 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from arnold_pipelines.megaplan.fallback_chains import (
+    configured_fallback_chain_for_phase,
+    fallback_observability_fields,
+)
+from arnold_pipelines.megaplan.observability.routing_ledger import format_selected_spec
 from arnold_pipelines.megaplan.receipts.canonical import CANONICALIZATION_VERSION, hash_prompts
 from arnold_pipelines.megaplan.receipts.extractors import extract_for_phase, load_and_extract
 from arnold_pipelines.megaplan.receipts.schema import Receipt, upstream_artifact_hashes
 
 
-def _configured_model_for_phase(phase: str, args: Any, agent: str) -> str | None:
-    for phase_model in getattr(args, "phase_model", None) or []:
-        if not isinstance(phase_model, str) or "=" not in phase_model:
-            continue
-        phase_name, spec = phase_model.split("=", 1)
-        if phase_name == phase:
-            return spec
+def _configured_chain_for_phase(phase: str, args: Any) -> tuple[str, ...] | None:
+    chain = configured_fallback_chain_for_phase(getattr(args, "phase_model", None), phase)
+    return chain.specs if chain is not None else None
+
+
+def _worker_selected_spec(worker: Any) -> str | None:
+    configured = getattr(worker, "configured_specs", None)
+    if not configured:
+        return None
+    try:
+        index = int(getattr(worker, "attempt_index", 0) or 0)
+    except (TypeError, ValueError):
+        index = 0
+    if index < 0 or index >= len(configured):
+        index = 0
+    selected = configured[index]
+    return selected if isinstance(selected, str) and selected else None
+
+
+def _configured_model_for_phase(phase: str, args: Any, agent: str, worker: Any) -> str | None:
+    selected_from_worker = _worker_selected_spec(worker)
+    if selected_from_worker is not None:
+        return selected_from_worker
+    configured_chain = _configured_chain_for_phase(phase, args)
+    if configured_chain:
+        return configured_chain[0]
     hermes_model = getattr(args, "hermes", None)
     if agent == "hermes" and isinstance(hermes_model, str) and hermes_model:
         return hermes_model
@@ -70,6 +94,18 @@ def build_receipt(
     if profile_name is None:
         profile_name = state.get("config", {}).get("profile")
     agent_mode = "persistent" if mode == "persistent" else "oneshot"
+    configured_specs = (
+        getattr(worker, "configured_specs", None)
+        or _configured_chain_for_phase(phase, args)
+        or (_configured_model_for_phase(phase, args, agent, worker) or format_selected_spec(agent, None) or agent,)
+    )
+    fallback_fields = fallback_observability_fields(
+        configured_specs,
+        attempt_index=int(getattr(worker, "attempt_index", 0) or 0),
+        attempted_specs=getattr(worker, "attempted_specs", None),
+        failed_attempt_reasons=getattr(worker, "failed_attempt_reasons", None),
+        fallback_trigger=getattr(worker, "fallback_trigger", None),
+    )
 
     return {
         "receipt_id": str(uuid.uuid4()),
@@ -81,8 +117,9 @@ def build_receipt(
         "profile_name": profile_name,
         "agent": agent,
         "agent_mode": agent_mode,
-        "model_configured": _configured_model_for_phase(phase, args, agent),
+        "model_configured": _configured_model_for_phase(phase, args, agent, worker),
         "model_actual": getattr(worker, "model_actual", None),
+        **fallback_fields,
         "session_id": getattr(worker, "session_id", None),
         "megaplan_version": getattr(megaplan, "__version__", "unknown"),
         "schema_version": 1,

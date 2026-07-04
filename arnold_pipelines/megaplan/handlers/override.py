@@ -12,6 +12,7 @@ from arnold_pipelines.megaplan.profiles import (
     effective_premium_vendor,
     normalize_robustness,
 )
+from arnold_pipelines.megaplan.fallback_chains import decode_phase_model_value, select_fallback_spec
 from arnold_pipelines.megaplan.types import (
     AgentSpec,
     CliError,
@@ -1457,7 +1458,11 @@ def _override_set_profile(
     exec_spec = next(
         (phase_model.split("=", 1)[1] for phase_model in phase_models if phase_model.startswith("execute=")),
         "",
-    ).lower()
+    )
+    if exec_spec:
+        _phase, exec_chain = decode_phase_model_value(f"execute={exec_spec}")
+        exec_spec = exec_chain.selected()
+    exec_spec = exec_spec.lower()
     exec_family = None
     if exec_spec.startswith("claude"):
         exec_family = "claude"
@@ -1665,9 +1670,9 @@ def _current_phase_spec(phase: str, state: PlanState, root: Path) -> str:
     phase_models = state.get("config", {}).get("phase_model") or []
     for pm in phase_models:
         if isinstance(pm, str) and "=" in pm:
-            pm_phase, pm_spec = pm.split("=", 1)
+            pm_phase, chain = decode_phase_model_value(pm)
             if pm_phase == phase:
-                return _resolve_symbolic_phase_spec(pm_spec, state)
+                return _resolve_symbolic_phase_spec(chain.selected(), state)
     profile_name = state.get("config", {}).get("profile")
     if profile_name:
         try:
@@ -1677,7 +1682,10 @@ def _current_phase_spec(phase: str, state: PlanState, root: Path) -> str:
             profiles = load_profiles(project_dir=project_dir)
             resolved = resolve_profile(profile_name, profiles)
             if phase in resolved:
-                return _resolve_symbolic_phase_spec(resolved[phase], state)
+                resolved_spec = resolved[phase]
+                if isinstance(resolved_spec, list):
+                    resolved_spec = select_fallback_spec(resolved_spec, 0, path=f"profile.{phase}")
+                return _resolve_symbolic_phase_spec(resolved_spec, state)
         except Exception:
             pass
     return _resolve_symbolic_phase_spec(DEFAULT_AGENT_ROUTING.get(phase, ""), state)
@@ -1790,9 +1798,9 @@ def _infer_phase_agent(phase: str, state: PlanState, root: Path) -> str | None:
     phase_models = state.get("config", {}).get("phase_model") or []
     for pm in phase_models:
         if isinstance(pm, str) and "=" in pm:
-            pm_phase, pm_spec = pm.split("=", 1)
+            pm_phase, chain = decode_phase_model_value(pm)
             if pm_phase == phase:
-                parsed = parse_agent_spec(pm_spec)
+                parsed = parse_agent_spec(chain.selected())
                 return parsed.agent
 
     # Check active profile
@@ -1804,7 +1812,10 @@ def _infer_phase_agent(phase: str, state: PlanState, root: Path) -> str | None:
             profiles = load_profiles(project_dir=project_dir)
             resolved = resolve_profile(profile_name, profiles)
             if phase in resolved:
-                parsed = parse_agent_spec(_resolve_symbolic_phase_spec(resolved[phase], state))
+                resolved_spec = resolved[phase]
+                if isinstance(resolved_spec, list):
+                    resolved_spec = select_fallback_spec(resolved_spec, 0, path=f"profile.{phase}")
+                parsed = parse_agent_spec(_resolve_symbolic_phase_spec(resolved_spec, state))
                 return parsed.agent
         except Exception:
             pass

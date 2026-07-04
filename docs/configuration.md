@@ -82,8 +82,8 @@ as needed.
 Megaplan resolves which model runs each pipeline phase through a fixed precedence chain:
 
 1. **Explicit `--phase-model` pins** (CLI). `--phase-model plan=codex:high` beats everything below.
-2. **Persisted `phase_model` entries** in the plan's `state.json`. These survive plan load/resume and have the same force as explicit CLI pins.
-3. **Profile phase slots** (from the selected built-in or custom profile TOML).
+2. **Persisted `phase_model` entries** in the plan's `state.json`. These survive plan load/resume and have the same force as explicit CLI pins. When a profile phase is a TOML array (fallback chain), the persisted entry uses the compact `__fallback_json__:<json-array>` encoding so the chain survives serialization without being parsed as a raw agent spec.
+3. **Profile phase slots** (from the selected built-in or custom profile TOML). Phase spec values can be scalar strings or TOML string arrays for fallback chains — see the main megaplan skill's **Fallback chains (v1)** section for the full advancement rules.
 4. **`DEFAULT_AGENT_ROUTING`** — the project's hardcoded fallback. Premium phases (plan, critique, revise, finalize, execute, review, etc.) use the symbolic agent spec **`premium`** (e.g., `premium:low`), not a concrete vendor name. Non-premium phases (prep) use `hermes`.
 
 The symbolic `premium` spec is a vendor-neutral placeholder, **not a runnable worker**. Before dispatch it is resolved to `claude` or `codex` based on the effective premium vendor, which follows its own precedence:
