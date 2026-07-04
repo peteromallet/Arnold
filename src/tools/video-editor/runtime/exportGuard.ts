@@ -52,6 +52,7 @@ import {
 import {
   COMPOSITION_DIAGNOSTIC_CODE,
   isBlockingTargetCompositionDiagnosticCode,
+  isDeterministicCaptureConversionDiagnosticCode,
 } from '@/tools/video-editor/runtime/composition/diagnostics.ts';
 import { validateShaderComposition } from '@/tools/video-editor/runtime/composition/shaderValidation.ts';
 import type { TransitionRegistryRecord, TransitionRegistrySnapshot } from '@/tools/video-editor/transitions/registry/types.ts';
@@ -406,6 +407,16 @@ function targetCompositionExportCode(code: string): ExportDiagnostic['code'] | u
       return 'export/target-value-type-error';
     case COMPOSITION_DIAGNOSTIC_CODE.TARGET_INTERPOLATION_GAP:
       return 'export/target-interpolation-gap';
+    case COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_CONVERSION_FAILED:
+      return 'export/deterministic-capture-conversion-failed';
+    case COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_TARGET_PATH_UNRESOLVABLE:
+      return 'export/deterministic-capture-target-path-unresolvable';
+    case COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_VALUE_NORMALIZATION_FAILED:
+      return 'export/deterministic-capture-value-normalization-failed';
+    case COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_TIMING_FAILED:
+      return 'export/deterministic-capture-timing-failed';
+    case COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_PROVENANCE_MISMATCH:
+      return 'export/deterministic-capture-provenance-mismatch';
     default:
       return undefined;
   }
@@ -417,6 +428,16 @@ function targetCompositionBlockerReason(code: string): RenderBlockerReason {
       return 'missing-contribution';
     case COMPOSITION_DIAGNOSTIC_CODE.UNSUPPORTED_RESERVED_TARGET:
       return 'inactive-extension';
+    case COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_CONVERSION_FAILED:
+      return 'live-unbaked';
+    case COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_TARGET_PATH_UNRESOLVABLE:
+      return 'live-unbaked';
+    case COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_VALUE_NORMALIZATION_FAILED:
+      return 'live-unbaked';
+    case COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_TIMING_FAILED:
+      return 'live-unbaked';
+    case COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_PROVENANCE_MISMATCH:
+      return 'live-unbaked';
     default:
       return 'unknown';
   }
@@ -442,10 +463,24 @@ function scanCompositionGraphTargetExportBlockers(
       return;
     }
 
+    // Extract conversion metadata for deterministic capture diagnostics.
+    // These are kept separate from material live-only diagnostics — material
+    // codes are not in BLOCKING_TARGET_COMPOSITION_DIAGNOSTIC_CODES so they
+    // never reach this block.
+    const isCaptureConversion = isDeterministicCaptureConversionDiagnosticCode(diagnostic.code);
+    const captureRef = isCaptureConversion && typeof diagnostic.detail?.captureRef === 'string'
+      ? diagnostic.detail.captureRef
+      : undefined;
+    const provenanceHash = isCaptureConversion && typeof diagnostic.detail?.provenanceHash === 'string'
+      ? diagnostic.detail.provenanceHash
+      : undefined;
+
     const detail = {
       source: 'composition-graph',
       graphDiagnosticCode: diagnostic.code,
       ...(diagnostic.detail ?? {}),
+      ...(captureRef ? { captureRef } : {}),
+      ...(provenanceHash ? { provenanceHash } : {}),
     };
     const extensionId = diagnostic.extensionId
       ?? (diagnostic.detail?.extensionId as string | undefined);
@@ -665,6 +700,14 @@ function pushLiveBindingFindingAndBlocker(
   blockers: RenderBlocker[],
   record: TimelineLiveBindingRecord,
 ): void {
+  const deterministicRefKinds = Array.from(new Set([
+    ...(Array.isArray(record.binding.deterministicRefs)
+      ? record.binding.deterministicRefs.map((ref) => ref.kind)
+      : []),
+    ...(Array.isArray(record.binding.bake?.deterministicRefs)
+      ? record.binding.bake.deterministicRefs.map((ref) => ref.kind)
+      : []),
+  ])).sort();
   const message = liveBindingStatusMessage(record);
   const id = `export.liveBinding.${record.clipId}.${record.binding.bindingId}.${record.status}`;
   const detail = {
@@ -672,6 +715,8 @@ function pushLiveBindingFindingAndBlocker(
     sourceId: record.binding.sourceId,
     sourceKind: record.binding.sourceKind,
     resolutionStatus: record.status,
+    bakeStatus: record.binding.bake?.status,
+    deterministicRefKinds,
     path: record.path,
     diagnostics: record.diagnostics.map((diagnostic) => ({
       code: diagnostic.code,

@@ -119,6 +119,92 @@ describe('timeline live binding metadata scanner', () => {
                 deterministicRefs: [{ kind: 'asset', ref: 'asset-live-baked' }],
               },
             },
+            {
+              bindingId: 'capture-resolved-binding',
+              sourceId: 'source-capture-resolved',
+              sourceKind: 'generated',
+              targetParamName: 'params.opacity',
+              targetPath: 'opacity',
+              bake: {
+                status: 'complete',
+                deterministicRefs: [{
+                  kind: 'deterministic-capture',
+                  ref: 'capture-opacity-1',
+                  metadata: {
+                    liveBake: {
+                      targetKind: 'deterministic-capture',
+                    },
+                    deterministicCapture: {
+                      captureId: 'capture-opacity-1',
+                      profile: 'event',
+                      provenanceHash: 'a'.repeat(64),
+                      routeConstraints: ['preview', 'browser-export'],
+                      determinism: 'deterministic',
+                    },
+                  },
+                }],
+              },
+            },
+            {
+              bindingId: 'sidecar-only-binding',
+              sourceId: 'source-sidecar-only',
+              sourceKind: 'generated',
+              bake: {
+                status: 'complete',
+                deterministicRefs: [{ kind: 'sidecar', ref: 'sidecar-live-analysis' }],
+              },
+            },
+            {
+              bindingId: 'media-capture-binding',
+              sourceId: 'source-media-capture',
+              sourceKind: 'generated',
+              targetParamName: 'texture',
+              bake: {
+                status: 'complete',
+                deterministicRefs: [{
+                  kind: 'deterministic-capture',
+                  ref: 'capture-texture-1',
+                  metadata: {
+                    liveBake: {
+                      targetKind: 'deterministic-capture',
+                    },
+                    deterministicCapture: {
+                      captureId: 'capture-texture-1',
+                      profile: 'event',
+                      provenanceHash: 'b'.repeat(64),
+                      routeConstraints: ['preview', 'browser-export'],
+                      determinism: 'deterministic',
+                    },
+                  },
+                }],
+              },
+            },
+            {
+              bindingId: 'malformed-capture-binding',
+              sourceId: 'source-malformed-capture',
+              sourceKind: 'generated',
+              targetParamName: 'params.scale',
+              targetPath: 'scale',
+              bake: {
+                status: 'complete',
+                deterministicRefs: [{
+                  kind: 'deterministic-capture',
+                  ref: 'capture-scale-1',
+                  metadata: {
+                    liveBake: {
+                      targetKind: 'deterministic-capture',
+                    },
+                    deterministicCapture: {
+                      captureId: 'capture-scale-1',
+                      profile: 'event',
+                      provenanceHash: 'bad-hash',
+                      routeConstraints: ['preview', 'browser-export'],
+                      determinism: 'deterministic',
+                    },
+                  },
+                }],
+              },
+            },
           ],
         },
       }),
@@ -130,6 +216,11 @@ describe('timeline live binding metadata scanner', () => {
         { sourceId: 'source-inactive', kind: 'microphone', status: 'inactive' },
         { sourceId: 'source-disposed', kind: 'generated', status: 'disposed' },
         { sourceId: 'source-orphaned', kind: 'custom', status: 'orphaned' },
+        { sourceId: 'source-resolved', kind: 'generated', status: 'active' },
+        { sourceId: 'source-capture-resolved', kind: 'generated', status: 'active' },
+        { sourceId: 'source-sidecar-only', kind: 'generated', status: 'active' },
+        { sourceId: 'source-media-capture', kind: 'generated', status: 'active' },
+        { sourceId: 'source-malformed-capture', kind: 'generated', status: 'active' },
       ],
     });
     const byId = new Map(scan.bindings.map((record) => [record.binding.bindingId, record]));
@@ -141,17 +232,30 @@ describe('timeline live binding metadata scanner', () => {
     expect(byId.get('orphaned-binding')?.status).toBe('orphaned');
     expect(byId.get('partial-binding')?.status).toBe('partiallyBaked');
     expect(byId.get('resolved-binding')?.status).toBe('resolved');
+    expect(byId.get('capture-resolved-binding')?.status).toBe('resolved');
+    expect(byId.get('sidecar-only-binding')?.status).toBe('active');
+    expect(byId.get('media-capture-binding')?.status).toBe('active');
+    expect(byId.get('malformed-capture-binding')?.status).toBe('malformed');
     expect(byId.get('resolved-binding')?.blocksExport).toBe(false);
+    expect(byId.get('capture-resolved-binding')?.blocksExport).toBe(false);
     expect(byId.get('partial-binding')?.blocksExport).toBe(true);
+    expect(byId.get('sidecar-only-binding')?.blocksExport).toBe(true);
+    expect(byId.get('media-capture-binding')?.blocksExport).toBe(true);
+    expect(byId.get('malformed-capture-binding')?.blocksExport).toBe(true);
     expect(scan.counts).toMatchObject({
-      active: 1,
+      active: 3,
       inactive: 1,
       missing: 1,
       disposed: 1,
       orphaned: 1,
       partiallyBaked: 1,
-      resolved: 1,
+      resolved: 2,
+      malformed: 1,
     });
+    expect(scan.diagnostics.some((diagnostic) => (
+      diagnostic.code === 'live-binding/malformed-metadata'
+      && diagnostic.bindingId === 'malformed-capture-binding'
+    ))).toBe(true);
   });
 
   it('keeps mixed resolved and unresolved bake ranges partially baked and export-blocked', () => {

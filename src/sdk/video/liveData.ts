@@ -269,7 +269,8 @@ export type LiveBakeTargetKind =
   | 'automation'
   | 'clip'
   | 'sidecar'
-  | 'render-material';
+  | 'render-material'
+  | 'deterministic-capture';
 
 /**
  * A single bake target descriptor.

@@ -1,0 +1,676 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `critique_evaluator`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3b-live-binding-and-20260703-2358`
+Current milestone: `m3b-live-binding-capture`
+
+### Phase Instruction
+Select critique checks that can catch North Star violations, scope substitution, or unsupported claims of alignment.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are the Critique Evaluator. Your job is to decide which critique
+        lenses to fire and to rate each selected lens's difficulty on a 1–5
+        complexity scale. The profile will map your complexity scores to
+        models — you do NOT name models or vendors.
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M3b: Live Binding And Deterministic Capture
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Finished plan:
+        # Implementation Plan: M3b Live Binding And Deterministic Capture
+
+## Overview
+M3b is a bridge milestone for the Reigh Extension Composition Spine, not a contradiction: it keeps live preview mutable while making authoritative export require durable media material/artifact refs or deterministic non-media captures. The repo already has most structural hooks: SDK `LiveBakeTargetKind`, host `TimelineLiveDeterministicRefKind`, live-binding export blockers, `liveBake.ts` replacement refs, `patchPreview.ts` graph-owned operation pattern, and `graphProjector.ts` automation/live-binding edges.
+
+Do not put `keyframe.add`, `keyframe.update`, or `keyframe.remove` under `TimelinePatchReservedOpFamily` or public `TimelinePatchOpFamily`. Reserved `graph.*` patch families are non-executable, and TimelinePatch currently targets top-level entities. Keyframe conversion should use the host-owned `GraphPreviewOperation` path and re-project through `projectCompositionGraph`.
+
+## Phase 1: Contracts And Capture Validation
+
+### Step 1: Add deterministic-capture discriminants (`src/sdk/video/liveData.ts`, `src/tools/video-editor/types/index.ts`)
+**Complexity: 2**
+1. Add `'deterministic-capture'` to `LiveBakeTargetKind` and `TimelineLiveDeterministicRefKind`.
+2. Update `src/tools/video-editor/runtime/liveBake.ts` target-to-ref mapping so deterministic capture targets emit refs/ranges but no `RenderMaterialRef`.
+3. Test in `src/tools/video-editor/runtime/liveBake.test.ts`.
+
+### Step 2: Define V1 capture profile types (`src/tools/video-editor/types/index.ts`, `src/tools/video-editor/runtime/deterministicCapture.ts`)
+**Complexity: 3**
+1. Add host-owned `DeterministicCapture`, `BakedValueRef`, profile discriminants, route constraints, rejection rules, determinism status, provenance, and content-hash fields.
+2. Add exactly four table shapes: seed, event, scalar, structured motion curve.
+3. Keep deferred profile candidates out of the union.
+
+### Step 3: Validate profiles and SHA-256 provenance (`src/tools/video-editor/runtime/deterministicCapture.ts`, `src/tools/video-editor/runtime/deterministicCapture.test.ts`)
+**Complexity: 3**
+1. Validate schema, provenance object, content hash, route constraints, rejection rules, and profile-specific query support.
+2. Reject missing provenance, bad hashes, unsupported profiles, unknown event types without fallback, and unsupported interpolation.
+
+## Phase 2: Graph-Owned Keyframe Operations
+
+### Step 4: Add graph keyframe operation types (`src/tools/video-editor/runtime/composition/patchPreview.ts`)
+**Complexity: 3**
+1. Extend `GraphPreviewOperation` with `keyframe.add`, `keyframe.update`, `keyframe.remove`.
+2. Payloads include clip/automation identity, target path, time, value, interpolation, capture ref, event id, provenance hash, and collision policy metadata.
+3. Add tests proving keyframe ops are not TimelinePatch or reserved `graph.*` families.
+
+### Step 5: Execute keyframe ops on cloned graph input (`src/tools/video-editor/runtime/composition/patchPreview.ts`)
+**Complexity: 4**
+1. Deep-clone clip automation/keyframes in `cloneInput`.
+2. Apply add/update/remove only to the clone.
+3. Re-project with `projectCompositionGraph` so `animates` edge detail updates.
+4. Test immutability, add/update/remove, invalid targets, and edge detail changes.
+
+## Phase 3: Event Conversion And Preview
+
+### Step 6: Implement conversion primitives (`src/tools/video-editor/runtime/liveEventConversion.ts`)
+**Complexity: 4**
+1. Add `TimingMapResolver`, `ValueSchemaNormalizer`, and `KeyframeCollisionPolicyEngine` interfaces locally.
+2. Resolve event time, normalize values against parameter schemas, and apply explicit collision policies: `replace`, `merge-first-wins`, `merge-last-wins`, `reject`.
+3. Emit graph keyframe operations plus per-keyframe detail; do not mutate timeline state or sidecars.
+
+### Step 7: Wire event tables into graph preview (`src/tools/video-editor/runtime/liveBake.ts`, `src/tools/video-editor/runtime/composition/patchPreview.ts`)
+**Complexity: 4**
+1. Carry validated capture refs/metadata through deterministic-capture bake results.
+2. Convert accepted event tables into `GraphPreviewOperation[]`.
+3. Use `createGraphPreviewWithOps` so zero-argument `CompositionGraph.preview()` captures generated operations.
+
+### Step 8: Add per-keyframe conversion preview (`src/tools/video-editor/runtime/liveEventConversion.ts`, `src/tools/video-editor/runtime/composition/patchPreview.ts`)
+**Complexity: 3**
+1. Add preview detail with event id, target path, mapped time, normalized value, interpolation/hold policy, collision policy, capture ref, provenance hash, operation kind, and blocking diagnostics.
+2. Fail readiness for non-empty conversions that collapse to summary-only output.
+
+## Phase 4: Export Guard
+
+### Step 9: Require export-safe refs for live export (`src/tools/video-editor/lib/timeline-domain.ts`, `src/tools/video-editor/runtime/exportGuard.ts`)
+**Complexity: 3**
+1. Tighten complete-bake detection so arbitrary deterministic refs do not clear blockers by length alone.
+2. Allow media-like live outputs only through durable asset/render-material refs.
+3. Allow non-media live outputs only through validated deterministic-capture refs.
+4. Test unbaked, partial, sidecar-only, malformed, valid capture, and valid asset/render-material cases.
+
+### Step 10: Preserve blocking graph diagnostics in export scan (`src/tools/video-editor/runtime/exportGuard.ts`, `src/tools/video-editor/runtime/composition/diagnostics.ts`)
+**Complexity: 2**
+1. Surface conversion target-path diagnostics with capture ref/provenance hash detail.
+2. Keep material live-only diagnostics orthogonal to deterministic captures.
+
+## Phase 5: SDK, Docs, Regression
+
+### Step 11: Export public discriminants only (`src/sdk/index.ts`, `src/sdk/video/liveData.ts`)
+**Complexity: 2**
+1. Ensure SDK consumers can request deterministic-capture bake targets.
+2. Keep concrete capture table definitions host/editor-owned.
+
+### Step 12: Update M3b docs (`docs/extensions/composition-spine/deterministic-capture-profiles.md`, `docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md`)
+**Complexity: 2**
+1. Document implemented contracts, frozen four-profile scope, graph-owned keyframe op placement, export safety, and exclusions.
+
+## Execution Order
+1. Land discriminants and capture types.
+2. Add validation/hashing.
+3. Add graph-owned keyframe operations.
+4. Build event conversion and per-keyframe preview.
+5. Tighten export guard.
+6. Finish SDK/docs and regression tests.
+
+## Validation Order
+1. Run typecheck.
+2. Run focused tests for deterministic capture, live bake, event conversion, patch preview, graph projector, and export guard.
+3. Run live-data bridge integration tests.
+4. Run broader video-editor tests, with full-suite fallback.
+
+## Ticket Proposal
+No open ticket should be marked `resolves_on_complete=true`; the listed tickets are unrelated or broader context.
+
+
+        Task graph (plan metadata):
+        {
+  "version": 1,
+  "timestamp": "2026-07-04T00:10:27Z",
+  "hash": "sha256:6b4c3e041eb2cd816bec6125449bcd81d62d60ff974d6e920b400c7257cb3928",
+  "questions": [
+    "Where should deterministic capture table bodies live long term: timeline metadata, provider storage, or an editor-side registry? The plan assumes timeline refs plus host/provider storage for bodies.",
+    "Should accepted conversion provenance be persisted on stored keyframes, or remain on preview/op metadata? The plan assumes stored keyframes stay backward compatible.",
+    "What exact route-constraint vocabulary should captures use beyond current export/render routes? The plan assumes current routes and blocks unknown constraints."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`LiveBakeTargetKind` and `TimelineLiveDeterministicRefKind` include `deterministic-capture`, and deterministic-capture bake targets produce refs without `RenderMaterialRef`s.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Concrete TypeScript definitions exist for `DeterministicCapture`, `BakedValueRef`, and exactly the four V1 profile tables with schema, provenance, content hash, route constraints, rejection rules, and determinism status.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Capture validation rejects missing provenance, invalid SHA-256 content hashes, unknown profiles, unsupported interpolation/event schema cases, and deferred anti-scope profiles.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`keyframe.add`, `keyframe.update`, and `keyframe.remove` are host-owned `GraphPreviewOperation` variants and are not added to reserved `graph.edge.*`/`graph.node.*` families or public `TimelinePatchOpFamily`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Graph-owned keyframe operations mutate only cloned graph input data, re-project through `projectCompositionGraph`, update `animates` edge detail, and leave source state unchanged.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Event-table conversion validates timing maps, target paths, value schemas, and explicit collision policy before emitting graph-owned keyframe operations.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Conversion preview exposes per-keyframe detail including event id, target path, mapped time, normalized value, interpolation/hold policy, collision policy, capture ref, provenance hash, operation kind, and blocking diagnostics.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Event-table conversion is an accepted-proposal flow that emits graph-owned operations and does not mutate sidecars or timeline state directly.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Authoritative export remains blocked for live bindings unless they resolve to durable media asset/render-material refs or validated deterministic-capture refs; sidecar-only and malformed capture refs do not clear the blocker.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Existing live-data bridge, live bake, composition projector, and export guard tests pass after the new behavior is added.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The implementation keeps full deterministic capture table shapes host-owned and exposes only the minimal SDK bake-target discriminant.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Docs describe live preview vs authoritative export, frozen V1 capture profiles, keyframe op placement, and sidecar/process exclusions without expanding V1 scope.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Deterministic capture table definitions are host/editor-owned; the public SDK only gains the `deterministic-capture` bake-target discriminant.",
+    "Existing stored keyframe shape remains backward compatible; provenance/event/collision metadata stays on conversion preview and graph operations unless persistence is required.",
+    "`createGraphPreviewWithOps` is the bridge for conversion preview because `CompositionGraph.preview()` is zero-argument.",
+    "Collision policy is `replace`, `merge-first-wins`, `merge-last-wins`, and `reject` on `(targetPath, mappedTime)` collisions.",
+    "Route constraints reuse existing export/render route vocabulary; unknown constraints block acceptance.",
+    "Media-like live outputs require durable asset/render-material refs; deterministic captures are only for non-media values.",
+    "The existing export guard remains the authoritative place to block live-unbaked export."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/liveBake.test.ts",
+        "reason": "Live bake target/ref behavior changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "reason": "Graph edge projection must reflect keyframe operation results."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/exportGuard.test.ts",
+        "reason": "Authoritative export readiness changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx",
+        "reason": "Existing integration covers bake and export guard clearance."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/index.ts",
+      "src/sdk/video/liveData.ts",
+      "src/tools/video-editor/types/index.ts",
+      "src/tools/video-editor/runtime/deterministicCapture.ts",
+      "src/tools/video-editor/runtime/deterministicCapture.test.ts",
+      "src/tools/video-editor/runtime/liveBake.ts",
+      "src/tools/video-editor/runtime/liveBake.test.ts",
+      "src/tools/video-editor/runtime/liveEventConversion.ts",
+      "src/tools/video-editor/runtime/liveEventConversion.test.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+      "src/tools/video-editor/runtime/composition/graphProjector.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/lib/timeline-domain.ts",
+      "src/tools/video-editor/runtime/exportGuard.ts",
+      "src/tools/video-editor/runtime/exportGuard.test.ts",
+      "src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx",
+      "docs/extensions/composition-spine/deterministic-capture-profiles.md",
+      "docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md"
+    ],
+    "always_run": [
+      "npm run typecheck"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/sdk/index.ts, src/sdk/video/liveData.ts, src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx, src/tools/video-editor/lib/timeline-domain.ts, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/graphProjector.ts, src/tools/video-editor/runtime/composition/patchPreview.test.ts, src/tools/video-editor/runtime/composition/patchPreview.ts, src/tools/video-editor/runtime/deterministicCapture.test.ts, src/tools/video-editor/runtime/deterministicCapture.ts, src/tools/video-editor/runtime/exportGuard.test.ts, src/tools/video-editor/runtime/exportGuard.ts, src/tools/video-editor/runtime/liveBake.test.ts, src/tools/video-editor/runtime/liveBake.ts, src/tools/video-editor/runtime/liveEventConversion.test.ts, src/tools/video-editor/runtime/liveEventConversion.ts, src/tools/video-editor/types/index.ts. Ignored documentation-only change(s) for selector derivation: docs/extensions/composition-spine/deterministic-capture-profiles.md, docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md. Candidate: The work touches shared editor contracts, graph projection, and export readiness. A scoped video-editor slice is the baseline, with full-suite fallback for SDK/type ripple effects. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/tools/video-editor/runtime/deterministicCapture.test.ts, src/tools/video-editor/runtime/liveEventConversion.test.ts, src/tools/video-editor/runtime/composition/patchPreview.test.ts.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/tools/video-editor/runtime/deterministicCapture.test.ts",
+      "src/tools/video-editor/runtime/liveEventConversion.test.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.test.ts"
+    ]
+  },
+  "structure_warnings": []
+}
+
+        Idea:
+# M3b: Live Binding And Deterministic Capture
+
+## Outcome
+
+Make live bindings export-safe by baking media-like sources to durable artifacts/materials or non-media sources to deterministic captures, then executing graph-owned keyframe patch operations for accepted live/bake paths.
+
+## Execution Posture
+
+Keep live preview distinct from authoritative export. No mutable live source may satisfy export until it resolves to durable provenance, hashes, and route constraints.
+
+## Scope
+
+IN:
+- Add live source refs and live-binding graph edges through M2 target paths.
+- Add live bake path for media-like sources that must produce durable `RenderMaterial` or `RenderArtifact`.
+- Add first-class host-owned `DeterministicCapture` or `BakedValueRef` for non-media live data.
+- Implement Phase 0 capture profiles: seed table, event table, scalar table, and structured motion curve table.
+- Add executable `keyframe.add`, `keyframe.update`, and `keyframe.remove` semantics for accepted live/bake paths.
+- Convert event tables into graph-owned keyframe patch operations after target path, timing map, value schema, and collision policy validation.
+- Add patch preview for event-table conversion with per-keyframe event id, target path, mapped time, normalized value, interpolation/hold policy, collision policy, capture ref, provenance hash, and blocking diagnostics.
+
+OUT:
+- Agent material promotion.
+- Transition/effect graph verticals.
+- General-purpose keyframe editor rewrite.
+- Process execution and output-format sidecars.
+- Networking, collection, moderation, privacy review, or live mutable web-state semantics for external datasets.
+
+## Locked Decisions
+
+- Deterministic captures do not replace `RenderMaterial`/`RenderArtifact` for media-like outputs or non-video output artifacts.
+- Event-table-to-keyframe conversion is an accepted-proposal step, not sidecar mutation.
+- Event removal or replacement uses stable event ids to produce keyframe operations.
+- Patch preview must expose generated keyframe detail, not just a summary count.
+- Deferred capture candidates remain backlog unless a release example pulls them forward.
+
+## Constraints
+
+- Live binding blocks authoritative export until bake resolves.
+- Each capture profile must define schema, provenance, hash, route constraints, and rejection rules.
+- Event conversion requires deterministic timing, resolved target paths, schema-valid values, and explicit collision policy.
+- Do not allow sidecars or live captures to mutate timeline state directly.
+- Do not add process lifecycle or output-format sidecar behavior.
+
+## Done Criteria
+
+- Live binding blocks export until a resolved media artifact/material or deterministic capture exists.
+- Seed table, event table, scalar table, and structured motion curve table are validated with provenance and hashes.
+- Event-table conversion expands into explicit graph-owned keyframe patch operations.
+- Conversion preview fails readiness if it collapses detail into summary counts or host-only side effects.
+- Executable keyframe patch semantics are covered before M4 shader-uniform render-path integration consumes them.
+
+## Touchpoints
+
+- `src/sdk/index.ts`
+- `src/sdk/video/composition/graph.ts`
+- `src/sdk/video/composition/references.ts`
+- `src/sdk/video/rendering/artifacts.ts`
+- `src/tools/video-editor/runtime/composition/**`
+- `src/tools/video-editor/commands/**`
+- `src/tools/video-editor/hooks/useTimelineCommands.ts`
+- `src/tools/video-editor/hooks/useAgentSession.ts`
+- `tests/**/video-editor/**`
+- `docs/extensions/**`
+
+User notes and answers:
+- Unattended auto-approve run: prep clarification halt was converted into planner assumptions so the cloud chain can continue. Questions:
+- [blocking] The full event-table-to-keyframe conversion pipeline could not be researched — area 3 errored with a worker structural audit failure. The data flow from LiveSample/LiveSampleFrame through timing maps, value schema normalization, collision policy, and into graph-owned keyframe patch operations is only partially reconstructable from existing code. What are the concrete TypeScript interfaces for the timing map resolver, schema normalizer, and collision policy engine? How does the bake() call on LiveSessionsService produce capture-populated tables vs. the existing 'keyframe'/'automation' BakeTarget kinds?
+- [blocking] The existing Keyframe interface (automation.ts: { time, value, interpolation }) lacks eventId, captureRef, provenanceHash, collisionPolicy, and targetPath fields required by the conversion preview spec. Does M3b extend the existing Keyframe interface (breaking existing automation clip consumers), create a parallel CaptureKeyframe type that maps to Keyframe at the graph edge boundary, or add optional extension fields to Keyframe?
+- [blocking] The CompositionGraph.preview() signature is a zero-argument closure — operations are captured via closure, not passed as arguments. For the keyframe conversion preview to work, how does the event-table conversion pipeline feed operations into the preview closure? The existing createGraphPreviewWithOps pattern captures a fixed set at construction time, but conversion may need to show preview before final acceptance.
+Planner/executor must make conservative repo-backed assumptions, encode them in artifacts, and let normal critique/gate/review phases reject unsafe choices.
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3b-live-binding-and-20260703-2358/critique_evaluator_output.json
+        Read this file first by calling `read_file` with `path` exactly `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3b-live-binding-and-20260703-2358/critique_evaluator_output.json` — it contains the expected JSON structure with all known check IDs pre-populated in `skipped`.
+        If you cannot supply that exact non-empty path, do not call `read_file`.
+        Move checks you are firing to `selections`, fill `why` for the rest, and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        ## Prep that preceded this plan
+
+This plan was produced after a multi-step prep phase (triage -> research
+fan-out -> distill). Use the prep record below when deciding which lenses
+to fire: areas prep researched thoroughly may need less scrutiny, while
+areas prep flagged as gaps, contradictions, or timed-out research warrant
+extra attention from the critics.
+
+**Prep coverage:** area_count=3, fanout_count=3, completed_count=2, partial_count=0, timed_out_count=0, error_count=1
+
+**Gaps prep could not close:**
+- event-table-conversion-pipeline: research failed with worker_structural_audit_failed: model output structural audit failed: type_mismatch at /error: value does not match declared type(s) ['string'].
+
+**Contradictions surfaced in research:**
+- file src/sdk/video/composition/graph.ts appears in multiple areas with differing evidence/status: Keyframe operation family placement in the existing op-family/CompositionGraph architecture=complete, capture-type-boundary=complete
+- file src/sdk/video/families/automation.ts appears in multiple areas with differing evidence/status: Keyframe operation family placement in the existing op-family/CompositionGraph architecture=complete, capture-type-boundary=complete
+- file src/sdk/video/timeline/patch.ts appears in multiple areas with differing evidence/status: Keyframe operation family placement in the existing op-family/CompositionGraph architecture=complete, capture-type-boundary=complete
+
+**Prep dossier:**
+
+# Prep Research Dossier
+
+## Triage
+
+M3b must make live bindings export-safe by baking live sources to durable artifacts (media-like → RenderMaterial/RenderArtifact) or deterministic captures (non-media → BakedValueRef), then executing graph-owned keyframe patch operations. The four capture profiles (seed, event, scalar, structured motion curve) are fully specified in docs, but three material uncertainties remain: (1) where `keyframe.add/update/remove` operations sit in the existing op-family architecture — they appear nowhere in TimelinePatchOpFamily or reserved families, (2) the SDK-vs-host boundary for new capture types (DeterministicCapture/BakedValueRef) relative to existing RenderMaterial/RenderArtifact/Keyframe contracts, and (3) the full conversion pipeline from event tables through M2 target-path validation to graph-owned keyframe patches, including timing maps, value schemas, collision policy, and the preview surface.
+
+## Research Areas
+
+1. keyframe-op-family-placement: `keyframe.add`, `keyframe.update`, and `keyframe.remove` are net-new operations with no existing home. Research where they belong: as new entries in TimelinePatchOpFamily, as graph-owned operations under the reserved `graph.edge.*` wildcard, or as a separate keyframe-operation system. This includes investigating the relationship to existing `graph.edge.*`/`graph.node.*` reserved families, the `CompositionGraph.preview()` signature, and whether keyframe ops flow through TimelinePatch or a parallel graph-owned operation path.
+2. capture-type-boundary: The four V1 capture profiles (seed table, event table, scalar table, structured motion curve table) are specified in prose but have no TypeScript type definitions. New `DeterministicCapture`/`BakedValueRef` types must coexist with existing `RenderMaterial`/`RenderArtifact`/`Keyframe` without replacing them for media-like outputs. Research: (a) what schema/provenance/hash/route fields each profile table type needs, (b) which types are SDK-public (needed by extension bake targets and `LiveBakeTargetKind`) vs. host-internal, and (c) how `DeterministicCapture` relates to existing `RenderMaterialRef.replacementPolicy` and `LiveBakeTarget` contracts.
+3. event-table-conversion-pipeline: Event-table conversion is the most complex M3b integration point: it must validate target paths (via M2 grammar), timing maps, value schemas, and collision policy before emitting graph-owned keyframe patch operations. Research: (a) what M2 target-path validation already provides vs. what M3b must add (timing determinism, schema-valid values, collision policy), (b) the data flow from `LiveSample`/`LiveSampleFrame` through `LiveBakeSelection`/`LiveBakeResult` into keyframe patch operations, (c) the shape of the patch preview that must expose per-keyframe event id, target path, mapped time, normalized value, interpolation/hold policy, collision policy, capture ref, provenance hash, and blocking diagnostics — not just summary counts.
+
+## Findings
+
+### Keyframe operation family placement in the existing op-family/CompositionGraph architecture (complete)
+
+`keyframe.add`, `keyframe.update`, and `keyframe.remove` are net-new operations with no existing home. Research where they belong: as new entries in TimelinePatchOpFamily, as graph-owned operations under the reserved `graph.edge.*` wildcard, or as a separate keyframe-operation system.
+
+- `keyframe.add`, `keyframe.update`, `keyframe.remove` have zero occurrences anywhere in the codebase — confirmed net-new with no existing home.
+- The `TimelinePatchOpFamily` union defines 13 active families (clip.*, track.*, asset.*, app.update, project-data.*, extension.noop) — all operate on top-level timeline-config entities (clips, tracks, assets, app data). Keyframe ops would be the first family targeting nested data (automation keyframes inside clip params).
+- The `TimelinePatchReservedOpFamily` union includes `graph.node.*`, `graph.edge.*`, `graph.group.*`, `clip.split`, `clip.slice` — all marked 'validated but not executed in M3'. The compiler explicitly skips reserved ops: it issues a warning diagnostic (`timeline-patch/reserved-op`), skips payload validation, skips execution during compilation (line 991-992), and sets `fullyPreviewable: false` in preview results. Reserved ops produce zero diff entries.
+- Placing keyframe ops under the reserved `graph.edge.*` wildcard would make them non-executable — they'd validate as warnings and silently skip compilation, contradicting the M3b requirement for executable keyframe patch semantics to be implemented before M4.
+- A parallel graph-owned operation path already exists in nascent form: `patchPreview.ts` defines `GraphPreviewOperation` as `GraphShaderAssignOp | GraphShaderRemoveOp`, with `applyGraphPreviewOperations()` applying them to a cloned `CompositionGraphInput` and returning `CompositionGraphPreviewResult`. This pattern bypasses `TimelinePatch` entirely.
+- The `CompositionGraph.preview()` signature (line 244 of graph.ts) is a zero-argument closure `() => CompositionGraphPreviewResult | undefined` — it captures operations via closure (`createGraphPreviewWithOps`) rather than accepting them as arguments. This means keyframe ops on this path would also need to be closure-captured.
+- The bridge from TimelinePatch to graph operations exists via `extractGraphPreviewOps()` (line 1889) which maps `clip.update`/`app.update` patch operations to internal `GraphShaderAssignOp`/`GraphShaderRemoveOp`. No equivalent bridge exists for keyframe ops.
+- Keyframe data models live in two places: (a) `src/sdk/video/families/automation.ts` defines `Keyframe`, `KeyframeInterpolation`, `AutomationClipTarget`, `AutomationClipParams` as public SDK contracts for baked keyframe curves on automation clips — these are data-only types with no operation family concept; (b) `src/tools/video-editor/keyframes/index.ts` provides host-owned deterministic interpolation/validation/recording utilities — also with no operation family concept.
+- Keyframe operations semantically differ from existing families: they mutate nested data (the `keyframes` array inside `AutomationClipParams` on an automation clip) rather than top-level config entities. The existing compile path operates on `TimelineData` working copies (clips, tracks, meta, clipOrder) — keyframe ops would need to reach into clip params, which is a different mutation target.
+- The `graphProjector.ts` already projects automation-annotated clips into `animates` graph edges (lines 316-367), reading `automation.keyframeCount` from clip summaries. This means keyframe additions/removals should update graph edges, suggesting graph-owned operations may be the natural authority path.
+- No existing code maps `graph.edge.*` to any executable behavior — it is purely a pass-through placeholder. Tests confirm it produces zero diff entries in all compilation scenarios (timeline-patch.test.ts lines 290-322).
+- Three distinct integration points exist: (1) `TimelinePatchOpFamily` via the `validateTimelinePatch`/`compileTimelinePatch` pipeline; (2) reserved `graph.edge.*`/`graph.node.*` as a placeholder wildcard (currently no-op); (3) `GraphPreviewOperation` via `applyGraphPreviewOperations` → `projectCompositionGraph` as a separate graph-owned path.
+
+### capture-type-boundary (complete)
+
+The four V1 capture profiles (seed table, event table, scalar table, structured motion curve table) are specified in prose but have no TypeScript type definitions. New DeterministicCapture/BakedValueRef types must coexist with existing RenderMaterial/RenderArtifact/Keyframe without replacing them for media-like outputs. Research: (a) what schema/provenance/hash/route fields each profile table type needs, (b) which types are SDK-public vs. host-internal, and (c) how DeterministicCapture relates to existing RenderMaterialRef.replacementPolicy and LiveBakeTarget contracts.
+
+- Zero TypeScript type definitions exist for any of the four capture profiles. Search for 'DeterministicCapture', 'BakedValueRef', 'seed-table', 'event-table', 'scalar-table', 'motion-curve-table', and 'capture-profile' across all src/ returned no results. The profiles exist only in the planning artifact docs/extensions/composition-spine/deterministic-capture-profiles.md.
+- Each profile requires distinct schema fields per the prose spec: (a) Seed Table — seed identity value, output values with type/unit metadata, target-path scope; (b) Event Table — timestamp, event type discriminator, typed payload, known event schema at capture time, time-range and type-filter query support, target-path scope; (c) Scalar Table — target-path identity key, single typed scalar value, scalar type preservation (number | boolean | string | enum), target-path scope; (d) Structured Motion Curve Table — timestamp/frame index, typed value, interpolation type (linear/hold), optional easing function, time-range query support, serialization round-trip to/from graph-owned keyframe patches, target-path scope.
+- All four profiles need shared base fields: provenance (Record<string, unknown>), content hash (likely SHA-256 of serialized capture data), route constraints (RenderRoute for export validation), rejection rules (schema validation failures), and a determinism status that moves from 'live-unbaked' to 'deterministic' upon capture. The existing RenderStorageLocator.contentSha256 and DeterminismStatus enums provide direct precedent for hash and determinism posture.
+- The SDK/host boundary is already partially defined: SDK-public contracts live in src/sdk/video/liveData.ts (LiveBakeTargetKind, LiveBakeTarget, LiveBakeSelection, LiveBakeResult, LiveBinding, LiveSessionsService.bake()), while host-internal types live in src/tools/video-editor/types/index.ts (TimelineLiveDeterministicRef, TimelineLiveDeterministicRefKind, TimelineLiveBakeRange, TimelineLiveBakeMetadata). DeterministicCapture/BakedValueRef are explicitly described as 'host-owned' in the task scope, placing them in the host-internal type space alongside TimelineLiveDeterministicRef.
+- However, a tension exists: extension bake targets and LiveBakeTargetKind must be able to reference capture profiles, implying some capture-profile discriminant must cross the SDK boundary. The current LiveBakeTargetKind union ('asset' | 'keyframe' | 'automation' | 'clip' | 'sidecar' | 'render-material') has no capture-profile entries. Either a new kind like 'deterministic-capture' must be added, or the existing 'keyframe'/'automation' kinds serve as the bridge from capture tables to keyframe patches.
+- RenderMaterialRef.replacementPolicy ('replace-live-ref' | 'preserve-live-ref' | 'materialize-on-export') is solely for media-like material provenance tracking. It governs how live material refs transition to durable RenderMaterial/RenderArtifact. DeterministicCapture is orthogonal: it handles non-media live data (scalars, events, seeds, motion curves) that produce graph-owned keyframe patches, not material replacement. The two concepts share the 'live → deterministic' resolution pattern but target different output types.
+- BakeContract.replacementPolicy (line 283 of artifacts.ts) picks up RenderMaterialRef['replacementPolicy'], confirming that replacement policy is a material concern. A deterministic capture would not use replacementPolicy — it would produce a different contract (e.g., CaptureContract or direct graph-patch operations).
+- No keyframe.add, keyframe.update, or keyframe.remove patch operation families exist in the current TimelinePatchOpFamily vocabulary (patch.ts lines 18-31). The active families are clip.*, track.*, asset.*, app.update, project-data.*, extension.noop. Reserved families include graph.node.*, graph.edge.*, graph.group.* — but no keyframe.*. These must be added as new active or reserved families for M3b.
+- The existing Keyframe interface (families/automation.ts) defines the minimal shape { time, value, interpolation } but has no event id, capture ref, provenance hash, collision policy, or target path — all fields required by the M3b event-table-to-keyframe conversion preview spec. The conversion preview must produce per-keyframe detail including event id, target path, mapped time, normalized value, interpolation/hold policy, collision policy, capture ref, provenance hash, and blocking diagnostics.
+- The CompositionGraphEdge 'binds-live' edge kind (graph.ts line 57) is the graph-level edge that will carry live-binding metadata. When a live binding is baked to a deterministic capture, the 'binds-live' edge must be resolved or replaced with an 'animates' edge backed by capture-derived keyframe patches. The existing graph contracts support this transition structurally but lack the capture-specific detail fields needed for the edge detail payload.
+- TimelineLiveDeterministicRef (types/index.ts line 192) is the closest existing host-internal type to a DeterministicCapture/BakedValueRef concept. It carries { kind, ref, range, metadata } but is a generic baked-output wrapper, not a capture-profile-aware type. It has no schema, provenance hash, rejection rules, or profile-specific shape constraints. A new DeterministicCapture type would either extend or sit beside this type.
+
+### event-table-conversion-pipeline (error)
+
+Event-table conversion is the most complex M3b integration point: it must validate target paths (via M2 grammar), timing maps, value schemas, and collision policy before emitting graph-owned keyframe patch operations. Research: (a) what M2 target-path validation already provides vs. what M3b must add (timing determinism, schema-valid values, collision policy), (b) the data flow from `LiveSample`/`LiveSampleFrame` through `LiveBakeSelection`/`LiveBakeResult` into keyframe patch operations, (c) the shape of the patch preview that must expose per-keyframe event id, target path, mapped time, normalized value, interpolation/hold policy, collision policy, capture ref, provenance hash, and blocking diagnostics — not just summary counts.
+
+Error: worker_structural_audit_failed: model output structural audit failed: type_mismatch at /error: value does not match declared type(s) ['string']
+
+## Adjudication
+
+### Gap Notes
+
+- event-table-conversion-pipeline: research failed with worker_structural_audit_failed: model output structural audit failed: type_mismatch at /error: value does not match declared type(s) ['string'].
+
+### Contradiction Notes
+
+- file src/sdk/video/composition/graph.ts appears in multiple areas with differing evidence/status: Keyframe operation family placement in the existing op-family/CompositionGraph architecture=complete, capture-type-boundary=complete
+- file src/sdk/video/families/automation.ts appears in multiple areas with differing evidence/status: Keyframe operation family placement in the existing op-family/CompositionGraph architecture=complete, capture-type-boundary=complete
+- file src/sdk/video/timeline/patch.ts appears in multiple areas with differing evidence/status: Keyframe operation family placement in the existing op-family/CompositionGraph architecture=complete, capture-type-boundary=complete
+
+### Overlap Groups
+
+- file: src/sdk/video/composition/graph.ts [Keyframe operation family placement in the existing op-family/CompositionGraph architecture, capture-type-boundary]
+- file: src/sdk/video/families/automation.ts [Keyframe operation family placement in the existing op-family/CompositionGraph architecture, capture-type-boundary]
+- file: src/sdk/video/timeline/patch.ts [Keyframe operation family placement in the existing op-family/CompositionGraph architecture, capture-type-boundary]
+
+### Bounded Cross-Reference
+
+- Performed: yes
+- Shared files: docs/extensions/composition-spine/deterministic-capture-profiles.md, src/sdk/video/families/automation.ts, src/sdk/video/liveData.ts, src/sdk/video/timeline/patch.ts, src/tools/video-editor/keyframes/index.ts, src/tools/video-editor/lib/timeline-patch.ts, src/tools/video-editor/runtime/composition/graphProjector.ts, src/tools/video-editor/runtime/composition/patchPreview.ts, src/tools/video-editor/types/index.ts
+- Missing files: (none)
+
+## Metrics
+
+- Areas triaged: 3
+- Fan-out units run: 3
+- Complete: 2
+- Partial: 0
+- Timed out: 0
+- Errors: 1
+- Missed units: event-table-conversion-pipeline
+
+
+## Critique Lens Catalog (9 lenses)
+
+        ### Lens: `issue_hints` (tier: core, category: completeness)
+**Question:** Did the work fully address the issue hints, user notes, and approved plan requirements?
+**Guidance:** Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.
+
+### Lens: `correctness` (tier: core, category: correctness)
+**Question:** Are the proposed changes technically correct?
+**Guidance:** Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases — not just the one reported in the issue.
+
+### Lens: `scope` (tier: core, category: completeness)
+**Question:** Search for related code that handles the same concept. Is the reported issue a symptom of something broader — and is any single step sized to fit one worker turn?
+**Guidance:** Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes. Also audit step SIZING: each step/task is executed in ONE worker turn (~15 min, one conversation) and must be fully implemented AND verified there. A single step that bundles multiple concerns — e.g. 'extract this 2000-line file into modules AND write tests', or 'consolidate the roots AND migrate N registries AND add parity tests' — is a god-task: it cannot finish in one turn and the worker will run out of time mid-implementation. Raising complexity does not buy more time, only a stronger model for the same single turn. Flag any such step and recommend splitting along the natural seam (one step to add the abstraction + its unit tests, then one step per consumer/module to migrate, parity tests on the last).
+
+### Lens: `all_locations` (tier: core, category: completeness)
+**Question:** Does the change touch all locations AND supporting infrastructure?
+**Guidance:** Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.
+
+### Lens: `callers` (tier: core, category: correctness)
+**Question:** Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?
+**Guidance:** Grep for call sites. For each caller, check what values it passes — especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?
+
+### Lens: `conventions` (tier: extended, category: maintainability)
+**Question:** Does the approach match how the codebase solves similar problems?
+**Guidance:** Check not just naming/style but how similar PROBLEMS are solved in this codebase. If the codebase adds new methods for similar cases, the plan should too. Do not spend findings on trivial stylistic preferences.
+
+### Lens: `verification` (tier: extended, category: completeness)
+**Question:** Is there convincing verification for the change?
+**Guidance:** Flag missing tests or weak validation. If verification tests exist, trace the test's execution path through your patch — does every branch it exercises produce the expected result? A patch can look correct but fail because it misses one code path the test covers. If you manually verify an edge case because existing tests don't cover it, also test the cases next to it.
+
+### Lens: `criteria_quality` (tier: extended, category: completeness)
+**Question:** Are the success criteria well-prioritized and verifiable?
+**Guidance:** Check that each `must` criterion has a clear yes/no answer verifiable from code, tests, or git diff. Subjective goals, numeric guidelines, and aspirational targets should be `should`, not `must`. Criteria requiring manual testing or human judgment should be `info`. Flag any `must` criterion that is ambiguous, subjective, or unverifiable in the review pipeline.
+
+### Lens: `prerequisite_ordering` (tier: core, category: correctness)
+**Question:** Do tasks that depend on a precondition gracefully handle that precondition only partially holding?
+**Guidance:** Walk the task graph. For each task that depends on a precondition produced by an earlier task (e.g. 'after T5 regen, remove ref()'), check what happens if the precondition only partially holds — some inputs fail, some succeed. Then re-read the brief: does it lock a graceful-fallback policy for the earlier task (e.g. 'failed templates get skipped with a diagnostic') AND simultaneously demand absolute completion for the dependent task (e.g. 'zero callers remain', 'all migrated')? That's a brief contradiction the planner will transcribe faithfully and the executor will hit at runtime. Flag the conflicting paragraphs and recommend conditionalizing the dependent task, or specifying explicit deferral behavior.
+
+
+        ## Complexity Rubric (1–5)
+
+        Rate each selected lens on its **hardest realistic** aspect, not a
+        worst-case imagining. When genuinely torn between two tiers, choose the
+        LOWER one UNLESS you can name the specific cascading, test-evading
+        failure that earns the higher tier in the justification.
+
+        - **1 = trivial, mechanical check.** The lens's question can be
+          answered by pattern-matching a single file or a grep hit. A weak
+          model cannot get it wrong.
+        - **2 = simple, localized check.** The lens touches one or two
+          files, the question has a linear answer, and the failure mode
+          (missing something) is obvious.
+        - **3 = multi-step check with non-trivial reasoning.** The lens
+          requires holding multiple files or a dataflow in your head;
+          correctness is not self-evident from a quick skim.
+        - **4 = cross-cutting or high-stakes check.** A defect this lens would
+          miss is **non-local and not caught by an obvious test** — it
+          propagates through a shared contract or invariant that code the plan
+          does NOT touch relies on. Spanning several modules is NOT sufficient
+          on its own; a lens whose failure is local and obvious is tier 2-3.
+        - **5 = fundamental system-level check.** The lens probes a
+          security-sensitive path, a schema migration, an auth boundary, or
+          a contract relied on by the whole system, where a subtle error would
+          pass the full suite and corrupt state. Only assign tier 5 when the
+          lens genuinely requires system-level reasoning — not merely
+          "important" or central code.
+
+        **FLOOR rules (hard minimum) — these two lenses ONLY:**
+        - `correctness` — NEVER below tier 4. A correctness defect that
+          slips through is the most expensive failure mode.
+        - `prerequisite_ordering` — NEVER below tier 4. Partial-precondition
+          contradictions are subtle and cascade into runtime failures; a
+          weak model will miss them.
+        Every OTHER lens must EARN tier 4-5 under the rubric above; the
+        expected home for an ordinary, locally-verifiable check is tier 2-3.
+        Do not let "this plan is large" inflate a lens whose own question is
+        answerable by a focused read.
+
+        ## Assignment Contract
+
+        Select the FEWEST lenses that cover the real risk; keep the set lean
+        rather than firing broad, overlapping checks. If a check's verification
+        would likely depend on things outside this project root (external or
+        sibling repos), files the plan only creates later, or runtime-only
+        behavior, either scope the lens to what is statically checkable in this
+        repo or name that dependency in its justification so the worker and gate
+        expect a partial or `unverifiable` result.
+
+        - **Select deliberately**: a lens fires only when it covers a concrete
+          risk in this plan.
+        - **Justify to skip**: every skipped lens must include a concrete, specific
+          `why` — a reason grounded in the plan's content, not a generic dismissal.
+        - **Every lens is assigned exactly once**: the union of `selections` and
+          `skipped` must cover all 9 lens ids with no overlap
+          and no omission.
+        - **At least one lens must be selected** — an all-skip verdict is rejected.
+        - **Every selected catalog lens** must emit a `complexity` (int 1–5) and
+          a `complexity_justification` (one or two sentences citing why this
+          lens sits at exactly that tier — reference the lens's question, the
+          plan's concrete files/interfaces/risks). The justification must be
+          defensible against a reviewer who disagrees. A bare restatement of the
+          rubric ("this is complex") is not acceptable.
+        - **`other` custom areas**: an `other` selection is additive (does not
+          replace a catalog lens). It requires `area` (a non-empty name for the
+          custom critique area), `why` (the probe question for the critic),
+          `complexity`, and `complexity_justification`. At most 2
+          `other` areas.
+        - **Do not invent check IDs**: North Star, anchor, product, or project-
+          specific concerns must either use one of the catalog lens IDs above
+          or `check_id: "other"` with the specific concern named in `area`.
+          Values such as `north_star_alignment`, `compatibility_shim_risk`, or
+          `behavior_preservation` are invalid as `check_id`s.
+
+        Your output must be a JSON object with these keys:
+        - `selections`: list of objects. For catalog lenses:
+          {check_id, complexity (int 1–5), complexity_justification, why?}
+          For `other` custom areas:
+          {check_id: "other", area, why, complexity (int 1–5), complexity_justification}
+        - `skipped`: list of {check_id, why} objects
+        - `evaluator_model`: your own model identifier string
+        - `flag_verifications`: list of
+          {flag_id, lens, outcome, rationale} objects where outcome is
+          one of "verified" / "open" / "accepted_tradeoff"; use [] when the
+          Flag Resolution Verification section is absent. `lens` must be
+          exactly one catalog lens id; combined lens strings such as
+          `correctness/all_locations` are invalid.
+
+        Remember: prefer the smallest selected set that still covers the real
+        risk.  Skipping requires a justification.  When you skip, explain *why
+        this specific lens is unnecessary for this specific plan* — do not
+        write generic cop-outs.

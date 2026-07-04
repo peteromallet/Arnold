@@ -1,0 +1,1591 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+Review the implementation against the success criteria.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M3b: Live Binding And Deterministic Capture
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: M3b Live Binding And Deterministic Capture
+
+## Overview
+M3b is a bridge milestone for the Reigh Extension Composition Spine, not a contradiction: it keeps live preview mutable while making authoritative export require durable media material/artifact refs or deterministic non-media captures. The repo already has most structural hooks: SDK `LiveBakeTargetKind`, host `TimelineLiveDeterministicRefKind`, live-binding export blockers, `liveBake.ts` replacement refs, `patchPreview.ts` graph-owned operation pattern, and `graphProjector.ts` automation/live-binding edges.
+
+Do not put `keyframe.add`, `keyframe.update`, or `keyframe.remove` under `TimelinePatchReservedOpFamily` or public `TimelinePatchOpFamily`. Reserved `graph.*` patch families are non-executable, and TimelinePatch currently targets top-level entities. Keyframe conversion should use the host-owned `GraphPreviewOperation` path and re-project through `projectCompositionGraph`.
+
+## Phase 1: Contracts And Capture Validation
+
+### Step 1: Add deterministic-capture discriminants (`src/sdk/video/liveData.ts`, `src/tools/video-editor/types/index.ts`)
+**Complexity: 2**
+1. Add `'deterministic-capture'` to `LiveBakeTargetKind` and `TimelineLiveDeterministicRefKind`.
+2. Update `src/tools/video-editor/runtime/liveBake.ts` target-to-ref mapping so deterministic capture targets emit refs/ranges but no `RenderMaterialRef`.
+3. Test in `src/tools/video-editor/runtime/liveBake.test.ts`.
+
+### Step 2: Define V1 capture profile types (`src/tools/video-editor/types/index.ts`, `src/tools/video-editor/runtime/deterministicCapture.ts`)
+**Complexity: 3**
+1. Add host-owned `DeterministicCapture`, `BakedValueRef`, profile discriminants, route constraints, rejection rules, determinism status, provenance, and content-hash fields.
+2. Add exactly four table shapes: seed, event, scalar, structured motion curve.
+3. Keep deferred profile candidates out of the union.
+
+### Step 3: Validate profiles and SHA-256 provenance (`src/tools/video-editor/runtime/deterministicCapture.ts`, `src/tools/video-editor/runtime/deterministicCapture.test.ts`)
+**Complexity: 3**
+1. Validate schema, provenance object, content hash, route constraints, rejection rules, and profile-specific query support.
+2. Reject missing provenance, bad hashes, unsupported profiles, unknown event types without fallback, and unsupported interpolation.
+
+## Phase 2: Graph-Owned Keyframe Operations
+
+### Step 4: Add graph keyframe operation types (`src/tools/video-editor/runtime/composition/patchPreview.ts`)
+**Complexity: 3**
+1. Extend `GraphPreviewOperation` with `keyframe.add`, `keyframe.update`, `keyframe.remove`.
+2. Payloads include clip/automation identity, target path, time, value, interpolation, capture ref, event id, provenance hash, and collision policy metadata.
+3. Add tests proving keyframe ops are not TimelinePatch or reserved `graph.*` families.
+
+### Step 5: Execute keyframe ops on cloned graph input (`src/tools/video-editor/runtime/composition/patchPreview.ts`)
+**Complexity: 4**
+1. Deep-clone clip automation/keyframes in `cloneInput`.
+2. Apply add/update/remove only to the clone.
+3. Re-project with `projectCompositionGraph` so `animates` edge detail updates.
+4. Test immutability, add/update/remove, invalid targets, and edge detail changes.
+
+## Phase 3: Event Conversion And Preview
+
+### Step 6: Implement conversion primitives (`src/tools/video-editor/runtime/liveEventConversion.ts`)
+**Complexity: 4**
+1. Add `TimingMapResolver`, `ValueSchemaNormalizer`, and `KeyframeCollisionPolicyEngine` interfaces locally.
+2. Resolve event time, normalize values against parameter schemas, and apply explicit collision policies: `replace`, `merge-first-wins`, `merge-last-wins`, `reject`.
+3. Emit graph keyframe operations plus per-keyframe detail; do not mutate timeline state or sidecars.
+
+### Step 7: Wire event tables into graph preview (`src/tools/video-editor/runtime/liveBake.ts`, `src/tools/video-editor/runtime/composition/patchPreview.ts`)
+**Complexity: 4**
+1. Carry validated capture refs/metadata through deterministic-capture bake results.
+2. Convert accepted event tables into `GraphPreviewOperation[]`.
+3. Use `createGraphPreviewWithOps` so zero-argument `CompositionGraph.preview()` captures generated operations.
+
+### Step 8: Add per-keyframe conversion preview (`src/tools/video-editor/runtime/liveEventConversion.ts`, `src/tools/video-editor/runtime/composition/patchPreview.ts`)
+**Complexity: 3**
+1. Add preview detail with event id, target path, mapped time, normalized value, interpolation/hold policy, collision policy, capture ref, provenance hash, operation kind, and blocking diagnostics.
+2. Fail readiness for non-empty conversions that collapse to summary-only output.
+
+## Phase 4: Export Guard
+
+### Step 9: Require export-safe refs for live export (`src/tools/video-editor/lib/timeline-domain.ts`, `src/tools/video-editor/runtime/exportGuard.ts`)
+**Complexity: 3**
+1. Tighten complete-bake detection so arbitrary deterministic refs do not clear blockers by length alone.
+2. Allow media-like live outputs only through durable asset/render-material refs.
+3. Allow non-media live outputs only through validated deterministic-capture refs.
+4. Test unbaked, partial, sidecar-only, malformed, valid capture, and valid asset/render-material cases.
+
+### Step 10: Preserve blocking graph diagnostics in export scan (`src/tools/video-editor/runtime/exportGuard.ts`, `src/tools/video-editor/runtime/composition/diagnostics.ts`)
+**Complexity: 2**
+1. Surface conversion target-path diagnostics with capture ref/provenance hash detail.
+2. Keep material live-only diagnostics orthogonal to deterministic captures.
+
+## Phase 5: SDK, Docs, Regression
+
+### Step 11: Export public discriminants only (`src/sdk/index.ts`, `src/sdk/video/liveData.ts`)
+**Complexity: 2**
+1. Ensure SDK consumers can request deterministic-capture bake targets.
+2. Keep concrete capture table definitions host/editor-owned.
+
+### Step 12: Update M3b docs (`docs/extensions/composition-spine/deterministic-capture-profiles.md`, `docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md`)
+**Complexity: 2**
+1. Document implemented contracts, frozen four-profile scope, graph-owned keyframe op placement, export safety, and exclusions.
+
+## Execution Order
+1. Land discriminants and capture types.
+2. Add validation/hashing.
+3. Add graph-owned keyframe operations.
+4. Build event conversion and per-keyframe preview.
+5. Tighten export guard.
+6. Finish SDK/docs and regression tests.
+
+## Validation Order
+1. Run typecheck.
+2. Run focused tests for deterministic capture, live bake, event conversion, patch preview, graph projector, and export guard.
+3. Run live-data bridge integration tests.
+4. Run broader video-editor tests, with full-suite fallback.
+
+## Ticket Proposal
+No open ticket should be marked `resolves_on_complete=true`; the listed tickets are unrelated or broader context.
+
+
+        Review execution context (`finalize.json` + `execution.json`, prompt projection only):
+        {
+  "tasks": [
+    {
+      "id": "T1",
+      "depends_on": [],
+      "status": "skipped",
+      "kind": "code",
+      "complexity": 2,
+      "reviewer_verdict": "deferred_baseline_unavailable",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This is a localized discriminant and mapping change across `liveData.ts`, editor types, `liveBake.ts`, and an existing focused test. The failure mode is direct and should be caught by typecheck or `liveBake.test.ts`, so it does not justify tier 3.",
+      "executor_notes": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative.",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": []
+    },
+    {
+      "id": "T2",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 2: Define host-owned deterministic capture contracts in `src/tools/video-editor/types/index.ts` and `src/tools/video-editor/runtime/deterministicCapture.ts`: `DeterministicCapture`, `BakedValueRef`, profile discriminants, route constraints, rejection rules, determinism status, provenance, content-hash fields, and exactly four V1 table shapes: seed, event, scalar, and structured motion curve. Do not export deferred profile candidates or concrete table bodies through the public SDK.",
+      "complexity_justification": "This introduces new multi-file data shapes that validation, conversion, and export guard code will consume later. The contract is non-trivial, but no existing runtime behavior depends on it yet, so tier 3 is sufficient.",
+      "executor_notes": "Defined DeterministicCapture, BakedValueRef, DeterministicCaptureProfileV1 (seed/event/scalar/structured-motion-curve), DeterministicCaptureProvenance, DeterministicCaptureRouteConstraint, DeterministicCaptureRejectionRule, DeterministicCaptureRejection, and four V1 table shapes (CaptureSeedTableV1, CaptureEventTableV1, CaptureScalarTableV1, CaptureStructuredMotionCurveV1) with their entry types. Added 'deterministic-capture' to TimelineLiveDeterministicRefKind. Created locked vocabularies (DETERMINISTIC_CAPTURE_PROFILES_V1, CAPTURE_COLLISION_POLICIES, DETERMINISTIC_CAPTURE_ROUTE_CONSTRAINT...",
+      "files_changed": [
+        "src/tools/video-editor/types/index.ts",
+        "src/tools/video-editor/runtime/deterministicCapture.ts"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts"
+      ]
+    },
+    {
+      "id": "T3",
+      "depends_on": [
+        "T2"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 3: Implement deterministic capture validation and SHA-256 provenance checks in `deterministicCapture.ts`, with `deterministicCapture.test.ts` covering schema validation, provenance requirements, content-hash validation, route constraints, rejection rules, profile-specific query support, missing provenance, bad hashes, unsupported profiles, unknown event types without fallback, unsupported interpolation, and deferred anti-scope profiles.",
+      "complexity_justification": "The validation matrix has several branches and a new test file, but it is still bounded to the deterministic capture module and its declared types. Mistakes should surface in focused validation tests rather than silently cascading through unrelated systems.",
+      "executor_notes": "Replaced FNV-1a placeholder hashCaptureBody with async SHA-256 via Web Crypto API. Added validateSeedTable (rejects null/boolean/object seeds), validateScalarTable (rejects empty entries, missing targetPaths, duplicate paths, invalid value types), validateBodyByProfile (routes to per-profile validator; rejects unknown profiles), and validateDeterministicCapture (comprehensive 5-step async pipeline: profile\u2192provenance\u2192routeConstraints\u2192contentHash\u2192bodySchema, producing BakedValueRef with provenanceHash on success). Added DeterministicCaptureValidationResult interface. Created deterministicCap...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/deterministicCapture.ts",
+        "src/tools/video-editor/runtime/deterministicCapture.test.ts"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/deterministicCapture.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionIntegrity.test.ts"
+      ]
+    },
+    {
+      "id": "T4",
+      "depends_on": [
+        "T3"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This changes a host preview operation union used by graph preview code, so the executor must preserve family boundaries and payload shape. It does not alter execution semantics yet, keeping the risk below tier 4.",
+      "executor_notes": "Added GraphKeyframeAddOp, GraphKeyframeUpdateOp, GraphKeyframeRemoveOp as GraphPreviewOperation variants in patchPreview.ts with stub handlers in applyGraphPreviewOperations. Payload shapes preserve family boundaries: keyframe operations use clipId/paramName targeting with ClipKeyframe data shapes. No modifications to public TimelinePatchOpFamily or reserved graph.* families. TypeScript typecheck passes clean (0 errors). All 284 timeline-patch tests, 96 composition/live-bake/capture tests pass with no regressions.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/patchPreview.ts"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-patch.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ]
+    },
+    {
+      "id": "T5",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 5: Execute graph-owned keyframe add/update/remove operations against cloned graph input in `patchPreview.ts`: deep-clone clip automation/keyframes in `cloneInput`, apply operations only to the clone, re-project through `projectCompositionGraph`, and add focused tests for immutability, add/update/remove behavior, invalid targets, and updated `animates` edge detail.",
+      "complexity_justification": "This changes graph preview execution semantics and must preserve the invariant that source timeline/graph input is not mutated while projected edge detail changes. A shallow clone or missed re-projection could produce non-local incorrect preview state, so tier 4 is warranted.",
+      "executor_notes": "Verified patchPreview deep-clones clip automation/keyframe state, applies keyframe add/update/remove ops only to the clone, and re-projects through projectCompositionGraph. Focused tests confirm source snapshot immutability, add/update/remove behavior, invalid-target no-ops, and animates edge detail keyframeCount updates.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/patchPreview.ts",
+        "src/tools/video-editor/runtime/composition/patchPreview.test.ts"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ]
+    },
+    {
+      "id": "T6",
+      "depends_on": [
+        "T5"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This is a new conversion module with non-trivial local control flow and tests, but it is scoped to producing validated conversion candidates. It does not yet own collision resolution or graph operation emission, so tier 3 fits.",
+      "executor_notes": "Verification checkpoint: TypeScript typecheck passes (0 errors). All cumulative test suites from T2-T5 pass with zero failures: composition/capture (95 tests: patchPreview 4, compositionGraphProjector 4, deterministicCapture 87), liveBake (5), extensionIntegrity (66), timeline-patch (284). Total 450 tests across 6 files, 0 failures. No new failures vs baseline. SC6 acknowledged: the timing resolver (finite-number time validation in validateEventTable/validateMotionCurve) and value normalizer (interpolation limited to linear/hold, valid collisionPolicy vocabulary) accept only events with val...",
+      "files_changed": [],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/deterministicCapture.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/runtime/extensionIntegrity.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-patch.test.ts"
+      ]
+    },
+    {
+      "id": "T7",
+      "depends_on": [
+        "T6"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 6: Finish event conversion by implementing explicit collision policies `replace`, `merge-first-wins`, `merge-last-wins`, and `reject` on `(targetPath, mappedTime)` collisions, then emit graph-owned keyframe operations plus per-keyframe conversion detail. Tests must prove collisions are resolved before operations are emitted and that no timeline state or sidecars are mutated.",
+      "complexity_justification": "Collision resolution sits between live event tables and graph keyframe operations, and a subtle ordering error could pass simple happy-path tests while producing wrong preview operations. The task touches a shared conversion invariant, so tier 4 is justified.",
+      "executor_notes": "Added `liveEventConversion.ts` as a pure event-table converter with local timing-map, value-normalizer, and collision-engine interfaces. The default collision engine applies `replace`, `merge-first-wins`, `merge-last-wins`, and `reject` explicitly on `(targetPath, mappedTime)` before any graph keyframe ops are emitted, and surviving `keyframe.add` ops now carry capture/event/provenance/collision metadata through `patchPreview.ts`. Focused tests prove winner selection happens before op emission, blocking details are preserved per event, and opaque timeline-state/sidecar inputs remain unchang...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/patchPreview.ts",
+        "src/tools/video-editor/runtime/liveEventConversion.ts",
+        "src/tools/video-editor/runtime/liveEventConversion.test.ts"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveEventConversion.test.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts"
+      ]
+    },
+    {
+      "id": "T8",
+      "depends_on": [
+        "T7"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 7: Carry validated deterministic-capture refs and metadata through deterministic-capture bake results in `liveBake.ts`, ensuring accepted captures keep capture ref, provenance hash, profile, and range metadata while still avoiding media `RenderMaterialRef`s.",
+      "complexity_justification": "This threads validated capture metadata through existing live bake result structures and tests. The change is multi-file and must preserve media/non-media separation, but the blast radius is mostly within live bake behavior.",
+      "executor_notes": "Threaded validated deterministic-capture refs and metadata through liveBake.ts. Added LiveBakeDeterministicCaptureMeta with captureId, profile, contentHash, provenanceHash, routeConstraints, determinism. capture field on replacements carries metadata; RenderMaterialRef strictly excluded for deterministic-capture targets. 3 new focused tests pass alongside all existing suites \u2014 775 total, 0 failures, 0 regressions.",
+      "files_changed": [
+        "src/sdk/video/liveData.ts",
+        "src/sdk/index.test.ts",
+        "src/tools/video-editor/runtime/liveBake.ts",
+        "src/tools/video-editor/runtime/liveBake.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/extensionIntegrity.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-patch.test.ts"
+      ]
+    },
+    {
+      "id": "T9",
+      "depends_on": [
+        "T8"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 7: Wire accepted event tables into graph preview by converting them into `GraphPreviewOperation[]` and using `createGraphPreviewWithOps` so zero-argument `CompositionGraph.preview()` captures generated keyframe operations. Add tests covering accepted event-table preview and confirming the flow remains graph-owned.",
+      "complexity_justification": "This connects live bake conversion, graph preview operation capture, and the zero-argument preview API. A wrong integration could silently omit generated operations or mutate the wrong layer, making this a tier 4 cross-contract task.",
+      "executor_notes": "Added a live-bake bridge that converts accepted deterministic event-table captures into GraphPreviewOperation[] and attaches them to CompositionGraph.preview() via createGraphPreviewWithOps without mutating the base graph. Verification passed: scoped vitest run across liveBake, liveEventConversion, and patchPreview reported 20/20 tests passing.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/liveBake.ts",
+        "src/tools/video-editor/runtime/liveBake.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/runtime/liveEventConversion.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts"
+      ]
+    },
+    {
+      "id": "T10",
+      "depends_on": [
+        "T9"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 8: Add per-keyframe conversion preview detail with event id, target path, mapped time, normalized value, interpolation/hold policy, collision policy, capture ref, provenance hash, operation kind, and blocking diagnostics. Fail readiness when non-empty conversions collapse to summary-only output.",
+      "complexity_justification": "This expands preview diagnostics and readiness checks around conversion output, which requires careful shape consistency across conversion and preview code. The behavior is testable through focused preview assertions, so it remains tier 3.",
+      "executor_notes": "T10 functionality was already implemented as part of prior tasks (T7-T9). LiveEventKeyframeDetail (liveEventConversion.ts:97-108) exposes all required per-keyframe fields: eventId, targetPath, mappedTime, normalizedValue, interpolation, collisionPolicy, captureRef, provenanceHash, operationKind, and diagnostics. convertAcceptedEventTablesWithConversionDetail (liveBake.ts:230-265) returns LiveEventTablePreviewResult with per-keyframe detail alongside operations. validateConversionPreviewReadiness (liveBake.ts:276-307) fails readiness with 'live-event/conversion-summary-only-collapse' error d...",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/runtime/liveEventConversion.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/extensionIntegrity.test.ts src/tools/video-editor/lib/timeline-patch.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts"
+      ]
+    },
+    {
+      "id": "T11",
+      "depends_on": [
+        "T10"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 9: Tighten authoritative export guard behavior in `src/tools/video-editor/lib/timeline-domain.ts` and `src/tools/video-editor/runtime/exportGuard.ts`: arbitrary deterministic refs must not clear blockers by length alone, media-like live outputs clear only via durable asset/render-material refs, and non-media live outputs clear only via validated deterministic-capture refs. Add export guard coverage for unbaked, partial, sidecar-only, malformed, valid capture, and valid asset/render-mater...",
+      "complexity_justification": "Export readiness is an authoritative guard used outside the files being edited, and a too-permissive check could incorrectly unblock exports. Because this changes a shared safety invariant around live bindings, tier 4 is appropriate.",
+      "executor_notes": "Tightened live-binding resolution so authoritative export no longer clears on deterministic-ref count alone: media-like bindings resolve only from non-empty asset/render-material refs, non-media bindings resolve only from structurally validated deterministic-capture refs that include browser-export in route constraints, and malformed capture metadata is surfaced as malformed/export-blocking. Focused verification passed: 82 tests across timeline-domain.live-bindings and exportGuard with 0 failures.",
+      "files_changed": [
+        "src/tools/video-editor/lib/timeline-domain.ts",
+        "src/tools/video-editor/runtime/exportGuard.ts",
+        "src/tools/video-editor/lib/timeline-domain.live-bindings.test.ts",
+        "src/tools/video-editor/runtime/exportGuard.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-domain.live-bindings.test.ts src/tools/video-editor/runtime/exportGuard.test.ts"
+      ]
+    },
+    {
+      "id": "T12",
+      "depends_on": [
+        "T11"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Step 10: Preserve blocking graph diagnostics during export scans by surfacing conversion target-path diagnostics with capture ref and provenance hash detail in `exportGuard.ts` and `src/tools/video-editor/runtime/composition/diagnostics.ts`. Keep material live-only diagnostics separate from deterministic capture diagnostics.",
+      "complexity_justification": "This is a localized diagnostic enrichment after the export guard behavior exists. The main risk is mixing diagnostic categories, which focused assertions in export/diagnostics tests should catch.",
+      "executor_notes": "Added five new composition/ diagnostic codes for deterministic capture conversion (DETERMINISTIC_CAPTURE_CONVERSION_FAILED, DETERMINISTIC_CAPTURE_TARGET_PATH_UNRESOLVABLE, DETERMINISTIC_CAPTURE_VALUE_NORMALIZATION_FAILED, DETERMINISTIC_CAPTURE_TIMING_FAILED, DETERMINISTIC_CAPTURE_PROVENANCE_MISMATCH) to diagnostics.ts, with captureRef and provenanceHash fields on CompositionDiagnosticDetail. Added DETERMINISTIC_CAPTURE_CONVERSION_DIAGNOSTIC_CODES set and isDeterministicCaptureConversionDiagnosticCode type guard. All five conversion codes added to BLOCKING_TARGET_COMPOSITION_DIAGNOSTIC_CODES...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/diagnostics.ts",
+        "src/tools/video-editor/runtime/exportGuard.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/exportGuard.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/runtime/extensionIntegrity.test.ts src/tools/video-editor/lib/timeline-patch.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/tools/video-editor/runtime/liveEventConversion.test.ts",
+        "npx tsc --noEmit"
+      ]
+    },
+    {
+      "id": "T13",
+      "depends_on": [
+        "T12"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Step 11: Finalize the public SDK surface in `src/sdk/index.ts` and `src/sdk/video/liveData.ts` so SDK consumers can request `deterministic-capture` bake targets while concrete deterministic capture table definitions remain host/editor-owned and are not re-exported.",
+      "complexity_justification": "This is a small SDK export-surface check and possible barrel update tied to the discriminant already added earlier. The failure mode is visible through SDK import/type tests and public-export checks.",
+      "executor_notes": "Verified SDK surface: `LiveBakeTargetKind` in `src/sdk/video/liveData.ts:273` already includes `'deterministic-capture'` as a discriminant. It is re-exported from `src/sdk/index.ts:209`. Zero concrete deterministic capture table types (`DeterministicCapture`, `CaptureSeedTableV1`, `CaptureEventTableV1`, `CaptureScalarTableV1`, `CaptureStructuredMotionCurveV1`, `BakedValueRef`) are imported or re-exported in the SDK \u2014 they remain solely in host/editor-owned modules (`src/tools/video-editor/types/index.ts`, `src/tools/video-editor/runtime/deterministicCapture.ts`). No code changes required; t...",
+      "files_changed": [],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/liveEventConversion.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/lib/timeline-domain.live-bindings.test.ts src/tools/video-editor/runtime/extensionIntegrity.test.ts"
+      ]
+    },
+    {
+      "id": "T14",
+      "depends_on": [
+        "T13"
+      ],
+      "status": "done",
+      "kind": "docs",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Step 12: Update `docs/extensions/composition-spine/deterministic-capture-profiles.md` and `docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md` to document live preview vs authoritative export, the frozen four-profile V1 scope, graph-owned keyframe op placement, export safety, and sidecar/process exclusions without expanding V1 scope.",
+      "complexity_justification": "This is documentation over the implemented contracts with a clear scope boundary from the plan. It requires consistency checks against code, but no new runtime behavior.",
+      "executor_notes": "Created two documentation files in docs/extensions/composition-spine/: (1) deterministic-capture-profiles.md covering the frozen four-profile V1 scope (seed, event, scalar, structured-motion-curve), table shapes, validation rules, collision policies, the five-step validation pipeline, graph-owned keyframe op placement, event-table conversion flow, export safety, public SDK boundary, and explicit V1 exclusions. (2) m3b-live-binding-and-deterministic-capture.md covering the end-to-end architecture: live preview vs authoritative export with media-like/non-media classification and blocking rule...",
+      "files_changed": [
+        "docs/extensions/composition-spine/deterministic-capture-profiles.md",
+        "docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit"
+      ]
+    },
+    {
+      "id": "T15",
+      "depends_on": [
+        "T14"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This task runs established verification commands and triages whether failures are new versus baseline. It does not require new design work, but it covers several selectors and may need concise failure classification.",
+      "executor_notes": "T15 verification: (1) npx tsc --noEmit passed with 0 errors. (2) Focused test slice (8 files, 199 tests) passed: liveBake (14), deterministicCapture (87), liveEventConversion (6), patchPreview (4), compositionGraphProjector (4), exportGuard (75), timeline-domain.live-bindings (7), live-data-bridge.integration (2) \u2014 all passing. (3) check:no-smoke-tests passed. (4) Full vitest suite timed out at 1800s; baseline capture also failed (exit code 4), confirming this is an environment constraint, not a regression. The harness-owned authoritative post-execute verification remains the final arbiter....",
+      "files_changed": [],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/liveEventConversion.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/lib/timeline-domain.live-bindings.test.ts src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx",
+        "node scripts/quality/check-no-smoke-tests.mjs",
+        "npx vitest run --config config/testing/vitest.config.ts (full suite, timed out at 1800s)"
+      ]
+    }
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "verdict": "",
+      "question": "Do `LiveBakeTargetKind` and `TimelineLiveDeterministicRefKind` include `deterministic-capture`, and do deterministic-capture bake results produce deterministic refs/ranges without any `RenderMaterialRef`?",
+      "executor_note": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative."
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "verdict": "",
+      "question": "Are exactly the seed, event, scalar, and structured motion curve V1 table shapes present as host/editor-owned types, with no deferred profiles or concrete table definitions exposed through the SDK?",
+      "executor_note": "CONFIRMED: Exactly the four V1 table shapes (CaptureSeedTableV1, CaptureEventTableV1, CaptureScalarTableV1, CaptureStructuredMotionCurveV1) are defined as host/editor-owned types in types/index.ts. No deferred profiles (V2+ candidates) are defined. No concrete table definitions are exported through the public SDK (verified by searching src/sdk/ for 'DeterministicCapture', 'BakedValueRef', 'CaptureSeedTableV1', etc. \u2014 no matches). The public SDK surface remains unchanged; only the host-owned TimelineLiveDeterministicRefKind gained the 'deterministic-capture' discriminant."
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "verdict": "",
+      "question": "Does validation reject missing provenance, malformed SHA-256 hashes, unsupported profiles, unknown event types without fallback, unsupported interpolation, bad route constraints, and deferred anti-scope profile candidates?",
+      "executor_note": "CONFIRMED. Validation rejects: (1) missing provenance \u2014 validateProvenance returns 'missing-provenance' when capturedAt is empty; (2) malformed SHA-256 hashes \u2014 verifyCaptureContentHash rejects non-hex, wrong-length, and mismatched hashes; (3) unsupported profiles \u2014 validateProfile rejects anything outside the 4 frozen V1 profiles, and validateDeterministicCapture additionally emits 'deferred-profile' for anti-scope/unknown profiles; (4) unknown event types without fallback \u2014 validateEventTable rejects empty events array, missing eventId/targetPath, and invalid time; (5) unsupported interpo..."
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "verdict": "",
+      "question": "Are `keyframe.add`, `keyframe.update`, and `keyframe.remove` only `GraphPreviewOperation` variants, with no additions to public `TimelinePatchOpFamily` or reserved `graph.*` families?",
+      "executor_note": "Confirmed: keyframe.add, keyframe.update, and keyframe.remove are defined only as GraphPreviewOperation variants (GraphKeyframeAddOp, GraphKeyframeUpdateOp, GraphKeyframeRemoveOp). They were NOT added to public TimelinePatchOpFamily (src/sdk/video/timeline/patch.ts unchanged) or reserved graph.* families (TimelinePatchReservedOpFamily unchanged). The existing test at timeline-patch.test.ts:5231 confirms internal kind strings like 'shader.assign' are rejected as TimelinePatchOperation.op values \u2014 the same boundary holds for keyframe operation kinds."
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "verdict": "",
+      "question": "Do keyframe graph preview operations mutate only cloned input, leave source state unchanged, re-project through `projectCompositionGraph`, and update `animates` edge detail?",
+      "executor_note": "Yes. The new patchPreview path clones clip automation/keyframes before applying keyframe ops, leaves the source snapshot unchanged, re-projects via projectCompositionGraph, and the focused tests verify animates edge detail reflects the updated keyframeCount."
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "verdict": "",
+      "question": "Do the timing resolver and value normalizer accept only events that map to valid target paths and parameter schemas, while leaving timeline state and sidecars untouched?",
+      "executor_note": "CONFIRMED. The timing resolver (validateEventTable time checks: typeof !== 'number' || !isFinite \u2192 reject) and value normalizer (validateEventTable interpolation check: only 'linear'/'hold' accepted; validateMotionCurve defaultInterpolation and per-keyframe interpolation restricted to 'linear'/'hold'; collisionPolicy validated against CAPTURE_COLLISION_POLICIES frozen vocabulary) accept only events that map to valid targetPaths (non-empty string, checked per event) and valid parameter schemas. All validators (validateEventTable, validateMotionCurve, validateSeedTable, validateScalarTable, v..."
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "verdict": "",
+      "question": "Are all four collision policies applied explicitly on `(targetPath, mappedTime)` before graph keyframe operations are emitted, with per-keyframe details preserved?",
+      "executor_note": "Confirmed. Conversion now resolves collisions on canonical `(targetPath, mappedTime)` keys before operation emission, applies all four explicit policies via the default collision engine, emits only the surviving graph keyframe ops, and retains per-event detail with mapped time, normalized value, interpolation, collision policy, capture ref, provenance hash, operation kind, and blocking diagnostics."
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "verdict": "",
+      "question": "Do deterministic-capture bake results carry validated capture ref/provenance/profile/range metadata while still avoiding media material refs?",
+      "executor_note": "CONFIRMED. Capture ref, provenance hash, profile, and range metadata are all carried through bake results while RenderMaterialRefs are strictly avoided for deterministic-capture targets. Tests prove no cross-contamination between capture and material replacement paths."
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "verdict": "",
+      "question": "Does accepted event-table preview flow through `createGraphPreviewWithOps` so zero-argument `CompositionGraph.preview()` captures generated graph-owned keyframe operations?",
+      "executor_note": "Confirmed. Accepted deterministic event-table sources are converted into GraphPreviewOperation[] and exposed through a zero-argument CompositionGraph.preview() closure created with createGraphPreviewWithOps; the base graph remains unchanged until preview() is invoked."
+    },
+    {
+      "id": "SC10",
+      "task_id": "T10",
+      "verdict": "",
+      "question": "Does conversion preview expose per-keyframe detail including event id, target path, mapped time, normalized value, interpolation/hold policy, collision policy, capture ref, provenance hash, operation kind, and blocking diagnostics, and fail readiness for summary-only collapse?",
+      "executor_note": "CONFIRMED. Conversion preview exposes per-keyframe detail through LiveEventKeyframeDetail with all required fields: eventId, targetPath, mappedTime, normalizedValue, interpolation (covering both linear and hold policies), collisionPolicy, captureRef, provenanceHash, operationKind (keyframe.add or blocked), and blocking diagnostics array. The validateConversionPreviewReadiness function fails readiness (ready=false) with error code 'live-event/conversion-summary-only-collapse' when non-empty conversions collapse to summary-only output. Test coverage at liveBake.test.ts:643-798 confirms both b..."
+    },
+    {
+      "id": "SC11",
+      "task_id": "T11",
+      "verdict": "",
+      "question": "Does authoritative export remain blocked for unbaked, partial, sidecar-only, arbitrary deterministic, or malformed live refs, while valid media asset/render-material refs and validated deterministic-capture refs clear only their intended blocker classes?",
+      "executor_note": "Confirmed by focused coverage: unbaked and partial bindings still block; sidecar-only and malformed deterministic-capture refs remain blocked; media-like bindings clear only with asset/render-material refs; non-media bindings clear only with validated deterministic-capture refs carrying browser-export route support."
+    },
+    {
+      "id": "SC12",
+      "task_id": "T12",
+      "verdict": "",
+      "question": "Do export diagnostics include conversion target path, capture ref, and provenance hash details without merging material live-only diagnostics into deterministic capture diagnostics?",
+      "executor_note": "CONFIRMED: Export diagnostics include conversion target path, capture ref, and provenance hash details without merging material live-only diagnostics into deterministic capture diagnostics. In scanCompositionGraphTargetExportBlockers, captureRef and provenanceHash are extracted and surfaced ONLY when isDeterministicCaptureConversionDiagnosticCode returns true. Material diagnostic codes (MATERIAL_LIVE_ONLY, MATERIAL_STALE, MATERIAL_FAILED, etc.) are NOT in BLOCKING_TARGET_COMPOSITION_DIAGNOSTIC_CODES, so they never reach the export scan function. The separate DETERMINISTIC_CAPTURE_CONVERSION..."
+    },
+    {
+      "id": "SC13",
+      "task_id": "T13",
+      "verdict": "",
+      "question": "Can SDK consumers request `deterministic-capture` bake targets while host/editor deterministic capture table types remain absent from public SDK exports?",
+      "executor_note": "CONFIRMED. SDK consumers can request `deterministic-capture` bake targets via `LiveBakeTargetKind` (line 273 of `src/sdk/video/liveData.ts`), which is re-exported through the public SDK barrel (`src/sdk/index.ts:209`). The only occurrences of `deterministic-capture` in the entire `src/sdk/` directory are: (1) the type definition in `liveData.ts:273`, and (2) the test assertion in `index.test.ts:1868`. No concrete deterministic capture table types (`DeterministicCapture`, `CaptureSeedTableV1`, `CaptureEventTableV1`, `CaptureScalarTableV1`, `CaptureStructuredMotionCurveV1`, `BakedValueRef`, e..."
+    },
+    {
+      "id": "SC14",
+      "task_id": "T14",
+      "verdict": "",
+      "question": "Do the docs describe the implemented contracts and exclusions without expanding V1 beyond deterministic capture profiles, graph-owned keyframe ops, and export-safe refs?",
+      "executor_note": "CONFIRMED. Both docs describe the implemented contracts exactly as they exist in code: (a) The frozen four-profile V1 scope (seed/event/scalar/structured-motion-curve) with per-profile table shapes, validation rules, and locked vocabularies \u2014 matching types/index.ts:588-778 and deterministicCapture.ts:57-94. (b) Graph-owned keyframe operations (keyframe.add/update/remove) as host-owned GraphPreviewOperation variants, not TimelinePatchOpFamily members \u2014 matching patchPreview.ts:71-107. (c) Export-safe refs with authoritative blocking rules (media-like cleared by durable asset/render-material..."
+    },
+    {
+      "id": "SC15",
+      "task_id": "T15",
+      "verdict": "",
+      "question": "Did typecheck and the focused test slice run, and were any failures classified as new regressions versus pre-existing baseline failures without masking them?",
+      "executor_note": "CONFIRMED: TypeScript typecheck passed (0 errors). Focused test slice (8 files, 199 tests) passed with 0 failures \u2014 no regressions detected. Full suite timed out at 1800s (consistent with baseline capture failure exit code 4). Since baseline_test_failures is null, there is no recorded baseline. All verifiable checks passed; no failures were masked. The harness-owned authoritative post-execute verification is the final arbiter."
+    }
+  ],
+  "task_updates": [
+    {
+      "task_id": "T2",
+      "status": "done",
+      "executor_notes": "Defined DeterministicCapture, BakedValueRef, DeterministicCaptureProfileV1 (seed/event/scalar/structured-motion-curve), DeterministicCaptureProvenance, DeterministicCaptureRouteConstraint, DeterministicCaptureRejectionRule, DeterministicCaptureRejection, and four V1 table shapes (CaptureSeedTableV1, CaptureEventTableV1, CaptureScalarTableV1, CaptureStructuredMotionCurveV1) with their entry types. Added 'deterministic-capture' to TimelineLiveDeterministicRefKind. Created locked vocabularies (DETERMINISTIC_CAPTURE_PROFILES_V1, CAPTURE_COLLISION_POLICIES, DETERMINISTIC_CAPTURE_ROUTE_CONSTRAINT...",
+      "files_changed": [
+        "src/tools/video-editor/types/index.ts",
+        "src/tools/video-editor/runtime/deterministicCapture.ts"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts"
+      ]
+    },
+    {
+      "task_id": "T3",
+      "status": "done",
+      "executor_notes": "Replaced FNV-1a placeholder hashCaptureBody with async SHA-256 via Web Crypto API. Added validateSeedTable (rejects null/boolean/object seeds), validateScalarTable (rejects empty entries, missing targetPaths, duplicate paths, invalid value types), validateBodyByProfile (routes to per-profile validator; rejects unknown profiles), and validateDeterministicCapture (comprehensive 5-step async pipeline: profile\u2192provenance\u2192routeConstraints\u2192contentHash\u2192bodySchema, producing BakedValueRef with provenanceHash on success). Added DeterministicCaptureValidationResult interface. Created deterministicCap...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/deterministicCapture.ts",
+        "src/tools/video-editor/runtime/deterministicCapture.test.ts"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/deterministicCapture.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionIntegrity.test.ts"
+      ]
+    },
+    {
+      "task_id": "T4",
+      "status": "done",
+      "executor_notes": "Added GraphKeyframeAddOp, GraphKeyframeUpdateOp, GraphKeyframeRemoveOp as GraphPreviewOperation variants in patchPreview.ts with stub handlers in applyGraphPreviewOperations. Payload shapes preserve family boundaries: keyframe operations use clipId/paramName targeting with ClipKeyframe data shapes. No modifications to public TimelinePatchOpFamily or reserved graph.* families. TypeScript typecheck passes clean (0 errors). All 284 timeline-patch tests, 96 composition/live-bake/capture tests pass with no regressions.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/patchPreview.ts"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-patch.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ]
+    },
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "Verified patchPreview deep-clones clip automation/keyframe state, applies keyframe add/update/remove ops only to the clone, and re-projects through projectCompositionGraph. Focused tests confirm source snapshot immutability, add/update/remove behavior, invalid-target no-ops, and animates edge detail keyframeCount updates.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/patchPreview.ts",
+        "src/tools/video-editor/runtime/composition/patchPreview.test.ts"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "Verification checkpoint: TypeScript typecheck passes (0 errors). All cumulative test suites from T2-T5 pass with zero failures: composition/capture (95 tests: patchPreview 4, compositionGraphProjector 4, deterministicCapture 87), liveBake (5), extensionIntegrity (66), timeline-patch (284). Total 450 tests across 6 files, 0 failures. No new failures vs baseline. SC6 acknowledged: the timing resolver (finite-number time validation in validateEventTable/validateMotionCurve) and value normalizer (interpolation limited to linear/hold, valid collisionPolicy vocabulary) accept only events with val...",
+      "files_changed": [],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/deterministicCapture.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/runtime/extensionIntegrity.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-patch.test.ts"
+      ]
+    },
+    {
+      "task_id": "T7",
+      "status": "done",
+      "executor_notes": "Added `liveEventConversion.ts` as a pure event-table converter with local timing-map, value-normalizer, and collision-engine interfaces. The default collision engine applies `replace`, `merge-first-wins`, `merge-last-wins`, and `reject` explicitly on `(targetPath, mappedTime)` before any graph keyframe ops are emitted, and surviving `keyframe.add` ops now carry capture/event/provenance/collision metadata through `patchPreview.ts`. Focused tests prove winner selection happens before op emission, blocking details are preserved per event, and opaque timeline-state/sidecar inputs remain unchang...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/patchPreview.ts",
+        "src/tools/video-editor/runtime/liveEventConversion.ts",
+        "src/tools/video-editor/runtime/liveEventConversion.test.ts"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveEventConversion.test.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts"
+      ]
+    },
+    {
+      "task_id": "T8",
+      "status": "done",
+      "executor_notes": "Threaded validated deterministic-capture refs and metadata through liveBake.ts. Added LiveBakeDeterministicCaptureMeta with captureId, profile, contentHash, provenanceHash, routeConstraints, determinism. capture field on replacements carries metadata; RenderMaterialRef strictly excluded for deterministic-capture targets. 3 new focused tests pass alongside all existing suites \u2014 775 total, 0 failures, 0 regressions.",
+      "files_changed": [
+        "src/sdk/video/liveData.ts",
+        "src/sdk/index.test.ts",
+        "src/tools/video-editor/runtime/liveBake.ts",
+        "src/tools/video-editor/runtime/liveBake.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/extensionIntegrity.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-patch.test.ts"
+      ]
+    },
+    {
+      "task_id": "T9",
+      "status": "done",
+      "executor_notes": "Added a live-bake bridge that converts accepted deterministic event-table captures into GraphPreviewOperation[] and attaches them to CompositionGraph.preview() via createGraphPreviewWithOps without mutating the base graph. Verification passed: scoped vitest run across liveBake, liveEventConversion, and patchPreview reported 20/20 tests passing.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/liveBake.ts",
+        "src/tools/video-editor/runtime/liveBake.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/runtime/liveEventConversion.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts"
+      ]
+    },
+    {
+      "task_id": "T10",
+      "status": "done",
+      "executor_notes": "T10 functionality was already implemented as part of prior tasks (T7-T9). LiveEventKeyframeDetail (liveEventConversion.ts:97-108) exposes all required per-keyframe fields: eventId, targetPath, mappedTime, normalizedValue, interpolation, collisionPolicy, captureRef, provenanceHash, operationKind, and diagnostics. convertAcceptedEventTablesWithConversionDetail (liveBake.ts:230-265) returns LiveEventTablePreviewResult with per-keyframe detail alongside operations. validateConversionPreviewReadiness (liveBake.ts:276-307) fails readiness with 'live-event/conversion-summary-only-collapse' error d...",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/runtime/liveEventConversion.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/extensionIntegrity.test.ts src/tools/video-editor/lib/timeline-patch.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts"
+      ]
+    },
+    {
+      "task_id": "T11",
+      "status": "done",
+      "executor_notes": "Tightened live-binding resolution so authoritative export no longer clears on deterministic-ref count alone: media-like bindings resolve only from non-empty asset/render-material refs, non-media bindings resolve only from structurally validated deterministic-capture refs that include browser-export in route constraints, and malformed capture metadata is surfaced as malformed/export-blocking. Focused verification passed: 82 tests across timeline-domain.live-bindings and exportGuard with 0 failures.",
+      "files_changed": [
+        "src/tools/video-editor/lib/timeline-domain.ts",
+        "src/tools/video-editor/runtime/exportGuard.ts",
+        "src/tools/video-editor/lib/timeline-domain.live-bindings.test.ts",
+        "src/tools/video-editor/runtime/exportGuard.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-domain.live-bindings.test.ts src/tools/video-editor/runtime/exportGuard.test.ts"
+      ]
+    },
+    {
+      "task_id": "T12",
+      "status": "done",
+      "executor_notes": "Added five new composition/ diagnostic codes for deterministic capture conversion (DETERMINISTIC_CAPTURE_CONVERSION_FAILED, DETERMINISTIC_CAPTURE_TARGET_PATH_UNRESOLVABLE, DETERMINISTIC_CAPTURE_VALUE_NORMALIZATION_FAILED, DETERMINISTIC_CAPTURE_TIMING_FAILED, DETERMINISTIC_CAPTURE_PROVENANCE_MISMATCH) to diagnostics.ts, with captureRef and provenanceHash fields on CompositionDiagnosticDetail. Added DETERMINISTIC_CAPTURE_CONVERSION_DIAGNOSTIC_CODES set and isDeterministicCaptureConversionDiagnosticCode type guard. All five conversion codes added to BLOCKING_TARGET_COMPOSITION_DIAGNOSTIC_CODES...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/diagnostics.ts",
+        "src/tools/video-editor/runtime/exportGuard.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/exportGuard.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/runtime/extensionIntegrity.test.ts src/tools/video-editor/lib/timeline-patch.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/tools/video-editor/runtime/liveEventConversion.test.ts",
+        "npx tsc --noEmit"
+      ]
+    },
+    {
+      "task_id": "T13",
+      "status": "done",
+      "executor_notes": "Verified SDK surface: `LiveBakeTargetKind` in `src/sdk/video/liveData.ts:273` already includes `'deterministic-capture'` as a discriminant. It is re-exported from `src/sdk/index.ts:209`. Zero concrete deterministic capture table types (`DeterministicCapture`, `CaptureSeedTableV1`, `CaptureEventTableV1`, `CaptureScalarTableV1`, `CaptureStructuredMotionCurveV1`, `BakedValueRef`) are imported or re-exported in the SDK \u2014 they remain solely in host/editor-owned modules (`src/tools/video-editor/types/index.ts`, `src/tools/video-editor/runtime/deterministicCapture.ts`). No code changes required; t...",
+      "files_changed": [],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/liveEventConversion.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/lib/timeline-domain.live-bindings.test.ts src/tools/video-editor/runtime/extensionIntegrity.test.ts"
+      ]
+    },
+    {
+      "task_id": "T14",
+      "status": "done",
+      "executor_notes": "Created two documentation files in docs/extensions/composition-spine/: (1) deterministic-capture-profiles.md covering the frozen four-profile V1 scope (seed, event, scalar, structured-motion-curve), table shapes, validation rules, collision policies, the five-step validation pipeline, graph-owned keyframe op placement, event-table conversion flow, export safety, public SDK boundary, and explicit V1 exclusions. (2) m3b-live-binding-and-deterministic-capture.md covering the end-to-end architecture: live preview vs authoritative export with media-like/non-media classification and blocking rule...",
+      "files_changed": [
+        "docs/extensions/composition-spine/deterministic-capture-profiles.md",
+        "docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit"
+      ]
+    },
+    {
+      "task_id": "T15",
+      "status": "done",
+      "executor_notes": "T15 verification: (1) npx tsc --noEmit passed with 0 errors. (2) Focused test slice (8 files, 199 tests) passed: liveBake (14), deterministicCapture (87), liveEventConversion (6), patchPreview (4), compositionGraphProjector (4), exportGuard (75), timeline-domain.live-bindings (7), live-data-bridge.integration (2) \u2014 all passing. (3) check:no-smoke-tests passed. (4) Full vitest suite timed out at 1800s; baseline capture also failed (exit code 4), confirming this is an environment constraint, not a regression. The harness-owned authoritative post-execute verification remains the final arbiter....",
+      "files_changed": [],
+      "commands_run": [
+        "npx tsc --noEmit",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/liveEventConversion.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/lib/timeline-domain.live-bindings.test.ts src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx",
+        "node scripts/quality/check-no-smoke-tests.mjs",
+        "npx vitest run --config config/testing/vitest.config.ts (full suite, timed out at 1800s)"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC2",
+      "executor_note": "CONFIRMED: Exactly the four V1 table shapes (CaptureSeedTableV1, CaptureEventTableV1, CaptureScalarTableV1, CaptureStructuredMotionCurveV1) are defined as host/editor-owned types in types/index.ts. No deferred profiles (V2+ candidates) are defined. No concrete table definitions are exported through the public SDK (verified by searching src/sdk/ for 'DeterministicCapture', 'BakedValueRef', 'CaptureSeedTableV1', etc. \u2014 no matches). The public SDK surface remains unchanged; only the host-owned TimelineLiveDeterministicRefKind gained the 'deterministic-capture' discriminant."
+    },
+    {
+      "sense_check_id": "SC3",
+      "executor_note": "CONFIRMED. Validation rejects: (1) missing provenance \u2014 validateProvenance returns 'missing-provenance' when capturedAt is empty; (2) malformed SHA-256 hashes \u2014 verifyCaptureContentHash rejects non-hex, wrong-length, and mismatched hashes; (3) unsupported profiles \u2014 validateProfile rejects anything outside the 4 frozen V1 profiles, and validateDeterministicCapture additionally emits 'deferred-profile' for anti-scope/unknown profiles; (4) unknown event types without fallback \u2014 validateEventTable rejects empty events array, missing eventId/targetPath, and invalid time; (5) unsupported interpo..."
+    },
+    {
+      "sense_check_id": "SC4",
+      "executor_note": "Confirmed: keyframe.add, keyframe.update, and keyframe.remove are defined only as GraphPreviewOperation variants (GraphKeyframeAddOp, GraphKeyframeUpdateOp, GraphKeyframeRemoveOp). They were NOT added to public TimelinePatchOpFamily (src/sdk/video/timeline/patch.ts unchanged) or reserved graph.* families (TimelinePatchReservedOpFamily unchanged). The existing test at timeline-patch.test.ts:5231 confirms internal kind strings like 'shader.assign' are rejected as TimelinePatchOperation.op values \u2014 the same boundary holds for keyframe operation kinds."
+    },
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "Yes. The new patchPreview path clones clip automation/keyframes before applying keyframe ops, leaves the source snapshot unchanged, re-projects via projectCompositionGraph, and the focused tests verify animates edge detail reflects the updated keyframeCount."
+    },
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "CONFIRMED. The timing resolver (validateEventTable time checks: typeof !== 'number' || !isFinite \u2192 reject) and value normalizer (validateEventTable interpolation check: only 'linear'/'hold' accepted; validateMotionCurve defaultInterpolation and per-keyframe interpolation restricted to 'linear'/'hold'; collisionPolicy validated against CAPTURE_COLLISION_POLICIES frozen vocabulary) accept only events that map to valid targetPaths (non-empty string, checked per event) and valid parameter schemas. All validators (validateEventTable, validateMotionCurve, validateSeedTable, validateScalarTable, v..."
+    },
+    {
+      "sense_check_id": "SC7",
+      "executor_note": "Confirmed. Conversion now resolves collisions on canonical `(targetPath, mappedTime)` keys before operation emission, applies all four explicit policies via the default collision engine, emits only the surviving graph keyframe ops, and retains per-event detail with mapped time, normalized value, interpolation, collision policy, capture ref, provenance hash, operation kind, and blocking diagnostics."
+    },
+    {
+      "sense_check_id": "SC8",
+      "executor_note": "CONFIRMED. Capture ref, provenance hash, profile, and range metadata are all carried through bake results while RenderMaterialRefs are strictly avoided for deterministic-capture targets. Tests prove no cross-contamination between capture and material replacement paths."
+    },
+    {
+      "sense_check_id": "SC9",
+      "executor_note": "Confirmed. Accepted deterministic event-table sources are converted into GraphPreviewOperation[] and exposed through a zero-argument CompositionGraph.preview() closure created with createGraphPreviewWithOps; the base graph remains unchanged until preview() is invoked."
+    },
+    {
+      "sense_check_id": "SC10",
+      "executor_note": "CONFIRMED. Conversion preview exposes per-keyframe detail through LiveEventKeyframeDetail with all required fields: eventId, targetPath, mappedTime, normalizedValue, interpolation (covering both linear and hold policies), collisionPolicy, captureRef, provenanceHash, operationKind (keyframe.add or blocked), and blocking diagnostics array. The validateConversionPreviewReadiness function fails readiness (ready=false) with error code 'live-event/conversion-summary-only-collapse' when non-empty conversions collapse to summary-only output. Test coverage at liveBake.test.ts:643-798 confirms both b..."
+    },
+    {
+      "sense_check_id": "SC11",
+      "executor_note": "Confirmed by focused coverage: unbaked and partial bindings still block; sidecar-only and malformed deterministic-capture refs remain blocked; media-like bindings clear only with asset/render-material refs; non-media bindings clear only with validated deterministic-capture refs carrying browser-export route support."
+    },
+    {
+      "sense_check_id": "SC12",
+      "executor_note": "CONFIRMED: Export diagnostics include conversion target path, capture ref, and provenance hash details without merging material live-only diagnostics into deterministic capture diagnostics. In scanCompositionGraphTargetExportBlockers, captureRef and provenanceHash are extracted and surfaced ONLY when isDeterministicCaptureConversionDiagnosticCode returns true. Material diagnostic codes (MATERIAL_LIVE_ONLY, MATERIAL_STALE, MATERIAL_FAILED, etc.) are NOT in BLOCKING_TARGET_COMPOSITION_DIAGNOSTIC_CODES, so they never reach the export scan function. The separate DETERMINISTIC_CAPTURE_CONVERSION..."
+    },
+    {
+      "sense_check_id": "SC13",
+      "executor_note": "CONFIRMED. SDK consumers can request `deterministic-capture` bake targets via `LiveBakeTargetKind` (line 273 of `src/sdk/video/liveData.ts`), which is re-exported through the public SDK barrel (`src/sdk/index.ts:209`). The only occurrences of `deterministic-capture` in the entire `src/sdk/` directory are: (1) the type definition in `liveData.ts:273`, and (2) the test assertion in `index.test.ts:1868`. No concrete deterministic capture table types (`DeterministicCapture`, `CaptureSeedTableV1`, `CaptureEventTableV1`, `CaptureScalarTableV1`, `CaptureStructuredMotionCurveV1`, `BakedValueRef`, e..."
+    },
+    {
+      "sense_check_id": "SC14",
+      "executor_note": "CONFIRMED. Both docs describe the implemented contracts exactly as they exist in code: (a) The frozen four-profile V1 scope (seed/event/scalar/structured-motion-curve) with per-profile table shapes, validation rules, and locked vocabularies \u2014 matching types/index.ts:588-778 and deterministicCapture.ts:57-94. (b) Graph-owned keyframe operations (keyframe.add/update/remove) as host-owned GraphPreviewOperation variants, not TimelinePatchOpFamily members \u2014 matching patchPreview.ts:71-107. (c) Export-safe refs with authoritative blocking rules (media-like cleared by durable asset/render-material..."
+    },
+    {
+      "sense_check_id": "SC15",
+      "executor_note": "CONFIRMED: TypeScript typecheck passed (0 errors). Focused test slice (8 files, 199 tests) passed with 0 failures \u2014 no regressions detected. Full suite timed out at 1800s (consistent with baseline capture failure exit code 4). Since baseline_test_failures is null, there is no recorded baseline. All verifiable checks passed; no failures were masked. The harness-owned authoritative post-execute verification is the final arbiter."
+    }
+  ],
+  "output": "Aggregated execute batches: completed 14/6. Batch 1: T2 executed successfully. Defined host-owned deterministic capture contracts in types/index.ts (DeterministicCapture, BakedValueRef, profile discriminants, route constraints, rejection rules, determinism status, provenance, content-hash fields, and four V1 table shapes: seed, event, scalar, and structured motion curve) and runtime/deterministicCapture.ts (locked vocabularies, validation helpers). Added 'deterministic-capture' to TimelineLiveDeterministicRefKind. No deferred profiles or concrete table bodies exported through the public SDK. TypeScript compilation passes with no errors. Existing liveBake tests all pass (5/5). Batch 2: T3: Implemented SHA-256 content hash verification replacing the FNV-1a placeholder, added validateSeedTable, validateScalarTable, validateBodyByProfile, and the comprehensive validateDeterministicCapture pipeline with BakedValueRef output. Created deterministicCapture.test.ts with 87 tests covering all required validation branches. Batch 3: Batch 4: Implemented graph-owned keyframe add/update/remove preview execution on cloned composition graph input, re-projecting through projectCompositionGraph and covering the new behavior with focused patchPreview tests. Batch 5: T6 verification checkpoint complete. All cumulative changes from T2-T5 pass type checking and all relevant test suites with zero new failures. Batch 6: Implemented pure event-table conversion with explicit `(targetPath, mappedTim...",
+  "deviations": [
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: src/tools/video-editor/runtime/deterministicCapture.ts, src/tools/video-editor/types/index.ts",
+    "Advisory audit finding: Executor claimed changed files not present in git status: src/tools/video-editor/runtime/deterministicCapture.ts, src/tools/video-editor/types/index.ts",
+    "Advisory audit finding: Sense check SC3 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC11 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC12 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC13 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC14 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC15 is missing an executor acknowledgment.",
+    "Advisory audit finding: Tasks left pending after execute (executor never started them): T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15",
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: src/tools/video-editor/runtime/deterministicCapture.test.ts, src/tools/video-editor/runtime/deterministicCapture.ts",
+    "Advisory audit finding: Executor claimed changed files not present in git status: src/tools/video-editor/runtime/deterministicCapture.test.ts, src/tools/video-editor/runtime/deterministicCapture.ts, src/tools/video-editor/types/index.ts",
+    "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+    {
+      "omitted_count": 119,
+      "reason": "prompt projection"
+    }
+  ],
+  "files_changed": [
+    "src/tools/video-editor/types/index.ts",
+    "src/tools/video-editor/runtime/deterministicCapture.ts",
+    "src/tools/video-editor/runtime/deterministicCapture.test.ts",
+    "src/tools/video-editor/runtime/composition/patchPreview.ts",
+    "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+    "src/tools/video-editor/runtime/liveEventConversion.ts",
+    "src/tools/video-editor/runtime/liveEventConversion.test.ts",
+    "src/sdk/video/liveData.ts",
+    "src/sdk/index.test.ts",
+    "src/tools/video-editor/runtime/liveBake.ts",
+    "src/tools/video-editor/runtime/liveBake.test.ts",
+    "src/tools/video-editor/lib/timeline-domain.ts",
+    "src/tools/video-editor/runtime/exportGuard.ts",
+    "src/tools/video-editor/lib/timeline-domain.live-bindings.test.ts",
+    "src/tools/video-editor/runtime/exportGuard.test.ts",
+    "src/tools/video-editor/runtime/composition/diagnostics.ts",
+    "docs/extensions/composition-spine/deterministic-capture-profiles.md",
+    "docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md"
+  ],
+  "commands_run": [
+    "npx tsc --noEmit",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/deterministicCapture.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionIntegrity.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-patch.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/deterministicCapture.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/runtime/extensionIntegrity.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveEventConversion.test.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/extension...",
+    "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/runtime/liveEventConversion.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/extensionIntegrity.test.ts src/tools/video-editor/lib/timeline-patch.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-domain.live-bindings.test.ts src/tools/video-editor/runtime/exportGuard.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/exportGuard.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/liveBake....",
+    "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/tools/video-editor/runtime/liveEventConversion.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/runtime/deterministicCapture.test.ts src/tools/video-editor/runtime/liveEventConversion.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/...",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/lib/timeline-domain.live-bindings.test.ts src/tools/video-editor/runtime/extensionIntegrity.test.ts",
+    {
+      "omitted_count": 3,
+      "reason": "prompt projection"
+    }
+  ],
+  "watch_items": [
+    "North Star constraint: extensions and processes must not mutate raw timeline internals directly; event conversion must emit host-owned graph preview operations only.",
+    "Do not add `keyframe.add`, `keyframe.update`, or `keyframe.remove` to public `TimelinePatchOpFamily` or reserved `graph.edge.*`/`graph.node.*` families.",
+    "The composition graph remains authoritative for graph-owned facts; keyframe operation execution must re-project through `projectCompositionGraph` rather than patching projected diagnostics by hand.",
+    "Deterministic capture table definitions are host/editor-owned; the public SDK only gains the minimal `deterministic-capture` bake-target discriminant.",
+    "V1 capture profiles are frozen to seed, event, scalar, and structured motion curve; material graphs, shader stacks, FBO chains, texture routing, and deferred profile candidates stay out of scope.",
+    "Media-like live outputs require durable asset or render-material refs; deterministic captures are only for non-media values.",
+    "Validated deterministic-capture refs must include provenance and SHA-256 content-hash checks; arbitrary deterministic ref counts must not clear export blockers.",
+    "Route constraints reuse current export/render vocabulary and unknown constraints should block acceptance rather than being ignored.",
+    "Collision policy vocabulary is exactly `replace`, `merge-first-wins`, `merge-last-wins`, and `reject` on `(targetPath, mappedTime)` collisions.",
+    "Stored keyframe shape should remain backward compatible; event/provenance/collision details stay on conversion preview and graph operations unless existing code already has a compatible metadata field.",
+    "The package has no `npm run typecheck` script in `package.json`; use an equivalent TypeScript check such as `npx tsc --noEmit` unless the script is added during implementation.",
+    "Three focused test files named in the plan may need to be created: `deterministicCapture.test.ts`, `liveEventConversion.test.ts`, and `composition/patchPreview.test.ts`."
+  ],
+  "user_actions": [],
+  "meta_commentary": "Execution should follow the chain order and keep c4 tasks isolated: graph keyframe execution, collision-to-operation emission, graph preview wiring, and export guard tightening each protect a shared invariant. Read existing nearby tests and helpers before adding new shapes; prefer existing graph projector and live bake patterns over new abstractions. Treat docs as a confirmation of implemented behavior, not a place to introduce broader capture/storage decisions. No user actions are needed because all open questions are already scoped by settled plan assumptions and can be handled mechanically in code, tests, and docs."
+}
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-04T00:10:27Z",
+  "hash": "sha256:6b4c3e041eb2cd816bec6125449bcd81d62d60ff974d6e920b400c7257cb3928",
+  "questions": [
+    "Where should deterministic capture table bodies live long term: timeline metadata, provider storage, or an editor-side registry? The plan assumes timeline refs plus host/provider storage for bodies.",
+    "Should accepted conversion provenance be persisted on stored keyframes, or remain on preview/op metadata? The plan assumes stored keyframes stay backward compatible.",
+    "What exact route-constraint vocabulary should captures use beyond current export/render routes? The plan assumes current routes and blocks unknown constraints."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`LiveBakeTargetKind` and `TimelineLiveDeterministicRefKind` include `deterministic-capture`, and deterministic-capture bake targets produce refs without `RenderMaterialRef`s.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Concrete TypeScript definitions exist for `DeterministicCapture`, `BakedValueRef`, and exactly the four V1 profile tables with schema, provenance, content hash, route constraints, rejection rules, and determinism status.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Capture validation rejects missing provenance, invalid SHA-256 content hashes, unknown profiles, unsupported interpolation/event schema cases, and deferred anti-scope profiles.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`keyframe.add`, `keyframe.update`, and `keyframe.remove` are host-owned `GraphPreviewOperation` variants and are not added to reserved `graph.edge.*`/`graph.node.*` families or public `TimelinePatchOpFamily`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Graph-owned keyframe operations mutate only cloned graph input data, re-project through `projectCompositionGraph`, update `animates` edge detail, and leave source state unchanged.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Event-table conversion validates timing maps, target paths, value schemas, and explicit collision policy before emitting graph-owned keyframe operations.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Conversion preview exposes per-keyframe detail including event id, target path, mapped time, normalized value, interpolation/hold policy, collision policy, capture ref, provenance hash, operation kind, and blocking diagnostics.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Event-table conversion is an accepted-proposal flow that emits graph-owned operations and does not mutate sidecars or timeline state directly.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Authoritative export remains blocked for live bindings unless they resolve to durable media asset/render-material refs or validated deterministic-capture refs; sidecar-only and malformed capture refs do not clear the blocker.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Existing live-data bridge, live bake, composition projector, and export guard tests pass after the new behavior is added.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The implementation keeps full deterministic capture table shapes host-owned and exposes only the minimal SDK bake-target discriminant.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Docs describe live preview vs authoritative export, frozen V1 capture profiles, keyframe op placement, and sidecar/process exclusions without expanding V1 scope.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Deterministic capture table definitions are host/editor-owned; the public SDK only gains the `deterministic-capture` bake-target discriminant.",
+    "Existing stored keyframe shape remains backward compatible; provenance/event/collision metadata stays on conversion preview and graph operations unless persistence is required.",
+    "`createGraphPreviewWithOps` is the bridge for conversion preview because `CompositionGraph.preview()` is zero-argument.",
+    "Collision policy is `replace`, `merge-first-wins`, `merge-last-wins`, and `reject` on `(targetPath, mappedTime)` collisions.",
+    "Route constraints reuse existing export/render route vocabulary; unknown constraints block acceptance.",
+    "Media-like live outputs require durable asset/render-material refs; deterministic captures are only for non-media values.",
+    "The existing export guard remains the authoritative place to block live-unbaked export."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/liveBake.test.ts",
+        "reason": "Live bake target/ref behavior changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "reason": "Graph edge projection must reflect keyframe operation results."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/exportGuard.test.ts",
+        "reason": "Authoritative export readiness changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx",
+        "reason": "Existing integration covers bake and export guard clearance."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/index.ts",
+      "src/sdk/video/liveData.ts",
+      "src/tools/video-editor/types/index.ts",
+      "src/tools/video-editor/runtime/deterministicCapture.ts",
+      "src/tools/video-editor/runtime/deterministicCapture.test.ts",
+      "src/tools/video-editor/runtime/liveBake.ts",
+      "src/tools/video-editor/runtime/liveBake.test.ts",
+      "src/tools/video-editor/runtime/liveEventConversion.ts",
+      "src/tools/video-editor/runtime/liveEventConversion.test.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+      "src/tools/video-editor/runtime/composition/graphProjector.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/lib/timeline-domain.ts",
+      "src/tools/video-editor/runtime/exportGuard.ts",
+      "src/tools/video-editor/runtime/exportGuard.test.ts",
+      "src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx",
+      "docs/extensions/composition-spine/deterministic-capture-profiles.md",
+      "docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md"
+    ],
+    "always_run": [
+      "npm run typecheck"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/sdk/index.ts, src/sdk/video/liveData.ts, src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx, src/tools/video-editor/lib/timeline-domain.ts, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/graphProjector.ts, src/tools/video-editor/runtime/composition/patchPreview.test.ts, src/tools/video-editor/runtime/composition/patchPreview.ts, src/tools/video-editor/runtime/deterministicCapture.test.ts, src/tools/video-editor/runtime/deterministicCapture.ts, src/tools/video-editor/runtime/exportGuard.test.ts, src/tools/video-editor/runtime/exportGuard.ts, src/tools/video-editor/runtime/liveBake.test.ts, src/tools/video-editor/runtime/liveBake.ts, src/tools/video-editor/runtime/liveEventConversion.test.ts, src/tools/video-editor/runtime/liveEventConversion.ts, src/tools/video-editor/types/index.ts. Ignored documentation-only change(s) for selector derivation: docs/extensions/composition-spine/deterministic-capture-profiles.md, docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md. Candidate: The work touches shared editor contracts, graph projection, and export readiness. A scoped video-editor slice is the baseline, with full-suite fallback for SDK/type ripple effects. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/tools/video-editor/runtime/deterministicCapture.test.ts, src/tools/video-editor/runtime/liveEventConversion.test.ts, src/tools/video-editor/runtime/composition/patchPreview.test.ts.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/tools/video-editor/runtime/deterministicCapture.test.ts",
+      "src/tools/video-editor/runtime/liveEventConversion.test.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.test.ts"
+    ]
+  },
+  "structure_warnings": []
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "PROCEED",
+  "passed": true,
+  "rationale_brief": "Iteration 1 is a clean plan with zero flags, zero recurring critiques, and all preflight checks passing. The plan is well-structured across 5 phases and 12 steps, each with explicit complexity estimates. All 12 success criteria are specific and measurable.",
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "Deterministic capture table definitions are host/editor-owned; the public SDK only gains the `deterministic-capture` bake-target discriminant.",
+      "rationale": "Keeps the SDK surface minimal and portable while allowing the host to evolve capture profiles without breaking extension contracts. Aligned with North Star constraint that extensions don't leak into host internals."
+    },
+    {
+      "id": "SD2",
+      "decision": "Existing stored keyframe shape remains backward compatible; provenance/event/collision metadata stays on conversion preview and graph operations unless persistence is required by a future release.",
+      "rationale": "Avoids destabilizing existing stored keyframe data and keeps the M3b milestone focused on the bridge from live data to export-safe keyframe operations."
+    },
+    {
+      "id": "SD3",
+      "decision": "Keyframe operations (`keyframe.add`, `keyframe.update`, `keyframe.remove`) are host-owned `GraphPreviewOperation` variants \u2014 not `TimelinePatchOpFamily` members and not reserved `graph.*` families.",
+      "rationale": "North Star constraint: extensions never mutate raw timeline internals directly. Graph-owned operations go through the composition spine and re-project through `projectCompositionGraph`, keeping the host in control."
+    },
+    {
+      "id": "SD4",
+      "decision": "Collision policy vocabulary is frozen at `replace`, `merge-first-wins`, `merge-last-wins`, and `reject` on `(targetPath, mappedTime)` collisions.",
+      "rationale": "Covers the four fundamental conflict-resolution strategies needed for event-to-keyframe conversion without over-engineering the V1 surface."
+    },
+    {
+      "id": "SD5",
+      "decision": "Media-like live outputs require durable asset/render-material refs; deterministic captures are only for non-media values.",
+      "rationale": "Maintains a clear separation between media rendering (which needs actual asset pipelines) and parameter/value capture (which can be fully deterministic). Aligned with North Star constraint on live inputs baking to durable materials/artifacts/captures."
+    }
+  ],
+  "warnings": [
+    "Three open questions in plan metadata remain undecided (capture table body storage location, provenance persistence on stored keyframes, and route-constraint vocabulary). These are scoped around in the assumptions but may surface during implementation if the assumptions prove wrong.",
+    "Test blast radius lists 3 missing test selectors (deterministicCapture.test.ts, liveEventConversion.test.ts, patchPreview.test.ts) that need to be created \u2014 plan steps acknowledge this but these files don't exist yet."
+  ],
+  "orchestrator_guidance": "First iteration; follow gate recommendation: PROCEED.",
+  "carried_flags": [],
+  "iteration": 1,
+  "produced_at": "2026-07-04T00:18:26Z"
+}
+
+        Settled decisions (verify the executor implemented these correctly):
+- SD1: Deterministic capture table definitions are host/editor-owned; the public SDK only gains the `deterministic-capture` bake-target discriminant. (Keeps the SDK surface minimal and portable while allowing the host to evolve capture profiles without breaking extension contracts. Aligned with North Star constraint that extensions don't leak into host internals.)
+- SD2: Existing stored keyframe shape remains backward compatible; provenance/event/collision metadata stays on conversion preview and graph operations unless persistence is required by a future release. (Avoids destabilizing existing stored keyframe data and keeps the M3b milestone focused on the bridge from live data to export-safe keyframe operations.)
+- SD3: Keyframe operations (`keyframe.add`, `keyframe.update`, `keyframe.remove`) are host-owned `GraphPreviewOperation` variants — not `TimelinePatchOpFamily` members and not reserved `graph.*` families. (North Star constraint: extensions never mutate raw timeline internals directly. Graph-owned operations go through the composition spine and re-project through `projectCompositionGraph`, keeping the host in control.)
+- SD4: Collision policy vocabulary is frozen at `replace`, `merge-first-wins`, `merge-last-wins`, and `reject` on `(targetPath, mappedTime)` collisions. (Covers the four fundamental conflict-resolution strategies needed for event-to-keyframe conversion without over-engineering the V1 surface.)
+- SD5: Media-like live outputs require durable asset/render-material refs; deterministic captures are only for non-media values. (Maintains a clear separation between media rendering (which needs actual asset pipelines) and parameter/value capture (which can be fully deterministic). Aligned with North Star constraint on live inputs baking to durable materials/artifacts/captures.)
+
+
+Critique flags to re-verify against the final diff:
+            [
+  {
+    "id": "verifiability-0",
+    "concern": "Criterion 10: requires human verification (subjective_judgment).",
+    "severity": "minor",
+    "status": "open"
+  },
+  {
+    "id": "verifiability-1",
+    "concern": "Criterion 11: requires human verification (subjective_judgment).",
+    "severity": "minor",
+    "status": "open"
+  }
+]
+
+            For each flag above that was raised during critique, verify whether the final diff actually addresses the concern.
+            A flag is resolved only if the final diff contains code that directly addresses the concern.
+            Do not trust pre-execute promises or plan claims; check the diff itself.
+            Add resolved flag IDs to `verified_flag_ids`.
+            Add flag IDs that are unresolved only by prose judgment, without a deterministic pre/post failing check, to `disputed_flag_ids`.
+            For any unresolved flag that is backed by a deterministic pre/post failing check, add a `rework_items` entry with a typed `target`, `issue`, `expected`, `actual`, `evidence_file`, `flag_id`, `source: "review_flag_reverify"`, and `deterministic_check`. Use `target.kind: "task"` with `task_id` for a single finalize task, `target.kind: "bulk"` with `task_ids` for a bulk operation that maps to multiple finalize tasks, or `target.kind: "manifest"` with `task_ids` for manifest-backed routes. Only use legacy `task_id: "REVIEW"` when the finding is a review blocker with no routable finalize target; execute treats that as telemetry/blocker compatibility, not runnable rework.
+
+Advisory mechanical pre-check flags:
+            [
+  {
+    "id": "PRECHECK-DIFF_SIZE_SANITY",
+    "check": "diff_size_sanity",
+    "detail": "Diff size looks larger than expected: changed_lines=5440, expected\u2248450, ratio=12.09, files=18, hunks=48.",
+    "severity": "minor",
+    "evidence_file": "docs/extensions/composition-spine/deterministic-capture-profiles.md"
+  }
+]
+
+            Copy this list verbatim into the output `pre_check_flags` field.
+
+        Historical execution audit context (`execution_audit.json`, prompt projection only):
+        {
+  "skipped": false,
+  "reason": "",
+  "findings": [
+    "Executor claimed changed files not present in git status: docs/extensions/composition-spine/deterministic-capture-profiles.md, docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md, src/tools/video-editor/lib/timeline-domain.live-bindings.test.ts, src/tools/video-editor/lib/timeline-domain.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/exportGuard.test.ts, src/tools/video-editor/runtime/exportGuard.ts"
+  ],
+  "files_in_diff": [
+    "docs/extensions/composition-spine/deterministic-capture-profiles.md",
+    "docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md",
+    "src/sdk/index.test.ts",
+    "src/sdk/video/liveData.ts",
+    "src/tools/video-editor/lib/timeline-domain.live-bindings.test.ts",
+    "src/tools/video-editor/lib/timeline-domain.ts",
+    "src/tools/video-editor/runtime/composition/diagnostics.ts",
+    "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+    "src/tools/video-editor/runtime/composition/patchPreview.ts",
+    "src/tools/video-editor/runtime/deterministicCapture.test.ts",
+    "src/tools/video-editor/runtime/deterministicCapture.ts",
+    "src/tools/video-editor/runtime/exportGuard.test.ts",
+    "src/tools/video-editor/runtime/exportGuard.ts",
+    "src/tools/video-editor/runtime/liveBake.test.ts",
+    "src/tools/video-editor/runtime/liveBake.ts",
+    "src/tools/video-editor/runtime/liveEventConversion.test.ts",
+    "src/tools/video-editor/runtime/liveEventConversion.ts",
+    "src/tools/video-editor/types/index.ts"
+  ],
+  "files_claimed": [
+    "docs/extensions/composition-spine/deterministic-capture-profiles.md",
+    "docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md",
+    "src/sdk/index.test.ts",
+    "src/sdk/video/liveData.ts",
+    "src/tools/video-editor/lib/timeline-domain.live-bindings.test.ts",
+    "src/tools/video-editor/lib/timeline-domain.ts",
+    "src/tools/video-editor/runtime/composition/diagnostics.ts",
+    "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+    "src/tools/video-editor/runtime/composition/patchPreview.ts",
+    "src/tools/video-editor/runtime/deterministicCapture.test.ts",
+    "src/tools/video-editor/runtime/deterministicCapture.ts",
+    "src/tools/video-editor/runtime/exportGuard.test.ts",
+    "src/tools/video-editor/runtime/exportGuard.ts",
+    "src/tools/video-editor/runtime/liveBake.test.ts",
+    "src/tools/video-editor/runtime/liveBake.ts",
+    "src/tools/video-editor/runtime/liveEventConversion.test.ts",
+    "src/tools/video-editor/runtime/liveEventConversion.ts",
+    "src/tools/video-editor/types/index.ts"
+  ]
+}
+
+        Fresh review-time evidence (`review_evidence.json`):
+        {
+  "projection": "bounded_prompt_summary",
+  "full_artifact": "review_evidence.json",
+  "schema": "megaplan.review_evidence",
+  "schema_version": 1,
+  "evidence_contract_version": 1,
+  "mode": "shadow",
+  "subject": {
+    "kind": "plan",
+    "name": "plan",
+    "to_state": "done",
+    "from_state": "executed",
+    "phase": "review",
+    "plan_name": "plan",
+    "milestone_label": null
+  },
+  "accepted": false,
+  "would_block": false,
+  "failures": [
+    "green_suite: verification suite ran but delta is not computable (collection parse failure in baseline or verification)"
+  ],
+  "providers_used": [
+    "phase_coverage",
+    "landed_diff",
+    "worker_did_work",
+    "green_suite",
+    "execution_acceptance_contract",
+    "review_disposition",
+    "declared_noop"
+  ],
+  "legacy_evidence_count": 0,
+  "unknown_evidence_count": 1,
+  "would_block_reasons": [
+    "green_suite: verification suite ran but delta is not computable (collection parse failure in baseline or verification)"
+  ],
+  "artifact": "review_evidence.json",
+  "generated_at": "2026-07-04T02:31:56Z",
+  "phase": "review",
+  "iteration": 1,
+  "base_sha": "6c1a7e40f6076a6cb7571a5127734fe802d5846f",
+  "head_sha": "6a6bb7e2e9448230bf2f42eeff2d5793c9847d64",
+  "invocation_id": "a3a38239336b407f",
+  "provider_diagnostics": {
+    "phase_coverage": {
+      "ok": true
+    },
+    "landed_diff": {
+      "ok": true
+    },
+    "worker_did_work": {
+      "ok": true
+    },
+    "green_suite": {
+      "ok": true
+    },
+    "execution_acceptance_contract": {
+      "ok": true
+    },
+    "review_disposition": {
+      "ok": true
+    },
+    "declared_noop": {
+      "ok": true
+    }
+  },
+  "diagnostics": {
+    "base_sha": {
+      "ok": true,
+      "source": "state.meta.chain_policy.milestone_base_sha"
+    },
+    "head_sha": {
+      "ok": true,
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "source": "git_rev_parse_head"
+    },
+    "invocation_id": {
+      "ok": true,
+      "source": "state.meta.current_invocation_id"
+    }
+  },
+  "evidence": [
+    {
+      "kind": "phase_coverage",
+      "status": "satisfied",
+      "summary": "all batch tasks done",
+      "trust_class": "judgment",
+      "provider": "PhaseCoverageProvider",
+      "provider_version": "1",
+      "source": "phase_result.json",
+      "subject": "plan",
+      "artifact": {
+        "path": "phase_result.json",
+        "sha256": "sha256:04d7ca5b8739e1af563915be9c55f09b8f3e76ebd9b0f2d091aa0831afff7f59",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "phase": "execute",
+        "exit_kind": "success",
+        "reason": "finalize.json",
+        "evidence_id": "sha256:12b35f131b2208850221c1986aea7687c641f233dca7b76a8a167e5641049654"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "landed_diff",
+      "status": "satisfied",
+      "summary": "diff present and claim-consistent",
+      "trust_class": "judgment",
+      "provider": "LandedDiffProvider",
+      "provider_version": "1",
+      "source": "execution_evidence.validate_execution_evidence",
+      "subject": "plan",
+      "artifact": {
+        "path": "finalize.json",
+        "sha256": "sha256:94557aa69548d6d7a527cc453e631e4190d5e25c0bb449b2068abd4fe443601c",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "preview": "{\n  \"findings\": [],\n  \"files_in_diff\": [\n    \"docs/extensions/composition-spine/deterministic-capture-profiles.md\",\n    \"docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md\",\n    \"src/sdk/index.test.ts\",\n    \"src/sdk/video/liveData.ts\",\n    \"src/tools/video-editor/lib/timeline-domain.live-bindings.test.ts\",\n    \"src/tools/video-editor/lib/timeline-domain.ts\",\n    \"src/tools/video-editor/runtime/composition/diagnostics.ts\",\n    \"src/tools/video-editor/runtime/composition/patchPreview.test.ts\",\n    \"src/tools/video-editor/runtime/composition/patchPreview.ts\",\n    \"src/tools/video-editor/runtime/deterministicCapture.test.ts\",\n    \"src/tools/video-editor/runtime/deterministicCapture.ts\",\n    \"src/tools/video-editor/runtime/exportGuard.test.ts\",\n    \"src/tools/video-editor/runtime/exportGuard.ts\",\n    \"src/tools/video-editor/runtime/liveBake.test.ts\",\n    \"src/tools/video-editor/runtime/liveBake.ts\",\n    \"src/tools/video-editor/runtime/liveEventConversion.test.ts\",\n    \"src/tools/video-editor/runtime/liveEventConversion.ts\",\n    \"src/tools/video-editor/types/index.ts\"\n  ],\n  \"files_in_committed_range\": [],\n  \"files_claimed\": [\n    \"docs/extensions/composition\n\n[truncated 1,400 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "worker_did_work",
+      "status": "satisfied",
+      "summary": "worker activity present",
+      "trust_class": "evidence",
+      "provider": "WorkerDidWorkProvider",
+      "provider_version": "1",
+      "source": "execution_batch_*.json",
+      "subject": "plan",
+      "artifacts": [
+        {
+          "path": "execution_batch_10.json",
+          "sha256": "sha256:7ac7ac6af4f83bddc4a3aae407d813c131784d8ecbdd0fbfa4072b73feb7ecb8",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_11.json",
+          "sha256": "sha256:a4c69dc886cfe8bd0c42b1a1e86cc8dcd1ae210364a6c25f6871f3b5c465db04",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_12.json",
+          "sha256": "sha256:d342f4b3b9f2dd403cd1f96340b2d2a479e6c9aff0675f3016a32d284418ce94",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_13.json",
+          "sha256": "sha256:44e55cf3e18160aa1e382af26f5c9ab2cfecd7b8ef698a957322ad6c137c472f",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_14.json",
+          "sha256": "sha256:d1524372243e146e3e487135cf3a4296bc67d86a1041e2313327a652f25a2864",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_15.json",
+          "sha256": "sha256:c865c1fee00971f3f06492235b111c4c6e135cf38f5e663e8771d20863d902d6",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_2.json",
+          "sha256": "sha256:b478d707b35830b9424a4e8f73384163546f5da56ee33d295cbfb7d79a07bc12",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_3.json",
+          "sha256": "sha256:fd4a4d92a96f5c7dc4cf584ed360c2089eecc2e8aec54feaad79e246a35e4b7b",
+          "artifact_type": "application/json"
+        }
+      ],
+      "artifacts_omitted": 6,
+      "details_preview": {
+        "files_changed": 48,
+        "commands_run": 80,
+        "sections_written": 0,
+        "batches": 14,
+        "batch_artifacts": [
+          "execution_batch_10.json",
+          "execution_batch_11.json",
+          "execution_batch_12.json",
+          "execution_batch_13.json",
+          "execution_batch_14.json",
+          "execution_batch_15.json",
+          "execution_batch_2.json",
+          "execution_batch_3.json",
+          "execution_batch_4.json",
+          "execution_batch_5.json",
+          "execution_batch_6.json",
+          "execution_batch_7.json",
+          "execution_batch_8.json",
+          "execution_batch_9.json"
+        ],
+        "activity_source": "execution_batch_records",
+        "evidence_id": "sha256:008cdddfb519f796e07e23bf7e96936e7c6efc0fa2e5b95551d88b6fc1920765"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "green_suite",
+      "status": "unsatisfied",
+      "summary": "verification suite ran but delta is not computable (collection parse failure in baseline or verification)",
+      "trust_class": "evidence",
+      "provider": "GreenSuiteProvider",
+      "provider_version": "1",
+      "source": "verification:f4d1fc75b953",
+      "subject": "plan:plan",
+      "observed_at": "1783132316.1651073",
+      "code_hash": "sha256:48a72f93d5f561265ba3d80d809b97e68b0c67be04a79c5dd925b3be34a4d8fe",
+      "artifact": {
+        "path": "verification/raw_f4d1fc75b953.log",
+        "sha256": "sha256:73983941434c7c333d3147d1a1432029d2598143979e458fe3c149e4fb143539",
+        "artifact_type": "text/plain"
+      },
+      "artifacts": [
+        {
+          "path": "verification/raw_f4d1fc75b953.log",
+          "sha256": "sha256:73983941434c7c333d3147d1a1432029d2598143979e458fe3c149e4fb143539",
+          "artifact_type": "text/plain"
+        },
+        {
+          "path": "verification/suite_runs.ndjson",
+          "sha256": "sha256:e0afa4ca5372b60f36d9cefa61e241624fbeaba790abb74bd04a4c5e9c10e175",
+          "artifact_type": "application/x-ndjson"
+        }
+      ],
+      "details_preview": {
+        "preview": "{\n  \"run_id\": \"f4d1fc75b953\",\n  \"phase\": \"verification\",\n  \"command\": \"/root/.pyenv/versions/3.11.11/bin/python3 -m pytest src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx --tb=no -q --no-header -rA\",\n  \"duration\": 0.3685146999778226,\n  \"collected\": 0,\n  \"collected_ids\": [],\n  \"failure_count\": 0,\n  \"failures\": [\n    \"runner_error\"\n  ],\n  \"pass_count\": 0,\n  \"status\": \"runner_error\",\n  \"exit_code\": 4,\n  \"code_hash\": \"sha256:48a72f93d5f561265ba3d80d809b97e68b0c67be04a79c5dd925b3be34a4d8fe\",\n  \"collections_parse_ok\": false,\n  \"collection_errors\": [],\n  \"raw_log_path\": \"/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3b-live-binding-and-20260703-2358/verification/raw_f4d1fc75b953.log\",\n  \"freshness_cache_hit\": false,\n  \"baseline_test_command\": null,\n  \"baseline_test_note\": \"Baseline capture failed: runner error (exit code: 4)\",\n  \"delta\": {\n    \"computable\": false,\n    \"newly_failing\": [],\n    \"newly_passing\": [],\n    \"still_red\": [],\n\n\n[truncated 1,049 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "execution_acceptance_contract",
+      "status": "unknown",
+      "summary": "execute acceptance contract could not be verified because suite evidence is runner_error",
+      "trust_class": "evidence",
+      "provider": "ExecuteAcceptanceContractProvider",
+      "provider_version": "1",
+      "source": "gate.json|gate_signals_v*.json + verification/suite_runs.ndjson",
+      "subject": "plan",
+      "details_preview": {
+        "preview": "{\n  \"contract\": {\n    \"scope\": \"execute\",\n    \"verification_mode\": \"verification_suite\",\n    \"required_checks\": [\n      {\n        \"id\": \"issue_hints\",\n        \"question\": \"Did the work fully address the issue hints, user notes, and approved plan requirements?\",\n        \"reason\": \"prep.json area 3 status=error; plan Step 6 mentions interfaces by name only with no signatures; plan assumptions section does not provide concrete interface shapes beyond collision policy enum\",\n        \"complexity\": 3\n      },\n      {\n        \"id\": \"correctness\",\n        \"question\": \"Are the proposed changes technically correct?\",\n        \"reason\": \"`TimelineClipSummary` has no keyframe/value payloads, while Steps 4-8 rely on `patchPreview.ts` and `projectCompositionGraph()` to preview per-keyframe conversions.\",\n        \"complexity\": 4,\n        \"attention\": \"high_complexity_unverifiable\"\n      },\n      {\n        \"id\": \"scope\",\n        \"question\": \"Search for related code that handles the same concept. Is the reported issue a symptom of something broader \\u2014 and is any single step sized to fit one worker turn?\",\n        \"reason\": \"Plan Step 6 description: 'Add TimingMapResolver, ValueSchemaNormalizer, \n\n[truncated 1,124 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "review_disposition",
+      "status": "not_applicable",
+      "summary": "no review.json (review may have been skipped)",
+      "trust_class": "judgment",
+      "provider": "ReviewDispositionProvider",
+      "provider_version": "1",
+      "subject": "plan",
+      "details_preview": {
+        "evidence_id": "sha256:519e446830e0c539cd39205827fa57231e722b8cf892a97834d8200a3ebfdc63"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "declared_noop",
+      "status": "not_applicable",
+      "summary": "no declared no-op/waiver artifact (absence is not a failure)",
+      "trust_class": "claim",
+      "provider": "DeclaredNoopProvider",
+      "provider_version": "1",
+      "source": "completion/noop.json|completion_noop.json",
+      "subject": "plan",
+      "details_preview": {
+        "evidence_id": "sha256:c5a9ab90387234220c35d0514efb5fab48bd80d5d3066b982919aa7d976625c8"
+      },
+      "details_full_location": "review_evidence.json"
+    }
+  ],
+  "evidence_count": 7,
+  "green_suite": {
+    "delta": {
+      "computable": false,
+      "newly_failing": 0,
+      "newly_passing": 0,
+      "still_red": 0,
+      "still_green": 0,
+      "deleted_tests": 0,
+      "added_tests": 0,
+      "flakes": 0,
+      "tests_collected": 0,
+      "duration": 0.3685146999778226,
+      "flake_retry_skipped": false,
+      "flake_retry_reason": ""
+    }
+  }
+}
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3b-live-binding-and-20260703-2358/review_output.json
+        Read this file first — it contains the expected JSON structure with pre-populated `task_verdicts`, `sense_check_verdicts`, and `criteria`.
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Git diff summary:
+        ?? .megaplan/epics/m3b-live-binding-and-20260703-2358/
+?? .megaplan/system_logs/log_ed92cd474ba0.json
+
+        Requirements:
+        - Verify each success criterion explicitly.
+        - Fresh repository inspection and `review_evidence.json` outrank stale execution-time claims from `execution_audit.json`, `finalize.json`, and executor notes.
+        - Use repository tools to inspect relevant files and run focused verification commands when behavior or tests are part of a criterion; include concrete repository-backed evidence for every criterion verdict.
+        - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
+          - `must` criteria are hard gates only when backed by a deterministic runnable check that failed on the pre-execute baseline and still fails after execution. Ungrounded prose concerns are advisory.
+          - `should` criteria are quality targets. If the spirit is met but the letter is not, mark `pass` with evidence explaining the gap. Only mark `fail` if the intent was clearly missed. A `should` failure alone does NOT require `needs_rework`.
+          - `info` criteria are for human reference. Mark them `waived` with a note — do not evaluate them.
+          - If a criterion has `requires` capabilities that are not satisfiable by container workers (e.g., `drive_browser`, `subjective_judgment`), mark it `deferred_human` — NOT `fail` or `waived`. Deferred-human criteria do NOT count toward `needs_rework`.
+          - If a criterion (any priority) cannot be verified in this context (e.g., requires manual testing or runtime observation), mark it `waived` with an explanation.
+        - Set `review_verdict` to `needs_rework` only for a rework item with `deterministic_check: {"command": "...", "baseline_status": "failed", "post_status": "failed"}`. Use `approved` for prose-only concerns; record those as advisory issues instead.
+        - Set `review_completion_status` to `"incomplete"` when you could not inspect the repository or run verification commands; otherwise set it to `"complete"`.
+        - The decisions listed above were settled at the gate stage. Verify that the executor implemented each settled decision correctly. Flag deviations from these decisions, but do not question the decisions themselves.
+        - baseline_test_failures in finalize.json lists tests that were already failing before execution. Do not flag these as rework items unless the executor introduced new failures in those same tests.
+        - Cross-reference each task's `files_changed` and `commands_run` against the git diff and any audit findings.
+        - Review every `sense_check` explicitly and treat perfunctory acknowledgments as a reason to dig deeper.
+        - Follow this JSON shape exactly:
+        ```json
+        {
+          "review_verdict": "approved",
+          "review_completion_status": "complete",
+          "criteria": [
+            {
+              "name": "All existing tests pass",
+              "priority": "must",
+              "pass": "pass",
+              "evidence": "Test suite ran green — 42 passed, 0 failed."
+            },
+            {
+              "name": "File under ~300 lines",
+              "priority": "should",
+              "pass": "pass",
+              "evidence": "File is 375 lines — above the target but reasonable given the component's responsibilities. Spirit met."
+            },
+            {
+              "name": "Manual smoke tests pass",
+              "priority": "info",
+              "pass": "waived",
+              "evidence": "Cannot be verified in automated review. Noted for manual QA."
+            }
+          ],
+          "issues": [],
+          "rework_items": [],
+          "summary": "Approved. All must criteria pass. The should criterion on line count is close enough given the component scope.",
+          "task_verdicts": [
+            {
+              "task_id": "T6",
+              "reviewer_verdict": "Pass. Claimed handler changes and command evidence match the repo state.",
+              "evidence_files": ["megaplan/handlers.py", "megaplan/evaluation.py"]
+            }
+          ],
+          "sense_check_verdicts": [
+            {
+              "sense_check_id": "SC6",
+              "verdict": "Confirmed. The execute blocker only fires when both evidence arrays are empty."
+            }
+          ]
+        }
+        ```
+        - `rework_items` must be an array of structured rework directives. When `review_verdict` is `needs_rework`, populate one entry per issue with:
+          - `target`: typed route for the rework. Use `{"kind": "task", "task_id": "T6"}` for one finalize task, `{"kind": "bulk", "id": "bulk-1", "task_ids": ["T6", "T7"]}` for bulk-operation findings, or `{"kind": "manifest", "id": "manifest-path-or-ref", "task_ids": ["T6"]}` for manifest-backed findings.
+          - `task_id`: legacy compatibility only. It may mirror the single task target, or be `"REVIEW"` only for review blockers with no runnable finalize target.
+          - `issue`: what is wrong
+          - `expected`: what correct behavior looks like
+          - `actual`: what was observed
+          - `evidence_file`: file path supporting the finding
+          - `flag_id`: critique/review flag ID when applicable, otherwise `null`
+          - `source`: short machine-readable source tag when applicable, otherwise `null`
+          - `deterministic_check` (required for blocking rework): object with `command`, `baseline_status`, and `post_status`
+        - `issues` must still be populated as a flat one-line-per-item summary derived from `rework_items` (for backward compatibility). When approved, blocking `rework_items` should be empty; prose-only concerns may be summarized in `issues`.
+        - When the work needs another execute pass, keep the same shape and change only `review_verdict` to `needs_rework`; make `issues`, `rework_items`, `summary`, and task verdicts specific enough for the executor to act on directly.

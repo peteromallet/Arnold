@@ -187,7 +187,8 @@ export type TimelineLiveDeterministicRefKind =
   | 'automation'
   | 'clip'
   | 'sidecar'
-  | 'render-material';
+  | 'render-material'
+  | 'deterministic-capture';
 
 export type TimelineLiveDeterministicRef = {
   kind: TimelineLiveDeterministicRefKind;
@@ -573,4 +574,205 @@ export type ResolvedTimelineConfig = {
 export type TimelineCompositionProps = {
   config?: ResolvedTimelineConfig;
   preview?: boolean;
+};
+
+// ---------------------------------------------------------------------------
+// M3b: Deterministic Capture — host/editor-owned contracts
+// ---------------------------------------------------------------------------
+// These types define the frozen V1 deterministic capture profiles. Concrete
+// table bodies are host/editor-owned and must not be re-exported through the
+// public SDK. The public SDK only gains the `deterministic-capture` bake-target
+// discriminant.
+
+/** Frozen V1 deterministic capture profiles. */
+export type DeterministicCaptureProfileV1 =
+  | 'seed'
+  | 'event'
+  | 'scalar'
+  | 'structured-motion-curve';
+
+/**
+ * Collision policy for event-table entries that share a (targetPath, mappedTime)
+ * pair. Only `replace`, `merge-first-wins`, `merge-last-wins`, and `reject` are
+ * allowed.
+ */
+export type CaptureCollisionPolicy =
+  | 'replace'
+  | 'merge-first-wins'
+  | 'merge-last-wins'
+  | 'reject';
+
+/** Provenance metadata for a deterministic capture. */
+export type DeterministicCaptureProvenance = {
+  /** Extension that produced this capture. */
+  producerExtensionId?: string;
+  /** Version of the producer at capture time. */
+  producerVersion?: string;
+  /** ISO 8601 timestamp when the capture was created. */
+  capturedAt: string;
+  /** Stable identifier for the capture session. */
+  sessionId?: string;
+  /** Opaque provenance tags. */
+  tags?: string[];
+};
+
+/**
+ * Route constraints carried by a deterministic capture. Reuses the existing
+ * RenderRoute vocabulary. Unknown constraints should block acceptance.
+ */
+export type DeterministicCaptureRouteConstraint =
+  | 'preview'
+  | 'browser-export'
+  | 'worker-export'
+  | 'sidecar-export';
+
+/** Rejection rules for deterministic capture validation. */
+export type DeterministicCaptureRejectionRule =
+  | 'missing-provenance'
+  | 'bad-content-hash'
+  | 'unsupported-profile'
+  | 'unsupported-event-type'
+  | 'unsupported-interpolation'
+  | 'bad-route-constraint'
+  | 'deferred-profile'
+  | 'malformed-value-ref';
+
+/** A rejection produced by deterministic capture validation. */
+export type DeterministicCaptureRejection = {
+  rule: DeterministicCaptureRejectionRule;
+  message: string;
+  detail?: Record<string, unknown>;
+};
+
+/**
+ * A validated reference to a baked deterministic value within a capture body.
+ * References are produced by capture validation and consumed by conversion
+ * and export guard code.
+ */
+export type BakedValueRef = {
+  /** The capture that produced this value. */
+  captureId: string;
+  /** Profile of the source capture. */
+  profile: DeterministicCaptureProfileV1;
+  /** SHA-256 content hash of the capture body (hex-encoded). */
+  contentHash: string;
+  /** SHA-256 provenance hash of the capture metadata (hex-encoded). */
+  provenanceHash: string;
+  /** Route constraints from the capture. */
+  routeConstraints: DeterministicCaptureRouteConstraint[];
+  /** The path to the value within the capture body (e.g. "events[3].value"). */
+  valuePath: string;
+  /** Determinism posture at reference time. */
+  determinism: 'deterministic' | 'preview-only' | 'process-dependent';
+};
+
+/**
+ * The top-level deterministic capture container. Every capture carries a frozen
+ * V1 profile discriminant, provenance, a content hash, route constraints, and
+ * exactly one of the four V1 table shapes as its body.
+ */
+export type DeterministicCapture = {
+  /** Unique capture identifier. */
+  captureId: string;
+  /** Frozen V1 profile discriminant. */
+  profile: DeterministicCaptureProfileV1;
+  /** Provenance metadata. */
+  provenance: DeterministicCaptureProvenance;
+  /** SHA-256 content hash of the serialized body (hex-encoded). */
+  contentHash: string;
+  /** Route constraints for this capture. */
+  routeConstraints: DeterministicCaptureRouteConstraint[];
+  /** Determinism posture. */
+  determinism: 'deterministic' | 'preview-only' | 'process-dependent';
+  /** Opaque extension metadata. */
+  metadata?: Record<string, unknown>;
+  /** The capture body — exactly one of the four V1 table shapes. */
+  body: DeterministicCaptureTableV1;
+};
+
+/**
+ * Union of the four frozen V1 capture table shapes. No deferred profile
+ * candidates or concrete table body implementations are exported through
+ * the public SDK.
+ */
+export type DeterministicCaptureTableV1 =
+  | CaptureSeedTableV1
+  | CaptureEventTableV1
+  | CaptureScalarTableV1
+  | CaptureStructuredMotionCurveV1;
+
+// ── V1 Table Shapes ────────────────────────────────────────────────────────
+
+/** V1 seed table — a single seed value for deterministic generation. */
+export type CaptureSeedTableV1 = {
+  profile: 'seed';
+  /** The seed value (string or number). */
+  seed: string | number;
+  /** Optional label describing the seed's purpose. */
+  label?: string;
+};
+
+/** A single timed event in a V1 event table. */
+export type CaptureEventV1 = {
+  /** Stable event identifier. */
+  eventId: string;
+  /** Time in seconds. */
+  time: number;
+  /** Target parameter path (e.g. "params.opacity"). */
+  targetPath: string;
+  /** The value at this event. */
+  value: number | string | boolean;
+  /** Interpolation from this event to the next. */
+  interpolation: KeyframeInterpolation;
+  /** Per-event collision policy override (falls back to table default). */
+  collisionPolicy?: CaptureCollisionPolicy;
+  /** Optional event metadata. */
+  metadata?: Record<string, unknown>;
+};
+
+/** V1 event table — timed events with target paths, values, and collision policy. */
+export type CaptureEventTableV1 = {
+  profile: 'event';
+  /** Ordered array of timed events. */
+  events: CaptureEventV1[];
+  /** Default collision policy applied when not overridden per-event. */
+  defaultCollisionPolicy: CaptureCollisionPolicy;
+};
+
+/** A single scalar entry mapping a parameter path to a value. */
+export type CaptureScalarEntryV1 = {
+  /** Target parameter path. */
+  targetPath: string;
+  /** The scalar value. */
+  value: number | string | boolean;
+  /** Optional label. */
+  label?: string;
+};
+
+/** V1 scalar table — parameter path → scalar value mappings. */
+export type CaptureScalarTableV1 = {
+  profile: 'scalar';
+  /** Parameter path → scalar value entries. */
+  entries: CaptureScalarEntryV1[];
+};
+
+/** A single keyframe in a V1 structured motion curve. */
+export type CaptureCurveKeyframeV1 = {
+  /** Time in seconds. */
+  time: number;
+  /** Value at this keyframe. */
+  value: number;
+  /** Interpolation from this keyframe to the next (falls back to curve default). */
+  interpolation?: KeyframeInterpolation;
+};
+
+/** V1 structured motion curve — keyframe-based motion curve on a parameter. */
+export type CaptureStructuredMotionCurveV1 = {
+  profile: 'structured-motion-curve';
+  /** Target parameter path. */
+  targetPath: string;
+  /** Ordered keyframes defining the curve. */
+  keyframes: CaptureCurveKeyframeV1[];
+  /** Default interpolation used between keyframes unless overridden. */
+  defaultInterpolation: KeyframeInterpolation;
 };

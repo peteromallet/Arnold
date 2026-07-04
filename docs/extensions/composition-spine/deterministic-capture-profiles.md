@@ -1,267 +1,278 @@
-# M0 Deterministic Capture Profiles — V1 Scope Freeze
+# Deterministic Capture Profiles — V1 (M3b)
 
-Date: 2026-07-02
-Status: frozen (planning-only; no runtime implementation)
-Milestone: M0 — Decisions, Fixtures, and Protocol V0
+**Status:** Active (M3b)
+**Last updated:** 2026-07-04
+**Scope:** Frozen V1 deterministic capture profiles, table shapes, validation rules, and graph-owned keyframe operation placement.
+**Extension boundary:** Concrete table bodies are **host/editor-owned**. Only the `deterministic-capture` bake-target discriminant is exposed through the public SDK (`LiveBakeTargetKind` in `@reigh/editor-sdk`).
 
-## Posture
+---
 
-This document freezes the V1 deterministic-capture profile list and defines the
-required evidence and usable release examples for each. It is a **durable
-planning artifact only**. No runtime source, SDK export, test, script, or config
-file is created or edited by this milestone.
+## 1. Overview
 
-Downstream milestones (M2, M3b, M5) cite this document when they implement
-target-path schema validation, live/bake execution, and the second composed
-release example (EX-02). Expanding V1 deterministic capture beyond the four
-profiles listed here requires a new decision record and release-example evidence
-from the milestone requesting the expansion.
+Deterministic captures are host-validated data payloads produced by extensions that describe reproducible state: seeds, timed event tables, scalar mappings, and structured motion curves. They bridge live data sources to export-safe keyframe operations through a strict validation pipeline.
 
-Source of record: `.megaplan/initiatives/reigh-extension-composition-spine-epic/prep.md`
-lines 41–42 (capture constraints), lines 44–45 (edge vocabulary);
-`.megaplan/initiatives/reigh-extension-composition-spine-epic/m0-decisions-fixtures.md`
-Locked Decisions lines 4–6 (profile selection, event-table conversion gate) and
-Constraints line 3 (no expansion without release-example evidence);
-`docs/extensions/composition-spine/m0-decisions.md` Section 7 (profile summary)
-and Section 4 (ownership boundaries).
+Every capture carries:
 
-## 1. V1 Deterministic Capture Profiles
+- A **frozen V1 profile discriminant** — exactly one of four supported profiles.
+- **Provenance metadata** (producer extension, capture timestamp, session id, tags).
+- A **SHA-256 content hash** of the serialized body for integrity verification.
+- **Route constraints** that declare which render routes this capture is valid for.
+- A **determinism posture** (`deterministic`, `preview-only`, or `process-dependent`).
 
-Exactly four capture profiles are in V1 scope. No other profile is included.
-Event-table conversion becomes executable only through graph-owned keyframe
-patch operations after M2 target-path validation lands.
+Captures that fail validation (missing provenance, bad hash, unsupported profile, deferred/anti-scope profile, unknown interpolation, malformed body) are **rejected** and produce structured `DeterministicCaptureRejection` records with rule, message, and detail.
 
-### 1.1 Seed Table
+---
 
-**Profile name:** `seed table`
+## 2. The four frozen V1 profiles
 
-**Semantics:** A fixed-seed capture table that records deterministic,
-reproducible outputs keyed by a seed value. Given the same seed and input
-parameters, the capture produces equivalent outputs on every evaluation.
+### 2.1 `seed` — Capture seed table
 
-**Required evidence:**
+A single seed value for deterministic generation workflows.
 
-- A seed value uniquely identifies the capture.
-- The capture table contains one or more rows, each mapping a seed input to
-  deterministic output values.
-- Output values are recorded with enough type and unit information for the
-  consumer to interpret them without ambiguity.
-- Round-trip evidence: applying the same seed to the same parameter path
-  reproduces the same output values.
-- The capture table is scoped to a target path (e.g., `effect-param` or
-  `shader-uniform`) owned by a graph-authoritative contribution.
+```typescript
+type CaptureSeedTableV1 = {
+  profile: 'seed';
+  seed: string | number;   // The seed value
+  label?: string;           // Optional purpose label
+};
+```
 
-**Usable release examples:**
+**Validation rules:**
+- `seed` must be present (not `null` or `undefined`).
+- `seed` must be `string` or `number` — objects, booleans, and arrays are rejected.
 
-- EX-02 (Effect + Live Data + Bake, M5): when a live data source is baked, the
-  resulting durable capture may use seed-table entries to replace live-sampled
-  values with deterministic equivalents for export readiness.
-- Any example that requires reproducible parameter automation across different
-  preview/export sessions.
+---
 
-**Owning milestone for execution:** M3b (live binding and deterministic capture
-execution) after M2 target-path validation.
+### 2.2 `event` — Capture event table
 
-### 1.2 Event Table
+Timed events with target paths, values, and collision policy.
 
-**Profile name:** `event table`
+```typescript
+type CaptureEventTableV1 = {
+  profile: 'event';
+  events: CaptureEventV1[];
+  defaultCollisionPolicy: CaptureCollisionPolicy;
+};
 
-**Semantics:** An event-driven capture sequence that records timestamped events
-with known event schemas. Each event carries a type discriminator and typed
-payload. The event table preserves the temporal order of events and supports
-lookup by time range and event type.
+type CaptureEventV1 = {
+  eventId: string;                           // Stable event identifier
+  time: number;                              // Time in seconds
+  targetPath: string;                        // e.g. "params.opacity"
+  value: number | string | boolean;          // The value at this event
+  interpolation: KeyframeInterpolation;      // 'linear' | 'hold'
+  collisionPolicy?: CaptureCollisionPolicy;  // Per-event override
+  metadata?: Record<string, unknown>;
+};
+```
 
-**Required evidence:**
+**Validation rules:**
+- `events` array must be non-empty.
+- Every event must have a non-empty `eventId` and `targetPath`.
+- `time` must be a finite number.
+- `interpolation` must be `'linear'` or `'hold'` — unknown interpolation modes are rejected.
+- `collisionPolicy` (if present) must be one of the locked collision policy vocabulary.
+- `defaultCollisionPolicy` must be a valid collision policy.
 
-- Every event has a timestamp, an event type discriminator, and a typed payload.
-- The event schema is known at capture time; unrecognized or unknown event types
-  are rejected or recorded with an explicit fallback discriminator rather than
-  silently dropped.
-- Time-range queries: consuming code can request events within a time window and
-  receive only events in that range.
-- Type-filter queries: consuming code can request events of a specific type
-  within a time window.
-- The event table is scoped to a target path owned by a graph-authoritative
-  contribution.
-
-**Usable release examples:**
-
-- EX-02 (Effect + Live Data + Bake, M5): live data that arrives as timestamped
-  events (e.g., webcam frame metadata, generated-frame steering signals) can be
-  captured into an event table during bake, then replayed or reduced to
-  parameter values through graph-owned keyframe operations.
-- EX-03 (Transition + Agent-Produced Mask Material, M5): agent-session events
-  that guided mask generation may be captured into an event table for
-  provenance and diagnostics.
-
-**M2 gate:** Event-table conversion to keyframe data becomes executable only
-after M2 target-path validation. Before M2, event tables may be recorded but not
-converted to graph-owned keyframe patches.
-
-**Owning milestone for execution:** M3b (live binding and deterministic capture
-execution) after M2 target-path validation.
-
-### 1.3 Scalar Table
-
-**Profile name:** `scalar table`
-
-**Semantics:** A single-value capture table where each row records one scalar
-value bound to a parameter or uniform. The scalar table is the simplest capture
-profile: a flat mapping from parameter identity to a typed value, suitable for
-parameters that do not vary over time.
-
-**Required evidence:**
-
-- Each row maps a target-path identity (e.g., `effect-param:intensity` or
-  `shader-uniform:opacity`) to a single typed scalar value.
-- The scalar type is known and preserved (number, boolean, string, or
-  enumerated value).
-- The table supports lookup by target-path identity.
-- Round-trip evidence: writing a scalar value to a target path and reading it
-  back through the capture table yields the same value.
-- The scalar table is scoped to a target path owned by a graph-authoritative
-  contribution.
-
-**Usable release examples:**
-
-- EX-01 (Clip + Shader + Shader-Uniform Keyframes, M4): individual shader
-  uniform values that do not vary over time (e.g., a single blend-mode constant)
-  may be recorded in a scalar table rather than as full keyframe curves.
-- EX-02 (Effect + Live Data + Bake, M5): when a live data source provides a
-  single snapshot value rather than a time series, the bake result may be a
-  scalar table entry.
-
-**Owning milestone for execution:** M3b (live binding and deterministic capture
-execution).
-
-### 1.4 Structured Motion Curve Table
-
-**Profile name:** `structured motion curve table`
-
-**Semantics:** A motion-curve capture table that records keyframe data with
-structured interpolation metadata. Each row describes a keyframe or curve
-segment with interpolation type, timing, easing, and value data. This is the
-most expressive V1 capture profile and the primary target for live-data bake
-workflows.
-
-**Required evidence:**
-
-- Each entry records at minimum: a timestamp or frame index, a typed value, and
-  interpolation metadata (interpolation type, easing function if applicable).
-- Supported interpolation types are explicitly enumerated; unrecognized types
-  are rejected.
-- The table supports time-range queries: consuming code can request curve
-  segments within a time window.
-- The table supports serialization to and from graph-owned keyframe patch
-  operations that target `clip-param`, `effect-param`, `transition-param`, or
-  `shader-uniform` paths.
-- Round-trip evidence: serializing a motion curve table to keyframe patches,
-  applying them, and reading the result back through the capture table preserves
-  the curve within the precision of the interpolation scheme.
-- The motion curve table is scoped to a target path owned by a
-  graph-authoritative contribution.
-
-**Usable release examples:**
-
-- EX-01 (Clip + Shader + Shader-Uniform Keyframes, M4): shader-uniform
-  keyframes that vary over time are stored as structured motion curve table
-  entries.
-- EX-02 (Effect + Live Data + Bake, M5): this is the primary capture profile
-  for baking live data streams (webcam intensity, generated-frame parameters)
-  into durable, export-ready motion curves.
-- EX-03 (Transition + Agent-Produced Mask Material, M5): transition-param
-  automation curves may be recorded as structured motion curve table entries.
-
-**Owning milestone for execution:** M3b (live binding and deterministic capture
-execution) after M2 target-path validation.
-
-## 2. Profile Summary
-
-| # | Profile Name | Primary Use | Key Evidence Requirement | Executable After |
-|---|---|---|---|---|
-| 1 | `seed table` | Reproducible seed-driven outputs | Same seed → same output | M3b |
-| 2 | `event table` | Timestamped event sequences with known schemas | Time-range + type-filter queries; conversion gate at M2 | M3b (after M2) |
-| 3 | `scalar table` | Single-value parameter/uniform bindings | Lookup by target-path identity + type preservation | M3b |
-| 4 | `structured motion curve table` | Keyframe curves with interpolation metadata | Time-range queries + graph-owned keyframe patch round-trip | M3b (after M2) |
-
-## 3. Release Example Cross-Reference
-
-| Release Example | Owning Milestone | Capture Profiles Used |
-|---|---|---|
-| EX-01 (Clip + Shader + Shader-Uniform Keyframes) | M4 | `scalar table` (static uniforms), `structured motion curve table` (animated uniforms) |
-| EX-02 (Effect + Live Data + Bake) | M5 | All four: `seed table`, `event table`, `scalar table`, `structured motion curve table` (primary bake target) |
-| EX-03 (Transition + Agent-Produced Mask Material) | M5 | `event table` (agent-session provenance), `structured motion curve table` (transition-param automation) |
-| EX-04 (Output Format + Sidecar/Process) | M7b | None directly; sidecar exports may reference capture evidence produced by earlier examples |
-
-## 4. Profile Expansion Gate
-
-**V1 scope is closed.** The four profiles listed in Section 2 are the complete
-set of V1 deterministic-capture profiles. Any additional capture profile or
-table shape is outside V1 until a later decision record expands scope.
-
-To expand V1 scope, a future milestone must:
-
-1. Provide release-example evidence showing why the existing four profiles are
-   insufficient for a concrete graph-backed composed example.
-2. Submit a decision record (e.g., an amendment to
-   `docs/extensions/composition-spine/m0-decisions.md` Section 7 or a new
-   milestone brief) that names the new profile, defines its required evidence,
-   assigns it to a release example, and justifies the expansion.
-3. Pass the same static-validation grep checks that this document currently
-   satisfies: the new profile name must appear only after the decision record is
-   accepted, not before.
-
-Until a decision record is accepted, the following candidate concepts are
-**explicitly out of V1 scope**:
-
-- **Histogram table** — distribution captures for parameter ranges.
-- **Frame-sampled capture** — raw frame-level captures that bypass the
-  structured motion curve table interpolation metadata.
-- **Audio-amplitude table** — audio analysis captures.
-- **Arbitrary binary blob capture** — opaque binary captures without typed
-  schema.
-- **Multi-dimensional array table** — captures spanning more than one
-  structured dimension beyond the four V1 shapes.
-- Any capture profile not named `seed table`, `event table`, `scalar table`, or
-  `structured motion curve table`.
-
-These candidates remain documented here only as explicit anti-scope markers.
-They are not hidden or unlisted; they are listed as excluded. This prevents
-ambiguity about whether a missing profile is an oversight or an intentional
-deferral.
-
-## 5. Relationship to Other M0 Artifacts
-
-| Artifact | Relationship |
+**Collision policies** (locked vocabulary):
+| Policy | Behavior |
 |---|---|
-| `README.md` | Indexes this artifact; validation checklist includes a grep check for exactly four V1 profile names |
-| `m0-decisions.md` | Section 7 summarizes the four profiles; this document provides the full evidence definitions and release-example assignments |
-| `m0-release-examples.md` | EX-01 through EX-04 cite capture profiles in their graph-path assertions and artifact/completion evidence |
-| `m0-fixture-matrices.md` | Determinism status rows (`DS-01` through `DS-05`) and blocker rows (`BR-04 live-unbaked`) describe the states that capture profiles resolve |
-| `v8-architecture-baseline.md` | Documents the North Star constraint that live/nondeterministic inputs must bake to durable captures before authoritative export |
-| `json-rpc-protocol-v0.md` | Process protocol is orthogonal to capture profiles; captures are graph-owned, not process-owned |
+| `replace` | Incoming event replaces any existing candidate at the same `(targetPath, mappedTime)`. |
+| `merge-first-wins` | First event to occupy a `(targetPath, mappedTime)` slot wins; later events are dropped. |
+| `merge-last-wins` | Last event to target a `(targetPath, mappedTime)` slot wins; earlier events are replaced. |
+| `reject` | Colliding events are both dropped with a blocking diagnostic. |
 
-## 6. Source Traceability
+---
 
-Every claim in this document traces to stable repo sources:
+### 2.3 `scalar` — Capture scalar table
 
-- `prep.md` line 41: non-media live data bake to deterministic captures.
-- `prep.md` line 42: material statuses and detail taxonomy.
-- `prep.md` line 76 (Constraints): no expansion of V1 deterministic capture
-  beyond selected profiles without release-example evidence.
-- `m0-decisions-fixtures.md` Locked Decision line 4: event-table conversion
-  gate at M2 validation.
-- `m0-decisions-fixtures.md` Locked Decision line 5: first four profiles are
-  seed table, event table, scalar table, structured motion curve table.
-- `m0-decisions-fixtures.md` Constraints line 3: do not expand V1 capture
-  without release-example evidence.
-- `m0-decisions-fixtures.md` Scope OUT line 5: no claim that deferred
-  capture/profile candidates are in V1 unless a release example requires them.
-- `m0-decisions.md` Section 7: V1 capture profile summary.
-- `m0-decisions.md` Section 4.1: ownership boundaries for M2 (target-path
-  grammar), M3b (keyframe patch semantics), M4 (shader assignment), M5
-  (effects/transitions).
-- `m0-release-examples.md`: EX-01 through EX-04 graph-path assertions and
-  fixture row references.
-- `m0-fixture-matrices.md`: `DS-01` through `DS-05` (determinism statuses),
-  `BR-04` (live-unbaked blocker).
+Static parameter-path → scalar-value mappings.
+
+```typescript
+type CaptureScalarTableV1 = {
+  profile: 'scalar';
+  entries: CaptureScalarEntryV1[];
+};
+
+type CaptureScalarEntryV1 = {
+  targetPath: string;          // Target parameter path
+  value: number | string | boolean;  // The scalar value
+  label?: string;
+};
+```
+
+**Validation rules:**
+- `entries` must be non-empty.
+- Every entry must have a non-empty `targetPath`.
+- Duplicate `targetPath` values within the same table are rejected.
+- `value` must be `number`, `string`, or `boolean` — `null`, `undefined`, and objects are rejected.
+
+---
+
+### 2.4 `structured-motion-curve` — Capture motion curve table
+
+Keyframe-based motion curves on a single parameter.
+
+```typescript
+type CaptureStructuredMotionCurveV1 = {
+  profile: 'structured-motion-curve';
+  targetPath: string;                       // Target parameter path
+  keyframes: CaptureCurveKeyframeV1[];      // Ordered keyframes
+  defaultInterpolation: KeyframeInterpolation; // 'linear' | 'hold'
+};
+
+type CaptureCurveKeyframeV1 = {
+  time: number;                             // Time in seconds
+  value: number;                            // Numeric value only
+  interpolation?: KeyframeInterpolation;    // Per-keyframe override
+};
+```
+
+**Validation rules:**
+- `targetPath` must be non-empty.
+- `keyframes` must be non-empty.
+- Every keyframe must have a finite `time` and finite numeric `value`.
+- `defaultInterpolation` must be `'linear'` or `'hold'`.
+- Per-keyframe `interpolation` (if present) must be `'linear'` or `'hold'`.
+
+---
+
+## 3. Deterministic capture validation pipeline
+
+The full validation pipeline (`validateDeterministicCapture`) runs five checks in order:
+
+1. **Profile discriminant** — Must be a known frozen V1 profile (`seed`, `event`, `scalar`, `structured-motion-curve`). Deferred/unknown profiles are rejected with both `unsupported-profile` and `deferred-profile` rules.
+2. **Provenance** — Must include at least `capturedAt` (ISO 8601 timestamp).
+3. **Route constraints** — Must be non-empty and contain only known constraint values (`preview`, `browser-export`, `worker-export`, `sidecar-export`).
+4. **Content hash** — Must be a valid 64-character SHA-256 hex digest matching the serialized body.
+5. **Body schema** — Routed to the per-profile validator (see §2).
+
+On success, a `BakedValueRef` is produced with `captureId`, `profile`, `contentHash`, `provenanceHash` (SHA-256 of provenance metadata), `routeConstraints`, `valuePath`, and `determinism`. On failure, all rejections are collected and returned.
+
+**Rejection rules** (locked vocabulary):
+| Rule | Trigger |
+|---|---|
+| `missing-provenance` | Capture is missing `capturedAt` timestamp. |
+| `bad-content-hash` | Content hash is missing, not valid SHA-256 hex, or mismatched. |
+| `unsupported-profile` | Profile is not one of the four frozen V1 profiles. |
+| `unsupported-event-type` | Event/scalar entry is malformed, missing required fields, or has duplicate target paths. |
+| `unsupported-interpolation` | Interpolation mode is not `linear` or `hold`. |
+| `bad-route-constraint` | Route constraint is unknown or the constraint list is empty. |
+| `deferred-profile` | Profile is a deferred/anti-scope candidate (emitted alongside `unsupported-profile`). |
+| `malformed-value-ref` | A baked value ref is structurally invalid. |
+
+---
+
+## 4. Graph-owned keyframe operations
+
+Keyframe operations produced by deterministic capture conversion are **host-owned `GraphPreviewOperation` variants** — they are **not** members of `TimelinePatchOpFamily` and **not** reserved `graph.*` families.
+
+| Operation | Kind | Description |
+|---|---|---|
+| `GraphKeyframeAddOp` | `keyframe.add` | Add a keyframe to a clip parameter. |
+| `GraphKeyframeUpdateOp` | `keyframe.update` | Update an existing keyframe on a clip parameter. |
+| `GraphKeyframeRemoveOp` | `keyframe.remove` | Remove a keyframe from a clip parameter. |
+
+These operations carry optional `GraphKeyframeEventMetadata` for diagnostics and preview detail:
+
+```typescript
+interface GraphKeyframeEventMetadata {
+  readonly captureRef?: string;       // Capture identifier
+  readonly eventId?: string;          // Source event identifier
+  readonly provenanceHash?: string;   // SHA-256 provenance hash
+  readonly collisionPolicy?: CaptureCollisionPolicy;  // Policy that selected this keyframe
+  readonly targetPath?: string;       // Canonical target path
+}
+```
+
+**Invariant:** Graph-owned keyframe operations mutate only **cloned** graph input data, re-project through `projectCompositionGraph`, update `animates` edge detail, and **never** mutate the source timeline, graph input, sidecars, or timeline state.
+
+---
+
+## 5. Event-table conversion flow
+
+Accepted deterministic event-table captures are converted to graph-owned keyframe operations through a pure pipeline:
+
+1. **Timing resolution** — An injected `TimingMapResolver` maps event times to graph-space mapped times. Failures produce `composition/deterministic-capture-timing-failed` diagnostics.
+2. **Value normalization** — An injected `ValueSchemaNormalizer` resolves target paths to `(clipId, paramName)` pairs and normalizes values to the `ClipKeyframe` value type. Failures produce `composition/deterministic-capture-value-normalization-failed` diagnostics.
+3. **Collision resolution** — Events sharing a `(targetPath, mappedTime)` pair are resolved according to the collision policy (table default or per-event override) **before** any graph operations are emitted.
+4. **Operation emission** — Surviving keyframe candidates are emitted as `GraphKeyframeAddOp` operations with full event-conversion metadata.
+
+Each event produces a `LiveEventKeyframeDetail` with: `eventId`, `targetPath`, `mappedTime`, `normalizedValue`, `interpolation`, `collisionPolicy`, `captureRef`, `provenanceHash`, `operationKind` (`'keyframe.add'` or `'blocked'`), and blocking `diagnostics`.
+
+**Sidecar/process exclusion:** The converter accepts opaque `timelineState` and `sidecars` parameters for future callers but **never mutates them**. It is intentionally pure and only produces graph operations.
+
+---
+
+## 6. Export safety
+
+### 6.1 Live binding resolution (authoritative export)
+
+The export guard classifies live bindings into two classes:
+
+| Export target class | Clearing condition |
+|---|---|
+| **media-like** (visual/audio bindings) | Must have at least one durable `asset` or `render-material` deterministic ref with a non-empty ref string. |
+| **non-media** (data/control bindings) | Must have at least one **structurally valid** `deterministic-capture` ref whose metadata includes `browser-export` in `routeConstraints`. |
+
+Arbitrary deterministic refs **never** clear blockers by count alone. Sidecar-only refs, malformed capture metadata, and capture refs missing `browser-export` in route constraints all leave the export blocked.
+
+### 6.2 Composition graph diagnostics during export
+
+All five deterministic capture conversion diagnostic codes are **blocking** during export scans:
+
+- `composition/deterministic-capture-conversion-failed`
+- `composition/deterministic-capture-target-path-unresolvable`
+- `composition/deterministic-capture-value-normalization-failed`
+- `composition/deterministic-capture-timing-failed`
+- `composition/deterministic-capture-provenance-mismatch`
+
+These are surfaced as `export/`-prefixed diagnostic codes with `live-unbaked` blocker reason and are annotated with `captureRef` and `provenanceHash` detail fields. Material live-only diagnostics (`composition/material-live-only`, etc.) remain **separate** — they are not in the blocking target set and never reach the capture-conversion diagnostic path.
+
+### 6.3 Malformed ref detection
+
+A `deterministic-capture` ref is considered **malformed** (and export-blocking) if:
+- `ref.kind` is not `'deterministic-capture'` or `ref.ref` is empty.
+- `ref.metadata` is not a record.
+- `ref.metadata.liveBake` is missing or `liveBake.targetKind !== 'deterministic-capture'`.
+- `ref.metadata.deterministicCapture` is missing required fields (`captureId`, `profile`, `provenanceHash`, `routeConstraints`, `determinism`) or they fail structural validation.
+
+Malformed refs are surfaced through `liveBindingHasMalformedAuthoritativeRef` and block export with a `malformed` resolution status.
+
+---
+
+## 7. Public SDK boundary
+
+The public SDK (`@reigh/editor-sdk`) exposes **only** the `deterministic-capture` discriminant on `LiveBakeTargetKind`:
+
+```typescript
+export type LiveBakeTargetKind =
+  | 'asset'
+  | 'keyframe'
+  | 'automation'
+  | 'clip'
+  | 'sidecar'
+  | 'render-material'
+  | 'deterministic-capture';
+```
+
+**Not exported through the public SDK:**
+- `DeterministicCapture`, `BakedValueRef`, or any concrete table body types.
+- `DeterministicCaptureProfileV1`, `CaptureSeedTableV1`, `CaptureEventTableV1`, `CaptureScalarTableV1`, `CaptureStructuredMotionCurveV1`.
+- Validation functions (`validateDeterministicCapture`, `hashCaptureBody`, etc.).
+- Collision policy engine or conversion interfaces.
+- Graph keyframe operation types (`GraphKeyframeAddOp`, `GraphKeyframeUpdateOp`, `GraphKeyframeRemoveOp`).
+
+All of these remain **host/editor-owned** and are imported from `@/tools/video-editor/types` and `@/tools/video-editor/runtime/deterministicCapture`.
+
+---
+
+## 8. What is explicitly excluded from V1
+
+The following are **not** part of the frozen V1 deterministic capture scope and must not be added to this milestone:
+
+- **Deferred/anti-scope profiles** — Any profile discriminant outside `seed`, `event`, `scalar`, `structured-motion-curve` is rejected. No deferred profile candidates are accepted or even type-narrowed.
+- **Capture persistence on stored keyframes** — Existing stored keyframe shapes remain backward compatible. Provenance, event, and collision metadata stay on conversion preview and graph operation metadata.
+- **Sidecar mutation** — The converter passes through opaque sidecar/timelineState references but never reads or mutates them.
+- **TimelinePatch operations for keyframes** — Keyframe operations are strictly `GraphPreviewOperation` variants, not public `TimelinePatchOpFamily` members.
+- **Capture body storage strategy** — Where capture bodies live long term (timeline metadata, provider storage, editor-side registry) is a deferred decision; this milestone only defines the validation and conversion pipeline.
+- **Expanded route constraint vocabulary** — Only `preview`, `browser-export`, `worker-export`, and `sidecar-export` are recognized. Unknown constraints are rejected.

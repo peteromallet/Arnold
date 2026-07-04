@@ -1,0 +1,487 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `finalize`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3b-live-binding-and-20260703-2358`
+Current milestone: `m3b-live-binding-capture`
+
+### Phase Instruction
+Convert the approved plan into executable tasks while preserving North Star constraints and visible alignment checks.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are DECOMPOSING the approved plan below into an ordered task DAG. The plan has been
+        critiqued, gated, and possibly revised. Do NOT re-evaluate strategy or re-litigate
+        decisions - gate has settled those.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M3b: Live Binding And Deterministic Capture
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: M3b Live Binding And Deterministic Capture
+
+## Overview
+M3b is a bridge milestone for the Reigh Extension Composition Spine, not a contradiction: it keeps live preview mutable while making authoritative export require durable media material/artifact refs or deterministic non-media captures. The repo already has most structural hooks: SDK `LiveBakeTargetKind`, host `TimelineLiveDeterministicRefKind`, live-binding export blockers, `liveBake.ts` replacement refs, `patchPreview.ts` graph-owned operation pattern, and `graphProjector.ts` automation/live-binding edges.
+
+Do not put `keyframe.add`, `keyframe.update`, or `keyframe.remove` under `TimelinePatchReservedOpFamily` or public `TimelinePatchOpFamily`. Reserved `graph.*` patch families are non-executable, and TimelinePatch currently targets top-level entities. Keyframe conversion should use the host-owned `GraphPreviewOperation` path and re-project through `projectCompositionGraph`.
+
+## Phase 1: Contracts And Capture Validation
+
+### Step 1: Add deterministic-capture discriminants (`src/sdk/video/liveData.ts`, `src/tools/video-editor/types/index.ts`)
+**Complexity: 2**
+1. Add `'deterministic-capture'` to `LiveBakeTargetKind` and `TimelineLiveDeterministicRefKind`.
+2. Update `src/tools/video-editor/runtime/liveBake.ts` target-to-ref mapping so deterministic capture targets emit refs/ranges but no `RenderMaterialRef`.
+3. Test in `src/tools/video-editor/runtime/liveBake.test.ts`.
+
+### Step 2: Define V1 capture profile types (`src/tools/video-editor/types/index.ts`, `src/tools/video-editor/runtime/deterministicCapture.ts`)
+**Complexity: 3**
+1. Add host-owned `DeterministicCapture`, `BakedValueRef`, profile discriminants, route constraints, rejection rules, determinism status, provenance, and content-hash fields.
+2. Add exactly four table shapes: seed, event, scalar, structured motion curve.
+3. Keep deferred profile candidates out of the union.
+
+### Step 3: Validate profiles and SHA-256 provenance (`src/tools/video-editor/runtime/deterministicCapture.ts`, `src/tools/video-editor/runtime/deterministicCapture.test.ts`)
+**Complexity: 3**
+1. Validate schema, provenance object, content hash, route constraints, rejection rules, and profile-specific query support.
+2. Reject missing provenance, bad hashes, unsupported profiles, unknown event types without fallback, and unsupported interpolation.
+
+## Phase 2: Graph-Owned Keyframe Operations
+
+### Step 4: Add graph keyframe operation types (`src/tools/video-editor/runtime/composition/patchPreview.ts`)
+**Complexity: 3**
+1. Extend `GraphPreviewOperation` with `keyframe.add`, `keyframe.update`, `keyframe.remove`.
+2. Payloads include clip/automation identity, target path, time, value, interpolation, capture ref, event id, provenance hash, and collision policy metadata.
+3. Add tests proving keyframe ops are not TimelinePatch or reserved `graph.*` families.
+
+### Step 5: Execute keyframe ops on cloned graph input (`src/tools/video-editor/runtime/composition/patchPreview.ts`)
+**Complexity: 4**
+1. Deep-clone clip automation/keyframes in `cloneInput`.
+2. Apply add/update/remove only to the clone.
+3. Re-project with `projectCompositionGraph` so `animates` edge detail updates.
+4. Test immutability, add/update/remove, invalid targets, and edge detail changes.
+
+## Phase 3: Event Conversion And Preview
+
+### Step 6: Implement conversion primitives (`src/tools/video-editor/runtime/liveEventConversion.ts`)
+**Complexity: 4**
+1. Add `TimingMapResolver`, `ValueSchemaNormalizer`, and `KeyframeCollisionPolicyEngine` interfaces locally.
+2. Resolve event time, normalize values against parameter schemas, and apply explicit collision policies: `replace`, `merge-first-wins`, `merge-last-wins`, `reject`.
+3. Emit graph keyframe operations plus per-keyframe detail; do not mutate timeline state or sidecars.
+
+### Step 7: Wire event tables into graph preview (`src/tools/video-editor/runtime/liveBake.ts`, `src/tools/video-editor/runtime/composition/patchPreview.ts`)
+**Complexity: 4**
+1. Carry validated capture refs/metadata through deterministic-capture bake results.
+2. Convert accepted event tables into `GraphPreviewOperation[]`.
+3. Use `createGraphPreviewWithOps` so zero-argument `CompositionGraph.preview()` captures generated operations.
+
+### Step 8: Add per-keyframe conversion preview (`src/tools/video-editor/runtime/liveEventConversion.ts`, `src/tools/video-editor/runtime/composition/patchPreview.ts`)
+**Complexity: 3**
+1. Add preview detail with event id, target path, mapped time, normalized value, interpolation/hold policy, collision policy, capture ref, provenance hash, operation kind, and blocking diagnostics.
+2. Fail readiness for non-empty conversions that collapse to summary-only output.
+
+## Phase 4: Export Guard
+
+### Step 9: Require export-safe refs for live export (`src/tools/video-editor/lib/timeline-domain.ts`, `src/tools/video-editor/runtime/exportGuard.ts`)
+**Complexity: 3**
+1. Tighten complete-bake detection so arbitrary deterministic refs do not clear blockers by length alone.
+2. Allow media-like live outputs only through durable asset/render-material refs.
+3. Allow non-media live outputs only through validated deterministic-capture refs.
+4. Test unbaked, partial, sidecar-only, malformed, valid capture, and valid asset/render-material cases.
+
+### Step 10: Preserve blocking graph diagnostics in export scan (`src/tools/video-editor/runtime/exportGuard.ts`, `src/tools/video-editor/runtime/composition/diagnostics.ts`)
+**Complexity: 2**
+1. Surface conversion target-path diagnostics with capture ref/provenance hash detail.
+2. Keep material live-only diagnostics orthogonal to deterministic captures.
+
+## Phase 5: SDK, Docs, Regression
+
+### Step 11: Export public discriminants only (`src/sdk/index.ts`, `src/sdk/video/liveData.ts`)
+**Complexity: 2**
+1. Ensure SDK consumers can request deterministic-capture bake targets.
+2. Keep concrete capture table definitions host/editor-owned.
+
+### Step 12: Update M3b docs (`docs/extensions/composition-spine/deterministic-capture-profiles.md`, `docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md`)
+**Complexity: 2**
+1. Document implemented contracts, frozen four-profile scope, graph-owned keyframe op placement, export safety, and exclusions.
+
+## Execution Order
+1. Land discriminants and capture types.
+2. Add validation/hashing.
+3. Add graph-owned keyframe operations.
+4. Build event conversion and per-keyframe preview.
+5. Tighten export guard.
+6. Finish SDK/docs and regression tests.
+
+## Validation Order
+1. Run typecheck.
+2. Run focused tests for deterministic capture, live bake, event conversion, patch preview, graph projector, and export guard.
+3. Run live-data bridge integration tests.
+4. Run broader video-editor tests, with full-suite fallback.
+
+## Ticket Proposal
+No open ticket should be marked `resolves_on_complete=true`; the listed tickets are unrelated or broader context.
+
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-04T00:10:27Z",
+  "hash": "sha256:6b4c3e041eb2cd816bec6125449bcd81d62d60ff974d6e920b400c7257cb3928",
+  "questions": [
+    "Where should deterministic capture table bodies live long term: timeline metadata, provider storage, or an editor-side registry? The plan assumes timeline refs plus host/provider storage for bodies.",
+    "Should accepted conversion provenance be persisted on stored keyframes, or remain on preview/op metadata? The plan assumes stored keyframes stay backward compatible.",
+    "What exact route-constraint vocabulary should captures use beyond current export/render routes? The plan assumes current routes and blocks unknown constraints."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`LiveBakeTargetKind` and `TimelineLiveDeterministicRefKind` include `deterministic-capture`, and deterministic-capture bake targets produce refs without `RenderMaterialRef`s.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Concrete TypeScript definitions exist for `DeterministicCapture`, `BakedValueRef`, and exactly the four V1 profile tables with schema, provenance, content hash, route constraints, rejection rules, and determinism status.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Capture validation rejects missing provenance, invalid SHA-256 content hashes, unknown profiles, unsupported interpolation/event schema cases, and deferred anti-scope profiles.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`keyframe.add`, `keyframe.update`, and `keyframe.remove` are host-owned `GraphPreviewOperation` variants and are not added to reserved `graph.edge.*`/`graph.node.*` families or public `TimelinePatchOpFamily`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Graph-owned keyframe operations mutate only cloned graph input data, re-project through `projectCompositionGraph`, update `animates` edge detail, and leave source state unchanged.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Event-table conversion validates timing maps, target paths, value schemas, and explicit collision policy before emitting graph-owned keyframe operations.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Conversion preview exposes per-keyframe detail including event id, target path, mapped time, normalized value, interpolation/hold policy, collision policy, capture ref, provenance hash, operation kind, and blocking diagnostics.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Event-table conversion is an accepted-proposal flow that emits graph-owned operations and does not mutate sidecars or timeline state directly.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Authoritative export remains blocked for live bindings unless they resolve to durable media asset/render-material refs or validated deterministic-capture refs; sidecar-only and malformed capture refs do not clear the blocker.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Existing live-data bridge, live bake, composition projector, and export guard tests pass after the new behavior is added.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The implementation keeps full deterministic capture table shapes host-owned and exposes only the minimal SDK bake-target discriminant.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Docs describe live preview vs authoritative export, frozen V1 capture profiles, keyframe op placement, and sidecar/process exclusions without expanding V1 scope.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Deterministic capture table definitions are host/editor-owned; the public SDK only gains the `deterministic-capture` bake-target discriminant.",
+    "Existing stored keyframe shape remains backward compatible; provenance/event/collision metadata stays on conversion preview and graph operations unless persistence is required.",
+    "`createGraphPreviewWithOps` is the bridge for conversion preview because `CompositionGraph.preview()` is zero-argument.",
+    "Collision policy is `replace`, `merge-first-wins`, `merge-last-wins`, and `reject` on `(targetPath, mappedTime)` collisions.",
+    "Route constraints reuse existing export/render route vocabulary; unknown constraints block acceptance.",
+    "Media-like live outputs require durable asset/render-material refs; deterministic captures are only for non-media values.",
+    "The existing export guard remains the authoritative place to block live-unbaked export."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/liveBake.test.ts",
+        "reason": "Live bake target/ref behavior changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "reason": "Graph edge projection must reflect keyframe operation results."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/exportGuard.test.ts",
+        "reason": "Authoritative export readiness changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx",
+        "reason": "Existing integration covers bake and export guard clearance."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/index.ts",
+      "src/sdk/video/liveData.ts",
+      "src/tools/video-editor/types/index.ts",
+      "src/tools/video-editor/runtime/deterministicCapture.ts",
+      "src/tools/video-editor/runtime/deterministicCapture.test.ts",
+      "src/tools/video-editor/runtime/liveBake.ts",
+      "src/tools/video-editor/runtime/liveBake.test.ts",
+      "src/tools/video-editor/runtime/liveEventConversion.ts",
+      "src/tools/video-editor/runtime/liveEventConversion.test.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+      "src/tools/video-editor/runtime/composition/graphProjector.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/lib/timeline-domain.ts",
+      "src/tools/video-editor/runtime/exportGuard.ts",
+      "src/tools/video-editor/runtime/exportGuard.test.ts",
+      "src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx",
+      "docs/extensions/composition-spine/deterministic-capture-profiles.md",
+      "docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md"
+    ],
+    "always_run": [
+      "npm run typecheck"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/sdk/index.ts, src/sdk/video/liveData.ts, src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx, src/tools/video-editor/lib/timeline-domain.ts, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/graphProjector.ts, src/tools/video-editor/runtime/composition/patchPreview.test.ts, src/tools/video-editor/runtime/composition/patchPreview.ts, src/tools/video-editor/runtime/deterministicCapture.test.ts, src/tools/video-editor/runtime/deterministicCapture.ts, src/tools/video-editor/runtime/exportGuard.test.ts, src/tools/video-editor/runtime/exportGuard.ts, src/tools/video-editor/runtime/liveBake.test.ts, src/tools/video-editor/runtime/liveBake.ts, src/tools/video-editor/runtime/liveEventConversion.test.ts, src/tools/video-editor/runtime/liveEventConversion.ts, src/tools/video-editor/types/index.ts. Ignored documentation-only change(s) for selector derivation: docs/extensions/composition-spine/deterministic-capture-profiles.md, docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md. Candidate: The work touches shared editor contracts, graph projection, and export readiness. A scoped video-editor slice is the baseline, with full-suite fallback for SDK/type ripple effects. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/tools/video-editor/runtime/deterministicCapture.test.ts, src/tools/video-editor/runtime/liveEventConversion.test.ts, src/tools/video-editor/runtime/composition/patchPreview.test.ts.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/tools/video-editor/runtime/deterministicCapture.test.ts",
+      "src/tools/video-editor/runtime/liveEventConversion.test.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.test.ts"
+    ]
+  },
+  "structure_warnings": []
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "PROCEED",
+  "passed": true,
+  "rationale_brief": "Iteration 1 is a clean plan with zero flags, zero recurring critiques, and all preflight checks passing. The plan is well-structured across 5 phases and 12 steps, each with explicit complexity estimates. All 12 success criteria are specific and measurable.",
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "Deterministic capture table definitions are host/editor-owned; the public SDK only gains the `deterministic-capture` bake-target discriminant.",
+      "rationale": "Keeps the SDK surface minimal and portable while allowing the host to evolve capture profiles without breaking extension contracts. Aligned with North Star constraint that extensions don't leak into host internals."
+    },
+    {
+      "id": "SD2",
+      "decision": "Existing stored keyframe shape remains backward compatible; provenance/event/collision metadata stays on conversion preview and graph operations unless persistence is required by a future release.",
+      "rationale": "Avoids destabilizing existing stored keyframe data and keeps the M3b milestone focused on the bridge from live data to export-safe keyframe operations."
+    },
+    {
+      "id": "SD3",
+      "decision": "Keyframe operations (`keyframe.add`, `keyframe.update`, `keyframe.remove`) are host-owned `GraphPreviewOperation` variants \u2014 not `TimelinePatchOpFamily` members and not reserved `graph.*` families.",
+      "rationale": "North Star constraint: extensions never mutate raw timeline internals directly. Graph-owned operations go through the composition spine and re-project through `projectCompositionGraph`, keeping the host in control."
+    },
+    {
+      "id": "SD4",
+      "decision": "Collision policy vocabulary is frozen at `replace`, `merge-first-wins`, `merge-last-wins`, and `reject` on `(targetPath, mappedTime)` collisions.",
+      "rationale": "Covers the four fundamental conflict-resolution strategies needed for event-to-keyframe conversion without over-engineering the V1 surface."
+    },
+    {
+      "id": "SD5",
+      "decision": "Media-like live outputs require durable asset/render-material refs; deterministic captures are only for non-media values.",
+      "rationale": "Maintains a clear separation between media rendering (which needs actual asset pipelines) and parameter/value capture (which can be fully deterministic). Aligned with North Star constraint on live inputs baking to durable materials/artifacts/captures."
+    }
+  ],
+  "warnings": [
+    "Three open questions in plan metadata remain undecided (capture table body storage location, provenance persistence on stored keyframes, and route-constraint vocabulary). These are scoped around in the assumptions but may surface during implementation if the assumptions prove wrong.",
+    "Test blast radius lists 3 missing test selectors (deterministicCapture.test.ts, liveEventConversion.test.ts, patchPreview.test.ts) that need to be created \u2014 plan steps acknowledge this but these files don't exist yet."
+  ],
+  "orchestrator_guidance": "First iteration; follow gate recommendation: PROCEED.",
+  "carried_flags": [],
+  "iteration": 1,
+  "produced_at": "2026-07-04T00:18:26Z"
+}
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3b-live-binding-and-20260703-2358/finalize_output.json
+        Read this file first — it contains the expected JSON structure (tasks, user_actions, sense_checks, watch_items, meta_commentary).
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Requirements:
+        - Produce structured JSON only.
+        - For each `## Step N:` in the plan, emit 1-N tasks.
+        - For each task, emit one sense_check.
+        - Default `user_actions` to `[]`. Identify a user_action ONLY when the work is genuinely non-mechanical and the executor literally cannot do it (secrets the human alone holds, identity-bound infra access, legal/license signatories, manual UI smoke tests on production). If a check is mechanical, make it a task — not a user_action. See the detailed guidance below.
+        - Do not invent tasks that don't trace to a plan step.
+        - How batching works at runtime — shape `depends_on` with this in mind, not just literal sequencing. Tasks that share the same `depends_on` set form one batch (capped at 5). Each batch dispatches as a SINGLE LLM conversation to a SINGLE model, picked by the max(complexity) in that batch. So a c=4 audit plus three c=2 tweaks sharing a batch all run in one turn on the c=4 model. Two consequences you control via DAG shape:
+          - Routing: every task in a batch runs on the highest-tier task's model — bundle a c=2 task beside a c=4 sibling and it runs on the pricier model.
+          - Cognitive load: one conversation holds all of the batch's tasks in working context. The more disparate the tasks, the higher the risk the model loses the thread or claims completion without doing the work. Wide, mixed batches are the dominant quality failure mode.
+        - Three principles for shaping batches — judgment, not arithmetic (there is no mechanical split rule):
+          1. Isolate heavyweights. A c=4 or c=5 task usually deserves its own batch. Chain lighter tasks through it via `depends_on` rather than placing them as siblings.
+          2. Bundle context-related light work. Several c=2/c=3 tasks touching the same files or contracts batch well together.
+          3. Never emit more than 5 actionable parallel siblings. If a step legitimately fans out wider, linearize via `depends_on` so the runtime batcher sees at most 5 at a time.
+        - Do not include `validation` or `coverage_complete` fields - the harness computes those.
+        - The FINAL task MUST run tests; harness validation will reject finalize output without it.
+        - `tasks` must be an ordered array of task objects. Every task object must include:
+          - `id`: short stable task ID like `T1`
+          - `description`: concrete work item
+          - `depends_on`: array of earlier task IDs or `[]`
+          - `status`: always `"pending"` at finalize time
+          - `executor_notes`: always `""` at finalize time
+          - `reviewer_verdict`: always `""` at finalize time
+          - `kind`: indicating the type of work. One of:
+            - `code`: writes or modifies source files (executor must produce `files_changed`).
+            - `test`: writes or modifies test files, or runs the test suite (executor must produce `files_changed` in tests/ OR `commands_run` containing pytest/test invocations).
+            - `audit`: read-only investigation — grep, code review, schema inspection (executor evidence is `executor_notes` describing findings; no `files_changed` expected).
+            - `research`: external research or non-code investigation (executor evidence is `executor_notes`).
+            - `docs`: writes documentation files (executor must produce `files_changed`).
+            If unsure, default to `code`.
+          - `complexity`: integer 1–5 complexity score. This score routes the task to a
+            model at execution time, so adjudicate it deliberately — do not guess. Use the rubric:
+            - 1 = trivial, mechanical, single-file change with no logic to reason about
+                  (rename, constant bump, comment, import). A weak model cannot get it wrong.
+            - 2 = simple, localized change plus the obvious test update; one file or two,
+                  logic is linear and the failure mode is obvious.
+            - 3 = multi-file change with non-trivial logic, control flow, or data shape the
+                  executor must hold in its head; correctness is not self-evident from the diff.
+            - 4 = a wrong implementation would be NON-LOCAL and not caught by an obvious test:
+                  the error propagates through a shared contract or invariant that code you did
+                  NOT edit relies on. Touching several files is NOT sufficient on its own — a
+                  mechanical multi-file change whose failure is local and test-evident is tier 2-3.
+            - 5 = fundamental system-invariant change with high regression risk: concurrency that
+                  cascades, a schema/wire-format others build on, a state machine, or a security/
+                  auth boundary. ONLY when a subtle error would pass the full suite and corrupt
+                  state or break a system-wide contract — not merely "important" or central code.
+            Score on the hardest REALISTIC aspect of the task, not a worst-case imagining. When
+            genuinely torn between two tiers, choose the LOWER one UNLESS you can name the specific
+            cascading, test-evading failure that earns the higher tier in the justification.
+            You are not the model that executes this task, and the score neither saves nor
+            costs you anything — so do not lowball to seem efficient and do not highball to
+            play safe. Both distort routing: a too-low score sends a hard task to a model
+            that fails it; a too-high score burns a premium model on trivial work. Score
+            what the task honestly requires, no higher and no lower.
+            FLOOR: a task is NEVER below tier 4 only when it GENUINELY changes the semantics of
+            concurrency, a schema/state-machine, a security/auth boundary, or a contract other
+            code actually depends on — because a subtle error there passes tests but is wrong.
+            This floor does NOT apply to mechanical edits that merely sit near such code, or that
+            add a new interface nothing relies on yet; score those on the rubric (usually 2-3).
+          - `complexity_justification`: REQUIRED. One or two sentences that argue, specifically,
+            why this task sits at exactly that tier — cite the concrete files, interfaces, or
+            risk that places it there (e.g. "touches the auth middleware contract used by 4
+            call sites, so a mistake is non-local → tier 4"). A bare restatement of the rubric
+            ("this is complex") is not acceptable; the justification must be defensible against
+            a reviewer who disagrees.
+        - `watch_items` must be an array of strings covering runtime risks, critique concerns, and assumptions to keep visible during execution.
+        - `sense_checks` must be an array with one verification question per task. Every sense-check object must include:
+          - `id`: short stable ID like `SC1`
+          - `task_id`: the related task ID
+          - `question`: reviewer verification question
+          - `verdict`: always `""` at finalize time
+        - `user_actions` should default to `[]`. Emitting a user_action stalls execution on a human gate — it is a load-bearing escape hatch, not a convenience. Prefer to design every step to be fully mechanical: the executor can read files, run commands, query APIs, fetch URLs, parse JSON, edit code, and run tests. If a check is mechanical, write it as a task — not a user_action.
+- Emit a user_action ONLY when the work is *genuinely non-mechanical* and the executor has no path to do it itself: secrets the human alone holds (a real API key the executor cannot mint), infrastructure access bound to the human's identity (cloud console, VPN), legal/license/security-policy judgments that require a human signatory, or out-of-band manual UI smoke tests on production. If you cannot name a specific reason the executor cannot do it, the task is mechanical — make it a task.
+- Anything that touches code, configuration, fixtures, or local files MUST be a task. Reading docs, grepping, editing, running tests, writing SQL, and producing JSON resolution files are tasks. Negative example: writing the migration SQL is a task, not a user_action; verifying a license URL is reachable is a task, not a user_action.
+- When you do emit a user_action, set `requires_human_only_reason` to a specific sentence naming why the executor literally cannot perform it (not just "it's important").
+- If `user_actions` is non-empty, expect that execution will block until the human resolves each one — only emit them when that block is unavoidable.
+- Positive examples (rare, last-resort): `U1: Set ANTHROPIC_API_KEY in .env (before_execute, requires_human_only_reason: "secret the executor cannot mint")`; `U2: Confirm legal sign-off to commit the third-party JSON corpus (before_execute, requires_human_only_reason: "license judgment with legal liability")`.
+        - `meta_commentary` must be a single string with execution guidance, gotchas, or judgment calls that help the executor succeed.
+        - Preserve information that strong existing artifacts already capture well: execution ordering, watch-outs, reviewer checkpoints, and practical context.
+        - The structured output should be self-contained: an executor reading only `finalize.json` should have everything needed to work.
+        - Keep the task count proportional to the work. A simple 1-2 file fix should be 2 tasks: (1) apply the fix, (2) run tests. Do NOT create separate "inspect" or "read" tasks for simple changes — the executor can read and fix in one step. Only create more tasks when the work has genuinely independent stages.
+        - One task is the unit of ONE worker turn: the executor must IMPLEMENT it, VERIFY it, and emit its result envelope inside a single ~15-minute conversation. A task that cannot realistically finish in one turn is mis-sized and WILL fail — the worker reports `blocked: "turn ended before implementation"` or runs out the clock mid-edit. Size every task to fit one turn; raising `complexity` does NOT buy more turns, it only routes to a stronger model for the SAME single turn. When a step is a large mechanical refactor, SPLIT it across tasks instead of bundling: "add the new abstraction + its unit tests" (T1) → "migrate consumer A" (T2, depends_on T1) → "migrate consumer B + parity tests" (T3, depends_on T2). A single task that says "extract this 2000-line file into modules and write tests" or "consolidate the roots AND migrate three registries AND add parity tests" is a god-task — decompose it into one task per consumer/module, each independently completable and verifiable.
+        - - The harness owns test verification — do NOT author a run-until-pass task. If you include a test-related task, scope it to: introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute suite.
+- For code-mode plans, preserve a scoped test contract. Prefer the plan's machine-readable `test_blast_radius`; when it is missing, ensure at least one finalized task carries a concrete scoped pytest command in `commands_run` (for example `pytest tests/test_relevant.py -q`) or mappable `files_changed` paths. Do not rely on an unscoped `pytest` command unless the plan explicitly opts into `test_selection=full`.

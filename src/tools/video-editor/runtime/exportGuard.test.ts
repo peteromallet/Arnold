@@ -422,6 +422,27 @@ describe('scanExportConfig — live binding blockers', () => {
   const builtIn = collectBuiltInKnownIds();
   const extIds = collectExtensionDeclaredIds([]);
 
+  function validCaptureRef(
+    ref: string,
+  ): Record<string, unknown> {
+    return {
+      kind: 'deterministic-capture',
+      ref,
+      metadata: {
+        liveBake: {
+          targetKind: 'deterministic-capture',
+        },
+        deterministicCapture: {
+          captureId: ref,
+          profile: 'event',
+          provenanceHash: 'a'.repeat(64),
+          routeConstraints: ['preview', 'browser-export'],
+          determinism: 'deterministic',
+        },
+      },
+    };
+  }
+
   function liveClip(
     id: string,
     binding: Record<string, unknown>,
@@ -506,6 +527,134 @@ describe('scanExportConfig — live binding blockers', () => {
               inputHash: 'sha256:baked',
             },
           ],
+        },
+      }),
+      liveClip('render-material-clip', {
+        bindingId: 'render-material-binding',
+        sourceId: 'src-render-material',
+        sourceKind: 'generated',
+        bake: {
+          status: 'complete',
+          deterministicRefs: [
+            {
+              kind: 'render-material',
+              ref: 'mat:live-baked',
+            },
+          ],
+        },
+      }),
+    ]);
+
+    const result = scanExportConfig(config, builtIn, extIds);
+
+    expect(result.diagnostics.filter((diag) => diag.code === 'export/live-binding-unresolved')).toEqual([]);
+    expect(result.blockers.filter((blocker) => blocker.reason === 'live-unbaked')).toEqual([]);
+    expect(result.hasBlockingErrors).toBe(false);
+  });
+
+  it('keeps sidecar-only, malformed capture, and capture-on-media bindings export-blocking', () => {
+    const config = makeConfig([
+      liveClip('sidecar-only-clip', {
+        bindingId: 'sidecar-only-binding',
+        sourceId: 'src-sidecar',
+        sourceKind: 'generated',
+        resolutionStatus: 'resolved',
+        bake: {
+          status: 'complete',
+          deterministicRefs: [
+            {
+              kind: 'sidecar',
+              ref: 'sidecar:analysis',
+            },
+          ],
+        },
+      }),
+      liveClip('malformed-capture-clip', {
+        bindingId: 'malformed-capture-binding',
+        sourceId: 'src-capture-malformed',
+        sourceKind: 'generated',
+        targetParamName: 'params.opacity',
+        targetPath: 'opacity',
+        resolutionStatus: 'resolved',
+        bake: {
+          status: 'complete',
+          deterministicRefs: [
+            {
+              kind: 'deterministic-capture',
+              ref: 'capture-malformed',
+              metadata: {
+                liveBake: {
+                  targetKind: 'deterministic-capture',
+                },
+                deterministicCapture: {
+                  captureId: 'capture-malformed',
+                  profile: 'event',
+                  provenanceHash: 'bad-hash',
+                  routeConstraints: ['preview', 'browser-export'],
+                  determinism: 'deterministic',
+                },
+              },
+            },
+          ],
+        },
+      }),
+      liveClip('media-capture-clip', {
+        bindingId: 'media-capture-binding',
+        sourceId: 'src-media-capture',
+        sourceKind: 'generated',
+        targetParamName: 'texture',
+        resolutionStatus: 'resolved',
+        bake: {
+          status: 'complete',
+          deterministicRefs: [validCaptureRef('capture-media-only')],
+        },
+      }),
+    ]);
+
+    const result = scanExportConfig(config, builtIn, extIds);
+    const liveFindings = result.findings.filter((finding) => finding.reason === 'live-unbaked');
+
+    expect(liveFindings).toHaveLength(3);
+    expect(liveFindings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        clipId: 'sidecar-only-clip',
+        detail: expect.objectContaining({
+          resolutionStatus: 'missing',
+          deterministicRefKinds: ['sidecar'],
+          bakeStatus: 'complete',
+        }),
+      }),
+      expect.objectContaining({
+        clipId: 'malformed-capture-clip',
+        detail: expect.objectContaining({
+          resolutionStatus: 'malformed',
+          deterministicRefKinds: ['deterministic-capture'],
+        }),
+      }),
+      expect.objectContaining({
+        clipId: 'media-capture-clip',
+        detail: expect.objectContaining({
+          resolutionStatus: 'missing',
+          deterministicRefKinds: ['deterministic-capture'],
+          bakeStatus: 'complete',
+        }),
+      }),
+    ]));
+    expect(result.blockers.filter((blocker) => blocker.reason === 'live-unbaked')).toHaveLength(3);
+  });
+
+  it('does not block validated deterministic-capture refs for non-media live bindings', () => {
+    const config = makeConfig([
+      liveClip('capture-clip', {
+        bindingId: 'capture-binding',
+        sourceId: 'src-capture',
+        sourceKind: 'generated',
+        targetParamName: 'params.opacity',
+        targetPath: 'opacity',
+        resolutionStatus: 'resolved',
+        bake: {
+          status: 'complete',
+          deterministicRefs: [validCaptureRef('capture-opacity-1')],
         },
       }),
     ]);

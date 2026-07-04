@@ -102,6 +102,25 @@ export const COMPOSITION_DIAGNOSTIC_CODE = {
 
   /** A resolved material is incompatible with the selected render route. */
   MATERIAL_ROUTE_INCOMPATIBLE: 'composition/material-route-incompatible',
+
+  // ---------------------------------------------------------------------------
+  // Deterministic capture (M3b) conversion diagnostic codes
+  // ---------------------------------------------------------------------------
+
+  /** Conversion of a deterministic capture to graph operations has failed. */
+  DETERMINISTIC_CAPTURE_CONVERSION_FAILED: 'composition/deterministic-capture-conversion-failed',
+
+  /** A deterministic capture specifies a target path that cannot be resolved. */
+  DETERMINISTIC_CAPTURE_TARGET_PATH_UNRESOLVABLE: 'composition/deterministic-capture-target-path-unresolvable',
+
+  /** A deterministic capture event value could not be normalized to the target schema. */
+  DETERMINISTIC_CAPTURE_VALUE_NORMALIZATION_FAILED: 'composition/deterministic-capture-value-normalization-failed',
+
+  /** A deterministic capture event timing could not be resolved. */
+  DETERMINISTIC_CAPTURE_TIMING_FAILED: 'composition/deterministic-capture-timing-failed',
+
+  /** A deterministic capture provenance hash does not match the expected value. */
+  DETERMINISTIC_CAPTURE_PROVENANCE_MISMATCH: 'composition/deterministic-capture-provenance-mismatch',
 } as const;
 
 export type CompositionDiagnosticCode =
@@ -166,6 +185,10 @@ export interface CompositionDiagnosticDetail {
   provenanceGap?: string;
   /** Planner next action associated with this diagnostic, when applicable. */
   nextAction?: Record<string, unknown>;
+  /** Deterministic capture ref ID when the diagnostic relates to a capture conversion. */
+  captureRef?: string;
+  /** Provenance hash of the deterministic capture (SHA-256 hex, 64 chars). */
+  provenanceHash?: string;
 }
 
 const BLOCKING_TARGET_COMPOSITION_DIAGNOSTIC_CODES = new Set<CompositionDiagnosticCode>([
@@ -176,6 +199,11 @@ const BLOCKING_TARGET_COMPOSITION_DIAGNOSTIC_CODES = new Set<CompositionDiagnost
   COMPOSITION_DIAGNOSTIC_CODE.NON_BINDABLE_TARGET,
   COMPOSITION_DIAGNOSTIC_CODE.TARGET_VALUE_TYPE_ERROR,
   COMPOSITION_DIAGNOSTIC_CODE.TARGET_INTERPOLATION_GAP,
+  COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_CONVERSION_FAILED,
+  COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_TARGET_PATH_UNRESOLVABLE,
+  COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_VALUE_NORMALIZATION_FAILED,
+  COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_TIMING_FAILED,
+  COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_PROVENANCE_MISMATCH,
 ]);
 
 /** Material diagnostic codes that carry warning severity. */
@@ -202,6 +230,15 @@ const MATERIAL_DIAGNOSTIC_CODES: ReadonlySet<CompositionDiagnosticCode> = new Se
   COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_STATUS_INVALID,
   COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_FAILED,
   COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_ROUTE_INCOMPATIBLE,
+]);
+
+/** All deterministic capture conversion diagnostic codes (M3b). */
+const DETERMINISTIC_CAPTURE_CONVERSION_DIAGNOSTIC_CODES: ReadonlySet<CompositionDiagnosticCode> = new Set([
+  COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_CONVERSION_FAILED,
+  COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_TARGET_PATH_UNRESOLVABLE,
+  COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_VALUE_NORMALIZATION_FAILED,
+  COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_TIMING_FAILED,
+  COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_PROVENANCE_MISMATCH,
 ]);
 
 // ---------------------------------------------------------------------------
@@ -273,6 +310,18 @@ export function isMaterialDiagnosticCode(code: string): code is CompositionDiagn
 }
 
 /**
+ * Type guard: returns `true` when `code` is a deterministic capture
+ * conversion (M3b) diagnostic code.
+ *
+ * These codes remain separate from material live-only diagnostics so that
+ * consumers (export guard, planner) can distinguish material issues from
+ * deterministic capture conversion issues.
+ */
+export function isDeterministicCaptureConversionDiagnosticCode(code: string): code is CompositionDiagnosticCode {
+  return DETERMINISTIC_CAPTURE_CONVERSION_DIAGNOSTIC_CODES.has(code as CompositionDiagnosticCode);
+}
+
+/**
  * Severity for material (M3a) diagnostic codes.
  *
  * Invalid status, failed materialization, and route-incompatible materials
@@ -304,6 +353,9 @@ export function buildCompositionDiagnostic(
   let severity: DiagnosticSeverity;
   if (isMaterialDiagnosticCode(code)) {
     severity = materialDiagnosticSeverity(code);
+  } else if (isDeterministicCaptureConversionDiagnosticCode(code)) {
+    // Deterministic capture conversion issues are always blocking errors.
+    severity = 'error';
   } else if (
     code === COMPOSITION_DIAGNOSTIC_CODE.MISSING_REF
     || code === COMPOSITION_DIAGNOSTIC_CODE.INACTIVE_RESERVED_REF

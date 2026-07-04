@@ -1865,8 +1865,9 @@ describe('M11: LiveBakeTargetKind', () => {
       'clip',
       'sidecar',
       'render-material',
+      'deterministic-capture',
     ];
-    expect(kinds).toHaveLength(6);
+    expect(kinds).toHaveLength(7);
   });
 });
 

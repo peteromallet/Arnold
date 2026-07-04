@@ -28,6 +28,10 @@ import {
   validateShaderStack,
   type CompositionShaderStackEntry,
 } from '@/tools/video-editor/runtime/composition/shaderValidation.ts';
+import {
+  isKnownCaptureProfileV1,
+  isValidRouteConstraint,
+} from '@/tools/video-editor/runtime/deterministicCapture.ts';
 import type { TransitionRegistrySnapshot } from '@/tools/video-editor/transitions/registry/types.ts';
 import {
   validateClipTransition,
@@ -1377,6 +1381,122 @@ const liveBindingDeterministicRefs = (
   ...(Array.isArray(binding.bake?.deterministicRefs) ? binding.bake.deterministicRefs : []),
 ];
 
+const LIVE_BINDING_MEDIA_TARGET_HINTS = [
+  'texture',
+  'frame',
+  'source',
+  'asset',
+] as const;
+
+const isLiveBindingMediaTargetHint = (value: string): boolean => {
+  const normalized = value.trim().toLowerCase();
+  return LIVE_BINDING_MEDIA_TARGET_HINTS.some((hint) => (
+    normalized === hint
+    || normalized.endsWith(`.${hint}`)
+  ));
+};
+
+const isDeterministicCaptureDeterminism = (
+  value: unknown,
+): value is 'deterministic' | 'preview-only' | 'process-dependent' => (
+  value === 'deterministic'
+  || value === 'preview-only'
+  || value === 'process-dependent'
+);
+
+const isSha256Hex = (value: unknown): value is string => (
+  typeof value === 'string' && /^[0-9a-f]{64}$/.test(value)
+);
+
+type TimelineLiveBindingExportTargetClass = 'media-like' | 'non-media';
+
+const getTimelineLiveBindingExportTargetClass = (
+  binding: TimelineLiveBinding,
+): TimelineLiveBindingExportTargetClass => {
+  const targetHints = [
+    binding.targetParamName,
+    binding.targetPath,
+  ].filter((value): value is string => typeof value === 'string' && value.length > 0);
+
+  if (binding.targetEffectId) {
+    return 'non-media';
+  }
+
+  if (targetHints.some(isLiveBindingMediaTargetHint)) {
+    return 'media-like';
+  }
+
+  return targetHints.length > 0 ? 'non-media' : 'media-like';
+};
+
+const isDurableMediaDeterministicRef = (ref: TimelineLiveDeterministicRef): boolean => (
+  (ref.kind === 'asset' || ref.kind === 'render-material')
+  && typeof ref.ref === 'string'
+  && ref.ref.length > 0
+);
+
+const isStructurallyValidDeterministicCaptureRef = (
+  ref: TimelineLiveDeterministicRef,
+): boolean => {
+  if (ref.kind !== 'deterministic-capture' || typeof ref.ref !== 'string' || ref.ref.length === 0) {
+    return false;
+  }
+
+  const metadata = ref.metadata;
+  if (!isRecord(metadata)) {
+    return false;
+  }
+
+  const liveBake = isRecord(metadata.liveBake) ? metadata.liveBake : undefined;
+  const captureMeta = isRecord(metadata.deterministicCapture) ? metadata.deterministicCapture : undefined;
+  if (!liveBake || !captureMeta || liveBake.targetKind !== 'deterministic-capture') {
+    return false;
+  }
+
+  const captureId = captureMeta.captureId;
+  const profile = captureMeta.profile;
+  const provenanceHash = captureMeta.provenanceHash;
+  const routeConstraints = captureMeta.routeConstraints;
+  const determinism = captureMeta.determinism;
+
+  return typeof captureId === 'string'
+    && captureId === ref.ref
+    && typeof profile === 'string'
+    && isKnownCaptureProfileV1(profile)
+    && isSha256Hex(provenanceHash)
+    && Array.isArray(routeConstraints)
+    && routeConstraints.length > 0
+    && routeConstraints.every((constraint) => (
+      typeof constraint === 'string' && isValidRouteConstraint(constraint)
+    ))
+    && isDeterministicCaptureDeterminism(determinism);
+};
+
+const isValidatedDeterministicCaptureRef = (
+  ref: TimelineLiveDeterministicRef,
+): boolean => {
+  if (!isStructurallyValidDeterministicCaptureRef(ref)) {
+    return false;
+  }
+
+  const captureMeta = ref.metadata?.deterministicCapture as Record<string, unknown>;
+  return Array.isArray(captureMeta.routeConstraints)
+    && captureMeta.routeConstraints.includes('browser-export');
+};
+
+const liveBindingHasMalformedAuthoritativeRef = (binding: TimelineLiveBinding): boolean => {
+  const exportTargetClass = getTimelineLiveBindingExportTargetClass(binding);
+
+  return liveBindingDeterministicRefs(binding).some((ref) => {
+    if (exportTargetClass === 'media-like') {
+      return (ref.kind === 'asset' || ref.kind === 'render-material')
+        && (typeof ref.ref !== 'string' || ref.ref.length === 0);
+    }
+
+    return ref.kind === 'deterministic-capture' && !isStructurallyValidDeterministicCaptureRef(ref);
+  });
+};
+
 const liveBindingHasUnresolvedRanges = (binding: TimelineLiveBinding): boolean => (
   Array.isArray(binding.bake?.unresolvedRanges) && binding.bake.unresolvedRanges.length > 0
 );
@@ -1395,12 +1515,14 @@ const liveBindingHasPartialBake = (binding: TimelineLiveBinding): boolean => {
 };
 
 const liveBindingHasCompleteBake = (binding: TimelineLiveBinding): boolean => {
+  const exportTargetClass = getTimelineLiveBindingExportTargetClass(binding);
+
   return (
     !liveBindingHasPartialBake(binding)
     && (
-      binding.resolutionStatus === 'resolved'
-      || binding.bake?.status === 'complete'
-      || liveBindingDeterministicRefs(binding).length > 0
+      exportTargetClass === 'media-like'
+        ? liveBindingDeterministicRefs(binding).some(isDurableMediaDeterministicRef)
+        : liveBindingDeterministicRefs(binding).some(isValidatedDeterministicCaptureRef)
     )
   );
 };
@@ -1429,6 +1551,24 @@ export const resolveTimelineLiveBinding = (
     return { status: 'partiallyBaked', diagnostics };
   }
 
+  if (liveBindingHasMalformedAuthoritativeRef(binding)) {
+    diagnostics.push(createLiveBindingDiagnostic(
+      'error',
+      'live-binding/malformed-metadata',
+      `Live binding '${binding.bindingId}' has malformed deterministic replacement metadata and remains export-blocking.`,
+      '',
+      {
+        bindingId: binding.bindingId,
+        sourceId: binding.sourceId,
+        details: {
+          exportTargetClass: getTimelineLiveBindingExportTargetClass(binding),
+          deterministicRefKinds: liveBindingDeterministicRefs(binding).map((ref) => ref.kind),
+        },
+      },
+    ));
+    return { status: 'malformed', diagnostics };
+  }
+
   if (liveBindingHasCompleteBake(binding)) {
     diagnostics.push(createLiveBindingDiagnostic(
       'info',
@@ -1440,7 +1580,7 @@ export const resolveTimelineLiveBinding = (
     return { status: 'resolved', diagnostics };
   }
 
-  if (isTimelineLiveBindingResolutionStatus(binding.resolutionStatus)) {
+  if (binding.resolutionStatus && binding.resolutionStatus !== 'resolved') {
     return { status: binding.resolutionStatus, diagnostics };
   }
 

@@ -8,6 +8,7 @@
  */
 
 import type {
+  CompositionGraph,
   LiveBakeResult,
   LiveBakeSelection,
   LiveBakeTarget,
@@ -23,7 +24,24 @@ import type {
   TimelineLiveDeterministicRef,
   TimelineLiveDeterministicRefKind,
   TimelineLiveBakeRange,
+  BakedValueRef,
+  DeterministicCapture,
+  DeterministicCaptureProfileV1,
+  DeterministicCaptureRouteConstraint,
 } from '@/tools/video-editor/types';
+import type { CompositionGraphInput } from '@/tools/video-editor/runtime/composition/graphProjector.ts';
+import {
+  createGraphPreviewWithOps,
+  type GraphPreviewOperation,
+} from '@/tools/video-editor/runtime/composition/patchPreview.ts';
+import {
+  convertEventTableToGraphOperations,
+  type LiveEventConversionDiagnostic,
+  type LiveEventKeyframeDetail,
+  type KeyframeCollisionPolicyEngine,
+  type TimingMapResolver,
+  type ValueSchemaNormalizer,
+} from '@/tools/video-editor/runtime/liveEventConversion.ts';
 
 export interface LiveBakeChannelInput {
   readonly metadata: LiveChannelMetadata;
@@ -53,10 +71,55 @@ export interface LiveBakeDeterministicReplacement {
     readonly range?: TimelineLiveBakeRange;
   };
   readonly renderMaterial?: RenderMaterialRef;
+  /** Validated deterministic capture metadata (only present for `deterministic-capture` targets). */
+  readonly capture?: LiveBakeDeterministicCaptureMeta;
+}
+
+/** Metadata carried through a bake result for a validated deterministic capture target. */
+export interface LiveBakeDeterministicCaptureMeta {
+  readonly captureId: string;
+  readonly profile: DeterministicCaptureProfileV1;
+  readonly contentHash: string;
+  readonly provenanceHash: string;
+  readonly routeConstraints: readonly DeterministicCaptureRouteConstraint[];
+  readonly determinism: 'deterministic' | 'preview-only' | 'process-dependent';
 }
 
 export interface LiveBakePlannerResult extends LiveBakeResult {
   readonly replacements: readonly LiveBakeDeterministicReplacement[];
+}
+
+export interface AcceptedEventTablePreviewSource {
+  readonly replacement: LiveBakeDeterministicReplacement;
+  readonly capture: DeterministicCapture;
+  readonly captureRef: BakedValueRef;
+}
+
+export interface AcceptedEventTablePreviewRequest {
+  readonly sources: readonly AcceptedEventTablePreviewSource[];
+  readonly timingResolver: TimingMapResolver;
+  readonly valueNormalizer: ValueSchemaNormalizer;
+  readonly collisionPolicyEngine?: KeyframeCollisionPolicyEngine;
+  readonly timelineState?: unknown;
+  readonly sidecars?: unknown;
+}
+
+export interface AcceptedEventTableGraphPreviewRequest extends AcceptedEventTablePreviewRequest {
+  readonly graph: CompositionGraph;
+  readonly graphInput: CompositionGraphInput;
+}
+
+/** Conversion preview result that carries per-keyframe detail alongside operations. */
+export interface LiveEventTablePreviewResult {
+  readonly operations: readonly GraphPreviewOperation[];
+  readonly details: readonly LiveEventKeyframeDetail[];
+  readonly diagnostics: readonly LiveEventConversionDiagnostic[];
+}
+
+/** Readiness check result for conversion preview. */
+export interface LiveEventTablePreviewReadinessResult {
+  readonly ready: boolean;
+  readonly diagnostics: readonly LiveEventConversionDiagnostic[];
 }
 
 interface PreparedBakeInput {
@@ -76,10 +139,172 @@ const TARGET_TO_REF_KIND: Record<LiveBakeTarget['kind'], TimelineLiveDeterminist
   clip: 'clip',
   sidecar: 'sidecar',
   'render-material': 'render-material',
+  'deterministic-capture': 'deterministic-capture',
 };
 
 const VISUAL_CHANNEL_KINDS = new Set<LiveChannelKind>(['video', 'image']);
 const AUDIO_OR_CONTROL_CHANNEL_KINDS = new Set<LiveChannelKind>(['audio', 'control', 'data']);
+
+function sameStringArray(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function isAcceptedEventTableSource(
+  source: AcceptedEventTablePreviewSource,
+): boolean {
+  const { replacement, capture, captureRef } = source;
+  const captureMeta = replacement.capture;
+  if (replacement.target.kind !== 'deterministic-capture' || !captureMeta) {
+    return false;
+  }
+
+  return capture.profile === 'event'
+    && capture.body.profile === 'event'
+    && captureRef.profile === 'event'
+    && captureMeta.profile === 'event'
+    && captureMeta.captureId === capture.captureId
+    && captureMeta.captureId === captureRef.captureId
+    && captureMeta.contentHash === capture.contentHash
+    && captureMeta.contentHash === captureRef.contentHash
+    && captureMeta.provenanceHash === captureRef.provenanceHash
+    && captureMeta.determinism === capture.determinism
+    && captureMeta.determinism === captureRef.determinism
+    && sameStringArray(captureMeta.routeConstraints, capture.routeConstraints)
+    && sameStringArray(captureMeta.routeConstraints, captureRef.routeConstraints);
+}
+
+export function convertAcceptedEventTablesToGraphPreviewOperations(
+  request: AcceptedEventTablePreviewRequest,
+): readonly GraphPreviewOperation[] {
+  const operations: GraphPreviewOperation[] = [];
+
+  for (const source of request.sources) {
+    if (!isAcceptedEventTableSource(source)) {
+      continue;
+    }
+
+    const conversion = convertEventTableToGraphOperations({
+      capture: source.capture,
+      captureRef: source.captureRef,
+      timingResolver: request.timingResolver,
+      valueNormalizer: request.valueNormalizer,
+      collisionPolicyEngine: request.collisionPolicyEngine,
+      timelineState: request.timelineState,
+      sidecars: request.sidecars,
+    });
+
+    operations.push(...conversion.operations);
+  }
+
+  return Object.freeze([...operations]);
+}
+
+export function withAcceptedEventTableGraphPreview(
+  request: AcceptedEventTableGraphPreviewRequest,
+): CompositionGraph {
+  const operations = convertAcceptedEventTablesToGraphPreviewOperations(request);
+  if (operations.length === 0) {
+    return request.graph;
+  }
+
+  return Object.freeze({
+    ...request.graph,
+    preview: createGraphPreviewWithOps(request.graphInput, operations),
+  } satisfies CompositionGraph);
+}
+
+/**
+ * Convert accepted event-table sources into a preview result that carries
+ * per-keyframe detail alongside graph operations.
+ *
+ * Unlike {@link convertAcceptedEventTablesToGraphPreviewOperations}, this
+ * function preserves the full {@link LiveEventKeyframeDetail} array and
+ * conversion diagnostics so callers can inspect per-keyframe metadata
+ * (event id, target path, mapped time, normalized value,
+ * interpolation/hold policy, collision policy, capture ref,
+ * provenance hash, operation kind, and blocking diagnostics).
+ */
+export function convertAcceptedEventTablesWithConversionDetail(
+  request: AcceptedEventTablePreviewRequest,
+): LiveEventTablePreviewResult {
+  const allOperations: GraphPreviewOperation[] = [];
+  const allDetails: LiveEventKeyframeDetail[] = [];
+  const allDiagnostics: LiveEventConversionDiagnostic[] = [];
+
+  for (const source of request.sources) {
+    if (!isAcceptedEventTableSource(source)) {
+      continue;
+    }
+
+    const conversion = convertEventTableToGraphOperations({
+      capture: source.capture,
+      captureRef: source.captureRef,
+      timingResolver: request.timingResolver,
+      valueNormalizer: request.valueNormalizer,
+      collisionPolicyEngine: request.collisionPolicyEngine,
+      timelineState: request.timelineState,
+      sidecars: request.sidecars,
+    });
+
+    allOperations.push(...conversion.operations);
+    allDetails.push(...conversion.details);
+    allDiagnostics.push(...conversion.diagnostics);
+  }
+
+  return {
+    operations: Object.freeze([...allOperations]),
+    details: Object.freeze([...allDetails]),
+    diagnostics: Object.freeze(allDiagnostics.map((d) => Object.freeze({
+      ...d,
+      ...(d.detail ? { detail: Object.freeze({ ...d.detail }) } : {}),
+    }))),
+  };
+}
+
+/**
+ * Validate that a conversion preview result is ready to serve as graph
+ * preview input.
+ *
+ * Returns `{ ready: false }` with a `summary-only-collapse` diagnostic when
+ * the result contains per-keyframe details (non-empty conversions) but all
+ * operations are blocked, meaning the conversion collapsed to summary-only
+ * output without any actionable graph operations.
+ */
+export function validateConversionPreviewReadiness(
+  result: LiveEventTablePreviewResult,
+): LiveEventTablePreviewReadinessResult {
+  if (result.details.length === 0) {
+    // No conversions were performed — not a readiness failure, just empty.
+    return { ready: true, diagnostics: Object.freeze([]) };
+  }
+
+  if (result.operations.length === 0) {
+    const blockedCount = result.details.filter((d) => d.operationKind === 'blocked').length;
+    const diagnostic: LiveEventConversionDiagnostic = Object.freeze({
+      severity: 'error',
+      code: 'live-event/conversion-summary-only-collapse',
+      message:
+        `Conversion produced ${result.details.length} per-keyframe detail(s) ` +
+        `but collapsed to summary-only output: all ${blockedCount} candidate(s) ` +
+        `are blocked and no graph operations were emitted.`,
+      detail: Object.freeze({
+        totalDetailCount: result.details.length,
+        blockedCount,
+        sampleEventIds: result.details.slice(0, 5).map((d) => d.eventId),
+      }),
+    });
+
+    return {
+      ready: false,
+      diagnostics: Object.freeze([diagnostic]),
+    };
+  }
+
+  return { ready: true, diagnostics: Object.freeze([]) };
+}
 
 export function bakeLiveSource(request: LiveBakeRequest): LiveBakePlannerResult {
   const selectionErrors = validateSelection(request.selection);
@@ -350,6 +575,12 @@ function validateTargetCompatibility(
   const hasVisual = Array.from(channelKinds).some((kind) => VISUAL_CHANNEL_KINDS.has(kind));
   const hasAudioOrControl = Array.from(channelKinds).some((kind) => AUDIO_OR_CONTROL_CHANNEL_KINDS.has(kind));
 
+  // Deterministic-capture targets accept any channel kind — they capture
+  // whatever data the extension produces.
+  if (target.kind === 'deterministic-capture') {
+    return [];
+  }
+
   if ((target.kind === 'keyframe' || target.kind === 'automation') && !hasAudioOrControl) {
     return [createDiagnostic(
       'error',
@@ -381,7 +612,7 @@ function createReplacement(
   const outputRef = target.ref;
   const channelIds = input.channels.map((channel) => channel.metadata.channelId);
   const sampleCount = input.samples.length;
-  const metadata = {
+  const metadata: Record<string, unknown> = {
     liveBake: {
       sourceId: request.source.id,
       sourceKind: request.source.kind,
@@ -402,6 +633,24 @@ function createReplacement(
     range: input.range,
     metadata,
   };
+
+  // Deterministic-capture targets carry validated capture metadata from params.
+  // They must NOT produce a RenderMaterialRef — capture data is structural, not media.
+  let capture: LiveBakeDeterministicCaptureMeta | undefined;
+  if (target.kind === 'deterministic-capture' && target.params) {
+    capture = extractCaptureMeta(target.params);
+    if (capture) {
+      // Enrich the deterministic ref metadata with capture provenance.
+      metadata.deterministicCapture = {
+        captureId: capture.captureId,
+        profile: capture.profile,
+        provenanceHash: capture.provenanceHash,
+        routeConstraints: capture.routeConstraints,
+        determinism: capture.determinism,
+      };
+    }
+  }
+
   const renderMaterial = target.kind === 'render-material'
     ? createRenderMaterialRef(request, target, input, outputRef)
     : undefined;
@@ -422,6 +671,42 @@ function createReplacement(
       range: input.range ? Object.freeze({ ...input.range }) : undefined,
     }),
     renderMaterial,
+    capture,
+  };
+}
+
+/**
+ * Extract validated deterministic capture metadata from a target's params.
+ * Returns undefined if the params do not contain the required capture fields.
+ */
+function extractCaptureMeta(
+  params: Record<string, unknown>,
+): LiveBakeDeterministicCaptureMeta | undefined {
+  const captureId = params.captureId;
+  const profile = params.profile;
+  const contentHash = params.contentHash;
+  const provenanceHash = params.provenanceHash;
+  const routeConstraints = params.routeConstraints;
+  const determinism = params.determinism;
+
+  if (
+    typeof captureId !== 'string' || captureId.length === 0 ||
+    typeof profile !== 'string' ||
+    typeof contentHash !== 'string' || contentHash.length === 0 ||
+    typeof provenanceHash !== 'string' || provenanceHash.length === 0 ||
+    !Array.isArray(routeConstraints) ||
+    typeof determinism !== 'string'
+  ) {
+    return undefined;
+  }
+
+  return {
+    captureId,
+    profile: profile as DeterministicCaptureProfileV1,
+    contentHash,
+    provenanceHash,
+    routeConstraints: routeConstraints as readonly DeterministicCaptureRouteConstraint[],
+    determinism: determinism as 'deterministic' | 'preview-only' | 'process-dependent',
   };
 }
 
