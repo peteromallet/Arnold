@@ -23,7 +23,10 @@ from arnold_pipelines.megaplan.orchestration.plan_structure import (
     validate_plan_structure,
 )
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
+    _authority_divergence_payload,
     _evidence_from_task_record,
+    AuthorityDecision,
+    EvidenceStatus,
     effective_execute_completed_task_ids,
 )
 from arnold_pipelines.megaplan.orchestration.execution_evidence import (
@@ -307,6 +310,22 @@ def test_effective_execute_completed_task_ids_accepts_execution_window_and_expla
         "v3_api_tests",
         "v4_optional_diagnostics_contract",
     }
+
+
+def test_authority_divergence_payload_ignores_explained_skips() -> None:
+    task = {
+        "id": "t_baseline_checkpoint",
+        "status": "skipped",
+        "reviewer_verdict": "deferred_baseline_unavailable",
+    }
+    decision = AuthorityDecision(
+        task_id="t_baseline_checkpoint",
+        status=EvidenceStatus.unknown,
+        satisfied=False,
+        would_block_reasons=("missing_linked_evidence",),
+    )
+
+    assert _authority_divergence_payload(task, decision) is None
 
 
 def test_execute_completion_authority_uses_execution_window_and_explained_skips(
