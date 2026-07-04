@@ -16,6 +16,22 @@ structure:
 - timeout, retry, model routing, escalation, override, and resume behavior are
   declared as workflow structure or policy rather than implicit handler effects.
 
+For this plan, "native Python" means ordinary Python authoring, not a
+Python-shaped graph DSL. Decorators, policy objects, and invocable metadata may
+annotate functions, but the source language for product orchestration is Python
+branches, loops, function calls, subworkflow calls, and typed return values.
+Manual node construction, route tables, generic stage dispatch, component
+constants, handler refs, and manifest-authoring APIs are not acceptable
+author-facing control-flow constructs for canonical Megaplan.
+
+The author-facing workflow extension is `.pypeline`. A `.pypeline` file uses
+Python syntax under Arnold's structured workflow contract; it is validated and
+compiled into manifest/runtime artifacts, but it is not an unconstrained `.py`
+module and not a hand-authored graph file. The target canonical Megaplan source
+is `arnold_pipelines/megaplan/workflows/workflow.pypeline`. A retained
+`workflow.py` is compatibility glue only and cannot be the semantic carrier for
+implemented report rows.
+
 This document defines how the three follow-up epics should be checked against
 that target. It is both a traceability matrix template and a review plan.
 
@@ -27,6 +43,14 @@ Use this precedence order when documents appear to conflict:
    native Python source, declared workflow policy, or an audited pure phase
    body. If a reviewer cannot see the real Megaplan control flow in those
    carriers, the report target is not met.
+   The canonical source must read as ordinary Python orchestration. A decorated
+   function that still routes through `SOURCE_*`-style component calls, generic
+   stage dispatch, route-label tables, handler refs, or manifest/node builders
+   is a wrapper around the old model, not report conformance.
+   For migrated Megaplan, the semantic source carrier should be
+   `workflow.pypeline`; `.py` carriers are acceptable for audited pure phase
+   bodies, imported helpers, runtime code, tests, and compatibility shims, not
+   for the authored workflow skeleton.
 2. `WorkflowManifest` is the stable normalized runtime, replay, inspection, and
    interchange contract. It proves compiled behavior and durable execution, but
    it is not the final Megaplan authoring doctrine and must not become a second
@@ -35,6 +59,10 @@ Use this precedence order when documents appear to conflict:
    substrate and dispatch compatibility. They are useful proof that execution
    can move away from graph-era bundles, but they never prove report
    conformance by themselves.
+
+A Python-shaped graph wrapper around graph-era components is not native
+authoring conformance, even if the wrapper compiles, traces, resumes, and
+renders a plausible topology.
 
 The older workflow-manifest-runtime work remains valuable as runtime/kernel
 quarry and compatibility evidence. Where it says Megaplan should be authored as
@@ -121,9 +149,9 @@ or to a narrower explicit `deferred` status with a downstream owner.
 | Trace-only native shadow topology | Report recommends a shadow topology before full migration. | Composition. | Composition M0/M1 | enabled | A reviewable native shadow topology exists before behavior switches, showing intended Megaplan product structure. | Shadow topology diff, review signoff, parity notes. | Migration starts directly from handler-backed runtime and drifts. | Epic cannot launch migration milestone without accepted shadow topology. |
 | Handler topology extraction/purity audit | Current handlers own routing, loop exits, fanout, and state mutation. | Composition. | Composition M1/M2/M6, Platform M6 | enabled | Retained handlers are pure phase bodies only; product topology moves to workflow source or declared policy. | Handler inventory, purity scan, source excerpts, reviewer signoff. | Handler names are wrapped in native nodes but retain control flow. | Scan for `current_state`, `next_step`, `workflow_transition`, `run_parallel_*`, auto-loop dispatch, and override action dispatch. |
 | Golden trace regeneration guard | Existing traces can be regenerated after behavior drift. | All three. | Completion M5, Composition M6, Platform M6 | enabled | Scenario definitions are fixed; regenerated traces require semantic diff review. | Golden scenario manifest, semantic diff checklist, reviewer approval. | Tests pass because goldens were overwritten. | CI fails on unreviewed trace regeneration or missing semantic diff note. |
-| Canonical source path reconciliation | Briefs reference future `arnold/pipelines/...` while current code uses `arnold_pipelines/...`; some expected paths may not exist in the current checkout. | Completion/Composition. | Completion M2/M7, Composition M0/M1/M6, Platform M6 | enabled | Each milestone identifies the actual canonical source path and import surface it is changing. | Path reconciliation table and import smoke test. | Review inspects stale/future path, or a missing expected file such as `arnold_pipelines/megaplan/workflows/pipeline.py`, and misses live source. | Milestone cannot close without import/path inventory matching installed package and a stale-path negative check for missing or renamed expected files. |
+| Canonical source path reconciliation | Briefs reference future `arnold/pipelines/...` while current code uses `arnold_pipelines/...`; some expected paths may not exist in the current checkout. | Completion/Composition. | Completion M2/M7, Composition M0/M1/M6, Platform M6 | enabled | Each milestone identifies the actual canonical source path and import surface it is changing; migrated Megaplan's authored source is `arnold_pipelines/megaplan/workflows/workflow.pypeline`, with any `workflow.py` retained only as compatibility glue. | Path reconciliation table, `.pypeline` source evidence, compatibility-shim proof, and import smoke test. | Review inspects stale/future path, or a missing expected file such as `arnold_pipelines/megaplan/workflows/pipeline.py`, and misses live source; or treats `workflow.py` as semantic authority after `.pypeline` migration. | Milestone cannot close without import/path inventory matching installed package, a stale-path negative check for missing or renamed expected files, and a proof that `workflow.py` is non-semantic if retained. |
 | Behavior parity with existing Megaplan | Current behavior is broad and handler-heavy. | All three. | Completion M3.5/M5, Composition M1/M6, Platform M6 | enabled | New structure preserves fresh, iterate, tiebreaker, execute/review, human, override, resume, and failure paths. | Golden suite, live smoke, installed-wheel conformance. | Report shape looks good but regressions hide in less common flows. | Scenario goldens cover prep blocking, bare skip, critique retry/fallback, gate reprompt/downgrade, severity cap, tiebreaker pick/escalate/replan, finalize failure, execute approval, DAG partial resume, review infra retry, review cap, and every override action. |
-| Source readability | Current source may still be graph-like or handler-ref-heavy. | Composition. | Composition M1/M6 | enabled | A reviewer can understand the real Megaplan product flow by reading the canonical workflow source. | Human review checklist plus rendered topology diff. | Source has readable names but the important decisions are still elsewhere. | Structural conformance and handler-purity inventory are required, not just human readability. |
+| Source readability | Current source may still be graph-like or handler-ref-heavy. | Composition. | Composition M1/M6 | enabled | A reviewer can understand the real Megaplan product flow by reading the canonical `.pypeline` workflow source. | Human review checklist plus rendered topology diff. | Source has readable names but the important decisions are still elsewhere. | Structural conformance, native-Python anti-wrapper check, and handler-purity inventory are required, not just human readability. |
 
 ## High-Abstraction Review Waves
 
@@ -193,6 +221,11 @@ as report-conformant:
 - structural conformance test that fails if `critique`, `gate`, `tiebreaker`,
   `execute`, `review`, or `override` are represented only as single
   handler-backed stages;
+- native-Python anti-wrapper test that fails if canonical `workflow.pypeline` or its
+  imported native subworkflows express product control flow through
+  `SOURCE_*`-style component calls, generic stage dispatch, route-label tables,
+  handler refs, or direct manifest/node builders rather than Python branches,
+  loops, calls, subworkflow calls, typed outcomes, and declared policies;
 - handler-purity inventory and scan for `current_state`, `next_step`,
   `workflow_transition`, `run_parallel_*`, auto-loop dispatch, override action
   dispatch, and equivalent routing/state mutation APIs;
@@ -329,9 +362,9 @@ the affected initiative North Star.
 Residual risk is execution discipline. The final M6 conformance gates must be
 real blockers, not documentation-only checklists. In particular, composition
 M6 and platform M6 must refuse closure unless structural conformance,
-handler-purity inventory, mutation tests, static topology snapshots, semantic
-golden review, source-path reconciliation, and post-platform preservation
-checks all pass.
+native-Python anti-wrapper checks, handler-purity inventory, mutation tests,
+static topology snapshots, semantic golden review, source-path reconciliation,
+and post-platform preservation checks all pass.
 
 Codex GPT-5.5 high-reasoning release-gate review on 2026-07-01 found that
 plain label/hash completion was not release-hard enough. The gate now rejects
@@ -395,8 +428,8 @@ The alignment work is done only when:
   implementation details;
 - final conformance includes source excerpts, rendered topology, static topology
   snapshots with untaken branches, trace fixtures, behavior goldens, resume
-  tests, handler-purity inventory, mutation tests, installed artifact checks,
-  and post-platform preservation checks;
+  tests, native-Python anti-wrapper checks, handler-purity inventory, mutation
+  tests, installed artifact checks, and post-platform preservation checks;
 - platform M6 has written
   `docs/arnold/megaplan-native-representation-conformance-report.md`,
   `docs/arnold/megaplan-native-representation-conformance.yaml`, final
@@ -411,8 +444,9 @@ The alignment work is done only when:
 - every implemented row includes `carrier_evidence` paths pointing at the
   source, declared policy, or audited pure phase body that carries the
   semantic, and the validator confirms those paths exist; `canonical_source`
-  and `audited_pure_phase_body` carrier evidence must be `.py` files, while
-  `declared_policy` evidence may be `.py`, `.yaml`, `.yml`, `.json`, or `.md`;
+  workflow evidence must be `.pypeline` files, `audited_pure_phase_body`
+  evidence may be `.py` files, and `declared_policy` evidence may be
+  `.pypeline`, `.py`, `.yaml`, `.yml`, `.json`, or `.md`;
 - `python scripts/validate_native_representation_conformance.py --conformance
   docs/arnold/megaplan-native-representation-conformance.yaml` passes against
   the final YAML ledger.

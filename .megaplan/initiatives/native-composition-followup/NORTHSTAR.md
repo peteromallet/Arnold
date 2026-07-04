@@ -1,10 +1,27 @@
 # Native Composition Follow-Up North Star
 
 Arnold's native pipeline layer becomes a compositional workflow system:
-authors write decorated Python steps and workflows, workflows can invoke other
-workflows as reusable units, loops and decisions route only on recorded state,
-and every run receives tree-structured traces, path-addressed checkpoints, and
-resume automatically.
+authors write ordinary Python steps and workflows, workflows can invoke other
+workflows as normal Python calls, loops and decisions route through Python
+control flow over recorded state, and every run receives tree-structured
+traces, path-addressed checkpoints, and resume automatically.
+
+The authoring target is **native Python, not a Python-shaped graph DSL**.
+Decorators, policy objects, and invocable metadata annotate normal Python
+functions; they do not replace `if`/`elif` branches, `while`/`for` loops,
+typed return values, or direct subworkflow calls with manual node construction,
+route tables, component constants, handler refs, or manifest-authoring APIs.
+If the canonical source reads like a list of graph nodes connected by
+`SOURCE_*`-style component calls, the epic has not met the target even if the
+compiled manifest, trace, or rendered topology looks correct.
+
+Author-facing workflow source uses the `.pypeline` extension. A `.pypeline`
+file is Python syntax under Arnold's workflow contract: structured, validated,
+replayable, and compilable into manifests/traces, but not a general-purpose
+Python module and not an explicit graph-definition file. Ordinary `.py` files
+remain valid for reusable implementation functions, pure phase bodies, runtime
+code, tests, and import compatibility shims, but the canonical Megaplan
+workflow source should end as `workflow.pypeline`.
 
 The load-bearing primitive is the **invocable interface**: steps and workflows
 are distinct internally, but both expose stable identity plus declared
@@ -46,6 +63,16 @@ retry/timeout, model-routing, and resume semantics are represented by declared
 workflow structure or policy. If any of those remain hidden, this epic must
 produce a named deferral with a downstream owner and proof gate.
 
+The canonical Megaplan source must therefore read as proper native Python:
+normal branches, normal loops, normal function/subworkflow calls, and typed
+domain results such as gate, review, override, and execution outcomes.
+Workflow-in-workflow composition must be authored as calling another decorated
+Python workflow, not by manually assembling child manifest nodes or dispatching
+through a generic component/handler registry.
+The canonical authoring file should be `arnold_pipelines/megaplan/workflows/workflow.pypeline`;
+any remaining `workflow.py` entrypoint is compatibility glue that loads or
+re-exports the `.pypeline` source and may not become a second semantic owner.
+
 Doctrine precedence for this epic: canonical Megaplan product semantics are
 owned by visible compositional Python workflow source, declared workflow policy,
 or audited pure phase bodies. `WorkflowManifest` is the normalized
@@ -59,10 +86,20 @@ handlers require a purity inventory and source-invariant tests proving they do
 not own product routing, loop exits, retries, fanout, suspension, override
 dispatch, or implicit `next_step`/`current_state` transitions.
 
+No report-owned Megaplan semantic may be implemented by a Python-shaped wrapper
+around the old graph-era stage/component model. A wrapper fails conformance if
+the author-facing source still uses component constants, route-label tables, or
+generic stage calls as the product control-flow skeleton, even when those calls
+are nested inside decorated workflows.
+
 ## Done Means
 
 - A new workflow author can write decorated Python workflows without manually
   constructing graph nodes, trace records, checkpoint paths, or runtime hooks.
+- The canonical Megaplan workflow is idiomatic Python orchestration: reviewers
+  can follow the main product flow through Python branches, loops, calls,
+  subworkflow calls, and typed outcomes without consulting component tables or
+  handler-local state transitions.
 - Workflows can invoke workflows through declared interfaces and stable IDs,
   including repeated child use and at least three levels of nesting.
 - Static tooling can inspect the derived graph before execution.
@@ -86,6 +123,14 @@ dispatch, or implicit `next_step`/`current_state` transitions.
   this epic are allowed only for genuinely platform-only production guarantees
   or explicitly rejected scope, and each deferral must name the blocking proof
   that prevents accidental closure.
+- A structural anti-wrapper test rejects any final `workflow.pypeline` where
+  `critique`, `gate`, `tiebreaker`, `execute`, `review`, `override`, or their
+  subworkflows are primarily expressed as `SOURCE_*`-style component calls,
+  manifest node builders, handler refs, route tables, or generic stage
+  dispatch instead of native Python control flow and typed calls.
+- Any compatibility `workflow.py` must be mechanically proven to delegate to
+  or re-export the `.pypeline` source without adding product routing, loop
+  exits, fanout, suspension, override dispatch, or implicit state transitions.
 
 ## Still Not Done
 

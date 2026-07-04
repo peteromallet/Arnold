@@ -748,6 +748,31 @@ def _meta_repair_summary(session, repair_data, meta_refs, *, run_kind="", curren
         and not current_recurrence
         and not current_signature
         and not recent_iterations
+        and not recent_attempts
+    ):
+        run_refs = _collect_meta_run_refs(session)
+        return {
+            "should_dispatch": True,
+            "trigger": "repair_running_without_attempt_context",
+            "rationale": [
+                "repair-data reports running but has no current attempt id, recurrence, "
+                "signature, attempts, or iterations; this is an artifact-quality gap, "
+                "not proof that ordinary repair is active"
+            ],
+            "repair_outcome": _redact_scalar(repair_outcome),
+            "attempt_outcomes": [_redact_scalar(item) for item in attempt_outcomes[-5:]],
+            "failure_kinds": [_redact_scalar(item) for item in failure_kinds[-5:]],
+            "meta_record_count": len(meta_refs or []),
+            "meta_run_log_count": len(run_refs),
+            "meta_run_refs": run_refs,
+            "missing_meta_run_evidence": bool(not meta_refs and not run_refs),
+        }
+    if (
+        repair_outcome == "running"
+        and not current_attempt_id
+        and not current_recurrence
+        and not current_signature
+        and not recent_iterations
         and recent_attempts
     ):
         return {
@@ -771,6 +796,7 @@ def _meta_repair_summary(session, repair_data, meta_refs, *, run_kind="", curren
         and not current_signature
         and recent_attempts
         and not any(_attempt_has_runtime_context(item) for item in recent_attempts)
+        and repair_outcome not in {"repair_timeout", "repair_exhausted"}
     ):
         return {
             "should_dispatch": False,

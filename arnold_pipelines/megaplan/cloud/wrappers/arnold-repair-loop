@@ -738,19 +738,41 @@ PY
 }
 
 marker_requires_repair_despite_alive() {
-  python3 - "$MARKER_PATH" <<'PY' 2>/dev/null
+  python3 - "$MARKER_PATH" "$DATA_FILE" <<'PY' 2>/dev/null
 import json
 import pathlib
 import sys
 
+def load_json(path_text: str) -> dict:
+    try:
+        payload = json.loads(pathlib.Path(path_text).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
 try:
-    payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+    marker_payload = load_json(sys.argv[1])
+    repair_payload = load_json(sys.argv[2]) if len(sys.argv) > 2 else {}
 except Exception:
-    payload = {}
-text = json.dumps(payload, sort_keys=True)
+    marker_payload = {}
+    repair_payload = {}
+text = json.dumps(marker_payload, sort_keys=True)
 if "workspace_drift:" in text or "sandbox_refused_outside_project_root" in text:
     print("workspace_drift")
     raise SystemExit(0)
+failure_context = repair_payload.get("current_failure_context")
+if isinstance(failure_context, dict):
+    latest_failure = failure_context.get("plan_latest_failure")
+    if isinstance(latest_failure, dict) and latest_failure:
+        kind = str(latest_failure.get("kind") or "").strip()
+        state = str(latest_failure.get("current_state") or "").strip()
+        if kind or state:
+            print(f"live_plan_failure:{kind or 'unknown'}:{state or 'unknown'}")
+            raise SystemExit(0)
+    state_mismatch = failure_context.get("state_mismatch")
+    if isinstance(state_mismatch, dict) and state_mismatch.get("detected"):
+        print("state_mismatch")
+        raise SystemExit(0)
 raise SystemExit(1)
 PY
 }

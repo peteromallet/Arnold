@@ -19,6 +19,9 @@ completed through M7 and the native-first completion branch is clean.
 
 - `docs/arnold/native-composition-contract.md`
   Create the contract document. Define:
+  - `.pypeline` as the author-facing workflow source extension. `.pypeline`
+    files use Python syntax plus Arnold workflow validation; they are not
+    general `.py` modules and not hand-authored manifest/graph files.
   - `@step` / `@workflow` terminology and compatibility aliases for existing
     `@phase` / `@pipeline` names.
   - Explicit stable unit IDs decoupled from Python function names.
@@ -50,9 +53,18 @@ completed through M7 and the native-first completion branch is clean.
   examples and accepted/rejected fixtures for nested workflow invocation,
   runtime-list `parallel_map`, typed loop outcomes or accepted loop exits,
   declared policy-call metadata, stable path identity, and wrapper rejection.
+  The accepted source files for author-facing workflows use `.pypeline`; `.py`
+  modules may provide imported implementation functions, decorators, tests, and
+  compatibility shims, but `.py` must not be the canonical workflow authoring
+  extension for migrated Megaplan.
   V2 must make clear that Megaplan conformance cannot depend on direct manifest
   authoring, `Pipeline.native_program` shell projection, or Megaplan-only
-  compiler/runtime helpers.
+  compiler/runtime helpers. It must also distinguish native Python authoring
+  from a Python-shaped graph DSL: normal Python branches, loops, function calls,
+  subworkflow calls, and typed return values are the source language; manual
+  node construction, route tables, generic stage dispatch, component constants,
+  handler refs, and manifest-authoring APIs are rejected as author-facing
+  control-flow constructs.
 - `docs/arnold/workflow-authoring-examples.md`
   Write 3-4 aspirational examples before implementation:
   - a single workflow with steps and decisions;
@@ -86,6 +98,14 @@ completed through M7 and the native-first completion branch is clean.
 - Each aspirational example reads as plain Python authoring: decorators,
   ordinary control flow, and function calls. Path resume is demonstrated as a
   tooling concern, not by requiring authors to construct path strings manually.
+- Aspirational workflow examples are stored as `.pypeline` fixtures, with any
+  `.py` files limited to imported implementation helpers or compatibility
+  adapters.
+- Rejected fixtures cover Python-shaped graph wrappers: examples that express
+  workflow control flow through `SOURCE_*`-style component calls, generic stage
+  dispatch, handler refs, route-label tables, or direct manifest/node builders
+  must fail the authoring contract even if they are wrapped in decorated
+  functions.
 - The follow-up milestones can cite this contract instead of inventing local
   semantics.
 - Canonical Megaplan M1 is blocked on this contract and may not introduce
@@ -102,14 +122,14 @@ completed through M7 and the native-first completion branch is clean.
 - Matrix rows owned or affected: Runtime-list iteration; Dynamic parallel map; Typed loop outcomes or break/continue; Path-addressed checkpoints; Trace-only native shadow topology; Bounded critique/gate/revise loop.
 - Expected status change: `enabled` by defining the authoring language and shadow-topology contract M1 must satisfy.
 - Proof artifacts: native composition contract, aspirational examples, expected-failing or compiling fixtures, stable ID/path rules, accepted/rejected syntax fixtures, and explicit fixtures for runtime-list fanout, typed loop exits, policy calls, nested invocation, and Megaplan-only helper rejection.
-- False-pass guard: examples that require manual graph nodes, path strings, validator directives, or Megaplan-only helpers do not satisfy the report.
+- False-pass guard: examples that require manual graph nodes, path strings, validator directives, route tables, handler refs, component constants, generic stage dispatch, or Megaplan-only helpers do not satisfy the report.
 - Doctrine gate: M0 must explicitly define the source/manifest/native_program
   relationship. Author-written compositional Python source owns Megaplan
   semantics; `WorkflowManifest` is compiled runtime/replay/inspection output;
   `Pipeline.native_program` is dispatch compatibility substrate. Examples must
   not hand-author manifests or treat flat manifest graphs as source truth.
 - Deferrals: actual Megaplan migration and conformance proofs remain owned by M1-M6; DB-backed durability remains owned by platform M4.
-- Canonical source paths/imports: M0 must name the canonical source/import surface that M1 will migrate and the legacy stage-name aliases it must preserve.
+- Canonical source paths/imports: M0 must name `arnold_pipelines/megaplan/workflows/workflow.pypeline` as the target canonical authoring source, document how any legacy `workflow.py` compatibility shim resolves it, and preserve the legacy stage-name aliases that users, profiles, overrides, status payloads, or cursors rely on.
 
 ## Risks And Blockers
 
