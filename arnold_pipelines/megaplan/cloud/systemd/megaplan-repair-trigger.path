@@ -18,11 +18,11 @@ Description=Watch Megaplan failure-triggered repair queue for new requests
 [Path]
 # Fire when the container workspace bind source transitions from empty to
 # non-empty.  The cloud container mounts this host directory at /workspace.
-DirectoryNotEmpty=/opt/megaplan-cloud/workspace/.megaplan/repair-queue/requests
+DirectoryNotEmpty=/workspace/.megaplan/repair-queue/requests
 # Also fire on subsequent inotify modifications so new requests added after the
 # first batch trigger a scan.  The repair-trigger lock prevents concurrent runs;
 # duplicate firings exit cleanly with status=busy.
-PathModified=/opt/megaplan-cloud/workspace/.megaplan/repair-queue/requests
+PathModified=/workspace/.megaplan/repair-queue/requests
 Unit=megaplan-repair-trigger.service
 
 [Install]

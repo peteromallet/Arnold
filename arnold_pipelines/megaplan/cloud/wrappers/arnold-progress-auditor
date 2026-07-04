@@ -161,7 +161,7 @@ EOF
   fi
   if [[ "$commit_enabled" == "1" ]]; then
     cat <<'EOF'
-Autofix mode: TRUSTED REPAIR-SYSTEM PATCH + COMMIT/PUSH.
+Autofix mode: REPAIR-SYSTEM PATCH + COMMIT/PUSH (explicitly gated).
 - You are trusted to ship the repair-system fix when evidence supports it.
 - You may change only the allowed Arnold repair-system files listed below.
 - Keep the fix narrow, validate with `python3 -m py_compile` and one focused test module, then `git commit` and `git push` to `origin/editible-install`.

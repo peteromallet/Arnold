@@ -20,8 +20,7 @@ After=network.target
 
 [Service]
 Type=oneshot
-# Execute inside the long-lived cloud container, whose /workspace mount is the
-# same tree watched by the path unit through /opt/megaplan-cloud/workspace.
-ExecStart=/usr/bin/docker exec megaplan-cloud-agent bash -lc 'cd /workspace/arnold && exec arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger'
+# Execute the wrapper from the same workspace path watched by the path unit.
+ExecStart=/workspace/arnold/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger
 # Never restart on its own — the path unit schedules the next activation.
 Restart=no
