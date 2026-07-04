@@ -233,6 +233,11 @@ _PROMPT_MAX_DICT_ITEMS = 64
 _PROMPT_MAX_DEPTH = 6
 _PROMPT_TOTAL_CHAR_BUDGET = 900_000
 
+_MODEL_TOOL_LAUNCH_FAILURE_STATUSES = {
+    "failed:missing_relaunch_command",
+    "failed:tmux_launch_failed",
+}
+
 
 def _summarize_attempt_record(attempt: Mapping[str, Any]) -> dict[str, Any]:
     """Return a compact, diagnostic-only attempt summary for prompts."""
@@ -294,6 +299,33 @@ def _summarize_attempt_record(attempt: Mapping[str, Any]) -> dict[str, Any]:
             summary["chain_state_summary"] = chain_summary
 
     return summary
+
+
+def is_model_tool_launch_failure_status(
+    status: str,
+    *,
+    state_tokens: Sequence[str] = (),
+) -> bool:
+    """Return True only for genuine model/tool launch setup failures.
+
+    Repair-loop status strings such as ``failed:stopped`` and
+    ``failed:retrying_failure`` are emitted after a process launched and then
+    died during the initial hold window. Those are post-launch health outcomes,
+    not launch failures, and must not drive meta-repair's
+    ``model_tool_launch_failure`` trigger.
+    """
+    normalized = status.strip()
+    if not normalized.startswith("failed:"):
+        return False
+    if any(token in normalized for token in state_tokens):
+        return False
+    if normalized in _MODEL_TOOL_LAUNCH_FAILURE_STATUSES:
+        return True
+
+    lowered = normalized.lower()
+    if "missing" in lowered and ("api_key" in lowered or "credentials" in lowered):
+        return True
+    return False
 
 
 def _prepare_emergency_prompt_json(
@@ -470,6 +502,19 @@ def classify_repair_system_failure(
         rationale.append(
             "Discord delivery failed but escalation is NOT a TRUE_BLOCKER; "
             "skipping meta-repair dispatch"
+        )
+        return MetaRepairClassification(
+            session=session,
+            trigger=None,
+            rationale=tuple(rationale),
+            evidence=deepcopy(dict(evidence)) if evidence else {},
+            attempted_at=now.isoformat(),
+        )
+
+    if repair_outcome and is_success_outcome(repair_outcome):
+        rationale.append(
+            "ordinary repair already reached a terminal success outcome "
+            f"({repair_outcome}); skipping meta-repair dispatch"
         )
         return MetaRepairClassification(
             session=session,
@@ -1463,6 +1508,7 @@ __all__ = [
     "compute_meta_deadline",
     "evaluate_meta_repair_triggers",
     "is_meta_budget_exhausted",
+    "is_model_tool_launch_failure_status",
     "load_meta_repair_record",
     "load_redacted_evidence",
     "persist_meta_repair_record",
