@@ -605,3 +605,64 @@ class TestReplayConsistency:
         )
 
         assert resumed.state == full.state
+
+    def test_uninterrupted_and_resumed_nested_loop_parity(self, tmp_path: Path) -> None:
+        """Parent loop plus child loop replay to the same nested path state."""
+        counters = {"outer": 0, "inner": 0}
+
+        @phase
+        def body(ctx: dict) -> dict:
+            counters["inner"] += 1
+            return {
+                "outer": counters["outer"],
+                "inner": counters["inner"],
+                "paths": [*ctx["state"].get("paths", []), ctx["run_path"]],
+            }
+
+        @decision(name="inner_loop", vocabulary={"again", "done"})
+        def inner_guard(ctx: dict) -> str:
+            return "again" if counters["inner"] < counters["outer"] * 2 else "done"
+
+        @decision(name="outer_loop", vocabulary={"again", "done"})
+        def outer_guard(ctx: dict) -> str:
+            return "again" if counters["outer"] < 2 else "done"
+
+        @phase
+        def bump_outer(ctx: dict) -> dict:
+            counters["outer"] += 1
+            return {"outer": counters["outer"]}
+
+        @workflow(name="child_loop")
+        def child(ctx: dict) -> dict:
+            state: dict = {}
+            while inner_guard(ctx) == "again":
+                state = yield body(ctx)
+            return state
+
+        @pipeline
+        def nested(ctx: dict) -> dict:
+            state: dict = {}
+            while outer_guard(ctx) == "again":
+                state = yield bump_outer(ctx)
+                state = yield child(ctx, id="child_loop")
+            return state
+
+        prog = compile_pipeline(nested)
+        full = run_native_pipeline(prog, artifact_root=tmp_path / "full")
+        assert full.suspended is False
+
+        counters.update({"outer": 0, "inner": 0})
+        resume_root = tmp_path / "resumed"
+        first = run_native_pipeline(prog, artifact_root=resume_root, max_phases=1)
+        assert first.suspended is True
+        resumed = run_native_pipeline(prog, artifact_root=resume_root, resume=True)
+
+        assert resumed.suspended is False
+        assert resumed.state == full.state
+        assert resumed.stages == full.stages
+        assert resumed.state["paths"] == [
+            "root/outer_loop[1]/child_loop/inner_loop[1]",
+            "root/outer_loop[1]/child_loop/inner_loop[2]",
+            "root/outer_loop[2]/child_loop/inner_loop[1]",
+            "root/outer_loop[2]/child_loop/inner_loop[2]",
+        ]

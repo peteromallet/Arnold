@@ -37,6 +37,8 @@ from arnold.pipeline.native import (
 )
 from arnold.pipeline.native.checkpoint import read_native_cursor
 from arnold.pipeline.native.hooks import NullNativeRuntimeHooks
+from arnold.pipeline.types import ContractResult, ContractStatus, HumanSuspension, StepResult
+from arnold.runtime.envelope import RunEnvelope
 
 
 # ── module-level fixture ──────────────────────────────────────────────
@@ -429,6 +431,301 @@ class TestPcAndStageTracking:
             "call_site_path": ("child_call",),
         }
 
+    def test_subpipeline_writes_composite_parent_cursor_before_child_entry(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        observed: dict[str, object] = {}
+
+        @phase
+        def child_step(ctx: dict) -> dict:
+            observed["child_root"] = ctx["artifact_root"]
+            observed["cursor"] = read_native_cursor(tmp_path)
+            return {"child": "done"}
+
+        @workflow(
+            name="child_flow",
+            outputs={"type": "object", "required": ["child"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield child(ctx, id="child_call")
+            return state
+
+        prog = compile_pipeline(parent)
+        result = run_native_pipeline(prog, artifact_root=tmp_path)
+
+        assert result.state["child"] == "done"
+        cursor = observed["cursor"]
+        assert isinstance(cursor, dict)
+        assert cursor["native_cursor_kind"] == "composite_parent_child"
+        assert cursor["native"]["pc"] == 0
+        assert cursor["composite"]["parent"]["pc"] == 0
+        assert cursor["composite"]["parent"]["run_path"] == "root"
+        assert cursor["composite"]["parent"]["state"] == {}
+        assert cursor["composite"]["child"] == {
+            "cursor_path": "_child_child_call/resume_cursor.json",
+            "run_path": "root/child_call",
+            "call_site_path": ("child_call",),
+        }
+        assert observed["child_root"] == str(tmp_path / "_child_child_call")
+
+    def test_repeated_subpipeline_call_sites_have_distinct_child_cursor_paths(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        observed_paths: list[str] = []
+        observed_roots: list[str] = []
+
+        @phase
+        def child_step(ctx: dict) -> dict:
+            cursor = read_native_cursor(tmp_path)
+            assert cursor is not None
+            observed_paths.append(cursor["composite"]["child"]["cursor_path"])
+            observed_roots.append(ctx["artifact_root"])
+            return {"child": ctx["call_site_path"][0]}
+
+        @workflow(
+            name="child_flow",
+            outputs={"type": "object", "required": ["child"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield child(ctx, id="child_a", outputs={"child": "a"})
+            state = yield child(ctx, id="child_b", outputs={"child": "b"})
+            return state
+
+        prog = compile_pipeline(parent)
+        result = run_native_pipeline(prog, artifact_root=tmp_path)
+
+        assert result.state["a"] == "child_a"
+        assert result.state["b"] == "child_b"
+        assert observed_paths == [
+            "_child_child_a/resume_cursor.json",
+            "_child_child_b/resume_cursor.json",
+        ]
+        assert observed_roots == [
+            str(tmp_path / "_child_child_a"),
+            str(tmp_path / "_child_child_b"),
+        ]
+
+    def test_subpipeline_child_suspension_returns_suspended_parent_without_merging_outputs(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from arnold.pipeline.types import (
+            ContractResult,
+            ContractStatus,
+            StepResult,
+            Suspension,
+        )
+
+        captured: list[tuple[dict, dict]] = []
+
+        class RecordingHooks(NullNativeRuntimeHooks):
+            def on_checkpoint(self, cursor: dict, state: dict) -> None:
+                captured.append((dict(cursor), dict(state)))
+
+        @phase
+        def child_step(ctx: dict) -> StepResult:
+            return StepResult(
+                outputs={"child": ctx["state"].get("seed", "missing")},
+                contract_result=ContractResult(
+                    status=ContractStatus.SUSPENDED,
+                    suspension=Suspension(
+                        kind="human",
+                        resume_cursor="child-review",
+                    ),
+                ),
+            )
+
+        @workflow(
+            name="child_flow",
+            inputs={"type": "object", "required": ["seed"]},
+            outputs={"type": "object", "required": ["child"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline(inputs={"type": "object", "required": ["seed"]})
+        def parent(ctx: dict) -> dict:
+            state = yield child(ctx, id="child_call", outputs={"child": "merged_child"})
+            return state
+
+        prog = compile_pipeline(parent)
+        result = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            initial_state={"seed": "ready"},
+            hooks=RecordingHooks(),
+        )
+
+        assert result.suspended is True
+        assert result.state == {"seed": "ready"}
+        assert "merged_child" not in result.state
+
+        cursor = json.loads((tmp_path / "resume_cursor.json").read_text(encoding="utf-8"))
+        assert cursor["native"]["suspension_kind"] == "child_suspended"
+        assert cursor["suspension_kind"] == "child_suspended"
+        assert cursor["composite"]["child"]["cursor_path"] == "_child_child_call/resume_cursor.json"
+
+        parent_suspensions = [
+            (checkpoint_cursor, checkpoint_state)
+            for checkpoint_cursor, checkpoint_state in captured
+            if checkpoint_cursor.get("native", {}).get("suspension_kind") == "child_suspended"
+        ]
+        assert len(parent_suspensions) == 1
+        assert parent_suspensions[0][1] == {"seed": "ready"}
+
+    def test_composite_cursor_resume_restores_parent_and_child_once(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from arnold.pipeline.types import (
+            ContractResult,
+            ContractStatus,
+            StepResult,
+            Suspension,
+        )
+
+        calls = {
+            "parent_start": 0,
+            "child_prepare": 0,
+            "child_wait": 0,
+            "parent_finish": 0,
+        }
+        allow_child_complete = {"value": False}
+
+        @phase
+        def parent_start(ctx: dict) -> dict:
+            calls["parent_start"] += 1
+            return {"parent_ready": True}
+
+        @phase
+        def child_prepare(ctx: dict) -> dict:
+            calls["child_prepare"] += 1
+            return {"prepared": ctx["state"]["seed"]}
+
+        @phase
+        def child_wait(ctx: dict) -> StepResult | dict:
+            calls["child_wait"] += 1
+            if allow_child_complete["value"]:
+                return {"child": f"done:{ctx['state']['prepared']}"}
+            return StepResult(
+                outputs={"wait_seen": calls["child_wait"]},
+                contract_result=ContractResult(
+                    status=ContractStatus.SUSPENDED,
+                    suspension=Suspension(
+                        kind="human",
+                        resume_cursor=f"child-review-{calls['child_wait']}",
+                    ),
+                ),
+            )
+
+        @phase
+        def parent_finish(ctx: dict) -> dict:
+            calls["parent_finish"] += 1
+            return {"finished": ctx["state"]["merged_child"]}
+
+        @workflow(
+            name="child_flow",
+            inputs={
+                "type": "object",
+                "properties": {
+                    "seed": {"type": "string"},
+                    "approved": {"type": "boolean"},
+                },
+                "required": ["seed"],
+            },
+            outputs={"type": "object", "required": ["child"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield child_prepare(ctx)
+            state = yield child_wait(ctx)
+            return state
+
+        @pipeline(
+            inputs={
+                "type": "object",
+                "properties": {
+                    "seed": {"type": "string"},
+                    "approved": {"type": "boolean"},
+                },
+                "required": ["seed"],
+            }
+        )
+        def parent(ctx: dict) -> dict:
+            state = yield parent_start(ctx)
+            state = yield child(ctx, id="child_call", outputs={"child": "merged_child"})
+            state = yield parent_finish(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+
+        first = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            initial_state={"seed": "alpha"},
+        )
+        assert first.suspended is True
+        assert calls == {
+            "parent_start": 1,
+            "child_prepare": 1,
+            "child_wait": 1,
+            "parent_finish": 0,
+        }
+
+        second = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            initial_state={"seed": "alpha"},
+            resume=True,
+        )
+        assert second.suspended is True
+        assert calls == {
+            "parent_start": 1,
+            "child_prepare": 1,
+            "child_wait": 2,
+            "parent_finish": 0,
+        }
+        parent_cursor = json.loads(
+            (tmp_path / "resume_cursor.json").read_text(encoding="utf-8")
+        )
+        child_cursor = json.loads(
+            (tmp_path / "_child_child_call" / "resume_cursor.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert parent_cursor["native"]["suspension_kind"] == "child_suspended"
+        assert child_cursor["resume_cursor"] == "child-review-2"
+
+        allow_child_complete["value"] = True
+        final = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            initial_state={"seed": "alpha"},
+            resume=True,
+        )
+
+        assert final.suspended is False
+        assert final.state["finished"] == "done:alpha"
+        assert calls == {
+            "parent_start": 1,
+            "child_prepare": 1,
+            "child_wait": 3,
+            "parent_finish": 1,
+        }
+        assert not (tmp_path / "resume_cursor.json").exists()
+
     def test_parallel_map_uses_parameter_precedence_and_preserves_item_order(self) -> None:
         seen_ids: list[str] = []
 
@@ -551,6 +848,88 @@ class TestPcAndStageTracking:
             {"child": "x"},
             {"child": "y"},
         ]
+
+    def test_parallel_map_compiled_child_suspension_returns_suspended_parent_without_merging_outputs(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from arnold.pipeline.types import (
+            ContractResult,
+            ContractStatus,
+            StepResult,
+            Suspension,
+        )
+
+        captured: list[tuple[dict, dict]] = []
+
+        class RecordingHooks(NullNativeRuntimeHooks):
+            def on_checkpoint(self, cursor: dict, state: dict) -> None:
+                captured.append((dict(cursor), dict(state)))
+
+        @phase
+        def child_step(ctx: dict) -> StepResult:
+            item_id = ctx["state"]["item_id"]
+            return StepResult(
+                outputs={"child": item_id},
+                contract_result=ContractResult(
+                    status=ContractStatus.SUSPENDED,
+                    suspension=Suspension(
+                        kind="human",
+                        resume_cursor=f"child-review-{item_id}",
+                    ),
+                ),
+            )
+
+        @workflow(
+            name="child_flow",
+            inputs={"type": "object", "required": ["item_id"]},
+            outputs={"type": "object", "required": ["child"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        def reduce_children(results: list[dict[str, str]]) -> dict:
+            return {"children": results}
+
+        @pipeline(inputs={"type": "object", "required": ["checks"]})
+        def parent(ctx: dict) -> dict:
+            state = yield parallel_map(
+                items="checks",
+                path_template="{item_id}",
+                step=child,
+                reducer=reduce_children,
+                name="batch",
+            )
+            return state
+
+        prog = compile_pipeline(parent)
+        initial_state = {"checks": [{"item_id": "x"}, {"item_id": "y"}], "seed": "ready"}
+        result = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            initial_state=initial_state,
+            hooks=RecordingHooks(),
+        )
+
+        assert result.suspended is True
+        assert result.state == initial_state
+        assert "children" not in result.state
+        assert "child" not in result.state
+
+        cursor = json.loads((tmp_path / "resume_cursor.json").read_text(encoding="utf-8"))
+        assert cursor["native"]["suspension_kind"] == "child_suspended"
+        assert cursor["suspension_kind"] == "child_suspended"
+        assert cursor["composite"]["child"]["cursor_path"] == "_child_child_flow/x/resume_cursor.json"
+        assert cursor["composite"]["child"]["run_path"] == "root/batch/x"
+
+        parent_suspensions = [
+            (checkpoint_cursor, checkpoint_state)
+            for checkpoint_cursor, checkpoint_state in captured
+            if checkpoint_cursor.get("native", {}).get("suspension_kind") == "child_suspended"
+        ]
+        assert len(parent_suspensions) == 1
+        assert parent_suspensions[0][1] == initial_state
 
     def test_parallel_map_empty_collection_invokes_reducer_with_empty_results(self) -> None:
         reducer_calls: list[list[dict[str, str]]] = []
@@ -1003,6 +1382,136 @@ class TestMaxPhasesAndResume:
         assert nodes["root/critique_batch/critique/a/mapper"]["parent_path"] == "root/critique_batch/critique/a"
         assert nodes["root/critique_batch/critique/b/mapper"]["parent_path"] == "root/critique_batch/critique/b"
 
+    def test_traced_resume_and_child_suspension_emit_path_addressed_events(
+        self, tmp_path: Path
+    ) -> None:
+        @phase
+        def child_step(ctx: dict) -> StepResult:
+            if ctx["state"].get("resume_child"):
+                return StepResult(outputs={"child": "resumed"})
+            return StepResult(
+                outputs={"resume_child": True},
+                contract_result=ContractResult(
+                    status=ContractStatus.SUSPENDED,
+                    suspension=HumanSuspension(
+                        kind="human",
+                        resume_cursor=json.dumps({"phase": "child_step"}),
+                    ),
+                ),
+            )
+
+        @workflow(
+            name="child_flow",
+            outputs={"type": "object", "required": ["child"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @phase
+        def parent_after(ctx: dict) -> dict:
+            return {"after": True}
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield child(ctx, id="child_call")
+            state = yield parent_after(ctx)
+            return state
+
+        trace_dir = tmp_path / "trace"
+        first = run_native_pipeline(
+            compile_pipeline(parent),
+            artifact_root=tmp_path,
+            trace_dir=trace_dir,
+        )
+        assert first.suspended is True
+
+        resumed = run_native_pipeline(
+            compile_pipeline(parent),
+            artifact_root=tmp_path,
+            trace_dir=trace_dir,
+            resume=True,
+        )
+        assert resumed.suspended is False
+
+        events = [
+            json.loads(line)
+            for line in (trace_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        suspended_events = [event for event in events if event["kind"] == "pipeline_suspended"]
+        resumed_events = [event for event in events if event["kind"] == "pipeline_resumed"]
+        assert suspended_events[-1]["payload"]["reason"] == "child_suspended"
+        assert suspended_events[-1]["payload"]["trace"]["path"] == "root/child_flow"
+        assert resumed_events[-1]["payload"]["reason"] in {"child_suspended", "native_resume"}
+        assert resumed_events[-1]["payload"]["trace"]["path"] in {
+            "root/child_flow",
+            "root/child_call/child_step",
+        }
+
+        checkpoint = json.loads((trace_dir / "checkpoint.json").read_text(encoding="utf-8"))
+        assert checkpoint["tree_file"] == "tree.json"
+        tree = json.loads((trace_dir / "tree.json").read_text(encoding="utf-8"))
+        nodes = {node["path"]: node for node in tree["nodes"]}
+        assert nodes["root/child_call"]["kind"] == "subpipeline"
+
+
+class TestCancellationBoundarySentinel:
+    def test_noop_cancellation_boundary_is_observable_without_changing_execution(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        observed: list[dict[str, object]] = []
+
+        def record_boundary(**payload: object) -> None:
+            observed.append(dict(payload))
+
+        monkeypatch.setattr(
+            "arnold.pipeline.native.runtime._check_cancellation_boundary",
+            record_boundary,
+        )
+
+        @phase
+        def child_step(ctx: dict) -> dict:
+            return {"child": "done"}
+
+        @workflow(
+            name="child_flow",
+            outputs={"type": "object", "required": ["child"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @phase
+        def parent_step(ctx: dict) -> dict:
+            return {"parent": True}
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield parent_step(ctx)
+            state = yield child(ctx, id="child_call")
+            return state
+
+        result = run_native_pipeline(
+            compile_pipeline(parent),
+            artifact_root=tmp_path,
+            initial_envelope=RunEnvelope(cancellation=True),
+        )
+
+        assert result.suspended is False
+        assert result.state == {"parent": True, "child": "done"}
+        assert [entry["boundary"] for entry in observed] == [
+            "step_enter",
+            "step_exit",
+            "child_enter",
+            "step_enter",
+            "step_exit",
+            "child_exit",
+        ]
+        assert all(entry["envelope"].cancellation is True for entry in observed)
+
 
 # ── decision branching ────────────────────────────────────────────────
 
@@ -1320,6 +1829,118 @@ class TestWhileLoopExecution:
         assert seen_step_paths == [
             "root/critique_loop[1]/body",
             "root/critique_loop[2]/body",
+        ]
+
+    def test_nested_loop_iterations_are_scoped_by_full_run_path(self) -> None:
+        seen_run_paths: list[str] = []
+        counts_by_child: dict[str, int] = {}
+
+        @phase
+        def body(ctx: dict) -> dict:
+            child_id = ctx["call_site_path"][0]
+            seen_run_paths.append(ctx["run_path"])
+            counts_by_child[child_id] = counts_by_child.get(child_id, 0) + 1
+            return {"count": counts_by_child[child_id]}
+
+        @decision(name="critique_loop", vocabulary={"again", "done"})
+        def guard(ctx: dict) -> str:
+            child_id = ctx["call_site_path"][0]
+            return "again" if counts_by_child.get(child_id, 0) < 2 else "done"
+
+        @workflow(
+            name="child_flow",
+            outputs={"type": "object", "required": ["count"]},
+        )
+        def child(ctx: dict) -> dict:
+            state: dict = {}
+            while guard(ctx) == "again":
+                state = yield body(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield child(ctx, id="child_a", outputs={"count": "a_count"})
+            state = yield child(ctx, id="child_b", outputs={"count": "b_count"})
+            return state
+
+        prog = compile_pipeline(parent)
+        result = run_native_pipeline(prog)
+
+        assert result.state["a_count"] == 2
+        assert result.state["b_count"] == 2
+        assert seen_run_paths == [
+            "root/child_a/critique_loop[1]",
+            "root/child_a/critique_loop[2]",
+            "root/child_b/critique_loop[1]",
+            "root/child_b/critique_loop[2]",
+        ]
+
+    def test_resume_path_stack_round_trips_legacy_loop_and_subpipeline_frames(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        @phase
+        def step(ctx: dict) -> dict:
+            return {"ok": True}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield step(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        cursor_path = tmp_path / "resume_cursor.json"
+        cursor_path.write_text(
+            json.dumps(
+                {
+                    "stage": "my_pipe__step__pc0",
+                    "resume_cursor": None,
+                    "stages": [],
+                    "loops": {"critique_loop": 2},
+                    "frames": {"__state__": {}},
+                    "run_path": "root/child_call/critique_loop[2]",
+                    "step_path": "root/child_call/critique_loop[2]/step",
+                    "call_site_path": ["child_call", "critique_loop[2]"],
+                    "path_stack": [
+                        {
+                            "kind": "subpipeline",
+                            "segment": "child_call",
+                            "parent_run_path": "root",
+                        },
+                        {
+                            "header_pc": 1,
+                            "segment": "critique_loop[2]",
+                            "parent_run_path": "root/child_call",
+                        },
+                    ],
+                    "native": {"pc": 0, "version": 1},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            resume=True,
+            max_phases=1,
+        )
+
+        assert result.suspended is True
+        cursor = read_native_cursor(tmp_path)
+        assert cursor is not None
+        assert cursor["path_stack"] == [
+            {
+                "kind": "subpipeline",
+                "segment": "child_call",
+                "parent_run_path": "root",
+            },
+            {
+                "kind": "loop",
+                "header_pc": 1,
+                "segment": "critique_loop[2]",
+                "parent_run_path": "root/child_call",
+            },
         ]
 
     def test_runtime_subpipeline_cycle_guard_rejects_recursive_program(self) -> None:

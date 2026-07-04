@@ -90,6 +90,9 @@ from arnold.pipeline.resume import (
 NATIVE_CURSOR_VERSION = 1
 """Schema version for the native cursor payload."""
 
+STANDARD_NATIVE_CURSOR_KIND = "native"
+COMPOSITE_PARENT_CHILD_CURSOR_KIND = "composite_parent_child"
+
 
 class NativeCursorCorruptError(ValueError):
     """Raised when a resume cursor carries a native key that is corrupt.
@@ -122,6 +125,176 @@ class CursorUpgradeError(ValueError):
         self.detail = detail
         self.cursor_path = cursor_path
         self.details = dict(details or {})
+
+
+def _is_valid_relative_cursor_path(value: Any) -> bool:
+    """Return whether *value* is a safe relative child cursor path."""
+
+    if not isinstance(value, str) or not value:
+        return False
+    path = Path(value)
+    if path.is_absolute():
+        return False
+    return ".." not in path.parts
+
+
+def _normalize_parent_child_composite_cursor(
+    composite: Any,
+    *,
+    cursor_path: Path,
+) -> dict[str, Any] | None:
+    """Validate and normalise a composite parent/child cursor payload."""
+
+    if composite is None:
+        return None
+    if not isinstance(composite, dict):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has a 'composite' key "
+            f"that is not a JSON object (got {type(composite).__name__}). "
+            f"The cursor claims composite native ownership but the composite "
+            f"payload is unreadable — refusing to resume.",
+            cursor_path=str(cursor_path),
+        )
+    if composite.get("kind") != "parent_child":
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has a composite cursor with an "
+            f"unsupported kind {composite.get('kind')!r}. Expected "
+            f"'parent_child' — refusing to resume.",
+            cursor_path=str(cursor_path),
+        )
+
+    parent = composite.get("parent")
+    child = composite.get("child")
+    if not isinstance(parent, dict) or not isinstance(child, dict):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} must store composite parent and child "
+            f"frames as JSON objects — refusing to resume.",
+            cursor_path=str(cursor_path),
+        )
+
+    if not isinstance(parent.get("pc"), int):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has composite.parent.pc of type "
+            f"{type(parent.get('pc')).__name__} (expected int) — refusing to resume.",
+            cursor_path=str(cursor_path),
+        )
+    run_path = parent.get("run_path")
+    if run_path is not None and not isinstance(run_path, str):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has composite.parent.run_path of type "
+            f"{type(run_path).__name__} (expected str or null) — refusing to resume.",
+            cursor_path=str(cursor_path),
+        )
+    path_stack = parent.get("path_stack")
+    if path_stack is None:
+        path_stack = []
+    if not isinstance(path_stack, list):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has composite.parent.path_stack of type "
+            f"{type(path_stack).__name__} (expected list) — refusing to resume.",
+            cursor_path=str(cursor_path),
+        )
+    state = parent.get("state")
+    stages = parent.get("stages")
+    loops = parent.get("loops")
+    frames = parent.get("frames")
+    if not isinstance(state, dict):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has composite.parent.state of type "
+            f"{type(state).__name__} (expected dict) — refusing to resume.",
+            cursor_path=str(cursor_path),
+        )
+    if not isinstance(stages, list):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has composite.parent.stages of type "
+            f"{type(stages).__name__} (expected list) — refusing to resume.",
+            cursor_path=str(cursor_path),
+        )
+    if not isinstance(loops, dict):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has composite.parent.loops of type "
+            f"{type(loops).__name__} (expected dict) — refusing to resume.",
+            cursor_path=str(cursor_path),
+        )
+    if not isinstance(frames, dict):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has composite.parent.frames of type "
+            f"{type(frames).__name__} (expected dict) — refusing to resume.",
+            cursor_path=str(cursor_path),
+        )
+    cursor_id = parent.get("cursor_id")
+    if cursor_id is not None and not isinstance(cursor_id, str):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has composite.parent.cursor_id of type "
+            f"{type(cursor_id).__name__} (expected str or null) — refusing to resume.",
+            cursor_path=str(cursor_path),
+        )
+
+    cursor_rel_path = child.get("cursor_path")
+    if not _is_valid_relative_cursor_path(cursor_rel_path):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has composite.child.cursor_path "
+            f"{cursor_rel_path!r}, but child cursor paths must be non-empty "
+            f"relative paths without parent traversal — refusing to resume.",
+            cursor_path=str(cursor_path),
+        )
+    child_run_path = child.get("run_path")
+    if child_run_path is not None and not isinstance(child_run_path, str):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} has composite.child.run_path of type "
+            f"{type(child_run_path).__name__} (expected str or null) — refusing to resume.",
+            cursor_path=str(cursor_path),
+        )
+    call_site_path = child.get("call_site_path")
+    normalized_call_site_path: tuple[str, ...] = ()
+    if call_site_path is not None:
+        if not isinstance(call_site_path, (list, tuple)):
+            raise NativeCursorCorruptError(
+                f"Resume cursor at {cursor_path} has composite.child.call_site_path "
+                f"of type {type(call_site_path).__name__} (expected list) — refusing to resume.",
+                cursor_path=str(cursor_path),
+            )
+        normalized_call_site_path = tuple(
+            str(segment)
+            for segment in call_site_path
+            if isinstance(segment, str) and segment
+        )
+        if len(normalized_call_site_path) != len(call_site_path):
+            raise NativeCursorCorruptError(
+                f"Resume cursor at {cursor_path} has composite.child.call_site_path "
+                f"with empty or non-string segments — refusing to resume.",
+                cursor_path=str(cursor_path),
+            )
+
+    return {
+        "kind": "parent_child",
+        "parent": {
+            "pc": parent["pc"],
+            "run_path": run_path,
+            "path_stack": path_stack,
+            "state": state,
+            "stages": stages,
+            "loops": loops,
+            "frames": frames,
+            "envelope": parent.get("envelope"),
+            "cursor_id": cursor_id,
+        },
+        "child": {
+            "cursor_path": cursor_rel_path,
+            "run_path": child_run_path,
+            "call_site_path": normalized_call_site_path,
+        },
+    }
+
+
+def classify_native_cursor_kind(cursor: dict[str, Any]) -> str:
+    """Return the validated native cursor subtype."""
+
+    return (
+        COMPOSITE_PARENT_CHILD_CURSOR_KIND
+        if isinstance(cursor.get("composite"), dict)
+        else STANDARD_NATIVE_CURSOR_KIND
+    )
 
 
 @dataclass(frozen=True)
@@ -266,6 +439,11 @@ def classify_resume_cursor(artifact_root: str | Path) -> str:
             f"version is unreadable — refusing to route.",
             cursor_path=str(cursor_path),
         )
+
+    _normalize_parent_child_composite_cursor(
+        raw.get("composite"),
+        cursor_path=cursor_path,
+    )
 
     # Valid native cursor.
     return "native"
@@ -648,15 +826,32 @@ def read_native_cursor(artifact_root: str | Path) -> dict[str, Any] | None:
     if not isinstance(raw_path_stack, list):
         data["path_stack"] = []
 
+    composite = _normalize_parent_child_composite_cursor(
+        data.get("composite"),
+        cursor_path=cursor_path,
+    )
+    if composite is not None:
+        data["composite"] = composite
+    elif "composite" in data:
+        data.pop("composite", None)
+    data["native_cursor_kind"] = (
+        COMPOSITE_PARENT_CHILD_CURSOR_KIND
+        if composite is not None
+        else STANDARD_NATIVE_CURSOR_KIND
+    )
+
     return data
 
 
 __all__ = [
     "CursorUpgradeError",
     "CursorUpgradeResult",
+    "COMPOSITE_PARENT_CHILD_CURSOR_KIND",
     "NATIVE_CURSOR_VERSION",
     "NativeCursorCorruptError",
+    "STANDARD_NATIVE_CURSOR_KIND",
     "classify_resume_cursor",
+    "classify_native_cursor_kind",
     "persist_native_cursor",
     "read_native_cursor",
     "upgrade_graph_cursor_to_native",

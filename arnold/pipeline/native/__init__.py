@@ -78,6 +78,7 @@ from arnold.pipeline.native.runtime import (
     NativeRuntimeError,
     run_native_pipeline,
 )
+from arnold.pipeline.native.start_from_path import start_from_trace
 from arnold.pipeline.native.audit import AuditHooks
 from arnold.pipeline.native.trace import NativeTraceHooks
 from arnold.pipeline.native.validator import (
@@ -148,6 +149,7 @@ __all__ = [
     "read_native_cursor",
     "require_native_runtime",
     "run_native_pipeline",
+    "start_from_trace",
     "step",
     "upgrade_graph_cursor_to_native",
     "validate_decision_body",

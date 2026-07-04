@@ -669,3 +669,43 @@ class NativeTraceHooks:
                     "trace": trace,
                 },
             )
+
+    def emit_pipeline_suspended(
+        self,
+        *,
+        reason: str,
+        run_path: Any = None,
+        step_path: Any = None,
+        call_site_path: Any = None,
+    ) -> None:
+        trace = self._trace_context(
+            path=step_path or run_path or ROOT_PATH,
+            run_path=run_path,
+            step_path=step_path,
+            call_site_path=call_site_path,
+        )
+        if self._journal is not None:
+            self._journal.emit(
+                "pipeline_suspended",
+                payload={"reason": reason, "trace": trace},
+            )
+
+    def emit_pipeline_resumed(
+        self,
+        *,
+        reason: str,
+        run_path: Any = None,
+        step_path: Any = None,
+        call_site_path: Any = None,
+    ) -> None:
+        trace = self._trace_context(
+            path=step_path or run_path or ROOT_PATH,
+            run_path=run_path,
+            step_path=step_path,
+            call_site_path=call_site_path,
+        )
+        if self._journal is not None:
+            self._journal.emit(
+                "pipeline_resumed",
+                payload={"reason": reason, "trace": trace},
+            )
