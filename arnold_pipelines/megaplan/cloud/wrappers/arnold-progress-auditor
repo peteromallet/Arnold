@@ -1668,32 +1668,47 @@ def _append_stage_metric(bucket, counter, amount, *refs):
         seen.add(marker)
 
 def _resolve_event_phase(events):
+    """Walk events in reverse chronological order to find the most recent phase-bearing event.
+
+    Returns (phase_name, kind, timestamp) or (\"\", \"\", None) when no phase event exists.
+    ``llm_token_heartbeat`` events indicate active LLM work; they do not carry a phase
+    name but are evidence that the most recent phase_start is still in-flight.
+    """
     sorted_events = sorted(
         events, key=lambda e: _event_timestamp(e) or 0, reverse=True
     )
+    last_heartbeat_ts = None
     for event in sorted_events:
         kind = str(event.get("kind") or event.get("event_type") or "").strip().lower()
+        ts = _event_timestamp(event)
+        if kind == "llm_token_heartbeat":
+            if last_heartbeat_ts is None:
+                last_heartbeat_ts = ts
+            continue
         if kind in ("phase_start", "phase_end", "state_transition"):
             payload = event.get("payload") or {}
             phase = (payload.get("phase") or "").strip()
             if not phase:
                 phase = (event.get("phase") or "").strip()
             if phase:
-                return _normalize_stage_metric_phase(phase), kind, _event_timestamp(event)
+                return _normalize_stage_metric_phase(phase), kind, ts
+        # Other event kinds that may carry phase info
         payload = event.get("payload") or {}
         phase = (payload.get("phase") or "").strip()
         if phase:
-            return _normalize_stage_metric_phase(phase), kind, _event_timestamp(event)
+            return _normalize_stage_metric_phase(phase), kind, ts
     return "", "", None
+
 
 def _build_stage_metrics(entries):
     stage_metrics = _stage_metrics_template()
-    events_cache = {}
+    events_cache = {}  # events_path_str -> list of events
 
     for entry in (entries if isinstance(entries, list) else []):
         if not isinstance(entry, dict):
             continue
 
+        # ── derive events path from state_path ──────────────────────────
         state_path = entry.get("state_path") or ""
         events_path_str = ""
         events = []
@@ -1704,11 +1719,13 @@ def _build_stage_metrics(entries):
             except Exception:
                 pass
 
+        # Load events once per plan (dedup by path)
         if events_path_str:
             if events_path_str not in events_cache:
                 events_cache[events_path_str] = _load_events(pathlib.Path(events_path_str))
             events = events_cache.get(events_path_str, [])
 
+        # ── active_event_phase from event telemetry ─────────────────────
         if events:
             active_phase, phase_kind, phase_ts = _resolve_event_phase(events)
             if active_phase:
@@ -1719,18 +1736,23 @@ def _build_stage_metrics(entries):
                     entry["active_event_phase_ts"] = phase_ts.isoformat() if isinstance(phase_ts, dt.datetime) else str(phase_ts)
 
         if not events:
+            # No events file – fall back to state-based unknown detection
             phase = entry.get("active_step_phase")
-            if phase and not _map_phase_to_stage(phase):
-                stage_metrics["unknown_phase_count"] += 1
-                stage_metrics["unknown_phase_evidence"].append(
-                    {
-                        "phase": _normalize_stage_metric_phase(phase),
-                        "refs": _unknown_stage_phase_refs(entry, phase),
-                    }
-                )
+            if phase:
+                stage = _map_phase_to_stage(phase)
+                if not stage:
+                    stage_metrics["unknown_phase_count"] += 1
+                    stage_metrics["unknown_phase_evidence"].append(
+                        {
+                            "phase": _normalize_stage_metric_phase(phase),
+                            "refs": _unknown_stage_phase_refs(entry, phase),
+                        }
+                    )
         else:
-            phase_starts = {}
-            phase_ends = {}
+            # ── collect phase_start / phase_end pairs ───────────────────────
+            phase_starts = {}  # phase_name -> [(ts, event), ...]
+            phase_ends = {}    # phase_name -> [(ts, event), ...]
+
             for event in events:
                 kind = str(event.get("kind") or event.get("event_type") or "").strip().lower()
                 if kind not in ("phase_start", "phase_end"):
@@ -1748,11 +1770,15 @@ def _build_stage_metrics(entries):
                     phase_ends.setdefault(phase, []).append((ts, event))
 
             all_phases = set(list(phase_starts.keys()) + list(phase_ends.keys()))
+
             for phase_name in sorted(all_phases):
                 starts = sorted(phase_starts.get(phase_name, []), key=lambda x: x[0] or 0)
                 ends = sorted(phase_ends.get(phase_name, []), key=lambda x: x[0] or 0)
+
                 stage = _map_phase_to_stage(phase_name)
                 normalized_phase = _normalize_stage_metric_phase(phase_name)
+
+                # Greedy pairing: each start matched with the next end after it
                 paired = []
                 end_idx = 0
                 for start_ts, start_ev in starts:
@@ -1766,6 +1792,7 @@ def _build_stage_metrics(entries):
                             break
                         end_idx += 1
 
+                # ── durations from paired events ─────────────────────────
                 for start_ts, start_ev, end_ts, end_ev in paired:
                     duration = max(0, int((end_ts - start_ts).total_seconds()))
                     start_iso = start_ts.isoformat() if isinstance(start_ts, dt.datetime) else str(start_ts)
@@ -1803,6 +1830,7 @@ def _build_stage_metrics(entries):
                             }
                         )
 
+                # ── unpaired phase_start (missing phase_end) ─────────────
                 for i in range(len(paired), len(starts)):
                     start_ts, start_ev = starts[i]
                     start_iso = start_ts.isoformat() if isinstance(start_ts, dt.datetime) else str(start_ts) if start_ts else ""
@@ -1813,8 +1841,9 @@ def _build_stage_metrics(entries):
                         source="events.ndjson",
                     )
                     if stage:
-                        stage_metrics[stage]["missing_evidence"] += 1
-                        stage_metrics[stage]["missing_evidence_evidence"].append(ev_ref)
+                        bucket = stage_metrics[stage]
+                        bucket["missing_evidence"] += 1
+                        bucket["missing_evidence_evidence"].append(ev_ref)
                     else:
                         stage_metrics["unknown_phase_count"] += 1
                         stage_metrics["unknown_phase_evidence"].append(
@@ -1824,6 +1853,7 @@ def _build_stage_metrics(entries):
                             }
                         )
 
+                # ── unpaired phase_end (missing phase_start) ─────────────
                 for i in range(len(paired), len(ends)):
                     end_ts, end_ev = ends[i]
                     end_iso = end_ts.isoformat() if isinstance(end_ts, dt.datetime) else str(end_ts) if end_ts else ""
@@ -1834,8 +1864,9 @@ def _build_stage_metrics(entries):
                         source="events.ndjson",
                     )
                     if stage:
-                        stage_metrics[stage]["missing_evidence"] += 1
-                        stage_metrics[stage]["missing_evidence_evidence"].append(ev_ref)
+                        bucket = stage_metrics[stage]
+                        bucket["missing_evidence"] += 1
+                        bucket["missing_evidence_evidence"].append(ev_ref)
                     else:
                         stage_metrics["unknown_phase_count"] += 1
                         stage_metrics["unknown_phase_evidence"].append(
@@ -1845,20 +1876,23 @@ def _build_stage_metrics(entries):
                             }
                         )
 
+        # ── state-based unknown phases (phases in state but not in events) ──
         phase = entry.get("active_step_phase")
-        if phase and not _map_phase_to_stage(phase):
-            already_recorded = any(
-                e.get("phase") == _normalize_stage_metric_phase(phase)
-                for e in stage_metrics["unknown_phase_evidence"]
-            )
-            if not already_recorded:
-                stage_metrics["unknown_phase_count"] += 1
-                stage_metrics["unknown_phase_evidence"].append(
-                    {
-                        "phase": _normalize_stage_metric_phase(phase),
-                        "refs": _unknown_stage_phase_refs(entry, phase),
-                    }
+        if phase:
+            stage = _map_phase_to_stage(phase)
+            if not stage:
+                already_recorded = any(
+                    e.get("phase") == _normalize_stage_metric_phase(phase)
+                    for e in stage_metrics["unknown_phase_evidence"]
                 )
+                if not already_recorded:
+                    stage_metrics["unknown_phase_count"] += 1
+                    stage_metrics["unknown_phase_evidence"].append(
+                        {
+                            "phase": _normalize_stage_metric_phase(phase),
+                            "refs": _unknown_stage_phase_refs(entry, phase),
+                        }
+                    )
 
         repair_summary = entry.get("repair_data_summary") if isinstance(entry.get("repair_data_summary"), dict) else {}
         repair_bucket = stage_metrics["repair"]
@@ -1897,6 +1931,7 @@ def _build_stage_metrics(entries):
             )
 
         meta_summary = entry.get("meta_repair_summary") if isinstance(entry.get("meta_repair_summary"), dict) else {}
+        meta_bucket = stage_metrics["meta_repair"]
         meta_record_count = int(meta_summary.get("meta_record_count") or 0)
         meta_run_count = int(meta_summary.get("meta_run_log_count") or 0)
         meta_attempt_count = max(meta_record_count, meta_run_count)
@@ -1912,7 +1947,7 @@ def _build_stage_metrics(entries):
                 if isinstance(item, dict) and item.get("path")
             ]
             _append_stage_metric(
-                stage_metrics["meta_repair"],
+                meta_bucket,
                 "meta_repair_attempts",
                 meta_attempt_count,
                 _stage_metric_ref(
@@ -1925,6 +1960,7 @@ def _build_stage_metrics(entries):
                     meta_run_paths=run_refs[:3],
                 ),
             )
+
         if int(entry.get("recent_gate_iterate") or 0) > 0:
             _append_stage_metric(
                 stage_metrics["gate"],
@@ -1941,19 +1977,21 @@ def _build_stage_metrics(entries):
             )
 
         chain_log = entry.get("chain_log") if isinstance(entry.get("chain_log"), dict) else {}
+        chain_bucket = stage_metrics["chain"]
         for item in (chain_log.get("repetition_summary") or []):
             if not isinstance(item, dict):
                 continue
             count = int(item.get("count") or 0)
             if count < 2:
                 continue
+            signature = str(item.get("signature") or "").strip()
             _append_stage_metric(
-                stage_metrics["chain"],
+                chain_bucket,
                 "retries",
                 count - 1,
                 _stage_metric_ref(
                     "chain_log_repetition",
-                    str(item.get("signature") or "").strip(),
+                    signature,
                     source="chain_log",
                     path=chain_log.get("path") or "",
                     occurrences=count,
@@ -1965,7 +2003,7 @@ def _build_stage_metrics(entries):
         if stop_cycles:
             last_cycle = stop_cycles[-1] if isinstance(stop_cycles[-1], dict) else {}
             _append_stage_metric(
-                stage_metrics["chain"],
+                chain_bucket,
                 "no_op_loops",
                 len(stop_cycles),
                 _stage_metric_ref(
@@ -1978,10 +2016,11 @@ def _build_stage_metrics(entries):
                     stop_line=last_cycle.get("stop_line"),
                 ),
             )
+
         stale_state = entry.get("stale_state_evidence") if isinstance(entry.get("stale_state_evidence"), dict) else {}
         if stale_state.get("stale_block_replay"):
             _append_stage_metric(
-                stage_metrics["chain"],
+                chain_bucket,
                 "no_op_loops",
                 1,
                 _stage_metric_ref(
@@ -1993,7 +2032,7 @@ def _build_stage_metrics(entries):
             )
         if stale_state.get("between_milestone_cycling"):
             _append_stage_metric(
-                stage_metrics["chain"],
+                chain_bucket,
                 "no_op_loops",
                 1,
                 _stage_metric_ref(
@@ -2006,10 +2045,11 @@ def _build_stage_metrics(entries):
                 ),
             )
 
+        human_bucket = stage_metrics["human_pr_ci"]
         unresolved_actions = (entry.get("user_action_context") or {}).get("unresolved_user_actions") or []
         if unresolved_actions:
             _append_stage_metric(
-                stage_metrics["human_pr_ci"],
+                human_bucket,
                 "human_waits",
                 len(unresolved_actions),
                 _stage_metric_ref(
@@ -2024,7 +2064,7 @@ def _build_stage_metrics(entries):
         chain_last_state = str(chain_current.get("last_state") or "").strip().lower()
         if chain_last_state == "awaiting_human":
             _append_stage_metric(
-                stage_metrics["human_pr_ci"],
+                human_bucket,
                 "human_waits",
                 1,
                 _stage_metric_ref(
@@ -2036,7 +2076,7 @@ def _build_stage_metrics(entries):
             )
         if chain_last_state == "pr_closed":
             _append_stage_metric(
-                stage_metrics["human_pr_ci"],
+                human_bucket,
                 "ci_waits",
                 1,
                 _stage_metric_ref(
@@ -2055,7 +2095,7 @@ def _build_stage_metrics(entries):
         )
         if isinstance(pr_closed_repeat, dict) and int(pr_closed_repeat.get("count") or 0) >= 2:
             _append_stage_metric(
-                stage_metrics["human_pr_ci"],
+                human_bucket,
                 "ci_waits",
                 int(pr_closed_repeat.get("count") or 0) - 1,
                 _stage_metric_ref(
@@ -2074,21 +2114,19 @@ def _build_stage_metrics(entries):
         expected_handoff = incident_audit.get("next_expected_event") or incident_brief.get("next_expected_event") or ""
         incident_handoff_gap_count = int(entry.get("incident_handoff_gap_count") or 0)
         if incident_handoff_gap_count > 0:
-            refs = entry.get("incident_handoff_gap_refs") if isinstance(entry.get("incident_handoff_gap_refs"), list) else []
             _append_stage_metric(
-                stage_metrics["chain"],
+                chain_bucket,
                 "handoff_gaps",
                 incident_handoff_gap_count,
-                *refs[:3],
+                *((entry.get("incident_handoff_gap_refs") or [])[:3] if isinstance(entry.get("incident_handoff_gap_refs"), list) else []),
             )
         incident_dead_worker_count = int(entry.get("incident_dead_worker_count") or 0)
         if incident_dead_worker_count > 0:
-            refs = entry.get("incident_dead_worker_refs") if isinstance(entry.get("incident_dead_worker_refs"), list) else []
             _append_stage_metric(
                 stage_metrics["deployment_runtime"],
                 "dead_workers",
                 incident_dead_worker_count,
-                *refs[:3],
+                *((entry.get("incident_dead_worker_refs") or [])[:3] if isinstance(entry.get("incident_dead_worker_refs"), list) else []),
             )
         for finding in (incident_audit.get("findings") or []):
             if not isinstance(finding, dict) or finding.get("status") == "ok":
@@ -2099,7 +2137,7 @@ def _build_stage_metrics(entries):
             if incident_handoff_gap_count <= 0 and (layer == "stale_claim" or code == "stale_claim_detected"):
                 handoff_amount = len(finding.get("claim_ids") or []) if isinstance(finding.get("claim_ids"), list) and finding.get("claim_ids") else 1
                 _append_stage_metric(
-                    stage_metrics["chain"],
+                    chain_bucket,
                     "handoff_gaps",
                     handoff_amount,
                     _stage_metric_ref(
