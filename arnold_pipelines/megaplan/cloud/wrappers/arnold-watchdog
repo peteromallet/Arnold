@@ -5554,6 +5554,7 @@ def is_complete_state(payload: object) -> bool:
         incomplete = [
             item for item in completed_list
             if isinstance(item, dict) and str(item.get("status") or "").strip() not in {"done", "complete", "completed"}
+            and "label" not in item
         ]
         if incomplete:
             return False
