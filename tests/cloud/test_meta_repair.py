@@ -251,6 +251,51 @@ class TestClassifyPartialLivenessRecurrence:
         )
         assert result.trigger == MetaRepairTrigger.PARTIAL_LIVENESS_RECURRENCE
 
+    def test_partial_liveness_suppressed_by_fresher_live_target(self, tmp_path: Path) -> None:
+        repair_root = _make_session_dir(tmp_path, "s15-live")
+        repair_data_path = repair_root / "s15-live.repair-data.json"
+        repair_data_path.write_text(
+            json.dumps(
+                {
+                    "session": "s15-live",
+                    "outcome": "running",
+                    "attempts": [
+                        {
+                            "attempt_id": 1,
+                            "failure_classification": "blocked_state_or_recovery_error",
+                            "dispatched_at": "2026-07-04T09:33:21Z",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result, _ = evaluate_meta_repair_triggers(
+            "s15-live",
+            repair_data_dir=repair_root,
+            repair_outcome=REPAIRING,
+            partial_liveness_ticks=3,
+            current_target_observation={
+                "authoritative_source": "chain_state",
+                "active_step_heartbeat": {"active": False},
+                "current_refs": {
+                    "current_plan_name": "test-plan",
+                    "chain_current_plan_name": "test-plan",
+                    "plan_current_state": "finalized",
+                    "chain_last_state": "finalized",
+                },
+                "plan_state": {"present": True, "mtime": datetime(2026, 7, 4, 10, 13, tzinfo=timezone.utc).timestamp()},
+                "chain_state": {"present": True, "mtime": datetime(2026, 7, 4, 10, 13, tzinfo=timezone.utc).timestamp()},
+                "chain_log": {"present": True, "mtime": datetime(2026, 7, 4, 10, 13, tzinfo=timezone.utc).timestamp()},
+                "event_cursors": {"mtime": datetime(2026, 7, 4, 10, 13, tzinfo=timezone.utc).timestamp()},
+            },
+            load_evidence=True,
+        )
+        assert result.trigger is None
+        assert result.should_dispatch is False
+        assert "supersedes stale recurring repair evidence" in result.rationale[0]
+
 
 class TestClassifyDiscordDeliveryFailure:
     def test_discord_true_blocker_triggers(self) -> None:
