@@ -295,6 +295,11 @@ def _build_session_entry(
     )
     latest_activity = _latest_activity(chain_health, marker)
     liveness = _safe_liveness(liveness_probe, marker)
+    superseding_sibling = _find_superseding_sibling(
+        marker,
+        marker_dir=marker_dir,
+        liveness_probe=liveness_probe,
+    )
 
     status, operator_next = _classify_session(
         session=session,
@@ -306,6 +311,7 @@ def _build_session_entry(
         repair_progress=repair_progress,
         watchdog_item=watchdog_item,
         liveness=liveness,
+        superseding_sibling=superseding_sibling,
         latest_activity_dt=_parse_iso(latest_activity),
         repair_data_dir=repair_data_dir,
         now=now,
@@ -337,6 +343,7 @@ def _build_session_entry(
             "needs_human": (
                 str(repair_data_dir / f"{session}.needs-human.json") if needs_human else None
             ),
+            "superseded_by": superseding_sibling,
         },
     }
 
@@ -352,6 +359,7 @@ def _classify_session(
     repair_progress: Mapping[str, Any],
     watchdog_item: Mapping[str, Any],
     liveness: Mapping[str, bool],
+    superseding_sibling: str | None,
     latest_activity_dt: datetime | None,
     repair_data_dir: Path,
     now: datetime,
@@ -367,6 +375,12 @@ def _classify_session(
     # Terminal success is the strongest signal and beats stale plan failures.
     if chain_complete:
         return "complete", "chain complete; no runner expected"
+
+    if superseding_sibling and not (liveness.get("tmux") or liveness.get("process")):
+        return (
+            "complete",
+            f"superseded by sibling session {superseding_sibling}; no runner expected",
+        )
 
     # Awaiting human action blocks progress that automation should not touch.
     if _is_needs_human(needs_human):
@@ -468,6 +482,47 @@ def _load_json(path: Path) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _find_superseding_sibling(
+    marker: Mapping[str, Any],
+    *,
+    marker_dir: Path,
+    liveness_probe: LivenessProbe,
+) -> str | None:
+    """Return sibling evidence that makes this stale marker non-actionable.
+
+    The watchdog wrapper has the same operational rule for stopped sessions:
+    when another canonical marker in the same workspace owns the live work, the
+    older marker is superseded rather than relaunched or escalated. The snapshot
+    needs that reconciliation too, otherwise stale needs-human sidecars from a
+    parent wrapper continue to appear as active blocked work after a child chain
+    has taken over or completed.
+    """
+
+    session = str(marker.get("session") or "")
+    workspace = str(marker.get("workspace") or "")
+    if not session or not workspace:
+        return None
+
+    for other in _load_session_markers(marker_dir):
+        other_session = str(other.get("session") or "")
+        other_workspace = str(other.get("workspace") or "")
+        if not other_session or other_session == session or other_workspace != workspace:
+            continue
+        other_remote_spec = str(other.get("remote_spec") or "")
+        if not other_remote_spec:
+            continue
+
+        other_health = _load_json(marker_dir / f"{other_session}.chain-health.progress.json")
+        if isinstance(other_health, Mapping) and bool(other_health.get("chain_complete")):
+            return f"{other_session}:complete"
+
+        other_liveness = _safe_liveness(liveness_probe, other)
+        if other_liveness.get("tmux") or other_liveness.get("process"):
+            return f"{other_session}:alive"
+
+    return None
 
 
 # --- classification helpers ------------------------------------------------

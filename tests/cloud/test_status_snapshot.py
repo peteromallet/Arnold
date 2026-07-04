@@ -247,6 +247,43 @@ def test_blocked_session_when_needs_human_marker_present(fx):
     assert "merge the PR" in entry["operator_next"]
 
 
+def test_stale_parent_needs_human_is_superseded_by_completed_child(fx):
+    workspace = fx.root / "shared-workspace"
+    fx.add_session(
+        "parent",
+        workspace=str(workspace),
+        remote_spec=str(
+            workspace / ".megaplan" / "initiatives" / "demo" / "assets" / "epic-chain.yaml"
+        ),
+        run_kind="epic_chain",
+        started_at="2026-07-01T02:02:15Z",
+    )
+    fx.add_needs_human("parent", summary="old parent repair exhaustion")
+
+    fx.add_session(
+        "child",
+        workspace=str(workspace),
+        remote_spec=str(workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"),
+        run_kind="chain",
+        started_at="2026-07-01T03:52:27Z",
+    )
+    fx.add_chain_health(
+        "child",
+        chain_complete=True,
+        completed_count=8,
+        milestone_count=8,
+        last_state="done",
+    )
+
+    snap = fx.build()
+    parent = _by_session(snap, "parent")
+    assert parent["status"] == "complete"
+    assert parent["should_run"] is False
+    assert "superseded by sibling session child:complete" in parent["operator_next"]
+    assert parent["evidence"]["superseded_by"] == "child:complete"
+    assert parent not in ss.plan_activity_summary(snap)["should_be_working_but_needs_attention"]
+
+
 def test_summary_counts_partition_all_sessions(fx):
     fx.add_session("r1"); fx.add_chain_health("r1")
     fx.add_session("r2"); fx.add_chain_health("r2")
