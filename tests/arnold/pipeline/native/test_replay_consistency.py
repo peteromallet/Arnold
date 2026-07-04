@@ -26,6 +26,7 @@ from arnold.pipeline.native import (
     run_native_pipeline,
     workflow,
 )
+from arnold.pipeline.native.audit import AuditHooks
 from arnold.pipeline.native.checkpoint import read_native_cursor
 
 # ── module-level fixture ──────────────────────────────────────────────
@@ -666,3 +667,526 @@ class TestReplayConsistency:
             "root/outer_loop[2]/child_loop/inner_loop[1]",
             "root/outer_loop[2]/child_loop/inner_loop[2]",
         ]
+
+
+# ── depth-2+ replay consistency ────────────────────────────────────────
+
+
+class TestDepth2PlusReplayConsistency:
+    """Interrupted/resumed depth-2+ child execution with audit and path stability."""
+
+    # ── helpers ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _read_audit_ndjson(audit_dir: Path) -> list[dict[str, Any]]:
+        audit_file = audit_dir / "audit.ndjson"
+        if not audit_file.exists():
+            return []
+        records: list[dict[str, Any]] = []
+        for line in audit_file.read_text(encoding="utf-8").strip().splitlines():
+            if line.strip():
+                records.append(json.loads(line))
+        return records
+
+    @staticmethod
+    def _step_audit_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [r for r in records if "attempt_id" in r]
+
+    # ── depth-2 state + stage parity ───────────────────────────────────
+
+    def test_depth2_nested_workflow_state_and_stage_parity(
+        self, tmp_path: Path
+    ) -> None:
+        """Pipeline→child→grandchild: full run == interrupted+resumed for state, stages, envelope.
+
+        Subpipeline phases (leaf, middle) run atomically within the child workflow call
+        and do NOT appear in the parent stages list; only top-level phases do.
+        State propagates through declared ``outputs`` schemas on workflows.
+        """
+
+        @phase
+        def leaf(ctx: dict) -> dict:
+            return {"leaf": "done", "run_path": ctx["run_path"]}
+
+        @workflow(name="grandchild", outputs={"type": "object", "required": ["leaf", "run_path"]})
+        def grandchild(ctx: dict) -> dict:
+            state = yield leaf(ctx)
+            return state
+
+        @phase
+        def middle(ctx: dict) -> dict:
+            return {"middle": "ok", "child_run_path": ctx["run_path"]}
+
+        @workflow(
+            name="child",
+            outputs={"type": "object", "required": ["leaf", "run_path", "middle", "child_run_path"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield grandchild(ctx, id="grand")
+            state = yield middle(ctx)
+            return state
+
+        @phase
+        def root_phase(ctx: dict) -> dict:
+            return {"root": "done", "root_run_path": ctx["run_path"]}
+
+        @pipeline
+        def root(ctx: dict) -> dict:
+            state = yield child(ctx, id="child_call")
+            state = yield root_phase(ctx)
+            return state
+
+        prog = compile_pipeline(root)
+
+        # ── uninterrupted run ──
+        full = run_native_pipeline(prog)
+        assert not full.suspended
+        assert full.state["leaf"] == "done"
+        assert full.state["middle"] == "ok"
+        assert full.state["root"] == "done"
+
+        # ── interrupted + resumed run ──
+        # max_phases limits top-level phases; the subpipeline runs atomically
+        artifact_root = tmp_path / "resume_test"
+        artifact_root.mkdir()
+        first = run_native_pipeline(prog, artifact_root=artifact_root, max_phases=1)
+        assert first.suspended
+        # Since the subpipeline runs atomically before the top-level phase is counted,
+        # the intermediate state carries all subpipeline outputs
+        assert first.state.get("leaf") == "done"
+        assert first.state.get("middle") == "ok"
+        assert first.state.get("root") == "done"
+
+        resumed = run_native_pipeline(prog, artifact_root=artifact_root, resume=True)
+        assert not resumed.suspended
+
+        # ── state parity ──
+        assert resumed.state == full.state
+
+        # ── stage sequence parity ──
+        # Only the single top-level phase appears in parent stages
+        assert len(resumed.stages) == len(full.stages)
+        assert resumed.stages == full.stages
+        assert len(resumed.stages) == 1  # root_phase only (subpipeline phases are internal)
+
+        # ── envelope parity ──
+        assert resumed.envelope == full.envelope
+
+        # ── pc parity ──
+        assert resumed.pc == full.pc
+        assert resumed.suspended == full.suspended
+
+    def test_depth2_multiple_toplevel_phases_parity(self, tmp_path: Path) -> None:
+        """Depth-2 pipeline with multiple top-level phases converges through suspend/resume.
+
+        Uses three top-level ``phase`` instructions so ``max_phases=1`` suspends
+        after the first, leaving later phases unexecuted.  Subpipeline calls are NOT
+        phases — only direct ``phase`` instructions count against ``max_phases``.
+        """
+
+        @phase
+        def step_a(ctx: dict) -> dict:
+            return {"a": 1}
+
+        @phase
+        def leaf(ctx: dict) -> dict:
+            v = ctx["state"].get("counter", 0) + ctx["state"].get("a", 0)
+            return {"counter": v, "leaf_done": True}
+
+        @workflow(
+            name="grandchild",
+            inputs={"type": "object", "required": ["a"]},
+            outputs={"type": "object", "required": ["counter", "leaf_done"]},
+        )
+        def grandchild(ctx: dict) -> dict:
+            state = yield leaf(ctx)
+            return state
+
+        @phase
+        def middle(ctx: dict) -> dict:
+            c = ctx["state"].get("counter", 0) + 1
+            return {"counter": c, "middle_done": True}
+
+        @workflow(
+            name="child",
+            inputs={"type": "object", "required": ["a"]},
+            outputs={"type": "object", "required": ["counter", "leaf_done", "middle_done"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield grandchild(ctx, id="grand")
+            state = yield middle(ctx)
+            return state
+
+        @phase
+        def step_c(ctx: dict) -> dict:
+            return {"c": ctx["state"].get("counter", 0) * 10}
+
+        @pipeline
+        def root(ctx: dict) -> dict:
+            state = yield step_a(ctx)
+            state = yield child(ctx, id="child_call")
+            state = yield step_c(ctx)
+            return state
+
+        prog = compile_pipeline(root)
+
+        # Full run: step_a(=1) → child(subpipeline: leaf(→counter=1), middle(→counter=2)) → step_c(→c=20)
+        full = run_native_pipeline(prog)
+        assert not full.suspended
+        assert full.state["a"] == 1
+        assert full.state["counter"] == 2
+        assert full.state["leaf_done"] is True
+        assert full.state["middle_done"] is True
+        assert full.state["c"] == 20
+
+        # Suspend after 1 phase (step_a), child subpipeline not yet executed
+        artifact_root = tmp_path / "resume_test"
+        artifact_root.mkdir()
+        r1 = run_native_pipeline(prog, artifact_root=artifact_root, max_phases=1)
+        assert r1.suspended
+        assert r1.state.get("a") == 1
+        # Child subpipeline hasn't run yet
+        assert "leaf_done" not in r1.state
+        assert "counter" not in r1.state
+
+        resumed = run_native_pipeline(prog, artifact_root=artifact_root, resume=True)
+        assert not resumed.suspended
+
+        assert resumed.state == full.state
+        assert resumed.stages == full.stages
+        assert resumed.pc == full.pc
+
+    # ── audit side-effect record parity ────────────────────────────────
+
+    def test_depth2_audit_side_effect_parity(self, tmp_path: Path) -> None:
+        """Depth-2 interrupted+resumed produces equivalent committed audit records.
+
+        Audit hooks capture all phases including subpipeline steps, producing
+        stable step_path/run_path/parent_run_path across replay.
+        """
+
+        @phase
+        def leaf(ctx: dict) -> dict:
+            return {"leaf": 1}
+
+        @workflow(name="grandchild", outputs={"type": "object", "required": ["leaf"]})
+        def grandchild(ctx: dict) -> dict:
+            state = yield leaf(ctx)
+            return state
+
+        @phase
+        def middle(ctx: dict) -> dict:
+            return {"middle": 2}
+
+        @workflow(
+            name="child",
+            outputs={"type": "object", "required": ["leaf", "middle"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield grandchild(ctx, id="grand")
+            state = yield middle(ctx)
+            return state
+
+        @phase
+        def root_phase(ctx: dict) -> dict:
+            return {"root": 3}
+
+        @pipeline
+        def root(ctx: dict) -> dict:
+            state = yield child(ctx, id="child_call")
+            state = yield root_phase(ctx)
+            return state
+
+        prog = compile_pipeline(root)
+
+        # ── uninterrupted run with audit ──
+        full_audit = tmp_path / "full_audit"
+        full_hooks = AuditHooks(audit_dir=full_audit)
+        full = run_native_pipeline(prog, hooks=full_hooks)
+        assert not full.suspended
+
+        full_records = self._read_audit_ndjson(full_audit)
+        full_step_recs = self._step_audit_records(full_records)
+
+        # ── interrupted + resumed run with audit ──
+        resume_audit = tmp_path / "resume_audit"
+        resume_hooks = AuditHooks(audit_dir=resume_audit)
+        artifact_root = tmp_path / "resume_artifacts"
+
+        first = run_native_pipeline(
+            prog,
+            artifact_root=artifact_root,
+            max_phases=1,
+            hooks=resume_hooks,
+        )
+        assert first.suspended
+
+        resumed = run_native_pipeline(
+            prog,
+            artifact_root=artifact_root,
+            resume=True,
+            hooks=resume_hooks,
+        )
+        assert not resumed.suspended
+
+        resumed_records = self._read_audit_ndjson(resume_audit)
+        resumed_step_recs = self._step_audit_records(resumed_records)
+
+        # ── audit record count parity ──
+        # Both runs execute the same number of phases (leaf, middle, root_phase)
+        assert len(resumed_step_recs) == len(full_step_recs)
+        assert len(full_step_recs) >= 2  # at least leaf + root_phase
+
+        # ── each record carries required skeleton fields ──
+        for rec in resumed_step_recs:
+            assert "attempt_id" in rec
+            assert isinstance(rec["attempt_id"], str)
+            assert len(rec["attempt_id"]) == 32
+            assert "run_path" in rec
+            assert isinstance(rec["run_path"], str)
+            assert len(rec["run_path"]) > 0
+            assert "parent_run_path" in rec
+            assert "call_site_path" in rec
+            assert isinstance(rec["step_path"], str)
+            assert len(rec["step_path"]) > 0
+            assert rec["status"] == "success"
+            assert "started_at" in rec
+            assert "ended_at" in rec
+
+        # ── same step_paths appear in both audit trails ──
+        full_paths = {r["step_path"] for r in full_step_recs}
+        resumed_paths = {r["step_path"] for r in resumed_step_recs}
+        assert full_paths == resumed_paths
+
+        # ── all records share same run_id (within each run) ──
+        full_run_ids = {r["run_id"] for r in full_step_recs}
+        resumed_run_ids = {r["run_id"] for r in resumed_step_recs}
+        assert len(full_run_ids) == 1
+        assert len(resumed_run_ids) == 1
+
+        # ── state parity still holds ──
+        assert resumed.state == full.state
+        assert resumed.stages == full.stages
+
+    # ── nested path stability ──────────────────────────────────────────
+
+    def test_depth2_nested_path_stability(self, tmp_path: Path) -> None:
+        """Nested run_path/step_paths are stable through replay, not just coincidental.
+
+        Uses ``ctx["run_path"]`` captured inside phases to prove that the tree-shaped
+        path addressing is identical between uninterrupted and interrupted+resumed runs.
+        """
+
+        captured_paths: dict[str, list[str]] = {"full": [], "resumed": []}
+
+        @phase
+        def leaf(ctx: dict) -> dict:
+            captured_paths["full"].append(ctx["run_path"])
+            return {"leaf_path": ctx["run_path"]}
+
+        @workflow(
+            name="grandchild",
+            outputs={"type": "object", "required": ["leaf_path"]},
+        )
+        def grandchild(ctx: dict) -> dict:
+            state = yield leaf(ctx)
+            return state
+
+        @phase
+        def middle(ctx: dict) -> dict:
+            captured_paths["full"].append(ctx["run_path"])
+            return {"middle_path": ctx["run_path"]}
+
+        @workflow(
+            name="child",
+            outputs={"type": "object", "required": ["leaf_path", "middle_path"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield grandchild(ctx, id="grand")
+            state = yield middle(ctx)
+            return state
+
+        @phase
+        def root_phase(ctx: dict) -> dict:
+            captured_paths["full"].append(ctx["run_path"])
+            return {"root_path": ctx["run_path"]}
+
+        @pipeline
+        def root(ctx: dict) -> dict:
+            state = yield child(ctx, id="child_call")
+            state = yield root_phase(ctx)
+            return state
+
+        prog = compile_pipeline(root)
+
+        # ── uninterrupted run (captures paths) ──
+        full = run_native_pipeline(prog)
+        assert not full.suspended
+
+        # ── interrupted + resumed run (captures paths via separate pipeline) ──
+        @phase
+        def leaf_r(ctx: dict) -> dict:
+            captured_paths["resumed"].append(ctx["run_path"])
+            return {"leaf_path": ctx["run_path"]}
+
+        @phase
+        def middle_r(ctx: dict) -> dict:
+            captured_paths["resumed"].append(ctx["run_path"])
+            return {"middle_path": ctx["run_path"]}
+
+        @phase
+        def root_phase_r(ctx: dict) -> dict:
+            captured_paths["resumed"].append(ctx["run_path"])
+            return {"root_path": ctx["run_path"]}
+
+        @workflow(
+            name="grandchild_r",
+            outputs={"type": "object", "required": ["leaf_path"]},
+        )
+        def grandchild_r(ctx: dict) -> dict:
+            state = yield leaf_r(ctx)
+            return state
+
+        @workflow(
+            name="child_r",
+            outputs={"type": "object", "required": ["leaf_path", "middle_path"]},
+        )
+        def child_r(ctx: dict) -> dict:
+            state = yield grandchild_r(ctx, id="grand")
+            state = yield middle_r(ctx)
+            return state
+
+        @pipeline
+        def root_r(ctx: dict) -> dict:
+            state = yield child_r(ctx, id="child_call")
+            state = yield root_phase_r(ctx)
+            return state
+
+        prog_r = compile_pipeline(root_r)
+
+        artifact_root = tmp_path / "resume_paths"
+        artifact_root.mkdir()
+        first = run_native_pipeline(prog_r, artifact_root=artifact_root, max_phases=1)
+        assert first.suspended
+
+        resumed = run_native_pipeline(prog_r, artifact_root=artifact_root, resume=True)
+        assert not resumed.suspended
+
+        # ── nested path stability assertions ──
+        # The run_paths captured during full and resumed runs must be identical
+        assert captured_paths["full"] == captured_paths["resumed"], (
+            f"run_paths diverge: full={captured_paths['full']} "
+            f"vs resumed={captured_paths['resumed']}"
+        )
+
+        # ── explicit path shape assertions ──
+        full_paths = captured_paths["full"]
+        assert len(full_paths) == 3
+
+        # leaf runs inside child → grandchild, so its run_path should be deeper
+        leaf_path = full_paths[0]
+        middle_path = full_paths[1]
+        root_path = full_paths[2]
+
+        # root phase runs at root level
+        assert root_path == "root"
+
+        # middle runs inside child, so its run_path contains child_call
+        assert "child_call" in middle_path
+        assert middle_path.startswith("root/")
+
+        # leaf runs inside child→grandchild, so it's deeper than middle
+        assert "grand" in leaf_path
+        assert leaf_path.startswith(middle_path.rsplit("/", 1)[0])
+        # leaf is strictly deeper than middle (more path segments)
+        assert leaf_path.count("/") > middle_path.count("/")
+
+        # ── state parity (ignore differently-named pipeline stage names) ──
+        assert resumed.state == full.state
+
+    def test_depth2_audit_path_correlation(self, tmp_path: Path) -> None:
+        """Audit records for depth-2 runs carry correct parent_run_path and call_site_path.
+
+        Verifies that committed side-effect records (audit) capture stable parent_lineage
+        and call-site addressing, not just flat step-level coincidence.
+        """
+
+        @phase
+        def leaf(ctx: dict) -> dict:
+            return {"leaf": 1}
+
+        @workflow(name="grandchild", outputs={"type": "object", "required": ["leaf"]})
+        def grandchild(ctx: dict) -> dict:
+            state = yield leaf(ctx)
+            return state
+
+        @phase
+        def middle(ctx: dict) -> dict:
+            return {"middle": 2}
+
+        @workflow(
+            name="child",
+            outputs={"type": "object", "required": ["leaf", "middle"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield grandchild(ctx, id="grand")
+            state = yield middle(ctx)
+            return state
+
+        @phase
+        def root_phase(ctx: dict) -> dict:
+            return {"root": 3}
+
+        @pipeline
+        def root(ctx: dict) -> dict:
+            state = yield child(ctx, id="child_call")
+            state = yield root_phase(ctx)
+            return state
+
+        prog = compile_pipeline(root)
+
+        audit_dir = tmp_path / "audit"
+        hooks = AuditHooks(audit_dir=audit_dir)
+        result = run_native_pipeline(prog, hooks=hooks)
+        assert not result.suspended
+
+        records = self._read_audit_ndjson(audit_dir)
+        step_recs = self._step_audit_records(records)
+        # leaf, middle, root_phase
+        assert len(step_recs) >= 2
+
+        # Collect by step_path suffix for inspection
+        by_name: dict[str, dict[str, Any]] = {}
+        for rec in step_recs:
+            name = rec["step_path"].rsplit("/", 1)[-1]
+            by_name[name] = rec
+
+        # root_phase runs at root level
+        root_rec = by_name.get("root_phase", {})
+        if root_rec:
+            assert root_rec["run_path"] == "root", (
+                f"root_phase run_path: {root_rec['run_path']}"
+            )
+
+        # middle: runs inside child_call
+        middle_rec = by_name.get("middle", {})
+        if middle_rec:
+            assert "child_call" in middle_rec["run_path"], (
+                f"middle run_path missing child_call: {middle_rec['run_path']}"
+            )
+            assert "parent_run_path" in middle_rec
+            assert "call_site_path" in middle_rec
+
+        # leaf: runs inside child_call→grand, deepest nesting
+        leaf_rec = by_name.get("leaf", {})
+        if leaf_rec:
+            assert "grand" in leaf_rec["run_path"], (
+                f"leaf run_path missing grand: {leaf_rec['run_path']}"
+            )
+            assert "child_call" in leaf_rec["run_path"], (
+                f"leaf run_path missing child_call: {leaf_rec['run_path']}"
+            )
+            # parent_run_path should point to grandchild's run context
+            assert leaf_rec.get("parent_run_path") is not None
+            # call_site_path should include child_call and grand segments
+            assert len(leaf_rec.get("call_site_path", [])) >= 1

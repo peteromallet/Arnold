@@ -2055,7 +2055,7 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
             return 1
 
         # ── Scaffold the Python module ────────────────────────────
-        module_content = f'''"""Native-first projected shell for the ``{cli_name}`` pipeline."""
+        module_content = f'''"""Native-first compositional shell for the ``{cli_name}`` pipeline."""
 
 from __future__ import annotations
 
@@ -2066,9 +2066,12 @@ from typing import Any
 from arnold.pipeline.native import (
     compile_pipeline,
     decision,
+    parallel_map,
     phase,
     pipeline,
     project_graph,
+    start_from_trace,
+    workflow,
 )
 from arnold.pipeline.types import Pipeline, StepResult
 
@@ -2083,45 +2086,178 @@ recommended_profiles: tuple[str, ...] = ()
 driver: tuple[str, str] = ("native", "project+validate")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
-capabilities: tuple[str, ...] = ()
+capabilities: tuple[str, ...] = ("skeleton",)
+authoring_style: str = "compositional"
+
+inputs: dict[str, Any] = {{
+    "type": "object",
+    "required": ["brief", "checks"],
+    "properties": {{
+        "brief": {{"type": "string"}},
+        "checks": {{
+            "type": "array",
+            "items": {{
+                "type": "object",
+                "required": ["item_id"],
+                "properties": {{"item_id": {{"type": "string"}}}},
+            }},
+        }},
+    }},
+}}
+
+outputs: dict[str, Any] = {{
+    "type": "object",
+    "required": ["final_artifact"],
+}}
 
 
-@phase(name="draft")
-def _native_draft(ctx: object) -> StepResult:
+def _required_schema(*names: str) -> dict[str, Any]:
+    return {{"type": "object", "required": list(names)}}
+
+
+@phase(name="draft_outline", id="{module_stem}.draft_outline", outputs=_required_schema("outline"))
+def _native_draft(ctx: dict[str, Any]) -> StepResult:
     del ctx
-    return StepResult(outputs={{"draft": "TODO"}}, next="review")
+    return StepResult(outputs={{"outline": "TODO: outline.md"}}, next="halt")
 
 
-@phase(name="review")
-def _native_review(ctx: object) -> StepResult:
+@phase(
+    name="review_findings",
+    id="{module_stem}.review_findings",
+    inputs=_required_schema("outline"),
+    outputs=_required_schema("findings"),
+)
+def _native_review_findings(ctx: dict[str, Any]) -> StepResult:
+    outline = ctx["state"].get("working_outline") or ctx["state"].get("outline") or "TODO"
+    return StepResult(outputs={{"findings": f"Findings for {{outline}}"}}, next="halt")
+
+
+@phase(
+    name="review_verdict",
+    id="{module_stem}.review_verdict",
+    inputs=_required_schema("findings"),
+    outputs=_required_schema("verdict"),
+)
+def _native_review_verdict(ctx: dict[str, Any]) -> StepResult:
     del ctx
-    return StepResult(outputs={{"review_notes": "TODO"}}, next="ship_or_revise")
+    return StepResult(outputs={{"verdict": "approved"}}, next="halt")
 
 
-@decision(name="ship_or_revise", vocabulary={{"ship", "revise"}})
-def _native_ship_or_revise(ctx: object) -> str:
+@phase(
+    name="revise_outline",
+    id="{module_stem}.revise_outline",
+    inputs=_required_schema("working_outline", "first_findings"),
+    outputs=_required_schema("outline"),
+)
+def _native_revise(ctx: dict[str, Any]) -> StepResult:
+    outline = ctx["state"].get("working_outline") or "TODO: outline.md"
+    findings = ctx["state"].get("first_findings") or "TODO findings"
+    return StepResult(outputs={{"outline": f"{{outline}} revised after {{findings}}"}}, next="halt")
+
+
+@phase(
+    name="parallel_item_review",
+    id="{module_stem}.parallel_item_review",
+    inputs=_required_schema("item_id"),
+    outputs=_required_schema("item_review"),
+)
+def _native_parallel_item_review(ctx: dict[str, Any]) -> StepResult:
+    item_id = str(ctx["state"].get("item_id", "item"))
+    return StepResult(outputs={{"item_review": f"reviewed:{{item_id}}"}}, next="halt")
+
+
+@phase(
+    name="publish_artifact",
+    id="{module_stem}.publish_artifact",
+    inputs=_required_schema("working_outline"),
+    outputs=_required_schema("final_artifact"),
+)
+def _native_publish(ctx: dict[str, Any]) -> StepResult:
+    outline = ctx["state"].get("working_outline") or "TODO: outline.md"
+    return StepResult(outputs={{"final_artifact": f"published:{{outline}}"}}, next="halt")
+
+
+@workflow(
+    name="review_pass",
+    id="{module_stem}.review_pass",
+    inputs=_required_schema("outline"),
+    outputs=_required_schema("findings", "verdict"),
+)
+def _review_pass(ctx: dict[str, Any]) -> Any:
+    state = yield _native_review_findings(ctx, id="review-findings", outputs={{"findings": "findings"}})
+    state = yield _native_review_verdict(ctx, id="review-verdict", outputs={{"verdict": "verdict"}})
+    return state
+
+
+@workflow(
+    name="parallel_review_item",
+    id="{module_stem}.parallel_review_item",
+    inputs=_required_schema("item_id"),
+    outputs=_required_schema("item_review"),
+)
+def _parallel_review_item(ctx: dict[str, Any]) -> Any:
+    state = yield _native_parallel_item_review(
+        ctx,
+        id="parallel-item-review",
+        outputs={{"item_review": "item_review"}},
+    )
+    return state
+
+
+def _collect_parallel_reviews(results: list[dict[str, Any]]) -> dict[str, Any]:
+    return {{"parallel_reviews": results}}
+
+
+@decision(name="publish_gate", vocabulary={{"publish", "revise"}})
+def _native_publish_gate(ctx: dict[str, Any]) -> str:
     del ctx
-    return "ship"
+    return "publish"
 
 
-@phase(name="publish")
-def _native_publish(ctx: object) -> StepResult:
-    del ctx
-    return StepResult(outputs={{"final_artifact": "TODO"}}, next="halt")
-
-
-@pipeline("{cli_name}")
-def {module_stem}_native(ctx: object) -> Any:
-    state = yield _native_draft(ctx)
-    state = yield _native_review(ctx)
-    if _native_ship_or_revise(ctx) == "revise":
-        state = yield _native_review(ctx)
-    state = yield _native_publish(ctx)
+@pipeline(
+    name="{cli_name}",
+    id="{module_stem}.parent",
+    description="TODO: compositional native workflow with child call sites and parallel fan-out",
+    inputs=inputs,
+    outputs=outputs,
+)
+def {module_stem}_native(ctx: dict[str, Any]) -> Any:
+    state = yield _native_draft(ctx, id="draft-outline", outputs={{"outline": "working_outline"}})
+    state = yield _review_pass(
+        ctx,
+        id="first-review",
+        outputs={{"findings": "first_findings", "verdict": "first_verdict"}},
+    )
+    if _native_publish_gate(ctx) == "revise":
+        state = yield _native_revise(ctx, id="revise-outline", outputs={{"outline": "working_outline"}})
+        state = yield _review_pass(
+            ctx,
+            id="second-review",
+            outputs={{"findings": "second_findings", "verdict": "second_verdict"}},
+        )
+    state = yield parallel_map(
+        items="checks",
+        step=_parallel_review_item,
+        reducer=_collect_parallel_reviews,
+        path_template="checks/{{item_id}}",
+        name="parallel_review_items",
+        id="parallel-review-items",
+    )
+    state = yield _native_publish(ctx, id="publish-artifact", outputs={{"final_artifact": "final_artifact"}})
     return state
 
 
 def _native_program() -> Any:
     return compile_pipeline({module_stem}_native)
+
+
+def resume_from_trace_example(
+    trace_dir: str | Path,
+    artifact_root: str | Path,
+    *,
+    target_path: str = "root/second-review/review_verdict",
+) -> Any:
+    return start_from_trace(_native_program(), trace_dir, target_path, artifact_root)
 
 
 def build_pipeline() -> Pipeline:
@@ -2138,14 +2274,18 @@ def build_pipeline() -> Pipeline:
 
 __all__ = [
     "arnold_api_version",
+    "authoring_style",
     "build_pipeline",
     "capabilities",
     "default_profile",
     "description",
     "driver",
     "entrypoint",
+    "inputs",
     "name",
+    "outputs",
     "recommended_profiles",
+    "resume_from_trace_example",
     "supported_modes",
 ]
 '''

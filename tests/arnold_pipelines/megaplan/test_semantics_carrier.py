@@ -357,3 +357,315 @@ class TestHandlerModuleExports:
             f"Handlers in both handlers.__all__ and StepComponents but not "
             f"classified: {unclassified}"
         )
+
+
+# ---------------------------------------------------------------------------
+# M6 Handler-purity bar — constants
+# ---------------------------------------------------------------------------
+
+# Handlers retained under M6 that must meet the raised purity bar.
+# These handlers must NOT directly mutate current_state / next_step, emit
+# workflow_transition / workflow_next, perform handler-resident fanout
+# dispatch, or define local route-decision functions.
+M6_RETAINED_HANDLERS: frozenset[str] = frozenset(
+    {
+        "handle_critique",
+        "handle_gate",
+        "handle_tiebreaker_decide",
+        "handle_tiebreaker_run",
+        "handle_finalize",
+        "handle_execute",
+        "handle_review",
+        "handle_override",
+    }
+)
+
+# Source files housing retained handlers plus the shared handler-infra module.
+M6_RETAINED_MODULE_RELS: frozenset[str] = frozenset(
+    {
+        "handlers/critique.py",
+        "handlers/gate.py",
+        "handlers/_tiebreaker_impl.py",
+        "handlers/finalize.py",
+        "handlers/execute.py",
+        "handlers/review.py",
+        "handlers/override.py",
+        "handlers/shared.py",
+    }
+)
+
+# Routing/dispatch calls that are forbidden in M6 retained handler bodies.
+M6_FORBIDDEN_ROUTING_CALLS: frozenset[str] = frozenset(
+    {
+        "workflow_transition",
+        "workflow_next",
+    }
+)
+
+# Handler-resident fanout-dispatch calls — these perform parallel /
+# multi-worker dispatch inside the handler itself and violate the M6
+# purity bar.
+M6_FANOUT_DISPATCH_CALLS: frozenset[str] = frozenset(
+    {
+        "run_parallel_critique",
+        "run_parallel_review",
+    }
+)
+
+
+# ---------------------------------------------------------------------------
+# M6 AST helpers
+# ---------------------------------------------------------------------------
+
+
+def _is_state_subscript_assign(
+    target: ast.expr, key: str, *, var_name: str = "state"
+) -> bool:
+    """Return True when *target* is ``var_name["key"]`` subscript form."""
+    if not isinstance(target, ast.Subscript):
+        return False
+    if not isinstance(target.value, ast.Name):
+        return False
+    if target.value.id != var_name:
+        return False
+    # Python 3.9+: slice is directly the Constant
+    if isinstance(target.slice, ast.Constant):
+        return target.slice.value == key
+    # Older Python: slice wrapped in ast.Index
+    if isinstance(target.slice, ast.Index):
+        inner = target.slice.value
+        if isinstance(inner, ast.Constant):
+            return inner.value == key
+        if isinstance(inner, ast.Str):
+            return inner.s == key
+    return False
+
+
+class _StateMutationVisitor(ast.NodeVisitor):
+    """Collects descriptions of ``state["current_state"]`` / ``state["next_step"]``
+    and ``response["next_step"]`` / ``response["state"]`` assignment sites."""
+
+    def __init__(self) -> None:
+        self.violations: list[str] = []
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        for target in node.targets:
+            if _is_state_subscript_assign(target, "current_state", var_name="state"):
+                self.violations.append('state["current_state"] = ...')
+            elif _is_state_subscript_assign(target, "next_step", var_name="state"):
+                self.violations.append('state["next_step"] = ...')
+            elif _is_state_subscript_assign(target, "next_step", var_name="response"):
+                self.violations.append('response["next_step"] = ...')
+            elif _is_state_subscript_assign(target, "state", var_name="response"):
+                self.violations.append('response["state"] = ...')
+        self.generic_visit(node)
+
+
+class _LocalRouteFunctionDetector(ast.NodeVisitor):
+    """Collects names of local helper functions that contain forbidden
+    routing / mutation / fanout patterns."""
+
+    def __init__(
+        self,
+        *,
+        handler_name: str,
+        forbidden_routing: frozenset[str],
+        fanout_calls: frozenset[str],
+    ) -> None:
+        self.handler_name = handler_name
+        self.forbidden_routing = forbidden_routing
+        self.fanout_calls = fanout_calls
+        # func_name -> set of violation descriptions
+        self.violations: dict[str, set[str]] = {}
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        # Skip all M6 retained handlers (they are checked separately via the
+        # body-purity tests).  A module may house multiple retained handlers
+        # (e.g. _tiebreaker_impl.py); we must not flag one as a "local route
+        # function" of another.
+        if node.name in M6_RETAINED_HANDLERS:
+            self.generic_visit(node)
+            return
+
+        func_violations: set[str] = set()
+
+        # Check for state-mutation assignments
+        mutation_visitor = _StateMutationVisitor()
+        mutation_visitor.visit(node)
+        for v in mutation_visitor.violations:
+            func_violations.add(f"state mutation: {v}")
+
+        # Check for forbidden routing calls
+        calls = _collect_call_names(node)
+        routing = calls & self.forbidden_routing
+        if routing:
+            func_violations.add(f"routing calls: {sorted(routing)}")
+
+        # Check for fanout dispatch calls
+        fanout = calls & self.fanout_calls
+        if fanout:
+            func_violations.add(f"fanout dispatch: {sorted(fanout)}")
+
+        if func_violations:
+            self.violations[node.name] = func_violations
+
+        # Recurse into nested function defs
+        self.generic_visit(node)
+
+
+def _check_handler_body_purity(
+    func: ast.FunctionDef, *, forbidden_routing: frozenset[str], fanout_calls: frozenset[str]
+) -> set[str]:
+    """Return a set of violation descriptions found in *func*'s body."""
+    violations: set[str] = set()
+
+    # State-mutation
+    mutation_visitor = _StateMutationVisitor()
+    mutation_visitor.visit(func)
+    for v in mutation_visitor.violations:
+        violations.add(f"state mutation: {v}")
+
+    # Routing / next-step calls
+    calls = _collect_call_names(func)
+    routing = calls & forbidden_routing
+    if routing:
+        violations.add(f"routing calls: {sorted(routing)}")
+
+    # Fanout dispatch
+    fanout = calls & fanout_calls
+    if fanout:
+        violations.add(f"fanout dispatch: {sorted(fanout)}")
+
+    return violations
+
+
+# ---------------------------------------------------------------------------
+# Tests: M6 retained-handler purity (handler body)
+# ---------------------------------------------------------------------------
+
+
+class TestM6RetainedHandlerBodyPurity:
+    """Verify that each M6 retained handler body is pure — no state
+    mutation, no routing calls, no fanout dispatch."""
+
+    @pytest.mark.parametrize("handler_name", sorted(M6_RETAINED_HANDLERS))
+    def test_no_state_mutation(self, handler_name: str) -> None:
+        """Retained handler must not assign to state[\"current_state\"]."""
+        _, source = _handler_source(handler_name)
+        tree = _parse_source(source)
+        func = _find_function(tree, handler_name)
+        assert func is not None, f"Function '{handler_name}' not found in source"
+
+        mutation_visitor = _StateMutationVisitor()
+        mutation_visitor.visit(func)
+        assert len(mutation_visitor.violations) == 0, (
+            f"M6 retained handler '{handler_name}' mutates state directly: "
+            f"{mutation_visitor.violations}. M6 purity bar requires state "
+            f"transitions to be expressed outside the handler body."
+        )
+
+    @pytest.mark.parametrize("handler_name", sorted(M6_RETAINED_HANDLERS))
+    def test_no_routing_calls(self, handler_name: str) -> None:
+        """Retained handler must not call workflow_transition / workflow_next."""
+        _, source = _handler_source(handler_name)
+        tree = _parse_source(source)
+        func = _find_function(tree, handler_name)
+        assert func is not None, f"Function '{handler_name}' not found in source"
+
+        calls = _collect_call_names(func)
+        routing = calls & M6_FORBIDDEN_ROUTING_CALLS
+        assert len(routing) == 0, (
+            f"M6 retained handler '{handler_name}' calls routing functions "
+            f"directly: {sorted(routing)}. M6 purity bar requires routing "
+            f"to be expressed in the workflow layer, not in handler bodies."
+        )
+
+    @pytest.mark.parametrize("handler_name", sorted(M6_RETAINED_HANDLERS))
+    def test_no_fanout_dispatch(self, handler_name: str) -> None:
+        """Retained handler must not perform handler-resident fanout dispatch."""
+        _, source = _handler_source(handler_name)
+        tree = _parse_source(source)
+        func = _find_function(tree, handler_name)
+        assert func is not None, f"Function '{handler_name}' not found in source"
+
+        calls = _collect_call_names(func)
+        fanout = calls & M6_FANOUT_DISPATCH_CALLS
+        assert len(fanout) == 0, (
+            f"M6 retained handler '{handler_name}' performs handler-resident "
+            f"fanout dispatch: {sorted(fanout)}. M6 purity bar requires "
+            f"fanout dispatch to be orchestrated outside the handler body."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Tests: M6 local route-decision functions
+# ---------------------------------------------------------------------------
+
+
+class TestM6NoLocalRouteDecisionFunctions:
+    """Verify that retained handler modules do not define local helper
+    functions that perform routing, state mutation, or fanout dispatch."""
+
+    @pytest.mark.parametrize("handler_name", sorted(M6_RETAINED_HANDLERS))
+    def test_no_local_route_functions(self, handler_name: str) -> None:
+        """No local function (other than the main handler) may contain
+        routing calls, state mutations, or fanout dispatch."""
+        _, source = _handler_source(handler_name)
+        tree = _parse_source(source)
+
+        detector = _LocalRouteFunctionDetector(
+            handler_name=handler_name,
+            forbidden_routing=M6_FORBIDDEN_ROUTING_CALLS,
+            fanout_calls=M6_FANOUT_DISPATCH_CALLS,
+        )
+        detector.visit(tree)
+
+        assert len(detector.violations) == 0, (
+            f"M6 retained handler module for '{handler_name}' defines local "
+            f"route-decision functions: {dict(detector.violations)}. "
+            f"M6 purity bar requires routing decisions to live in the "
+            f"workflow / orchestration layer, not inside handler modules."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Tests: M6 shared-handler-infrastructure purity
+# ---------------------------------------------------------------------------
+
+
+class TestM6SharedHandlerPurity:
+    """Verify that the shared handler-infrastructure module (shared.py)
+    does not contain routing logic or state-transition mutations inside
+    its utility functions."""
+
+    SHARED_MODULE_REL = "handlers/shared.py"
+
+    def test_shared_functions_are_pure(self) -> None:
+        """Each top-level function in shared.py must not contain forbidden
+        routing calls, state-mutation assignments, or fanout dispatch."""
+        megaplan_root = _megaplan_root()
+        filepath = megaplan_root / self.SHARED_MODULE_REL
+        if not filepath.exists():
+            raise FileNotFoundError(f"Shared module not found: {filepath}")
+        source = filepath.read_text(encoding="utf-8")
+        tree = _parse_source(source)
+
+        all_violations: dict[str, set[str]] = {}
+
+        for node in ast.iter_child_nodes(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            func_violations = _check_handler_body_purity(
+                node,
+                forbidden_routing=M6_FORBIDDEN_ROUTING_CALLS,
+                fanout_calls=M6_FANOUT_DISPATCH_CALLS,
+            )
+            if func_violations:
+                all_violations[node.name] = func_violations
+
+        assert len(all_violations) == 0, (
+            f"Shared handler-infrastructure module contains functions with "
+            f"forbidden M6 patterns: {all_violations}. "
+            f"M6 purity bar requires shared utility functions to delegate "
+            f"routing and state transitions to the workflow layer."
+        )

@@ -60,89 +60,205 @@ Start from the [contract surface](package-authoring-contract.md). Every Arnold
 pipeline package must expose the required fields at module level and a nullary
 `build_pipeline()` entrypoint. The primary authoring path is native
 declarations plus a projected `Pipeline` shell with a non-null
-`native_program`:
+`native_program`.
+
+### Stable Invocable Steps And Workflows
+
+Every callable component must carry a stable identity. Use `@step` (or the
+compatibility alias `@phase`) and `@workflow` (or `@pipeline`) decorators with
+an explicit `id=` keyword that defines the durable semantic identity of the
+invocable across compilation, projection, trace emission, and replay.
 
 ```python
-from typing import Any
-
-from arnold.pipeline.native import (
-    compile_pipeline,
-    decision,
-    native_panel,
-    parallel,
-    phase,
-    pipeline,
-    project_graph,
-)
-from arnold.pipeline.subpipeline import run_subpipeline
+from arnold.pipeline import step, workflow
+from arnold.pipeline.native import compile_pipeline, project_graph
 from arnold.pipeline.types import Pipeline
 
-name = "my-module"
-description = "Review a draft and emit a revised Markdown artifact."
-driver = ("native", "project+validate")
-entrypoint = "build_pipeline"
-arnold_api_version = "1.0"
-capabilities = ("document-review",)
-default_profile: str | None = None
-supported_modes: tuple[str, ...] = ()
 
-
-@phase(name="draft")
-def draft(ctx: Any) -> dict[str, Any]:
+@step(
+    name="draft",
+    id="my-module.draft",
+    inputs={"type": "object", "required": ["brief"]},
+    outputs={"type": "object", "required": ["draft"]},
+)
+def draft(ctx: object) -> dict[str, Any]:
     return {"draft": "TODO"}
 
 
-@phase(name="review_fast")
-def review_fast(ctx: Any) -> dict[str, Any]:
-    return {"review": "fast"}
-
-
-@phase(name="review_deep")
-def review_deep(ctx: Any) -> dict[str, Any]:
-    return {"review": "deep"}
-
-
-@decision(name="approval", vocabulary=frozenset({"ship", "revise"}))
-def approval(ctx: Any) -> str:
-    return "ship"
-
-
-@phase(name="publish")
-def publish(ctx: Any) -> dict[str, Any]:
+@step(
+    name="publish",
+    id="my-module.publish",
+    inputs={"type": "object", "required": ["draft"]},
+    outputs={"type": "object", "required": ["status"]},
+)
+def publish(ctx: object) -> dict[str, Any]:
     return {"status": "ready"}
-
-
-@pipeline("my-module", description=description)
-def my_module(ctx: Any) -> Any:
-    yield draft(ctx)
-    for branch in parallel([review_fast, review_deep], name="review_panel"):
-        yield branch(ctx)
-    for branch in native_panel(
-        "editorial_panel",
-        (("fast", review_fast), ("deep", review_deep)),
-    ):
-        yield branch(ctx)
-    if approval(ctx) == "revise":
-        # A phase can call run_subpipeline(...) when child workflow ownership
-        # and resume behavior need to stay explicit.
-        pass
-    yield publish(ctx)
-
-
-def build_pipeline() -> Pipeline:
-    program = compile_pipeline(my_module)
-    return project_graph(program, key_mode="phase")
 ```
 
-Use `parallel(...)` for fixed branch sets. Use `native_panel(...)` for fixed
-reviewer panels whose outputs should be prefixed by reviewer id. Use
-`run_subpipeline(...)` inside a phase when a child pipeline owns a distinct
-workflow and resume boundary.
+The stable ID is a semantic identity — it does not depend on Python function
+names, memory addresses, or source-code line ordering. It is the durability
+contract that survives refactors, reorders, and replay.
 
-`build_pipeline()` returns the projected `Pipeline` shell with a non-null
-`native_program`. Discovery and `arnold pipelines check` validate the
-public topology through the shell; the native runtime executes the program
-directly.
+### Declared Interfaces
+
+Every invocable must declare its input and output schemas. These schemas are
+serializable, comparable metadata that describe the expected incoming and
+emitted payloads without executing the invocable body. Use plain dicts or
+typed schema objects that can be read statically by the compiler, the
+projection layer, and the trace/audit system.
+
+Schema compatibility follows four classes:
+
+- **identical** — same schema meaning and same stable schema identity.
+- **backward-compatible** — producer widened or added optional output;
+  existing consumers remain valid.
+- **forward-compatible** — consumer accepts a newer producer.
+- **breaking** — shape or semantics changed in a way that invalidates existing
+  callers, replayers, or validators.
+
+The compiler records schema identities and emits diagnostics when parent-child
+boundaries do not satisfy declared input/output contracts.
+
+### Nested Child Workflow Invocation
+
+A workflow body may invoke another `@workflow`-decorated workflow as an
+executable child. Each child call **must** include a literal `id=` keyword that
+derives a stable call-site path segment. The same child workflow may be called
+more than once at distinct call sites with distinct `id=` values.
+
+```python
+@workflow(
+    name="review_pass",
+    id="my-module.review_pass",
+    inputs={"type": "object", "required": ["outline"]},
+    outputs={"type": "object", "required": ["findings", "verdict"]},
+)
+def review_pass(ctx: dict[str, Any]) -> Any:
+    state = yield review_findings(ctx, id="review-findings",
+                                   outputs={"findings": "findings"})
+    state = yield review_verdict(ctx, id="review-verdict",
+                                  outputs={"verdict": "verdict"})
+    return state
+
+
+@workflow(
+    name="my-pipeline",
+    id="template.parent",
+    inputs=inputs,
+    outputs=outputs,
+)
+def my_pipeline_native(ctx: dict[str, Any]) -> Any:
+    state = yield review_pass(ctx, id="first-review")
+    if publish_gate(ctx) == "revise":
+        state = yield revise_outline(ctx, id="revise-outline")
+        state = yield review_pass(ctx, id="second-review")  # same child, different site
+    return state
+```
+
+The compiler validates schema compatibility at parent-child boundaries: child
+input schemas must be satisfiable from available parent state, and child output
+schemas must be compatible with parent merge expectations.
+
+### Runtime-List `parallel_map`
+
+For dynamic fanout over a runtime collection, use `parallel_map` instead of
+static `parallel`. `parallel_map` accepts a runtime list, applies the same
+step or child workflow to each item, and merges results through a declared
+reducer.
+
+```python
+from arnold.pipeline.native import parallel_map
+
+state = yield parallel_map(
+    items="checks",
+    step=parallel_review_item_flow,
+    reducer=collect_parallel_reviews,
+    path_template="checks/{item_id}",
+    name="parallel_review_items",
+    id="parallel-review-items",
+)
+```
+
+The `path_template` is a literal string template that derives per-item
+call-site coordinates for trace and replay. Non-literal or missing templates
+are rejected at compile time. Runtime execution preserves list order, derives
+per-item call-site paths from the template, collects mapper results, and
+invokes the reducer on both populated and empty lists.
+
+### Recorded-State Routing Loops
+
+Loop reentry is driven by recorded state, not by handler-local magic strings.
+Use `loop(policy=..., reentry_id=...)` from `arnold.workflow.authoring` with
+explicit `break`/`continue` exits. The loop policy declares iteration bounds
+and reentry identity:
+
+```python
+from arnold.workflow.authoring import loop
+
+@workflow(id="review_loop")
+def review_loop():
+    loop(policy=bounded_review_loop, reentry_id="review-all")
+    while True:
+        verdict = review(id="review", policy=review_timeout)
+        if verdict == "approved":
+            break
+        revise(id="revise")
+```
+
+Loop iteration coordinates are ordered and monotonic. Replay reuses the same
+static path plus recorded iteration coordinates.
+
+### Tree Traces And Audit Skeletons
+
+Every attempt records a tree-shaped trace with stable path-addressed
+correlation. Audit records carry:
+
+- **`attempt_id`** — UUID hex string unique per attempt.
+- **`run_path`** — the trace-addressable path of this step in the invocation tree.
+- **`parent_run_path`** — the path of the parent workflow or iteration context.
+- **`call_site_path`** — the authored literal `id=` that created this step.
+- **`step_path`** — the full trace tree coordinate for this step.
+- **`attempt_start`**, **`step_outcome`**, **`attempt_end`** — timing and outcome.
+
+The audit skeleton is produced by `AuditHooks` and is serializable without
+capturing live Python frames. It is the evidence layer for conformance
+verification, not a debug log.
+
+### Path Resume
+
+Resume targets a specific call-site path in the trace tree, not a bare stage
+name. Use `start_from_trace` to resume execution from a recorded position:
+
+```python
+from arnold.pipeline.native import start_from_trace
+
+def resume_from_trace_example(
+    trace_dir: str | Path,
+    artifact_root: str | Path,
+    *,
+    target_path: str = "root/second-review/review-verdict",
+) -> Any:
+    return start_from_trace(build_native_program(), trace_dir, target_path, artifact_root)
+```
+
+The target path is tree-shaped: `root/<call-site>/<call-site>/...`. It matches
+the trace coordinates recorded at run time. Path identity is stable across
+refactors and does not depend on runtime object identity.
+
+### `@decision` Gates
+
+Branch decisions use the `@decision` decorator with an explicit vocabulary.
+Decision outcomes name declared labels only — magic-string interpretation is
+rejected:
+
+```python
+@decision(name="publish_gate", vocabulary={"publish", "revise"})
+def publish_gate(ctx: dict[str, Any]) -> str:
+    return "publish"
+```
+
+The compiler validates that every decision outcome is a member of the declared
+vocabulary.
 
 ### M6 Dispatch Substrate
 
@@ -156,6 +272,131 @@ in package metadata or docs.
 
 Hand-built graph builders are retained only for existing plans that have not
 yet migrated. New packages must be native-first.
+
+### Explicit Platform Boundaries
+
+The composition contract draws clear lines between what workflow source owns
+and what the platform provides. Each boundary below is a declared contract
+surface — source must not smuggle platform concerns into handler bodies, and
+the platform must not rewrite workflow topology.
+
+#### Durability
+
+Workflow durability (suspension and resume) is defined by declared suspension
+points in workflow source, not by handler-local checkpoint calls. A suspension
+point declares its eligibility, reentry identity, and resume schema:
+
+- **Suspension eligibility** — the workflow source declares where a suspension
+  may occur via `suspend(reentry_id=..., resume_schema=...)`.
+- **Reentry identity** — a stable ID that names the resume cursor. This ID is
+  recorded in the trace and used by `start_from_trace`.
+- **Resume schema** — the payload shape expected at reentry, validated against
+  the recorded trace before execution resumes.
+
+The native runtime owns the actual suspension mechanics (checkpoint writes,
+cursor advancement). Workflow source declares the intent; the platform executes
+it.
+
+#### Credentials
+
+Credentials and secrets are **never** referenced in workflow source or static
+metadata. The platform injects credentials at the execution boundary:
+
+- Workflow source may declare **credential requirements** (e.g., `"requires_api_key": true`),
+  but never the key values.
+- Environment reads, secret-file paths, and credential resolution happen inside
+  the platform's execution layer, not in workflow bodies.
+- `StepContext` or an equivalent runtime carrier provides resolved credentials
+  to step implementations without exposing raw secrets to the trace or audit
+  skeleton.
+
+#### Worker Fleets
+
+Execution isolation is a platform concern. Workflow source declares **what**
+should run; the platform decides **where**:
+
+- A workflow may declare `target_worker_pool="gpu"` as metadata, but the
+  actual dispatch, queuing, and fleet management belong to the execution
+  layer.
+- Parallel fanout (`parallel_map`, `parallel`) emits independent execution
+  items. The platform may distribute these across workers; workflow source
+  must not assume co-location.
+- Step implementations must not depend on local filesystem state that would
+  not survive a worker migration.
+
+#### Worktree Reconcile
+
+Artifacts and working directories are owned by the platform, not by workflow
+source:
+
+- Step outputs that represent file artifacts use `EvidenceArtifactRef` with
+  content-addressed URIs, not raw local paths.
+- The platform's artifact store owns durability, replication, and cleanup.
+- Workflow source declares `consumes`/`produces` port contracts referencing
+  content types; the platform maps these to concrete artifact locations.
+- Worktree reconcile (replaying into a fresh working directory) is a platform
+  operation that uses the recorded trace to reconstruct the artifact state
+  needed at each reentry point.
+
+#### Pack / Version Rollout
+
+Package identity and versioning follow the declared module-level contract:
+
+- `name`, `arnold_api_version`, `driver`, and `entrypoint` are the stable
+  package identity surface.
+- `WorkflowManifest` is compiled output with a deterministic manifest hash.
+  Version rollout compares manifest hashes, not hand-authored version strings.
+- The scaffold template (`arnold_pipelines/_template/`) emits
+  `authoring_style = "compositional"` and `driver = ("native", "project+validate")`.
+  New packages must not use legacy graph-first drivers or shim modules.
+- Capsule Contracts consume package identity facts but do not relax the
+  package contract. A package that changes its declared capabilities or
+  manifest shape must produce a distinct manifest hash — the platform uses
+  this for rollout gating and rollback decisions.
+
+#### Supervision
+
+Supervision (policy enforcement, escalation, override) is declared in workflow
+source and rendered policy metadata, not buried in handler-local control flow:
+
+- **Timeout** — declared at the step boundary (`policy=step_timeout`).
+- **Retry** — max attempts, backoff, and retryable error classes declared at the
+  call site via a named policy reference.
+- **Escalation** — escalation targets and trigger conditions declared in
+  policy metadata; the platform routes to escalation handlers without workflow
+  source reinterpreting outcomes.
+- **Override** — override actions and their route/effect classification live
+  in the override matrix (`arnold_pipelines/megaplan/workflows/override_matrix.py`).
+  Handlers consume pre-classified entries; they must not define local
+  route-decision functions.
+- **Model routes** — model selection is declared at the policy/profiles layer,
+  not chosen inside handler bodies. The execution layer resolves the model
+  binding before invoking the step.
+
+The rule across all boundaries is the same: **workflow source declares intent;
+the platform executes mechanics**. Handler bodies stay pure — they compute
+outputs from inputs without reading platform configuration, mutating routing
+state, or calling into fleet/credential/artifact infrastructure.
+
+### Static Queries
+
+The compiled `WorkflowManifest` and `Pipeline.native_program` support static
+queries without executing workflow bodies. Authors and tools can inspect:
+
+- **`node_ids`** and **`refs`** — the declared components and their dependencies.
+- **`suspension_points`** — where the workflow declares eligible suspension.
+- **`control_routes`** — the declared routing topology between steps.
+- **`source_spans`** — source-code locations for every call site.
+- **`hash_inputs`** — the inputs used to compute the deterministic manifest hash.
+
+Use `arnold workflow inspect <source>` for a source-oriented summary, or
+`arnold workflow explain <source>` for an ordered narrative of authored
+control flow. Both produce machine-readable JSON output with `--format json`.
+
+Generated reference docs for manifest fields, discovery facts, dispositions,
+and schemas live in [`docs/reference/arnold-projections.md`](../reference/arnold-projections.md).
+Update them with `python scripts/generate_arnold_docs.py --write` when
+code-owned facts change — do not copy fact tables into these authored pages.
 
 ### Typed Ports
 

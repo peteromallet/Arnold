@@ -48,6 +48,7 @@ RECOMMENDED_METADATA_KEYS: tuple[str, ...] = (
     "default_profile",
     "recommended_profiles",
     "capabilities",
+    "authoring_style",
 )
 
 #: The ``driver`` tuple **must** start with this literal.
@@ -55,6 +56,10 @@ NATIVE_DRIVER_PREFIX: str = "native"
 
 #: The literal that **must** appear in ``supported_modes``.
 NATIVE_MODE_LITERAL: str = "native"
+
+#: Opt-in value for packages that should satisfy the compositional scaffold
+#: contract rather than a flat native shell.
+COMPOSITIONAL_AUTHORING_STYLE: str = "compositional"
 
 #: Contract docstring (stable prose, used by docs and error messages).
 CONTRACT_TEXT: str = (
@@ -94,6 +99,10 @@ class _BuildPipelineError(_AuthoringError):
 
 class _RoutingPurityError(_AuthoringError):
     """Raised when a native program's routing decisions contain impure code."""
+
+
+class _CompositionContractError(_AuthoringError):
+    """Raised when an opt-in compositional package violates scaffold rules."""
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +185,57 @@ def _check_build_pipeline(pkg: object) -> Pipeline:
     return result
 
 
+_FORBIDDEN_SOURCE_PATTERNS: tuple[str, ...] = (
+    "Deprecated hand-built graph scaffold",
+    "_legacy",
+    "graph fallback",
+    "compatibility wrapper",
+    "compatibility namespace",
+    "shim package",
+    "temporary wrapper",
+    "direct manifest authoring",
+    "native_program as source authority",
+    "native_program-as-source",
+)
+
+
+def _read_module_source(pkg: object) -> str | None:
+    source_file = getattr(pkg, "__file__", None)
+    if not isinstance(source_file, str) or not source_file:
+        return None
+    try:
+        with open(source_file, encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def _check_compositional_source(pkg: object) -> None:
+    source = _read_module_source(pkg)
+    if source is None:
+        return
+    for forbidden in _FORBIDDEN_SOURCE_PATTERNS:
+        if forbidden in source:
+            raise _CompositionContractError(
+                f"Compositional package source contains forbidden shim/fallback pattern "
+                f"{forbidden!r}"
+            )
+
+
+def _check_compositional_program(program: object) -> None:
+    if not isinstance(program, NativeProgram):
+        raise _CompositionContractError(
+            "Compositional packages must attach a real NativeProgram so the "
+            "authoring validator can inspect nested workflow and fan-out structure."
+        )
+    if not any(instr.op in {"subpipeline", "parallel_map"} for instr in program.instructions):
+        raise _CompositionContractError(
+            f"Native program {program.name!r} is flat-only; compositional packages must "
+            "declare nested child workflows or parallel_map fan-out instead of a simple "
+            "top-level phase chain."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -195,7 +255,9 @@ def validate_package_module(pkg: object) -> Pipeline:
     4. ``build_pipeline()`` exists, is callable, returns a
        :class:`arnold.pipeline.Pipeline`, and that pipeline has a
        non-null ``native_program``.
-    5. When ``native_program`` is a :class:`~arnold.pipeline.native.ir.NativeProgram`
+    5. When ``authoring_style == 'compositional'``, reject shim/fallback
+       guidance and flat-only native step chains.
+    6. When ``native_program`` is a :class:`~arnold.pipeline.native.ir.NativeProgram`
        instance, routing-purity validation is performed on its decision bodies
        and static topology.
 
@@ -207,6 +269,7 @@ def validate_package_module(pkg: object) -> Pipeline:
         _InvalidDriverError: ``driver`` does not start with ``'native'``.
         _MissingNativeModeError: ``'native'`` not in ``supported_modes``.
         _BuildPipelineError: ``build_pipeline`` contract violation.
+        _CompositionContractError: compositional scaffold contract violation.
         _RoutingPurityError: native program routing decisions contain impure
             code or invalid static topology.
     """
@@ -214,6 +277,9 @@ def validate_package_module(pkg: object) -> Pipeline:
     _check_driver(getattr(pkg, "driver"))
     _check_supported_modes(getattr(pkg, "supported_modes"))
     pipeline = _check_build_pipeline(pkg)
+    if getattr(pkg, "authoring_style", None) == COMPOSITIONAL_AUTHORING_STYLE:
+        _check_compositional_source(pkg)
+        _check_compositional_program(pipeline.native_program)
 
     # Routing-purity validation for real NativeProgram instances only.
     # Non-NativeProgram sentinels (e.g. object() used in test fakes) are
@@ -241,10 +307,12 @@ def validate_package_module(pkg: object) -> Pipeline:
 __all__ = [
     "_AuthoringError",
     "_BuildPipelineError",
+    "_CompositionContractError",
     "_InvalidDriverError",
     "_MissingMetadataError",
     "_MissingNativeModeError",
     "_RoutingPurityError",
+    "COMPOSITIONAL_AUTHORING_STYLE",
     "CONTRACT_TEXT",
     "NATIVE_DRIVER_PREFIX",
     "NATIVE_MODE_LITERAL",

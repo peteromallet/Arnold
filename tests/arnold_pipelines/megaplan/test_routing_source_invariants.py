@@ -43,21 +43,6 @@ NATIVE_DIR = REPO_ROOT / "arnold" / "pipeline" / "native"
 # When a handler no longer needs a write, remove its entry — do not leave
 # stale entries that would mask a regression.
 _INVENTORIED_HANDLER_WRITES: set[tuple[str, int, str]] = {
-    # _tiebreaker_impl.py
-    ("arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py", 61, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py", 132, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py", 135, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py", 139, "current_state"),
-    # critique.py
-    ("arnold_pipelines/megaplan/handlers/critique.py", 874, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/critique.py", 1215, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/critique.py", 1223, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/critique.py", 1237, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/critique.py", 1247, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/critique.py", 1264, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/critique.py", 1283, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/critique.py", 1285, "current_state"),
-    ("arnold_pipelines/megaplan/handlers/critique.py", 1289, "current_state"),
     # execute.py
     ("arnold_pipelines/megaplan/handlers/execute.py", 260, "current_state"),
     ("arnold_pipelines/megaplan/handlers/execute.py", 318, "current_state"),
@@ -92,7 +77,6 @@ _INVENTORIED_HANDLER_WRITES: set[tuple[str, int, str]] = {
 # These don't show up as simple `state["key"] =` AST nodes but the test still
 # needs to allow them.
 _INVENTORIED_UNPACK_WRITES: set[tuple[str, int, str]] = {
-    ("arnold_pipelines/megaplan/handlers/critique.py", 1163, "current_state"),
     ("arnold_pipelines/megaplan/handlers/plan.py", 195, "current_state"),
 }
 

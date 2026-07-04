@@ -322,3 +322,288 @@ def test_workflow_manifest_amendments_clarifies_loop_reentry() -> None:
     assert "SuspensionRoute.reentry_id" in text
     lowered = text.lower()
     assert "arbitrary graph cycles" in lowered or "arbitrary cycles" in lowered
+
+
+# ── M6 composition doc/scaffold forbidden-pattern scans ───────────────────
+
+_COMPOSITION_DOC_SCAN_PATHS = (
+    Path("docs/arnold/native-composition-contract.md"),
+    Path("docs/arnold/authoring-guide.md"),
+    Path("docs/arnold/package-authoring-contract.md"),
+    Path("docs/arnold/workflow-authoring.md"),
+    Path("docs/arnold/creating-a-new-pipeline.md"),
+)
+
+_ACTIVE_SCAFFOLD_DIR = Path("arnold_pipelines/_template")
+_LEGACY_SCAFFOLD_DIR = Path("arnold/pipelines/_template")
+
+_FORBIDDEN_SHIM_FALLBACK_TERMS = (
+    "shim",
+    "fallback builder",
+    "graph fallback",
+    "dual-mode package",
+    "compatibility namespace",
+    "_legacy.py",
+    "temporary wrapper",
+    "--driver graph",
+)
+
+_FORBIDDEN_DIRECT_AUTHORITY_TERMS = (
+    "hand-authored WorkflowManifest",
+    "hand-authored NativeProgram",
+    "direct IR construction",
+    "native_program as source of truth",
+    "native_program defines composition",
+)
+
+_REJECTION_MARKERS = (
+    "do not",
+    "do **not**",
+    "must not",
+    "cannot",
+    "forbidden",
+    "prohibited",
+    "rejected",
+    "invalid",
+    "legacy",
+    "migration",
+    "delete",
+    "archival",
+    "no longer",
+    "banned",
+    "non-conformant",
+    "not conformant",
+    "explicitly disallowed",
+    "never",
+    "tolerated",
+    "bridge debt",
+    "not the source-authoritative",
+)
+
+
+def _is_rejection_line(line: str) -> bool:
+    lowered = line.lower()
+    # Normalize markdown bold/italic
+    lowered = lowered.replace("**", "").replace("*", "").replace("__", "")
+    return any(marker in lowered for marker in _REJECTION_MARKERS)
+
+
+def _paragraph_has_rejection_m6(paragraph_lines: list[str]) -> bool:
+    """Return True if any line in the paragraph has a rejection marker."""
+    return any(_is_rejection_line(line) for line in paragraph_lines)
+
+
+def _paragraphs_from_lines_m6(lines: list[str]) -> list[tuple[int, list[str]]]:
+    """Split lines into (start_line, paragraph_lines) groups on blank lines."""
+    paragraphs: list[tuple[int, list[str]]] = []
+    current: list[str] = []
+    start = 1
+    for lineno, line in enumerate(lines, start=1):
+        if line.strip() == "":
+            if current:
+                paragraphs.append((start, current))
+                current = []
+            start = lineno + 1
+        else:
+            current.append(line)
+    if current:
+        paragraphs.append((start, current))
+    return paragraphs
+
+
+def _is_table_or_fence(stripped: str) -> bool:
+    return stripped.startswith("|") or stripped.startswith("```")
+
+
+def test_m6_scaffold_python_no_forbidden_shim_fallback() -> None:
+    """Active scaffold Python files must not contain shim/fallback terms outside rejection context."""
+    root = Path(__file__).parent.parent.parent.parent
+    violations: list[str] = []
+    scaffold = root / _ACTIVE_SCAFFOLD_DIR
+    for py_file in sorted(scaffold.rglob("*.py")):
+        text = py_file.read_text(encoding="utf-8")
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if _is_rejection_line(line):
+                continue
+            lowered = line.lower()
+            for term in _FORBIDDEN_SHIM_FALLBACK_TERMS:
+                if term.lower() in lowered:
+                    violations.append(f"{py_file.relative_to(root)}:{lineno}: {term!r}")
+    assert not violations, "Scaffold Python contains forbidden shim/fallback terms:\n" + "\n".join(violations)
+
+
+def test_m6_scaffold_python_no_direct_manifest_authority() -> None:
+    """Active scaffold Python files must not teach direct manifest/native_program authority."""
+    root = Path(__file__).parent.parent.parent.parent
+    violations: list[str] = []
+    scaffold = root / _ACTIVE_SCAFFOLD_DIR
+    for py_file in sorted(scaffold.rglob("*.py")):
+        text = py_file.read_text(encoding="utf-8")
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if _is_rejection_line(line):
+                continue
+            lowered = line.lower()
+            for term in _FORBIDDEN_DIRECT_AUTHORITY_TERMS:
+                if term.lower() in lowered:
+                    violations.append(f"{py_file.relative_to(root)}:{lineno}: {term!r}")
+    assert not violations, (
+        "Scaffold Python contains forbidden direct-manifest authority terms:\n" + "\n".join(violations)
+    )
+
+
+def test_m6_scaffold_skill_md_no_forbidden_shim_fallback() -> None:
+    """Active scaffold SKILL.md files must not teach shim/fallback outside rejection context."""
+    root = Path(__file__).parent.parent.parent.parent
+    violations: list[str] = []
+    scaffold = root / _ACTIVE_SCAFFOLD_DIR
+    for md_file in sorted(scaffold.rglob("*.md")):
+        text = md_file.read_text(encoding="utf-8")
+        for start, para_lines in _paragraphs_from_lines_m6(text.splitlines()):
+            if _paragraph_has_rejection_m6(para_lines):
+                continue
+            for offset, line in enumerate(para_lines):
+                stripped = line.strip()
+                if _is_table_or_fence(stripped):
+                    continue
+                lineno = start + offset
+                lowered = line.lower()
+                for term in _FORBIDDEN_SHIM_FALLBACK_TERMS:
+                    if term.lower() in lowered:
+                        violations.append(f"{md_file.relative_to(root)}:{lineno}: {term!r}")
+    assert not violations, (
+        "Scaffold SKILL.md contains forbidden shim/fallback terms:\n" + "\n".join(violations)
+    )
+
+
+def test_m6_scaffold_skill_md_no_direct_manifest_authority() -> None:
+    """Active scaffold SKILL.md files must not teach direct manifest/native_program authority."""
+    root = Path(__file__).parent.parent.parent.parent
+    violations: list[str] = []
+    scaffold = root / _ACTIVE_SCAFFOLD_DIR
+    for md_file in sorted(scaffold.rglob("*.md")):
+        text = md_file.read_text(encoding="utf-8")
+        for start, para_lines in _paragraphs_from_lines_m6(text.splitlines()):
+            if _paragraph_has_rejection_m6(para_lines):
+                continue
+            for offset, line in enumerate(para_lines):
+                stripped = line.strip()
+                if _is_table_or_fence(stripped):
+                    continue
+                lineno = start + offset
+                lowered = line.lower()
+                for term in _FORBIDDEN_DIRECT_AUTHORITY_TERMS:
+                    if term.lower() in lowered:
+                        violations.append(f"{md_file.relative_to(root)}:{lineno}: {term!r}")
+    assert not violations, (
+        "Scaffold SKILL.md contains forbidden direct-manifest authority terms:\n" + "\n".join(violations)
+    )
+
+
+def test_m6_composition_docs_no_forbidden_shim_fallback() -> None:
+    """Composition docs must not teach shim/fallback authority patterns outside rejection context."""
+    root = Path(__file__).parent.parent.parent.parent
+    violations: list[str] = []
+    for rel in _COMPOSITION_DOC_SCAN_PATHS:
+        p = root / rel
+        if not p.exists():
+            continue
+        text = p.read_text(encoding="utf-8")
+        for start, para_lines in _paragraphs_from_lines_m6(text.splitlines()):
+            if _paragraph_has_rejection_m6(para_lines):
+                continue
+            for offset, line in enumerate(para_lines):
+                stripped = line.strip()
+                if _is_table_or_fence(stripped):
+                    continue
+                lineno = start + offset
+                lowered = line.lower()
+                for term in _FORBIDDEN_SHIM_FALLBACK_TERMS:
+                    if term.lower() in lowered:
+                        violations.append(f"{rel}:{lineno}: {term!r}")
+    assert not violations, (
+        "Composition docs contain forbidden shim/fallback terms:\n" + "\n".join(violations)
+    )
+
+
+def test_m6_composition_docs_no_direct_manifest_authority() -> None:
+    """Composition docs must not teach direct manifest/native_program authority outside rejection."""
+    root = Path(__file__).parent.parent.parent.parent
+    violations: list[str] = []
+    for rel in _COMPOSITION_DOC_SCAN_PATHS:
+        p = root / rel
+        if not p.exists():
+            continue
+        text = p.read_text(encoding="utf-8")
+        bullets_in_toleration: set[int] = set()
+        all_paragraphs = _paragraphs_from_lines_m6(text.splitlines())
+        for i, (start, para_lines) in enumerate(all_paragraphs):
+            para_text = " ".join(line.strip() for line in para_lines).lower()
+            if "tolerated" in para_text and "bridge debt" in para_text:
+                if i + 1 < len(all_paragraphs):
+                    next_start, next_lines = all_paragraphs[i + 1]
+                    if next_lines and next_lines[0].strip().startswith("-"):
+                        for off in range(len(next_lines)):
+                            bullets_in_toleration.add(next_start + off)
+        for start, para_lines in all_paragraphs:
+            if _paragraph_has_rejection_m6(para_lines):
+                continue
+            for offset, line in enumerate(para_lines):
+                stripped = line.strip()
+                if _is_table_or_fence(stripped):
+                    continue
+                lineno = start + offset
+                if lineno in bullets_in_toleration:
+                    continue
+                lowered = line.lower()
+                for term in _FORBIDDEN_DIRECT_AUTHORITY_TERMS:
+                    if term.lower() in lowered:
+                        violations.append(f"{rel}:{lineno}: {term!r}")
+    assert not violations, (
+        "Composition docs contain forbidden direct-manifest authority terms:\n" + "\n".join(violations)
+    )
+
+
+def test_m6_legacy_scaffold_path_not_resurrected() -> None:
+    """The legacy ``arnold/pipelines/_template/`` directory must not exist."""
+    root = Path(__file__).parent.parent.parent.parent
+    legacy = root / _LEGACY_SCAFFOLD_DIR
+    assert not legacy.exists(), (
+        f"Legacy scaffold path {_LEGACY_SCAFFOLD_DIR} must NOT exist. "
+        f"Use active path: {_ACTIVE_SCAFFOLD_DIR}"
+    )
+
+
+def test_m6_active_scaffold_does_not_reference_legacy_path() -> None:
+    """Active scaffold files must not reference the legacy scaffold path."""
+    root = Path(__file__).parent.parent.parent.parent
+    violations: list[str] = []
+    scaffold = root / _ACTIVE_SCAFFOLD_DIR
+    for f in sorted(scaffold.rglob("*")):
+        if not f.is_file():
+            continue
+        try:
+            text = f.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        if "arnold/pipelines/_template" in text:
+            violations.append(str(f.relative_to(root)))
+    assert not violations, (
+        f"Active scaffold references legacy path arnold/pipelines/_template/: {violations}"
+    )
+
+
+def test_m6_scaffold_skill_md_native_program_substrate_language() -> None:
+    """Scaffold SKILL.md mentioning native_program must use substrate/dispatch language."""
+    root = Path(__file__).parent.parent.parent.parent
+    violations: list[str] = []
+    scaffold = root / _ACTIVE_SCAFFOLD_DIR
+    for md_file in sorted(scaffold.rglob("*.md")):
+        text = md_file.read_text(encoding="utf-8").lower()
+        if "native_program" in text:
+            has_substrate = "substrate" in text or "dispatch" in text
+            if not has_substrate:
+                violations.append(str(md_file.relative_to(root)))
+    assert not violations, (
+        "Scaffold SKILL.md mentions native_program without substrate/dispatch language:\n"
+        + "\n".join(violations)
+    )

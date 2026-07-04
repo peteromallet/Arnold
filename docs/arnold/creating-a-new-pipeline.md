@@ -35,48 +35,72 @@ Replace every `my-pipeline` placeholder with the real pipeline id.
 
 ## 2. Replace the Skeleton
 
-Open `__init__.py` and keep the native-first shape. A minimal native-first
-package looks like this:
+Open `__init__.py` and keep the native-first compositional shape. A minimal
+native-first package uses `@step`, `@workflow`, `@decision`, and literal
+`id=` values at every call site:
 
 ```python
 from __future__ import annotations
 
 from typing import Any
 
-from arnold.pipeline.native import compile_pipeline, phase, pipeline, project_graph
+from arnold.pipeline import step, workflow, decision
+from arnold.pipeline.native import compile_pipeline, project_graph
 from arnold.pipeline.types import Pipeline
 
 
 name: str = "my-pipeline"
-description: str = "A minimal native-first pipeline."
+description: str = "A compositional native-first pipeline."
 default_profile: str | None = None
 supported_modes: tuple[str, ...] = ("native",)
 driver: tuple[str, str] = ("native", "project+validate")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("skeleton",)
+authoring_style: str = "compositional"
 
 
-@phase(name="plan")
+@step(
+    name="plan",
+    id="my-pipeline.plan",
+    inputs={"type": "object", "required": ["brief"]},
+    outputs={"type": "object", "required": ["plan"]},
+)
 def plan(ctx: object) -> Any:
     return {"plan": "ready"}
 
 
-@phase(name="execute")
+@step(
+    name="execute",
+    id="my-pipeline.execute",
+    inputs={"type": "object", "required": ["plan"]},
+    outputs={"type": "object", "required": ["result"]},
+)
 def execute(ctx: object) -> Any:
     return {"result": "done"}
 
 
-@phase(name="review")
+@step(
+    name="review",
+    id="my-pipeline.review",
+    inputs={"type": "object", "required": ["result"]},
+    outputs={"type": "object", "required": ["verdict"]},
+)
 def review(ctx: object) -> Any:
-    return {"review": "approved"}
+    return {"verdict": "approved"}
 
 
-@pipeline(name="my-pipeline", description=description)
+@workflow(
+    name="my-pipeline",
+    id="my-pipeline.root",
+    inputs={"type": "object", "required": ["brief"]},
+    outputs={"type": "object", "required": ["verdict"]},
+)
 def my_pipeline_native(ctx: object) -> Any:
-    yield plan(ctx)
-    yield execute(ctx)
-    yield review(ctx)
+    state = yield plan(ctx, id="plan-step", outputs={"plan": "plan"})
+    state = yield execute(ctx, id="execute-step", outputs={"result": "result"})
+    state = yield review(ctx, id="review-step", outputs={"verdict": "verdict"})
+    return state
 
 
 def build_pipeline() -> Pipeline:
@@ -87,6 +111,7 @@ def build_pipeline() -> Pipeline:
 
 __all__ = [
     "arnold_api_version",
+    "authoring_style",
     "build_pipeline",
     "capabilities",
     "default_profile",
@@ -102,6 +127,10 @@ __all__ = [
 `arnold.pipeline.types.Pipeline` with a **non-null** `native_program`. The
 `native_program` is a dispatch substrate — the runtime executes it directly.
 Do not hand-author the native program as a builder object.
+
+Every `@step` and `@workflow` must declare a stable `id=`, `inputs`, and
+`outputs`. Every call site in the workflow body must include a literal `id=`.
+These are the durability contract for trace, replay, and resume.
 
 ## 3. Validate and Run
 
@@ -154,6 +183,11 @@ dispatch boundary.
 - Do **not** use `--driver graph` — it is an unsupported legacy path.
 - Do **not** import `arnold.workflow` (`Pipeline`, `Step`, `Route`,
   `Input`, `Output`, `Capability`) for new native-first packages.
+- Every `@step` and `@workflow` must declare `id=`, `inputs`, and `outputs`.
+- Every call site in a workflow body must include a literal `id=` keyword.
+- `authoring_style = "compositional"` enables platform-boundary validation.
+- Do **not** read environment variables or secret files in package code.
+- Do **not** assume local filesystem paths survive worker migration.
 
 ## 7. Reference Implementations
 

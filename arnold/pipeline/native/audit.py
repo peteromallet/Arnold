@@ -8,7 +8,11 @@ file (one JSON record per line) at the documented insertion points.
 Each audit record captures:
 
 * ``run_id`` — stable identifier for the run
+* ``attempt_id`` — stable unique identifier for this specific attempt
 * ``step_path`` — the stable tree-shaped path of the step
+* ``run_path`` — the run path (parent of step_path, for trace correlation)
+* ``parent_run_path`` — the parent run path (for lineage / tree-trace correlation)
+* ``call_site_path`` — call-site path segments (for tree-trace correlation)
 * ``attempt`` — attempt number (defaults to 1, incremented by retry wiring)
 * ``input_keys`` — sorted list of input context dict keys
 * ``output_keys`` — sorted list of output/result dict keys (success only)
@@ -92,8 +96,12 @@ class AuditRecord:
     """
 
     __slots__ = (
+        "attempt_id",
         "run_id",
         "step_path",
+        "run_path",
+        "parent_run_path",
+        "call_site_path",
         "attempt",
         "input_keys",
         "output_keys",
@@ -107,13 +115,21 @@ class AuditRecord:
     def __init__(
         self,
         *,
+        attempt_id: str,
         run_id: str,
         step_path: str,
+        run_path: str = "",
+        parent_run_path: str | None = None,
+        call_site_path: list[str] | None = None,
         attempt: int = 1,
         input_keys: list[str] | None = None,
     ) -> None:
+        self.attempt_id = attempt_id
         self.run_id = run_id
         self.step_path = step_path
+        self.run_path = run_path
+        self.parent_run_path = parent_run_path
+        self.call_site_path = call_site_path
         self.attempt = attempt
         self.input_keys = input_keys
         self.output_keys: list[str] | None = None
@@ -139,8 +155,12 @@ class AuditRecord:
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a dictionary for NDJSON writing."""
         return {
+            "attempt_id": self.attempt_id,
             "run_id": self.run_id,
             "step_path": self.step_path,
+            "run_path": self.run_path,
+            "parent_run_path": self.parent_run_path,
+            "call_site_path": self.call_site_path,
             "attempt": self.attempt,
             "input_keys": self.input_keys,
             "output_keys": self.output_keys,
@@ -241,6 +261,34 @@ class AuditHooks:
             return run_path
         return "root"
 
+    def _resolve_run_path(self, ctx: dict[str, Any]) -> str:
+        """Extract the run_path (parent of step_path) from context."""
+        run_path = ctx.get("run_path")
+        if isinstance(run_path, str) and run_path:
+            return run_path
+        return "root"
+
+    def _resolve_parent_run_path(self, ctx: dict[str, Any]) -> str | None:
+        """Extract the parent_run_path from context for lineage."""
+        parent = ctx.get("parent_run_path")
+        if isinstance(parent, str) and parent:
+            return parent
+        return None
+
+    def _resolve_call_site_path(self, ctx: dict[str, Any]) -> list[str]:
+        """Extract the call_site_path from context for trace correlation."""
+        csp = ctx.get("call_site_path")
+        if isinstance(csp, (list, tuple)):
+            return [str(s) for s in csp]
+        return []
+
+    def _parent_path(self, step_path: str) -> str | None:
+        """Derive parent path from step_path by removing the last segment."""
+        parts = step_path.rsplit("/", 1)
+        if len(parts) == 2 and parts[0]:
+            return parts[0]
+        return None
+
     def _next_attempt(self, step_key: str) -> int:
         """Return the next attempt number for *step_key*."""
         current = self._attempts.get(step_key, 0)
@@ -258,9 +306,14 @@ class AuditHooks:
         ctx = self._inner.on_step_start(instr, ctx)
         if self._audit_dir is not None:
             step_key = self._step_key(instr)
+            step_path = self._resolve_step_path(ctx)
             self._active_record = AuditRecord(
+                attempt_id=uuid4().hex,
                 run_id=self._run_id,
-                step_path=self._resolve_step_path(ctx),
+                step_path=step_path,
+                run_path=self._resolve_run_path(ctx),
+                parent_run_path=self._resolve_parent_run_path(ctx),
+                call_site_path=self._resolve_call_site_path(ctx),
                 attempt=self._next_attempt(step_key),
                 input_keys=_dict_keys_summary(ctx),
             )

@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable
 
 import arnold_pipelines.megaplan.workers as worker_module
 from arnold_pipelines.megaplan.execute.batch import build_monitor_hint
@@ -50,6 +50,7 @@ from arnold_pipelines.megaplan._core.phase_runtime import (
     format_duration_hint,
 )
 from arnold_pipelines.megaplan.orchestration.plan_structure import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE, validate_plan_structure
+from arnold_pipelines.megaplan.route_dispatch import resolve_route_target_for_signal
 from arnold_pipelines.megaplan.workers import WorkerResult
 
 log = logging.getLogger("megaplan")
@@ -128,26 +129,6 @@ def _validate_relative_path(project_dir: Path, raw: str, flag_name: str) -> str:
 def attach_agent_fallback(response: StepResponse, args: argparse.Namespace) -> None:
     if hasattr(args, "_agent_fallback"):
         response["agent_fallback"] = args._agent_fallback
-
-
-def _route_target_for_signal(step: str, route_signal: object) -> str | None:
-    if not isinstance(route_signal, str) or not route_signal:
-        return None
-    try:
-        from arnold_pipelines.megaplan.workflows.components import STEP_COMPONENTS_BY_ID
-
-        component = STEP_COMPONENTS_BY_ID[step]
-    except Exception:
-        return None
-    for binding in component.metadata.get("route_bindings", ()):
-        if not isinstance(binding, Mapping):
-            continue
-        if binding.get("label") != route_signal:
-            continue
-        target_ref = binding.get("target_ref")
-        if isinstance(target_ref, str) and target_ref:
-            return target_ref
-    return None
 
 
 def _attach_next_step_runtime(response: StepResponse) -> None:
@@ -510,7 +491,7 @@ def _finish_step(
     }
     if response_fields:
         response.update(response_fields)
-    route_target = _route_target_for_signal(step, response.get("route_signal"))
+    route_target = resolve_route_target_for_signal(step, response.get("route_signal"))
     if route_target is not None:
         response["next_step"] = route_target
     _attach_next_step_runtime(response)

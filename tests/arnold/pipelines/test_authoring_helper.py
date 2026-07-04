@@ -9,18 +9,22 @@ These tests live under ``tests/arnold/pipelines/`` without a package
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import types
+from pathlib import Path
 
 import pytest
 
 from arnold.pipeline import Pipeline
 from arnold.pipelines._authoring import (
+    COMPOSITIONAL_AUTHORING_STYLE,
     CONTRACT_TEXT,
     NATIVE_DRIVER_PREFIX,
     NATIVE_MODE_LITERAL,
     REQUIRED_METADATA_KEYS,
     _AuthoringError,
     _BuildPipelineError,
+    _CompositionContractError,
     _InvalidDriverError,
     _MissingMetadataError,
     _MissingNativeModeError,
@@ -59,6 +63,14 @@ def _native_first_module(**overrides: object) -> types.ModuleType:
     }
     defaults.update(overrides)
     return _make_module(**defaults)
+
+
+def _load_module_from_path(path: Path, module_name: str) -> types.ModuleType:
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 # ---------------------------------------------------------------------------
@@ -179,3 +191,77 @@ def test_validate_accepts_native_template() -> None:
     """T6: _template is now native-first and must pass validation."""
     pkg = importlib.import_module("arnold_pipelines._template")
     validate_package_module(pkg)  # does not raise
+
+
+def test_validate_rejects_flat_only_compositional_module(tmp_path: Path) -> None:
+    """Opted-in compositional packages must not collapse to a flat phase chain."""
+    module_path = tmp_path / "flat_only_pkg.py"
+    module_path.write_text(
+        """
+from dataclasses import replace
+
+from arnold.pipeline.native import compile_pipeline, phase, pipeline, project_graph
+from arnold.pipeline.types import Pipeline, StepResult
+
+name = "flat-only"
+description = "flat only compositional test"
+driver = ("native", "project+validate")
+supported_modes = ("native",)
+entrypoint = "build_pipeline"
+arnold_api_version = "1.0"
+authoring_style = "compositional"
+
+
+@phase(name="only_step", id="flat.only_step")
+def only_step(ctx):
+    del ctx
+    return StepResult(outputs={"done": True}, next="halt")
+
+
+@pipeline(name="flat_only", id="flat.parent")
+def flat_only(ctx):
+    state = yield only_step(ctx)
+    return state
+
+
+def build_pipeline() -> Pipeline:
+    native_program = compile_pipeline(flat_only)
+    projected = project_graph(native_program, key_mode="phase")
+    return replace(projected, native_program=native_program, resource_bundles=())
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    module = _load_module_from_path(module_path, "flat_only_pkg")
+
+    with pytest.raises(_CompositionContractError, match="flat-only"):
+        validate_package_module(module)
+
+
+def test_validate_rejects_shim_pattern_for_compositional_module(tmp_path: Path) -> None:
+    """Opted-in compositional packages must not carry shim/fallback guidance."""
+    module_path = tmp_path / "shim_pkg.py"
+    module_path.write_text(
+        """
+from arnold.pipeline import Pipeline
+
+name = "shimmy"
+description = "Deprecated hand-built graph scaffold"
+driver = ("native", "project+validate")
+supported_modes = ("native",)
+entrypoint = "build_pipeline"
+arnold_api_version = "1.0"
+authoring_style = "compositional"
+
+
+def build_pipeline():
+    # Deprecated hand-built graph scaffold
+    return Pipeline(stages={}, entry="start", native_program=object())
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    module = _load_module_from_path(module_path, "shim_pkg")
+
+    with pytest.raises(_CompositionContractError, match="shim/fallback"):
+        validate_package_module(module)

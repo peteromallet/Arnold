@@ -286,6 +286,24 @@ Per-attempt audit fields must preserve:
 - suspension/resume coordinates when applicable
 - child invocation coordinates
 
+### Audit Skeleton
+
+Every attempt records a complete audit skeleton through `AuditHooks`.
+The `AuditRecord` dataclass carries:
+
+- `attempt_id` — UUID hex string unique per attempt.
+- `run_path` — the trace-addressable path of this step in the invocation tree.
+- `parent_run_path` — the path of the parent workflow or iteration context.
+- `call_site_path` — the authored literal `id=` that created this step.
+- `step_path` — the full trace tree coordinate for this step.
+- `attempt_start` — timestamp when the attempt began.
+- `step_outcome` — the result of the step (`completed`, `failed`, `suspended`).
+- `attempt_end` — timestamp when the attempt finished.
+
+The audit skeleton is serializable without capturing live Python frames. It is
+the evidence layer for conformance verification, not a debug log. All paths
+are trace-addressable and correlate to tree traces via `call_site_path`.
+
 Trace records are structural evidence. They must be serializable without
 capturing live Python frames.
 
@@ -301,6 +319,95 @@ Replay is repeatable, not model-deterministic:
   byte equality of all step outputs.
 - Resume/replay must never infer a new topology from `Pipeline.native_program`
   alone when source and compiled metadata disagree; source-owned semantics win.
+
+## Platform Boundaries
+
+The composition contract draws explicit lines between six platform domains.
+Each boundary is a declared contract surface: workflow source declares intent;
+the platform executes mechanics.
+
+### Durability
+
+Workflow durability (suspension and resume) is defined by declared suspension
+points in workflow source, not by handler-local checkpoint calls:
+
+- `suspend(reentry_id=..., resume_schema=...)` declares a suspension point.
+- `reentry_id` names the stable resume cursor.
+- `resume_schema` describes the expected payload shape at reentry.
+- The native runtime owns checkpoint writes and cursor advancement.
+
+### Credentials
+
+Credentials and secrets are never referenced in workflow source or static
+metadata:
+
+- Workflow source may declare credential requirements, never key values.
+- `StepContext` provides resolved credentials at runtime without exposing
+  raw secrets to the trace or audit skeleton.
+- Environment reads and credential resolution live in the platform's
+  execution layer.
+
+### Worker Fleets
+
+Execution isolation is a platform concern. Workflow source declares *what*
+runs; the platform decides *where*:
+
+- `target_worker_pool` hints are metadata, not dispatch directives.
+- Parallel fanout items are independent; workflow source must not assume
+  co-location.
+- Steps must not depend on local filesystem state that would not survive
+  worker migration.
+
+### Worktree Reconcile
+
+Artifacts and working directories are owned by the platform:
+
+- File artifacts use `EvidenceArtifactRef` with content-addressed URIs.
+- The platform's artifact store owns durability, replication, and cleanup.
+- `consumes`/`produces` port contracts reference content types; the platform
+  maps these to concrete locations.
+- Worktree reconcile uses the recorded trace to reconstruct artifact state
+  at reentry points.
+
+### Pack / Version Rollout
+
+Package identity and versioning follow the declared module-level contract:
+
+- `name`, `arnold_api_version`, `driver`, `entrypoint` are the stable identity
+  surface.
+- `WorkflowManifest` hashes drive rollout gating — version comparisons use
+  deterministic hashes, not hand-authored version strings.
+- The scaffold template emits `authoring_style = "compositional"` and
+  `driver = ("native", "project+validate")`.
+
+### Supervision
+
+Supervision (policy enforcement, escalation, override) is declared in workflow
+source and rendered policy metadata:
+
+- Timeout, retry, escalation, and override actions are declared via named
+  policy references at call sites.
+- The override matrix classifies actions into terminal-route-affecting and
+  additive-config-effect categories.
+- Handlers consume pre-classified entries; they must not define local
+  route-decision functions.
+- Model routes are resolved at the policy/profiles layer before step
+  invocation.
+
+## Static Queries
+
+The compiled `WorkflowManifest` supports static inspection without executing
+workflow bodies:
+
+- `node_ids` and `refs` — declared components and dependencies.
+- `suspension_points` — eligible suspension locations.
+- `control_routes` — declared routing topology.
+- `source_spans` — source-code locations for every call site.
+- `hash_inputs` — inputs used to compute the deterministic manifest hash.
+
+Use `arnold workflow inspect` or `arnold workflow explain` for static queries.
+Both produce machine-readable JSON with `--format json`. The CLI never imports
+or executes workflow source for inspection.
 
 ## Megaplan Compatibility Aliases
 

@@ -82,22 +82,6 @@ from .shared import _append_to_meta, _attach_next_step_runtime, _warn_best_effor
 
 
 _REVISE_STRUCTURAL_OVERRIDE_ACTIONS = {"step-add", "step-remove", "step-move", "replan"}
-_ROUTED_OVERRIDE_ACTIONS = frozenset(
-    {
-        "add-note",
-        "abort",
-        "force-proceed",
-        "recover-blocked",
-        "replan",
-        "resume-clarify",
-        "set-robustness",
-        "set-profile",
-        "set-model",
-        "set-vendor",
-    }
-)
-
-
 @dataclass(frozen=True)
 class UnknownOverrideActionError(ValueError):
     action: str
@@ -115,18 +99,22 @@ class OverrideActionOutput:
     extras: tuple[tuple[str, Any], ...] = ()
 
 
-_OVERRIDE_ROUTE_SIGNALS = {
-    "abort": "abort",
-    "force-proceed": "force_proceed",
-    "replan": "replan",
-    "recover-blocked": "recover_blocked",
-    "resume-clarify": "resume_clarify",
-    "add-note": "add_note",
-    "set-robustness": "set_robustness",
-    "set-profile": "set_profile",
-    "set-model": "set_model",
-    "set-vendor": "set_vendor",
-}
+def _override_action_entry(action: str):
+    from arnold_pipelines.megaplan.workflows.override_matrix import get_entry
+
+    return get_entry(action)
+
+
+def _control_routed_override_actions() -> frozenset[str]:
+    from arnold_pipelines.megaplan.workflows.override_matrix import CONTROL_ROUTED_ACTIONS
+
+    return CONTROL_ROUTED_ACTIONS
+
+
+def _route_signal_for_override_action(action: str) -> str | None:
+    from arnold_pipelines.megaplan.workflows.override_matrix import ROUTE_SIGNAL_BY_ACTION
+
+    return ROUTE_SIGNAL_BY_ACTION.get(action)
 
 
 def _build_override_action_output(
@@ -138,7 +126,10 @@ def _build_override_action_output(
     artifacts: dict[str, Any] | None = None,
 ) -> OverrideActionOutput:
     next_steps = infer_next_steps(state)
-    route_signal = _OVERRIDE_ROUTE_SIGNALS.get(action)
+    try:
+        route_signal = _override_action_entry(action).route_signal
+    except KeyError as error:
+        raise UnknownOverrideActionError(action) from error
     if action == "add-note":
         return OverrideActionOutput(
             summary="Attached note to the plan.",
@@ -493,7 +484,7 @@ def _emit_routed_override_events(
 def _normalize_override_response(action: str, response: StepResponse) -> StepResponse:
     normalized = dict(response)
     normalized.setdefault("override_action", action)
-    route_signal = _OVERRIDE_ROUTE_SIGNALS.get(action)
+    route_signal = _route_signal_for_override_action(action)
     if route_signal is not None:
         normalized.setdefault("route_signal", route_signal)
     return normalized
@@ -1902,7 +1893,7 @@ def handle_override(root: Path, args: argparse.Namespace) -> StepResponse:
     else:
         preflight_phase(root=root, state=state, phase=f"override:{action}")
     save_state_merge_meta(plan_dir, state)
-    if control_interface_routing_on() and action in _ROUTED_OVERRIDE_ACTIONS:
+    if control_interface_routing_on() and action in _control_routed_override_actions():
         return _handle_routed_override(root, plan_dir, state, args)
     handler = _OVERRIDE_ACTIONS.get(action)
     if handler is None:
