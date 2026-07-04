@@ -18,7 +18,9 @@ static graph queries, tree traces, per-attempt audit skeletons, and path resume.
   workflow identity.
 - `docs/arnold/workflow-authoring.md`
   Add examples for a single workflow, a nested workflow, a loop over recorded
-  state, repeated child workflow use, and a path-resume scenario.
+  state, repeated child workflow use, and a path-resume scenario. Examples
+  should use `.pypeline` files for authored workflows and `.py` only for helper
+  implementation modules or compatibility shims.
 - `docs/arnold/native-composition-contract.md`
   Ensure the final implemented contract matches the M0 contract, or update the
   contract with deliberate decisions made during implementation.
@@ -61,6 +63,13 @@ static graph queries, tree traces, per-attempt audit skeletons, and path resume.
 - Conformance tests lock stable unit IDs, declared interfaces, nested
   invocation, loops, static graph queries, tree traces, path addressing,
   per-attempt audit skeletons, and composite resume as public behavior.
+- Conformance includes a native-Python authoring gate for canonical Megaplan:
+  `workflow.pypeline` and imported native subworkflows must express product
+  control flow with Python branches, loops, calls, subworkflow calls, and typed
+  outcomes. The gate rejects author-facing control flow built from component
+  constants, generic stage dispatch, route tables, handler refs, or direct
+  manifest/node builders. If `workflow.py` remains, it must be proven to be a
+  compatibility loader/re-export with no product semantics.
 - Conformance includes a replay-consistency gate: run an equivalent nested
   workflow uninterrupted and with interruption/resume, then assert the final
   state and committed side-effect record are equivalent.
@@ -85,6 +94,18 @@ static graph queries, tree traces, per-attempt audit skeletons, and path resume.
   artifact-contract, or suspension policies do not count unless the compiled
   workflow renders and tests them on the affected steps, subworkflows, or
   dynamic-map call sites.
+- The source-readability conformance check is mechanical as well as human:
+  it scans the canonical workflow source and imported native subworkflow files
+  for prohibited graph-era authoring constructs, including `SOURCE_*`-style
+  component calls, `handler_ref` carriers, route-label dispatch tables, generic
+  stage dispatch, and direct manifest/node construction in product control
+  flow. Allowed retained uses must be documented as pure phase bodies or
+  compatibility projection code with source-invariant tests.
+- The source-path conformance check requires
+  `arnold_pipelines/megaplan/workflows/workflow.pypeline` to be the canonical
+  authored workflow source. A retained `workflow.py` must be tested as a
+  compatibility shim and may not be listed as the semantic carrier for any
+  implemented report row.
 - No doc or scaffold teaches shims, graph fallback builders, or compatibility
   wrapper modules as an authoring pattern.
 - Docs are explicit that this epic delivers composition on the existing native
@@ -103,8 +124,13 @@ static graph queries, tree traces, per-attempt audit skeletons, and path resume.
 
 - Matrix rows owned or affected: all composition-owned rows in `docs/arnold/megaplan-native-representation-alignment-plan.md`, especially Source readability; Handler topology extraction/purity audit; Golden trace regeneration guard; Behavior parity with existing Megaplan.
 - Expected status change: no composition-owned row may remain `missing` or merely planning-only `enabled`; each must be `implemented` with proof or explicitly `deferred` to a downstream owner.
-- Proof artifacts: row-by-row alignment proof, structural conformance test, handler-purity inventory and scans, mutation tests moving logic back into handlers, fixed D1-D15 scenario manifest, generated override action matrix, rendered policy view, static topology snapshots, rendered topology diff, docs/scaffold tests, installed-package smoke test, source-path reconciliation proof, `docs/arnold/megaplan-composition-conformance-report.md`, the explicit `proof-map.json` used for platform handoff, and the generated `completion-manifest.json`.
+- Proof artifacts: row-by-row alignment proof, structural conformance test, native-Python anti-wrapper test over `workflow.pypeline`, handler-purity inventory and scans, mutation tests moving logic back into handlers, fixed D1-D15 scenario manifest, generated override action matrix, rendered policy view, static topology snapshots, rendered topology diff, docs/scaffold tests, installed-package smoke test, source-path reconciliation proof, `workflow.py` compatibility-shim proof if retained, `docs/arnold/megaplan-composition-conformance-report.md`, the explicit `proof-map.json` used for platform handoff, and the generated `completion-manifest.json`.
 - False-pass guard: human-readable docs or route labels do not prove conformance unless structural checks fail when semantics are hidden in handlers.
+- Anti-wrapper guard: a decorated Python file that still orchestrates Megaplan
+  by calling graph-era component constants, generic stages, handler refs, or
+  manifest builders is not native representation conformance. Final M6 must
+  fail that shape even if nested traces, route labels, or compiled manifests
+  appear correct.
 - Doctrine gate: final docs and conformance must prove that canonical
   compositional source is the semantic authority, `WorkflowManifest` is the
   compiled runtime/replay/inspection artifact, and `Pipeline.native_program`
@@ -115,7 +141,7 @@ static graph queries, tree traces, per-attempt audit skeletons, and path resume.
   semantic cannot be deferred from this milestone because it remains hidden in a
   handler, metadata constant, route label, manifest projection, native trace, or
   `native_program` shell.
-- Canonical source paths/imports: final docs and conformance must point to the canonical workflow source and installed package/import path verified by smoke tests.
+- Canonical source paths/imports: final docs and conformance must point to `arnold_pipelines/megaplan/workflows/workflow.pypeline` as the canonical authored workflow source, describe any `workflow.py` compatibility shim, and verify installed package/import path behavior by smoke tests.
 
 ## Risks And Blockers
 

@@ -79,6 +79,7 @@ locks, logs, telemetry, verification state, `.DS_Store`, or macOS AppleDouble
 
 ```bash
 python -m arnold_pipelines.megaplan cloud status --all
+python -m arnold_pipelines.megaplan cloud status --all --compact --since 12h
 python -m arnold_pipelines.megaplan cloud status
 python -m arnold_pipelines.megaplan cloud status --chain
 python -m arnold_pipelines.megaplan cloud logs
@@ -90,6 +91,20 @@ sessions with human names, `should_run=yes/no`, liveness, current plan state,
 and any watchdog repair/escalation status. Use `tmux ls` only for "which runner
 processes are alive right now"; `/workspace/watchdog-report.json` is only the
 last watchdog scan and can be stale.
+
+For operator handoffs and "what changed recently?" checks, prefer:
+
+```bash
+python -m arnold_pipelines.megaplan cloud status --all --compact --since 12h \
+  --cloud-yaml .megaplan/initiatives/<active-initiative>/cloud.yaml
+```
+
+`--compact` prints one row per relevant session. `--since` accepts durations
+such as `30m`, `12h`, or `2d`, or an ISO timestamp. The filter uses the newest
+real plan `state.json` timestamp when available, not watchdog health mtimes,
+because watchdog reports can be rewritten after a chain has already completed.
+The JSON payload is filtered to the same sessions and includes
+`unfiltered_session_count` plus `since` for auditability.
 
 ## `cloud.yaml` Reference
 

@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, replace
 from importlib import resources
 from pathlib import Path, PurePosixPath
@@ -284,6 +284,16 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         help="List all known cloud sessions from the marker registry with live/health evidence",
     )
     status_parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="With --all, print a compact operator table before the JSON payload",
+    )
+    status_parser.add_argument(
+        "--since",
+        default=None,
+        help="With --all, only print compact rows with real activity since a duration or ISO timestamp, e.g. 12h",
+    )
+    status_parser.add_argument(
         "--remote-spec",
         default=None,
         help="Explicit remote chain spec path for `cloud status --chain`",
@@ -436,7 +446,7 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
 
         if action == "status":
             if bool(getattr(args, "all", False)):
-                return _run_cloud_chains(spec, provider)
+                return _run_cloud_chains(spec, provider, args=args)
             if _status_should_use_chain(root, args, spec):
                 return _run_chain_status(root, args, spec, provider)
             payload = cloud_status_payload(args, spec, provider)
@@ -450,7 +460,7 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
             return provider.logs(follow=not bool(getattr(args, "no_follow", False)))
 
         if action == "chains":
-            return _run_cloud_chains(spec, provider)
+            return _run_cloud_chains(spec, provider, args=args)
 
         if action == "exec":
             result = provider.ssh_exec(args.command)
@@ -3765,6 +3775,46 @@ def _active_step_evidence(workspace, plan_name):
         "last_activity_at": active_step.get("last_activity_at") or "",
     }}
 
+def _latest_plan_state_evidence(workspace):
+    payload = {{"status": "missing", "path": "", "mtime": 0.0, "updated_at": ""}}
+    if not workspace:
+        return payload
+    plans_dir = pathlib.Path(workspace) / ".megaplan" / "plans"
+    if not plans_dir.exists():
+        payload["path"] = str(plans_dir)
+        return payload
+    latest = None
+    for path in plans_dir.glob("*/state.json"):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        if latest is None or stat.st_mtime > latest[0]:
+            latest = (stat.st_mtime, path)
+    if latest is None:
+        payload["path"] = str(plans_dir)
+        return payload
+    mtime, path = latest
+    try:
+        state = json.loads(path.read_text())
+    except Exception as exc:
+        return {{
+            "status": "invalid",
+            "path": str(path),
+            "mtime": mtime,
+            "updated_at": datetime.fromtimestamp(mtime, timezone.utc).isoformat().replace("+00:00", "Z"),
+            "error": str(exc),
+        }}
+    current_state = state.get("current_state") or state.get("state") or ""
+    return {{
+        "status": "present",
+        "path": str(path),
+        "plan": path.parent.name,
+        "state": current_state,
+        "mtime": mtime,
+        "updated_at": datetime.fromtimestamp(mtime, timezone.utc).isoformat().replace("+00:00", "Z"),
+    }}
+
 def _policy_evidence(remote_spec):
     payload = {{"status": "missing", "path": remote_spec or ""}}
     if not remote_spec:
@@ -3885,6 +3935,7 @@ def _payload_for(name):
     if not plan_name and isinstance(health_payload, dict):
         plan_name = health_payload.get("current_plan_name")
     payload["active_step_evidence"] = _active_step_evidence(payload.get("workspace"), plan_name)
+    payload["latest_plan_state"] = _latest_plan_state_evidence(payload.get("workspace"))
     payload["policy_evidence"] = _policy_evidence(payload.get("remote_spec") or "")
     payload["display_name"] = _display_name(payload)
     payload["marker_status"] = payload["marker_evidence"]["status"]
@@ -4041,7 +4092,226 @@ print(json.dumps({{
     return f"python3 - <<'MEGAPLAN_CHAINS'\n{script.strip()}\nMEGAPLAN_CHAINS"
 
 
-def _run_cloud_chains(spec: CloudSpec, provider) -> int:
+_SINCE_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([smhd])\s*$", re.IGNORECASE)
+
+
+def _parse_cloud_status_since(value: str | None, *, now: datetime | None = None) -> datetime | None:
+    if not value:
+        return None
+    now = now or datetime.now(timezone.utc)
+    match = _SINCE_RE.match(value)
+    if match:
+        amount = float(match.group(1))
+        unit = match.group(2).lower()
+        seconds_by_unit = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+        return now - timedelta(seconds=amount * seconds_by_unit[unit])
+    raw = value.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise CliError("invalid_args", f"invalid --since value {value!r}; use a duration like 12h or an ISO timestamp") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _parse_cloud_status_timestamp(value: Any) -> datetime | None:
+    if isinstance(value, (int, float)) and value > 0:
+        return datetime.fromtimestamp(float(value), timezone.utc)
+    if not isinstance(value, str) or not value:
+        return None
+    raw = value.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _cloud_session_real_activity_at(item: Mapping[str, Any]) -> datetime | None:
+    """Return the newest timestamp tied to actual chain/plan activity.
+
+    Watchdog health files can be rewritten after a chain is done, so this
+    intentionally prefers plan ``state.json`` evidence and launch markers over
+    watchdog mtimes.
+    """
+    latest_state = item.get("latest_plan_state")
+    if isinstance(latest_state, Mapping) and latest_state.get("status") in {"present", "invalid"}:
+        timestamp = _parse_cloud_status_timestamp(latest_state.get("updated_at")) or _parse_cloud_status_timestamp(
+            latest_state.get("mtime")
+        )
+        if timestamp is not None:
+            return timestamp
+    active = item.get("active_step_evidence")
+    if isinstance(active, Mapping):
+        timestamp = _parse_cloud_status_timestamp(active.get("last_activity_at"))
+        if timestamp is not None:
+            return timestamp
+    return _parse_cloud_status_timestamp(item.get("started_at"))
+
+
+def _cloud_session_plan_state(item: Mapping[str, Any]) -> str:
+    latest_state = item.get("latest_plan_state")
+    if isinstance(latest_state, Mapping) and latest_state.get("state"):
+        return str(latest_state.get("state"))
+    active = item.get("active_step_evidence")
+    if isinstance(active, Mapping) and active.get("current_state"):
+        return str(active.get("current_state"))
+    health = item.get("health")
+    if isinstance(health, Mapping) and health.get("last_state"):
+        return str(health.get("last_state"))
+    return ""
+
+
+def _recount_cloud_sessions(payload: dict[str, Any], sessions: list[Any]) -> None:
+    summary: dict[str, int] = {}
+    operator_summary: dict[str, int] = {}
+    should_be_running_count = 0
+    watchdog_repairing_count = 0
+    for item in sessions:
+        if not isinstance(item, Mapping):
+            continue
+        status = str(item.get("status") or "unknown")
+        summary[status] = summary.get(status, 0) + 1
+        operator = item.get("operator_status") if isinstance(item.get("operator_status"), Mapping) else {}
+        operator_key = str(operator.get("status") or status)
+        operator_summary[operator_key] = operator_summary.get(operator_key, 0) + 1
+        if item.get("should_be_running"):
+            should_be_running_count += 1
+        if item.get("watchdog_repairing"):
+            watchdog_repairing_count += 1
+    payload["sessions"] = sessions
+    payload["summary"] = summary
+    payload["operator_summary"] = operator_summary
+    payload["should_be_running_count"] = should_be_running_count
+    payload["watchdog_repairing_count"] = watchdog_repairing_count
+
+
+def _filter_cloud_sessions_since(payload: dict[str, Any], since: datetime | None) -> None:
+    if since is None:
+        return
+    sessions = payload.get("sessions")
+    if not isinstance(sessions, list):
+        return
+    filtered = []
+    for item in sessions:
+        if not isinstance(item, Mapping):
+            continue
+        activity_at = _cloud_session_real_activity_at(item)
+        if activity_at is not None and activity_at >= since:
+            copied = dict(item)
+            copied["real_activity_at"] = activity_at.isoformat().replace("+00:00", "Z")
+            filtered.append(copied)
+    payload["unfiltered_session_count"] = len(sessions)
+    payload["since"] = since.isoformat().replace("+00:00", "Z")
+    _recount_cloud_sessions(payload, filtered)
+
+
+def _cloud_compact_line(item: Mapping[str, Any]) -> str:
+    operator = item.get("operator_status") if isinstance(item.get("operator_status"), Mapping) else {}
+    latest_state = item.get("latest_plan_state") if isinstance(item.get("latest_plan_state"), Mapping) else {}
+    health = item.get("health") if isinstance(item.get("health"), Mapping) else {}
+    current_plan = item.get("plan_name") or health.get("current_plan_name") or ""
+    activity_plan = latest_state.get("plan") or current_plan
+    activity = item.get("real_activity_at") or latest_state.get("updated_at") or item.get("started_at") or ""
+    return (
+        f"- {item.get('display_name') or item.get('session')} "
+        f"session={item.get('session')} status={item.get('status')} "
+        f"operator={operator.get('status') or item.get('status')} "
+        f"should_run={'yes' if item.get('should_be_running') else 'no'} "
+        f"repairing={'yes' if item.get('watchdog_repairing') else 'no'} "
+        f"current_plan={current_plan} activity_plan={activity_plan or ''} "
+        f"activity_state={_cloud_session_plan_state(item)} "
+        f"activity={activity} workspace={item.get('workspace')}"
+    )
+
+
+def _emit_cloud_sessions_human(payload: dict[str, Any], *, compact: bool) -> None:
+    sessions = payload.get("sessions") if isinstance(payload, dict) else []
+    if not isinstance(sessions, list):
+        return
+    since_detail = f" since={payload.get('since')}" if payload.get("since") else ""
+    unfiltered_detail = (
+        f" filtered_from={payload.get('unfiltered_session_count')}"
+        if payload.get("unfiltered_session_count") is not None
+        else ""
+    )
+    sys.stderr.write(
+        f"cloud sessions: {len(sessions)}{since_detail}{unfiltered_detail} "
+        f"should_be_running={payload.get('should_be_running_count', 0)} "
+        f"watchdog_repairing={payload.get('watchdog_repairing_count', 0)} "
+        f"operator_summary={payload.get('operator_summary', {})}\n"
+    )
+    for item in sessions:
+        if not isinstance(item, dict):
+            continue
+        if compact:
+            sys.stderr.write(_cloud_compact_line(item) + "\n")
+            continue
+        health = item.get("health") if isinstance(item.get("health"), dict) else {}
+        active = item.get("active_step_evidence") if isinstance(item.get("active_step_evidence"), dict) else {}
+        policy = item.get("policy_evidence") if isinstance(item.get("policy_evidence"), dict) else {}
+        operator = item.get("operator_status") if isinstance(item.get("operator_status"), dict) else {}
+        latest_state = item.get("latest_plan_state") if isinstance(item.get("latest_plan_state"), dict) else {}
+        display_state = active.get("current_state") or (health.get("last_state") if health else "")
+        detail = ""
+        if health:
+            health_state = health.get("last_state")
+            health_detail = ""
+            if display_state and health_state and display_state != health_state:
+                health_detail = f" health_state={health_state}"
+            detail = (
+                f" state={display_state}{health_detail} "
+                f"plan={health.get('current_plan_name') or ''} "
+                f"completed={health.get('completed_count')}"
+            )
+        elif display_state:
+            detail = f" state={display_state}"
+        if latest_state.get("status") == "present":
+            detail += (
+                f" latest_plan={latest_state.get('plan') or ''}"
+                f" latest_state={latest_state.get('state') or ''}"
+                f" latest_activity={latest_state.get('updated_at') or ''}"
+            )
+        watchdog_detail = ""
+        if item.get("watchdog_evidence", {}).get("status") == "present":
+            watchdog_detail = (
+                f" watchdog={item.get('watchdog_status') or ''}"
+                f" watchdog_action={item.get('watchdog_action') or ''}"
+            )
+        policy_detail = ""
+        if policy.get("status") == "present":
+            policy_detail = (
+                f" merge_policy={policy.get('merge_policy')} "
+                f"auto_approve={policy.get('driver_auto_approve')}"
+            )
+        operator_detail = ""
+        if operator:
+            operator_detail = (
+                f" operator={operator.get('status') or ''}"
+                f" reason={operator.get('reason') or ''}"
+                f" next={operator.get('next_action') or ''}"
+            )
+        sys.stderr.write(
+            f"- {item.get('display_name') or item.get('session')} "
+            f"session={item.get('session')} status={item.get('status')} "
+            f"should_run={'yes' if item.get('should_be_running') else 'no'} "
+            f"repairing={'yes' if item.get('watchdog_repairing') else 'no'} "
+            f"tmux={item.get('tmux_status')} process={item.get('process_status')}"
+            f"{watchdog_detail}"
+            f"{policy_detail}"
+            f"{operator_detail}"
+            f"{detail} workspace={item.get('workspace')} spec={item.get('remote_spec')}\n"
+        )
+
+
+def _run_cloud_chains(spec: CloudSpec, provider, *, args: argparse.Namespace | None = None) -> int:
     del spec
     result = provider.ssh_exec(_cloud_chains_command())
     if result.returncode != 0:
@@ -4051,64 +4321,10 @@ def _run_cloud_chains(spec: CloudSpec, provider) -> int:
         payload = json.loads((result.stdout or "").strip().splitlines()[-1])
     except (IndexError, json.JSONDecodeError) as exc:
         raise CliError("provider_failed", f"cloud chains did not return JSON: {exc}") from exc
-    sessions = payload.get("sessions") if isinstance(payload, dict) else []
-    if isinstance(sessions, list):
-        sys.stderr.write(
-            f"cloud sessions: {len(sessions)} "
-            f"should_be_running={payload.get('should_be_running_count', 0)} "
-            f"watchdog_repairing={payload.get('watchdog_repairing_count', 0)} "
-            f"operator_summary={payload.get('operator_summary', {})}\n"
-        )
-        for item in sessions:
-            if isinstance(item, dict):
-                health = item.get("health") if isinstance(item.get("health"), dict) else {}
-                active = item.get("active_step_evidence") if isinstance(item.get("active_step_evidence"), dict) else {}
-                policy = item.get("policy_evidence") if isinstance(item.get("policy_evidence"), dict) else {}
-                operator = item.get("operator_status") if isinstance(item.get("operator_status"), dict) else {}
-                display_state = active.get("current_state") or (health.get("last_state") if health else "")
-                detail = ""
-                if health:
-                    health_state = health.get("last_state")
-                    health_detail = ""
-                    if display_state and health_state and display_state != health_state:
-                        health_detail = f" health_state={health_state}"
-                    detail = (
-                        f" state={display_state}{health_detail} "
-                        f"plan={health.get('current_plan_name') or ''} "
-                        f"completed={health.get('completed_count')}"
-                    )
-                elif display_state:
-                    detail = f" state={display_state}"
-                watchdog_detail = ""
-                if item.get("watchdog_evidence", {}).get("status") == "present":
-                    watchdog_detail = (
-                        f" watchdog={item.get('watchdog_status') or ''}"
-                        f" watchdog_action={item.get('watchdog_action') or ''}"
-                    )
-                policy_detail = ""
-                if policy.get("status") == "present":
-                    policy_detail = (
-                        f" merge_policy={policy.get('merge_policy')} "
-                        f"auto_approve={policy.get('driver_auto_approve')}"
-                    )
-                operator_detail = ""
-                if operator:
-                    operator_detail = (
-                        f" operator={operator.get('status') or ''}"
-                        f" reason={operator.get('reason') or ''}"
-                        f" next={operator.get('next_action') or ''}"
-                    )
-                sys.stderr.write(
-                    f"- {item.get('display_name') or item.get('session')} "
-                    f"session={item.get('session')} status={item.get('status')} "
-                    f"should_run={'yes' if item.get('should_be_running') else 'no'} "
-                    f"repairing={'yes' if item.get('watchdog_repairing') else 'no'} "
-                    f"tmux={item.get('tmux_status')} process={item.get('process_status')}"
-                    f"{watchdog_detail}"
-                    f"{policy_detail}"
-                    f"{operator_detail}"
-                    f"{detail} workspace={item.get('workspace')} spec={item.get('remote_spec')}\n"
-                )
+    since = _parse_cloud_status_since(getattr(args, "since", None) if args is not None else None)
+    if isinstance(payload, dict):
+        _filter_cloud_sessions_since(payload, since)
+        _emit_cloud_sessions_human(payload, compact=bool(getattr(args, "compact", False)) if args is not None else False)
     sys.stdout.write(json.dumps(payload, indent=2) + "\n")
     return 0
 

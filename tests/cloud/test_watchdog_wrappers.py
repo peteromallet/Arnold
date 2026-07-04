@@ -5835,6 +5835,10 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
     assert "kill_matching_runner_processes()" in text
     assert 'kill_matching_runner_processes "$session" "$remote_spec" "$run_kind" "$plan_name"' in text
     assert "marker_requires_repair_despite_alive()" in text
+    assert 'python3 - "$MARKER_PATH" "$DATA_FILE"' in text
+    assert 'repair_payload.get("current_failure_context")' in text
+    assert "live_plan_failure:" in text
+    assert "state_mismatch" in text
     assert "repair target is alive but marker requires repair" in text
     assert "workspace_drift:" in text
     assert "sandbox_refused_outside_project_root" in text
@@ -9420,6 +9424,85 @@ def test_auditor_gather_surfaces_missing_meta_repair_run_for_triggered_session(t
     assert meta_summary["meta_record_count"] == 0
     assert meta_summary["meta_run_log_count"] == 0
     assert "meta-repair trigger" in " ".join(finding["reasons"])
+
+
+def test_auditor_gather_flags_running_repair_without_attempt_context(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    plan_name = "m1-demo"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    _write_plan(
+        plan_dir,
+        {
+            "name": plan_name,
+            "iteration": 0,
+            "current_state": "initialized",
+            "active_step": None,
+            "latest_failure": {
+                "kind": "phase_failed",
+                "message": "worker_structural_audit_failed: type_mismatch at /suggested_approach",
+                "recorded_at": _iso_hours_ago(1.0),
+            },
+            "history": [{"step": "init", "result": "success", "timestamp": _iso_hours_ago(7.0)}],
+        },
+        plan_v_bodies={"plan_v1.md": "v1"},
+        events_body="{}\n",
+    )
+
+    repair_data_dir = tmp_path / "repair-data"
+    repair_data_dir.mkdir()
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "outcome": "running",
+                "repair_run_count": 6,
+                "attempt_counter": 0,
+                "current_attempt_id": None,
+                "current_signature": {},
+                "current_recurrence": {},
+                "attempts": [],
+                "iterations": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    gather_dir = tmp_path / "gather"
+    gather_dir.mkdir()
+    worklist = tmp_path / "worklist.jsonl"
+    worklist.write_text(
+        json.dumps(
+            {
+                "workspace": str(workspace),
+                "plan": plan_name,
+                "session": "demo-session",
+                "kind": "chain",
+                "sources": ["marker"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    gather_path = gather_dir / "gather.py"
+    gather_path.write_text(_extract_auditor_gather_program(), encoding="utf-8")
+    env = dict(os.environ)
+    env["MEGAPLAN_AUDIT_REPAIR_DATA_DIR"] = str(repair_data_dir)
+    env["MEGAPLAN_AUDIT_META_RUN_DIR"] = str(tmp_path / "meta-runs")
+    result = subprocess.run(
+        [sys.executable, str(gather_path), str(worklist), str(gather_dir), "6", str(tmp_path), "none"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    findings = json.loads((gather_dir / "findings.json").read_text(encoding="utf-8"))["findings"]
+    assert findings, "expected running repair without attempt context to produce a finding"
+    meta_summary = findings[0]["meta_repair_summary"]
+    assert meta_summary["should_dispatch"] is True
+    assert meta_summary["trigger"] == "repair_running_without_attempt_context"
+    assert meta_summary["missing_meta_run_evidence"] is True
+    assert "artifact-quality gap" in " ".join(meta_summary["rationale"])
 
 
 def test_arnold_progress_auditor_produces_evidence_cited_report_via_mocked_deepseek(tmp_path) -> None:

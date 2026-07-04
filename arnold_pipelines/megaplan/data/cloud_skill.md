@@ -122,6 +122,11 @@ until clarification is answered or the run is relaunched as unattended. Use
 `tmux ls` and per-chain logs under
 `<workspace>/.megaplan/cloud-chain-<session>.log` only as follow-up evidence;
 milestone state lives under `.megaplan/plans/<plan>/state.json` + `events.ndjson`.
+For "what changed recently?" use
+`megaplan cloud status --all --compact --since 12h --cloud-yaml <active-cloud.yaml>`.
+`--since` filters on real plan `state.json` activity when available, not
+watchdog health mtimes, because watchdog reports can be rewritten after a chain
+has already completed.
 
 For lower-level launches or when preparing a shared cloud checkout manually,
 seed durable planning state before `cloud chain`:
@@ -339,6 +344,7 @@ For users running multiple chains across many repos on the shared Hetzner agentb
 
 3. **Observing**:
    - `megaplan cloud status --all --cloud-yaml cloud.<chain>.yaml` first.
+   - `megaplan cloud status --all --compact --since 12h --cloud-yaml cloud.<chain>.yaml` for a compact recent-activity handoff.
    - `megaplan cloud status --chain` for one chain's detailed summary.
    - `megaplan cloud logs --no-follow` for build / boot logs.
    - SSH-tail the per-chain log: `ssh root@<box-ip> 'docker exec megaplan-cloud-agent tail -f /workspace/<repo>/.megaplan/cloud-chain-<chain-session>.log'`.
