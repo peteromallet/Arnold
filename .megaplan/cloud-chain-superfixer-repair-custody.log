@@ -1,0 +1,37 @@
+{"state_path": "/workspace/superfixer-repair-custody/Arnold/.megaplan/plans/.chains/chain-4cbf1f4aa180.json", "status": "absent"}
+[megaplan-refresh] 2026-07-04T00:57:35+00:00 starting
+From https://github.com/peteromallet/Arnold
+ * branch              editible-install -> FETCH_HEAD
+[megaplan-refresh] refusing editable install refresh: tracked changes in source checkout at /workspace/arnold
+{"state_path": "/workspace/superfixer-repair-custody/Arnold/.megaplan/plans/.chains/chain-4cbf1f4aa180.json", "status": "absent"}
+[megaplan-refresh] 2026-07-04T00:58:59+00:00 starting
+[megaplan-refresh] source clone missing at /workspace/arnold-runtime-superfixer-repair-custody; skipping editable install
+[megaplan-refresh] done
+[chain] reconciled cursor index: -1 -> 0 from completed milestones
+[chain] milestone repair-custody-core starting
+[chain] git ls-remote --exit-code --heads origin main -> rc=0
+[chain] git fetch origin main -> rc=0
+[chain] git rev-parse --verify refs/remotes/origin/main^{commit} -> rc=0
+[chain] git symbolic-ref --short HEAD -> rc=0
+[chain] git pull --ff-only origin main -> rc=0
+[chain] git ls-remote --heads origin repair-custody-core -> rc=2
+[chain] cleaning worktree for automated branch checkout
+[chain] git reset --hard HEAD -> rc=0
+[chain] git clean -fd -e .megaplan -> rc=0
+[chain] git clean -fd .megaplan/schemas -> rc=0
+[chain] git ls-remote --exit-code --heads origin main -> rc=0
+[chain] git fetch origin main -> rc=0
+[chain] git rev-parse --verify refs/remotes/origin/main^{commit} -> rc=0
+[chain] forking repair-custody-core from origin/main (authoritative merged history)
+[chain] git checkout -B repair-custody-core origin/main -> rc=0
+[chain] git push --no-verify -u origin repair-custody-core -> rc=0
+[chain] initializing plan from /workspace/superfixer-repair-custody/Arnold/.megaplan/initiatives/superfixer-repair-custody/briefs/repair-custody-core.md
+{
+  "success": false,
+  "error": "init_failed",
+  "message": "megaplan init failed (rc=2): usage: __main__.py [-h] [--actor ID] [--backend {file,db}]\n                   {setup,init,prep,plan,critique,gate,revise,finalize,execute,review,status,override,user-action,quality-gate,auto,chain,epic-chain,brief,initiative,progress,watch,audit,resume,verify-human,audit-verifiability,migrate-layout,pipelines,introspect,trace,doctor,record-tag}\n                   ...\n__main__.py: error: unrecognized arguments: --prep-direction"
+}
+{"reason": "forced", "removed": ["/workspace/superfixer-repair-custody/Arnold/.megaplan/plans/.chains/chain-4cbf1f4aa180.json"], "status": "reset"}
+[megaplan-refresh] 2026-07-04T00:59:53+00:00 starting
+[megaplan-refresh] source clone missing at /workspace/arnold-runtime-superfixer-repair-custody; skipping editable install
+[megaplan-refresh] done
