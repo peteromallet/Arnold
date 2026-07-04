@@ -284,6 +284,28 @@ def test_stale_parent_needs_human_is_superseded_by_completed_child(fx):
     assert parent not in ss.plan_activity_summary(snap)["should_be_working_but_needs_attention"]
 
 
+def test_frozen_chain_health_sidecar_defers_to_watchdog_complete(fx):
+    """A done chain's chain-health sidecar can freeze at the last non-complete
+    snapshot once the session goes idle. The snapshot must defer to the
+    watchdog's authoritative per-session verdict instead of reporting the done
+    chain as stalled attention."""
+    fx.add_session("done", plan_name="planDone")
+    fx.add_chain_health(
+        "done",
+        current_plan_name="planDone",
+        chain_complete=False,
+        last_state="executed",
+        updated_at=NOW - timedelta(hours=18),
+    )
+    fx.add_watchdog_report(
+        items=[{"session": "done", "status": "complete", "action": "observe", "message": "chain complete"}]
+    )
+    snap = fx.build(watchdog_report_path=fx.root / "watchdog-report.json")
+    entry = _by_session(snap, "done")
+    assert entry["status"] == "complete"
+    assert entry["should_run"] is False
+
+
 def test_summary_counts_partition_all_sessions(fx):
     fx.add_session("r1"); fx.add_chain_health("r1")
     fx.add_session("r2"); fx.add_chain_health("r2")
