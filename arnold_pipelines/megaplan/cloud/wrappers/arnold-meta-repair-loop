@@ -55,6 +55,7 @@ SYNC_BRANCH="${MEGAPLAN_META_SYNC_BRANCH:-editible-install}"
 REPAIR_LOOP_BIN="${MEGAPLAN_META_REPAIR_LOOP_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop}"
 REPAIR_DATA_PATH="$REPAIR_DATA_DIR/${SESSION}.repair-data.json"
 RUN_DIR="${MEGAPLAN_META_RUN_DIR:-/workspace/.megaplan/meta-runs}"
+BRIEF_PREFLIGHT_MAX_CHARS="${MEGAPLAN_META_BRIEF_PREFLIGHT_MAX_CHARS:-900000}"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
 RUN_LOG="$RUN_DIR/${TS}-${SAFE_SESSION}.log"
@@ -152,7 +153,8 @@ log "recursion guard: $RECURSION_OUTPUT"
 
 # ---- classify failure + build redacted prompt via Python handoff -------------
 classification_and_prompt() {
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_DATA_DIR" "$REPAIR_DATA_PATH" "$META_REPAIR_ENABLED_VAR" "$WATCHDOG_TRIGGER" <<'PY'
+  local force_emergency="${1:-0}"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_DATA_DIR" "$REPAIR_DATA_PATH" "$META_REPAIR_ENABLED_VAR" "$WATCHDOG_TRIGGER" "$force_emergency" <<'PY'
 import json, sys
 
 from arnold_pipelines.megaplan.cloud.meta_repair import (
@@ -163,7 +165,8 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     load_redacted_evidence,
 )
 
-session, repair_data_dir, repair_data_path, enabled, watchdog_trigger = sys.argv[1:6]
+session, repair_data_dir, repair_data_path, enabled, watchdog_trigger, force_emergency = sys.argv[1:7]
+force_emergency = force_emergency == "1"
 
 # Evaluate triggers without loading full evidence initially;
 # the wrapper provides the trigger context.
@@ -182,13 +185,23 @@ if trigger is not None:
         rationale=(f"watchdog preclassified trigger={trigger.value}; meta loop must not reclassify stale evidence",),
         evidence=evidence,
     )
-    prompt = build_meta_repair_prompt(classification, repair_data_dir=repair_data_dir)
+    prompt = build_meta_repair_prompt(
+        classification,
+        repair_data_dir=repair_data_dir,
+        force_emergency=force_emergency,
+    )
 else:
     classification, prompt = evaluate_meta_repair_triggers(
         session,
         repair_data_dir=repair_data_dir,
         load_evidence=True,
     )
+    if classification.should_dispatch:
+        prompt = build_meta_repair_prompt(
+            classification,
+            repair_data_dir=repair_data_dir,
+            force_emergency=force_emergency,
+        )
 
 if not classification.should_dispatch:
     print("NO_TRIGGER")
@@ -281,6 +294,85 @@ Then cite specific evidence, the root cause, the change(s) made
 PROMPT_POLICY
 } > "$BRIEF_PATH"
 redact_file_in_place "$BRIEF_PATH"
+BRIEF_SIZE="$(wc -c < "$BRIEF_PATH" | tr -d ' ')"
+if [[ "$BRIEF_SIZE" =~ ^[0-9]+$ ]] && (( BRIEF_SIZE > BRIEF_PREFLIGHT_MAX_CHARS )); then
+  log "meta-repair brief exceeded preflight char budget; rebuilding emergency brief chars=$BRIEF_SIZE limit=$BRIEF_PREFLIGHT_MAX_CHARS"
+  CLASSIFICATION_RESULT="$(classification_and_prompt 1 2>&1)" || true
+  if [[ "$CLASSIFICATION_RESULT" == NO_TRIGGER* ]]; then
+    log "emergency prompt rebuild returned no trigger; exiting"
+    exit 0
+  fi
+  TRIGGER_TYPE="$(echo "$CLASSIFICATION_RESULT" | sed -n 's/^TRIGGER://p')"
+  PROMPT="$(echo "$CLASSIFICATION_RESULT" | sed -n '/^PROMPT_START$/,/^PROMPT_END$/{//!p}')"
+  if [[ -z "$PROMPT" ]]; then
+    log "emergency prompt assembly produced empty output; exiting"
+    exit 1
+  fi
+  {
+    echo "# Meta-Repair Diagnosis: $SESSION"
+    echo
+    echo "**Trigger:** \`$TRIGGER_TYPE\`"
+    echo "**Session:** \`$SESSION\`"
+    echo "**Repair Data Directory:** \`$REPAIR_DATA_DIR\`"
+    echo
+    echo "$PROMPT"
+    echo
+    cat <<'PROMPT_POLICY'
+## Meta-Repair Policy
+
+You are diagnosing and repairing a failure in the Arnold repair system itself
+— NOT the end-user project.  Your job is to fix the repair tooling so that
+ordinary repair can succeed.
+
+### Scope and authority
+- You have `danger-full-access` sandbox scope.
+- You may read, patch, and test files in the Arnold checkout
+  (`$ARNOLD_SRC` on the `editible-install` branch).
+- You may inspect the repair data, watchdog reports, chain state, session
+  markers, and audit reports as evidence.
+- You MUST delegate broad mapping, log/history review, independent
+  root-cause probes, and bounded fix investigations to DeepSeek/Hermes
+  research subagents wherever practical.
+
+### Subagent dispatch
+- Read the subagent-launcher skill at the path stored in
+  `SUBAGENT_SKILL` for the exact dispatch contract.
+- Use provider=deepseek, model=deepseek:deepseek-v4-pro,
+  profile=partnered-5, max-tokens=92192.
+- Each subagent gets a focused query, project directory, and a bounded
+  scope.
+
+### Commit/push policy
+- You may commit and push fixes when ARNOLD_META_REPAIR_COMMIT_ENABLED is not
+  explicitly disabled.
+- Do not commit or push when ARNOLD_META_REPAIR_COMMIT_ENABLED=0/false/no/off.
+- Pushes require the same gate as commits.
+
+### Fix constraints
+- Fix only Arnold repair-system code (wrappers, Python modules under
+  arnold_pipelines/megaplan/cloud/, tests, contracts).
+- Do NOT modify the running workspace/project tree.
+- Keep fixes narrow, testable, and bounded.
+- Validate fixes with `python3 -m py_compile` and focused tests.
+
+### Retrigger
+- After applying any fix, retrigger the ordinary repair loop for
+  session `$SESSION` using the command stored in REPAIR_LOOP_BIN.
+- Verify that the retriggered ordinary repair reaches a terminal
+  SUCCESS outcome.
+- Do NOT claim success without a verified ordinary repair retrigger —
+  partial_liveness and "repairing" are not terminal success.
+
+### Output format
+Start with a verdict on its own line: FIXED, ESCALATE, or NO_FIX.
+Then cite specific evidence, the root cause, the change(s) made
+(if any), and the retrigger verification result.  Keep under 400 words.
+PROMPT_POLICY
+  } > "$BRIEF_PATH"
+  redact_file_in_place "$BRIEF_PATH"
+  BRIEF_SIZE="$(wc -c < "$BRIEF_PATH" | tr -d ' ')"
+  log "emergency brief rebuilt chars=$BRIEF_SIZE"
+fi
 
 # ---- commit gate check ------------------------------------------------------
 commit_gate_check() {

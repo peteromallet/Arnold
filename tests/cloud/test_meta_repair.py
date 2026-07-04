@@ -617,6 +617,54 @@ class TestBuildMetaRepairPrompt:
         assert "truncated" in prompt
         assert huge_text not in prompt
 
+    def test_prompt_hard_caps_total_length_for_many_huge_attempts(self) -> None:
+        huge_text = "B" * 250_000
+        classification = classify_repair_system_failure(
+            session="p10",
+            evidence={
+                "repair_data": {
+                    "attempts": [
+                        {
+                            "attempt_id": idx,
+                            "dev_report": {"log_tail": huge_text},
+                            "iterations": [{"artifact": huge_text}],
+                        }
+                        for idx in range(10)
+                    ],
+                }
+            },
+            repair_outcome=REPAIR_TIMEOUT,
+            repair_budget_exhausted=True,
+        )
+
+        prompt = build_meta_repair_prompt(classification)
+        assert len(prompt) < 900_000
+        assert huge_text not in prompt
+
+    def test_force_emergency_prompt_uses_compacted_evidence(self) -> None:
+        huge_text = "C" * 200_000
+        classification = classify_repair_system_failure(
+            session="p11",
+            evidence={
+                "repair_data": {
+                    "attempts": [
+                        {
+                            "attempt_id": 1,
+                            "outcome": "repair_exhausted",
+                            "dev_report": {"chain_log_tail": huge_text},
+                        }
+                    ]
+                }
+            },
+            repair_outcome=REPAIR_TIMEOUT,
+            repair_budget_exhausted=True,
+        )
+
+        prompt = build_meta_repair_prompt(classification, force_emergency=True)
+        assert "Evidence was compacted" in prompt
+        assert '"repair_attempt_summaries"' in prompt
+        assert huge_text not in prompt
+
 
 # ---------------------------------------------------------------------------
 # Combined evaluate_meta_repair_triggers
