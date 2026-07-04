@@ -14,12 +14,17 @@ evidence.
 IN:
 
 - Align `TransitionDecision` with `BoundaryContract` transition fields.
+- Align `TransitionDecision` with `AuthorityRecord` so approvals, denials,
+  delegated approvals, waivers, overrides, and revocations have actor, role,
+  scope, conditions, expiry, checked evidence refs, and stale-input rejection.
 - Extend transition coverage for:
   - review -> execute/done;
   - recovery routes that promote blocked or partial execution;
   - reset/reconcile routes;
   - config reroutes;
   - force-proceed/override waivers.
+- Add explicit handling for partial, degraded-continue, rollback, and
+  irreversible transition outcomes where the boundary type allows them.
 - Ensure transition denials are structured and visible.
 - Preserve SHA-pinned evidence for chain/worktree/CI where relevant.
 - Add compare-and-swap / stale decision rejection where transitions depend on
@@ -35,6 +40,8 @@ OUT:
 
 - Authority writes go through a transition writer or are explicitly deferred.
 - Overrides are scoped waivers, not bypasses.
+- Approval/waiver state is not boolean; it carries authority, scope, expiry,
+  revocation, and checked evidence.
 - Transition decisions are valid only for their checked inputs.
 - Semantic health reports transition-contract failures separately from
   phase-writer failures.
@@ -47,7 +54,9 @@ OUT:
 3. Denied/stale transition followed by state advance produces a semantic
    finding.
 4. Transition denials are operator-visible and auditor-visible.
-5. Existing transition policy tests pass.
+5. Waived/partial/degraded transitions remain visible as non-green outcomes,
+   with expiry or revalidation where required by the contract.
+6. Existing transition policy tests pass.
 
 ## Touchpoints
 
@@ -56,4 +65,3 @@ OUT:
 - `arnold_pipelines/megaplan/auto.py`
 - review/execute/override handlers
 - state locks / lease helpers
-

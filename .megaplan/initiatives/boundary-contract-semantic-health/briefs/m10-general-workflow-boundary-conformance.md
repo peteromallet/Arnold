@@ -20,6 +20,14 @@ IN:
   - external effect boundary;
   - reducer boundary;
   - authority-increasing transition boundary.
+- Add an example graph-shaped workflow that includes:
+  - fan-out to multiple producers or vendors;
+  - a peer join/fan-in boundary;
+  - an external witness;
+  - a partial or conditional acceptance outcome;
+  - an authority record;
+  - a temporal policy that separates staleness, deadline, and observation
+    sufficiency.
 - Add docs and examples.
 - Ensure missing contract coverage is visible in diagnostics.
 
@@ -33,15 +41,20 @@ OUT:
 - No boundary without a contract once the workflow opts into conformance.
 - Workflows can start with audit-only findings before dispatch integration.
 - Megaplan-specific details stay in Megaplan adapters.
+- Domain-specific concepts belong in adapters that map onto generic primitives;
+  the core should not grow `clinical_safety`, `public_deliberation`,
+  `DAW_null_test`, or similar profession-specific families.
 
 ## Done Criteria
 
-1. A non-Megaplan test workflow defines a boundary contract and gets semantic
-   verification.
+1. A non-Megaplan graph-shaped test workflow defines boundary contracts and gets
+   semantic verification.
 2. Contract docs explain how to add new boundaries.
 3. Conformance tests fail when a new boundary writes artifacts without declared
    durable effects.
 4. Existing Megaplan contracts remain valid through the generic surface.
+5. Adapters can express physical/external evidence and partial acceptance
+   without changing core schema.
 
 ## Touchpoints
 
@@ -49,4 +62,3 @@ OUT:
 - workflow conformance tests
 - Megaplan boundary-contract adapter
 - docs
-

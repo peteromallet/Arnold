@@ -22,6 +22,9 @@ from them. It is input to the epic, not a requirement dump.
   terminal.
 - Include human approval, waiver, manual override, blocked/unblocked, and resume
   as authority-bearing boundary families.
+- Reserve generic primitives for graph-shaped workflows, richer outcomes,
+  evidence profiles, temporal policies, and authority records. The profession
+  stress test showed these are generic, not domain-specific.
 
 ## Core Surfaces To Shape The Architecture
 
@@ -54,6 +57,26 @@ from them. It is input to the epic, not a requirement dump.
   and later adoption target for cloud custody.
 - Resident/scheduler/guardian loops: boundary-rich but not where this epic
   should pioneer the model.
+
+## Profession Stress-Test Result
+
+Ten profession-specific stress tests were run against the epic: sound
+engineering, architecture, film/video, game technical art, surgery/medical
+imaging, robotics/manufacturing, legal eDiscovery, bioinformatics, urban
+planning, and fashion/product design. The contract/evidence/finding split held
+up across all ten. The repeated pressure points were:
+
+- boundaries are graph-shaped, not only sequential;
+- outcomes are richer than complete/incomplete;
+- external and physical evidence need provenance/trust profiles;
+- deadlines, staleness, sufficiency windows, and expiry are different temporal
+  concepts;
+- human approval/waiver needs authority records, not booleans;
+- domain-specific checks should live in adapters, not the core schema.
+
+The resulting judgment: keep the epic broad, but reshape M3 before
+implementation so the foundation reserves those generic primitives without
+trying to implement every domain-specific extension.
 
 ## Rejected Or Deferred
 
