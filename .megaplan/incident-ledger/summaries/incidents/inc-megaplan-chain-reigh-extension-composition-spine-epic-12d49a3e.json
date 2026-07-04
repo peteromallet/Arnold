@@ -1,0 +1,42 @@
+{
+  "deadline_ts": null,
+  "evidence_ref_count": 3,
+  "evidence_refs": [
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "progress_stall"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    }
+  ],
+  "generated_at": "2026-07-04T11:05:18.054919+00:00",
+  "incident_id": "inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
+  "kind": "incident_summary",
+  "latest_actor": "watchdog",
+  "next_expected_event": "immediate_repair.repair_attempt",
+  "outcome": "dispatched",
+  "placeholders": {
+    "install_freshness": "unknown",
+    "recurrence": "unknown",
+    "shipped_fix": "unknown"
+  },
+  "problem_ids": [
+    "problem-71f954a05546",
+    "problem-e20c45ae0eb0",
+    "problem-fc037a661409"
+  ],
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:1394ceb613778ee090f924dd795932b9f075c7e13d7f4cc255467fdfa20d740d",
+    "last_seq": 2,
+    "projection": "incidents"
+  },
+  "state": "dispatch",
+  "summary_text": "inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e: repair loop background-dispatched"
+}

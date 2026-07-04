@@ -303,6 +303,13 @@ export type TimelineLiveUniformBinding = {
 export type TimelineShaderScope = 'clip' | 'postprocess';
 
 export type TimelineShaderUniformValues = Record<string, unknown>;
+export type TimelineShaderKeyframeValue = number | string | boolean | number[];
+export type TimelineShaderKeyframe = {
+  time: number;
+  value: TimelineShaderKeyframeValue;
+  interpolation: KeyframeInterpolation;
+};
+export type TimelineShaderUniformKeyframes = Record<string, TimelineShaderKeyframe[]>;
 
 export type TimelineShaderTextureRef = {
   kind: 'clip-frame' | 'static-image-asset' | 'live-generated-frame';
@@ -317,6 +324,7 @@ export type TimelineShaderBaseMetadata = {
   shaderId: string;
   label?: string;
   uniforms?: TimelineShaderUniformValues;
+  keyframes?: TimelineShaderUniformKeyframes;
   textures?: TimelineShaderTextureValues;
   enabled?: boolean;
   sourceHash?: string;

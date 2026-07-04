@@ -1,0 +1,760 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `critique_evaluator`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m4-clip-type-shader-and-20260704-0427`
+Current milestone: `m4-clip-shader-keyframes`
+
+### Phase Instruction
+Select critique checks that can catch North Star violations, scope substitution, or unsupported claims of alignment.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are the Critique Evaluator. Your job is to decide which critique
+        lenses to fire and to rate each selected lens's difficulty on a 1–5
+        complexity scale. The profile will map your complexity scores to
+        models — you do NOT name models or vendors.
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M4: Clip Type, Shader, And Shader-Uniform Keyframes
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Finished plan:
+        # Implementation Plan: M4 Clip Type, Shader, And Shader-Uniform Keyframes
+
+## Overview
+M4 should promote shader composition from preview/compatibility behavior into the public host write path while keeping the composition graph authoritative. The repository already has most primitives in partial form: native shader preview ops in `patchPreview.ts`, target-path normalization in `graphProjector.ts`, contribution reference diagnostics in `diagnostics.ts`, and existing route requirement/blocker concepts in `extensionSurface.ts` and `renderPlanner.ts`. This plan treats those as the foundation, not a rewrite.
+
+The scope is broad enough to split into worker-sized steps: first expose executable `shader.assign`/`shader.remove`, then add clip-type contribution refs, then add shader-uniform keyframe storage and patch behavior, then project diagnostics/edges, then integrate render/planner behavior, and finally harden the canary and tests. The scope narrowing here is a bridge, not a contradiction: process execution, output-format execution, shader stacks, and texture routing remain deferred exactly as the North Star and M4 brief require.
+
+No anchor conflict found. The plan preserves the epic constraints: extensions do not mutate raw timeline internals directly, graph-authoritative facts flow through `CompositionGraph`, V1 target paths stay limited to params and shader uniforms, and nondeterministic/process-backed execution remains outside this milestone.
+
+## Phase 1: Public Shader Write Path
+
+### Step 1: Add public `shader.assign` and `shader.remove` patch families (`src/tools/video-editor/lib/timeline-patch.ts`, `src/tools/video-editor/runtime/composition/patchPreview.ts`)
+**Scope:** Cross-cutting runtime/API change  
+**Complexity: 4**
+1. Define public timeline patch op shapes for `shader.assign` and `shader.remove` using the existing `GraphShaderAssignOp` and `GraphShaderRemoveOp` semantics as the canonical behavior.
+2. Wire host patch execution so these operations call the native shader applicators directly instead of depending on `extractGraphPreviewOps()` compatibility extraction.
+3. Preserve `extractGraphPreviewOps()` only for legacy `clip.update`/`app.update` shader payloads and preview/diagnostic compatibility reads.
+4. Enforce single-occupancy during commit: assigning a distinct shader into an occupied scope must fail before timeline mutation, not silently replace.
+5. Add focused round-trip tests proving public patch execution mutates shader summaries and graph projection emits the expected `consumes` edge.
+
+### Step 2: Surface duplicate scope validation on graph-owned shader assignment (`src/tools/video-editor/runtime/composition/shaderValidation.ts`, `src/tools/video-editor/runtime/composition/graphProjector.ts`, `src/tools/video-editor/runtime/composition/diagnostics.ts`)
+**Scope:** Validation hardening  
+**Complexity: 3**
+1. Reuse `validateShaderComposition` and graph duplicate-scope diagnostics as the pre-commit guard for graph-owned `shader.assign` operations.
+2. Ensure duplicate distinct shaders produce `DUPLICATE_SCOPE` with enough detail for the caller/test to identify the conflicting scope and clips.
+3. Keep idempotent reassignment of the same shader/scope behavior explicit in tests if the existing model allows it; otherwise reject consistently.
+4. Add a fail-to-pass test that exercises rejection through `shader.assign`, not through stored invalid data alone.
+
+## Phase 2: Clip-Type Contribution References
+
+### Step 3: Project `clipType` as a `ContributionRef` with `consumes` edges (`src/sdk/video/composition/references.ts`, `src/tools/video-editor/runtime/composition/graphProjector.ts`, `src/tools/video-editor/runtime/renderability.ts`)
+**Scope:** Graph projection plus resolver integration  
+**Complexity: 3**
+1. Convert clip type projection from a flat string-only field into a contribution reference resolved from `ClipTypeRegistryRecord.contributionId` and `ownerExtensionId`.
+2. Add contribution nodes for resolved clip types using the existing contribution node conventions and `contribution:clipType:<extensionId>:<contributionId>` identity pattern.
+3. Emit a `consumes` edge from the clip node to the clip-type contribution node, mirroring the shader consumes pattern.
+4. Use existing reference state diagnostics for missing, disabled, inactive-reserved, and resolved clip-type refs; include planner repair state through `nextAction` where available.
+5. Add focused tests for resolved, missing, and disabled clip-type refs.
+
+## Phase 3: Shader-Uniform Keyframe Model And Patch Semantics
+
+### Step 4: Add shader-uniform keyframe serialization to timeline shader summaries (`src/sdk/video/timeline/reader.ts`, `src/tools/video-editor/runtime/timeline-reader.ts`)
+**Scope:** SDK reader shape and serialization  
+**Complexity: 3**
+1. Extend `TimelineShaderSummary` with a minimal keyframe/automation field that can represent uniform target paths in canonical `uniforms.<name>` form.
+2. Keep the shape compatible with M3b keyframe semantics: stable keyframe ids, time/value/easing fields where already used, and no bespoke shader-only interpolation schema unless unavoidable.
+3. Update timeline reader/projection code so shader-owned keyframes round-trip through saved timeline summaries.
+4. Add serialization tests that read/write at least one scalar, vector/color, boolean, integer, frame/time, and enum-style uniform keyframe.
+
+### Step 5: Extend graph keyframe ops to target shader uniforms (`src/tools/video-editor/runtime/composition/patchPreview.ts`, `src/tools/video-editor/lib/timeline-patch.ts`)
+**Scope:** Patch semantics  
+**Complexity: 4**
+1. Extend `GraphKeyframeAddOp`, `GraphKeyframeUpdateOp`, and `GraphKeyframeRemoveOp` to accept target paths for both existing clip params and shader uniforms.
+2. Route target normalization through the existing M2 helpers only: `canonicalAutomationTargetPath` for clip params and `canonicalizeShaderUniformPath` for `uniforms.<name>`.
+3. Add applicator paths that find the targeted shader summary and mutate its uniform keyframe set without changing raw timeline internals directly from extension code.
+4. Preserve existing clip keyframe behavior and tests.
+5. Add add/update/remove tests for shader-uniform targets using graph-owned keyframe ops.
+
+### Step 6: Project shader-uniform `animates` edges and unknown-uniform diagnostics (`src/tools/video-editor/runtime/composition/graphProjector.ts`, `src/tools/video-editor/runtime/composition/shaderValidation.ts`, `src/tools/video-editor/runtime/composition/diagnostics.ts`)
+**Scope:** Graph projection and validation  
+**Complexity: 3**
+1. Add a shader-keyframe projection loop alongside the existing clip automation loop.
+2. Emit `animates` edges with `targetKind: 'shader-uniform'`, canonical `targetPath`, and accurate `keyframeCount`.
+3. Validate shader-uniform target paths against the declared shader uniform schema.
+4. Emit existing `UNKNOWN_UNIFORM` diagnostics with `uniformName` and `targetPath` when a keyframe targets an undeclared uniform.
+5. Add focused graph projection tests for valid and invalid uniform targets.
+
+### Step 7: Execute animated shader uniforms in the render path (`src/tools/video-editor/rendering/**`, `src/tools/video-editor/runtime/composition/patchPreview.ts`)
+**Scope:** Render integration  
+**Complexity: 4**
+1. Identify the current uniform resolution path and integrate shader-uniform keyframes into the existing animated-parameter resolver rather than creating a separate interpolation engine.
+2. Resolve interpolated uniform values at render/preview time using the same time basis as clip automation.
+3. Support the canary uniform types already present: `intensity`, `tint`, `center`, `showGrid`, `bandCount`, `holdFrame`, `holdTime`, and `blendMode`.
+4. Add render-path tests proving current-time uniform values reflect keyframes after add/update/remove operations.
+
+## Phase 4: Requires Edges And Planner Blockers
+
+### Step 8: Add `requires` edge kind and typed `RouteRequirement` detail (`src/sdk/video/composition/graph.ts`, `src/tools/video-editor/runtime/extensionSurface.ts`, `src/tools/video-editor/runtime/composition/graphProjector.ts`)
+**Scope:** Composition graph contract  
+**Complexity: 4**
+1. Add `requires` to `CompositionEdgeKind` and `COMPOSITION_EDGE_KINDS`.
+2. Introduce a V1 `RouteRequirement` detail type with subject, route scope, satisfier kind, determinism, fallback allowance, and repair action.
+3. Compose with the existing `VideoEditorRouteRequirementDescriptor` where it fits, but do not pretend process execution exists in M4.
+4. Project declared shader/materializer/process-style dependencies as `requires` edges only; do not add `materializes`, `produces`, or `fallbacks` edge kinds.
+5. Add graph contract tests validating edge kind acceptance and detail shape.
+
+### Step 9: Consume `requires` edges in render planning (`src/tools/video-editor/runtime/renderPlanner.ts`, `src/tools/video-editor/lib/renderRouter.ts`)
+**Scope:** Planner integration  
+**Complexity: 4**
+1. Add a `collectGraphRequiresEdges` style integration point that scans composition graph `requires` edges before route selection/export readiness decisions.
+2. Produce blockers/repair facts using the existing `RenderBlocker` and next-action mechanisms, parallel to `routeRequirementBlocker` and `buildResolveBlockerAction`.
+3. Add preview-only shader blockers for non-preview routes such as `browser-export` and `worker-export`, with repair guidance.
+4. Add unresolved material requirement blockers without starting processes or claiming output-format execution support.
+5. Add tests for blocker generation from graph `requires` edges.
+
+## Phase 5: Canary And End-To-End Coverage
+
+### Step 10: Upgrade the clip-local-shader canary (`src/tools/video-editor/examples/extensions/clip-local-shader-canary/index.ts`, `src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx`)
+**Scope:** Integration scenario  
+**Complexity: 4**
+1. Extend the canary to exercise graph-owned `shader.assign`/`shader.remove` instead of legacy shader payload writes.
+2. Add shader-uniform keyframe add/update/remove coverage for all eight editable uniforms: `intensity`, `tint`, `center`, `showGrid`, `bandCount`, `holdFrame`, `holdTime`, and `blendMode`.
+3. Add graph-path markers proving clip + shader + keyframes round-trip through graph-owned operations and timeline serialization.
+4. Assert `animates` edges report `targetKind: 'shader-uniform'`, canonical target paths, and correct keyframe counts after mutation.
+5. Include repair-state checks for missing/disabled shader or clip-type refs and duplicate scope rejection through graph-owned ops.
+
+### Step 11: Documentation and public extension surface alignment (`docs/extensions/**`, `examples/video-editor-extension/**`, `src/tools/video-editor/commands/**`)
+**Scope:** Developer-facing alignment  
+**Complexity: 2**
+1. Update extension-facing examples and command fixtures only where they expose patch families, target paths, contribution refs, or route requirements.
+2. Document `shader.assign`, `shader.remove`, shader-uniform target path format, and `requires` edge detail as M4 host semantics.
+3. Avoid docs/examples for shader stacks, texture routing, process execution, sidecar execution, or output-format execution.
+
+### Step 12: Final validation sweep (`tests/**/video-editor/**`, targeted package scripts)
+**Scope:** Verification  
+**Complexity: 2**
+1. Run cheapest focused tests first: composition graph, patch preview/timeline patch, shader validation, render planner, and canary integration.
+2. Run lints/type checks for the affected packages.
+3. Run the broader video-editor test suite after focused failures are fixed.
+4. Record any intentionally deferred behavior as out-of-scope only if it matches the M4 OUT list.
+
+## Execution Order
+1. Land public `shader.assign`/`shader.remove` first so later canary and keyframe tests use graph-owned writes from the start.
+2. Add clip-type refs next because they reuse existing contribution/ref diagnostic machinery and reduce uncertainty before the deeper keyframe work.
+3. Add shader-uniform serialization before patch applicators so keyframe mutations have a stable persistence target.
+4. Add graph projection/diagnostics after storage and mutation semantics exist.
+5. Integrate render-path execution before expanding the canary to all uniform types.
+6. Add `requires` graph contract before render planner consumption.
+7. Finish with the canary and docs so examples reflect final public behavior.
+
+## Validation Order
+1. `shader.assign`/`shader.remove` unit and integration tests.
+2. Clip-type contribution ref projection tests.
+3. Shader-uniform keyframe serialization and patch operation tests.
+4. Graph projector tests for `animates`, `consumes`, `requires`, and diagnostics.
+5. Render-path interpolation tests for shader uniforms.
+6. Render planner blocker tests for preview-only shaders and unresolved requirements.
+7. Clip-local-shader canary integration test.
+8. Broader video-editor test suite and lint/type checks.
+
+## Ticket Notes
+The open ticket `01KS384XKZNEWQRSXN2NXQ0DTJ` (“Video editor: extensibility plan”) appears related at the design/refactor level and may be proposed as linked context, but this milestone should not claim to resolve it unless the ticket’s acceptance criteria specifically match M4. The megaplan validator ticket `01KV8XVYW2EYDDDY30V48YX520` is unrelated and should not be linked.
+
+
+        Task graph (plan metadata):
+        {
+  "version": 1,
+  "timestamp": "2026-07-04T04:40:35Z",
+  "hash": "sha256:7f7d04e244da3271084a01fa4a782b253e4b6222027da5d479f893aab5199758",
+  "questions": [
+    "Should duplicate assignment of the exact same shader into the same scope be treated as idempotent success or rejected uniformly with distinct duplicate scopes? This affects the exact pre-commit guard behavior and test expectation.",
+    "What is the preferred public serialization field name on `TimelineShaderSummary`: `keyframes`, `automation`, or an existing local convention if one appears during implementation? The plan assumes the implementer will choose the smallest shape consistent with M3b keyframe semantics.",
+    "For `requires` edges, should M4 project only shader/materializer dependencies already declared in extension metadata, or also synthesize preview-only export requirements for shaders that lack non-preview readiness? The plan assumes both are graph/planner-visible where source data exists, with no process execution."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Public `shader.assign` and `shader.remove` patch families execute through host timeline patch execution without using legacy shader payload extraction as the new write path.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Assigning a distinct shader into an occupied scope through graph-owned operations is rejected before commit and emits/returns a `DUPLICATE_SCOPE` diagnostic path exercised by tests.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Clip types project as contribution refs with contribution nodes, `consumes` edges from clip nodes, and missing/disabled/resolved reference states covered by tests.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Shader-uniform keyframes add, update, remove, serialize, and round-trip through graph-owned keyframe operations using canonical `uniforms.<name>` target paths.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Shader-uniform `animates` edges include `targetKind: 'shader-uniform'`, canonical `targetPath`, and accurate `keyframeCount`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Unknown shader uniform keyframe targets emit `UNKNOWN_UNIFORM` diagnostics with `uniformName` and `targetPath` detail.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Render/preview uniform resolution uses shader-uniform keyframe data to produce interpolated current-time uniform values for the canary uniform set.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`requires` is added as a composition edge kind and declared dependencies project as `requires` edges with typed `RouteRequirement` detail containing subject, route scope, satisfier kind, determinism, fallback allowance, and repair action.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Render planning consumes `requires` edges and preview-only shader readiness to produce blockers and repair facts for non-preview routes without starting processes or claiming output-format execution.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The clip-local-shader-canary proves clip + shader + shader-uniform keyframes through graph-owned operations and graph-path markers.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "No new public edge discriminants such as `materializes`, `produces`, or `fallbacks` are introduced for M4.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Existing clip keyframe behavior remains covered and passing after shader-uniform keyframe support is added.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Implementation reuses M2 target-path normalization and M3b keyframe semantics instead of adding parallel path parsers or a separate keyframe engine.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "New code stays scoped to composition graph, timeline patch, render planner/render path, examples, and tests; unrelated extension/process/output-format behavior remains untouched.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Developer-facing examples/docs describe only M4 host semantics and avoid implying shader stacks, texture routing, process execution, or output-format execution support.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The engineering brief is accurate enough to avoid broad repository exploration; implementers should still verify exact local symbols and exports before editing each step.",
+    "`shader.assign` and `shader.remove` become public patch families in the host timeline patch surface, while `extractGraphPreviewOps()` remains only for backward-compatible legacy shader payloads.",
+    "Shader-uniform keyframes should reuse existing keyframe ids, timing, values, and easing semantics from M3b rather than introducing a shader-specific format.",
+    "The storage target for shader-uniform keyframes is `TimelineShaderSummary`, because existing shader summaries are the durable SDK reader surface for shader assignment facts.",
+    "Clip-type contribution refs can be built from `ClipTypeRegistryRecord.contributionId` and `ownerExtensionId`; unresolved refs use existing ReferenceState diagnostic codes and repair action detail.",
+    "The `requires` edge pipeline should mirror existing render planner blocker/next-action shapes, but use graph edge details rather than process execution.",
+    "Preview-only shader blockers for export routes are readiness/planner facts only; M4 does not start trusted processes, run materializers, or claim output-format execution.",
+    "Postprocess shader-uniform keyframes are out of scope unless they naturally work through the same target-path and timeline summary model without extra routing."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition",
+        "reason": "Core graph projection, diagnostics, validation, and patch preview behavior changes live here."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/timeline-patch.ts",
+        "reason": "Public patch operation execution and legacy bridge behavior are modified here."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.ts",
+        "reason": "Requires edge and preview-only shader blocker behavior is consumed here."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx",
+        "reason": "End-to-end canary must prove graph-owned shader and keyframe behavior."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/video/composition/graph.ts",
+      "src/sdk/video/composition/references.ts",
+      "src/sdk/video/timeline/reader.ts",
+      "src/tools/video-editor/lib/timeline-patch.ts",
+      "src/tools/video-editor/lib/renderRouter.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.ts",
+      "src/tools/video-editor/runtime/composition/graphProjector.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/runtime/composition/shaderValidation.ts",
+      "src/tools/video-editor/runtime/extensionSurface.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/renderability.ts",
+      "src/tools/video-editor/runtime/timeline-reader.ts",
+      "src/tools/video-editor/rendering/**",
+      "src/tools/video-editor/commands/**",
+      "src/tools/video-editor/examples/extensions/clip-local-shader-canary/index.ts",
+      "src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx",
+      "examples/video-editor-extension/**",
+      "tests/**/video-editor/**",
+      "docs/extensions/**"
+    ],
+    "always_run": [
+      "Targeted composition/timeline patch tests",
+      "Targeted render planner tests",
+      "Clip-local-shader-canary integration test",
+      "Video-editor typecheck/lint where available"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: examples/video-editor-extension/**, src/sdk/video/composition/graph.ts, src/sdk/video/composition/references.ts, src/sdk/video/timeline/reader.ts, src/tools/video-editor/commands/**, src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx, src/tools/video-editor/examples/extensions/clip-local-shader-canary/index.ts, src/tools/video-editor/lib/renderRouter.ts, src/tools/video-editor/lib/timeline-patch.ts, src/tools/video-editor/rendering/**, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/graphProjector.ts, src/tools/video-editor/runtime/composition/patchPreview.ts, src/tools/video-editor/runtime/composition/shaderValidation.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/renderPlanner.ts, src/tools/video-editor/runtime/renderability.ts, src/tools/video-editor/runtime/timeline-reader.ts, tests/**/video-editor/**. Ignored documentation-only change(s) for selector derivation: docs/extensions/**. Candidate: The change is cross-cutting inside the video editor composition spine, but still repo-local enough for a scoped video-editor baseline plus full-suite fallback rather than immediately making every package test the baseline. Dropped nonexistent pytest path(s) from plan-time baseline metadata: tests/**/video-editor/**.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "tests/**/video-editor/**"
+    ]
+  },
+  "structure_warnings": []
+}
+
+        Idea:
+# M4: Clip Type, Shader, And Shader-Uniform Keyframes
+
+## Outcome
+
+Ship the first creative vertical: clip + shader + shader-uniform keyframes through graph-owned shader assignment, target paths, keyframe operations, render-path integration, and graph-visible route requirements.
+
+## Execution Posture
+
+This milestone turns reserved shader operations into executable host patch semantics. It must prove native graph operations and stop new shader writes from relying on legacy-only paths.
+
+## Scope
+
+IN:
+- Execute `shader.assign` and `shader.remove` through host patch execution.
+- Add clip type refs and repair placeholders through contribution refs.
+- Derive shader uniform controls from schema capability.
+- Implement shader-uniform keyframe targeting, serialization, validation, and render-path execution through M2 target paths and M3b keyframe patch semantics.
+- Add planner blockers for preview-only shaders and unresolved material requirements using V1 material/action vocabulary.
+- Introduce `requires` graph edges for declared shader/materializer/process-style dependencies.
+- Use typed `RouteRequirement` detail with subject, route scope, satisfier kind, determinism, fallback allowance, and repair action.
+- Update the `clip-local-shader-canary` into a clip + shader + keyframes example.
+
+OUT:
+- Shader stacks and texture routing.
+- Live binding UI for shader uniforms.
+- Process or output-format execution.
+- Public `materializes`, `produces`, or `fallbacks` edge discriminants.
+- Postprocess shader-uniform keyframes unless they fall out naturally from the same target-path path.
+
+## Locked Decisions
+
+- M4 owns graph-visible `requires` edges.
+- Process-backed materializer blockers may become `requires` edges, but process start/lifecycle/execution remains M6.
+- New shader assignment writes use native `shader.assign`/`shader.remove`.
+- Legacy shader writes are compatibility reads only after M4.
+- Clip shader assignment projects as a `consumes` edge.
+
+## Constraints
+
+- Do not invent process execution in M4.
+- Do not bypass M2 target-path validation or M3b keyframe operation semantics.
+- Do not add arbitrary material graph or texture routing.
+- Do not let duplicate distinct shader scopes commit.
+- Do not claim output-format or sidecar support.
+
+## Done Criteria
+
+- Clip shader assignment projects as a `consumes` edge.
+- Shader-uniform keyframes round-trip and execute through graph-owned keyframe operations and existing render path.
+- Missing/disabled shader or clip type refs show repair state.
+- Duplicate distinct shader scopes are rejected before commit and diagnosed through graph validation.
+- Declared dependencies project as `requires` edges and produce blocker/repair facts.
+- Canary proves clip + shader + keyframes with graph-path markers.
+
+## Touchpoints
+
+- `src/sdk/video/composition/graph.ts`
+- `src/sdk/video/composition/references.ts`
+- `src/tools/video-editor/runtime/composition/**`
+- `src/tools/video-editor/commands/**`
+- `src/tools/video-editor/rendering/**`
+- `src/tools/video-editor/lib/renderRouter.ts`
+- `examples/video-editor-extension/**`
+- `tests/**/video-editor/**`
+- `docs/extensions/**`
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m4-clip-type-shader-and-20260704-0427/critique_evaluator_output.json
+        Read this file first by calling `read_file` with `path` exactly `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m4-clip-type-shader-and-20260704-0427/critique_evaluator_output.json` — it contains the expected JSON structure with all known check IDs pre-populated in `skipped`.
+        If you cannot supply that exact non-empty path, do not call `read_file`.
+        Move checks you are firing to `selections`, fill `why` for the rest, and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        ## Prep that preceded this plan
+
+This plan was produced after a multi-step prep phase (triage -> research
+fan-out -> distill). Use the prep record below when deciding which lenses
+to fire: areas prep researched thoroughly may need less scrutiny, while
+areas prep flagged as gaps, contradictions, or timed-out research warrant
+extra attention from the critics.
+
+**Prep coverage:** area_count=4, fanout_count=4, completed_count=3, partial_count=0, timed_out_count=0, error_count=1
+
+**Gaps prep could not close:**
+- requires-edge-and-route-requirement: research failed with worker_structural_audit_failed: model output structural audit failed: type_mismatch at /error: value does not match declared type(s) ['string'].
+
+**Contradictions surfaced in research:**
+- file src/sdk/video/composition/graph.ts appears in multiple areas with differing evidence/status: canary-update-audit=complete, shader-execution-and-clip-type-refs=complete
+- file src/sdk/video/composition/references.ts appears in multiple areas with differing evidence/status: canary-update-audit=complete, shader-execution-and-clip-type-refs=complete
+- file src/tools/video-editor/examples/extensions/clip-local-shader-canary/index.ts appears in multiple areas with differing evidence/status: canary-update-audit=complete, shader-uniform-keyframe-targeting=complete
+- file src/tools/video-editor/runtime/composition/diagnostics.ts appears in multiple areas with differing evidence/status: shader-execution-and-clip-type-refs=complete, shader-uniform-keyframe-targeting=complete
+- file src/tools/video-editor/runtime/composition/graphProjector.ts appears in multiple areas with differing evidence/status: canary-update-audit=complete, shader-execution-and-clip-type-refs=complete, shader-uniform-keyframe-targeting=complete
+- file src/tools/video-editor/runtime/composition/patchPreview.ts appears in multiple areas with differing evidence/status: canary-update-audit=complete, shader-execution-and-clip-type-refs=complete, shader-uniform-keyframe-targeting=complete
+- file src/tools/video-editor/runtime/composition/shaderValidation.ts appears in multiple areas with differing evidence/status: canary-update-audit=complete, shader-execution-and-clip-type-refs=complete
+
+**Prep dossier:**
+
+# Prep Research Dossier
+
+## Triage
+
+M4 turns reserved shader operations into executable host patch semantics, introduces clip-type contribution refs with repair state, derives shader-uniform keyframe controls from schema capability, and adds `requires` edges with RouteRequirement detail. The existing codebase already has: (a) `shader.assign`/`shader.remove` as preview-only graph operations in patchPreview.ts with legacy-side execution in timeline-patch.ts, (b) clipType tracked as a flat detail field in graph nodes rather than a contribution ref, (c) shader-uniform type support in schemaCapabilityRegistry and canonical path normalization in graphProjector.ts, (d) keyframe add/update/remove graph operations that currently target clip params but have no shader-uniform path, and (e) an existing clip-local-shader-canary that exercises shader registration and preview but not keyframes. The `requires` edge kind does not exist yet in `COMPOSITION_EDGE_KINDS` and `RouteRequirement` as a typed detail does not exist. The core uncertainties are: (1) where the legacy-to-native shader execution cutover happens and what 'host patch execution' means concretely, (2) how clip types should project as contribution refs with repair/resolution states, (3) how shader-uniform keyframes route through M2 target-path validation and M3b keyframe semantics, (4) the shape of the `requires` edge, `RouteRequirement` detail, and how both project through the planner into blockers.
+
+## Research Areas
+
+1. shader-execution-and-clip-type-refs: Map the current dual-path shader execution (legacy functions in timeline-domain.ts for mutation vs. GraphShaderAssignOp/GraphShaderRemoveOp in patchPreview.ts for preview) and identify the cutover point where M4 makes native graph operations the write path. In parallel, audit how clipType is currently stored (flat detail on clip nodes in graphProjector.ts), how it could project as a ContributionRef through the contribution index, what repair/resolution states are needed for missing/disabled clip types, and which diagnostic codes already exist (MISSING_REF, DISABLED_REF, etc.) versus what needs adding. The key deliverables are: a concrete cutover plan for shader execution, a clip-type-to-contribution-ref projection design, and a repair placeholder contract.
+2. shader-uniform-keyframe-targeting: Trace how shader-uniform keyframes would route through the existing infrastructure: the `canonicalizeShaderUniformPath` normalizer in graphProjector.ts already produces `uniforms.<name>` paths, `liveBindingTargetKind` already discriminates `'shader-uniform'`, and the schemaCapabilityRegistry already maps shader scalar/vector/color types to widget controls and validation paths. Identify what needs to be added: (a) how `GraphKeyframeAddOp`/`GraphKeyframeUpdateOp`/`GraphKeyframeRemoveOp` extend to shader-uniform targets (likely through `paramName` carrying the `uniforms.<name>` path), (b) how `animates` edges project for shader-uniform targets (currently the projector builds animates edges for clip automation but not shader-uniform paths), (c) what validation gates are needed (UNKNOWN_UNIFORM diagnostic already exists for undeclared uniforms), (d) serialization and render-path integration through the existing automation infrastructure. Output should be a concrete mapping of what already works, what needs extension, and what new validation/diagnostic codes are required.
+3. requires-edge-and-route-requirement: Design the new `requires` edge kind for the composition graph. Currently `COMPOSITION_EDGE_KINDS` = ['consumes', 'animates', 'binds-live'] in graph.ts. M4 adds `requires` as a graph-visible edge for declared shader/materializer/process-style dependencies. In parallel, design the `RouteRequirement` detail type with the fields specified (subject, route scope, satisfier kind, determinism, fallback allowance, repair action) — this should extend or replace the simpler `VideoEditorRouteRequirementDescriptor` in extensionSurface.ts. Map how `requires` edges project from the graph projector, how they feed into the renderPlanner to produce blockers/repair facts, and how process-backed materializer blockers may become `requires` edges (per locked decisions). Audit the existing renderPlanner.ts pipeline (routeRequirementBlocker, buildMaterialPlannerAction, etc.) for integration points. Output should be a concrete contract shape for both the `requires` edge detail and `RouteRequirement`, plus a projection-to-planner flow diagram.
+4. canary-update-audit: Produce an inventory of what the existing clip-local-shader-canary covers: shader registration, uniform schema declaration, texture binding, diagnostic shader for error surfacing, picker metadata, preview renderability, integration test coverage (shader registration lifecycle, composition graph projection, render planner evaluation). Then identify what's missing for the M4 canary upgrade: (a) shader-uniform keyframe operations on the canary's uniforms (intensity, tint, center, showGrid, bandCount, holdFrame, holdTime, blendMode), (b) graph-path markers that prove clip + shader + keyframes round-trip through graph-owned operations, (c) ability for the canary test to exercise keyframe add/update/remove on shader uniform target paths. Output should be a gap list keyed to M4 done criteria, with test scenarios that would prove each criterion.
+
+## Findings
+
+### shader-execution-and-clip-type-refs (complete)
+
+Map the current dual-path shader execution and identify the cutover point where M4 makes native graph operations the write path, audit clipType storage and projection, and identify repair/resolution states.
+
+- DUAL-PATH SHADER EXECUTION: Legacy mutations flow through `clip.update`/`app.update` timeline patch ops → `extractGraphPreviewOps()` (timeline-patch.ts:1889) → `GraphShaderAssignOp`/`GraphShaderRemoveOp` → `applyGraphPreviewOperations()`. The native functions `assignTimelineClipShader`/`assignTimelinePostprocessShader` (timeline-domain.ts:377,402) write into `clip.app.shader` / `config.app.shaderPostprocess` but are only invoked from the timeline-patch compile path and tests. No UI or command module calls them directly — all shader writes currently enter through legacy patch operations.
+- NATIVE PREVIEW PATH EXISTS BUT IS NOT THE WRITE PATH: `GraphShaderAssignOp`/`GraphShaderRemoveOp` (patchPreview.ts:43,53) and their applicators `applyShaderAssign`/`applyShaderRemove` (patchPreview.ts:171,205) operate on the shader array in the snapshot (`TimelineShaderSummary[]`), NOT on `clip.app`. This native path is used exclusively for preview/diagnostics via `applyGraphPreviewOperations()` (patchPreview.ts:774). The public SDK timeline patch families do NOT include `shader.assign`/`shader.remove` — they are reserved. M4 must promote them to public write-path operations.
+- CUTOVER PLAN: The `extractGraphPreviewOps()` bridge (timeline-patch.ts:1878-1970) currently scans legacy `clip.update`/`app.update` ops and extracts shader payloads into native graph ops. Post-M4, new shader writes must use native `shader.assign`/`shader.remove` as public timeline patch families, bypassing the bridge. Legacy payloads in `clip.update`/`app.update` become compatibility reads only. The bridge function can remain for backward-compatible preview but must not be the write path for new operations.
+- CLIPTYPE STORAGE: `clipType` is stored as a flat string property on clip nodes in `graphProjector.ts:303` (`clipType: clip.clipType`). It is declared as `ClipType` (union) in types/index.ts:346 but widened to string at schema level (line 68). There is NO `clipType`-to-`ContributionRef` projection in the graph today — `clipType` does not appear as a contribution node or edge.
+- CLIPTYPE AND CONTRIBUTION INDEX: `clipType` is listed as a 'reserved future kind' in `extensionSurface.ts:706` alongside effect, transition, parser, agentTool, agent. The `normalizeExtensionRuntime` doc (line 705) explicitly separates 'bridged M1 contributions (slot, dialog, panel, inspectorSection) from reserved future kinds (effect, transition, clipType, parser, agentTool, agent)'. Clip types currently enter the contribution index with `status: 'inactive-reserved'`, which the reference resolver maps to `ReferenceState: 'inactive-reserved'` and `COMPOSITION_DIAGNOSTIC_CODE.INACTIVE_RESERVED_REF`.
+- CLIPTYPE-TO-CONTRIBUTION-REF PROJECTION DESIGN: To project clipType as a ContributionRef, M4 needs to: (a) add a `consumes` edge from each clip node to a `contribution:clipType:<extensionId>:<contributionId>` node (matching the pattern used for shaders in graphProjector.ts:453-500), (b) use the ClipTypeRegistryRecord's `ownerExtensionId` and `contributionId` to build the ContributionRef, (c) the ContributionRef kind would be `'clipType'`. The `resolveCompositionReferences` call already handles arbitrary ref kinds through `contributionRefKey(ref)`.
+- DIAGNOSTIC CODES ARE COMPLETE: All needed reference-state codes exist in diagnostics.ts: `MISSING_REF`, `DISABLED_REF`, `INACTIVE_RESERVED_REF`, `INVALID_PACKAGE_REF`, `DUPLICATE_REF`, `SETTINGS_ERROR_REF`, `RUNTIME_ERROR_REF`, `VERSION_INCOMPATIBLE_REF`, `UNKNOWN_REF`. The `referenceStateDiagnosticCode()` function maps all 10 ReferenceState values to their codes. Additional composition codes (`DUPLICATE_SCOPE`, `SCOPE_OCCUPIED`) cover shader scope conflicts. No new diagnostic codes are needed for M4.
+- DUPLICATE SCOPE REJECTION: Already implemented in `validateShaderComposition` (shaderValidation.ts) and `buildDuplicateScopeDiagnostics` (graphProjector.ts:252-288). The `applyShaderAssign` in patchPreview.ts:171 already removes any existing shader for the same scope before adding (single-occupancy enforcement). The graph projector's `buildDuplicateScopeDiagnostics` catches existing duplicates from stored data.
+- REPAIR PLACEHOLDER CONTRACT: The `CompositionDiagnosticDetail` interface (diagnostics.ts:144-195) already carries `nextAction?: Record<string, unknown>` for planner repair actions. The `COMPOSITION_DIAGNOSTIC_CODE.MISSING_REF` and `DISABLED_REF` are already defined with warning severity. Repair actions would be attached via the `nextAction` field. The `referenceStateSeverity()` function (diagnostics.ts:294) classifies `missing` and `inactive-reserved` as warnings and all other non-resolved states as errors.
+- NO EXISTING CANARY: A search for `clip-local-shader-canary` or `canary` across the entire repository returned zero results. The canary must be newly created in `examples/video-editor-extension/` as part of M4.
+- RENDER-PATH INTEGRATION: The `TimelineRenderer.tsx` already reads shaders via `getTimelinePostprocessShader` (line 1231) and the shader registry snapshot. Clip-level shaders are read via `getTimelineClipShader` from `clip.app.shader`. M4's graph-owned shader assignment must feed into this existing render read path so that shader-uniform keyframes can be resolved by the same `resolveAnimatedParams` pipeline that handles automation keyframes (imported at line 45).
+
+### shader-uniform-keyframe-targeting (complete)
+
+Trace how shader-uniform keyframes would route through existing M2 target-path validation and M3b keyframe operations
+
+- PATH NORMALIZATION EXISTS: `canonicalizeShaderUniformPath` in graphProjector.ts:132-140 already normalizes `uniforms.<name>` paths. It strips a leading `uniforms.` prefix (if present), then re-prepends it, producing canonical `uniforms.<name>` output. Undefined is returned for empty strings.
+- TARGET KIND DISCRIMINATION EXISTS: `liveBindingTargetKind` in graphProjector.ts:180-205 already returns `'shader-uniform'` when binding.targetKind === 'shader-uniform', targetMaterialId is present, or targetPath starts with 'uniforms.'. `canonicalLiveBindingTargetPath` (line 155-178) routes shader-uniform targets through `canonicalizeShaderUniformPath`.
+- ANIMATES EDGES PARTIALLY COVER SHADER-UNIFORM: In graphProjector.ts:337-388, the automation loop already sets `targetKind: 'shader-uniform'` on animates edges when the canonical target path starts with 'uniforms.' (line 381). However, this only fires for clip-level `clip.automation` entries. There is NO separate loop to build animates edges from shader-owned uniform keyframe data stored on TimelineShaderSummary or shader-level data.
+- KEYFRAME OPS ARE CLIP-ONLY: `GraphKeyframeAddOp`, `GraphKeyframeUpdateOp`, `GraphKeyframeRemoveOp` in patchPreview.ts each carry `clipId` and `paramName`. The `paramName` is treated as a clip parameter name. The `getClipKeyframes` / `matchAutomationSummary` / `syncAutomationKeyframeCount` helpers all operate on MutablePreviewClip, not on shader summaries. There is NO shader-uniform variant of these ops or their applicators.
+- TIMELINE SHADER SUMMARY LACKS KEYFRAMES: `TimelineShaderSummary` in the SDK (src/sdk/video/timeline/reader.ts:322-330) carries only id, shaderId, scope, clipId, extensionId, contributionId, and enabled. There is no `automation`, `keyframes`, or `uniformValues` field. Shader-uniform keyframe data has no serialization surface.
+- DIAGNOSTIC CODES READY: `UNKNOWN_UNIFORM` (composition/unknown-uniform) exists in diagnostics.ts:70 and is in the BLOCKING_TARGET set (line 201). `CompositionDiagnosticDetail` already has `uniformName` and `targetPath` fields. `exportGuard.ts` maps it to `export/unknown-uniform`. Missing pieces: no code yet emits `UNKNOWN_UNIFORM` during graph projection — it's declared but unused.
+- SCHEMA CAPABILITY READY: `schemaCapabilityRegistry` maps shader types to widgets: float/int/frame/time → 'shader-number', vec2/vec3/vec4 → 'vector', color → 'color', bool → 'boolean', enum → 'select'. Validation paths exist for shader scalars (shader-scalar-path, line 339), vectors (shader-vector-path, line 363), and color vectors (shader-color-vector-path, line 381). The registry is fully wired for shader uniform value validation.
+- RENDER-PATH INTEGRATION GAP: No uniform-interpolation code exists. The keyframe interpolator (`keyframes/index.ts`) operates on `ClipKeyframe` arrays keyed by parameter name — it does not know about shader uniforms or `uniforms.<name>` paths. Shader rendering (e.g., WebGLShaderPreviewSurface) uses static uniform defaults, not keyframe-interpolated values. Fed from the registry snapshot, not from timeline keyframe data.
+- LIVE BINDING PATH WORKS: Uniform live bindings DO project `uniforms.<name>` target paths through `binds-live` edges. timeline-reader.ts:603 constructs `uniforms.<uniform>` from binding mappings. This path is fully functional for live (realtime) binding but NOT for keyframe (timeline) binding.
+- EXTENSION GAP SUMMARY: (a) `GraphKeyframeAddOp`/`GraphKeyframeUpdateOp`/`GraphKeyframeRemoveOp` need to be extended or duplicated for shader-uniform targets — likely by having `paramName` carry `uniforms.<name>` and adding a shader contribution ref; (b) `animates` edges need a new loop in graphProjector.ts that iterates shader-uniform keyframe data (not clip automation) and projects `animates` edges with `sourceNodeId` from the scope node (clip or postprocess) and `targetNodeId` from the shader contribution node; (c) `UNKNOWN_UNIFORM` diagnostic needs to be emitted during graph projection when a shader-uniform target path references an undeclared uniform; (d) `TimelineShaderSummary` needs a `keyframes` or `automation` field to carry serialized uniform keyframe data; (e) the keyframe applicators in patchPreview.ts need a `applyKeyframeToShaderUniform` path; (f) render-path integration needs the shader preview surfaces to consume interpolated uniform values from keyframe data.
+
+### requires-edge-and-route-requirement (error)
+
+Design the new `requires` edge kind for the composition graph. Currently `COMPOSITION_EDGE_KINDS` = ['consumes', 'animates', 'binds-live'] in graph.ts. M4 adds `requires` as a graph-visible edge for declared shader/materializer/process-style dependencies. In parallel, design the `RouteRequirement` detail type with the fields specified (subject, route scope, satisfier kind, determinism, fallback allowance, repair action) — this should extend or replace the simpler `VideoEditorRouteRequirementDescriptor` in extensionSurface.ts. Map how `requires` edges project from the graph projector, how they feed into the renderPlanner to produce blockers/repair facts, and how process-backed materializer blockers may become `requires` edges (per locked decisions). Audit the existing renderPlanner.ts pipeline (routeRequirementBlocker, buildMaterialPlannerAction, etc.) for integration points. Output should be a concrete contract shape for both the `requires` edge detail and `RouteRequirement`, plus a projection-to-planner flow diagram.
+
+Error: worker_structural_audit_failed: model output structural audit failed: type_mismatch at /error: value does not match declared type(s) ['string']
+
+### canary-update-audit (complete)
+
+Inventory of existing clip-local-shader-canary coverage and gap list keyed to M4 done criteria.
+
+- EXISTING COVERAGE (7 areas): (1) Shader registration lifecycle — ctx.shaders.registerShader() exercised; registry snapshot, runtime normalization, and picker entries verified via listClipShaderPickerEntries. (2) Uniform schema declaration — 8 editable uniforms (intensity, tint, center, showGrid, bandCount, holdFrame, holdTime, blendMode) + 1 textureRef (u_source); all default values serialized in clip.app.shader.uniforms. (3) Texture binding metadata — u_source declared as clip-frame source with filter/wrap/colorSpace; ClipShaderPreviewCanvas passes textureValues to preview surface. (4) Diagnostic shader for error surfacing — clipLocalShaderDiagnosticContribution uses matrix3 uniform type to trigger shader/uniform-unsupported diagnostic; verified in registry snapshot with status:'error'. (5) Picker metadata — listClipShaderPickerEntries returns entries with passKind, previewOnly flag, blockedRoutes, and disabled state for errored shaders. (6) Preview renderability — ClipShaderPreviewCanvas mounts with WebGL preview surface, receives uniformValues/textureValues, calls renderFrame with time/frame. (7) Integration test coverage — registration lifecycle test (lines 226-313), inspector edit + preview + planner test (lines 315-409), graph-present vs legacy planner test (lines 411-453), graph node/edge kind scoping test (lines 455-514).
+- GAP A — shader-uniform keyframe operations: The canary test NEVER exercises keyframe.add, keyframe.update, or keyframe.remove on shader uniform target paths. The patchPreview module has the operations (GraphKeyframeAddOp/UpdateOp/RemoveOp), and graphProjector.ts canonicalAutomationTargetPath detects 'uniforms.' prefix (line 381), but the canary does not call applyGraphPreviewOperations with keyframe ops on any of its 8 uniforms. The makeGraphCoverageSnapshot helper creates static automation clips with targetPath:'uniforms.intensity' and keyframeCount:2, but never mutates them. The patchPreview.test.ts tests keyframe add/update/remove only on effect params (opacity), never on shader-uniform paths.
+- GAP B — graph-path markers for clip+shader+keyframes round-trip: No end-to-end test proves that an animates edge emerges from adding a keyframe to a shader uniform via graph-owned operations, or that removing it updates the edge's keyframeCount. The existing test at lines 455-514 checks edge kinds (consumes/animates/binds-live) and targetKinds (clip-param/effect-param/transition-param/shader-uniform) but only from static snapshot data, not from dynamic keyframe operations. No round-trip test serializes a shader-uniform keyframe through graph operations and verifies the resulting edge detail (targetPath, targetKind:'shader-uniform', keyframeCount).
+- GAP C — keyframe add/update/remove on shader uniform target paths: Zero test scenarios exercise keyframe mutations on any of the canary's uniforms (intensity, tint, center, showGrid, bandCount, holdFrame, holdTime, blendMode). The GraphKeyframeAddOp's paramName field expects 'params.intensity' or similar format; there is no test proving the canonicalization path canonicalAutomationTargetPath → 'uniforms.intensity' → targetKind:'shader-uniform' flow for keyframe operations.
+- GAP D — requires edges: The public SDK CompositionEdgeKind type (src/sdk/video/composition/graph.ts:57) defines ONLY 'consumes' | 'animates' | 'binds-live'. The 'requires' edge kind is not implemented anywhere in the codebase. COMPOSITION_EDGE_KINDS array (line 62-66) and barrel export tests both confirm only those three kinds exist.
+- GAP E — RouteRequirement typed detail: No RouteRequirement type with subject, route scope, satisfier kind, determinism, fallback allowance, and repair action exists. VideoEditorRouteRequirementDescriptor in extensionSurface.ts is process/output-format focused and lacks the M4-specified fields.
+- GAP F — shader.assign / shader.remove execution: These operations exist in patchPreview.ts (GraphShaderAssignOp, GraphShaderRemoveOp) but are NEVER invoked in the canary integration test. There is no test proving host patch execution of these operations for the canary shader.
+- GAP G — clip type ref repair state: No test demonstrates missing/disabled shader or clip type refs showing repair state for the canary. The diagnostic shader shows error status but no repair action.
+- GAP H — planner blockers for preview-only shaders: The missing-material blocker for browser/worker export is verified, but there is no test proving that a preview-only shader posture produces a distinct 'preview-only' blocker (vs silently treating preview success as export readiness).
+- GAP I — duplicate distinct shader scope rejection: Validated at validateShaderComposition level and emitted as graph diagnostics (COMPOSITION_DIAGNOSTIC_CODE.DUPLICATE_SCOPE), but the canary test does NOT exercise the rejection through graph-owned shader.assign operations — it only relies on projection-time validation.
+- GAP J — declared dependencies as requires edges: No implementation; requires edge kind is entirely absent from both SDK contracts and host projection code.
+
+## Adjudication
+
+### Gap Notes
+
+- requires-edge-and-route-requirement: research failed with worker_structural_audit_failed: model output structural audit failed: type_mismatch at /error: value does not match declared type(s) ['string'].
+
+### Contradiction Notes
+
+- file src/sdk/video/composition/graph.ts appears in multiple areas with differing evidence/status: canary-update-audit=complete, shader-execution-and-clip-type-refs=complete
+- file src/sdk/video/composition/references.ts appears in multiple areas with differing evidence/status: canary-update-audit=complete, shader-execution-and-clip-type-refs=complete
+- file src/tools/video-editor/examples/extensions/clip-local-shader-canary/index.ts appears in multiple areas with differing evidence/status: canary-update-audit=complete, shader-uniform-keyframe-targeting=complete
+- file src/tools/video-editor/runtime/composition/diagnostics.ts appears in multiple areas with differing evidence/status: shader-execution-and-clip-type-refs=complete, shader-uniform-keyframe-targeting=complete
+- file src/tools/video-editor/runtime/composition/graphProjector.ts appears in multiple areas with differing evidence/status: canary-update-audit=complete, shader-execution-and-clip-type-refs=complete, shader-uniform-keyframe-targeting=complete
+- file src/tools/video-editor/runtime/composition/patchPreview.ts appears in multiple areas with differing evidence/status: canary-update-audit=complete, shader-execution-and-clip-type-refs=complete, shader-uniform-keyframe-targeting=complete
+- file src/tools/video-editor/runtime/composition/shaderValidation.ts appears in multiple areas with differing evidence/status: canary-update-audit=complete, shader-execution-and-clip-type-refs=complete
+
+### Overlap Groups
+
+- file: src/sdk/video/composition/graph.ts [canary-update-audit, shader-execution-and-clip-type-refs]
+- file: src/sdk/video/composition/references.ts [canary-update-audit, shader-execution-and-clip-type-refs]
+- file: src/tools/video-editor/examples/extensions/clip-local-shader-canary/index.ts [canary-update-audit, shader-uniform-keyframe-targeting]
+- file: src/tools/video-editor/runtime/composition/diagnostics.ts [shader-execution-and-clip-type-refs, shader-uniform-keyframe-targeting]
+- file: src/tools/video-editor/runtime/composition/graphProjector.ts [canary-update-audit, shader-execution-and-clip-type-refs, shader-uniform-keyframe-targeting]
+- file: src/tools/video-editor/runtime/composition/patchPreview.ts [canary-update-audit, shader-execution-and-clip-type-refs, shader-uniform-keyframe-targeting]
+- file: src/tools/video-editor/runtime/composition/shaderValidation.ts [canary-update-audit, shader-execution-and-clip-type-refs]
+
+### Bounded Cross-Reference
+
+- Performed: yes
+- Shared files: src/sdk/video/composition/graph.ts, src/sdk/video/timeline/reader.ts, src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx, src/tools/video-editor/examples/extensions/clip-local-shader-canary/index.ts, src/tools/video-editor/lib/timeline-patch.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/graphProjector.ts, src/tools/video-editor/runtime/composition/patchPreview.ts, src/tools/video-editor/runtime/composition/shaderValidation.ts, src/tools/video-editor/runtime/extensionSurface.ts
+- Missing files: (none)
+
+## Metrics
+
+- Areas triaged: 4
+- Fan-out units run: 4
+- Complete: 3
+- Partial: 0
+- Timed out: 0
+- Errors: 1
+- Missed units: requires-edge-and-route-requirement
+
+
+## Critique Lens Catalog (9 lenses)
+
+        ### Lens: `issue_hints` (tier: core, category: completeness)
+**Question:** Did the work fully address the issue hints, user notes, and approved plan requirements?
+**Guidance:** Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.
+
+### Lens: `correctness` (tier: core, category: correctness)
+**Question:** Are the proposed changes technically correct?
+**Guidance:** Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases — not just the one reported in the issue.
+
+### Lens: `scope` (tier: core, category: completeness)
+**Question:** Search for related code that handles the same concept. Is the reported issue a symptom of something broader — and is any single step sized to fit one worker turn?
+**Guidance:** Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes. Also audit step SIZING: each step/task is executed in ONE worker turn (~15 min, one conversation) and must be fully implemented AND verified there. A single step that bundles multiple concerns — e.g. 'extract this 2000-line file into modules AND write tests', or 'consolidate the roots AND migrate N registries AND add parity tests' — is a god-task: it cannot finish in one turn and the worker will run out of time mid-implementation. Raising complexity does not buy more time, only a stronger model for the same single turn. Flag any such step and recommend splitting along the natural seam (one step to add the abstraction + its unit tests, then one step per consumer/module to migrate, parity tests on the last).
+
+### Lens: `all_locations` (tier: core, category: completeness)
+**Question:** Does the change touch all locations AND supporting infrastructure?
+**Guidance:** Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.
+
+### Lens: `callers` (tier: core, category: correctness)
+**Question:** Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?
+**Guidance:** Grep for call sites. For each caller, check what values it passes — especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?
+
+### Lens: `conventions` (tier: extended, category: maintainability)
+**Question:** Does the approach match how the codebase solves similar problems?
+**Guidance:** Check not just naming/style but how similar PROBLEMS are solved in this codebase. If the codebase adds new methods for similar cases, the plan should too. Do not spend findings on trivial stylistic preferences.
+
+### Lens: `verification` (tier: extended, category: completeness)
+**Question:** Is there convincing verification for the change?
+**Guidance:** Flag missing tests or weak validation. If verification tests exist, trace the test's execution path through your patch — does every branch it exercises produce the expected result? A patch can look correct but fail because it misses one code path the test covers. If you manually verify an edge case because existing tests don't cover it, also test the cases next to it.
+
+### Lens: `criteria_quality` (tier: extended, category: completeness)
+**Question:** Are the success criteria well-prioritized and verifiable?
+**Guidance:** Check that each `must` criterion has a clear yes/no answer verifiable from code, tests, or git diff. Subjective goals, numeric guidelines, and aspirational targets should be `should`, not `must`. Criteria requiring manual testing or human judgment should be `info`. Flag any `must` criterion that is ambiguous, subjective, or unverifiable in the review pipeline.
+
+### Lens: `prerequisite_ordering` (tier: core, category: correctness)
+**Question:** Do tasks that depend on a precondition gracefully handle that precondition only partially holding?
+**Guidance:** Walk the task graph. For each task that depends on a precondition produced by an earlier task (e.g. 'after T5 regen, remove ref()'), check what happens if the precondition only partially holds — some inputs fail, some succeed. Then re-read the brief: does it lock a graceful-fallback policy for the earlier task (e.g. 'failed templates get skipped with a diagnostic') AND simultaneously demand absolute completion for the dependent task (e.g. 'zero callers remain', 'all migrated')? That's a brief contradiction the planner will transcribe faithfully and the executor will hit at runtime. Flag the conflicting paragraphs and recommend conditionalizing the dependent task, or specifying explicit deferral behavior.
+
+
+        ## Complexity Rubric (1–5)
+
+        Rate each selected lens on its **hardest realistic** aspect, not a
+        worst-case imagining. When genuinely torn between two tiers, choose the
+        LOWER one UNLESS you can name the specific cascading, test-evading
+        failure that earns the higher tier in the justification.
+
+        - **1 = trivial, mechanical check.** The lens's question can be
+          answered by pattern-matching a single file or a grep hit. A weak
+          model cannot get it wrong.
+        - **2 = simple, localized check.** The lens touches one or two
+          files, the question has a linear answer, and the failure mode
+          (missing something) is obvious.
+        - **3 = multi-step check with non-trivial reasoning.** The lens
+          requires holding multiple files or a dataflow in your head;
+          correctness is not self-evident from a quick skim.
+        - **4 = cross-cutting or high-stakes check.** A defect this lens would
+          miss is **non-local and not caught by an obvious test** — it
+          propagates through a shared contract or invariant that code the plan
+          does NOT touch relies on. Spanning several modules is NOT sufficient
+          on its own; a lens whose failure is local and obvious is tier 2-3.
+        - **5 = fundamental system-level check.** The lens probes a
+          security-sensitive path, a schema migration, an auth boundary, or
+          a contract relied on by the whole system, where a subtle error would
+          pass the full suite and corrupt state. Only assign tier 5 when the
+          lens genuinely requires system-level reasoning — not merely
+          "important" or central code.
+
+        **FLOOR rules (hard minimum) — these two lenses ONLY:**
+        - `correctness` — NEVER below tier 4. A correctness defect that
+          slips through is the most expensive failure mode.
+        - `prerequisite_ordering` — NEVER below tier 4. Partial-precondition
+          contradictions are subtle and cascade into runtime failures; a
+          weak model will miss them.
+        Every OTHER lens must EARN tier 4-5 under the rubric above; the
+        expected home for an ordinary, locally-verifiable check is tier 2-3.
+        Do not let "this plan is large" inflate a lens whose own question is
+        answerable by a focused read.
+
+        ## Assignment Contract
+
+        Select the FEWEST lenses that cover the real risk; keep the set lean
+        rather than firing broad, overlapping checks. If a check's verification
+        would likely depend on things outside this project root (external or
+        sibling repos), files the plan only creates later, or runtime-only
+        behavior, either scope the lens to what is statically checkable in this
+        repo or name that dependency in its justification so the worker and gate
+        expect a partial or `unverifiable` result.
+
+        - **Select deliberately**: a lens fires only when it covers a concrete
+          risk in this plan.
+        - **Justify to skip**: every skipped lens must include a concrete, specific
+          `why` — a reason grounded in the plan's content, not a generic dismissal.
+        - **Every lens is assigned exactly once**: the union of `selections` and
+          `skipped` must cover all 9 lens ids with no overlap
+          and no omission.
+        - **At least one lens must be selected** — an all-skip verdict is rejected.
+        - **Every selected catalog lens** must emit a `complexity` (int 1–5) and
+          a `complexity_justification` (one or two sentences citing why this
+          lens sits at exactly that tier — reference the lens's question, the
+          plan's concrete files/interfaces/risks). The justification must be
+          defensible against a reviewer who disagrees. A bare restatement of the
+          rubric ("this is complex") is not acceptable.
+        - **`other` custom areas**: an `other` selection is additive (does not
+          replace a catalog lens). It requires `area` (a non-empty name for the
+          custom critique area), `why` (the probe question for the critic),
+          `complexity`, and `complexity_justification`. At most 2
+          `other` areas.
+        - **Do not invent check IDs**: North Star, anchor, product, or project-
+          specific concerns must either use one of the catalog lens IDs above
+          or `check_id: "other"` with the specific concern named in `area`.
+          Values such as `north_star_alignment`, `compatibility_shim_risk`, or
+          `behavior_preservation` are invalid as `check_id`s.
+
+        Your output must be a JSON object with these keys:
+        - `selections`: list of objects. For catalog lenses:
+          {check_id, complexity (int 1–5), complexity_justification, why?}
+          For `other` custom areas:
+          {check_id: "other", area, why, complexity (int 1–5), complexity_justification}
+        - `skipped`: list of {check_id, why} objects
+        - `evaluator_model`: your own model identifier string
+        - `flag_verifications`: list of
+          {flag_id, lens, outcome, rationale} objects where outcome is
+          one of "verified" / "open" / "accepted_tradeoff"; use [] when the
+          Flag Resolution Verification section is absent. `lens` must be
+          exactly one catalog lens id; combined lens strings such as
+          `correctness/all_locations` are invalid.
+
+        Remember: prefer the smallest selected set that still covers the real
+        risk.  Skipping requires a justification.  When you skip, explain *why
+        this specific lens is unnecessary for this specific plan* — do not
+        write generic cop-outs.

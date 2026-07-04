@@ -1,10 +1,11 @@
 /**
- * clip-local-shader-canary — M13 clip-local WebGL shader canary.
+ * clip-local-shader-canary — clip-local WebGL shader canary.
  *
  * Exercises the public shader SDK path: manifest-declared ShaderContribution
  * records, ctx.shaders.registerShader(), uniform defaults, textureRef binding
- * metadata, registry diagnostics, preview-only renderability, picker metadata,
- * and M12 planner blockers.
+ * metadata, registry diagnostics, graph-owned shader assignment/removal,
+ * shader-uniform keyframe round-trips, preview-only renderability, picker
+ * metadata, and planner blockers.
  */
 
 import { defineExtension } from '@reigh/editor-sdk';
@@ -259,7 +260,7 @@ export function createClipLocalShaderCanaryExtension(
       id: CLIP_LOCAL_SHADER_CANARY_EXTENSION_ID as any,
       version: CLIP_LOCAL_SHADER_CANARY_VERSION,
       label: 'Clip Local Shader Canary',
-      description: 'M13 canary for clip-local WebGL shader registration, uniforms, diagnostics, preview, picker, and planner behavior.',
+      description: 'Canary for clip-local WebGL shader registration, graph-owned assignment/keyframes, diagnostics, preview, picker, and planner behavior.',
       apiVersion: 1,
       contributions: [
         clipLocalShaderCanaryContribution,

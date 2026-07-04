@@ -1,0 +1,180 @@
+{
+  "incidents": [
+    {
+      "actions": [],
+      "attempts": [],
+      "claims": [],
+      "deadline_ts": null,
+      "decisions": [
+        {
+          "decision": {
+            "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+            "repair_actor": "meta_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+          },
+          "seq": 0
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+          },
+          "seq": 2
+        }
+      ],
+      "event_count": 3,
+      "events": [
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+            "repair_actor": "meta_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+          },
+          "event_id": "wdd-1f40c872f03a",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+              "repair_actor": "meta_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "meta_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 0,
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
+          "summary": "meta-repair background-dispatched",
+          "timestamp": "2026-07-04T10:48:03.021046+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-222910b3b404",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "progress_stall",
+              "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "progress_stall",
+          "parent": [],
+          "problem_id": null,
+          "seq": 1,
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
+          "summary": "progress_stall:m4-clip-type-shader-and-20260704-0427:iteration=1:attempt=0:plan_v_count=1:events_stale=11m",
+          "timestamp": "2026-07-04T10:52:30.738550+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+          },
+          "event_id": "wdd-5e919fa35b19",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 2,
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-04T10:52:33.349321+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "progress_stall",
+          "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+          "repair_actor": "meta_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+        }
+      ],
+      "first_seq": 0,
+      "first_timestamp": "2026-07-04T10:48:03.021046+00:00",
+      "incident_id": "inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
+      "last_seq": 2,
+      "last_timestamp": "2026-07-04T10:52:33.349321+00:00",
+      "latest_actor": "watchdog",
+      "latest_kind": "incident.dispatch",
+      "next_expected_event": "immediate_repair.repair_attempt",
+      "outcome": "dispatched",
+      "placeholders": {
+        "install_freshness": "unknown",
+        "recurrence": "unknown",
+        "shipped_fix": "unknown"
+      },
+      "problem_ids": [
+        "problem-71f954a05546",
+        "problem-e20c45ae0eb0",
+        "problem-fc037a661409"
+      ],
+      "session_ids": [
+        "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+      ],
+      "state": "dispatch",
+      "summary": "repair loop background-dispatched"
+    }
+  ],
+  "integrity": [],
+  "projection": "incidents",
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:1394ceb613778ee090f924dd795932b9f075c7e13d7f4cc255467fdfa20d740d",
+    "event_count": 3,
+    "journal_line_count": 3,
+    "last_seq": 2,
+    "malformed_line_count": 0
+  }
+}

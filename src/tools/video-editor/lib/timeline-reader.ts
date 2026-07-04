@@ -33,6 +33,7 @@ import type { TimelineData, ClipMeta } from '@/tools/video-editor/lib/timeline-d
 import type {
   TimelineClip,
   TimelineClipShaderMetadata,
+  TimelineShaderKeyframe,
   TimelinePostprocessShaderMetadata,
   TimelineLiveBindingResolutionStatus,
   TimelineLiveSourceKind,
@@ -337,6 +338,74 @@ function isPostprocessShaderMetadata(value: unknown): value is TimelinePostproce
   );
 }
 
+function canonicalizeShaderUniformPath(parameterPath: string): string | undefined {
+  const trimmed = parameterPath.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  const uniform = trimmed.startsWith('uniforms.') ? trimmed.slice('uniforms.'.length) : trimmed;
+  return uniform.length > 0 ? `uniforms.${uniform}` : undefined;
+}
+
+function isShaderKeyframeValue(value: unknown): value is TimelineShaderKeyframe['value'] {
+  if (
+    typeof value === 'number'
+    || typeof value === 'string'
+    || typeof value === 'boolean'
+  ) {
+    return true;
+  }
+
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'number' && Number.isFinite(entry));
+}
+
+function extractShaderKeyframes(
+  rawKeyframes: TimelineClipShaderMetadata['keyframes'] | TimelinePostprocessShaderMetadata['keyframes'],
+): TimelineShaderSummary['keyframes'] | undefined {
+  if (!rawKeyframes || typeof rawKeyframes !== 'object' || Array.isArray(rawKeyframes)) {
+    return undefined;
+  }
+
+  const canonical: Record<string, TimelineShaderKeyframe[]> = {};
+  for (const [parameterPath, entries] of Object.entries(rawKeyframes)) {
+    const targetPath = canonicalizeShaderUniformPath(parameterPath);
+    if (!targetPath || !Array.isArray(entries)) {
+      continue;
+    }
+
+    const keyframes = entries.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return [];
+      }
+
+      const time = (entry as { time?: unknown }).time;
+      const value = (entry as { value?: unknown }).value;
+      const interpolation = (entry as { interpolation?: unknown }).interpolation;
+      if (
+        typeof time !== 'number'
+        || !Number.isFinite(time)
+        || !isShaderKeyframeValue(value)
+        || (interpolation !== 'linear' && interpolation !== 'hold')
+      ) {
+        return [];
+      }
+
+      return [{
+        time,
+        value: Array.isArray(value) ? [...value] : value,
+        interpolation,
+      }];
+    });
+
+    if (keyframes.length > 0) {
+      canonical[targetPath] = keyframes;
+    }
+  }
+
+  return Object.keys(canonical).length > 0 ? canonical : undefined;
+}
+
 function extractAutomationSummary(
   rawParams: Record<string, unknown> | undefined,
 ): TimelineAutomationSummary | undefined {
@@ -466,6 +535,7 @@ export function createTimelineReader(
           ? clip.app.shader
           : undefined;
         if (clipShader) {
+          const clipShaderKeyframes = extractShaderKeyframes(clipShader.keyframes);
           shaderSummaries.push({
             id: `${clip.id}:shader:${clipShader.shaderId}`,
             shaderId: clipShader.shaderId,
@@ -474,6 +544,9 @@ export function createTimelineReader(
             extensionId: clipShader.extensionId,
             contributionId: clipShader.contributionId,
             enabled: clipShader.enabled !== false,
+            ...(clipShaderKeyframes
+              ? { keyframes: clipShaderKeyframes }
+              : {}),
           });
         }
 
@@ -742,6 +815,7 @@ export function createTimelineReader(
         ? app.shaderPostprocess
         : undefined;
       if (postprocessShader) {
+        const postprocessShaderKeyframes = extractShaderKeyframes(postprocessShader.keyframes);
         shaderSummaries.push({
           id: `postprocess:shader:${postprocessShader.shaderId}`,
           shaderId: postprocessShader.shaderId,
@@ -749,6 +823,9 @@ export function createTimelineReader(
           extensionId: postprocessShader.extensionId,
           contributionId: postprocessShader.contributionId,
           enabled: postprocessShader.enabled !== false,
+          ...(postprocessShaderKeyframes
+            ? { keyframes: postprocessShaderKeyframes }
+            : {}),
         });
       }
 

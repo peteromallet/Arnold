@@ -1,0 +1,524 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `finalize`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m4-clip-type-shader-and-20260704-0427`
+Current milestone: `m4-clip-shader-keyframes`
+
+### Phase Instruction
+Convert the approved plan into executable tasks while preserving North Star constraints and visible alignment checks.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are DECOMPOSING the approved plan below into an ordered task DAG. The plan has been
+        critiqued, gated, and possibly revised. Do NOT re-evaluate strategy or re-litigate
+        decisions - gate has settled those.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M4: Clip Type, Shader, And Shader-Uniform Keyframes
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: M4 Clip Type, Shader, And Shader-Uniform Keyframes
+
+## Overview
+M4 should promote shader composition from preview/compatibility behavior into the public host write path while keeping the composition graph authoritative. The repository already has most primitives in partial form: native shader preview ops in `patchPreview.ts`, target-path normalization in `graphProjector.ts`, contribution reference diagnostics in `diagnostics.ts`, and existing route requirement/blocker concepts in `extensionSurface.ts` and `renderPlanner.ts`. This plan treats those as the foundation, not a rewrite.
+
+The scope is broad enough to split into worker-sized steps: first expose executable `shader.assign`/`shader.remove`, then add clip-type contribution refs, then add shader-uniform keyframe storage and patch behavior, then project diagnostics/edges, then integrate render/planner behavior, and finally harden the canary and tests. The scope narrowing here is a bridge, not a contradiction: process execution, output-format execution, shader stacks, and texture routing remain deferred exactly as the North Star and M4 brief require.
+
+No anchor conflict found. The plan preserves the epic constraints: extensions do not mutate raw timeline internals directly, graph-authoritative facts flow through `CompositionGraph`, V1 target paths stay limited to params and shader uniforms, and nondeterministic/process-backed execution remains outside this milestone.
+
+## Phase 1: Public Shader Write Path
+
+### Step 1: Add public `shader.assign` and `shader.remove` patch families (`src/tools/video-editor/lib/timeline-patch.ts`, `src/tools/video-editor/runtime/composition/patchPreview.ts`)
+**Scope:** Cross-cutting runtime/API change  
+**Complexity: 4**
+1. Define public timeline patch op shapes for `shader.assign` and `shader.remove` using the existing `GraphShaderAssignOp` and `GraphShaderRemoveOp` semantics as the canonical behavior.
+2. Wire host patch execution so these operations call the native shader applicators directly instead of depending on `extractGraphPreviewOps()` compatibility extraction.
+3. Preserve `extractGraphPreviewOps()` only for legacy `clip.update`/`app.update` shader payloads and preview/diagnostic compatibility reads.
+4. Enforce single-occupancy during commit: assigning a distinct shader into an occupied scope must fail before timeline mutation, not silently replace.
+5. Add focused round-trip tests proving public patch execution mutates shader summaries and graph projection emits the expected `consumes` edge.
+
+### Step 2: Surface duplicate scope validation on graph-owned shader assignment (`src/tools/video-editor/runtime/composition/shaderValidation.ts`, `src/tools/video-editor/runtime/composition/graphProjector.ts`, `src/tools/video-editor/runtime/composition/diagnostics.ts`)
+**Scope:** Validation hardening  
+**Complexity: 3**
+1. Reuse `validateShaderComposition` and graph duplicate-scope diagnostics as the pre-commit guard for graph-owned `shader.assign` operations.
+2. Ensure duplicate distinct shaders produce `DUPLICATE_SCOPE` with enough detail for the caller/test to identify the conflicting scope and clips.
+3. Keep idempotent reassignment of the same shader/scope behavior explicit in tests if the existing model allows it; otherwise reject consistently.
+4. Add a fail-to-pass test that exercises rejection through `shader.assign`, not through stored invalid data alone.
+
+## Phase 2: Clip-Type Contribution References
+
+### Step 3: Project `clipType` as a `ContributionRef` with `consumes` edges (`src/sdk/video/composition/references.ts`, `src/tools/video-editor/runtime/composition/graphProjector.ts`, `src/tools/video-editor/runtime/renderability.ts`)
+**Scope:** Graph projection plus resolver integration  
+**Complexity: 3**
+1. Convert clip type projection from a flat string-only field into a contribution reference resolved from `ClipTypeRegistryRecord.contributionId` and `ownerExtensionId`.
+2. Add contribution nodes for resolved clip types using the existing contribution node conventions and `contribution:clipType:<extensionId>:<contributionId>` identity pattern.
+3. Emit a `consumes` edge from the clip node to the clip-type contribution node, mirroring the shader consumes pattern.
+4. Use existing reference state diagnostics for missing, disabled, inactive-reserved, and resolved clip-type refs; include planner repair state through `nextAction` where available.
+5. Add focused tests for resolved, missing, and disabled clip-type refs.
+
+## Phase 3: Shader-Uniform Keyframe Model And Patch Semantics
+
+### Step 4: Add shader-uniform keyframe serialization to timeline shader summaries (`src/sdk/video/timeline/reader.ts`, `src/tools/video-editor/runtime/timeline-reader.ts`)
+**Scope:** SDK reader shape and serialization  
+**Complexity: 3**
+1. Extend `TimelineShaderSummary` with a minimal keyframe/automation field that can represent uniform target paths in canonical `uniforms.<name>` form.
+2. Keep the shape compatible with M3b keyframe semantics: stable keyframe ids, time/value/easing fields where already used, and no bespoke shader-only interpolation schema unless unavoidable.
+3. Update timeline reader/projection code so shader-owned keyframes round-trip through saved timeline summaries.
+4. Add serialization tests that read/write at least one scalar, vector/color, boolean, integer, frame/time, and enum-style uniform keyframe.
+
+### Step 5: Extend graph keyframe ops to target shader uniforms (`src/tools/video-editor/runtime/composition/patchPreview.ts`, `src/tools/video-editor/lib/timeline-patch.ts`)
+**Scope:** Patch semantics  
+**Complexity: 4**
+1. Extend `GraphKeyframeAddOp`, `GraphKeyframeUpdateOp`, and `GraphKeyframeRemoveOp` to accept target paths for both existing clip params and shader uniforms.
+2. Route target normalization through the existing M2 helpers only: `canonicalAutomationTargetPath` for clip params and `canonicalizeShaderUniformPath` for `uniforms.<name>`.
+3. Add applicator paths that find the targeted shader summary and mutate its uniform keyframe set without changing raw timeline internals directly from extension code.
+4. Preserve existing clip keyframe behavior and tests.
+5. Add add/update/remove tests for shader-uniform targets using graph-owned keyframe ops.
+
+### Step 6: Project shader-uniform `animates` edges and unknown-uniform diagnostics (`src/tools/video-editor/runtime/composition/graphProjector.ts`, `src/tools/video-editor/runtime/composition/shaderValidation.ts`, `src/tools/video-editor/runtime/composition/diagnostics.ts`)
+**Scope:** Graph projection and validation  
+**Complexity: 3**
+1. Add a shader-keyframe projection loop alongside the existing clip automation loop.
+2. Emit `animates` edges with `targetKind: 'shader-uniform'`, canonical `targetPath`, and accurate `keyframeCount`.
+3. Validate shader-uniform target paths against the declared shader uniform schema.
+4. Emit existing `UNKNOWN_UNIFORM` diagnostics with `uniformName` and `targetPath` when a keyframe targets an undeclared uniform.
+5. Add focused graph projection tests for valid and invalid uniform targets.
+
+### Step 7: Execute animated shader uniforms in the render path (`src/tools/video-editor/rendering/**`, `src/tools/video-editor/runtime/composition/patchPreview.ts`)
+**Scope:** Render integration  
+**Complexity: 4**
+1. Identify the current uniform resolution path and integrate shader-uniform keyframes into the existing animated-parameter resolver rather than creating a separate interpolation engine.
+2. Resolve interpolated uniform values at render/preview time using the same time basis as clip automation.
+3. Support the canary uniform types already present: `intensity`, `tint`, `center`, `showGrid`, `bandCount`, `holdFrame`, `holdTime`, and `blendMode`.
+4. Add render-path tests proving current-time uniform values reflect keyframes after add/update/remove operations.
+
+## Phase 4: Requires Edges And Planner Blockers
+
+### Step 8: Add `requires` edge kind and typed `RouteRequirement` detail (`src/sdk/video/composition/graph.ts`, `src/tools/video-editor/runtime/extensionSurface.ts`, `src/tools/video-editor/runtime/composition/graphProjector.ts`)
+**Scope:** Composition graph contract  
+**Complexity: 4**
+1. Add `requires` to `CompositionEdgeKind` and `COMPOSITION_EDGE_KINDS`.
+2. Introduce a V1 `RouteRequirement` detail type with subject, route scope, satisfier kind, determinism, fallback allowance, and repair action.
+3. Compose with the existing `VideoEditorRouteRequirementDescriptor` where it fits, but do not pretend process execution exists in M4.
+4. Project declared shader/materializer/process-style dependencies as `requires` edges only; do not add `materializes`, `produces`, or `fallbacks` edge kinds.
+5. Add graph contract tests validating edge kind acceptance and detail shape.
+
+### Step 9: Consume `requires` edges in render planning (`src/tools/video-editor/runtime/renderPlanner.ts`, `src/tools/video-editor/lib/renderRouter.ts`)
+**Scope:** Planner integration  
+**Complexity: 4**
+1. Add a `collectGraphRequiresEdges` style integration point that scans composition graph `requires` edges before route selection/export readiness decisions.
+2. Produce blockers/repair facts using the existing `RenderBlocker` and next-action mechanisms, parallel to `routeRequirementBlocker` and `buildResolveBlockerAction`.
+3. Add preview-only shader blockers for non-preview routes such as `browser-export` and `worker-export`, with repair guidance.
+4. Add unresolved material requirement blockers without starting processes or claiming output-format execution support.
+5. Add tests for blocker generation from graph `requires` edges.
+
+## Phase 5: Canary And End-To-End Coverage
+
+### Step 10: Upgrade the clip-local-shader canary (`src/tools/video-editor/examples/extensions/clip-local-shader-canary/index.ts`, `src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx`)
+**Scope:** Integration scenario  
+**Complexity: 4**
+1. Extend the canary to exercise graph-owned `shader.assign`/`shader.remove` instead of legacy shader payload writes.
+2. Add shader-uniform keyframe add/update/remove coverage for all eight editable uniforms: `intensity`, `tint`, `center`, `showGrid`, `bandCount`, `holdFrame`, `holdTime`, and `blendMode`.
+3. Add graph-path markers proving clip + shader + keyframes round-trip through graph-owned operations and timeline serialization.
+4. Assert `animates` edges report `targetKind: 'shader-uniform'`, canonical target paths, and correct keyframe counts after mutation.
+5. Include repair-state checks for missing/disabled shader or clip-type refs and duplicate scope rejection through graph-owned ops.
+
+### Step 11: Documentation and public extension surface alignment (`docs/extensions/**`, `examples/video-editor-extension/**`, `src/tools/video-editor/commands/**`)
+**Scope:** Developer-facing alignment  
+**Complexity: 2**
+1. Update extension-facing examples and command fixtures only where they expose patch families, target paths, contribution refs, or route requirements.
+2. Document `shader.assign`, `shader.remove`, shader-uniform target path format, and `requires` edge detail as M4 host semantics.
+3. Avoid docs/examples for shader stacks, texture routing, process execution, sidecar execution, or output-format execution.
+
+### Step 12: Final validation sweep (`tests/**/video-editor/**`, targeted package scripts)
+**Scope:** Verification  
+**Complexity: 2**
+1. Run cheapest focused tests first: composition graph, patch preview/timeline patch, shader validation, render planner, and canary integration.
+2. Run lints/type checks for the affected packages.
+3. Run the broader video-editor test suite after focused failures are fixed.
+4. Record any intentionally deferred behavior as out-of-scope only if it matches the M4 OUT list.
+
+## Execution Order
+1. Land public `shader.assign`/`shader.remove` first so later canary and keyframe tests use graph-owned writes from the start.
+2. Add clip-type refs next because they reuse existing contribution/ref diagnostic machinery and reduce uncertainty before the deeper keyframe work.
+3. Add shader-uniform serialization before patch applicators so keyframe mutations have a stable persistence target.
+4. Add graph projection/diagnostics after storage and mutation semantics exist.
+5. Integrate render-path execution before expanding the canary to all uniform types.
+6. Add `requires` graph contract before render planner consumption.
+7. Finish with the canary and docs so examples reflect final public behavior.
+
+## Validation Order
+1. `shader.assign`/`shader.remove` unit and integration tests.
+2. Clip-type contribution ref projection tests.
+3. Shader-uniform keyframe serialization and patch operation tests.
+4. Graph projector tests for `animates`, `consumes`, `requires`, and diagnostics.
+5. Render-path interpolation tests for shader uniforms.
+6. Render planner blocker tests for preview-only shaders and unresolved requirements.
+7. Clip-local-shader canary integration test.
+8. Broader video-editor test suite and lint/type checks.
+
+## Ticket Notes
+The open ticket `01KS384XKZNEWQRSXN2NXQ0DTJ` (“Video editor: extensibility plan”) appears related at the design/refactor level and may be proposed as linked context, but this milestone should not claim to resolve it unless the ticket’s acceptance criteria specifically match M4. The megaplan validator ticket `01KV8XVYW2EYDDDY30V48YX520` is unrelated and should not be linked.
+
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-04T04:40:35Z",
+  "hash": "sha256:7f7d04e244da3271084a01fa4a782b253e4b6222027da5d479f893aab5199758",
+  "questions": [
+    "Should duplicate assignment of the exact same shader into the same scope be treated as idempotent success or rejected uniformly with distinct duplicate scopes? This affects the exact pre-commit guard behavior and test expectation.",
+    "What is the preferred public serialization field name on `TimelineShaderSummary`: `keyframes`, `automation`, or an existing local convention if one appears during implementation? The plan assumes the implementer will choose the smallest shape consistent with M3b keyframe semantics.",
+    "For `requires` edges, should M4 project only shader/materializer dependencies already declared in extension metadata, or also synthesize preview-only export requirements for shaders that lack non-preview readiness? The plan assumes both are graph/planner-visible where source data exists, with no process execution."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Public `shader.assign` and `shader.remove` patch families execute through host timeline patch execution without using legacy shader payload extraction as the new write path.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Assigning a distinct shader into an occupied scope through graph-owned operations is rejected before commit and emits/returns a `DUPLICATE_SCOPE` diagnostic path exercised by tests.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Clip types project as contribution refs with contribution nodes, `consumes` edges from clip nodes, and missing/disabled/resolved reference states covered by tests.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Shader-uniform keyframes add, update, remove, serialize, and round-trip through graph-owned keyframe operations using canonical `uniforms.<name>` target paths.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Shader-uniform `animates` edges include `targetKind: 'shader-uniform'`, canonical `targetPath`, and accurate `keyframeCount`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Unknown shader uniform keyframe targets emit `UNKNOWN_UNIFORM` diagnostics with `uniformName` and `targetPath` detail.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Render/preview uniform resolution uses shader-uniform keyframe data to produce interpolated current-time uniform values for the canary uniform set.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`requires` is added as a composition edge kind and declared dependencies project as `requires` edges with typed `RouteRequirement` detail containing subject, route scope, satisfier kind, determinism, fallback allowance, and repair action.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Render planning consumes `requires` edges and preview-only shader readiness to produce blockers and repair facts for non-preview routes without starting processes or claiming output-format execution.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The clip-local-shader-canary proves clip + shader + shader-uniform keyframes through graph-owned operations and graph-path markers.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "No new public edge discriminants such as `materializes`, `produces`, or `fallbacks` are introduced for M4.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Existing clip keyframe behavior remains covered and passing after shader-uniform keyframe support is added.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Implementation reuses M2 target-path normalization and M3b keyframe semantics instead of adding parallel path parsers or a separate keyframe engine.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "New code stays scoped to composition graph, timeline patch, render planner/render path, examples, and tests; unrelated extension/process/output-format behavior remains untouched.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Developer-facing examples/docs describe only M4 host semantics and avoid implying shader stacks, texture routing, process execution, or output-format execution support.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The engineering brief is accurate enough to avoid broad repository exploration; implementers should still verify exact local symbols and exports before editing each step.",
+    "`shader.assign` and `shader.remove` become public patch families in the host timeline patch surface, while `extractGraphPreviewOps()` remains only for backward-compatible legacy shader payloads.",
+    "Shader-uniform keyframes should reuse existing keyframe ids, timing, values, and easing semantics from M3b rather than introducing a shader-specific format.",
+    "The storage target for shader-uniform keyframes is `TimelineShaderSummary`, because existing shader summaries are the durable SDK reader surface for shader assignment facts.",
+    "Clip-type contribution refs can be built from `ClipTypeRegistryRecord.contributionId` and `ownerExtensionId`; unresolved refs use existing ReferenceState diagnostic codes and repair action detail.",
+    "The `requires` edge pipeline should mirror existing render planner blocker/next-action shapes, but use graph edge details rather than process execution.",
+    "Preview-only shader blockers for export routes are readiness/planner facts only; M4 does not start trusted processes, run materializers, or claim output-format execution.",
+    "Postprocess shader-uniform keyframes are out of scope unless they naturally work through the same target-path and timeline summary model without extra routing."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition",
+        "reason": "Core graph projection, diagnostics, validation, and patch preview behavior changes live here."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/timeline-patch.ts",
+        "reason": "Public patch operation execution and legacy bridge behavior are modified here."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.ts",
+        "reason": "Requires edge and preview-only shader blocker behavior is consumed here."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx",
+        "reason": "End-to-end canary must prove graph-owned shader and keyframe behavior."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/video/composition/graph.ts",
+      "src/sdk/video/composition/references.ts",
+      "src/sdk/video/timeline/reader.ts",
+      "src/tools/video-editor/lib/timeline-patch.ts",
+      "src/tools/video-editor/lib/renderRouter.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.ts",
+      "src/tools/video-editor/runtime/composition/graphProjector.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/runtime/composition/shaderValidation.ts",
+      "src/tools/video-editor/runtime/extensionSurface.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/renderability.ts",
+      "src/tools/video-editor/runtime/timeline-reader.ts",
+      "src/tools/video-editor/rendering/**",
+      "src/tools/video-editor/commands/**",
+      "src/tools/video-editor/examples/extensions/clip-local-shader-canary/index.ts",
+      "src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx",
+      "examples/video-editor-extension/**",
+      "tests/**/video-editor/**",
+      "docs/extensions/**"
+    ],
+    "always_run": [
+      "Targeted composition/timeline patch tests",
+      "Targeted render planner tests",
+      "Clip-local-shader-canary integration test",
+      "Video-editor typecheck/lint where available"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: examples/video-editor-extension/**, src/sdk/video/composition/graph.ts, src/sdk/video/composition/references.ts, src/sdk/video/timeline/reader.ts, src/tools/video-editor/commands/**, src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx, src/tools/video-editor/examples/extensions/clip-local-shader-canary/index.ts, src/tools/video-editor/lib/renderRouter.ts, src/tools/video-editor/lib/timeline-patch.ts, src/tools/video-editor/rendering/**, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/graphProjector.ts, src/tools/video-editor/runtime/composition/patchPreview.ts, src/tools/video-editor/runtime/composition/shaderValidation.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/renderPlanner.ts, src/tools/video-editor/runtime/renderability.ts, src/tools/video-editor/runtime/timeline-reader.ts, tests/**/video-editor/**. Ignored documentation-only change(s) for selector derivation: docs/extensions/**. Candidate: The change is cross-cutting inside the video editor composition spine, but still repo-local enough for a scoped video-editor baseline plus full-suite fallback rather than immediately making every package test the baseline. Dropped nonexistent pytest path(s) from plan-time baseline metadata: tests/**/video-editor/**.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "tests/**/video-editor/**"
+    ]
+  },
+  "structure_warnings": []
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "PROCEED",
+  "passed": true,
+  "rationale_brief": "Clean gate. Zero blocking flags (significant_flags=0, unresolved=[], addressed=[], resolved=[]). All preflight checks pass (project exists, writable, success criteria present).",
+  "settled_decisions": [],
+  "warnings": [
+    "Criterion 12 (existing clip keyframe behavior remains covered and passing) requires run_tests verification \u2014 implementers should validate this early in Phase 3 before shader-uniform keyframe patches touch the shared keyframe pipeline.",
+    "Three open questions in plan metadata (idempotent shader reassignment semantics, TimelineShaderSummary field naming, requires-edge projection scope for preview-only shaders) need concrete resolution during implementation; the plan assumes the implementer will choose the smallest/simplest consistent answer at each step."
+  ],
+  "orchestrator_guidance": "First iteration; follow gate recommendation: PROCEED.",
+  "carried_flags": [],
+  "iteration": 1,
+  "produced_at": "2026-07-04T04:52:14Z"
+}
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m4-clip-type-shader-and-20260704-0427/finalize_output.json
+        Read this file first — it contains the expected JSON structure (tasks, user_actions, sense_checks, watch_items, meta_commentary).
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Requirements:
+        - Produce structured JSON only.
+        - For each `## Step N:` in the plan, emit 1-N tasks.
+        - For each task, emit one sense_check.
+        - Default `user_actions` to `[]`. Identify a user_action ONLY when the work is genuinely non-mechanical and the executor literally cannot do it (secrets the human alone holds, identity-bound infra access, legal/license signatories, manual UI smoke tests on production). If a check is mechanical, make it a task — not a user_action. See the detailed guidance below.
+        - Do not invent tasks that don't trace to a plan step.
+        - How batching works at runtime — shape `depends_on` with this in mind, not just literal sequencing. Tasks that share the same `depends_on` set form one batch (capped at 5). Each batch dispatches as a SINGLE LLM conversation to a SINGLE model, picked by the max(complexity) in that batch. So a c=4 audit plus three c=2 tweaks sharing a batch all run in one turn on the c=4 model. Two consequences you control via DAG shape:
+          - Routing: every task in a batch runs on the highest-tier task's model — bundle a c=2 task beside a c=4 sibling and it runs on the pricier model.
+          - Cognitive load: one conversation holds all of the batch's tasks in working context. The more disparate the tasks, the higher the risk the model loses the thread or claims completion without doing the work. Wide, mixed batches are the dominant quality failure mode.
+        - Three principles for shaping batches — judgment, not arithmetic (there is no mechanical split rule):
+          1. Isolate heavyweights. A c=4 or c=5 task usually deserves its own batch. Chain lighter tasks through it via `depends_on` rather than placing them as siblings.
+          2. Bundle context-related light work. Several c=2/c=3 tasks touching the same files or contracts batch well together.
+          3. Never emit more than 5 actionable parallel siblings. If a step legitimately fans out wider, linearize via `depends_on` so the runtime batcher sees at most 5 at a time.
+        - Do not include `validation` or `coverage_complete` fields - the harness computes those.
+        - The FINAL task MUST run tests; harness validation will reject finalize output without it.
+        - `tasks` must be an ordered array of task objects. Every task object must include:
+          - `id`: short stable task ID like `T1`
+          - `description`: concrete work item
+          - `depends_on`: array of earlier task IDs or `[]`
+          - `status`: always `"pending"` at finalize time
+          - `executor_notes`: always `""` at finalize time
+          - `reviewer_verdict`: always `""` at finalize time
+          - `kind`: indicating the type of work. One of:
+            - `code`: writes or modifies source files (executor must produce `files_changed`).
+            - `test`: writes or modifies test files, or runs the test suite (executor must produce `files_changed` in tests/ OR `commands_run` containing pytest/test invocations).
+            - `audit`: read-only investigation — grep, code review, schema inspection (executor evidence is `executor_notes` describing findings; no `files_changed` expected).
+            - `research`: external research or non-code investigation (executor evidence is `executor_notes`).
+            - `docs`: writes documentation files (executor must produce `files_changed`).
+            If unsure, default to `code`.
+          - `complexity`: integer 1–5 complexity score. This score routes the task to a
+            model at execution time, so adjudicate it deliberately — do not guess. Use the rubric:
+            - 1 = trivial, mechanical, single-file change with no logic to reason about
+                  (rename, constant bump, comment, import). A weak model cannot get it wrong.
+            - 2 = simple, localized change plus the obvious test update; one file or two,
+                  logic is linear and the failure mode is obvious.
+            - 3 = multi-file change with non-trivial logic, control flow, or data shape the
+                  executor must hold in its head; correctness is not self-evident from the diff.
+            - 4 = a wrong implementation would be NON-LOCAL and not caught by an obvious test:
+                  the error propagates through a shared contract or invariant that code you did
+                  NOT edit relies on. Touching several files is NOT sufficient on its own — a
+                  mechanical multi-file change whose failure is local and test-evident is tier 2-3.
+            - 5 = fundamental system-invariant change with high regression risk: concurrency that
+                  cascades, a schema/wire-format others build on, a state machine, or a security/
+                  auth boundary. ONLY when a subtle error would pass the full suite and corrupt
+                  state or break a system-wide contract — not merely "important" or central code.
+            Score on the hardest REALISTIC aspect of the task, not a worst-case imagining. When
+            genuinely torn between two tiers, choose the LOWER one UNLESS you can name the specific
+            cascading, test-evading failure that earns the higher tier in the justification.
+            You are not the model that executes this task, and the score neither saves nor
+            costs you anything — so do not lowball to seem efficient and do not highball to
+            play safe. Both distort routing: a too-low score sends a hard task to a model
+            that fails it; a too-high score burns a premium model on trivial work. Score
+            what the task honestly requires, no higher and no lower.
+            FLOOR: a task is NEVER below tier 4 only when it GENUINELY changes the semantics of
+            concurrency, a schema/state-machine, a security/auth boundary, or a contract other
+            code actually depends on — because a subtle error there passes tests but is wrong.
+            This floor does NOT apply to mechanical edits that merely sit near such code, or that
+            add a new interface nothing relies on yet; score those on the rubric (usually 2-3).
+          - `complexity_justification`: REQUIRED. One or two sentences that argue, specifically,
+            why this task sits at exactly that tier — cite the concrete files, interfaces, or
+            risk that places it there (e.g. "touches the auth middleware contract used by 4
+            call sites, so a mistake is non-local → tier 4"). A bare restatement of the rubric
+            ("this is complex") is not acceptable; the justification must be defensible against
+            a reviewer who disagrees.
+        - `watch_items` must be an array of strings covering runtime risks, critique concerns, and assumptions to keep visible during execution.
+        - `sense_checks` must be an array with one verification question per task. Every sense-check object must include:
+          - `id`: short stable ID like `SC1`
+          - `task_id`: the related task ID
+          - `question`: reviewer verification question
+          - `verdict`: always `""` at finalize time
+        - `user_actions` should default to `[]`. Emitting a user_action stalls execution on a human gate — it is a load-bearing escape hatch, not a convenience. Prefer to design every step to be fully mechanical: the executor can read files, run commands, query APIs, fetch URLs, parse JSON, edit code, and run tests. If a check is mechanical, write it as a task — not a user_action.
+- Emit a user_action ONLY when the work is *genuinely non-mechanical* and the executor has no path to do it itself: secrets the human alone holds (a real API key the executor cannot mint), infrastructure access bound to the human's identity (cloud console, VPN), legal/license/security-policy judgments that require a human signatory, or out-of-band manual UI smoke tests on production. If you cannot name a specific reason the executor cannot do it, the task is mechanical — make it a task.
+- Anything that touches code, configuration, fixtures, or local files MUST be a task. Reading docs, grepping, editing, running tests, writing SQL, and producing JSON resolution files are tasks. Negative example: writing the migration SQL is a task, not a user_action; verifying a license URL is reachable is a task, not a user_action.
+- When you do emit a user_action, set `requires_human_only_reason` to a specific sentence naming why the executor literally cannot perform it (not just "it's important").
+- If `user_actions` is non-empty, expect that execution will block until the human resolves each one — only emit them when that block is unavoidable.
+- Positive examples (rare, last-resort): `U1: Set ANTHROPIC_API_KEY in .env (before_execute, requires_human_only_reason: "secret the executor cannot mint")`; `U2: Confirm legal sign-off to commit the third-party JSON corpus (before_execute, requires_human_only_reason: "license judgment with legal liability")`.
+        - `meta_commentary` must be a single string with execution guidance, gotchas, or judgment calls that help the executor succeed.
+        - Preserve information that strong existing artifacts already capture well: execution ordering, watch-outs, reviewer checkpoints, and practical context.
+        - The structured output should be self-contained: an executor reading only `finalize.json` should have everything needed to work.
+        - Keep the task count proportional to the work. A simple 1-2 file fix should be 2 tasks: (1) apply the fix, (2) run tests. Do NOT create separate "inspect" or "read" tasks for simple changes — the executor can read and fix in one step. Only create more tasks when the work has genuinely independent stages.
+        - One task is the unit of ONE worker turn: the executor must IMPLEMENT it, VERIFY it, and emit its result envelope inside a single ~15-minute conversation. A task that cannot realistically finish in one turn is mis-sized and WILL fail — the worker reports `blocked: "turn ended before implementation"` or runs out the clock mid-edit. Size every task to fit one turn; raising `complexity` does NOT buy more turns, it only routes to a stronger model for the SAME single turn. When a step is a large mechanical refactor, SPLIT it across tasks instead of bundling: "add the new abstraction + its unit tests" (T1) → "migrate consumer A" (T2, depends_on T1) → "migrate consumer B + parity tests" (T3, depends_on T2). A single task that says "extract this 2000-line file into modules and write tests" or "consolidate the roots AND migrate three registries AND add parity tests" is a god-task — decompose it into one task per consumer/module, each independently completable and verifiable.
+        - - The harness owns test verification — do NOT author a run-until-pass task. If you include a test-related task, scope it to: introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute suite.
+- For code-mode plans, preserve a scoped test contract. Prefer the plan's machine-readable `test_blast_radius`; when it is missing, ensure at least one finalized task carries a concrete scoped pytest command in `commands_run` (for example `pytest tests/test_relevant.py -q`) or mappable `files_changed` paths. Do not rely on an unscoped `pytest` command unless the plan explicitly opts into `test_selection=full`.

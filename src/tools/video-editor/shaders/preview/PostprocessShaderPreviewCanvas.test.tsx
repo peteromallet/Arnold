@@ -90,7 +90,14 @@ describe('PostprocessShaderPreviewCanvas', () => {
   it('creates a preview surface for an active inline postprocess shader and renders the current timeline frame', () => {
     const { rerender } = render(
       <PostprocessShaderPreviewCanvas
-        shader={shader()}
+        shader={shader({
+          keyframes: {
+            intensity: [
+              { time: 0, value: 0.25, interpolation: 'linear' },
+              { time: 2, value: 0.75, interpolation: 'linear' },
+            ],
+          },
+        })}
         record={record()}
         timeSeconds={1.5}
         frame={45}
@@ -110,6 +117,7 @@ describe('PostprocessShaderPreviewCanvas', () => {
       uniformValues: { intensity: 0.7 },
       textureValues: { source: { kind: 'clip-frame' } },
     });
+    expect(previewSurfaceInstances[0].surface.setUniformValues).toHaveBeenLastCalledWith({ intensity: 0.625 });
     expect(previewSurfaceInstances[0].surface.renderFrame).toHaveBeenLastCalledWith(1.5, 45);
 
     rerender(

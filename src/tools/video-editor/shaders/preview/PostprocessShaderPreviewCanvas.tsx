@@ -11,6 +11,7 @@ import {
   createWebGLShaderPreviewSurface,
   type WebGLShaderPreviewSurface,
 } from '@/tools/video-editor/shaders/preview/WebGLShaderPreviewSurface.ts';
+import { resolveShaderPreviewUniformValues } from '@/tools/video-editor/shaders/preview/uniformResolution.ts';
 import type { ShaderEffectRegistryRecord } from '@/tools/video-editor/shaders/registry/types.ts';
 
 export interface PostprocessShaderPreviewCanvasProps {
@@ -55,6 +56,12 @@ export function PostprocessShaderPreviewCanvas({
   const canvasKey = useMemo(() => sourceKey(record), [record]);
   const canvasWidth = normalizeDimension(width);
   const canvasHeight = normalizeDimension(height);
+  const resolvedUniformValues = resolveShaderPreviewUniformValues({
+    uniforms: record.uniforms,
+    uniformValues: shader.uniforms,
+    keyframes: shader.keyframes,
+    timeSeconds,
+  });
   const active = shader.enabled !== false
     && record.status === 'active'
     && passKind(record) === 'postprocess'
@@ -118,7 +125,7 @@ export function PostprocessShaderPreviewCanvas({
   useLayoutEffect(() => {
     const surface = surfaceRef.current;
     if (!surface || !active) return;
-    surface.setUniformValues(shader.uniforms ?? {});
+    surface.setUniformValues(resolvedUniformValues);
     surface.setTextureValues(shader.textures ?? {});
     surface.resize(canvasWidth, canvasHeight);
     surface.renderFrame(timeSeconds, frame);
@@ -127,8 +134,8 @@ export function PostprocessShaderPreviewCanvas({
     canvasHeight,
     canvasWidth,
     frame,
+    resolvedUniformValues,
     shader.textures,
-    shader.uniforms,
     timeSeconds,
   ]);
 

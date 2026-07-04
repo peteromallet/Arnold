@@ -207,13 +207,20 @@ tracks, outputs, processes, and other surfaces.
 
 #### Edge Kinds
 
-M1b supports exactly one public edge kind:
+The composition graph now supports four public edge kinds (M1b–M4):
 
 - `consumes` — a source node (clip or timeline-postprocess) consumes a shader
   contribution from a target contribution node.
+- `animates` — keyframe-driven parameter animation for clip-type parameters and
+  shader-uniform target paths (`uniforms.<name>`).
+- `binds-live` — live data binding to parameters/uniforms.
+- `requires` — graph-projected requirement edges with typed route requirement
+  detail (subject, route scope, satisfier kind, determinism, fallback allowance,
+  repair action). Process repair driven by `requires` edges is executable in M6.
 
-This is exposed as the `COMPOSITION_EDGE_KINDS` constant containing only `'consumes'`.
-Future milestones will add `animates` (M2), `binds-live` (M2), and `requires` (M4).
+These are exposed as the `COMPOSITION_EDGE_KINDS` constant in the SDK barrel.
+Deferred edge names (`materializes`, `produces`, `fallbacks`) are excluded from
+the public edge vocabulary for the entire epic.
 
 #### Resolver States
 

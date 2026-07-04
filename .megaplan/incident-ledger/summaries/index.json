@@ -1,0 +1,26 @@
+{
+  "generated_at": "2026-07-04T11:05:18.056311+00:00",
+  "incident_count": 1,
+  "incidents": [
+    {
+      "incident_id": "inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
+      "path": ".megaplan/incident-ledger/summaries/incidents/inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e.json"
+    }
+  ],
+  "problem_count": 3,
+  "problems": [
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-71f954a05546.json",
+      "problem_id": "problem-71f954a05546"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-e20c45ae0eb0.json",
+      "problem_id": "problem-e20c45ae0eb0"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-fc037a661409.json",
+      "problem_id": "problem-fc037a661409"
+    }
+  ],
+  "schema_version": 1
+}

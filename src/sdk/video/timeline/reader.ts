@@ -116,6 +116,23 @@ export interface TimelineAutomationSummary {
   enabled: boolean;
 }
 
+/** M4: JSON-serializable shader-uniform keyframe values carried in summaries. */
+export type TimelineShaderKeyframeValue =
+  | number
+  | string
+  | boolean
+  | readonly number[];
+
+/** M4: A single shader-uniform keyframe using the existing M3b fields. */
+export interface TimelineShaderKeyframe {
+  /** Time in seconds. */
+  time: number;
+  /** JSON-serializable uniform value. */
+  value: TimelineShaderKeyframeValue;
+  /** Interpolation mode from this keyframe to the next. */
+  interpolation: 'linear' | 'hold';
+}
+
 /**
  * M12: Lightweight material-ref summary extracted from clip data
  * for planner inspection.
@@ -327,6 +344,8 @@ export interface TimelineShaderSummary {
   extensionId: string;
   contributionId: string;
   enabled: boolean;
+  /** M4: Canonical shader-uniform keyframes keyed by `uniforms.<name>`. */
+  keyframes?: Readonly<Record<string, readonly TimelineShaderKeyframe[]>>;
 }
 
 /**

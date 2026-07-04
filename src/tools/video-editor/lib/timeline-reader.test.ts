@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { createTimelineReader } from '@/tools/video-editor/lib/timeline-reader';
+import { serializeTimelineConfigSnapshot } from '@/tools/video-editor/lib/timeline-domain.ts';
 import type {
   TimelineReader,
   TimelineSnapshot,
@@ -435,6 +436,117 @@ describe('createTimelineReader — clip summaries', () => {
       },
     ]);
     expect(snap.liveBindings).toEqual(clip?.liveBindings);
+  });
+
+  it('round-trips shader-uniform keyframes through saved shader summaries using canonical uniforms paths', async () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-shader-keyframes',
+          at: 0,
+          track: 'V1',
+          clipType: 'media',
+          hold: 2,
+          app: {
+            shader: {
+              scope: 'clip',
+              extensionId: 'com.example.shader',
+              contributionId: 'clip-grade',
+              shaderId: 'shader.clipGrade',
+              keyframes: {
+                intensity: [
+                  { time: 0, value: 0.15, interpolation: 'linear' },
+                ],
+                'uniforms.tint': [
+                  { time: 0, value: [0.2, 0.4, 0.8, 1], interpolation: 'hold' },
+                ],
+                center: [
+                  { time: 0.5, value: [0.5, 0.25], interpolation: 'linear' },
+                ],
+                showGrid: [
+                  { time: 0, value: true, interpolation: 'hold' },
+                ],
+                bandCount: [
+                  { time: 1, value: 12, interpolation: 'hold' },
+                ],
+              },
+            },
+          },
+        },
+      ],
+      app: {
+        shaderPostprocess: {
+          scope: 'postprocess',
+          extensionId: 'com.example.shader',
+          contributionId: 'post-grade',
+          shaderId: 'shader.postGrade',
+          keyframes: {
+            holdFrame: [
+              { time: 0, value: 24, interpolation: 'hold' },
+            ],
+            holdTime: [
+              { time: 0.25, value: 0.5, interpolation: 'linear' },
+            ],
+            blendMode: [
+              { time: 0, value: 'invert-lift', interpolation: 'hold' },
+            ],
+          },
+        },
+      },
+    };
+    const serialized = serializeTimelineConfigSnapshot(config).config;
+    const data = await buildTimelineData(serialized, emptyRegistry);
+    const reader = createTimelineReader({ data });
+
+    expect(reader.snapshot().shaders).toEqual([
+      {
+        id: 'clip-shader-keyframes:shader:shader.clipGrade',
+        shaderId: 'shader.clipGrade',
+        scope: 'clip',
+        clipId: 'clip-shader-keyframes',
+        extensionId: 'com.example.shader',
+        contributionId: 'clip-grade',
+        enabled: true,
+        keyframes: {
+          'uniforms.intensity': [
+            { time: 0, value: 0.15, interpolation: 'linear' },
+          ],
+          'uniforms.tint': [
+            { time: 0, value: [0.2, 0.4, 0.8, 1], interpolation: 'hold' },
+          ],
+          'uniforms.center': [
+            { time: 0.5, value: [0.5, 0.25], interpolation: 'linear' },
+          ],
+          'uniforms.showGrid': [
+            { time: 0, value: true, interpolation: 'hold' },
+          ],
+          'uniforms.bandCount': [
+            { time: 1, value: 12, interpolation: 'hold' },
+          ],
+        },
+      },
+      {
+        id: 'postprocess:shader:shader.postGrade',
+        shaderId: 'shader.postGrade',
+        scope: 'postprocess',
+        extensionId: 'com.example.shader',
+        contributionId: 'post-grade',
+        enabled: true,
+        keyframes: {
+          'uniforms.holdFrame': [
+            { time: 0, value: 24, interpolation: 'hold' },
+          ],
+          'uniforms.holdTime': [
+            { time: 0.25, value: 0.5, interpolation: 'linear' },
+          ],
+          'uniforms.blendMode': [
+            { time: 0, value: 'invert-lift', interpolation: 'hold' },
+          ],
+        },
+      },
+    ]);
   });
 
   it('does not mark clip as managed for unknown extension IDs in app', async () => {

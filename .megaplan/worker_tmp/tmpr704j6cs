@@ -1,0 +1,367 @@
+Execute the approved plan in the repository.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M4: Clip Type, Shader, And Shader-Uniform Keyframes
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Batch framing:
+        - Execute batch 12 of 16.
+        - Actionable task IDs for this batch: ['T12']
+        - Already completed task IDs available as dependency context: ['T1', 'T10', 'T11', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8', 'T9']
+
+        Actionable tasks for this batch:
+        [
+  {
+    "id": "T12",
+    "depends_on": [
+      "T11"
+    ],
+    "status": "pending",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 9: Consume composition graph `requires` edges in render planning and render routing; generate blockers and repair facts through existing `RenderBlocker`, `nextAction`, `routeRequirementBlocker`, and `buildResolveBlockerAction` patterns for preview-only shaders on non-preview routes and unresolved material requirements, without starting processes or claiming output-format execution.",
+    "complexity_justification": "Render planning decisions are non-local because blockers affect route selection and export readiness outside the files being edited. The executor must preserve existing planner behavior while adding graph-derived blockers, which is a tier 4 integration risk.",
+    "executor_notes": ""
+  }
+]
+
+        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
+        [
+  {
+    "id": "T4",
+    "depends_on": [
+      "T3"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 4: Extend `TimelineShaderSummary` and timeline reader serialization with shader-uniform keyframe/automation storage using canonical `uniforms.<name>` target paths and existing M3b keyframe fields; ensure saved summaries round-trip scalar, vector/color, boolean, integer, frame/time, and enum-style uniform keyframes.",
+    "complexity_justification": "This extends a durable SDK reader/serialization shape in `src/sdk/video/timeline/reader.ts` and runtime timeline readers, which is a wire-format-like contract other code can consume. The executor must preserve existing keyframe semantics while adding a new persisted shader-owned target.",
+    "executor_notes": "Extended `TimelineShaderSummary` with canonical shader-uniform keyframe maps keyed by `uniforms.<name>`, added persisted shader keyframe typing, projected saved clip/postprocess shader keyframes through the timeline reader, and preserved shader keyframes during preview shader cloning/assignment so the summary contract does not strip them. Verified scalar, vector/color, boolean, integer, frame/time, and enum-style uniform keyframes round-trip through `serializeTimelineConfigSnapshot -> buildTimelineData -> TimelineReader.snapshot()`; scoped vitest run passed 82/82 tests across 4 files.",
+    "files_changed": [
+      "src/sdk/video/timeline/reader.ts",
+      "src/tools/video-editor/types/index.ts",
+      "src/tools/video-editor/lib/timeline-reader.ts",
+      "src/tools/video-editor/lib/timeline-reader.test.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.ts"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/lib/timeline-reader.test.ts src/tools/video-editor/lib/timeline-domain.shaders.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+    ]
+  },
+  {
+    "id": "T8",
+    "depends_on": [
+      "T7"
+    ],
+    "status": "done",
+    "kind": "audit",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Step 7: Audit the current render/preview shader uniform resolution path under `src/tools/video-editor/rendering/**` and related runtime helpers; identify the existing animated-parameter resolver and record the integration points before changing render behavior.",
+    "complexity_justification": "This is read-only investigation over a bounded render path and should produce concrete notes for the next implementation task. It is useful because Step 7 explicitly requires reusing the existing interpolation engine rather than inventing a parallel one.",
+    "executor_notes": "Audited the entire render/preview shader uniform resolution path. Key findings: 1. EXISTING INTERPOLATION ENGINE: `resolveAnimatedParams()` in `src/tools/video-editor/keyframes/index.ts` (line 411-522). Takes `Record<string, ClipKeyframe[]>`, `ParameterSchema`, and `time`, returns `InterpolatedParam[]`. Uses `interpolatePair()` for linear/hold interpolation. Currently consumed only by `ExtensionClipSequence` in `TimelineRenderer.tsx` for clip parameters \u2014 NOT for shader uniforms. 2. CURRENT SHADER UNIFORM PATH (STATIC-ONLY): - `ClipShaderPreviewCanvas` / `PostprocessShaderPreviewCanvas` pas...",
+    "files_changed": [],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/lib/timeline-reader.test.ts"
+    ]
+  },
+  {
+    "id": "T9",
+    "depends_on": [
+      "T8"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 7: Integrate shader-uniform keyframes into render/preview uniform resolution using the same time basis and interpolation path as clip automation; cover the canary uniform set (`intensity`, `tint`, `center`, `showGrid`, `bandCount`, `holdFrame`, `holdTime`, `blendMode`) with render-path tests after add/update/remove operations.",
+    "complexity_justification": "Render-time value resolution is a shared behavioral path where a wrong interpolation or time-basis choice can produce correct storage but incorrect previews/exports. The task spans runtime patch state and rendering consumers, so focused tests alone may not catch all non-local regressions.",
+    "executor_notes": "Added shared shader preview uniform resolution on top of the existing keyframe interpolation engine, wired both clip and postprocess preview canvases to resolve shader keyframes at the current render time, and added render-path assertions for the clip canary uniform set across add/update/remove-style states plus a postprocess preview regression. `npx tsc --noEmit --pretty false` passed. Scoped `vitest run` attempts for the changed files hung in-worker with no test output after extended waits and were interrupted; targeted `tsx` sanity checks confirmed scalar/vector/bool/int/frame/time/enum...",
+    "files_changed": [
+      "src/tools/video-editor/keyframes/index.ts",
+      "src/tools/video-editor/shaders/preview/uniformResolution.ts",
+      "src/tools/video-editor/shaders/preview/ClipShaderPreviewCanvas.tsx",
+      "src/tools/video-editor/shaders/preview/PostprocessShaderPreviewCanvas.tsx",
+      "src/tools/video-editor/shaders/preview/PostprocessShaderPreviewCanvas.test.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/keyframes/index.test.ts src/tools/video-editor/shaders/preview/PostprocessShaderPreviewCanvas.test.tsx src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx",
+      "npx vitest run src/tools/video-editor/shaders/preview/PostprocessShaderPreviewCanvas.test.tsx src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx",
+      "npx tsc --noEmit --pretty false",
+      "npx tsx --eval \"import { resolveShaderPreviewUniformValues } from './src/tools/video-editor/shaders/preview/uniformResolution.ts'; ...\""
+    ]
+  },
+  {
+    "id": "T11",
+    "depends_on": [
+      "T10"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 8: Project declared shader/materializer/process-style dependencies as graph `requires` edges with typed route requirement detail and graph contract tests; do not introduce `materializes`, `produces`, or `fallbacks` edge kinds.",
+    "complexity_justification": "This applies the new edge contract to graph projection using existing dependency metadata and tests. It is bounded by the new `requires` shape and should not alter execution paths.",
+    "executor_notes": "Projected shader `requires` edges with typed CompositionRouteRequirementEdgeDetail: each enabled shader produces a requires edge from its scope node to its shader contribution node with subject kind 'shader', routeScope 'browser-export', satisfierKind 'shader-materializer', determinism 'preview-only', and fallbackAllowance with 'preview-only' kind. Also projected material-slot `requires` edges for materialSlotDeclarations with matching contribution index entries. Verified `materializes`, `produces`, and `fallbacks` are absent from CompositionEdgeKind (only 'consumes'|'animates'|'binds-live'...",
+    "files_changed": [
+      "src/tools/video-editor/runtime/composition/graphProjector.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "npx vitest run src/tools/video-editor/runtime/composition/",
+      "npx vitest run src/tools/video-editor/lib/timeline-reader.test.ts src/tools/video-editor/lib/timeline-domain.shaders.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/liveBake.test.ts",
+      "npx vitest run src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+    ]
+  },
+  {
+    "id": "T6",
+    "depends_on": [
+      "T5"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 5: Implement graph-owned shader-uniform keyframe add/update/remove applicators that locate the targeted shader summary and mutate its uniform keyframe set through host patch execution; add focused patch tests for add, update, remove, serialization persistence, and unchanged clip keyframe behavior.",
+    "complexity_justification": "The applicator touches shared keyframe mutation semantics and must not bypass the host-controlled graph write path. A wrong implementation can silently diverge saved timeline summaries from projected graph facts, so it warrants tier 4.",
+    "executor_notes": "Tightened shader-uniform keyframe mutation in `patchPreview` so updated vector values are cloned before being stored in host-owned shader summaries, then added focused graph-preview tests for shader-uniform add/update/remove, serialization persistence through timeline reader round-trip, and unchanged clip keyframe behavior when shader summaries are present. Scoped vitest verification passed 66/66 tests across `patchPreview.test.ts` and `timeline-reader.test.ts`.",
+    "files_changed": [
+      "src/tools/video-editor/runtime/composition/patchPreview.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.test.ts"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/lib/timeline-reader.test.ts"
+    ]
+  },
+  {
+    "id": "T10",
+    "depends_on": [
+      "T9"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 8: Add `requires` to `CompositionEdgeKind` and `COMPOSITION_EDGE_KINDS`, and introduce the V1 typed `RouteRequirement` edge detail with subject, route scope, satisfier kind, determinism, fallback allowance, and repair action; compose with existing route requirement descriptors without adding process execution or new edge kinds.",
+    "complexity_justification": "This changes the public composition graph edge-kind contract in `src/sdk/video/composition/graph.ts` and runtime route requirement typing. It is a shared schema-like surface, and the critical risk is accidentally implying unsupported edge families or process/output execution.",
+    "executor_notes": "Extended the public composition graph contract with `requires` as the only new edge kind and exported typed V1 route-requirement detail/descriptor shapes. Composed runtime `VideoEditorRouteRequirementDescriptor` and planner repair-action typing from the new public contract, then populated output-format route requirements with declarative subject, satisfier, fallback-allowance, and repair-action metadata without introducing process-execution edge families or new edge discriminants. Verified with `npx vitest run src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts src/tools/video-e...",
+    "files_changed": [
+      "src/sdk/index.test.ts",
+      "src/sdk/index.ts",
+      "src/sdk/smoke/barrel-import-smoke.test.ts",
+      "src/sdk/video/composition/graph.ts",
+      "src/tools/video-editor/runtime/extensionSurface.test.ts",
+      "src/tools/video-editor/runtime/extensionSurface.ts",
+      "src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts",
+      "src/tools/video-editor/runtime/renderPlanner.test.ts"
+    ],
+    "commands_run": [
+      "npx vitest run src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+    ]
+  },
+  {
+    "id": "T2",
+    "depends_on": [
+      "T1"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 2: Reuse shader composition validation as the pre-commit guard for graph-owned `shader.assign`; surface `DUPLICATE_SCOPE` diagnostics with conflicting scope and clip/shader detail, decide same-shader same-scope behavior consistently with the existing model, and add a rejection test that enters through public `shader.assign` rather than stored invalid data.",
+    "complexity_justification": "The work spans validation, diagnostics, and the new patch execution path, but the behavior is bounded to shader duplicate-scope validation. Failures should be visible in focused assignment and diagnostic tests, so it does not require tier 4 routing.",
+    "executor_notes": "Added DUPLICATE_SCOPE pre-commit guard to applyShaderAssign in patchPreview.ts (lines 179-228). The guard finds existing shader for the same scope, uses sameCompositionShaderIdentity to check for identity match, and produces a composition/duplicate-scope diagnostic via buildCompositionDiagnostic when a different shader tries to occupy an already-occupied scope. Same-shader same-scope passes through (consistent with validateShaderAssignment). Updated applyGraphPreviewOperations call site to pass operationDiagnostics. Added 5 tests: rejection of different clip shader, rejection of different p...",
+    "files_changed": [
+      "src/tools/video-editor/runtime/composition/patchPreview.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.test.ts"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+      "npx vitest run src/tools/video-editor/runtime/composition/shaderValidation.test.ts",
+      "npx vitest run src/tools/video-editor/runtime/composition/",
+      "npx vitest run src/tools/video-editor/lib/timeline-patch.test.ts",
+      "npx vitest run src/tools/video-editor/lib/timeline-domain.shaders.test.ts"
+    ]
+  },
+  {
+    "id": "T7",
+    "depends_on": [
+      "T6"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 6: Project shader-uniform keyframes into `animates` edges with `targetKind: 'shader-uniform'`, canonical `targetPath`, and accurate `keyframeCount`; validate targets against declared shader uniform schemas and emit `UNKNOWN_UNIFORM` diagnostics with `uniformName` and `targetPath` detail for undeclared uniforms.",
+    "complexity_justification": "This is a graph projection and diagnostic extension using existing edge and validation patterns. It is non-trivial across projector, validator, and tests, but focused graph tests should expose most mistakes.",
+    "executor_notes": "Extended graphProjector.ts with shader-uniform keyframe projection: (1) Added optional shaderUniformSchemas map to CompositionGraphInput for uniform validation; (2) Added a projection loop after shader consumes edges that iterates enabled shaders' keyframes maps, creates animates edges with targetKind:'shader-uniform', canonical targetPath via canonicalizeShaderUniformPath, accurate keyframeCount, and edge detail including shaderId/contributionId/refKey/scope/uniformName; (3) Validates uniform names against declared schemas and emits UNKNOWN_UNIFORM diagnostics with uniformName and targetPa...",
+    "files_changed": [
+      "src/tools/video-editor/runtime/composition/graphProjector.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "npx vitest run src/tools/video-editor/runtime/composition/",
+      "npx vitest run src/tools/video-editor/lib/timeline-reader.test.ts src/tools/video-editor/lib/timeline-domain.shaders.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/liveBake.test.ts",
+      "npx vitest run src/tools/video-editor/runtime/exportGuard.test.ts"
+    ]
+  },
+  {
+    "id": "T3",
+    "depends_on": [
+      "T2"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 3: Project clip types as `ContributionRef`s using `ClipTypeRegistryRecord.contributionId` and `ownerExtensionId`; create `contribution:clipType:<extensionId>:<contributionId>` nodes, emit clip-to-clipType `consumes` edges, reuse existing reference-state diagnostics and repair `nextAction` detail, update renderability integration, and add resolved/missing/disabled clip-type ref tests.",
+    "complexity_justification": "This is a multi-file projection and resolver change, but it follows existing shader contribution-node and reference-diagnostic conventions. The risks are local to clip-type graph projection and renderability tests rather than a new shared state machine.",
+    "executor_notes": "Implemented clip-type projection as ContributionRefs in graphProjector.ts. Added clipTypeRegistry to CompositionGraphInput (optional, backward-compatible). For each clip, looks up clipType in registry, creates contribution:clipType:<extensionId>:<contributionId> nodes and consumes edges. Resolves reference states (resolved/missing/disabled) using registry directly, emits composition diagnostics reusing existing codes, and includes nextAction detail from renderability blockers. Added 5 tests: resolved clip type, missing (no registry), missing (no ownerExtensionId), disabled (with blockers +...",
+    "files_changed": [
+      "src/tools/video-editor/runtime/composition/graphProjector.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "npx vitest run src/tools/video-editor/runtime/composition/",
+      "npx vitest run src/tools/video-editor/runtime/liveBake.test.ts src/tools/video-editor/lib/timeline-patch.test.ts",
+      "npx vitest run src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts"
+    ]
+  },
+  {
+    "id": "T1",
+    "depends_on": [],
+    "status": "skipped",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "deferred_baseline_unavailable",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "This changes the public host patch contract and commit semantics used by extension writes, so a subtle mistake can affect all patch consumers rather than only the edited files. The single-occupancy guard must fire before mutation, which is a non-local invariant across `timeline-patch.ts`, `patchP...",
+    "executor_notes": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative.",
+    "files_changed": [],
+    "commands_run": [],
+    "evidence_files": []
+  },
+  {
+    "id": "T5",
+    "depends_on": [
+      "T4"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 5: Extend `GraphKeyframeAddOp`, `GraphKeyframeUpdateOp`, and `GraphKeyframeRemoveOp` patch types to accept existing clip parameter targets and shader uniform targets; route path normalization only through `canonicalAutomationTargetPath` and `canonicalizeShaderUniformPath`, preserving all existing clip keyframe behavior.",
+    "complexity_justification": "This changes multi-file patch type and normalization logic, but it is mostly contract expansion around existing helpers. The main correctness check is that clip automation still uses its existing path and shader uniforms canonicalize through the existing shader helper.",
+    "executor_notes": "Exported canonicalAutomationTargetPath from graphProjector.ts. Updated patchPreview.ts: replaced canonivalizeAutomationParameterPath import with canonicalAutomationTargetPath; changed canonicalizeKeyframeParamName to delegate to canonicalAutomationTargetPath({parameterPath}); simplified keyframeRecordKey to directly call canonicalAutomationTargetPath with both parameterPath and automation.targetPath, removing the manual targetPath fallback logic. Shader uniform keyframe functions (applyShaderKeyframeAdd/Update/Remove) continue to use canonicalizeShaderUniformPath unchanged. All 44 compositi...",
+    "files_changed": [
+      "src/tools/video-editor/runtime/composition/graphProjector.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.ts"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/runtime/composition/",
+      "npx vitest run src/tools/video-editor/lib/timeline-reader.test.ts src/tools/video-editor/lib/timeline-domain.shaders.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/liveBake.test.ts"
+    ]
+  }
+]
+
+        Prior batch deviations (address if applicable):
+        [
+  "Advisory quality: .megaplan/telemetry/m4-clip-type-shader-and-20260704-0427.ndjson grew by 318 lines (threshold 200).",
+  "Advisory observation mismatch: git status/content hash delta found unclaimed files: src/sdk/video/timeline/reader.ts, src/tools/video-editor/lib/timeline-reader.test.ts, src/tools/video-editor/lib/timeline-reader.ts, src/tools/video-editor/runtime/composition/patchPreview.test.ts, src/tools/video-editor/runtime/composition/patchPreview.ts, src/tools/video-editor/types/index.ts",
+  "Advisory audit finding: Executor claimed changed files not present in git status: src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/smoke/barrel-import-smoke.test.ts, src/sdk/video/composition/graph.ts, src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx, src/tools/video-editor/keyframes/index.ts, src/tools/video-editor/runtime/extensionSurface.test.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/shaders/preview/ClipShaderPreviewCanvas.tsx, src/tools/video-editor/shaders/preview/PostprocessShaderPreviewCanvas.test.tsx, src/tools/video-editor/shaders/preview/PostprocessShaderPreviewCanvas.tsx, src/tools/video-editor/shaders/preview/uniformResolution.ts",
+  "Advisory audit finding: Sense check SC12 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC13 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC14 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC15 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC16 is missing an executor acknowledgment.",
+  "Advisory audit finding: Tasks left pending after execute (executor never started them): T12, T13, T14, T15, T16"
+]
+
+        User action prerequisites:
+        No user_action prerequisites for this batch.
+
+
+        Batch-scoped sense checks:
+        [
+  {
+    "id": "SC12",
+    "task_id": "T12",
+    "verdict": "",
+    "question": "Does render planning consume graph `requires` edges and preview-only shader readiness to produce blockers and repair facts for non-preview routes without starting processes?"
+  }
+]
+
+
+        ## Execution context (settled - DO NOT re-litigate)
+
+        - None provided.
+
+        ## Plan execution order rationale
+
+        1. Land public `shader.assign`/`shader.remove` first so later canary and keyframe tests use graph-owned writes from the start.
+2. Add clip-type refs next because they reuse existing contribution/ref diagnostic machinery and reduce uncertainty before the deeper keyframe work.
+3. Add shader-uniform serialization before patch applicators so keyframe mutations have a stable persistence target.
+4. Add graph projection/diagnostics after storage and mutation semantics exist.
+5. Integrate render-path execution before expanding the canary to all uniform types.
+6. Add `requires` graph contract before render planner consumption.
+7. Finish with the canary and docs so examples reflect final public behavior.
+
+        ## Inter-task guidance from finalize
+
+        Execution should proceed in the task order shown. Heavy shared-contract work is chained so the runtime batcher does not mix unrelated c4 tasks in one worker turn. The three plan questions are intentionally kept as implementation watch items rather than user actions because the executor can resolve them mechanically from local conventions: same-shader duplicate behavior follows the existing shader validation model, the timeline summary field name follows nearby keyframe/automation naming, and `requires` projection covers declared dependencies plus preview-only readiness facts without starting processes. Every task should implement and verify its own slice; the final task is the scoped validation sweep and should report new failures versus baseline rather than attempting a run-until-pass loop.
+
+        Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations.
+        Robustness level: thorough.
+
+        Requirements:
+        - Execute only the actionable tasks in this batch.
+        - Treat completed tasks as dependency context, not new work.
+        - Return structured JSON only.
+        - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
+        - Template file already written for reference: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m4-clip-type-shader-and-20260704-0427/execute_batch_12_output.json
+        - Only produce `task_updates` for these tasks: [T12]
+        - `task_updates[].status` must be one of `done`, `skipped`, `completed`, or `blocked`; never `pending` or `in_progress`.
+        - Only produce `sense_check_acknowledgments` for these sense checks: [SC12]
+        - Do not include updates for tasks or sense checks outside this batch.
+        - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+        - Keep `executor_notes` verification-focused.
+        - Best-effort progress checkpointing: if `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m4-clip-type-shader-and-20260704-0427/execution_batch_12.json` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
+        - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
+        - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
+        - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
+
+        Batch JSON response template:
+        ```json
+        {
+  "output": "",
+  "files_changed": [],
+  "commands_run": [],
+  "deviations": [],
+  "task_updates": [
+    {
+      "task_id": "T12",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC12",
+      "executor_note": ""
+    }
+  ]
+}
+        ```

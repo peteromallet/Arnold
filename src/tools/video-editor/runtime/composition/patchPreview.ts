@@ -27,10 +27,22 @@ import type {
   ClipKeyframe,
   KeyframeInterpolation,
 } from '@/tools/video-editor/types/index.ts';
-import { projectCompositionGraph } from '@/tools/video-editor/runtime/composition/graphProjector.ts';
+import {
+  canonicalizeAutomationParameterPath,
+  canonicalizeShaderUniformPath,
+  projectCompositionGraph,
+} from '@/tools/video-editor/runtime/composition/graphProjector.ts';
 import {
   resolveMaterialAttachEntry,
 } from '@/tools/video-editor/runtime/composition/materialRuntime.ts';
+import {
+  sameCompositionShaderIdentity,
+  shaderScopeOccupiedMessage,
+} from '@/tools/video-editor/runtime/composition/shaderValidation.ts';
+import {
+  buildCompositionDiagnostic,
+  COMPOSITION_DIAGNOSTIC_CODE,
+} from '@/tools/video-editor/runtime/composition/diagnostics.ts';
 
 // ---------------------------------------------------------------------------
 // Internal patch operation types
@@ -97,34 +109,43 @@ export interface GraphKeyframeEventMetadata {
 }
 
 /**
- * Internal keyframe add operation: add a keyframe to a clip parameter.
+ * Internal keyframe add operation: add a keyframe to a clip parameter
+ * or a shader uniform.
  */
 export interface GraphKeyframeAddOp {
   readonly kind: 'keyframe.add';
-  /** The clip to add the keyframe to. */
-  readonly clipId: string;
-  /** The parameter name (e.g. "opacity", "x"). */
-  readonly paramName: string;
-  /** The keyframe to add. */
-  readonly keyframe: ClipKeyframe;
+  /** The clip to add the keyframe to (clip parameter target). */
+  readonly clipId?: string;
+  /** The parameter name (e.g. \"opacity\", \"x\") — clip parameter target. */
+  readonly paramName?: string;
+  /** The shader summary id to target (shader uniform target). */
+  readonly shaderId?: string;
+  /** The uniform path to target (shader uniform target). */
+  readonly uniformPath?: string;
+  /** The keyframe to add. Value supports `number[]` for shader vector/color uniforms. */
+  readonly keyframe: ClipKeyframe | { time: number; value: number | string | boolean | readonly number[]; interpolation: KeyframeInterpolation };
   /** Optional event-conversion metadata for diagnostics/preview detail. */
   readonly metadata?: GraphKeyframeEventMetadata;
 }
 
 /**
  * Internal keyframe update operation: update an existing keyframe value
- * and optionally its interpolation mode.
+ * and optionally its interpolation mode on a clip parameter or shader uniform.
  */
 export interface GraphKeyframeUpdateOp {
   readonly kind: 'keyframe.update';
-  /** The clip containing the keyframe. */
-  readonly clipId: string;
-  /** The parameter name. */
-  readonly paramName: string;
+  /** The clip containing the keyframe (clip parameter target). */
+  readonly clipId?: string;
+  /** The parameter name (clip parameter target). */
+  readonly paramName?: string;
+  /** The shader summary id to target (shader uniform target). */
+  readonly shaderId?: string;
+  /** The uniform path to target (shader uniform target). */
+  readonly uniformPath?: string;
   /** The time of the keyframe to update (used as identity). */
   readonly time: number;
-  /** The new value. */
-  readonly value: number | string | boolean;
+  /** The new value. Supports `number[]` for shader vector/color uniforms. */
+  readonly value: number | string | boolean | readonly number[];
   /** Optional new interpolation mode; omitted means keep existing. */
   readonly interpolation?: KeyframeInterpolation;
   /** Optional event-conversion metadata for diagnostics/preview detail. */
@@ -133,16 +154,20 @@ export interface GraphKeyframeUpdateOp {
 
 /**
  * Internal keyframe remove operation: remove one or all keyframes
- * for a clip parameter.
+ * for a clip parameter or a shader uniform.
  */
 export interface GraphKeyframeRemoveOp {
   readonly kind: 'keyframe.remove';
-  /** The clip containing the keyframe(s). */
-  readonly clipId: string;
-  /** The parameter name. */
-  readonly paramName: string;
+  /** The clip containing the keyframe(s) (clip parameter target). */
+  readonly clipId?: string;
+  /** The parameter name (clip parameter target). */
+  readonly paramName?: string;
+  /** The shader summary id to target (shader uniform target). */
+  readonly shaderId?: string;
+  /** The uniform path to target (shader uniform target). */
+  readonly uniformPath?: string;
   /** The time of the keyframe to remove; omit to remove all keyframes
-   * for this parameter. */
+   * for this parameter / uniform. */
   readonly time?: number;
   /** Optional event-conversion metadata for diagnostics/preview detail. */
   readonly metadata?: GraphKeyframeEventMetadata;
@@ -165,16 +190,71 @@ export type GraphPreviewOperation =
 // ---------------------------------------------------------------------------
 
 function cloneShaders(shaders: readonly TimelineShaderSummary[]): TimelineShaderSummary[] {
-  return shaders.map((shader) => ({ ...shader }));
+  return shaders.map((shader) => ({
+    ...shader,
+    ...(shader.keyframes ? { keyframes: cloneShaderKeyframeRecord(shader.keyframes) } : {}),
+  }));
+}
+
+type ShaderKeyframeRecord = NonNullable<TimelineShaderSummary['keyframes']>;
+type ShaderKeyframeValue = ShaderKeyframeRecord[string][number]['value'];
+
+function cloneShaderKeyframeValue(value: ShaderKeyframeValue): ShaderKeyframeValue {
+  return Array.isArray(value) ? [...value] : value;
+}
+
+function cloneShaderKeyframeRecord(
+  keyframes: ShaderKeyframeRecord,
+): ShaderKeyframeRecord {
+  return Object.fromEntries(
+    Object.entries(keyframes).map(([targetPath, entries]) => [
+      targetPath,
+      entries.map((entry) => ({
+        time: entry.time,
+        value: cloneShaderKeyframeValue(entry.value),
+        interpolation: entry.interpolation,
+      })),
+    ]),
+  );
 }
 
 function applyShaderAssign(
   shaders: TimelineShaderSummary[],
   op: GraphShaderAssignOp,
+  diagnostics: ExtensionDiagnostic[],
 ): void {
   const assignId = op.shader.scope === 'clip'
     ? `${op.shader.clipId}:shader:${op.shader.shaderId}`
     : `postprocess:shader:${op.shader.shaderId}`;
+
+  // Pre-commit guard: find any existing shader for the same scope.
+  const existing = shaders.find(
+    (s) => s.scope === op.shader.scope && s.clipId === op.shader.clipId,
+  );
+
+  // Same-shader same-scope is allowed (consistent with validateShaderAssignment).
+  // Different shader on the same scope is a DUPLICATE_SCOPE violation.
+  if (existing && !sameCompositionShaderIdentity(existing, op.shader)) {
+    diagnostics.push(
+      buildCompositionDiagnostic(
+        COMPOSITION_DIAGNOSTIC_CODE.DUPLICATE_SCOPE,
+        shaderScopeOccupiedMessage(
+          op.shader.scope,
+          existing.shaderId,
+          op.shader.shaderId,
+          op.shader.clipId,
+        ),
+        {
+          scope: op.shader.scope,
+          clipId: op.shader.clipId,
+          extensionId: op.shader.extensionId,
+          contributionId: op.shader.contributionId,
+          shaderId: op.shader.shaderId,
+        },
+      ),
+    );
+    return;
+  }
 
   // Remove any existing shader for the same scope so this becomes the
   // single-occupancy winner (matching patch overlay semantics).
@@ -196,6 +276,7 @@ function applyShaderAssign(
     extensionId: op.shader.extensionId,
     contributionId: op.shader.contributionId,
     enabled: op.shader.enabled !== false,
+    ...(op.shader.keyframes ? { keyframes: cloneShaderKeyframeRecord(op.shader.keyframes) } : {}),
   });
 }
 
@@ -361,12 +442,7 @@ function cloneMaterialSlotBindings(
 }
 
 function canonicalizeKeyframeParamName(paramName: string): string | undefined {
-  const trimmed = paramName.trim();
-  if (trimmed.length === 0) {
-    return undefined;
-  }
-
-  return trimmed.startsWith('params.') ? trimmed.slice('params.'.length) : trimmed;
+  return canonicalizeAutomationParameterPath(paramName);
 }
 
 function matchAutomationSummary(
@@ -448,6 +524,10 @@ function sortKeyframesInPlace(keyframes: ClipKeyframe[]): void {
 }
 
 function applyKeyframeAdd(clips: MutablePreviewClip[], op: GraphKeyframeAddOp): void {
+  if (!op.clipId || !op.paramName) {
+    return;
+  }
+
   const clip = clips.find((candidate) => candidate.id === op.clipId);
   if (!clip) {
     return;
@@ -458,12 +538,16 @@ function applyKeyframeAdd(clips: MutablePreviewClip[], op: GraphKeyframeAddOp): 
     return;
   }
 
-  keyframes.push(cloneKeyframe(op.keyframe));
+  keyframes.push(cloneKeyframe(op.keyframe as ClipKeyframe));
   sortKeyframesInPlace(keyframes);
   syncAutomationKeyframeCount(clip, op.paramName, keyframes);
 }
 
 function applyKeyframeUpdate(clips: MutablePreviewClip[], op: GraphKeyframeUpdateOp): void {
+  if (!op.clipId || !op.paramName) {
+    return;
+  }
+
   const clip = clips.find((candidate) => candidate.id === op.clipId);
   if (!clip) {
     return;
@@ -482,13 +566,17 @@ function applyKeyframeUpdate(clips: MutablePreviewClip[], op: GraphKeyframeUpdat
   const current = keyframes[index]!;
   keyframes[index] = {
     ...current,
-    value: op.value,
+    value: op.value as ClipKeyframe['value'],
     interpolation: op.interpolation ?? current.interpolation,
   };
   syncAutomationKeyframeCount(clip, op.paramName, keyframes);
 }
 
 function applyKeyframeRemove(clips: MutablePreviewClip[], op: GraphKeyframeRemoveOp): void {
+  if (!op.clipId || !op.paramName) {
+    return;
+  }
+
   const clip = clips.find((candidate) => candidate.id === op.clipId);
   if (!clip) {
     return;
@@ -518,6 +606,143 @@ function applyKeyframeRemove(clips: MutablePreviewClip[], op: GraphKeyframeRemov
   }
 
   syncAutomationKeyframeCount(clip, op.paramName, keyframes);
+}
+
+// ---------------------------------------------------------------------------
+// Shader-uniform keyframe apply helpers
+// ---------------------------------------------------------------------------
+
+type MutableShaderSummary = TimelineShaderSummary & {
+  keyframes?: Record<string, (ClipKeyframe | { time: number; value: number | string | boolean | readonly number[]; interpolation: KeyframeInterpolation })[]>;
+};
+
+function findMutableShader(
+  shaders: TimelineShaderSummary[],
+  shaderId: string,
+): MutableShaderSummary | undefined {
+  return (shaders as MutableShaderSummary[]).find((shader) => shader.id === shaderId);
+}
+
+function ensureShaderKeyframeRecord(
+  shader: MutableShaderSummary,
+): Record<string, (ClipKeyframe | { time: number; value: number | string | boolean | readonly number[]; interpolation: KeyframeInterpolation })[]> {
+  shader.keyframes ??= {};
+  return shader.keyframes;
+}
+
+function cloneShaderKeyframe(
+  kf: ClipKeyframe | { time: number; value: number | string | boolean | readonly number[]; interpolation: KeyframeInterpolation },
+): typeof kf {
+  const value = Array.isArray(kf.value) ? [...kf.value] : kf.value;
+  return { time: kf.time, value, interpolation: kf.interpolation };
+}
+
+function sortShaderKeyframesInPlace(
+  keyframes: (ClipKeyframe | { time: number; value: number | string | boolean | readonly number[]; interpolation: KeyframeInterpolation })[],
+): void {
+  keyframes.sort((left, right) => left.time - right.time);
+}
+
+function applyShaderKeyframeAdd(
+  shaders: TimelineShaderSummary[],
+  op: GraphKeyframeAddOp,
+): void {
+  const shader = findMutableShader(shaders, op.shaderId!);
+  if (!shader) {
+    return;
+  }
+
+  const targetPath = canonicalizeShaderUniformPath(op.uniformPath!);
+  if (!targetPath) {
+    return;
+  }
+
+  const record = ensureShaderKeyframeRecord(shader);
+  const keyframes = (record[targetPath] ??= []);
+  keyframes.push(cloneShaderKeyframe(op.keyframe));
+  sortShaderKeyframesInPlace(keyframes);
+}
+
+function applyShaderKeyframeUpdate(
+  shaders: TimelineShaderSummary[],
+  op: GraphKeyframeUpdateOp,
+): void {
+  const shader = findMutableShader(shaders, op.shaderId!);
+  if (!shader) {
+    return;
+  }
+
+  const targetPath = canonicalizeShaderUniformPath(op.uniformPath!);
+  if (!targetPath) {
+    return;
+  }
+
+  const record = shader.keyframes;
+  if (!record || !record[targetPath]?.length) {
+    return;
+  }
+
+  const keyframes = record[targetPath]!;
+  const index = keyframes.findIndex((kf) => kf.time === op.time);
+  if (index < 0) {
+    return;
+  }
+
+  const current = keyframes[index]!;
+  keyframes[index] = {
+    time: current.time,
+    value: op.value,
+    interpolation: op.interpolation ?? current.interpolation,
+  };
+}
+
+function applyShaderKeyframeRemove(
+  shaders: TimelineShaderSummary[],
+  op: GraphKeyframeRemoveOp,
+): void {
+  const shader = findMutableShader(shaders, op.shaderId!);
+  if (!shader) {
+    return;
+  }
+
+  const targetPath = canonicalizeShaderUniformPath(op.uniformPath!);
+  if (!targetPath) {
+    return;
+  }
+
+  const record = shader.keyframes;
+  if (!record || !record[targetPath]) {
+    return;
+  }
+
+  const keyframes = record[targetPath]!;
+
+  if (op.time === undefined) {
+    delete record[targetPath];
+    if (Object.keys(record).length === 0) {
+      delete shader.keyframes;
+    }
+    return;
+  }
+
+  let changed = false;
+  for (let i = keyframes.length - 1; i >= 0; i--) {
+    if (keyframes[i]?.time === op.time) {
+      keyframes.splice(i, 1);
+      changed = true;
+    }
+  }
+
+  if (!changed) {
+    return;
+  }
+
+  if (keyframes.length === 0) {
+    delete record[targetPath];
+    if (Object.keys(record).length === 0) {
+      delete shader.keyframes;
+    }
+  }
 }
 
 function normalizeMaterialSlotName(slotName: string): string | undefined {
@@ -785,7 +1010,7 @@ export function applyGraphPreviewOperations(
   for (const op of operations) {
     switch (op.kind) {
       case 'shader.assign':
-        applyShaderAssign(clone.snapshot.shaders ?? [], op);
+        applyShaderAssign(clone.snapshot.shaders ?? [], op, operationDiagnostics);
         break;
       case 'shader.remove':
         applyShaderRemove(clone.snapshot.shaders ?? [], op);
@@ -797,13 +1022,25 @@ export function applyGraphPreviewOperations(
         applyMaterialRemove(clone, op);
         break;
       case 'keyframe.add':
-        applyKeyframeAdd(clone.snapshot.clips as MutablePreviewClip[], op);
+        if (op.shaderId) {
+          applyShaderKeyframeAdd(clone.snapshot.shaders ?? [], op);
+        } else {
+          applyKeyframeAdd(clone.snapshot.clips as MutablePreviewClip[], op);
+        }
         break;
       case 'keyframe.update':
-        applyKeyframeUpdate(clone.snapshot.clips as MutablePreviewClip[], op);
+        if (op.shaderId) {
+          applyShaderKeyframeUpdate(clone.snapshot.shaders ?? [], op);
+        } else {
+          applyKeyframeUpdate(clone.snapshot.clips as MutablePreviewClip[], op);
+        }
         break;
       case 'keyframe.remove':
-        applyKeyframeRemove(clone.snapshot.clips as MutablePreviewClip[], op);
+        if (op.shaderId) {
+          applyShaderKeyframeRemove(clone.snapshot.shaders ?? [], op);
+        } else {
+          applyKeyframeRemove(clone.snapshot.clips as MutablePreviewClip[], op);
+        }
         break;
     }
   }

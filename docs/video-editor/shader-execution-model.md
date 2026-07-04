@@ -98,6 +98,16 @@ inputs. The generic `SchemaForm` renders a diagnostic placeholder for
 `textureRef`; the shader inspector persists texture defaults/bindings under the
 shader metadata texture map and leaves full texture editing deferred.
 
+**Shader-uniform keyframes (M4):** Uniform values can be animated over time
+through graph-owned shader-uniform keyframes. Keyframe target paths use the
+canonical `uniforms.<name>` format (e.g. `uniforms.intensity`,
+`uniforms.tint`, `uniforms.center`). Keyframes are stored in the shader
+summary under the host-owned keyframe map, interpolated at render time using
+the same interpolation engine as clip automation parameters, and projected
+as `animates` edges with `targetKind: 'shader-uniform'` in the composition
+graph. Non-canonical (bare) uniform names are normalized to the
+`uniforms.<name>` prefix during keyframe add/update/remove operations.
+
 Unsupported uniform schemas produce `shader/uniform-unsupported` during shader
 schema validation.
 

@@ -2,16 +2,23 @@ import type {
   CompositionGraph,
   CompositionGraphEdge,
   CompositionGraphNode,
+  CompositionReferenceStateEntry,
   ContributionRef,
   ExtensionDiagnostic,
+  ReferenceState,
   TimelineShaderSummary,
   TimelineSnapshot,
 } from '@reigh/editor-sdk';
 import { contributionRefKey } from '@reigh/editor-sdk';
+import type {
+  ClipTypeRegistryRecord,
+  ClipTypeRegistrySnapshot,
+} from '@/tools/video-editor/clip-types/ClipTypeRegistry.ts';
 import type { HostMaterialRuntimeProjection } from '@/tools/video-editor/runtime/composition/materialRuntime.ts';
 import {
   buildCompositionDiagnostic,
   COMPOSITION_DIAGNOSTIC_CODE,
+  type CompositionDiagnosticCode,
 } from '@/tools/video-editor/runtime/composition/diagnostics.ts';
 import {
   resolveCompositionReferences,
@@ -50,6 +57,7 @@ export interface CompositionGraphMaterialSlotBinding {
 export interface CompositionGraphInput {
   readonly snapshot: TimelineSnapshot;
   readonly contributionIndex: ContributionIndex | undefined;
+  readonly clipTypeRegistry?: ClipTypeRegistrySnapshot;
   readonly runtimeOverlay?: CompositionGraphRuntimeOverlay;
   readonly patchOverlay?: CompositionGraphPatchOverlay;
   readonly materialRuntime?: HostMaterialRuntimeProjection;
@@ -61,6 +69,7 @@ const EMPTY_NODES: readonly CompositionGraphNode[] = Object.freeze([]);
 const EMPTY_EDGES: readonly CompositionGraphEdge[] = Object.freeze([]);
 const EMPTY_DIAGNOSTICS: readonly ExtensionDiagnostic[] = Object.freeze([]);
 const EMPTY_SHADERS: readonly TimelineShaderSummary[] = Object.freeze([]);
+const EMPTY_REFERENCE_STATES: readonly CompositionReferenceStateEntry[] = Object.freeze([]);
 
 function clipNodeId(clipId: string): string {
   return `clip:${clipId}`;
@@ -120,7 +129,7 @@ function buildContributionEntryByContributionId(
   return byContributionId;
 }
 
-function canonicalizeAutomationParameterPath(parameterPath: string): string | undefined {
+export function canonicalizeAutomationParameterPath(parameterPath: string): string | undefined {
   const trimmed = parameterPath.trim();
   if (trimmed.length === 0) {
     return undefined;
@@ -129,7 +138,7 @@ function canonicalizeAutomationParameterPath(parameterPath: string): string | un
   return trimmed.startsWith('params.') ? trimmed.slice('params.'.length) : trimmed;
 }
 
-function canonicalizeShaderUniformPath(parameterPath: string): string | undefined {
+export function canonicalizeShaderUniformPath(parameterPath: string): string | undefined {
   const trimmed = parameterPath.trim();
   if (trimmed.length === 0) {
     return undefined;
@@ -237,6 +246,12 @@ function scopeLabel(shader: TimelineShaderSummary): 'clip' | 'postprocess' | und
   return undefined;
 }
 
+function shaderUniformName(targetPath: string): string {
+  return targetPath.startsWith('uniforms.')
+    ? targetPath.slice('uniforms.'.length)
+    : targetPath;
+}
+
 function duplicateScopeMessage(
   shader: Pick<TimelineShaderSummary, 'scope' | 'clipId' | 'shaderId'>,
   winnerShaderId: string,
@@ -286,6 +301,154 @@ function buildDuplicateScopeDiagnostics(
     } satisfies ExtensionDiagnostic);
   }));
 }
+
+// ---------------------------------------------------------------------------
+// Clip-type reference state resolution
+// ---------------------------------------------------------------------------
+
+function clipTypeReferenceState(record: ClipTypeRegistryRecord | undefined): ReferenceState {
+  if (!record) {
+    return 'missing';
+  }
+
+  const hasBlockers = record.renderability.blockers && record.renderability.blockers.length > 0;
+  if (hasBlockers) {
+    return 'disabled';
+  }
+
+  if (record.status === 'error') {
+    return 'runtime-error';
+  }
+
+  if (record.status === 'inactive') {
+    return 'inactive-reserved';
+  }
+
+  return 'resolved';
+}
+
+function clipTypeDiagnosticMessage(refKey: string, state: ReferenceState, clipTypeId: string): string {
+  switch (state) {
+    case 'missing':
+      return `Clip type \"${clipTypeId}\" ref \"${refKey}\" has no registered clip type record.`;
+    case 'disabled':
+      return `Clip type \"${clipTypeId}\" ref \"${refKey}\" has renderability blockers.`;
+    case 'runtime-error':
+      return `Clip type \"${clipTypeId}\" ref \"${refKey}\" is in error state.`;
+    case 'inactive-reserved':
+      return `Clip type \"${clipTypeId}\" ref \"${refKey}\" is inactive.`;
+    default:
+      return `Clip type \"${clipTypeId}\" ref \"${refKey}\" is ${state}.`;
+  }
+}
+
+function buildClipTypeReferenceStatesAndDiagnostics(
+  usages: readonly CompositionReferenceUsage[],
+  clipTypeRegistry: ClipTypeRegistrySnapshot | undefined,
+  refKeyToClipTypeId: ReadonlyMap<string, string>,
+): {
+  referenceStates: readonly CompositionReferenceStateEntry[];
+  diagnostics: readonly ExtensionDiagnostic[];
+} {
+  if (usages.length === 0 || !clipTypeRegistry) {
+    return { referenceStates: EMPTY_REFERENCE_STATES, diagnostics: EMPTY_DIAGNOSTICS };
+  }
+
+  const diagnostics: ExtensionDiagnostic[] = [];
+  const orderedRefKeys: string[] = [];
+  const mutableByRefKey: Record<string, {
+    refKey: string;
+    state: ReferenceState;
+    nodeIds: string[];
+    clipTypeId: string;
+    ref: ContributionRef;
+  }> = {};
+
+  for (const usage of usages) {
+    const refKey = contributionRefKey(usage.ref);
+    let resolved = mutableByRefKey[refKey];
+    if (!resolved) {
+      const clipTypeId = refKeyToClipTypeId.get(refKey) ?? '';
+      const record = clipTypeRegistry?.get(clipTypeId);
+      const state = clipTypeReferenceState(record);
+      resolved = {
+        refKey,
+        state,
+        nodeIds: [],
+        clipTypeId,
+        ref: usage.ref,
+      };
+      mutableByRefKey[refKey] = resolved;
+      orderedRefKeys.push(refKey);
+    }
+
+    if (!resolved.nodeIds.includes(usage.nodeId)) {
+      resolved.nodeIds.push(usage.nodeId);
+    }
+
+    if (resolved.state === 'resolved') {
+      continue;
+    }
+
+    const code = COMPOSITION_DIAGNOSTIC_CODE[
+      resolved.state === 'missing' ? 'MISSING_REF'
+      : resolved.state === 'disabled' ? 'DISABLED_REF'
+      : resolved.state === 'inactive-reserved' ? 'INACTIVE_RESERVED_REF'
+      : resolved.state === 'runtime-error' ? 'RUNTIME_ERROR_REF'
+      : 'UNKNOWN_REF'
+    ] as CompositionDiagnosticCode;
+
+    const record = clipTypeRegistry?.get(resolved.clipTypeId);
+    const nextAction: Record<string, unknown> | undefined = record?.renderability.blockers?.length
+      ? Object.freeze({
+          kind: 'resolve-blockers',
+          blockers: record.renderability.blockers.map((b) => ({
+            reason: b.reason,
+            message: b.message,
+            route: b.route,
+          })),
+        })
+      : undefined;
+
+    const diagnostic = Object.freeze({
+      ...buildCompositionDiagnostic(
+        code,
+        clipTypeDiagnosticMessage(refKey, resolved.state, resolved.clipTypeId),
+        {
+          nodeId: usage.nodeId,
+          refKey,
+          refState: resolved.state,
+          scope: usage.scope,
+          extensionId: usage.ref.extensionId,
+          contributionId: usage.ref.contributionId,
+          ...(nextAction ? { nextAction } : {}),
+        },
+      ),
+      extensionId: usage.ref.extensionId,
+      contributionId: usage.ref.contributionId,
+    } satisfies ExtensionDiagnostic);
+
+    diagnostics.push(diagnostic);
+  }
+
+  const referenceStates = Object.freeze(orderedRefKeys.map((refKey) => {
+    const resolved = mutableByRefKey[refKey]!;
+    return Object.freeze({
+      refKey,
+      state: resolved.state,
+      nodeIds: Object.freeze([...resolved.nodeIds]),
+    });
+  }));
+
+  return {
+    referenceStates,
+    diagnostics: Object.freeze(diagnostics),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Main projector
+// ---------------------------------------------------------------------------
 
 export function projectCompositionGraph(input: CompositionGraphInput): CompositionGraph {
   const nodes: CompositionGraphNode[] = [];
@@ -448,6 +611,63 @@ export function projectCompositionGraph(input: CompositionGraphInput): Compositi
     }
   }
 
+  // ---- clip-type projection --------------------------------------------------
+  const clipTypeRefUsages: CompositionReferenceUsage[] = [];
+  const refKeyToClipTypeId = new Map<string, string>();
+  const clipTypeRegistry = input.clipTypeRegistry;
+  if (clipTypeRegistry) {
+    for (const clip of input.snapshot.clips) {
+      const clipTypeId = clip.clipType;
+      if (!clipTypeId) {
+        continue;
+      }
+
+      const record = clipTypeRegistry.get(clipTypeId);
+      if (!record?.ownerExtensionId || !record.contributionId) {
+        continue;
+      }
+
+      const ref: ContributionRef = {
+        kind: 'clipType',
+        extensionId: record.ownerExtensionId,
+        contributionId: record.contributionId,
+      };
+      const refKey = contributionRefKey(ref);
+      refKeyToClipTypeId.set(refKey, clipTypeId);
+
+      let contributionNode = contributionNodeByRefKey.get(refKey);
+      if (!contributionNode) {
+        contributionNode = Object.freeze({
+          id: contributionNodeId(ref),
+          kind: 'contribution' as const,
+          ref,
+        });
+        contributionNodeByRefKey.set(refKey, contributionNode);
+        nodes.push(contributionNode);
+      }
+
+      const sourceNodeId = clipNodeId(clip.id);
+      edges.push(Object.freeze({
+        id: `consumes:${sourceNodeId}:${contributionNode.id}:${clipTypeId}`,
+        kind: 'consumes',
+        sourceNodeId,
+        targetNodeId: contributionNode.id,
+        detail: Object.freeze({
+          clipTypeId,
+          clipId: clip.id,
+          refKey,
+          scope: 'clip',
+        }),
+      }));
+
+      clipTypeRefUsages.push({
+        ref,
+        nodeId: sourceNodeId,
+        scope: 'clip',
+      });
+    }
+  }
+
   const shaders = selectShaderSummaries(input);
   const refUsages: CompositionReferenceUsage[] = [];
   for (const shader of shaders) {
@@ -497,17 +717,62 @@ export function projectCompositionGraph(input: CompositionGraphInput): Compositi
       scope,
       shaderId: shader.shaderId,
     });
+
+    for (const [rawTargetPath, keyframes] of Object.entries(shader.keyframes ?? {})) {
+      const targetPath = canonicalizeShaderUniformPath(rawTargetPath);
+      if (!targetPath || !keyframes.length) {
+        continue;
+      }
+
+      edges.push(Object.freeze({
+        id: `animates:${sourceNodeId}:${contributionNode.id}:${shader.id}:${targetPath}`,
+        kind: 'animates',
+        sourceNodeId,
+        targetNodeId: contributionNode.id,
+        detail: Object.freeze({
+          shaderId: shader.shaderId,
+          clipId: shader.clipId,
+          contributionId: shader.contributionId,
+          refKey,
+          scope,
+          targetKind: 'shader-uniform',
+          targetPath,
+          uniformName: shaderUniformName(targetPath),
+          keyframeCount: keyframes.length,
+        }),
+      }));
+    }
   }
 
   const resolvedReferences = resolveCompositionReferences(refUsages, contributionIndex);
   const duplicateScopeDiagnostics = buildDuplicateScopeDiagnostics(shaders);
+  const clipTypeResolved = buildClipTypeReferenceStatesAndDiagnostics(
+    clipTypeRefUsages,
+    clipTypeRegistry,
+    refKeyToClipTypeId,
+  );
+
+  // Merge reference states: clip type refs first, then shader refs
+  const mergedReferenceStates = [
+    ...clipTypeResolved.referenceStates,
+    ...resolvedReferences.referenceStates,
+  ];
+
+  // Merge diagnostics
+  const allDiagnostics = [
+    ...duplicateScopeDiagnostics,
+    ...clipTypeResolved.diagnostics,
+    ...resolvedReferences.diagnostics,
+  ];
 
   return Object.freeze({
     nodes: nodes.length > 0 ? Object.freeze(nodes) : EMPTY_NODES,
     edges: edges.length > 0 ? Object.freeze(edges) : EMPTY_EDGES,
-    referenceStates: resolvedReferences.referenceStates,
-    diagnostics: duplicateScopeDiagnostics.length > 0
-      ? Object.freeze([...duplicateScopeDiagnostics, ...resolvedReferences.diagnostics])
-      : resolvedReferences.diagnostics,
+    referenceStates: mergedReferenceStates.length > 0
+      ? Object.freeze(mergedReferenceStates)
+      : EMPTY_REFERENCE_STATES,
+    diagnostics: allDiagnostics.length > 0
+      ? Object.freeze(allDiagnostics)
+      : EMPTY_DIAGNOSTICS,
   } satisfies CompositionGraph);
 }

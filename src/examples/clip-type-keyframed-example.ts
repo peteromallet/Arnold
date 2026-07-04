@@ -13,6 +13,11 @@
  *   4. An optional callback-style inspector that receives live params
  *      and an `onParamsChange` callback so the host can persist edits.
  *
+ * In the composition graph (M4), this clip-type contribution projects a
+ * `contribution:clipType:<extensionId>:<contributionId>` node.  Each clip
+ * using this clip type emits a `consumes` edge to that node, with
+ * resolved/missing/disabled reference-state diagnostics.
+ *
  * This file must NOT import from editor internals (src/tools/video-editor/*).
  * It imports exclusively from @reigh/editor-sdk, the public SDK entrypoint.
  *

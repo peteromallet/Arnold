@@ -194,6 +194,12 @@ These contributions register trusted component renderers:
 - **Transition** (`kind: 'transition'`): Renders between clips.
 - **Clip type** (`kind: 'clipType'`): A contributed clip type with parameter schema and keyframed interpolation.
 
+In the composition graph (M4), clip-type contributions project as `ContributionRef`
+nodes keyed by `contribution:clipType:<extensionId>:<contributionId>`. Each clip
+using a contributed clip type emits a `consumes` edge from the clip node to the
+clip-type contribution node, with resolved/missing/disabled reference state
+diagnostics.
+
 Example references:
 - Effect: flagship-local extension's `FlagshipEffectComponent.tsx` (docs-safe, EXT)
 - Transition: flagship-local extension's `__tests__/flagship-local-transition.test.ts` (docs-safe, EXT)
@@ -201,16 +207,24 @@ Example references:
 
 ### 3.5 Other supported contribution kinds
 
-| Kind | Milestone | Example (docs-safe) |
-|---|---|---|
-| `parser` | M6 | [integrity-hash-parser-example.ts](../../src/examples/integrity-hash-parser-example.ts) |
-| `outputFormat` | M6 | Typed and declarable; execution reserved (returns M6 from `contributionKindNotYetBridged`). Example: [metadata-json-output-example.ts](../../src/examples/metadata-json-output-example.ts) |
-| `searchProvider` | M6 | Typed and declarable; execution reserved (returns M6 from `contributionKindNotYetBridged`). Frontend rendering deferred (D-063, D-064) |
-| `metadataFacet` | M6 | Supported (bridged); frontend rendering deferred (D-063, D-064) |
-| `assetDetailSection` | M6 | Supported (bridged); frontend rendering deferred |
-| `agentTool` | M10 | [agent-tools-canary/](../../src/tools/video-editor/examples/extensions/agent-tools-canary/) (EXT, docs-safe) |
-| `shader` | M13 | [clip-local-shader-canary/](../../src/tools/video-editor/examples/extensions/clip-local-shader-canary/) (EXT, docs-safe) |
-| `automation` | M9 | [automation-recording-canary.ts](../../src/examples/automation-recording-canary.ts) (docs-safe) |
+|| Kind | Milestone | Example (docs-safe) |
+||---|---|---|
+|| `parser` | M6 | [integrity-hash-parser-example.ts](../../src/examples/integrity-hash-parser-example.ts) |
+|| `outputFormat` | M6 | Typed and declarable; execution reserved (returns M6 from `contributionKindNotYetBridged`). Example: [metadata-json-output-example.ts](../../src/examples/metadata-json-output-example.ts) |
+|| `searchProvider` | M6 | Typed and declarable; execution reserved (returns M6 from `contributionKindNotYetBridged`). Frontend rendering deferred (D-063, D-064) |
+|| `metadataFacet` | M6 | Supported (bridged); frontend rendering deferred (D-063, D-064) |
+|| `assetDetailSection` | M6 | Supported (bridged); frontend rendering deferred |
+|| `agentTool` | M10 | [agent-tools-canary/](../../src/tools/video-editor/examples/extensions/agent-tools-canary/) (EXT, docs-safe) |
+|| `shader` | M13 | [clip-local-shader-canary/](../../src/tools/video-editor/examples/extensions/clip-local-shader-canary/) (EXT, docs-safe) |
+|| `automation` | M9 | [automation-recording-canary.ts](../../src/examples/automation-recording-canary.ts) (docs-safe) |
+
+Shader contributions (M4) are assigned to clips or the timeline postprocess
+scope through **graph-owned** `shader.assign` / `shader.remove` preview
+operations. These are internal host operations derived from existing timeline
+patch payloads (`clip.update` with `app.shader`, `app.update` with
+`shaderPostprocess`) — they are not public SDK patch families. Shader-uniform
+keyframes use the canonical `uniforms.<name>` target path (e.g.
+`uniforms.intensity`) and project `animates` edges in the composition graph.
 
 ---
 
