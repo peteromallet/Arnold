@@ -1583,6 +1583,139 @@ class TestLiveSignalFiltering:
         assert meta["failed_meta_run_count"] >= 1
         assert any("failed launch/no-output evidence" in reason for reason in finding["reasons"])
 
+    def test_missing_meta_run_evidence_stays_corroboration_when_incident_audit_says_meta_not_blocking(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "blocked",
+                    "iteration": 2,
+                    "latest_failure": {
+                        "kind": "execution_blocked",
+                        "message": "verification fixture still fails",
+                        "recorded_at": "2026-07-04T19:00:00+00:00",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        events_path = plan_dir / "events.ndjson"
+        events_path.write_text("", encoding="utf-8")
+        os.utime(events_path, (1, 1))
+
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir(parents=True, exist_ok=True)
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "outcome": "repairing",
+                    "current_attempt_id": "attempt-3",
+                    "current_signature": {
+                        "milestone_or_plan": "demo-plan",
+                        "current_state": "blocked",
+                    },
+                    "iterations": [
+                        {
+                            "failure_classification": "timeout_or_hang",
+                            "latest_failure_kind": "execution_blocked",
+                            "outcome": "repairing",
+                        },
+                        {
+                            "failure_classification": "timeout_or_hang",
+                            "latest_failure_kind": "execution_blocked",
+                            "outcome": "repairing",
+                        },
+                        {
+                            "failure_classification": "timeout_or_hang",
+                            "latest_failure_kind": "execution_blocked",
+                            "outcome": "repairing",
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        patch_dir = tmp_path / "patches"
+        patch_dir.mkdir(parents=True, exist_ok=True)
+        (patch_dir / "sitecustomize.py").write_text(
+            """
+import arnold_pipelines.megaplan.cloud.six_hour_auditor as auditor
+
+def fake_build_audit_input(session, root, now):
+    return {
+        "brief": {
+            "found": True,
+            "incident_id": "inc-1",
+            "next_expected_event": "repair_attempt.verification",
+        },
+        "incident": {
+            "incident_id": "inc-1",
+            "next_expected_event": "repair_attempt.verification",
+        },
+        "problem": {},
+        "projections": {},
+    }
+
+def fake_audit_projection_input(*args, **kwargs):
+    return {
+        "incident_id": "inc-1",
+        "next_expected_event": "repair_attempt.verification",
+        "findings": [
+            {
+                "layer": "meta_repair",
+                "status": "ok",
+                "code": "meta_repair_observed",
+                "message": "meta_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "repair_attempt.verification",
+            }
+        ],
+        "audit_complete": {
+            "outcome": "audit_cycle_complete",
+            "next_expected_event": "repair_attempt.verification",
+        },
+    }
+
+auditor.build_audit_input = fake_build_audit_input
+auditor.audit_projection_input = fake_audit_projection_input
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={
+                "PYTHONPATH": f"{patch_dir}:{REPO_ROOT}",
+                "MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root),
+            },
+        )
+
+        finding = findings["findings"][0]
+        meta = finding["meta_repair_summary"]
+        assert meta["should_dispatch"] is True
+        assert meta["missing_meta_run_evidence"] is True
+        assert not any("meta-repair trigger" in reason for reason in finding["reasons"])
+        assert (
+            "meta-repair trigger persistent_recurring_retry has no meta record or run log"
+            in finding["corroboration"]
+        )
+
     def test_meta_repair_summary_ignores_partial_liveness_for_complete_chain_without_repair_context(
         self, tmp_path: Path
     ) -> None:
