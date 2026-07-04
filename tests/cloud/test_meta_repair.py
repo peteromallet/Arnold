@@ -456,6 +456,53 @@ class TestLoadRedactedEvidence:
         assert "super-secret-webhook-key" not in str(repair_data)
         assert REDACTION in str(repair_data)
 
+    def test_partial_liveness_history_is_filtered_to_session(self, tmp_path: Path) -> None:
+        session = "target-session"
+        repair_root = _make_session_dir(tmp_path, session)
+        sidecar_dir = repair_root.with_name(f"{repair_root.name}.d")
+        events_dir = sidecar_dir / "events"
+        events_dir.mkdir(parents=True, exist_ok=True)
+        events_path = events_dir / "events.jsonl"
+        records = [
+            {
+                "session": f"other-{idx}",
+                "outcome": PARTIAL_LIVENESS,
+                "recorded_at": f"2026-07-03T19:{idx:02d}:00Z",
+            }
+            for idx in range(5)
+        ]
+        records.append(
+            {
+                "session": session,
+                "outcome": PARTIAL_LIVENESS,
+                "recorded_at": "2026-07-03T19:12:01Z",
+            }
+        )
+        events_path.write_text(
+            "\n".join(json.dumps(record) for record in records) + "\n",
+            encoding="utf-8",
+        )
+
+        evidence = load_redacted_evidence(
+            session,
+            repair_data_dir=repair_root,
+            max_attempts=20,
+        )
+        history = evidence["partial_liveness_history"]
+        assert len(history) == 1
+        assert history[0]["session"] == session
+
+        classification, _ = evaluate_meta_repair_triggers(
+            session,
+            repair_data_dir=repair_root,
+            repair_outcome=REPAIRING,
+            attempt_outcomes=[REPAIRING],
+            failure_kinds=["timeout_or_hang"],
+            load_evidence=True,
+        )
+        assert classification.should_dispatch is False
+        assert classification.trigger is None
+
 
 # ---------------------------------------------------------------------------
 # Prompt assembly
@@ -550,6 +597,74 @@ class TestBuildMetaRepairPrompt:
         )
         assert "/tmp/repair-data" in prompt
 
+    def test_prompt_compacts_large_evidence_to_budget(self) -> None:
+        huge_text = "A" * 300_000
+        classification = classify_repair_system_failure(
+            session="p9",
+            evidence={
+                "repair_data": {
+                    "marker_json": huge_text,
+                    "failure_context": {
+                        "chain_log_tail": huge_text,
+                    },
+                }
+            },
+            repair_outcome=REPAIR_TIMEOUT,
+            repair_budget_exhausted=True,
+        )
+        prompt = build_meta_repair_prompt(classification)
+        assert len(prompt) < 250_000
+        assert "truncated" in prompt
+        assert huge_text not in prompt
+
+    def test_prompt_hard_caps_total_length_for_many_huge_attempts(self) -> None:
+        huge_text = "B" * 250_000
+        classification = classify_repair_system_failure(
+            session="p10",
+            evidence={
+                "repair_data": {
+                    "attempts": [
+                        {
+                            "attempt_id": idx,
+                            "dev_report": {"log_tail": huge_text},
+                            "iterations": [{"artifact": huge_text}],
+                        }
+                        for idx in range(10)
+                    ],
+                }
+            },
+            repair_outcome=REPAIR_TIMEOUT,
+            repair_budget_exhausted=True,
+        )
+
+        prompt = build_meta_repair_prompt(classification)
+        assert len(prompt) < 900_000
+        assert huge_text not in prompt
+
+    def test_force_emergency_prompt_uses_compacted_evidence(self) -> None:
+        huge_text = "C" * 200_000
+        classification = classify_repair_system_failure(
+            session="p11",
+            evidence={
+                "repair_data": {
+                    "attempts": [
+                        {
+                            "attempt_id": 1,
+                            "outcome": "repair_exhausted",
+                            "dev_report": {"chain_log_tail": huge_text},
+                        }
+                    ]
+                }
+            },
+            repair_outcome=REPAIR_TIMEOUT,
+            repair_budget_exhausted=True,
+        )
+
+        prompt = build_meta_repair_prompt(classification, force_emergency=True)
+        assert "Evidence was compacted" in prompt
+        assert '"repair_attempt_summaries"' in prompt
+        assert huge_text not in prompt
+
 
 # ---------------------------------------------------------------------------
 # Combined evaluate_meta_repair_triggers
@@ -603,6 +718,34 @@ class TestEvaluateMetaRepairTriggers:
         )
         assert prompt is not None
         assert "test context" in prompt
+
+    def test_load_evidence_compacts_huge_repair_data_before_prompt(self, tmp_path: Path) -> None:
+        repair_root = _make_session_dir(tmp_path, "eval-s5")
+        payload = json.loads((repair_root / "eval-s5.repair-data.json").read_text(encoding="utf-8"))
+        huge_text = "B" * 350_000
+        payload["initial_facts"] = {
+            "marker_json": huge_text,
+            "failure_context": {
+                "chain_log_tail": huge_text,
+            },
+        }
+        (repair_root / "eval-s5.repair-data.json").write_text(
+            json.dumps(payload),
+            encoding="utf-8",
+        )
+
+        classification, prompt = evaluate_meta_repair_triggers(
+            session="eval-s5",
+            repair_data_dir=repair_root,
+            repair_outcome=REPAIR_TIMEOUT,
+            repair_budget_exhausted=True,
+            load_evidence=True,
+        )
+        assert classification.should_dispatch is True
+        assert prompt is not None
+        assert len(prompt) < 250_000
+        assert huge_text not in prompt
+        assert "truncated" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -1442,6 +1585,62 @@ class TestCheckMetaRepairRecursion:
         assert result.should_escalate is True
         assert NEEDS_HUMAN in result.recommendation
         assert "mr-001" in result.existing_meta_repair_ids
+
+    def test_codex_launch_failure_record_does_not_poison_recursion(
+        self, tmp_path: Path
+    ) -> None:
+        repair_dir = tmp_path / "repair-data"
+        meta_dir = repair_dir / "meta"
+        meta_dir.mkdir(parents=True)
+
+        record = {
+            "meta_repair_id": "mr-launch-failed",
+            "session": "recursion-test",
+            "trigger": "partial_liveness_recurrence",
+            "diagnosis": "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/Hermes subagents); see meta-repair log.",
+            "subagent_results": {
+                "codex_response": "Not inside a trusted directory and --skip-git-repo-check was not specified."
+            },
+            "outcome": "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/Hermes subagents); see meta-repair log.",
+        }
+        (meta_dir / "mr-launch-failed.json").write_text(
+            json.dumps(record), encoding="utf-8"
+        )
+
+        result = check_meta_repair_recursion(
+            session="recursion-test",
+            repair_data_dir=repair_dir,
+        )
+        assert result.recursing is False
+        assert result.existing_meta_repair_ids == ()
+
+    def test_input_too_large_record_does_not_poison_recursion(
+        self, tmp_path: Path
+    ) -> None:
+        repair_dir = tmp_path / "repair-data"
+        meta_dir = repair_dir / "meta"
+        meta_dir.mkdir(parents=True)
+
+        record = {
+            "meta_repair_id": "mr-input-too-large",
+            "session": "recursion-test",
+            "trigger": "repair_timeout",
+            "diagnosis": "Codex meta-repair prompt exceeded input limit; see meta-repair log.",
+            "subagent_results": {
+                "codex_response": "Input exceeds the maximum length of 1048576 characters. (code -32602)"
+            },
+            "outcome": "Codex meta-repair prompt exceeded input limit; see meta-repair log.",
+        }
+        (meta_dir / "mr-input-too-large.json").write_text(
+            json.dumps(record), encoding="utf-8"
+        )
+
+        result = check_meta_repair_recursion(
+            session="recursion-test",
+            repair_data_dir=repair_dir,
+        )
+        assert result.recursing is False
+        assert result.existing_meta_repair_ids == ()
 
     def test_existing_record_for_different_session_is_not_recursion(
         self, tmp_path: Path

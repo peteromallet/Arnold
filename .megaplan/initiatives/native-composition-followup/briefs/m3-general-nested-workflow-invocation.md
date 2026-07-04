@@ -25,8 +25,10 @@ behavior.
   `docs/arnold/python-shaped-authoring-contract.md`
   Implement the V2 source grammar and diagnostics needed for the same
   constructs. The native compiler/IR work is insufficient unless the
-  Python-shaped authoring frontend accepts, rejects, and lowers the V2 source
-  forms without executing workflow files.
+  `.pypeline` authoring frontend accepts, rejects, and lowers the V2 source
+  forms without executing workflow files. The frontend must parse `.pypeline`
+  files as Python syntax under the Arnold workflow contract, not as arbitrary
+  importable `.py` modules or hand-authored manifests.
 - `arnold/pipeline/native/ir.py`
   Add or tighten first-class invocable/workflow metadata. Tooling should be able
   to query a unit's stable ID and declared interface without inspecting Python
@@ -64,9 +66,9 @@ behavior.
 - Megaplan fanout, execute batching, review fanout, typed loop exits, and
   policy calls use general native constructs. A bespoke Megaplan dynamic fanout
   helper is a blocking failure.
-- The Python-shaped source frontend accepts the V2 constructs with stable
-  provenance and rejects the V2 anti-patterns; compiler-only IR support is not
-  enough to close this milestone.
+- The `.pypeline` authoring frontend accepts the V2 constructs with stable
+  provenance from `.pypeline` files and rejects the V2 anti-patterns;
+  compiler-only IR support is not enough to close this milestone.
 
 ## Native Representation Alignment
 

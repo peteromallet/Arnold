@@ -161,9 +161,11 @@ EOF
   fi
   if [[ "$commit_enabled" == "1" ]]; then
     cat <<'EOF'
-Autofix mode: REPAIR-SYSTEM PATCH + COMMIT/PUSH (explicitly gated).
+Autofix mode: TRUSTED REPAIR-SYSTEM PATCH + COMMIT/PUSH.
+- You are trusted to ship the repair-system fix when evidence supports it.
 - You may change only the allowed Arnold repair-system files listed below.
 - Keep the fix narrow, validate with `python3 -m py_compile` and one focused test module, then `git commit` and `git push` to `origin/editible-install`.
+- Do not stop at a recommendation for repair-system bugs; patch, validate, commit, push, and return `FIXED <commit-sha>`.
 - Do not touch run-state artifacts, project workspaces, or non-repair-system files.
 EOF
     return 0
@@ -374,6 +376,7 @@ import datetime as dt
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -385,6 +388,7 @@ sys.path.insert(0, arnold_src)
 sys.path.insert(0, str(pathlib.Path.cwd()))
 
 from arnold_pipelines.megaplan.cloud.redact import redact_text
+from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
 from arnold_pipelines.megaplan.cloud.repair_contract import read_jsonl_records
 from arnold_pipelines.megaplan.cloud.six_hour_auditor import audit_projection_input, build_audit_input
 from arnold_pipelines.megaplan.incident.summaries import write_projection_summaries
@@ -395,6 +399,7 @@ WATCHDOG_REPORT_PATH = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_WATCHDOG_REPO
 WATCHDOG_REPORT_ARCHIVE_DIR = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_WATCHDOG_REPORT_ARCHIVE_DIR", "/workspace/watchdog-reports"))
 AUDIT_REPORT_DIR = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_REPORT_DIR", "/workspace/audit-reports"))
 PERSISTENT_FINDINGS_DOC = pathlib.Path(os.environ.get("CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC", "/workspace/findings/persistent-problems.md"))
+META_RUN_DIR = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_META_RUN_DIR", "/workspace/.megaplan/meta-runs"))
 COMMIT_SOURCE_DIR = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_COMMIT_SOURCE_DIR", arnold_src))
 COMMIT_SOURCE_PATHS = (
     "arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog",
@@ -623,6 +628,259 @@ def _collect_related_artifact_refs(workspace, plan, session, repair_data):
         "source_refs": source_refs,
     }
 
+def _collect_meta_run_refs(session):
+    refs = []
+    if not META_RUN_DIR.exists():
+        return refs
+    safe_session = "".join(ch if ch.isalnum() or ch in "_.-" else "-" for ch in str(session))
+    candidates = list(META_RUN_DIR.glob(f"*{safe_session}*")) + list(META_RUN_DIR.glob(f"*{session}*"))
+    seen = set()
+    ordered = []
+    for path in candidates:
+        key = str(path)
+        if key in seen or not path.is_file():
+            continue
+        seen.add(key)
+        ordered.append((_mtime(path), path))
+    ordered.sort(reverse=True)
+    for mtime, path in ordered[:5]:
+        tail = _tail_with_line_numbers(path, lines=12)
+        launch_failure = _text_has_meta_launch_failure(tail)
+        refs.append(
+            {
+                "path": _redact_scalar(path),
+                "mtime_age_min": int((now.timestamp() - mtime) // 60) if mtime else None,
+                "tail": _redact_scalar(tail),
+                "launch_failure": launch_failure,
+            }
+        )
+    return refs
+
+def _text_has_meta_launch_failure(text):
+    if not isinstance(text, str):
+        return False
+    needles = (
+        "Codex meta-repair orchestrator returned no output",
+        "Codex meta-repair prompt exceeded input limit",
+        "Not inside a trusted directory",
+        "--skip-git-repo-check was not specified",
+        "codex CLI missing; no automated meta-repair",
+        "failed to launch DeepSeek/Hermes subagents",
+        "Input exceeds the maximum length",
+        "input_too_large",
+    )
+    return any(needle in text for needle in needles)
+
+def _meta_record_is_launch_failure(path):
+    payload = _load_json(path)
+    if not isinstance(payload, dict):
+        return False
+    outcome = str(payload.get("outcome") or "")
+    if outcome and outcome not in {"UNKNOWN", "NO_FIX"} and not outcome.startswith("Codex meta-repair orchestrator returned no output"):
+        return False
+    haystacks = [
+        str(payload.get("diagnosis") or ""),
+        str(payload.get("reason") or ""),
+    ]
+    subagent_results = payload.get("subagent_results")
+    if isinstance(subagent_results, dict):
+        haystacks.extend(str(value or "") for value in subagent_results.values())
+    return _text_has_meta_launch_failure("\n".join(haystacks))
+
+def _repair_attempt_signals(repair_payload):
+    attempts = repair_payload.get("attempts") if isinstance(repair_payload, dict) else []
+    iterations = repair_payload.get("iterations") if isinstance(repair_payload, dict) else []
+    if not isinstance(attempts, list):
+        attempts = []
+    if not isinstance(iterations, list):
+        iterations = []
+    recent_attempts = [item for item in attempts[-5:] if isinstance(item, dict)]
+    recent_iterations = [item for item in iterations[-5:] if isinstance(item, dict)]
+    failure_kinds = []
+    for item in recent_attempts + recent_iterations:
+        for candidate in (
+            item.get("failure_classification"),
+            (item.get("failure_context") or {}).get("failure_classification") if isinstance(item.get("failure_context"), dict) else None,
+            (item.get("post_launch_failure_context") or {}).get("failure_classification") if isinstance(item.get("post_launch_failure_context"), dict) else None,
+            (item.get("plan_latest_failure") or {}).get("kind") if isinstance(item.get("plan_latest_failure"), dict) else None,
+            item.get("latest_failure_kind"),
+        ):
+            if isinstance(candidate, str) and candidate.strip():
+                failure_kinds.append(candidate.strip())
+                break
+    repair_outcome = str(repair_payload.get("outcome") or "") if isinstance(repair_payload, dict) else ""
+    attempt_outcomes = [
+        str(item.get("outcome") or repair_outcome or "").strip()
+        for item in recent_attempts + recent_iterations
+        if isinstance(item, dict)
+    ]
+    return repair_outcome, [item for item in attempt_outcomes if item], failure_kinds
+
+def _attempt_has_runtime_context(item):
+    if not isinstance(item, dict):
+        return False
+    for key in ("recorded_at", "started_at", "finished_at", "dispatched_at", "run_dir", "outcome"):
+        if str(item.get(key) or "").strip():
+            return True
+    for key in ("resolver_output", "target", "verification"):
+        if isinstance(item.get(key), dict) and item.get(key):
+            return True
+    return False
+
+def _meta_repair_summary(session, repair_data, meta_refs, *, run_kind="", current_state="", chain_state_summary=None):
+    repair_root = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_REPAIR_DATA_DIR", "/workspace/.megaplan/cloud-sessions/repair-data"))
+    repair_payload = _load_json(repair_root / f"{session}.repair-data.json")
+    if not isinstance(repair_payload, dict):
+        repair_payload = {}
+    run_refs = _collect_meta_run_refs(session)
+    repair_outcome, attempt_outcomes, failure_kinds = _repair_attempt_signals(repair_payload)
+    recent_attempts = [
+        item
+        for item in (repair_payload.get("attempts") if isinstance(repair_payload.get("attempts"), list) else [])[-5:]
+        if isinstance(item, dict)
+    ]
+    recent_iterations = [
+        item
+        for item in (repair_payload.get("iterations") if isinstance(repair_payload.get("iterations"), list) else [])[-5:]
+        if isinstance(item, dict)
+    ]
+    current_attempt_id = str(repair_payload.get("current_attempt_id") or "").strip()
+    current_recurrence = repair_payload.get("current_recurrence") if isinstance(repair_payload.get("current_recurrence"), dict) else {}
+    current_signature = repair_payload.get("current_signature") if isinstance(repair_payload.get("current_signature"), dict) else {}
+    terminal_success = False
+    if isinstance(repair_data, dict) and not repair_data.get("exists"):
+        normalized_kind = str(run_kind or "").strip().lower()
+        normalized_state = str(current_state or "").strip().lower()
+        if normalized_kind == "plan":
+            terminal_success = normalized_state in {"done", "complete", "completed", "finalized"}
+        else:
+            chain_current = (chain_state_summary or {}).get("current") if isinstance(chain_state_summary, dict) else {}
+            chain_last_state = str((chain_current or {}).get("last_state") or "").strip().lower()
+            chain_current_plan = str((chain_current or {}).get("current_plan_name") or "").strip()
+            terminal_success = chain_last_state in {"done", "complete", "completed"} and not chain_current_plan
+    if terminal_success and not meta_refs and not run_refs:
+        return {
+            "should_dispatch": False,
+            "trigger": "",
+            "rationale": [
+                "session already reached terminal success and has no repair-data or meta-repair artifacts; "
+                "partial-liveness sidecars alone are not operative meta-repair evidence"
+            ],
+            "repair_outcome": _redact_scalar(repair_outcome),
+            "attempt_outcomes": [_redact_scalar(item) for item in attempt_outcomes[-5:]],
+            "failure_kinds": [_redact_scalar(item) for item in failure_kinds[-5:]],
+            "meta_record_count": len(meta_refs or []),
+            "meta_run_log_count": 0,
+            "meta_run_refs": [],
+            "missing_meta_run_evidence": False,
+        }
+    if (
+        repair_outcome == "running"
+        and not current_attempt_id
+        and not current_recurrence
+        and not current_signature
+        and not recent_iterations
+        and not recent_attempts
+    ):
+        run_refs = _collect_meta_run_refs(session)
+        return {
+            "should_dispatch": True,
+            "trigger": "repair_running_without_attempt_context",
+            "rationale": [
+                "repair-data reports running but has no current attempt id, recurrence, "
+                "signature, attempts, or iterations; this is an artifact-quality gap, "
+                "not proof that ordinary repair is active"
+            ],
+            "repair_outcome": _redact_scalar(repair_outcome),
+            "attempt_outcomes": [_redact_scalar(item) for item in attempt_outcomes[-5:]],
+            "failure_kinds": [_redact_scalar(item) for item in failure_kinds[-5:]],
+            "meta_record_count": len(meta_refs or []),
+            "meta_run_log_count": len(run_refs),
+            "meta_run_refs": run_refs,
+            "missing_meta_run_evidence": bool(not meta_refs and not run_refs),
+        }
+    if (
+        repair_outcome == "running"
+        and not current_attempt_id
+        and not current_recurrence
+        and not current_signature
+        and not recent_iterations
+        and recent_attempts
+    ):
+        return {
+            "should_dispatch": False,
+            "trigger": "",
+            "rationale": [
+                "repair-data reports running but no active attempt/iteration context is present; "
+                "historical attempts alone are insufficient to demand meta-repair"
+            ],
+            "repair_outcome": _redact_scalar(repair_outcome),
+            "attempt_outcomes": [_redact_scalar(item) for item in attempt_outcomes[-5:]],
+            "failure_kinds": [_redact_scalar(item) for item in failure_kinds[-5:]],
+            "meta_record_count": len(meta_refs or []),
+            "meta_run_log_count": 0,
+            "meta_run_refs": [],
+            "missing_meta_run_evidence": False,
+        }
+    if (
+        not current_attempt_id
+        and not current_recurrence
+        and not current_signature
+        and recent_attempts
+        and not any(_attempt_has_runtime_context(item) for item in recent_attempts)
+        and repair_outcome not in {"repair_timeout", "repair_exhausted"}
+    ):
+        return {
+            "should_dispatch": False,
+            "trigger": "",
+            "rationale": ["repair-data only contains legacy attempt summaries; no active recurring repair context is present"],
+            "repair_outcome": _redact_scalar(repair_outcome),
+            "attempt_outcomes": [_redact_scalar(item) for item in attempt_outcomes[-5:]],
+            "failure_kinds": [_redact_scalar(item) for item in failure_kinds[-5:]],
+            "meta_record_count": len(meta_refs or []),
+            "meta_run_log_count": 0,
+            "meta_run_refs": [],
+            "missing_meta_run_evidence": False,
+        }
+    try:
+        classification, _ = evaluate_meta_repair_triggers(
+            session,
+            repair_data_dir=repair_root,
+            repair_outcome=repair_outcome,
+            attempt_outcomes=attempt_outcomes,
+            failure_kinds=failure_kinds,
+            repair_budget_exhausted=repair_outcome in {"repair_timeout", "repair_exhausted"},
+            load_evidence=True,
+        )
+        should_dispatch = bool(classification.should_dispatch)
+        trigger = classification.trigger_label
+        rationale = [_redact_scalar(item) for item in classification.rationale]
+    except Exception as exc:
+        should_dispatch = False
+        trigger = "classification_error"
+        rationale = [_redact_scalar(exc)]
+    failed_run_refs = [item for item in run_refs if item.get("launch_failure")]
+    failed_meta_records = []
+    for item in meta_refs or []:
+        path = item.get("path") if isinstance(item, dict) else ""
+        if path and _meta_record_is_launch_failure(pathlib.Path(str(path))):
+            failed_meta_records.append(item)
+    return {
+        "should_dispatch": should_dispatch,
+        "trigger": trigger,
+        "rationale": rationale,
+        "repair_outcome": _redact_scalar(repair_outcome),
+        "attempt_outcomes": [_redact_scalar(item) for item in attempt_outcomes[-5:]],
+        "failure_kinds": [_redact_scalar(item) for item in failure_kinds[-5:]],
+        "meta_record_count": len(meta_refs or []),
+        "meta_run_log_count": len(run_refs),
+        "meta_run_refs": run_refs,
+        "failed_meta_run_count": len(failed_run_refs),
+        "failed_meta_record_count": len(failed_meta_records),
+        "missing_meta_run_evidence": bool(should_dispatch and not meta_refs and not run_refs),
+        "failed_meta_run_evidence": bool(should_dispatch and (failed_run_refs or failed_meta_records)),
+    }
+
 def _collect_watchdog_report_refs(session, plan, workspace):
     refs = []
     tokens = _match_tokens(session, plan, workspace.name)
@@ -781,9 +1039,14 @@ def _chain_log_candidates(workspace, session, entry):
             unique.append(path)
     return unique
 
+_AWAITING_HUMAN_TOKEN = re.compile(r"(?<![A-Za-z0-9_])awaiting_human(?:_verify)?(?![A-Za-z0-9_])")
+
+def _has_awaiting_human_token(line):
+    return bool(_AWAITING_HUMAN_TOKEN.search(line.lower()))
+
 def _normalize_stop_signature(line):
     lower = line.lower()
-    if "awaiting_human" in lower:
+    if _has_awaiting_human_token(lower):
         return "awaiting_human"
     if "pr #" in lower and "closed" in lower:
         return "pr_closed"
@@ -831,7 +1094,7 @@ def _chain_log_summary(workspace, session, entry):
         if (
             "status: stopped" in lower
             or '"status": "stopped"' in lower
-            or "awaiting_human" in lower
+            or _has_awaiting_human_token(lower)
             or ("pr #" in lower and "closed" in lower)
             or "repair loop exhausted" in lower
             or "all milestones complete" in lower
@@ -1488,6 +1751,14 @@ def _plan_evidence(entry):
     chain_state = _chain_state_summary(workspace_path, plan)
     repair_data = _repair_data_summary(session)
     cross_refs = _collect_related_artifact_refs(workspace_path, plan, session, repair_data)
+    meta_repair_summary = _meta_repair_summary(
+        session,
+        repair_data,
+        cross_refs.get("meta_repair_refs") or [],
+        run_kind=run_kind,
+        current_state=state.get("current_state") or "",
+        chain_state_summary=chain_state,
+    )
     prior_incident_ids = [item.get("incident_id") for item in cross_refs.get("prior_incident_refs", []) if item.get("incident_id")]
     prior_watchdog_report_refs = _collect_watchdog_report_refs(session, plan, workspace_path)
     prior_audit_refs = _collect_audit_report_refs(session, plan)
@@ -1625,6 +1896,7 @@ def _plan_evidence(entry):
         "ticket_refs": ticket_refs,
         "commit_refs": commit_refs,
         "meta_repair_refs": cross_refs.get("meta_repair_refs") or [],
+        "meta_repair_summary": meta_repair_summary,
         "attempt_refs": cross_refs.get("attempt_refs") or [],
         "escalation_refs": cross_refs.get("escalation_refs") or [],
         "source_refs": {
@@ -1643,6 +1915,7 @@ def _plan_evidence(entry):
                 if problem_projection.get("problem_id")
                 else ""
             ),
+            "meta_run_log_paths": [item.get("path") for item in (meta_repair_summary.get("meta_run_refs") or []) if item.get("path")],
         },
     }
 
@@ -1706,6 +1979,14 @@ for entry in plans:
         corroboration.append(f"repair data has {repair_summary.get('iteration_count')} repair iterations")
     if repeated_failures:
         corroboration.append(f"repair data repeats same failure signature {repeated_failures[0].get('count')}x")
+    meta_summary = ev.get("meta_repair_summary") or {}
+    if meta_summary.get("missing_meta_run_evidence"):
+        reasons.append(f"meta-repair trigger {meta_summary.get('trigger')} has no meta record or run log")
+    if meta_summary.get("failed_meta_run_evidence"):
+        reasons.append(
+            f"meta-repair trigger {meta_summary.get('trigger')} has only failed launch/no-output evidence "
+            f"(bad_records={meta_summary.get('failed_meta_record_count')} bad_run_logs={meta_summary.get('failed_meta_run_count')})"
+        )
     unresolved_actions = (ev.get("user_action_context") or {}).get("unresolved_user_actions") or []
     if (run_kind == "plan" or chain_last_state == "awaiting_human") and unresolved_actions:
         ids = ",".join(str(item.get("id")) for item in unresolved_actions[:5])
@@ -1951,6 +2232,17 @@ Evaluate these questions in order:
   delegated subagents, wrote a meta record, committed/pushed when allowed, and
   retriggered ordinary repair. If any of those did not happen, classify
   META_REPAIR_FAILURE and fix the meta-repairer/watchdog dispatch path first.
+- Treat meta-repair artifacts as negative evidence when they contain only
+  launch/trust/no-output failures such as "Not inside a trusted directory",
+  "--skip-git-repo-check was not specified", "Codex meta-repair orchestrator
+  returned no output", "codex CLI missing", or no `FIXED`/`ESCALATE`/`NO_FIX`
+  verdict. The existence of a meta record or run log is not success; it must
+  prove a real verdict, subagent/deep diagnosis, and ordinary-repair retrigger.
+- If watchdog dispatched meta-repair while the target process was still alive,
+  compare the watchdog trigger, the meta-loop persisted trigger, repair-data
+  outcome timestamps, chain state advancement, and active-step heartbeat. Any
+  mismatch or stale repair-data trigger is pipeline friction, even if the user
+  chain is still progressing.
 - When META_REPAIR_FAILURE is present, deploy Codex/DeepSeek/Hermes subagents
   through the subagent-launcher skill for independent log review, wrapper/source
   tracing, and a bounded fix proposal. Pass each subagent the concrete paths
@@ -1958,6 +2250,10 @@ Evaluate these questions in order:
   watchdog/audit report path. Synthesize their findings, patch Arnold repair
   code, commit/push when enabled, then relaunch arnold-meta-repair-loop for the same session
   so it can relaunch ordinary repair.
+- Trust the subagents' judgment on the repair implementation. Give them the
+  evidence, constraints, and desired invariant, then let them choose the patch.
+  Do not over-prescribe the implementation or downgrade to report-only when
+  commit/push is enabled.
 - The desired outcome is that the next watchdog/auditor cycle can repair the
   class of failures automatically. Do not patch the running workspace merely to
   make this one session green when the repairer is the broken component.
@@ -2417,12 +2713,20 @@ for f in findings:
     source_refs = f.get("source_refs") or {}
     if source_refs:
         bits = []
-        for key in ("audit_report_paths", "watchdog_report_paths", "persistent_finding_paths", "ticket_paths", "meta_record_paths"):
+        for key in ("audit_report_paths", "watchdog_report_paths", "persistent_finding_paths", "ticket_paths", "meta_record_paths", "meta_run_log_paths"):
             value = source_refs.get(key)
             if isinstance(value, list) and value:
                 bits.append(f"{key}={', '.join(str(item) for item in value[:2])}")
         if bits:
             lines.append(f"- source refs: {'; '.join(bits)}")
+    meta_summary = f.get("meta_repair_summary") or {}
+    if meta_summary:
+        lines.append(
+            f"- meta-repair: trigger `{meta_summary.get('trigger')}` · "
+            f"should_dispatch `{meta_summary.get('should_dispatch')}` · "
+            f"records `{meta_summary.get('meta_record_count')}` · "
+            f"run_logs `{meta_summary.get('meta_run_log_count')}`"
+        )
     if f.get("latest_failure_message"):
         lines.append(f"- latest_failure: {f.get('latest_failure_kind')} — {f.get('latest_failure_message')}")
     stale = f.get("stale_state_evidence") or {}

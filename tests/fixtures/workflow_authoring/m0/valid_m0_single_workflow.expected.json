@@ -1,0 +1,15 @@
+{
+  "grammar_version": "arnold.workflow.authoring.v2",
+  "source_path": "tests/fixtures/workflow_authoring/m0/valid_m0_single_workflow.py",
+  "outcome": "valid",
+  "group": "m0",
+  "expected_lowering": {
+    "workflow_id": "m0-single",
+    "nodes": [
+      "plan",
+      "execute"
+    ],
+    "subflows": {}
+  },
+  "expected_diagnostics": []
+}

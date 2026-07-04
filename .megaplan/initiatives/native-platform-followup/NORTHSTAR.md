@@ -44,6 +44,16 @@ audit lookup, and reconcile-on-resume. If platform machinery requires hiding
 workflow semantics back inside product handlers, that is a regression against
 the report and must fail the epic's conformance gate.
 
+Platform work must also preserve the native-Python authoring contract delivered
+by the composition epic. The canonical Megaplan workflow and its subworkflows
+must remain ordinary Python orchestration: branches, loops, function calls,
+subworkflow calls, typed outcomes, and declared policies. Platform durability,
+brokerage, manifests, reconcile hooks, worker leases, and event streams are
+consumers of that source; they may not replace it with a Python-shaped graph
+wrapper, generic component registry, route table, or handler-dispatch skeleton.
+The canonical authoring source remains `workflow.pypeline`; any `workflow.py`
+compatibility shim remains non-semantic after platform hardening.
+
 ## Done Means
 
 - Production-covered side effects are idempotent, auditable, and reconciled on
@@ -65,6 +75,10 @@ the report and must fail the epic's conformance gate.
 - The production conformance scenario includes a Megaplan-native-representation
   alignment check proving that platform hardening did not collapse report-level
   workflow structure back into opaque handlers or runtime side effects.
+- The production conformance scenario reruns the native-Python anti-wrapper
+  check proving that platform hardening did not turn canonical Megaplan back
+  into component calls, route tables, handler refs, generic stage dispatch, or
+  manifest/node builders as the author-facing control-flow skeleton.
 - The platform conformance pass reruns the handler-purity inventory and
   structural conformance checks from
   `docs/arnold/megaplan-native-representation-alignment-plan.md`.

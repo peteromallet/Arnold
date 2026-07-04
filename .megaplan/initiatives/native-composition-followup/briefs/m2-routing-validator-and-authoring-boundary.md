@@ -19,8 +19,10 @@ before general nesting, tree traces, or composite resume depend on it.
 - `arnold/pipeline/native/decorators.py`
   Surface enough metadata for the validator to distinguish step bodies from
   workflow routing bodies.
-- `arnold_pipelines/megaplan/workflows/workflow.py`
+- `arnold_pipelines/megaplan/workflows/workflow.pypeline`
   Ensure the compositional Megaplan workflow validates under the new rules.
+  If `workflow.py` remains as a compatibility shim, validate that it delegates
+  to or re-exports the `.pypeline` source without adding product routing.
 - `arnold/pipelines/_authoring.py`
   Surface validator diagnostics in authoring helpers.
 - `tests/arnold/pipeline/native/`
@@ -46,8 +48,8 @@ before general nesting, tree traces, or composite resume depend on it.
   `run_parallel_*`, override action dispatch, or equivalent implicit state
   mutation.
 - Generic Arnold coupling and semantic-vocabulary scans run against the current
-  canonical source and fail if neutral native modules import Megaplan product
-  semantics.
+  canonical `.pypeline` source and fail if neutral native modules import
+  Megaplan product semantics.
 
 ## Native Representation Alignment
 
@@ -56,7 +58,7 @@ before general nesting, tree traces, or composite resume depend on it.
 - Proof artifacts: routing validator tests, line-specific diagnostics, replay-consistency fixture, Megaplan validator pass, generic-coupling/semantic-vocabulary scans, and source-invariant scans for retained handlers.
 - False-pass guard: a readable workflow that routes through hidden state mutation, nondeterministic calls, or handler-owned `next_step` changes must fail validation or conformance.
 - Deferrals: static tree snapshots and path resume proofs remain M4/M5; production event replay and durability remain platform M4/M6.
-- Canonical source paths/imports: validator wiring must run on shipped native workflows, including canonical Megaplan, not only on examples.
+- Canonical source paths/imports: validator wiring must run on shipped native workflows, including canonical Megaplan's `workflow.pypeline`, not only on examples. Any `workflow.py` compatibility shim must be validated as non-semantic.
 
 ## Risks And Blockers
 

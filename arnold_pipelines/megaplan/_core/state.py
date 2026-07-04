@@ -264,6 +264,60 @@ def _reconcile_satisfied_user_action_gate(plan_dir: Path, state: dict[str, Any])
     return write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_transition)
 
 
+def _approved_review_outcome_is_done(plan_dir: Path) -> bool:
+    review_path = plan_dir / "review.json"
+    if not review_path.exists():
+        return False
+    try:
+        review = read_json(review_path)
+    except Exception:
+        return False
+    if not isinstance(review, dict):
+        return False
+    outcome = review.get("outcome")
+    if not isinstance(outcome, dict):
+        return False
+    result = outcome.get("result")
+    if result not in {"success", "force_proceeded"}:
+        return False
+    if outcome.get("state") != "done":
+        return False
+    verdict = review.get("review_verdict")
+    return verdict in {"approved", "needs_rework"}
+
+
+def _reconcile_completed_review(plan_dir: Path, state: dict[str, Any]) -> dict[str, Any]:
+    """Move stale executed state to done when review.json already finalized the run."""
+
+    if state.get("current_state") != "executed":
+        return state
+    if not _approved_review_outcome_is_done(plan_dir):
+        return state
+
+    def _transition(current: dict[str, Any]) -> bool:
+        if current.get("current_state") != "executed":
+            return False
+        if not _approved_review_outcome_is_done(plan_dir):
+            return False
+        current["current_state"] = "done"
+        current["latest_failure"] = None
+        current.pop("active_step", None)
+        current.pop("resume_cursor", None)
+        current.setdefault("meta", {})
+        if isinstance(current["meta"], dict):
+            current["meta"].setdefault("state_reconciliations", []).append(
+                {
+                    "kind": "completed_review",
+                    "from_state": state.get("current_state"),
+                    "to_state": "done",
+                    "timestamp": now_utc(),
+                }
+            )
+        return True
+
+    return write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_transition)
+
+
 def load_plan_from_dir(plan_dir: Path) -> tuple[Path, PlanState]:
     from arnold_pipelines.megaplan._core.io import read_plan_state_cached
     state = read_plan_state_cached(plan_dir, mode="authority")
@@ -275,6 +329,7 @@ def load_plan_from_dir(plan_dir: Path) -> tuple[Path, PlanState]:
         state = write_plan_state(plan_dir, mode="legacy-migration")
     if isinstance(state, dict):
         state = _reconcile_satisfied_user_action_gate(plan_dir, state)
+        state = _reconcile_completed_review(plan_dir, state)
     _validate_persisted_phase_models(plan_dir, state)
     return plan_dir, state
 
@@ -858,19 +913,24 @@ def write_plan_state(
             elif mode == "merge-meta-list":
                 if state is None:
                     raise TypeError("state is required for merge-meta-list mode")
-                next_state = dict(state)
+                # Meta-list appends are often issued by short-lived override
+                # commands while another override or phase transition is also
+                # saving state. Preserve the current on-disk state as authority
+                # for non-meta fields so a stale add-note snapshot cannot roll
+                # back a just-applied transition such as resume-clarify.
+                next_state = dict(existing) if state_path.exists() else dict(state)
                 disk_meta = existing.get("meta") if isinstance(existing.get("meta"), dict) else {}
-                meta = next_state.setdefault("meta", {})
-                if not isinstance(meta, dict):
-                    meta = {}
-                    next_state["meta"] = meta
+                memory_meta = state.get("meta") if isinstance(state.get("meta"), dict) else {}
+                base_meta = next_state.get("meta") if isinstance(next_state.get("meta"), dict) else {}
+                meta = dict(base_meta)
+                next_state["meta"] = meta
                 for field in (merge_fields or _DEFAULT_MERGE_FIELDS):
                     key_func = _FIELD_KEY_FUNCS.get(field)
                     if key_func is None:
                         continue
                     meta[field] = _merge_meta_lists(
                         disk_meta.get(field, []),
-                        meta.get(field, []),
+                        memory_meta.get(field, []),
                         key_func=key_func,
                     )
             elif mode == "legacy-migration":

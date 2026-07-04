@@ -22,7 +22,7 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
     PhaseResult,
     atomic_write_phase_result,
 )
-from arnold_pipelines.megaplan.planning.state import STATE_BLOCKED
+from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_HUMAN, STATE_BLOCKED
 from arnold_pipelines.megaplan.quality_resolutions import build_quality_resolution_event
 from arnold_pipelines.megaplan.types import CliError
 from tests.conftest import load_state
@@ -246,6 +246,66 @@ def test_status_projects_execute_for_stale_recover_blocked_failure(
     assert response["state"] == STATE_BLOCKED
     assert response["next_step"] == "execute"
     assert response["valid_next"] == ["execute"]
+
+
+def test_status_prefers_resume_clarify_for_blocked_prep_clarification(
+    local_plan_fixture: LocalPlanFixture,
+) -> None:
+    state = load_state(local_plan_fixture.plan_dir)
+    state["current_state"] = STATE_BLOCKED
+    state["resume_cursor"] = {
+        "phase": "execute",
+        "retry_strategy": "fresh_session",
+    }
+    state["latest_failure"] = {
+        "kind": "blocked_recovery_not_resolved",
+        "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal",
+        "phase": "recover-blocked",
+        "state": STATE_BLOCKED,
+    }
+    state["clarification"] = {
+        "source": "prep",
+        "intent_summary": "prep surfaced 1 blocking ambiguity",
+        "questions": ["Question 1"],
+    }
+    write_plan_state(local_plan_fixture.plan_dir, mode="replace", state=state)
+
+    response = handle_status(
+        local_plan_fixture.root,
+        argparse.Namespace(plan=local_plan_fixture.plan_name, pending_human=False),
+    )
+
+    assert response["state"] == STATE_BLOCKED
+    assert response["next_step"] == "resume-clarify"
+    assert response["valid_next"] == ["resume-clarify"]
+
+
+def test_resume_clarify_allows_blocked_state_with_prep_clarification(
+    local_plan_fixture: LocalPlanFixture,
+) -> None:
+    state = load_state(local_plan_fixture.plan_dir)
+    state["current_state"] = STATE_BLOCKED
+    state["clarification"] = {
+        "source": "prep",
+        "intent_summary": "prep surfaced 1 blocking ambiguity",
+        "questions": ["Question 1"],
+    }
+    state.setdefault("meta", {})["notes"] = [
+        {"source": "user", "note": "Answer recorded."}
+    ]
+    write_plan_state(local_plan_fixture.plan_dir, mode="replace", state=state)
+
+    response = override_handler._override_resume_clarify(
+        local_plan_fixture.root,
+        local_plan_fixture.plan_dir,
+        load_state(local_plan_fixture.plan_dir),
+        argparse.Namespace(plan=local_plan_fixture.plan_name),
+    )
+
+    assert response["success"] is True
+    next_state = load_state(local_plan_fixture.plan_dir)
+    assert next_state["current_state"] == "prepped"
+    assert "clarification" not in next_state
 
 
 def test_recover_blocked_allows_fixed_quality_rerun(

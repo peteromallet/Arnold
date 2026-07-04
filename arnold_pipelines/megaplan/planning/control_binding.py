@@ -249,6 +249,7 @@ def _blocked_phase_rerun_target(
     recovered_state: str,
     source: str | None,
 ) -> ControlTargetRef | None:
+    blocked_rerunnable_phases = {"execute"}
     latest_failure = state.get("latest_failure")
     if not isinstance(latest_failure, Mapping):
         return None
@@ -266,6 +267,8 @@ def _blocked_phase_rerun_target(
         and not rerun_from_stale_recovery_helper
         and not stale_recover_blocked_failure
     ):
+        return None
+    if phase not in blocked_rerunnable_phases:
         return None
     return _workflow_step_target(
         phase,
@@ -290,6 +293,14 @@ def _awaiting_human_target(state: Mapping[str, object]) -> ControlTargetRef:
         target_state=target_state,
         source="awaiting_human",
         operator_action=step,
+    )
+
+
+def _has_prep_clarification(state: Mapping[str, object]) -> bool:
+    clarification = state.get("clarification")
+    return (
+        isinstance(clarification, Mapping)
+        and clarification.get("source") == "prep"
     )
 
 
@@ -806,7 +817,9 @@ class PlanningControlBinding:
             return ()
 
         current_state = state["current_state"]
-        if current_state == STATE_AWAITING_HUMAN:
+        if current_state == STATE_AWAITING_HUMAN or (
+            current_state == STATE_BLOCKED and _has_prep_clarification(state)
+        ):
             return (_awaiting_human_target(state),)
 
         phase, source = _recovery_phase(state)

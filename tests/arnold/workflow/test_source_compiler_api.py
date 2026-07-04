@@ -23,7 +23,13 @@ PUBLIC_SOURCE_APIS = (
     "compile_workflow_file",
 )
 FIXTURE_DIR = Path("tests/fixtures/workflow_authoring")
+M0_FIXTURE_DIR = Path("tests/fixtures/workflow_authoring/m0")
 M3_FIXTURE_DIR = Path("tests/fixtures/workflow_authoring/m3")
+M0_VALID_FIXTURES = (
+    "valid_m0_single_workflow",
+    "valid_m0_nested_child_workflow",
+    "valid_m0_repeated_call_sites",
+)
 M3_VALID_FIXTURES = (
     "valid_m3_canonical_megaplan_topology",
     "valid_m3_branch_routes",
@@ -1055,6 +1061,43 @@ def test_source_compiler_m3_negative_sidecars_pin_source_diagnostics(
 
     assert sidecar["outcome"] == "invalid"
     assert _diagnostic_payloads(result) == sidecar["expected_diagnostics"]
+
+
+def test_source_compiler_m0_expectation_fixture_set_is_complete() -> None:
+    source_cases = {path.stem for path in M0_FIXTURE_DIR.glob("*.py")}
+    sidecar_cases = {
+        path.name.removesuffix(".expected.json")
+        for path in M0_FIXTURE_DIR.glob("*.expected.json")
+    }
+
+    assert source_cases == set(M0_VALID_FIXTURES)
+    assert sidecar_cases == source_cases
+
+
+@pytest.mark.parametrize("fixture_name", M0_VALID_FIXTURES)
+def test_source_compiler_m0_valid_expectation_fixtures_lower_to_pinned_contract(
+    fixture_name: str,
+) -> None:
+    sidecar = _load_m0_sidecar(fixture_name)
+    source_path = M0_FIXTURE_DIR / f"{fixture_name}.py"
+    expected = sidecar["expected_lowering"]
+
+    pipeline = workflow.lower_workflow_file(source_path)
+
+    assert sidecar["outcome"] == "valid"
+    assert pipeline.id == expected["workflow_id"]
+    assert [step.id for step in pipeline.steps] == expected["nodes"]
+
+    expected_subflows = expected.get("subflows", {})
+    if expected_subflows:
+        nodes = {step.id: step for step in pipeline.steps}
+        for node_id, subflow_contract in expected_subflows.items():
+            assert nodes[node_id].kind == "subpipeline"
+            assert nodes[node_id].subpipeline is not None
+            _assert_contract(
+                _compact_contract(nodes[node_id].subpipeline),
+                subflow_contract,
+            )
 
 
 def test_source_compiler_m3_regression_keeps_existing_direct_and_function_linear_contracts() -> None:
@@ -2712,6 +2755,11 @@ def _diagnostic_payloads(result: workflow.CheckWorkflowSourceResult) -> list[dic
 
 def _load_m3_sidecar(fixture_name: str) -> dict[str, object]:
     with (M3_FIXTURE_DIR / f"{fixture_name}.expected.json").open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _load_m0_sidecar(fixture_name: str) -> dict[str, object]:
+    with (M0_FIXTURE_DIR / f"{fixture_name}.expected.json").open(encoding="utf-8") as handle:
         return json.load(handle)
 
 

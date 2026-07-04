@@ -200,7 +200,11 @@ def load_redacted_evidence(
                 partial_liveness_history = [
                     redact_payload(e, secret_names=list(secret_names))
                     for e in all_events
-                    if isinstance(e, dict) and e.get("outcome") == PARTIAL_LIVENESS
+                    if (
+                        isinstance(e, dict)
+                        and e.get("outcome") == PARTIAL_LIVENESS
+                        and str(e.get("session") or "").strip() == session
+                    )
                 ][-max_attempts:]
             except Exception:
                 pass
@@ -219,6 +223,155 @@ _MIN_RECURRING_ATTEMPTS = 3
 
 # Minimum number of partial-liveness ticks before we trigger.
 _MIN_PARTIAL_LIVENESS_TICKS = 2
+
+# Meta-repair prompts must stay well under Codex's input limit even when
+# repair-data snapshots contain large embedded logs or prompts.
+_PROMPT_EVIDENCE_CHAR_BUDGET = 180_000
+_PROMPT_MAX_STRING_CHARS = 4_000
+_PROMPT_MAX_LIST_ITEMS = 12
+_PROMPT_MAX_DICT_ITEMS = 64
+_PROMPT_MAX_DEPTH = 6
+_PROMPT_TOTAL_CHAR_BUDGET = 900_000
+
+
+def _summarize_attempt_record(attempt: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a compact, diagnostic-only attempt summary for prompts."""
+    summary: dict[str, Any] = {}
+    for key in (
+        "attempt_id",
+        "recorded_at",
+        "session",
+        "plan_name",
+        "run_kind",
+        "health",
+        "outcome",
+        "failure_kind",
+        "failure_classification",
+        "dev_classification",
+        "kimi_classification",
+        "mechanical_launch",
+        "mechanical_detail",
+        "current_signature",
+    ):
+        value = attempt.get(key)
+        if value not in (None, "", [], {}):
+            summary[key] = value
+
+    advancement = attempt.get("advancement_snapshot")
+    if isinstance(advancement, Mapping):
+        advancement_summary = {
+            key: advancement.get(key)
+            for key in (
+                "completed_count",
+                "current_milestone_index",
+                "current_state",
+                "milestone_or_plan",
+                "phase",
+                "pr_number",
+                "run_kind",
+            )
+            if advancement.get(key) not in (None, "", [], {})
+        }
+        if advancement_summary:
+            summary["advancement_snapshot"] = advancement_summary
+
+    chain_state = attempt.get("chain_state_summary")
+    if isinstance(chain_state, Mapping):
+        chain_summary = {
+            key: chain_state.get(key)
+            for key in (
+                "completed_count",
+                "current_milestone_index",
+                "current_plan_name",
+                "current_state",
+                "last_state",
+                "pr_number",
+                "pr_state",
+            )
+            if chain_state.get(key) not in (None, "", [], {})
+        }
+        if chain_summary:
+            summary["chain_state_summary"] = chain_summary
+
+    return summary
+
+
+def _prepare_emergency_prompt_json(
+    payload: Mapping[str, Any], *, secret_names: Sequence[str]
+) -> str:
+    """Serialize a minimal prompt-safe evidence summary."""
+    import json as _json
+
+    redacted = redact_payload(payload, secret_names=list(secret_names))
+    repair_data = redacted.get("repair_data", {})
+    if not isinstance(repair_data, Mapping):
+        repair_data = {}
+    recent_attempts = redacted.get("recent_attempts", [])
+    if not isinstance(recent_attempts, list):
+        recent_attempts = []
+    partial_liveness_history = redacted.get("partial_liveness_history", [])
+    if not isinstance(partial_liveness_history, list):
+        partial_liveness_history = []
+
+    repair_attempts = repair_data.get("attempts", [])
+    if not isinstance(repair_attempts, list):
+        repair_attempts = []
+
+    emergency = {
+        "prompt_truncated": True,
+        "available_top_level_keys": sorted(str(key) for key in redacted.keys()),
+        "session": redacted.get("session", ""),
+        "repair_data_path": redacted.get("repair_data_path", ""),
+        "attempt_dir": redacted.get("attempt_dir", ""),
+        "index_path": redacted.get("index_path", ""),
+        "repair_data_summary": {
+            key: repair_data.get(key)
+            for key in (
+                "session",
+                "run_kind",
+                "plan_name",
+                "outcome",
+                "repair_run_count",
+                "attempt_counter",
+                "current_attempt_id",
+                "current_signature",
+                "current_recurrence",
+                "verification",
+            )
+            if repair_data.get(key) not in (None, "", [], {})
+        },
+        "repair_attempt_count": len(repair_attempts),
+        "repair_attempt_summaries": [
+            _summarize_attempt_record(attempt)
+            for attempt in repair_attempts[-3:]
+            if isinstance(attempt, Mapping)
+        ],
+        "recent_attempt_count": len(recent_attempts),
+        "recent_attempt_summaries": [
+            _summarize_attempt_record(attempt)
+            for attempt in recent_attempts[-3:]
+            if isinstance(attempt, Mapping)
+        ],
+        "partial_liveness_count": len(partial_liveness_history),
+        "partial_liveness_tail": [
+            {
+                key: item.get(key)
+                for key in ("recorded_at", "health", "outcome", "plan_name", "run_kind")
+                if item.get(key) not in (None, "", [], {})
+            }
+            for item in partial_liveness_history[-3:]
+            if isinstance(item, Mapping)
+        ],
+    }
+
+    compact = _compact_prompt_value(
+        emergency,
+        max_depth=4,
+        max_string_chars=400,
+        max_list_items=6,
+        max_dict_items=24,
+    )
+    return _json.dumps(compact, indent=2, default=str, ensure_ascii=False)
 
 
 def classify_repair_system_failure(
@@ -435,6 +588,135 @@ def _is_persistent_recurring_retry(
     return True
 
 
+def _truncate_prompt_text(text: str, *, max_chars: int) -> str:
+    """Clip oversized prompt text while preserving both ends."""
+    if len(text) <= max_chars:
+        return text
+    marker = f"\n... [truncated {len(text) - max_chars} chars] ...\n"
+    head_budget = max(32, (max_chars - len(marker)) // 2)
+    tail_budget = max(32, max_chars - len(marker) - head_budget)
+    return f"{text[:head_budget]}{marker}{text[-tail_budget:]}"
+
+
+def _compact_prompt_value(
+    value: Any,
+    *,
+    max_depth: int,
+    max_string_chars: int,
+    max_list_items: int,
+    max_dict_items: int,
+) -> Any:
+    """Reduce oversized JSON-like evidence to a bounded prompt view."""
+    if max_depth <= 0:
+        if isinstance(value, str):
+            return _truncate_prompt_text(value, max_chars=min(max_string_chars, 256))
+        if isinstance(value, Mapping):
+            return {"__truncated__": "mapping"}
+        if isinstance(value, (list, tuple)):
+            return ["__truncated_sequence__"]
+        return value
+
+    if isinstance(value, str):
+        return _truncate_prompt_text(value, max_chars=max_string_chars)
+
+    if isinstance(value, Mapping):
+        items = list(value.items())
+        compact: dict[str, Any] = {}
+        for key, item in items[:max_dict_items]:
+            compact[str(key)] = _compact_prompt_value(
+                item,
+                max_depth=max_depth - 1,
+                max_string_chars=max_string_chars,
+                max_list_items=max_list_items,
+                max_dict_items=max_dict_items,
+            )
+        if len(items) > max_dict_items:
+            compact["__truncated_keys__"] = len(items) - max_dict_items
+        return compact
+
+    if isinstance(value, (list, tuple)):
+        seq = list(value)
+        if len(seq) <= max_list_items:
+            return [
+                _compact_prompt_value(
+                    item,
+                    max_depth=max_depth - 1,
+                    max_string_chars=max_string_chars,
+                    max_list_items=max_list_items,
+                    max_dict_items=max_dict_items,
+                )
+                for item in seq
+            ]
+        head_count = max(1, max_list_items // 2)
+        tail_count = max(1, max_list_items - head_count)
+        head = seq[:head_count]
+        tail = seq[-tail_count:]
+        compact_list = [
+            _compact_prompt_value(
+                item,
+                max_depth=max_depth - 1,
+                max_string_chars=max_string_chars,
+                max_list_items=max_list_items,
+                max_dict_items=max_dict_items,
+            )
+            for item in head
+        ]
+        compact_list.append({"__truncated_items__": len(seq) - len(head) - len(tail)})
+        compact_list.extend(
+            _compact_prompt_value(
+                item,
+                max_depth=max_depth - 1,
+                max_string_chars=max_string_chars,
+                max_list_items=max_list_items,
+                max_dict_items=max_dict_items,
+            )
+            for item in tail
+        )
+        return compact_list
+
+    return value
+
+
+def _prepare_prompt_json(payload: Mapping[str, Any], *, secret_names: Sequence[str]) -> str:
+    """Serialize evidence for prompts within a fixed character budget."""
+    import json as _json
+
+    redacted = redact_payload(payload, secret_names=list(secret_names))
+    serialized = _json.dumps(redacted, indent=2, default=str, ensure_ascii=False)
+    if len(serialized) <= _PROMPT_EVIDENCE_CHAR_BUDGET:
+        return serialized
+
+    compact = _compact_prompt_value(
+        redacted,
+        max_depth=_PROMPT_MAX_DEPTH,
+        max_string_chars=_PROMPT_MAX_STRING_CHARS,
+        max_list_items=_PROMPT_MAX_LIST_ITEMS,
+        max_dict_items=_PROMPT_MAX_DICT_ITEMS,
+    )
+    serialized = _json.dumps(compact, indent=2, default=str, ensure_ascii=False)
+    if len(serialized) <= _PROMPT_EVIDENCE_CHAR_BUDGET:
+        return serialized
+
+    emergency = {
+        "prompt_truncated": True,
+        "available_top_level_keys": sorted(str(key) for key in redacted.keys()),
+        "session": redacted.get("session", ""),
+        "repair_data_path": redacted.get("repair_data_path", ""),
+        "attempt_dir": redacted.get("attempt_dir", ""),
+        "index_path": redacted.get("index_path", ""),
+        "repair_data": _compact_prompt_value(
+            redacted.get("repair_data", {}),
+            max_depth=4,
+            max_string_chars=800,
+            max_list_items=6,
+            max_dict_items=24,
+        ),
+        "recent_attempt_count": len(redacted.get("recent_attempts", []) or []),
+        "partial_liveness_count": len(redacted.get("partial_liveness_history", []) or []),
+    }
+    return _json.dumps(emergency, indent=2, default=str, ensure_ascii=False)
+
+
 # ---------------------------------------------------------------------------
 # Prompt assembly
 # ---------------------------------------------------------------------------
@@ -446,6 +728,7 @@ def build_meta_repair_prompt(
     repair_data_dir: str | Path | None = None,
     extra_context: Mapping[str, Any] | None = None,
     secret_names: Sequence[str] = (),
+    force_emergency: bool = False,
 ) -> str:
     """Build a redacted meta-repair prompt for Codex/DeepSeek diagnosis.
 
@@ -465,72 +748,104 @@ def build_meta_repair_prompt(
     Returns:
         A redacted prompt string suitable for sending to Codex/DeepSeek.
     """
-    import json as _json
+    def _assemble_prompt(
+        evidence_json: str | None,
+        context_json: str | None,
+        *,
+        emergency_mode: bool,
+    ) -> str:
+        parts: list[str] = []
 
-    parts: list[str] = []
+        parts.append("## Meta-Repair Diagnosis Prompt\n")
 
-    # Header
-    parts.append("## Meta-Repair Diagnosis Prompt\n")
+        trigger_label = classification.trigger_label
+        if classification.should_dispatch:
+            parts.append(f"**Trigger:** `{trigger_label}`\n")
+        else:
+            parts.append(f"**Status:** Non-trigger (`{trigger_label}`)\n")
 
-    trigger_label = classification.trigger_label
-    if classification.should_dispatch:
-        parts.append(f"**Trigger:** `{trigger_label}`\n")
-    else:
-        parts.append(f"**Status:** Non-trigger (`{trigger_label}`)\n")
-
-    # Session and context
-    parts.append(f"**Session:** `{classification.session}`\n")
-    if repair_data_dir:
-        parts.append(f"**Repair Data Directory:** `{repair_data_dir}`\n")
-    parts.append("\n")
-
-    # Rationale
-    if classification.rationale:
-        parts.append("### Rationale\n")
-        for line in classification.rationale:
-            parts.append(f"- {redact_text(str(line), secret_names=list(secret_names))}\n")
+        parts.append(f"**Session:** `{classification.session}`\n")
+        if repair_data_dir:
+            parts.append(f"**Repair Data Directory:** `{repair_data_dir}`\n")
         parts.append("\n")
 
-    # Evidence
+        if classification.rationale:
+            parts.append("### Rationale\n")
+            for line in classification.rationale:
+                parts.append(
+                    f"- {redact_text(str(line), secret_names=list(secret_names))}\n"
+                )
+            parts.append("\n")
+
+        if evidence_json is not None:
+            parts.append("### Redacted Evidence\n")
+            if emergency_mode:
+                parts.append(
+                    "_Evidence was compacted to stay under Codex input limits._\n\n"
+                )
+            parts.append("```json\n")
+            parts.append(evidence_json)
+            parts.append("\n```\n\n")
+
+        if context_json is not None:
+            parts.append("### Additional Context\n")
+            parts.append("```json\n")
+            parts.append(context_json)
+            parts.append("\n```\n\n")
+
+        parts.append("### Instructions\n")
+        parts.append(
+            "Diagnose the root cause of the repair-system failure described above. "
+            "Focus on:\n"
+            "1. What part of the repair system is broken?\n"
+            "2. What evidence supports this diagnosis?\n"
+            "3. What concrete change(s) would fix the system?\n"
+            "4. What tests should verify the fix?\n\n"
+            "Do NOT expose secrets, tokens, or credentials. "
+            "All sensitive values in the evidence have been redacted.\n"
+        )
+        return "".join(parts)
+
+    evidence_json: str | None = None
     if classification.evidence:
-        parts.append("### Redacted Evidence\n")
-        evidence_redacted = redact_payload(
-            classification.evidence,
-            secret_names=list(secret_names),
-        )
-        parts.append("```json\n")
-        parts.append(
-            _json.dumps(evidence_redacted, indent=2, default=str, ensure_ascii=False)
-        )
-        parts.append("\n```\n\n")
-
-    # Extra context
-    if extra_context:
-        parts.append("### Additional Context\n")
-        ctx_redacted = redact_payload(
-            dict(extra_context),
-            secret_names=list(secret_names),
-        )
-        parts.append("```json\n")
-        parts.append(
-            _json.dumps(ctx_redacted, indent=2, default=str, ensure_ascii=False)
-        )
-        parts.append("\n```\n\n")
-
-    # Instructions
-    parts.append("### Instructions\n")
-    parts.append(
-        "Diagnose the root cause of the repair-system failure described above. "
-        "Focus on:\n"
-        "1. What part of the repair system is broken?\n"
-        "2. What evidence supports this diagnosis?\n"
-        "3. What concrete change(s) would fix the system?\n"
-        "4. What tests should verify the fix?\n\n"
-        "Do NOT expose secrets, tokens, or credentials. "
-        "All sensitive values in the evidence have been redacted.\n"
+        if force_emergency:
+            evidence_json = _prepare_emergency_prompt_json(
+                classification.evidence,
+                secret_names=secret_names,
+            )
+        else:
+            evidence_json = _prepare_prompt_json(
+                classification.evidence,
+                secret_names=secret_names,
+            )
+    context_json = (
+        _prepare_prompt_json(dict(extra_context), secret_names=secret_names)
+        if extra_context
+        else None
     )
 
-    return "".join(parts)
+    prompt = _assemble_prompt(
+        evidence_json,
+        context_json,
+        emergency_mode=force_emergency,
+    )
+    if len(prompt) <= _PROMPT_TOTAL_CHAR_BUDGET:
+        return prompt
+
+    prompt = _assemble_prompt(
+        _prepare_emergency_prompt_json(
+            classification.evidence,
+            secret_names=secret_names,
+        )
+        if classification.evidence
+        else None,
+        context_json,
+        emergency_mode=True,
+    )
+    if len(prompt) <= _PROMPT_TOTAL_CHAR_BUDGET:
+        return prompt
+
+    return _truncate_prompt_text(prompt, max_chars=_PROMPT_TOTAL_CHAR_BUDGET)
 
 
 # ---------------------------------------------------------------------------

@@ -518,6 +518,41 @@ def test_finalize_baseline_selection_keeps_full_opt_out_with_task_files(
     assert result == resolved
 
 
+def test_execution_baseline_refreshes_when_finalize_runs_on_new_head(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from arnold_pipelines.megaplan.handlers import finalize
+
+    plan_dir = tmp_path / "repo" / ".megaplan" / "plans" / "p"
+    plan_dir.mkdir(parents=True)
+    state = _make_state(plan_dir)
+    state["meta"]["execution_baseline"] = {
+        "captured_at": "2026-01-01T00:00:00Z",
+        "head": "old-head",
+        "paths": {"tracked.txt": "abc"},
+    }
+
+    monkeypatch.setattr(finalize, "_git_head", lambda _project_dir: "new-head")
+    monkeypatch.setattr(
+        finalize,
+        "capture_uncommitted_baseline",
+        lambda _project_dir: {
+            "captured_at": "2026-01-02T00:00:00Z",
+            "head": "new-head",
+            "paths": {"tracked.txt": "def"},
+        },
+    )
+
+    finalize._ensure_execution_baseline(state)
+
+    assert state["meta"]["execution_baseline"] == {
+        "captured_at": "2026-01-02T00:00:00Z",
+        "head": "new-head",
+        "paths": {"tracked.txt": "def"},
+    }
+
+
 def test_graph_build_failure_keeps_name_convention_result(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

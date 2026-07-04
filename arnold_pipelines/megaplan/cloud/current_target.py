@@ -16,6 +16,7 @@ from arnold_pipelines.megaplan.cloud.session_markers import (
 )
 
 _FINGERPRINT_ALGORITHM = "sha256"
+_TERMINAL_PLAN_STATES = {"done", "aborted", "cancelled"}
 
 SessionLiveProbe = Callable[[str], bool | None]
 PidLiveProbe = Callable[[int], bool | None]
@@ -34,6 +35,10 @@ def _mtime(path: Path) -> float:
         return path.stat().st_mtime
     except OSError:
         return 0.0
+
+
+def _is_terminal_plan_state(value: Any) -> bool:
+    return _safe_text(value).lower() in _TERMINAL_PLAN_STATES
 
 
 def resolve_current_target(
@@ -144,6 +149,9 @@ def resolve_current_target(
         )
         rationale.append("needs-human sidecar references an older plan")
 
+    plan_current_state = _safe_text(plan_state.get("current_state"))
+    chain_last_state = _safe_text(chain_state.get("last_state"))
+
     if chain_current_plan and marker_plan_name and chain_current_plan != marker_plan_name:
         stale_evidence.append(
             _artifact(
@@ -154,6 +162,24 @@ def resolve_current_target(
             )
         )
         rationale.append("marker plan reference is older than chain state")
+    if (
+        run_kind == "chain"
+        and plan_name
+        and _is_terminal_plan_state(plan_current_state)
+        and chain_state_path is not None
+        and chain_state_path.exists()
+        and chain_last_state.lower() not in _TERMINAL_PLAN_STATES
+    ):
+        stale_evidence.append(
+            _artifact(
+                kind="stale_chain_state_after_terminal_plan",
+                path=chain_state_path,
+                plan_name=plan_name,
+                plan_state=plan_current_state,
+                chain_last_state=chain_last_state,
+            )
+        )
+        rationale.append("terminal plan state supersedes stale chain state")
 
     live_siblings = [item for item in siblings if item["live_status"] == "alive"]
     for sibling in siblings:
@@ -180,6 +206,8 @@ def resolve_current_target(
                 "path": chosen["marker_path"],
             }
         )
+    elif plan_name and plan_state_path is not None and plan_state_path.exists() and _is_terminal_plan_state(plan_current_state):
+        authoritative_source = "plan_state"
     elif chain_current_plan and chain_state_path is not None and chain_state_path.exists():
         authoritative_source = "chain_state"
     elif plan_name and plan_state_path is not None and plan_state_path.exists():
@@ -206,8 +234,8 @@ def resolve_current_target(
             "marker_plan_name": marker_plan_name,
             "current_plan_name": plan_name,
             "chain_current_plan_name": chain_current_plan,
-            "chain_last_state": _safe_text(chain_state.get("last_state")),
-            "plan_current_state": _safe_text(plan_state.get("current_state")),
+            "chain_last_state": chain_last_state,
+            "plan_current_state": plan_current_state,
         },
         "marker": {
             "path": str(marker_path),

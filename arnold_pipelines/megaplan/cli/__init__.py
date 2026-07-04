@@ -192,6 +192,7 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--profile", default=None)
     init_parser.add_argument("--robustness", choices=ROBUSTNESS_ACCEPTED, default=None)
     init_parser.add_argument("--with-prep", action="store_true", default=False)
+    init_parser.add_argument("--prep-direction", default=None)
     init_parser.add_argument("--with-feedback", action="store_true", default=False)
     init_parser.add_argument("--no-prep-clarify", dest="prep_clarify", action="store_false", default=True)
     _add_vendor_critic_args(init_parser)
@@ -309,12 +310,43 @@ def build_parser() -> argparse.ArgumentParser:
     initiative_new = initiative_sub.add_parser("new")
     initiative_new.add_argument("slug")
     initiative_new.add_argument("--title")
-    description_group = initiative_new.add_mutually_exclusive_group(required=True)
+    description_group = initiative_new.add_mutually_exclusive_group(required=False)
     description_group.add_argument("--description")
     description_group.add_argument("--description-file")
     initiative_new.add_argument("--north-star")
     initiative_new.add_argument("--north-star-file")
     initiative_new.add_argument("--chain", action="store_true")
+    initiative_new.add_argument(
+        "--doc",
+        action="append",
+        default=[],
+        metavar="KIND=PATH",
+        help=(
+            "Copy an existing starting document into the initiative. KIND is one of "
+            "research, decisions, notes, assets, or handoff. Repeatable."
+        ),
+    )
+    initiative_new.add_argument(
+        "--milestone",
+        action="append",
+        default=[],
+        help="Add a milestone as LABEL=Title. Implies --chain.",
+    )
+    initiative_new.add_argument("--base-branch", default="main")
+    initiative_new.add_argument("--merge-policy", choices=("auto", "review", "manual"), default="auto")
+    initiative_new.add_argument("--branch-prefix")
+    initiative_new.add_argument("--profile", default="partnered-5")
+    initiative_new.add_argument("--vendor", default="codex")
+    initiative_new.add_argument("--robustness", default="full")
+    initiative_new.add_argument("--depth", default="high")
+    initiative_new.add_argument("--no-with-prep", action="store_true")
+    initiative_new.add_argument(
+        "--cloud",
+        action="store_true",
+        help="Write initiative-local cloud.yaml with required edit-before-launch placeholders.",
+    )
+    initiative_new.add_argument("--repo-url")
+    initiative_new.add_argument("--chain-session")
     initiative_new.add_argument("--force", action="store_true")
     initiative_list = initiative_sub.add_parser("list")
     initiative_list.add_argument("--limit", type=int)
@@ -1390,6 +1422,13 @@ def _brief_cli_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
     """Dispatch ``megaplan initiative ...`` subcommands."""
+    import shutil
+
+    from arnold_pipelines.megaplan.briefs import (
+        default_initiative_description,
+        scaffold_epic,
+        write_initiative_cloud_yaml,
+    )
     from arnold_pipelines.megaplan.layout import (
         ALLOWED_INITIATIVE_SUBDIRS,
         initiative_metadata,
@@ -1412,6 +1451,27 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
             )
         for name in ALLOWED_INITIATIVE_SUBDIRS:
             (initiative / name).mkdir(parents=True, exist_ok=True)
+        copied_docs: list[Path] = []
+        for raw_doc in getattr(args, "doc", []) or []:
+            kind, sep, source_raw = str(raw_doc).partition("=")
+            kind = kind.strip()
+            source_raw = source_raw.strip()
+            if not sep or not kind or not source_raw:
+                raise CliError("invalid_args", "--doc must be formatted as KIND=PATH")
+            if kind not in ALLOWED_INITIATIVE_SUBDIRS or kind == "briefs":
+                allowed = ", ".join(sorted(name for name in ALLOWED_INITIATIVE_SUBDIRS if name != "briefs"))
+                raise CliError("invalid_args", f"--doc kind must be one of: {allowed}")
+            source = Path(source_raw).expanduser()
+            if not source.is_file():
+                raise CliError("invalid_args", f"--doc source does not exist or is not a file: {source}")
+            destination = initiative / kind / source.name
+            if destination.exists() and not args.force:
+                raise CliError(
+                    "initiative_exists",
+                    f"Initiative document already exists: {destination}. Pass --force to overwrite.",
+                )
+            shutil.copyfile(source, destination)
+            copied_docs.append(destination)
         description = args.description
         if args.description_file:
             source = Path(args.description_file).expanduser()
@@ -1419,9 +1479,7 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
                 description = source.read_text(encoding="utf-8")
             except OSError as exc:
                 raise CliError("invalid_args", f"Unable to read description source {source}: {exc}") from exc
-        description = (description or "").strip()
-        if not description:
-            raise CliError("invalid_args", "initiative description must not be empty")
+        description = (description or default_initiative_description(slug)).strip()
         readme = initiative / "README.md"
         if args.force or not readme.exists():
             title = (args.title or slug.replace("-", " ").title()).strip()
@@ -1437,15 +1495,77 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
             north_star_path = initiative / "NORTHSTAR.md"
             if args.force or not north_star_path.exists():
                 north_star_path.write_text(north_star.rstrip() + "\n", encoding="utf-8")
-        if args.chain:
-            chain = initiative / "chain.yaml"
-            if args.force or not chain.exists():
-                chain.write_text("milestones: []\n", encoding="utf-8")
+        chain_path: Path | None = None
+        milestone_paths: list[Path] = []
+        milestones = list(getattr(args, "milestone", []) or [])
+        if args.chain or milestones:
+            if not milestones:
+                milestones = ["m1=TODO_MILESTONE_TITLE"]
+            try:
+                chain_path, milestone_paths = scaffold_epic(
+                    root,
+                    slug,
+                    milestones,
+                    base_branch=args.base_branch,
+                    merge_policy=args.merge_policy,
+                    branch_prefix=args.branch_prefix,
+                    profile=args.profile,
+                    vendor=args.vendor,
+                    robustness=args.robustness,
+                    depth=args.depth,
+                    with_prep=not bool(args.no_with_prep),
+                    force=bool(args.force),
+                )
+            except FileExistsError as exc:
+                existing = exc.args[0] if exc.args else exc.filename
+                raise CliError(
+                    "initiative_exists",
+                    f"Initiative artifact already exists: {existing}. Pass --force to overwrite.",
+                ) from exc
+            except ValueError as exc:
+                raise CliError("invalid_args", str(exc)) from exc
+            milestone_paths = [path for path in milestone_paths if path.parent.name == "briefs"]
+        cloud_path: Path | None = None
+        if args.cloud:
+            try:
+                cloud_path = write_initiative_cloud_yaml(
+                    root,
+                    slug,
+                    base_branch=args.base_branch,
+                    force=bool(args.force),
+                    repo_url=args.repo_url,
+                    chain_session=args.chain_session,
+                )
+            except FileExistsError as exc:
+                existing = exc.args[0] if exc.args else exc.filename
+                raise CliError(
+                    "initiative_exists",
+                    f"Initiative cloud config already exists: {existing}. Pass --force to overwrite.",
+                ) from exc
         return {
             "success": True,
             "step": "initiative",
             "action": "new",
             "initiative": initiative_metadata(root, slug),
+            "chain": str(chain_path) if chain_path else None,
+            "cloud_yaml": str(cloud_path) if cloud_path else None,
+            "milestones": [str(path) for path in milestone_paths],
+            "docs": [str(path) for path in copied_docs],
+            "next": {
+                "edit": str(initiative),
+                "preflight": (
+                    f"python -m arnold_pipelines.megaplan cloud preflight {chain_path} "
+                    f"--cloud-yaml {cloud_path}"
+                    if chain_path and cloud_path
+                    else None
+                ),
+                "launch": (
+                    f"python -m arnold_pipelines.megaplan cloud chain {chain_path} "
+                    f"--cloud-yaml {cloud_path}"
+                    if chain_path and cloud_path
+                    else None
+                ),
+            },
         }
     if action == "list":
         base = initiatives_dir(root)

@@ -45,12 +45,25 @@ ssh:
 secrets: []   # leave empty if pre-set on the box; listing would overwrite box values with local env
 ```
 
-### Recommended launch: canonical `launch-epic`
+### Recommended launch: canonical initiative + `cloud chain`
 
-Use the standardized launcher for cloud epics:
+Create one self-contained initiative first, then preflight and launch that same
+initiative:
 
 ```bash
-megaplan cloud launch-epic --cloud-yaml cloud.<chain>.yaml .megaplan/initiatives/<initiative> --fresh
+python -m arnold_pipelines.megaplan initiative new <initiative> \
+  --milestone m1="First Sprint" \
+  --doc research=path/to/strategy-or-audit.md \
+  --cloud
+
+python -m arnold_pipelines.megaplan cloud preflight \
+  .megaplan/initiatives/<initiative>/chain.yaml \
+  --cloud-yaml .megaplan/initiatives/<initiative>/cloud.yaml
+
+python -m arnold_pipelines.megaplan cloud chain \
+  .megaplan/initiatives/<initiative>/chain.yaml \
+  --cloud-yaml .megaplan/initiatives/<initiative>/cloud.yaml \
+  --fresh
 ```
 
 Durable chain specs must live at `.megaplan/initiatives/<initiative>/chain.yaml`.
@@ -58,12 +71,34 @@ Milestone briefs, North Star anchors, research notes, and supporting docs belong
 `.megaplan/initiatives/`; tickets and ideas stay under `.megaplan/tickets/` or `.megaplan/ideas/`. Runtime state
 stays under `.megaplan/plans/` and `.megaplan/epics/`.
 
-`launch-epic` is the sanctioned path. It validates the North Star, `chain.yaml`
-or the inputs needed to generate one, and every milestone brief before it
-uploads anything. It materializes the canonical layout, syncs the launching
+`initiative new --cloud` creates a cloud-shaped template, but generated
+placeholders are treated as unsafe defaults. `cloud preflight` and `cloud chain`
+fail if fields such as `TODO_REPO_URL`, `TODO_SSH_HOST`, or
+`TODO_INITIATIVE_DESCRIPTION` remain. Passing
+`--allow-template-placeholders` is the required explicit override for deliberate
+dry runs against an unedited template.
+
+Cloud chains are also treated as unattended by default. `cloud preflight` and
+`cloud chain` fail when `chain.yaml` contains human-gated policy
+(`merge_policy: review`/`manual` or `driver.auto_approve: false`) unless the
+operator passes `--allow-human-gates`. Use that override only when the chain is
+supposed to pause for human PR merges, prep clarifications, or verification
+records. For normal cloud epics, keep `merge_policy: auto` and
+`driver.auto_approve: true`.
+
+Use `--doc kind=path` during initiative creation to seed starting documents for
+specific parts of the run. Supported kinds are `research`, `decisions`, `notes`,
+`assets`, and `handoff`. The files are copied under the initiative and uploaded
+with the durable inputs; cite them from milestone briefs instead of relying on
+local `.codex/`, Downloads, or scratch files that the cloud runner cannot see.
+
+`cloud chain` is the normal launcher. It validates the North Star, `chain.yaml`,
+and every milestone brief before it uploads anything. It syncs the launching
 Arnold checkout to `editible-install`, starts tmux, writes the watchdog marker,
 and verifies that the marker's `remote_spec` resolves on the box. If that
 verification fails, the command fails instead of leaving an orphaned chain.
+`cloud launch-epic` remains a compatibility/materialization helper for older
+brief directories; prefer `initiative new` plus `cloud chain` for new work.
 
 Canonical chain layout on the box:
 
@@ -78,10 +113,20 @@ The watchdog marker must point `remote_spec` to that real `chain.yaml`, never to
 
 Observe first with `megaplan cloud status --all --cloud-yaml cloud.<chain>.yaml`.
 It lists all known shared-runner sessions with human names, `should_run=yes/no`,
-liveness, current plan state, and watchdog repair/escalation status. Use `tmux
-ls` only for live runner processes; the watchdog report is just the last scan
-and can be stale. Per-chain logs live under `<workspace>/.megaplan/cloud-chain-<session>.log`;
+tmux/process liveness, current plan state, chain policy, watchdog status, and an
+operator-facing `operator=... reason=... next=...` classification. Trust this
+over raw `tmux ls`: a supervised chain can have no live tmux session while it is
+blocked on user action, and a live repair/relaunch can briefly obscure a human
+gate. `operator=blocked_prep_clarification` means the watchdog will not resume
+until clarification is answered or the run is relaunched as unattended. Use
+`tmux ls` and per-chain logs under
+`<workspace>/.megaplan/cloud-chain-<session>.log` only as follow-up evidence;
 milestone state lives under `.megaplan/plans/<plan>/state.json` + `events.ndjson`.
+For "what changed recently?" use
+`megaplan cloud status --all --compact --since 12h --cloud-yaml <active-cloud.yaml>`.
+`--since` filters on real plan `state.json` activity when available, not
+watchdog health mtimes, because watchdog reports can be rewritten after a chain
+has already completed.
 
 For lower-level launches or when preparing a shared cloud checkout manually,
 seed durable planning state before `cloud chain`:
@@ -98,11 +143,11 @@ state.
 
 ### Gotchas specific to the ssh/Hetzner path (learned the hard way)
 
-1. **Chain spec requires a `north_star` anchor** — `launch-epic` rejects the setup without `anchors: north_star: NORTHSTAR.md` and a real `NORTHSTAR.md` next to the canonical `chain.yaml`.
+1. **Chain spec requires a `north_star` anchor** — `cloud preflight` / `cloud chain` reject the setup without `anchors: north_star: NORTHSTAR.md` and a real `NORTHSTAR.md` next to the canonical `chain.yaml`.
 2. **Anchor paths are chain.yaml-dir-relative.** Put `NORTHSTAR.md` next to `.megaplan/initiatives/<initiative>/chain.yaml` and set `anchors.north_star: NORTHSTAR.md`.
 3. **Durable `.megaplan` inputs must be synced or committed.** The cloud runner ignores generated state, but it needs the durable source artifacts. Use `megaplan cloud sync-megaplan <chain.yaml> --clean` to upload `.megaplan/initiatives/`, `.megaplan/tickets/`, and `.megaplan/ideas/` to the exact derived workspace before launch.
 4. **The base-branch refresh fetches but does NOT fast-forward the box clone's local branch.** If the clone's `<base-branch>` is already checked out, `git checkout <base-branch>` is a no-op and the clone stays at the old commit. Force it: `git fetch origin <base-branch> && git reset --hard origin/<base-branch>` before launching (or after any push to the base branch).
-5. **Do not bypass `launch-epic` for normal epics.** Direct tmux/`chain start` launches can drift out of the canonical marker contract and fall outside watchdog supervision.
+5. **Do not bypass `cloud chain` for normal initiatives.** Direct tmux/`chain start` launches can drift out of the canonical marker contract and fall outside watchdog supervision. `launch-epic` is only for older brief directories that still need materialization.
 6. **Missing specs/workspaces are watchdog issues.** A marker whose `workspace` or `remote_spec` does not resolve is reported as `workspace_missing` or `spec_missing`, not hidden as a benign skip.
 7. **The editable arnold `.pth` can get disabled mid-run** (renamed `*.pth.disabled`) by a cloud-chain editable-install-sync side-effect, breaking `import arnold`/`import arnold_pipelines` locally + any local tooling that uses it. Re-enable: `mv <site-packages>/_editable_impl_arnold.pth.disabled <site-packages>/_editable_impl_arnold.pth`. (Also: keep the local venv on an editable install of `~/Documents/Arnold` — a stale non-editable copy shadows the live code and lags the path migration.)
 8. **arnold path migration: `arnold.pipelines.megaplan` → `arnold_pipelines.megaplan`.** Live arnold moved megaplan to the top-level `arnold_pipelines` package and dropped `arnold.pipelines.megaplan`. Older tooling (e.g. the hermes subagent launcher, watchdog scripts) may still use the old dotted path and depend on a stale site-packages copy as a bridge. When you editable-install live arnold, update those tools to `arnold_pipelines.megaplan` too, or they break.
@@ -118,8 +163,10 @@ Typical flow:
 2. Edit it (set the provider, primary `repo:`, any `extra_repos:`, the secret names, etc.).
 3. Export the secret values into your local env (the names listed under `secrets:` in `cloud.yaml`).
 4. `megaplan cloud deploy` to build the image and start the runner.
-5. `megaplan cloud preflight .megaplan/initiatives/<initiative>/chain.yaml` to check the canonical spec, North Star, resolved profile routing, local secrets, worker import path, and remote command availability.
-6. `megaplan cloud launch-epic <spec-or-dir>` for a multi-milestone run, or `megaplan cloud bootstrap <idea.md>` for a single plan. Use `sync-megaplan` + `chain` only for lower-level/manual runs.
+5. `python -m arnold_pipelines.megaplan initiative new <initiative> --milestone m1="First Sprint" --cloud` to create the canonical initiative. Add `--doc research=...`, `--doc decisions=...`, etc. for starting docs that should travel with the cloud run.
+6. Edit `.megaplan/initiatives/<initiative>/README.md`, `NORTHSTAR.md`, `briefs/*.md`, `chain.yaml`, and `cloud.yaml`. Do not leave `TODO_*` placeholders unless this is an intentional dry run.
+7. `megaplan cloud preflight .megaplan/initiatives/<initiative>/chain.yaml --cloud-yaml .megaplan/initiatives/<initiative>/cloud.yaml` to check the canonical spec, North Star, placeholder status, resolved profile routing, local secrets, worker import path, and remote command availability.
+8. `megaplan cloud chain .megaplan/initiatives/<initiative>/chain.yaml --cloud-yaml .megaplan/initiatives/<initiative>/cloud.yaml --fresh` for the normal multi-milestone launch. Use `launch-epic` only for older brief directories that still need materialization.
 7. Use `status`, `logs`, `attach` to observe; `down` to pause, `destroy` to tear the volume.
 
 See `docs/cloud.md` for the full reference, including `cloud.yaml` fields, mode behavior (`auto`/`chain`/`idle`), and provider-specific troubleshooting.
@@ -236,7 +283,15 @@ An operator loop may automatically handle infrastructure recovery:
 - auto-merge and advance a milestone PR when the chain declares `merge_policy: auto`, or advance a chain past a PR that was already merged by a human;
 - commit and push after each completed milestone when the user asked for push-after-sprint behavior.
 
-For an operator loop to progress a chain autonomously, the chain spec must set `merge_policy: auto`. This should be the default for cloud epics unless the user explicitly wants human review on every milestone PR. With `review` or `manual`, the chain opens each milestone PR and halts at `awaiting_pr_merge` until a human merges it, so an unattended chain looks "stuck" when it is actually waiting on a manual merge. Set `merge_policy: auto` and `driver.auto_approve: true` in `chain.yaml` for cloud epics that should keep cooking without a human in the loop.
+For an operator loop to progress a chain autonomously, the chain spec must set
+`merge_policy: auto` and `driver.auto_approve: true`. This should be the default
+for cloud epics unless the user explicitly wants human review on every milestone
+PR or prep/verification halt. With `review`/`manual`, the chain opens each
+milestone PR and halts at `awaiting_pr_merge` until a human merges it. With
+`driver.auto_approve: false`, prep clarification and human-verification gates
+halt at `awaiting_human_verify`; watchdog/repair reports
+`blocked_prep_clarification` or `blocked_human_verification` and does not
+silently answer those questions.
 
 An operator loop should **not** silently decide product or architecture questions, resolve merge conflicts, accept destructive cleanup, or ignore failing tests. Those are implementation decisions, not supervision. Surface them to the user or write a clear ticket unless the plan already contains an explicit settled decision that covers the case.
 
@@ -284,10 +339,12 @@ For users running multiple chains across many repos on the shared Hetzner agentb
 2. **Per chain**:
    - Write `cloud.<chain>.yaml` with `provider: ssh`, `repo:` + any `extra_repos:` + `chain_session: <chain-name>` + `mode: idle`.
    - `megaplan cloud deploy --cloud-yaml cloud.<chain>.yaml` only when adding new repos or bumping `megaplan.ref` (the entrypoint is baked in at build time).
-   - `megaplan cloud launch-epic --cloud-yaml cloud.<chain>.yaml <spec-or-dir>` to validate, materialize, launch, and watchdog-verify.
+   - `megaplan cloud preflight --cloud-yaml .megaplan/initiatives/<chain>/cloud.yaml .megaplan/initiatives/<chain>/chain.yaml`
+   - `megaplan cloud chain --cloud-yaml .megaplan/initiatives/<chain>/cloud.yaml .megaplan/initiatives/<chain>/chain.yaml --fresh` to validate, upload, launch, and watchdog-verify.
 
 3. **Observing**:
    - `megaplan cloud status --all --cloud-yaml cloud.<chain>.yaml` first.
+   - `megaplan cloud status --all --compact --since 12h --cloud-yaml cloud.<chain>.yaml` for a compact recent-activity handoff.
    - `megaplan cloud status --chain` for one chain's detailed summary.
    - `megaplan cloud logs --no-follow` for build / boot logs.
    - SSH-tail the per-chain log: `ssh root@<box-ip> 'docker exec megaplan-cloud-agent tail -f /workspace/<repo>/.megaplan/cloud-chain-<chain-session>.log'`.

@@ -87,7 +87,7 @@ def test_workflow_authoring_fixture_components_are_typed_step_exports() -> None:
 
 
 def test_reserved_intrinsics_are_declared_and_not_executable() -> None:
-    assert authoring.GRAMMAR_VERSION == "arnold.workflow.authoring.v1"
+    assert authoring.GRAMMAR_VERSION == "arnold.workflow.authoring.v2"
     assert authoring.RESERVED_INTRINSIC_NAMES == (
         "workflow",
         "loop",

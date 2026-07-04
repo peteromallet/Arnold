@@ -295,6 +295,11 @@ class StepResponse(TypedDict, total=False):
     criteria_check: dict[str, Any]
     preflight_results: dict[str, bool]
     unresolved_flags: list[Any]
+    prep_signal: dict[str, Any]
+    route_signal: str
+    gate_signal: dict[str, Any]
+    debt_payload: dict[str, Any]
+    fallback_payload: dict[str, Any]
     error: str
     message: str
     details: dict[str, Any]
