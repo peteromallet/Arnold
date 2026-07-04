@@ -60,6 +60,58 @@ def test_drive_forwards_live_phase_model_to_phase_subprocess(
     ]
 
 
+def test_drive_clears_stale_latest_failure_before_phase_redispatch(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "initialized",
+                "latest_failure": {
+                    "kind": "phase_failed",
+                    "phase": "prep",
+                    "message": "stale structural audit failure",
+                },
+                "resume_cursor": {
+                    "phase": "prep",
+                    "retry_strategy": "rerun_phase",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_status(plan: str, **kwargs):
+        assert plan == "demo"
+        return {
+            "state": "initialized",
+            "next_step": "prep",
+            "valid_next": ["prep"],
+            "progress": {},
+        }
+
+    def fake_run_planning_phase(args, **kwargs):
+        assert args == ["prep", "--plan", "demo"]
+        return (0, "", "")
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
+    monkeypatch.setattr(auto, "_record_lifecycle_failure", lambda **kwargs: None)
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=1, poll_sleep=0)
+
+    assert outcome.status == "cap"
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["latest_failure"] is None
+    assert "resume_cursor" not in state
+
+
 def test_drive_stops_on_non_retryable_recover_blocked_error(
     monkeypatch,
     tmp_path: Path,
