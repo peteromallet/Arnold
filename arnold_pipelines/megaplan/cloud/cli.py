@@ -4162,6 +4162,13 @@ def _active_step_evidence_from_plan_status(plan_status: Mapping[str, Any]) -> di
 def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> dict[str, Any]:
     """Return the same payload printed by `arnold cloud status --chain`."""
     from arnold_pipelines.megaplan import chain as chain_module
+    from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+    from arnold_pipelines.megaplan.cloud.repair_contract import (
+        CUSTODY_BUCKET_BROKEN_SUPERFIXER,
+        CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING,
+        CUSTODY_BUCKET_REPAIRING,
+        project_repair_custody,
+    )
 
     remote_spec = _resolve_remote_chain_spec(root, args, spec)
     marker = _load_marker(root, args)
@@ -4341,6 +4348,37 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
         local_marker_path=_marker_path_no_create(_cloud_yaml_path(root, args)) / "last_chain.json",
     )
     active_step_evidence = _active_step_evidence_from_plan_status(plan_status)
+    repair_custody: dict[str, Any] = {"status": "unavailable", "reason": "local custody evidence unavailable"}
+    local_workspace = Path(resolved_workspace)
+    marker_dir = local_workspace / ".megaplan" / "cloud-sessions"
+    repair_data_dir = marker_dir / "repair-data"
+    if local_workspace.exists():
+        try:
+            current_target = resolve_current_target(
+                resolved_session,
+                marker_dir=marker_dir,
+                repair_data_dir=repair_data_dir,
+            )
+            projection = project_repair_custody(
+                plan_state=plan_status,
+                current_target=current_target,
+                marker_dir=marker_dir,
+                repair_data_dir=repair_data_dir,
+            )
+            bucket = projection["custody_bucket"]
+            if bucket in {
+                CUSTODY_BUCKET_REPAIRING,
+                CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING,
+                CUSTODY_BUCKET_BROKEN_SUPERFIXER,
+            }:
+                repair_custody = {
+                    "status": "available",
+                    "bucket": bucket,
+                    "blocker_id": projection["blocker_id"],
+                    "active_request_ids": projection["active_request_ids"],
+                }
+        except Exception as exc:
+            repair_custody = {"status": "invalid", "reason": str(exc)}
 
     # Classify effective status.
     effective_status = _classify_effective_status(
@@ -4365,6 +4403,7 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
         "tmux_evidence": tmux_evidence,
         "process_evidence": process_evidence,
         "active_step_evidence": active_step_evidence,
+        "repair_custody": repair_custody,
         "logs": logs,
         "pr": pr,
         "provider_consistency": provider_consistency,
