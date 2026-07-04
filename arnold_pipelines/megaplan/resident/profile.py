@@ -581,7 +581,29 @@ class MegaplanResidentProfile:
         resident must fall back to local plan evidence (clearly labeled as
         degraded, not canonical). Never raises — a missing/unreadable snapshot
         is the degraded-mode signal, not an error.
+
+        Inside the trusted container the snapshot is built fresh from local
+        observation on every call, so hot context always reflects the current
+        running/stuck/done set (the on-disk file the watchdog writes hourly can
+        lag a newly-started session by up to a tick). Elsewhere the on-disk file
+        is read with a freshness window.
         """
+        if status_snapshot.is_trusted_container():
+            try:
+                snapshot = status_snapshot.build_cloud_status_snapshot()
+            except Exception as exc:  # pragma: no cover - defensive guard
+                return None, f"snapshot build failed: {exc.__class__.__name__}: {exc}"
+            # Best-effort refresh of the shared on-disk file so CLI/laptop and
+            # later reads see the current view too. The watchdog still owns the
+            # hourly cadence; this just keeps the file fresh between sweeps while
+            # the resident is active. A write failure never degrades the answer.
+            try:
+                status_snapshot.write_cloud_status_snapshot(
+                    snapshot, path=self.config.status_snapshot_path
+                )
+            except Exception:  # pragma: no cover - best effort
+                pass
+            return snapshot, None
         path = self.config.status_snapshot_path
         try:
             return status_snapshot.load_cloud_status_snapshot(path, max_age_s=_SNAPSHOT_MAX_AGE_S)

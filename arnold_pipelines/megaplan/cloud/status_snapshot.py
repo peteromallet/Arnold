@@ -45,6 +45,20 @@ DEFAULT_WORKSPACE_ROOT = Path("/workspace")
 
 SNAPSHOT_SOURCE = "cloud-local-observer"
 
+
+def is_trusted_container() -> bool:
+    """True when this process is the cloud worker itself (local observation fits).
+
+    The resident, watchdog, and runners set ``MEGAPLAN_TRUSTED_CONTAINER=1`` inside
+    the container; combined with the canonical marker directory being present, that
+    means a fresh local snapshot can be built on demand with no SSH. Consumers that
+    opt into a per-turn fresh view (the resident hot context) use this to decide
+    build-vs-read.
+    """
+    if os.environ.get("MEGAPLAN_TRUSTED_CONTAINER") != "1":
+        return False
+    return DEFAULT_MARKER_DIR.exists()
+
 # A session whose latest activity is older than this is not "running" on
 # activity alone; it must have a live process or be under active repair.
 STALE_ACTIVITY_S = 30 * 60

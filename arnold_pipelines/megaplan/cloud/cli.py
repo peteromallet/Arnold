@@ -4471,14 +4471,10 @@ def _emit_cloud_sessions_human(payload: dict[str, Any], *, compact: bool) -> Non
 def _in_trusted_container() -> bool:
     """True when this process is the cloud worker itself (no SSH needed).
 
-    The resident and watchdog set ``MEGAPLAN_TRUSTED_CONTAINER=1`` inside the
-    container; combined with the canonical marker directory being present, that
-    means local observation is the correct status path and SSHing back to our
-    own host would be both unnecessary and likely to fail (no host key).
+    Delegates to :func:`status_snapshot.is_trusted_container` so the CLI and the
+    resident share one definition of "we are the box."
     """
-    if os.environ.get("MEGAPLAN_TRUSTED_CONTAINER") != "1":
-        return False
-    return status_snapshot.DEFAULT_MARKER_DIR.exists()
+    return status_snapshot.is_trusted_container()
 
 
 def _emit_cloud_status_human(snapshot: dict[str, Any] | None, *, compact: bool) -> None:
