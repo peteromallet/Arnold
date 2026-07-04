@@ -692,11 +692,12 @@ def _attempt_has_runtime_context(item):
             return True
     return False
 
-def _meta_repair_summary(session, repair_data, meta_refs):
+def _meta_repair_summary(session, repair_data, meta_refs, *, run_kind="", current_state="", chain_state_summary=None):
     repair_root = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_REPAIR_DATA_DIR", "/workspace/.megaplan/cloud-sessions/repair-data"))
     repair_payload = _load_json(repair_root / f"{session}.repair-data.json")
     if not isinstance(repair_payload, dict):
         repair_payload = {}
+    run_refs = _collect_meta_run_refs(session)
     repair_outcome, attempt_outcomes, failure_kinds = _repair_attempt_signals(repair_payload)
     recent_attempts = [
         item
@@ -711,6 +712,33 @@ def _meta_repair_summary(session, repair_data, meta_refs):
     current_attempt_id = str(repair_payload.get("current_attempt_id") or "").strip()
     current_recurrence = repair_payload.get("current_recurrence") if isinstance(repair_payload.get("current_recurrence"), dict) else {}
     current_signature = repair_payload.get("current_signature") if isinstance(repair_payload.get("current_signature"), dict) else {}
+    terminal_success = False
+    if isinstance(repair_data, dict) and not repair_data.get("exists"):
+        normalized_kind = str(run_kind or "").strip().lower()
+        normalized_state = str(current_state or "").strip().lower()
+        if normalized_kind == "plan":
+            terminal_success = normalized_state in {"done", "complete", "completed", "finalized"}
+        else:
+            chain_current = (chain_state_summary or {}).get("current") if isinstance(chain_state_summary, dict) else {}
+            chain_last_state = str((chain_current or {}).get("last_state") or "").strip().lower()
+            chain_current_plan = str((chain_current or {}).get("current_plan_name") or "").strip()
+            terminal_success = chain_last_state in {"done", "complete", "completed"} and not chain_current_plan
+    if terminal_success and not meta_refs and not run_refs:
+        return {
+            "should_dispatch": False,
+            "trigger": "",
+            "rationale": [
+                "session already reached terminal success and has no repair-data or meta-repair artifacts; "
+                "partial-liveness sidecars alone are not operative meta-repair evidence"
+            ],
+            "repair_outcome": _redact_scalar(repair_outcome),
+            "attempt_outcomes": [_redact_scalar(item) for item in attempt_outcomes[-5:]],
+            "failure_kinds": [_redact_scalar(item) for item in failure_kinds[-5:]],
+            "meta_record_count": len(meta_refs or []),
+            "meta_run_log_count": 0,
+            "meta_run_refs": [],
+            "missing_meta_run_evidence": False,
+        }
     if (
         repair_outcome == "running"
         and not current_attempt_id
@@ -770,7 +798,6 @@ def _meta_repair_summary(session, repair_data, meta_refs):
         should_dispatch = False
         trigger = "classification_error"
         rationale = [_redact_scalar(exc)]
-    run_refs = _collect_meta_run_refs(session)
     failed_run_refs = [item for item in run_refs if item.get("launch_failure")]
     failed_meta_records = []
     for item in meta_refs or []:
@@ -1593,7 +1620,14 @@ def _plan_evidence(entry):
     chain_state = _chain_state_summary(workspace_path, plan)
     repair_data = _repair_data_summary(session)
     cross_refs = _collect_related_artifact_refs(workspace_path, plan, session, repair_data)
-    meta_repair_summary = _meta_repair_summary(session, repair_data, cross_refs.get("meta_repair_refs") or [])
+    meta_repair_summary = _meta_repair_summary(
+        session,
+        repair_data,
+        cross_refs.get("meta_repair_refs") or [],
+        run_kind=run_kind,
+        current_state=state.get("current_state") or "",
+        chain_state_summary=chain_state,
+    )
     prior_incident_ids = [item.get("incident_id") for item in cross_refs.get("prior_incident_refs", []) if item.get("incident_id")]
     prior_watchdog_report_refs = _collect_watchdog_report_refs(session, plan, workspace_path)
     prior_audit_refs = _collect_audit_report_refs(session, plan)
