@@ -3921,13 +3921,39 @@ render_chain_health_block() {
   artifact="$(dirname "$DATA_FILE")/${SESSION}.chain-health.json"
   [[ -f "$artifact" ]] || return 0
   python3 - "$artifact" <<'PY'
-import json, sys
+import json, pathlib, sys
 try:
-    d = json.load(open(sys.argv[1]))
+    artifact = pathlib.Path(sys.argv[1])
+    d = json.load(open(artifact))
 except Exception:
     sys.exit(0)
 if not d or d.get("status") == "ok":
     sys.exit(0)
+snapshot = d.get("snapshot") if isinstance(d.get("snapshot"), dict) else {}
+chain_summary = d.get("chain_state_summary") if isinstance(d.get("chain_state_summary"), dict) else {}
+chain_path_text = str(chain_summary.get("path") or "").strip()
+current_plan = str(chain_summary.get("current_plan_name") or "").strip()
+last_state = str(chain_summary.get("last_state") or "").strip()
+if (
+    d.get("issue_kind") == "chain_no_advance"
+    and snapshot.get("plan_has_active_step") is False
+    and current_plan
+    and last_state == "blocked"
+    and chain_path_text
+):
+    try:
+        chain_path = pathlib.Path(chain_path_text)
+        state_path = chain_path.parent.parent / current_plan / "state.json"
+        state = json.load(open(state_path))
+        if (
+            isinstance(state, dict)
+            and state.get("current_state") == "blocked"
+            and not state.get("active_step")
+        ):
+            artifact.unlink(missing_ok=True)
+            sys.exit(0)
+    except Exception:
+        pass
 md = d.get("evidence_markdown") or ""
 if md:
     print(md)
