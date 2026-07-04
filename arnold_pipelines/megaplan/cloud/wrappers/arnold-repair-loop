@@ -3877,12 +3877,62 @@ render_chain_health_block() {
   artifact="$(dirname "$DATA_FILE")/${SESSION}.chain-health.json"
   [[ -f "$artifact" ]] || return 0
   python3 - "$artifact" <<'PY'
-import json, sys
+import json
+import pathlib
+import sys
+
+
+def load_json(path_text):
+    try:
+        payload = json.loads(pathlib.Path(path_text).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def is_plan_projected_nonterminal(artifact):
+    status = str(artifact.get("status") or artifact.get("issue_kind") or "").strip()
+    if status not in {"chain_no_advance", "chain_stuck", "chain_stuck_nonterminal"}:
+        return False
+    snapshot = artifact.get("snapshot") if isinstance(artifact.get("snapshot"), dict) else {}
+    if snapshot.get("plan_has_active_step") is True:
+        return False
+    summary = artifact.get("chain_state_summary")
+    summary = summary if isinstance(summary, dict) else {}
+    chain_state = load_json(summary.get("path") or artifact.get("chain_state_path") or "")
+    last_state = str(
+        chain_state.get("last_state") or summary.get("last_state") or ""
+    ).strip()
+    if last_state not in {"blocked", "awaiting_human"}:
+        return False
+    current_plan = str(
+        chain_state.get("current_plan_name")
+        or summary.get("current_plan_name")
+        or ""
+    ).strip()
+    if not current_plan:
+        return False
+    chain_path = pathlib.Path(str(summary.get("path") or artifact.get("chain_state_path") or ""))
+    plans_dir = chain_path.parent.parent if chain_path.name else pathlib.Path()
+    plan_state = load_json(plans_dir / current_plan / "state.json")
+    if str(plan_state.get("current_state") or "").strip() != last_state:
+        return False
+    active_step = plan_state.get("active_step")
+    return not (isinstance(active_step, dict) and bool(active_step.get("phase") or active_step.get("worker_pid")))
+
+
 try:
-    d = json.load(open(sys.argv[1]))
+    artifact_path = pathlib.Path(sys.argv[1])
+    d = json.loads(artifact_path.read_text(encoding="utf-8"))
 except Exception:
     sys.exit(0)
 if not d or d.get("status") == "ok":
+    sys.exit(0)
+if is_plan_projected_nonterminal(d):
+    try:
+        artifact_path.unlink()
+    except Exception:
+        pass
     sys.exit(0)
 md = d.get("evidence_markdown") or ""
 if md:
