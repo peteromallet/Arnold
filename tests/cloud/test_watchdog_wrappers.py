@@ -10295,6 +10295,54 @@ def test_meta_repair_dispatch_recursive_skip(tmp_path: Path) -> None:
         assert "recursive" in report_content, f"report missing recursive: {report_content}"
 
 
+def test_meta_repair_dispatch_ignores_launch_failure_record(tmp_path: Path) -> None:
+    """dispatch_meta_repair should not treat launch-failure meta records as recursion."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    report_path = tmp_path / "report.jsonl"
+
+    fake_bin = tmp_path / "arnold-meta-repair-loop"
+    fake_bin.write_text("#!/usr/bin/env bash\necho meta-repair ran\nexit 0\n", encoding="utf-8")
+    fake_bin.chmod(0o755)
+
+    repair_data = marker_dir / "repair-data" / "meta"
+    repair_data.mkdir(parents=True)
+    (repair_data / "launch-failed.json").write_text(
+        json.dumps(
+            {
+                "meta_repair_id": "launch-failed",
+                "session": "demo-session",
+                "trigger": "partial_liveness_recurrence",
+                "diagnosis": "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/Hermes subagents); see meta-repair log.",
+                "subagent_results": {
+                    "codex_response": "Not inside a trusted directory and --skip-git-repo-check was not specified."
+                },
+                "outcome": "Codex meta-repair orchestrator returned no output (timed out or failed to launch DeepSeek/Hermes subagents); see meta-repair log.",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = _build_meta_dispatch_script(
+        marker_dir,
+        report_path,
+        meta_repair_bin=str(fake_bin),
+        extra_lines=[
+            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r}",
+            'echo "RESULT=$REPAIR_DISPATCH_RESULT"',
+        ],
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "RESULT=dispatched" in result.stdout, f"stdout: {result.stdout}"
+
+
 def test_meta_repair_dispatch_report_output(tmp_path: Path) -> None:
     """dispatch_meta_repair emits report items for dispatched, disabled, and unavailable cases."""
     marker_dir = tmp_path / "markers"

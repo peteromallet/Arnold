@@ -52,10 +52,8 @@ def _is_unrecordable_launch_failure(data: dict) -> bool:
     before reaching the prompt.  Counting those as meta-repair attempts poisons
     the no-recursion guard and prevents the fixed wrapper from running.
     """
-    outcome = str(data.get("outcome") or "")
-    if outcome and outcome not in {"UNKNOWN", "NO_FIX"}:
-        return False
     haystacks = [
+        str(data.get("outcome") or ""),
         str(data.get("diagnosis") or ""),
         str(data.get("reason") or ""),
     ]
