@@ -313,7 +313,12 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "constraints": {"type": "array", "items": {"type": "string"}},
             "primary_criterion": {"type": "string"},
-            "suggested_approach": {"type": "string"},
+            "suggested_approach": {
+                "anyOf": [
+                    {"type": "string"},
+                    {"type": "array", "items": {"type": "string"}},
+                ]
+            },
             "open_questions": {
                 "type": "array",
                 "items": {
