@@ -7856,6 +7856,58 @@ def test_chain_health_status_ignores_stuck_nonterminal_while_plan_step_is_active
     assert second["CHAIN_HEALTH_ARTIFACT_PATH"] == ""
 
 
+def test_chain_health_status_ignores_stuck_nonterminal_when_chain_last_state_mirrors_blocked_plan() -> None:
+    tmp = Path(tempfile.mkdtemp())
+    ws = tmp / "ws"
+    marker = tmp / "markers"
+    repair_dir = tmp / "repair-data"
+    _write_chain_state(
+        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        {
+            "current_milestone_index": 1,
+            "current_plan_name": "m1-demo-plan",
+            "last_state": "blocked",
+            "pr_state": "open",
+            "completed": [{"label": "m0"}],
+        },
+    )
+    _write_plan(
+        ws / ".megaplan" / "plans" / "m1-demo-plan",
+        {
+            "current_state": "blocked",
+            "latest_failure": {
+                "kind": "execution_blocked",
+                "phase": "execute",
+                "message": "execute blocked by quality gates",
+            },
+        },
+    )
+    (ws / ".megaplan" / "cloud-chain-demo.log").parent.mkdir(parents=True, exist_ok=True)
+    (ws / ".megaplan" / "cloud-chain-demo.log").write_text(
+        "[chain] resuming existing plan m1-demo-plan for m1\n",
+        encoding="utf-8",
+    )
+
+    first = _run_chain_health(
+        ws,
+        marker,
+        repair_dir,
+        health="alive",
+        env_overrides={"CLOUD_WATCHDOG_CHAIN_STUCK_TICKS": "2"},
+    )
+    second = _run_chain_health(
+        ws,
+        marker,
+        repair_dir,
+        health="alive",
+        env_overrides={"CLOUD_WATCHDOG_CHAIN_STUCK_TICKS": "2"},
+    )
+
+    assert first["CHAIN_HEALTH_STATUS"] == "ok"
+    assert second["CHAIN_HEALTH_STATUS"] == "ok"
+    assert second["CHAIN_HEALTH_ARTIFACT_PATH"] == ""
+
+
 def test_chain_health_status_classifies_unclean_base_before_generic_stuck() -> None:
     tmp = Path(tempfile.mkdtemp())
     ws = tmp / "ws"

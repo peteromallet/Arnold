@@ -2337,8 +2337,15 @@ chain_complete, milestone_count = chain_state_is_complete(chain_state)
 plan_dir = workspace / ".megaplan" / "plans" / current_plan_name if current_plan_name else None
 plan_state_path = plan_dir / "state.json" if plan_dir is not None else None
 plan_state = load_json(plan_state_path) if plan_state_path is not None else {}
+plan_current_state = str(plan_state.get("current_state") or "").strip()
 active_step = plan_state.get("active_step")
 plan_has_active_step = isinstance(active_step, dict) and bool(active_step.get("phase") or active_step.get("worker_pid"))
+plan_projected_nonterminal = (
+    bool(current_plan_name)
+    and not plan_has_active_step
+    and last_state in {"blocked", "awaiting_human"}
+    and plan_current_state == last_state
+)
 events_path = plan_dir / "events.ndjson" if plan_dir is not None else None
 events_exists = events_path is not None and events_path.exists()
 events_mtime = events_path.stat().st_mtime if events_exists else 0.0
@@ -2715,6 +2722,7 @@ if (
     and not completion_guard_repair_eligible
     and last_state in NONTERMINAL_STATES
     and not plan_has_active_step
+    and not plan_projected_nonterminal
     and stuck_ticks >= STUCK_TICKS
 ):
     status = "chain_stuck"
