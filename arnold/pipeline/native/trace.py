@@ -6,7 +6,8 @@ Implemented as a :class:`NativeTraceHooks` that wraps an inner
 ``trace_dir`` when it is set.  When ``trace_dir`` is ``None`` (the
 default), the wrapper passes through to the inner hooks with zero
 overhead beyond a few attribute accesses — there are no allocations,
-no file opens, and no event journal writes.
+no file opens, and no event journal writes unless a persistence backend
+is provided explicitly.
 
 Trace directory layout::
 
@@ -29,7 +30,6 @@ Example usage through :func:`run_native_pipeline`::
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -38,21 +38,19 @@ from arnold.pipeline.native.hooks import (
     NullNativeRuntimeHooks,
 )
 from arnold.pipeline.native.ir import PATH_DELIMITER, ROOT_PATH, NativeInstruction, NativeProgram
-from arnold.runtime.event_journal import NdjsonEventJournal
+from arnold.pipeline.native.persistence import (
+    FileNativePersistenceBackend,
+    NativePersistenceBackend,
+    NativePersistenceScope,
+    bind_legacy_artifact_root,
+)
+from arnold.runtime.event_journal import BackendEventJournal, NdjsonEventJournal
 
 
 __all__ = [
     "NativeTraceHooks",
     "write_artifact_inventory",
 ]
-
-# ── helpers ───────────────────────────────────────────────────────────
-
-
-def _json_dumps(obj: Any) -> str:
-    """Serialize *obj* to canonical JSON (sorted keys, compact)."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
-
 
 def _sha256_hex(data: bytes) -> str:
     """Return ``sha256:<hex>`` string for *data*."""
@@ -125,6 +123,19 @@ def write_artifact_inventory(root: str | Path) -> dict[str, str]:
     return inventory
 
 
+def _backend_for_trace_dir(
+    trace_dir: str | Path,
+) -> tuple[NativePersistenceBackend, NativePersistenceScope]:
+    trace_root = Path(trace_dir)
+    binding = bind_legacy_artifact_root(trace_root)
+    backend = FileNativePersistenceBackend(
+        lambda scope: trace_root
+        if scope == binding.scope
+        else (_ for _ in ()).throw(KeyError(scope))
+    )
+    return backend, binding.scope
+
+
 # ── NativeTraceHooks ──────────────────────────────────────────────────
 
 
@@ -143,8 +154,8 @@ class NativeTraceHooks:
     * ``on_checkpoint`` — writes ``stages.json``, ``artifacts.json``,
       and ``checkpoint.json``.
 
-    When *trace_dir* is ``None`` every callback is a pure pass-through
-    to the inner hooks — there are no file-system operations.
+    When neither *trace_dir* nor a persistence backend is provided, every
+    callback is a pure pass-through to the inner hooks.
     """
 
     halt_reason: str | None
@@ -155,6 +166,8 @@ class NativeTraceHooks:
         *,
         trace_dir: str | Path | None = None,
         artifact_root: str | Path = ".",
+        persistence_backend: NativePersistenceBackend | None = None,
+        persistence_scope: NativePersistenceScope | None = None,
     ) -> None:
         self._inner: NativeRuntimeHooks = (
             inner if inner is not None else NullNativeRuntimeHooks()
@@ -164,7 +177,21 @@ class NativeTraceHooks:
         )
         self._artifact_root: Path = Path(artifact_root)
         self.halt_reason: str | None = None
-        self._journal: NdjsonEventJournal | None = None
+        if persistence_backend is not None or persistence_scope is not None:
+            if persistence_backend is None or persistence_scope is None:
+                raise ValueError(
+                    "persistence_backend and persistence_scope must be provided together"
+                )
+            self._persistence_backend = persistence_backend
+            self._persistence_scope = persistence_scope
+        elif self._trace_dir is not None:
+            self._persistence_backend, self._persistence_scope = _backend_for_trace_dir(
+                self._trace_dir
+            )
+        else:
+            self._persistence_backend = None
+            self._persistence_scope = None
+        self._journal: NdjsonEventJournal | BackendEventJournal | None = None
         self._stage_seq: list[str] = []
         self._active_runs: list[str] = []
         self._tree_nodes: dict[str, dict[str, Any]] = {}
@@ -172,7 +199,12 @@ class NativeTraceHooks:
 
         if self._trace_dir is not None:
             _ensure_dir(self._trace_dir)
-            self._journal = NdjsonEventJournal(self._trace_dir)
+        if self._persistence_backend is not None and self._persistence_scope is not None:
+            self._load_existing_tree_json()
+            self._journal = BackendEventJournal(
+                self._persistence_backend,
+                self._persistence_scope,
+            )
             self._journal.emit("pipeline.init", payload={"status": "started"})
             self._write_state_json({})
 
@@ -184,44 +216,52 @@ class NativeTraceHooks:
 
     def _write_state_json(self, state: dict[str, Any]) -> None:
         """Write *state* as ``state.json`` in the trace directory."""
-        if self._trace_dir is None:
+        if self._persistence_backend is None or self._persistence_scope is None:
             return
-        (self._trace_dir / "state.json").write_text(
-            _json_dumps(state), encoding="utf-8"
+        self._persistence_backend.write_trace_artifact(
+            self._persistence_scope,
+            name="state.json",
+            payload=state,
         )
 
     def _write_stages_json(self) -> None:
         """Write the ordered stage sequence as ``stages.json``."""
-        if self._trace_dir is None:
+        if self._persistence_backend is None or self._persistence_scope is None:
             return
-        (self._trace_dir / "stages.json").write_text(
-            _json_dumps(self._stage_seq), encoding="utf-8"
+        self._persistence_backend.write_trace_artifact(
+            self._persistence_scope,
+            name="stages.json",
+            payload=self._stage_seq,
         )
 
     def _write_tree_json(self) -> None:
-        if self._trace_dir is None:
+        if self._persistence_backend is None or self._persistence_scope is None:
             return
         nodes = [self._tree_nodes[path] for path in self._tree_order if path in self._tree_nodes]
         payload = {
             "root_path": ROOT_PATH,
             "nodes": nodes,
         }
-        (self._trace_dir / "tree.json").write_text(
-            _json_dumps(payload), encoding="utf-8"
+        self._persistence_backend.write_trace_artifact(
+            self._persistence_scope,
+            name="tree.json",
+            payload=payload,
         )
 
     def _write_artifacts_json(self) -> None:
         """Write an artifact inventory as ``artifacts.json``."""
-        if self._trace_dir is None:
+        if self._persistence_backend is None or self._persistence_scope is None:
             return
         inventory = write_artifact_inventory(self._artifact_root)
-        (self._trace_dir / "artifacts.json").write_text(
-            _json_dumps(inventory), encoding="utf-8"
+        self._persistence_backend.write_trace_artifact(
+            self._persistence_scope,
+            name="artifacts.json",
+            payload=inventory,
         )
 
     def _write_checkpoint_json(self, cursor: dict[str, Any], final: bool) -> None:
         """Write the final checkpoint notification as ``checkpoint.json``."""
-        if self._trace_dir is None:
+        if self._persistence_backend is None or self._persistence_scope is None:
             return
         payload: dict[str, Any] = {
             "final": final,
@@ -238,9 +278,41 @@ class NativeTraceHooks:
             "tree_file": "tree.json",
             "tree_node_count": len(self._tree_nodes),
         }
-        (self._trace_dir / "checkpoint.json").write_text(
-            _json_dumps(payload), encoding="utf-8"
+        self._persistence_backend.write_trace_artifact(
+            self._persistence_scope,
+            name="checkpoint.json",
+            payload=payload,
         )
+
+    def _load_existing_tree_json(self) -> None:
+        if self._persistence_backend is None or self._persistence_scope is None:
+            return
+        payload = self._persistence_backend.read_trace_artifact(
+            self._persistence_scope,
+            name="tree.json",
+        )
+        if payload is None:
+            return
+        if not isinstance(payload, Mapping):
+            return
+        raw_nodes = payload.get("nodes")
+        if not isinstance(raw_nodes, list):
+            return
+        for raw_node in raw_nodes:
+            if not isinstance(raw_node, Mapping):
+                continue
+            path = raw_node.get("path")
+            if not isinstance(path, str) or not path:
+                continue
+            node = dict(raw_node)
+            children = raw_node.get("children")
+            if not isinstance(children, list):
+                node["children"] = []
+            metadata = raw_node.get("metadata")
+            if not isinstance(metadata, Mapping):
+                node["metadata"] = {}
+            self._tree_nodes[path] = node
+            self._tree_order.append(path)
 
     def _active_depth(self) -> int:
         return len(self._active_runs)

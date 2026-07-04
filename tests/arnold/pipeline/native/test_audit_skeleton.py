@@ -28,6 +28,7 @@ from arnold.pipeline.native import (
 )
 from arnold.pipeline.native.audit import AuditHooks, AuditRecord
 from arnold.pipeline.native.hooks import NullNativeRuntimeHooks
+from arnold.pipeline.native.persistence import OrderedPersistenceRow
 from arnold.security.audit import record_broker_audit_entry
 
 
@@ -49,6 +50,31 @@ def _read_audit_ndjson(audit_dir: Path) -> list[dict[str, Any]]:
 def _step_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Filter audit records to only step-attempt records (exclude run.init)."""
     return [r for r in records if "attempt_id" in r]
+
+
+class _MemoryAuditBackend:
+    def __init__(self) -> None:
+        self.rows: dict[object, list[dict[str, Any]]] = {}
+
+    def append_audit_record(self, scope, *, payload):
+        rows = self.rows.setdefault(scope, [])
+        rows.append(dict(payload))
+        event = payload.get("event") if isinstance(payload.get("event"), str) else "audit"
+        return OrderedPersistenceRow(
+            sequence=len(rows),
+            payload=dict(payload),
+            kind=event,
+        )
+
+    def read_audit_records(self, scope):
+        return [
+            OrderedPersistenceRow(
+                sequence=index,
+                payload=dict(payload),
+                kind=payload.get("event") if isinstance(payload.get("event"), str) else "audit",
+            )
+            for index, payload in enumerate(self.rows.get(scope, []), start=1)
+        ]
 
 
 # ── AuditRecord unit tests ────────────────────────────────────────────
@@ -408,6 +434,35 @@ class TestAuditHooksIntegration:
         assert result.state == {"result": 42}
         # No audit file written
         assert hooks._audit_path() is None
+
+    def test_backend_only_constructor_writes_audit_records_without_audit_dir(
+        self,
+    ) -> None:
+        backend = _MemoryAuditBackend()
+        scope = object()
+
+        @phase
+        def do_work(ctx: dict) -> dict:
+            return {"result": 42}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield do_work(ctx)
+            return state
+
+        result = run_native_pipeline(
+            compile_pipeline(my_pipe),
+            hooks=AuditHooks(
+                audit_dir=None,
+                persistence_backend=backend,
+                persistence_scope=scope,
+            ),
+        )
+
+        assert result.state == {"result": 42}
+        records = [row.payload for row in backend.read_audit_records(scope)]
+        assert records[0]["event"] == "run.init"
+        assert _step_records(records)[0]["status"] == "success"
 
     def test_audit_record_has_run_init_marker(self, tmp_path: Path) -> None:
         """The audit file starts with a run.init event."""

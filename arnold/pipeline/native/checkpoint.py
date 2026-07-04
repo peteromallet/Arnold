@@ -80,11 +80,15 @@ from typing import Any
 from uuid import uuid4
 
 from arnold.pipeline.native.ir import NativeProgram
+from arnold.pipeline.native.persistence import (
+    FileNativePersistenceBackend,
+    NativePersistenceBackend,
+    NativePersistenceScope,
+    bind_legacy_artifact_root,
+)
 from arnold.pipeline.resume import (
     RESUME_CURSOR_FILENAME,
     classify_resume_cursor_payload,
-    persist_resume_cursor,
-    read_resume_cursor,
 )
 
 NATIVE_CURSOR_VERSION = 1
@@ -125,6 +129,18 @@ class CursorUpgradeError(ValueError):
         self.detail = detail
         self.cursor_path = cursor_path
         self.details = dict(details or {})
+
+
+def _legacy_backend_for_artifact_root(
+    artifact_root: str | Path,
+) -> tuple[NativePersistenceBackend, NativePersistenceScope, Path]:
+    binding = bind_legacy_artifact_root(artifact_root)
+    backend = FileNativePersistenceBackend(
+        lambda scope: binding.artifact_root
+        if scope == binding.scope
+        else (_ for _ in ()).throw(KeyError(scope))
+    )
+    return backend, binding.scope, binding.artifact_root
 
 
 def _is_valid_relative_cursor_path(value: Any) -> bool:
@@ -360,30 +376,14 @@ def classify_resume_cursor(artifact_root: str | Path) -> str:
         key is malformed — not a dict, missing ``pc`` or ``version``,
         or non-integer values.  The caller must fail closed.
     """
-    root = Path(artifact_root)
+    backend, scope, root = _legacy_backend_for_artifact_root(artifact_root)
     cursor_path = root / RESUME_CURSOR_FILENAME
 
-    if not cursor_path.exists():
-        return "none"
-
-    # Read raw JSON — intentionally bypass read_resume_cursor so we
-    # can distinguish malformed JSON from an absent cursor.
-    try:
-        raw = json.loads(cursor_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise NativeCursorCorruptError(
-            f"Resume cursor at {cursor_path} could not be decoded as a JSON object. "
-            f"The cursor file exists but is unreadable — refusing to route.",
-            cursor_path=str(cursor_path),
-        ) from exc
-
-    if not isinstance(raw, dict):
-        raise NativeCursorCorruptError(
-            f"Resume cursor at {cursor_path} is a {type(raw).__name__} "
-            f"(expected JSON object). The cursor file exists but does not "
-            f"have a valid resume shape — refusing to route.",
-            cursor_path=str(cursor_path),
-        )
+    raw = backend.read_resume_cursor(scope)
+    if raw is None:
+        raw = _read_resume_payload_for_failure(root, action="route")
+        if raw is None:
+            return "none"
 
     cursor_kind = classify_resume_cursor_payload(raw)
     if cursor_kind == "none":
@@ -628,6 +628,34 @@ def _next_graph_cursor_backup_path(cursor_path: Path) -> Path:
         index += 1
 
 
+def _read_resume_payload_for_failure(
+    root: Path,
+    *,
+    action: str,
+) -> dict[str, Any] | None:
+    cursor_path = root / RESUME_CURSOR_FILENAME
+    if not cursor_path.exists():
+        return None
+
+    try:
+        raw = json.loads(cursor_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} could not be decoded as a JSON object. "
+            f"The cursor file exists but is unreadable — refusing to {action}.",
+            cursor_path=str(cursor_path),
+        ) from exc
+
+    if not isinstance(raw, dict):
+        raise NativeCursorCorruptError(
+            f"Resume cursor at {cursor_path} is a {type(raw).__name__} "
+            f"(expected JSON object). The cursor file exists but does not "
+            f"have a valid resume shape — refusing to {action}.",
+            cursor_path=str(cursor_path),
+        )
+    return raw
+
+
 def persist_native_cursor(
     artifact_root: str | Path,
     *,
@@ -643,6 +671,8 @@ def persist_native_cursor(
     effect: dict[str, Any] | None = None,
     native_extra: dict[str, Any] | None = None,
     version: int = NATIVE_CURSOR_VERSION,
+    persistence_backend: NativePersistenceBackend | None = None,
+    persistence_scope: NativePersistenceScope | None = None,
     **extra: Any,
 ) -> Path:
     """Persist the native runtime cursor to *artifact_root*/resume_cursor.json.
@@ -711,15 +741,27 @@ def persist_native_cursor(
     # readers ignore but native resume can inspect.
     payload_extra.update(extra)
 
-    return persist_resume_cursor(
+    backend, scope, root = _backend_scope_root(
         artifact_root,
-        stage=stage,
-        resume_cursor=resume_cursor,
-        **payload_extra,
+        persistence_backend=persistence_backend,
+        persistence_scope=persistence_scope,
     )
+    payload: dict[str, Any] = {
+        "stage": stage,
+        "resume_cursor": resume_cursor,
+    }
+    payload.update(payload_extra)
+    backend.write_resume_cursor(scope, payload=payload)
+    return root / RESUME_CURSOR_FILENAME
 
 
-def read_native_cursor(artifact_root: str | Path) -> dict[str, Any] | None:
+def read_native_cursor(
+    artifact_root: str | Path,
+    *,
+    persistence_backend: NativePersistenceBackend | None = None,
+    persistence_scope: NativePersistenceScope | None = None,
+    fallback_to_artifact_root: bool = True,
+) -> dict[str, Any] | None:
     """Read and validate a native cursor from *artifact_root*/resume_cursor.json.
 
     Returns ``None`` only when the cursor file is absent or when an existing
@@ -738,26 +780,19 @@ def read_native_cursor(artifact_root: str | Path) -> dict[str, Any] | None:
     Returns:
         The full cursor dict on success, or ``None`` if absent/non-native.
     """
-    cursor_path = Path(artifact_root) / RESUME_CURSOR_FILENAME
-    if not cursor_path.exists():
-        return None
-
-    try:
-        raw = json.loads(cursor_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise NativeCursorCorruptError(
-            f"Resume cursor at {cursor_path} could not be decoded as a JSON object. "
-            f"The cursor file exists but is unreadable — refusing to resume.",
-            cursor_path=str(cursor_path),
-        ) from exc
-
-    if not isinstance(raw, dict):
-        raise NativeCursorCorruptError(
-            f"Resume cursor at {cursor_path} is a {type(raw).__name__} "
-            f"(expected JSON object). The cursor file exists but does not "
-            f"have a valid resume shape — refusing to resume.",
-            cursor_path=str(cursor_path),
-        )
+    backend, scope, root = _backend_scope_root(
+        artifact_root,
+        persistence_backend=persistence_backend,
+        persistence_scope=persistence_scope,
+    )
+    cursor_path = root / RESUME_CURSOR_FILENAME
+    raw = backend.read_resume_cursor(scope)
+    if raw is None:
+        if not fallback_to_artifact_root:
+            return None
+        raw = _read_resume_payload_for_failure(root, action="resume")
+        if raw is None:
+            return None
 
     data = raw
 
@@ -916,6 +951,19 @@ def read_native_cursor(artifact_root: str | Path) -> dict[str, Any] | None:
     )
 
     return data
+
+
+def _backend_scope_root(
+    artifact_root: str | Path,
+    *,
+    persistence_backend: NativePersistenceBackend | None,
+    persistence_scope: NativePersistenceScope | None,
+) -> tuple[NativePersistenceBackend, NativePersistenceScope, Path]:
+    if persistence_backend is None:
+        return _legacy_backend_for_artifact_root(artifact_root)
+    if persistence_scope is None:
+        persistence_scope = bind_legacy_artifact_root(artifact_root).scope
+    return persistence_backend, persistence_scope, Path(artifact_root)
 
 
 __all__ = [

@@ -3,7 +3,9 @@
 Implemented as a :class:`AuditHooks` that wraps an inner
 :class:`NativeRuntimeHooks` instance and delegates every callback to it.
 When *audit_dir* is set, audit records are appended to an ``audit.ndjson``
-file (one JSON record per line) at the documented insertion points.
+file (one JSON record per line) at the documented insertion points. Callers
+may also provide a persistence backend/scope pair to route audit writes
+through a durable backend without changing callback semantics.
 
 Each audit record captures:
 
@@ -50,6 +52,12 @@ from arnold.pipeline.native.hooks import (
     NullNativeRuntimeHooks,
 )
 from arnold.pipeline.native.ir import NativeInstruction, NativeProgram
+from arnold.pipeline.native.persistence import (
+    FileNativePersistenceBackend,
+    NativePersistenceBackend,
+    NativePersistenceScope,
+    bind_legacy_artifact_root,
+)
 from arnold.security.audit import claim_broker_audit_entry
 from arnold.security.redaction import redact_value
 from arnold.security.types import RedactionStatus, RetentionPolicy
@@ -60,16 +68,6 @@ __all__ = [
     "AuditRecord",
     "resolved_versions_by_stable_id_for_run",
 ]
-
-# ── helpers ───────────────────────────────────────────────────────────
-
-
-def _json_dumps(obj: Any) -> str:
-    """Serialize *obj* to canonical JSON (sorted keys, compact)."""
-    return json.dumps(
-        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
-    )
-
 
 def _ensure_dir(path: Path) -> None:
     """Create directory *path* if it does not exist."""
@@ -88,7 +86,37 @@ def _dict_keys_summary(d: Any) -> list[str] | None:
     return None
 
 
-def _load_audit_records(audit_dir: str | Path) -> list[dict[str, Any]]:
+def _backend_for_audit_dir(
+    audit_dir: str | Path,
+) -> tuple[NativePersistenceBackend, NativePersistenceScope]:
+    audit_root = Path(audit_dir)
+    binding = bind_legacy_artifact_root(audit_root)
+    backend = FileNativePersistenceBackend(
+        lambda scope: audit_root
+        if scope == binding.scope
+        else (_ for _ in ()).throw(KeyError(scope))
+    )
+    return backend, binding.scope
+
+
+def _load_audit_records(
+    audit_dir: str | Path | None = None,
+    *,
+    persistence_backend: NativePersistenceBackend | None = None,
+    persistence_scope: NativePersistenceScope | None = None,
+) -> list[dict[str, Any]]:
+    if persistence_backend is not None or persistence_scope is not None:
+        if persistence_backend is None or persistence_scope is None:
+            raise ValueError(
+                "persistence_backend and persistence_scope must be provided together"
+            )
+        return [
+            dict(row.payload)
+            for row in persistence_backend.read_audit_records(persistence_scope)
+            if isinstance(row.payload, Mapping)
+        ]
+    if audit_dir is None:
+        return []
     audit_path = Path(audit_dir) / "audit.ndjson"
     if not audit_path.is_file():
         return []
@@ -103,14 +131,20 @@ def _load_audit_records(audit_dir: str | Path) -> list[dict[str, Any]]:
 
 
 def resolved_versions_by_stable_id_for_run(
-    audit_dir: str | Path,
+    audit_dir: str | Path | None = None,
     *,
     run_id: str | None = None,
+    persistence_backend: NativePersistenceBackend | None = None,
+    persistence_scope: NativePersistenceScope | None = None,
 ) -> dict[str, str]:
     """Return ``stable_id -> resolved version`` from a run's ``run.init`` record."""
     run_inits = [
         record
-        for record in _load_audit_records(audit_dir)
+        for record in _load_audit_records(
+            audit_dir,
+            persistence_backend=persistence_backend,
+            persistence_scope=persistence_scope,
+        )
         if record.get("event") == "run.init"
     ]
     if run_id is not None:
@@ -292,8 +326,8 @@ class AuditHooks:
     * ``on_step_end`` — finalizes the record as ``"success"`` and flushes.
     * ``on_step_error`` — finalizes the record as ``"failure"`` and flushes.
 
-    When *audit_dir* is ``None`` every callback is a pure pass-through
-    to the inner hooks — there are no file-system operations.
+    When neither *audit_dir* nor a persistence backend is provided, every
+    callback is a pure pass-through to the inner hooks.
 
     The audit file is append-only NDJSON (one JSON record per line),
     written separately from ``resume_cursor.json`` and checkpoints.
@@ -306,6 +340,8 @@ class AuditHooks:
         inner: NativeRuntimeHooks | None = None,
         *,
         audit_dir: str | Path | None = None,
+        persistence_backend: NativePersistenceBackend | None = None,
+        persistence_scope: NativePersistenceScope | None = None,
     ) -> None:
         self._inner: NativeRuntimeHooks = (
             inner if inner is not None else NullNativeRuntimeHooks()
@@ -313,6 +349,20 @@ class AuditHooks:
         self._audit_dir: Path | None = (
             Path(audit_dir) if audit_dir is not None else None
         )
+        if persistence_backend is not None or persistence_scope is not None:
+            if persistence_backend is None or persistence_scope is None:
+                raise ValueError(
+                    "persistence_backend and persistence_scope must be provided together"
+                )
+            self._audit_backend = persistence_backend
+            self._audit_scope = persistence_scope
+        elif self._audit_dir is not None:
+            self._audit_backend, self._audit_scope = _backend_for_audit_dir(
+                self._audit_dir
+            )
+        else:
+            self._audit_backend = None
+            self._audit_scope = None
         self.halt_reason: str | None = None
         self._run_id: str = uuid4().hex
         self._attempts: dict[str, int] = {}
@@ -332,12 +382,15 @@ class AuditHooks:
 
     def _append_record(self, record: dict[str, Any]) -> None:
         """Append a JSON line to ``audit.ndjson``."""
-        audit_file = self._audit_path()
-        if audit_file is None:
+        if self._audit_backend is None or self._audit_scope is None:
             return
-        line = _json_dumps(redact_value(record))
-        with open(audit_file, "a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
+        payload = redact_value(record)
+        if not isinstance(payload, Mapping):
+            payload = {"payload": payload}
+        self._audit_backend.append_audit_record(
+            self._audit_scope,
+            payload=dict(payload),
+        )
 
     def _write_run_init(
         self,
@@ -347,7 +400,7 @@ class AuditHooks:
         run_path: str | None = None,
         pack_provenance: Mapping[str, Any] | None = None,
     ) -> None:
-        if self._audit_dir is None or self._run_init_written:
+        if self._audit_backend is None or self._run_init_written:
             return
         record: dict[str, Any] = {
             "event": "run.init",
@@ -465,7 +518,7 @@ class AuditHooks:
         ctx: dict[str, Any],
     ) -> dict[str, Any]:
         ctx = self._inner.on_step_start(instr, ctx)
-        if self._audit_dir is not None:
+        if self._audit_backend is not None:
             self._write_run_init(run_path=self._resolve_run_path(ctx))
             step_key = self._step_key(instr)
             step_path = self._resolve_step_path(ctx)
@@ -496,7 +549,7 @@ class AuditHooks:
         result: Any,
     ) -> Any:
         result = self._inner.on_step_end(instr, ctx, result)
-        if self._audit_dir is not None and self._active_record is not None:
+        if self._audit_backend is not None and self._active_record is not None:
             self._active_record.mark_success(result)
             self._active_record.effect_lifecycle_state = "fulfilled"
             self._flush_active()
@@ -509,7 +562,7 @@ class AuditHooks:
         exc: BaseException,
     ) -> None:
         self._inner.on_step_error(instr, ctx, exc)
-        if self._audit_dir is not None and self._active_record is not None:
+        if self._audit_backend is not None and self._active_record is not None:
             self._active_record.mark_failure(exc)
             self._active_record.effect_lifecycle_state = "failed"
             self._flush_active()
