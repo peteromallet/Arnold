@@ -1231,6 +1231,57 @@ def _summarize_full_suite_backstop(path: pathlib.Path) -> dict[str, object]:
     }
 
 
+def _review_blocker_excerpt(item: object) -> dict[str, object]:
+    if not isinstance(item, dict):
+        return {}
+    target = item.get("target") if isinstance(item.get("target"), dict) else {}
+    deterministic = (
+        item.get("deterministic_check")
+        if isinstance(item.get("deterministic_check"), dict)
+        else {}
+    )
+    return {
+        "task_id": item.get("task_id") or target.get("task_id") or target.get("id") or "",
+        "issue": _clip_text(item.get("issue") or "", limit=1200),
+        "expected": _clip_text(item.get("expected") or "", limit=1200),
+        "actual": _clip_text(item.get("actual") or "", limit=1200),
+        "evidence_file": item.get("evidence_file") or "",
+        "source": item.get("source") or "",
+        "deterministic_command": deterministic.get("command") or "",
+        "deterministic_post_status": deterministic.get("post_status") or "",
+    }
+
+
+def _summarize_review_artifact(path: pathlib.Path) -> dict[str, object]:
+    payload = _load_json(path)
+    if not payload:
+        return {}
+    blocking = [
+        excerpt
+        for excerpt in (_review_blocker_excerpt(item) for item in payload.get("blocking_rework_items") or [])
+        if excerpt
+    ]
+    advisory_failed = [
+        {
+            "name": _clip_text(item.get("name") or "", limit=800),
+            "priority": item.get("priority") or "",
+            "pass": item.get("pass") or "",
+            "evidence": _clip_text(item.get("evidence") or "", limit=1200),
+        }
+        for item in (payload.get("advisory_failed_criteria") or [])
+        if isinstance(item, dict)
+    ]
+    outcome = payload.get("outcome") if isinstance(payload.get("outcome"), dict) else {}
+    return {
+        "path": str(path),
+        "result": outcome.get("result") or payload.get("result") or "",
+        "review_verdict": outcome.get("review_verdict") or payload.get("review_verdict") or "",
+        "state": outcome.get("state") or payload.get("state") or "",
+        "blocking_rework_items": blocking,
+        "advisory_failed_criteria": advisory_failed[:8],
+    }
+
+
 def _history_tail_summary(plan_state: dict[str, object]) -> dict[str, object]:
     history = plan_state.get("history")
     if not isinstance(history, list):
@@ -1272,11 +1323,15 @@ def _collect_execute_attempt_context(plan_dir: pathlib.Path, plan_state: dict[st
     full_suite_path = plan_dir / "full_suite_backstop.json"
     if full_suite_path.exists():
         context["full_suite_backstop"] = _summarize_full_suite_backstop(full_suite_path)
+    review_path = plan_dir / "review.json"
+    if review_path.exists():
+        context["review"] = _summarize_review_artifact(review_path)
     context["has_execute_artifacts"] = bool(
         context.get("execute_batch_output")
         or context.get("execution_batch")
         or context.get("finalize")
         or context.get("full_suite_backstop")
+        or context.get("review")
         or (context.get("plan_history") or {}).get("last_entries")
     )
     return context
@@ -2386,6 +2441,18 @@ def _task_reason(task: dict[str, object]) -> str:
     return verdict or notes or str(task.get("status") or "").strip() or "see artifact"
 
 
+def _review_blocking_items(context: object) -> list[dict[str, object]]:
+    if not isinstance(context, dict):
+        return []
+    review = context.get("review")
+    if not isinstance(review, dict):
+        return []
+    items = review.get("blocking_rework_items")
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
 def _render_last_execute_attempt(context: object, plan_failure: dict[str, object]) -> str:
     lines = ["## LAST EXECUTE ATTEMPT"]
     if not isinstance(context, dict) or not context.get("has_execute_artifacts"):
@@ -2468,6 +2535,20 @@ def _render_last_execute_attempt(context: object, plan_failure: dict[str, object
             elif rendered_tail:
                 lines.append(f"- Plan history last entries: {rendered_tail}")
 
+        review = context.get("review")
+        blocking_items = _review_blocking_items(context)
+        if isinstance(review, dict) and review:
+            verdict = review.get("review_verdict") or review.get("result") or review.get("state") or "unknown"
+            lines.append(f"- Review verdict: {verdict} (source: `{review.get('path') or 'review.json'}`)")
+        if blocking_items:
+            ids = ", ".join(str(item.get("task_id") or "(unknown)") for item in blocking_items[:6])
+            if len(blocking_items) > 6:
+                ids += f", +{len(blocking_items) - 6} more"
+            lines.append(
+                f"- Review blocking rework: {ids} "
+                "(these are concrete implementation blockers, not a human gate)"
+            )
+
     kind = plan_failure.get("kind") or "unknown"
     message = plan_failure.get("message") or "unknown"
     phase = plan_failure.get("phase") or "unknown"
@@ -2485,6 +2566,30 @@ def _render_last_execute_attempt(context: object, plan_failure: dict[str, object
 
 
 last_execute_attempt_summary = _render_last_execute_attempt(execute_attempt_context, plan_failure)
+
+review_blocking_items = _review_blocking_items(execute_attempt_context)
+if review_blocking_items:
+    review_blocker_lines = []
+    for idx, item in enumerate(review_blocking_items[:8], start=1):
+        task_id = item.get("task_id") or "(unknown)"
+        issue = str(item.get("issue") or "missing issue").strip()
+        expected = str(item.get("expected") or "").strip()
+        actual = str(item.get("actual") or "").strip()
+        evidence_file = str(item.get("evidence_file") or "").strip()
+        command = str(item.get("deterministic_command") or "").strip()
+        review_blocker_lines.append(f"{idx}. {task_id}: {issue}")
+        if expected:
+            review_blocker_lines.append(f"   expected: {expected}")
+        if actual:
+            review_blocker_lines.append(f"   actual: {actual}")
+        if evidence_file:
+            review_blocker_lines.append(f"   evidence_file: {evidence_file}")
+        if command:
+            review_blocker_lines.append(f"   deterministic_check: {command}")
+    if len(review_blocking_items) > 8:
+        review_blocker_lines.append(f"... +{len(review_blocking_items) - 8} more blocking items")
+else:
+    review_blocker_lines = ["- none detected"]
 
 mismatch_lines = []
 if state_mismatch.get("detected"):
@@ -2595,6 +2700,11 @@ summary = "\n".join(
         "```text",
         events_tail,
         "```",
+        "",
+        "## Review Blocking Rework",
+        "- These items are actionable implementation/test work. Do not classify them as a human-only stop merely because the plan is terminal `blocked` or `valid_next` is empty.",
+        "- Repair path: implement the missing work, validate the deterministic checks, then let the wrapper mechanically relaunch/review.",
+        *review_blocker_lines,
         "",
         "## Prep Clarification Gate",
         *prep_clarification_lines,

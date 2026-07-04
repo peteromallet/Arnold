@@ -630,6 +630,43 @@ def test_repair_loop_collects_execute_attempt_artifacts_and_renders_summary(tmp_
         ),
         encoding="utf-8",
     )
+    (plan_dir / "review.json").write_text(
+        json.dumps(
+            {
+                "outcome": {
+                    "result": "blocked",
+                    "review_verdict": "needs_rework",
+                    "state": "blocked",
+                },
+                "blocking_rework_items": [
+                    {
+                        "task_id": "T1",
+                        "issue": "Backend agentic replay gate and path helpers are missing.",
+                        "expected": "routes.py contains _is_agentic_replay_enabled and ID validation.",
+                        "actual": "No agentic-replay symbols exist in routes.py.",
+                        "evidence_file": "vibecomfy/comfy_nodes/agent/routes.py",
+                        "source": "review_backend_missing",
+                        "deterministic_check": {
+                            "command": "python -m pytest tests/test_agentic_replay_routes.py -v",
+                            "post_status": "failed",
+                        },
+                    },
+                    {
+                        "task_id": "T2",
+                        "issue": "Backend discovery routes are not implemented.",
+                        "expected": "GET /vibecomfy/agentic-replay/runs returns sanitized run records.",
+                        "actual": "No discovery endpoints or helpers exist in routes.py.",
+                        "evidence_file": "vibecomfy/comfy_nodes/agent/routes.py",
+                        "deterministic_check": {
+                            "command": "grep -n 'agentic-replay/runs' vibecomfy/comfy_nodes/agent/routes.py",
+                            "post_status": "failed",
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     (chain_dir / "chain-demo.json").write_text(
         json.dumps({"current_plan_name": "demo-plan", "last_state": "blocked"}),
         encoding="utf-8",
@@ -648,6 +685,8 @@ def test_repair_loop_collects_execute_attempt_artifacts_and_renders_summary(tmp_
     assert execute_context["execution_batch"]["status_counts"]["blocked"] == 1
     assert execute_context["finalize"]["baseline_test_failures"] is None
     assert execute_context["plan_history"]["consecutive_execute_blocked"] == 8
+    assert execute_context["review"]["review_verdict"] == "needs_rework"
+    assert execute_context["review"]["blocking_rework_items"][0]["task_id"] == "T1"
 
     data_path = tmp_path / "repair-data.json"
     data_path.write_text(
@@ -670,6 +709,11 @@ def test_repair_loop_collects_execute_attempt_artifacts_and_renders_summary(tmp_
     assert "pytest collection: 1 errors" in summary
     assert "8 consecutive execute=blocked" in summary
     assert "NOTE: this may be STALE" in summary
+    assert "## Review Blocking Rework" in summary
+    assert "concrete implementation blockers, not a human gate" in summary
+    assert "T1: Backend agentic replay gate and path helpers are missing." in summary
+    assert "evidence_file: vibecomfy/comfy_nodes/agent/routes.py" in summary
+    assert "deterministic_check: python -m pytest tests/test_agentic_replay_routes.py -v" in summary
 
 
 def test_repair_loop_collects_stale_state_classification(tmp_path: Path) -> None:
@@ -3617,6 +3661,70 @@ tmux() { echo TMUX >&2; return 1; }
     assert "RELAUNCH" not in result.stderr
     assert "TMUX" not in result.stderr
     assert "needs-human webhook unset" in log_path.read_text(encoding="utf-8")
+
+
+def test_watchdog_blocked_recovery_manual_review_dispatches_repair_before_needs_human(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "demo-plan"
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "iteration": 10,
+            "current_state": "blocked",
+            "resume_cursor": {"phase": "review", "retry_strategy": "manual_review"},
+            "latest_failure": {
+                "kind": "blocked_recovery_not_resolved",
+                "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal",
+                "phase": "recover-blocked",
+            },
+        },
+        events_body="{}\n",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_attention_status_env"),
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            _extract_wrapper_function("plan_terminal_status"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\trepair\trepair_dispatched\tblocked_recovery manual_review repair loop dispatched before needs_human\t" in report
+    assert "\tobserve\tneeds_human\t" not in report
+    assert "DISPATCH" in result.stderr
+    assert "REPAIR" not in result.stderr
+    assert "RELAUNCH" not in result.stderr
+    assert "TMUX" not in result.stderr
+    assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
 
 
 def test_watchdog_auto_stall_manual_review_dispatches_repair_before_needs_human(
