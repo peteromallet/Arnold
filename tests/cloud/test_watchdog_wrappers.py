@@ -451,6 +451,56 @@ def test_repair_loop_prompt_files_redact_secret_bearers_before_dispatch(tmp_path
     assert REDACTION in kimi_text
 
 
+def test_repair_prompt_ignores_stale_projected_blocked_chain_health(tmp_path: Path) -> None:
+    repair_dir = tmp_path / "repair-data"
+    repair_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "demo-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"current_state": "blocked", "active_step": None}),
+        encoding="utf-8",
+    )
+    chain_path = chain_dir / "chain-demo.json"
+    chain_path.write_text(
+        json.dumps({"current_plan_name": plan_name, "last_state": "blocked"}),
+        encoding="utf-8",
+    )
+    artifact = repair_dir / "demo-session.chain-health.json"
+    artifact.write_text(
+        json.dumps(
+            {
+                "status": "chain_no_advance",
+                "issue_kind": "chain_no_advance",
+                "snapshot": {"plan_has_active_step": False},
+                "chain_state_summary": {
+                    "path": str(chain_path),
+                    "current_plan_name": plan_name,
+                    "last_state": "blocked",
+                },
+                "evidence_markdown": "## CHAIN HEALTH EVIDENCE\n- stale",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = "\n".join(
+        [
+            _extract_repair_function("render_chain_health_block"),
+            "SESSION=demo-session",
+            f"DATA_FILE={shlex.quote(str(repair_dir / 'demo-session.repair-data.json'))}",
+            "render_chain_health_block",
+            f"test ! -e {shlex.quote(str(artifact))}",
+        ]
+    )
+    result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+
+
 def test_repair_loop_collects_failure_signal_narrative_and_event_tail(tmp_path: Path) -> None:
     workspace = tmp_path / "workflow"
     plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
