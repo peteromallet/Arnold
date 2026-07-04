@@ -30,12 +30,15 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Literal
 
 import fcntl
 
+from arnold_pipelines.megaplan.fallback_chains import fallback_observability_fields
 from arnold_pipelines.megaplan.types import (
     ActivePhase,
+    AgentSpec,
     CliError,
     HistoryEntry,
     PlanState,
     PlanVersionRecord,
+    format_agent_spec,
 )
 from arnold_pipelines.megaplan.planning.state import (
     CANONICAL_PLAN_STATES,
@@ -165,6 +168,7 @@ def _validate_persisted_phase_models(plan_dir: Path, state: Any) -> None:
     instead of mis-dispatching. No migration is attempted — the operator
     fixes the pin via ``megaplan override set-model`` / ``set-vendor``.
     """
+    from arnold_pipelines.megaplan.fallback_chains import decode_phase_model_value
     from arnold_pipelines.megaplan.types import parse_agent_spec
 
     if not isinstance(state, dict):
@@ -175,17 +179,26 @@ def _validate_persisted_phase_models(plan_dir: Path, state: Any) -> None:
     for entry in phase_models:
         if not isinstance(entry, str) or "=" not in entry:
             continue
-        phase, spec = entry.split("=", 1)
         try:
-            parse_agent_spec(spec)
-        except (CliError, ValueError) as exc:
+            phase, chain = decode_phase_model_value(entry)
+        except ValueError as exc:
             raise CliError(
                 "corrupt_phase_model",
                 f"Plan '{plan_dir.name}' has a malformed persisted routing pin "
-                f"for phase '{phase}': {spec!r}. {str(exc)} "
-                f"Fix it with `megaplan override set-model --phase {phase} "
-                f"--model <model>` (or `set-vendor`) before resuming.",
+                f"entry {entry!r}. {str(exc)}",
             ) from exc
+        for index, spec in enumerate(chain.specs):
+            try:
+                parse_agent_spec(spec)
+            except (CliError, ValueError) as exc:
+                location = f"phase '{phase}'" if len(chain.specs) == 1 else f"phase '{phase}' chain[{index}]"
+                raise CliError(
+                    "corrupt_phase_model",
+                    f"Plan '{plan_dir.name}' has a malformed persisted routing pin "
+                    f"for {location}: {spec!r}. {str(exc)} "
+                    f"Fix it with `megaplan override set-model --phase {phase} "
+                    f"--model <model>` (or `set-vendor`) before resuming.",
+                ) from exc
 
 
 def _all_finalize_user_actions_satisfied(plan_dir: Path, state: dict[str, Any]) -> bool:
@@ -1245,6 +1258,11 @@ def set_active_step(
     mode: str,
     model: str | None = None,
     run_id: str | None = None,
+    configured_specs: str | list[str] | tuple[str, ...] | None = None,
+    attempt_index: int = 0,
+    attempted_specs: str | list[str] | tuple[str, ...] | None = None,
+    failed_attempt_reasons: list[str] | tuple[str, ...] | None = None,
+    fallback_trigger: str | None = None,
 ) -> str:
     resolved_run_id = run_id or str(uuid.uuid4())
     started_at = now_utc()
@@ -1266,6 +1284,16 @@ def set_active_step(
     }
     if model:
         active_step["model"] = model
+    selected_spec = configured_specs or format_agent_spec(AgentSpec(agent=agent, model=model))
+    active_step.update(
+        fallback_observability_fields(
+            selected_spec or agent,
+            attempt_index=attempt_index,
+            attempted_specs=attempted_specs,
+            failed_attempt_reasons=failed_attempt_reasons,
+            fallback_trigger=fallback_trigger,
+        )
+    )
     if mode == "persistent":
         from arnold_pipelines.megaplan.workers import session_key_for
 
@@ -1405,6 +1433,15 @@ def make_history_entry(
         entry["session_mode"] = mode
         entry["session_id"] = worker.session_id
         entry["agent"] = agent
+        entry.update(
+            fallback_observability_fields(
+                getattr(worker, "configured_specs", None) or agent,
+                attempt_index=int(getattr(worker, "attempt_index", 0) or 0),
+                attempted_specs=getattr(worker, "attempted_specs", None),
+                failed_attempt_reasons=getattr(worker, "failed_attempt_reasons", None),
+                fallback_trigger=getattr(worker, "fallback_trigger", None),
+            )
+        )
     if output_file is not None:
         entry["output_file"] = output_file
     if artifact_hash is not None:

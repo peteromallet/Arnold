@@ -142,6 +142,16 @@ def _phase_rows(receipts: list[dict[str, Any]], state: dict[str, Any]) -> list[d
                 "output_file": receipt.get("output_file") or history_entry.get("output_file") or "",
                 "file": receipt.get("_file") or "",
                 "session_id": receipt.get("session_id") or "",
+                "configured_specs": receipt.get("configured_specs") or history_entry.get("configured_specs") or [],
+                "attempted_specs": receipt.get("attempted_specs") or history_entry.get("attempted_specs") or [],
+                "selected_spec_index": receipt.get("selected_spec_index", history_entry.get("selected_spec_index", 0)),
+                "selected_spec_total": receipt.get("selected_spec_total", history_entry.get("selected_spec_total", 0)),
+                "fallback_trigger": receipt.get("fallback_trigger") or history_entry.get("fallback_trigger"),
+                "failed_attempt_reasons": (
+                    receipt.get("failed_attempt_reasons")
+                    or history_entry.get("failed_attempt_reasons")
+                    or []
+                ),
             }
         )
     return rows
@@ -292,6 +302,8 @@ def render_audit_report_markdown(payload: dict[str, Any]) -> str:
         "",
     ]
     if active:
+        configured_specs = active.get("configured_specs") or []
+        attempted_specs = active.get("attempted_specs") or []
         lines.extend(
             [
                 "## Active Step",
@@ -302,6 +314,11 @@ def render_audit_report_markdown(payload: dict[str, Any]) -> str:
                 f"- Attempt: `{active.get('attempt')}`",
                 f"- Worker PID: `{active.get('worker_pid')}`",
                 f"- Last activity: `{active.get('last_activity_at')}` ({active.get('last_activity_kind')})",
+                f"- Selected fallback attempt: `{active.get('selected_spec_index', 0) + 1}/{active.get('selected_spec_total', 0)}`",
+                f"- Configured specs: `{configured_specs}`",
+                f"- Attempted specs: `{attempted_specs}`",
+                f"- Fallback trigger: `{active.get('fallback_trigger')}`",
+                f"- Failed attempt reasons: `{active.get('failed_attempt_reasons') or []}`",
                 "",
             ]
         )

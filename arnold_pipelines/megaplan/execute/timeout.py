@@ -234,6 +234,7 @@ def _recover_execute_timeout(
     agent: str,
     mode: str,
     refreshed: bool,
+    model: str | None,
     auto_approve: bool,
     args: argparse.Namespace,
     batch_number: int | None,
@@ -320,6 +321,7 @@ def _recover_execute_timeout(
             timeout_worker.session_id,
             mode=mode,
             refreshed=refreshed,
+            model=model,
         )
     user_approved_gate = bool(state["meta"].get("user_approved_gate", False))
     approval_mode = _resolve_execute_approval_mode(

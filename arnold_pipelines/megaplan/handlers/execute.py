@@ -9,6 +9,7 @@ from arnold_pipelines.megaplan.execute.batch import (
     handle_execute_one_batch,
     normalize_tier_map,
 )
+from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
 from arnold_pipelines.megaplan.profiles import apply_profile_expansion
 from arnold_pipelines.megaplan.types import (
     CliError,
@@ -43,7 +44,13 @@ from arnold_pipelines.megaplan._core.io import read_plan_state_cached
 from arnold_pipelines.megaplan.workers import warn_if_work_dir_differs_from_project_dir
 from arnold_pipelines.megaplan.runtime.execution_environment import preflight_mutating_phase
 
-from .shared import _agent_mode_parts, _emit_phase_notice, attach_agent_fallback, worker_module
+from .shared import (
+    _active_step_fallback_fields,
+    _agent_mode_parts,
+    _emit_phase_notice,
+    attach_agent_fallback,
+    worker_module,
+)
 from arnold_pipelines.megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
 
 # Canonical execute-phase defaults (rehomed from stages/execute.py during M3 T24).
@@ -96,15 +103,24 @@ def _extract_execute_tier_map(tier_models: object) -> dict[int, str] | None:
         return None
     normalized: dict[int, str] = {}
     for raw_tier, raw_spec in execute_tiers.items():
-        if not isinstance(raw_spec, str) or not raw_spec.strip():
-            continue
         if isinstance(raw_tier, bool):
             continue
+        selected_spec: str | None = None
+        if isinstance(raw_spec, str) and raw_spec.strip():
+            selected_spec = raw_spec
+        elif isinstance(raw_spec, list):
+            selected_spec = select_fallback_spec(
+                raw_spec,
+                0,
+                path=f"tier_models.execute.{raw_tier}",
+            )
+        if not selected_spec:
+            continue
         if isinstance(raw_tier, int):
-            normalized[raw_tier] = raw_spec
+            normalized[raw_tier] = selected_spec
             continue
         if isinstance(raw_tier, str) and raw_tier.isdigit():
-            normalized[int(raw_tier)] = raw_spec
+            normalized[int(raw_tier)] = selected_spec
     return normalized or None
 
 
@@ -193,7 +209,14 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             if getattr(args, "max_execute_tier", None) is not None
             else state["config"].get("max_execute_tier"),
         )
-        run_id = set_active_step(state, step="execute", agent=agent, mode=mode, model=model)
+        run_id = set_active_step(
+            state,
+            step="execute",
+            agent=agent,
+            mode=mode,
+            model=model,
+            **_active_step_fallback_fields("execute", args, agent=agent, model=model),
+        )
         _emit_phase_notice("execute")
         save_state_merge_meta(plan_dir, state)
         response: StepResponse | None = None

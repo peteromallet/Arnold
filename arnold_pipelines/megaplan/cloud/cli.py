@@ -30,6 +30,7 @@ from arnold_pipelines.megaplan.cloud.providers.base import (
 )
 from arnold_pipelines.megaplan.cloud.redact import redact
 from arnold_pipelines.megaplan.cloud.spec import CloudSpec, apply_repo_overrides, load_spec as load_cloud_spec
+from arnold_pipelines.megaplan.fallback_chains import decode_phase_model_value, encode_phase_model_value
 from arnold_pipelines.megaplan.cloud.template import materialize_deploy_dir, render_ensure_repos_block
 from arnold_pipelines.megaplan.layout import is_canonical_chain_spec
 from arnold_pipelines.megaplan.types import CliError
@@ -980,6 +981,7 @@ def _phase_model_by_label_from_preflight(preflight_summary: Mapping[str, Any]) -
         label = milestone.get("label")
         profile = milestone.get("profile")
         explicit = milestone.get("explicit_phase_model")
+        resolved_phase_chains = milestone.get("resolved_phase_chains")
         if isinstance(profile, str) and profile:
             if (
                 isinstance(label, str)
@@ -990,12 +992,28 @@ def _phase_model_by_label_from_preflight(preflight_summary: Mapping[str, Any]) -
                 phase_model_by_label[label] = list(explicit)
             continue
         resolved = milestone.get("resolved_phase_map")
-        if not isinstance(label, str) or not isinstance(resolved, Mapping):
+        if not isinstance(label, str):
             continue
         phase_models: list[str] = []
-        for phase, spec in resolved.items():
-            if isinstance(phase, str) and isinstance(spec, str) and phase and spec:
-                phase_models.append(f"{phase}={spec}")
+        explicit_steps: set[str] = set()
+        if isinstance(explicit, list) and all(isinstance(item, str) for item in explicit):
+            for entry in explicit:
+                if "=" not in entry:
+                    continue
+                phase, _chain = decode_phase_model_value(entry)
+                explicit_steps.add(phase)
+                phase_models.append(entry)
+        if isinstance(resolved_phase_chains, Mapping):
+            for phase, specs in resolved_phase_chains.items():
+                if not isinstance(phase, str) or phase in explicit_steps:
+                    continue
+                if not isinstance(specs, list) or not all(isinstance(item, str) for item in specs) or not specs:
+                    continue
+                phase_models.append(encode_phase_model_value(phase, specs))
+        elif isinstance(resolved, Mapping):
+            for phase, spec in resolved.items():
+                if isinstance(phase, str) and isinstance(spec, str) and phase and spec and phase not in explicit_steps:
+                    phase_models.append(f"{phase}={spec}")
         if phase_models:
             phase_model_by_label[label] = phase_models
     return phase_model_by_label
@@ -4806,6 +4824,12 @@ def _active_step_evidence_from_plan_status(plan_status: Mapping[str, Any]) -> di
         "attempt": active_step.get("attempt"),
         "worker_pid": active_step.get("worker_pid"),
         "last_activity_at": active_step.get("last_activity_at") or "",
+        "configured_specs": active_step.get("configured_specs") or [],
+        "attempted_specs": active_step.get("attempted_specs") or [],
+        "selected_spec_index": active_step.get("selected_spec_index", 0),
+        "selected_spec_total": active_step.get("selected_spec_total", 0),
+        "fallback_trigger": active_step.get("fallback_trigger"),
+        "failed_attempt_reasons": active_step.get("failed_attempt_reasons") or [],
     }
 
 

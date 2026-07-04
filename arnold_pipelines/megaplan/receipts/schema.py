@@ -20,6 +20,12 @@ class Receipt(TypedDict):
     agent_mode: Literal["oneshot", "persistent"]
     model_configured: str | None
     model_actual: str | None
+    configured_specs: list[str]
+    attempted_specs: list[str]
+    selected_spec_index: int
+    selected_spec_total: int
+    fallback_trigger: str | None
+    failed_attempt_reasons: list[str]
     session_id: str | None
     megaplan_version: str
     schema_version: int

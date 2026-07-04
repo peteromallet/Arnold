@@ -27,19 +27,18 @@ from arnold_pipelines.megaplan.execute._envelope import unified_execute_enabled
 
 def _resolve_tier_spec(
     args: Namespace,
-    tier_spec: str,
+    tier_spec: str | list[str],
 ) -> tuple[str, str, str | None]:
     """Replicate the batch.py ``_resolve_tier_spec`` helper for testing.
 
     Copies *args*, sets ``phase_model=["execute=<tier_spec>"]`` on the
     copy, and calls ``worker_module.resolve_agent_mode``.
     """
+    selected_spec = tier_spec[0] if isinstance(tier_spec, list) else tier_spec
     tier_args = copy.copy(args)
-    tier_args.phase_model = [f"execute={tier_spec}"]
-    agent, _mode, _refreshed, model = worker_module.resolve_agent_mode(
-        "execute", tier_args
-    )
-    return agent, _mode, model
+    tier_args.phase_model = [f"execute={selected_spec}"]
+    resolved = worker_module.resolve_agent_mode("execute", tier_args)
+    return resolved.agent, resolved.mode, resolved.resolved_model or resolved.model
 
 
 def _build_finalize_payload(
@@ -203,6 +202,38 @@ class TestEnvelopeFlagParity:
             agent_off, mode_off, model_off = _resolve_tier_spec(args, spec_off)
             agent_on, mode_on, model_on = _resolve_tier_spec(args, spec_on)
             assert (agent_off, mode_off, model_off) == (agent_on, mode_on, model_on)
+
+    def test_chain_tier_values_use_selected_element_on_both_paths(self, args):
+        payload = _build_finalize_payload(
+            [
+                {
+                    "id": "T1",
+                    "complexity": 4,
+                    "complexity_justification": "Complex.",
+                    "depends_on": [],
+                }
+            ]
+        )
+        batch_ids = ["T1"]
+        tier_map = {
+            4: ["codex:gpt-5.5", "claude:claude-sonnet-4-6"],
+        }
+
+        from arnold_pipelines.megaplan._core import compute_batch_complexity
+
+        complexity_off = compute_batch_complexity(payload, batch_ids)
+        spec_off = tier_map.get(complexity_off)
+
+        complexity_on = select_batch_tier(payload, batch_ids)
+        spec_on = resolve_dispatch_spec({"execute": tier_map}, "execute", complexity_on)
+
+        assert complexity_off == complexity_on == 4
+        assert spec_off == ["codex:gpt-5.5", "claude:claude-sonnet-4-6"]
+        assert spec_on == "codex:gpt-5.5"
+
+        agent_off, mode_off, model_off = _resolve_tier_spec(args, spec_off)
+        agent_on, mode_on, model_on = _resolve_tier_spec(args, spec_on)
+        assert (agent_off, mode_off, model_off) == (agent_on, mode_on, model_on)
 
     # -- empty batch → fail-safe returns 5 for both paths ------------------
 

@@ -43,6 +43,7 @@ from arnold_pipelines.megaplan.cloud.cli import (
     build_cloud_parser,
     cloud_chain_status_payload,
 )
+from arnold_pipelines.megaplan.fallback_chains import encode_phase_model_value
 from arnold_pipelines.megaplan.cloud.spec import (
     ChainSubSpec,
     CloudSpec,
@@ -175,6 +176,35 @@ def test_preflight_phase_model_materialization_keeps_cloud_default_without_profi
     )
 
     assert result == {"m1": ["execute=codex:medium", "plan=codex:high"]}
+
+
+def test_preflight_phase_model_materialization_preserves_explicit_encoded_chain_without_profile() -> None:
+    encoded_execute = encode_phase_model_value(
+        "execute",
+        ["codex:gpt-5.4", "claude:sonnet"],
+    )
+
+    result = _phase_model_by_label_from_preflight(
+        {
+            "milestones": [
+                {
+                    "label": "m1",
+                    "profile": None,
+                    "explicit_phase_model": [encoded_execute],
+                    "resolved_phase_chains": {
+                        "plan": ["codex:high"],
+                        "execute": ["codex:gpt-5.4", "claude:sonnet"],
+                    },
+                    "resolved_phase_map": {
+                        "plan": "codex:high",
+                        "execute": "codex:gpt-5.4",
+                    },
+                }
+            ]
+        }
+    )
+
+    assert result == {"m1": [encoded_execute, "plan=codex:high"]}
 
 
 def test_launch_epic_rejects_missing_north_star(tmp_path: Path) -> None:
@@ -508,6 +538,38 @@ def test_cloud_preflight_expands_vendor_depth_like_init() -> None:
     assert phase_map["plan"] == "codex:high"
     assert phase_map["revise"] == "codex:high"
     assert phase_map["execute"] == "codex"
+
+
+def test_cloud_preflight_reports_dependencies_for_every_spec_in_each_chain() -> None:
+    chain_spec = chain_module.ChainSpec.from_dict(
+        {
+            "milestones": [
+                {
+                    "label": "m1",
+                    "idea": "idea.md",
+                    "phase_model": [
+                        encode_phase_model_value("plan", ["codex:high", "claude:sonnet"]),
+                        encode_phase_model_value("prep", ["hermes:deepseek:deepseek-v4-pro", "codex"]),
+                    ],
+                }
+            ]
+        }
+    )
+
+    summary = resolve_cloud_chain_runtime_dependencies(
+        chain_spec,
+        project_dir=None,
+        cloud_default_agent="codex",
+    )
+
+    milestone = summary["milestones"][0]
+    assert milestone["resolved_phase_map"]["plan"] == "codex:high"
+    assert milestone["resolved_phase_chains"]["plan"] == ["codex:high", "claude:sonnet"]
+    assert sorted(summary["required_agents"]) == ["claude", "codex", "hermes"]
+    assert "bun" in summary["runtime_commands"]
+    assert "codex" in summary["runtime_commands"]
+    assert "claude" in summary["runtime_commands"]
+    assert "DEEPSEEK_API_KEY" in summary["env_hints"]
 
 
 def test_chain_project_root_uses_spec_git_repo_not_caller_root(tmp_path: Path) -> None:

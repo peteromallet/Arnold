@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from arnold_pipelines.megaplan.handlers.override import _override_set_model, _override_set_profile
 from arnold_pipelines.megaplan.handlers.structured_output import (
     _strip_unknown_keys,
     classify_scratch,
@@ -23,6 +24,37 @@ from arnold_pipelines.megaplan.workers import WorkerResult
 
 
 class TestAdaptiveCritiqueRouting:
+    def test_tier_chain_selects_first_spec_for_routing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from arnold_pipelines.megaplan.execute import batch
+        from arnold_pipelines.megaplan.handlers.critique import _apply_adaptive_critique_routing
+
+        def fake_resolve_tier_spec(args: argparse.Namespace, spec: str, *, phase: str = "execute"):
+            assert phase == "critique"
+            agent, model = spec.split(":", 1)
+            return agent, "fresh", model
+
+        monkeypatch.setattr(batch, "_resolve_tier_spec", fake_resolve_tier_spec)
+
+        state = {"config": {}}
+        args = argparse.Namespace(
+            tier_models={
+                "critique": {
+                    4: ["codex:gpt-5.5", "claude:claude-sonnet-4-6"],
+                }
+            }
+        )
+        checks = [{"id": "hard", "question": "Hard?", "complexity": 4}]
+
+        assert _apply_adaptive_critique_routing(state, args, checks) is None
+
+        hard_mode = checks[0]["_resolved_agent_mode"]
+        assert hard_mode.agent == "codex"
+        assert hard_mode.resolved_model == "gpt-5.5"
+        assert checks[0]["_routing_selected_spec"] == "codex:gpt-5.5"
+        assert checks[0]["_routing_tier_active"] is True
+
     def test_tier_models_win_over_global_pin_with_pin_as_missing_tier_fallback(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -259,6 +291,63 @@ class TestTiebreakerOutcomeSemantics:
         from arnold_pipelines.megaplan.handlers._tiebreaker_impl import _route_signal_for_tiebreaker_action
 
         assert _route_signal_for_tiebreaker_action("replan") == "iterate"
+
+
+class TestOverrideFallbackChains:
+    def test_set_profile_preserves_encoded_phase_model_chain(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import arnold_pipelines.megaplan.profiles as profiles_module
+
+        monkeypatch.setattr(profiles_module, "load_profiles", lambda project_dir=None: {"demo": {}})
+        monkeypatch.setattr(
+            profiles_module,
+            "resolve_profile",
+            lambda profile_name, profiles: {
+                "execute": [
+                    "hermes:deepseek:deepseek-v4-pro",
+                    "hermes:fireworks:accounts/fireworks/models/kimi-k2p6",
+                ],
+                "plan": "codex:gpt-5.5",
+            },
+        )
+
+        state = {
+            "name": "demo",
+            "current_state": "planned",
+            "config": {"project_dir": str(tmp_path), "profile": "old", "vendor": "claude"},
+            "meta": {},
+            "history": [],
+            "iteration": 1,
+        }
+        args = argparse.Namespace(profile="demo", reason="switch")
+
+        response = _override_set_profile(tmp_path, tmp_path, state, args)
+
+        assert response["success"] is True
+        assert state["config"]["phase_model"] == [
+            'execute=__fallback_json__:["hermes:deepseek:deepseek-v4-pro","hermes:fireworks:accounts/fireworks/models/kimi-k2p6"]',
+            "plan=claude:claude-opus-4-7",
+        ]
+
+    def test_set_model_replaces_encoded_chain_with_scalar_spec(self, tmp_path: Path) -> None:
+        state = {
+            "name": "demo",
+            "current_state": "planned",
+            "config": {
+                "project_dir": str(tmp_path),
+                "phase_model": ['execute=__fallback_json__:["codex:gpt-5.5","claude:claude-sonnet-4-6"]'],
+            },
+            "meta": {},
+            "history": [],
+            "iteration": 1,
+        }
+        args = argparse.Namespace(phase="execute", model="gpt-5.4", effort=None, reason="pin")
+
+        response = _override_set_model(tmp_path, tmp_path, state, args)
+
+        assert response["success"] is True
+        assert state["config"]["phase_model"] == ["execute=codex:gpt-5.4"]
+        assert response["previous_spec"] == '__fallback_json__:["codex:gpt-5.5","claude:claude-sonnet-4-6"]'
+        assert response["new_spec"] == "codex:gpt-5.4"
 
     def test_escalate_stays_escalate_signal(self) -> None:
         from arnold_pipelines.megaplan.handlers._tiebreaker_impl import _route_signal_for_tiebreaker_action

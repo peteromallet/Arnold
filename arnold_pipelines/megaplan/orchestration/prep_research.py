@@ -17,6 +17,7 @@ from arnold_pipelines.megaplan._core import (
     scatter_worker_units,
 )
 from arnold_pipelines.megaplan._core.process_fanout import GenericScatterResult
+from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
 from arnold_pipelines.megaplan.profiles import (
     CANONICAL_PREP_MODELS,
     normalize_robustness,
@@ -259,6 +260,8 @@ def resolve_prep_stage_model(state: PlanState, stage: str) -> AgentMode:
         if exc.code != "invalid_profile":
             raise
         raise CliError("invalid_prep_model", exc.message) from exc
+    if isinstance(spec, list):
+        spec = select_fallback_spec(spec, 0, path=f"prep_models.{stage}")
 
     parsed = parse_agent_spec(spec)
     return AgentMode(

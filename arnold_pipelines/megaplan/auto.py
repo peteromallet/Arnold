@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from arnold_pipelines.megaplan.drivers import Substrate
 
 from arnold_pipelines.megaplan._core import active_phase_name, find_plan_dir
+from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
 from arnold.runtime.envelope import (
     _envelope_ctx,
     write_envelope_in,
@@ -1637,6 +1638,13 @@ def _read_execute_tier_ladder(plan_dir: Path | None) -> dict[int, str]:
             continue
         if isinstance(spec, str) and spec.strip():
             ladder[tier_num] = spec
+            continue
+        if isinstance(spec, list):
+            ladder[tier_num] = select_fallback_spec(
+                spec,
+                0,
+                path=f"tier_models.execute.{tier_num}",
+            )
     return ladder
 
 
