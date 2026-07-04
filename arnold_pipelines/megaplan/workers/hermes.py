@@ -2722,17 +2722,81 @@ def _reconstruct_execute_payload(
     if not tool_calls and not files_changed:
         return None
 
-    # Try to read checkpoint file for task updates
-    task_updates = []
-    checkpoint_files = sorted(plan_dir.glob("execution_batch_*.json"), reverse=True)
-    for cp_file in checkpoint_files:
+    def _batch_sort_key(path: Path, prefix: str) -> int:
+        stem = path.stem
         try:
-            cp_data = json.loads(cp_file.read_text(encoding="utf-8"))
-            updates = cp_data.get("task_updates", [])
-            if isinstance(updates, list):
-                task_updates.extend(updates)
+            return int(stem[len(prefix) :])
+        except ValueError:
+            return -1
+
+    latest_batch_output_payload: dict[str, Any] | None = None
+    latest_batch_output_path: Path | None = None
+    batch_output_files = sorted(
+        plan_dir.glob("execute_batch_*_output.json"),
+        key=lambda path: _batch_sort_key(path, "execute_batch_"),
+        reverse=True,
+    )
+    for batch_output_path in batch_output_files:
+        try:
+            loaded = json.loads(batch_output_path.read_text(encoding="utf-8"))
         except Exception:
-            pass
+            continue
+        if not isinstance(loaded, dict):
+            continue
+        latest_batch_output_payload = loaded
+        latest_batch_output_path = batch_output_path
+        break
+
+    task_updates: list[dict[str, Any]] = []
+    sense_check_acknowledgments: list[dict[str, Any]] = []
+    if latest_batch_output_payload is not None:
+        raw_updates = latest_batch_output_payload.get("task_updates")
+        if isinstance(raw_updates, list):
+            task_updates.extend(
+                item for item in raw_updates if isinstance(item, dict)
+            )
+        raw_acks = latest_batch_output_payload.get("sense_check_acknowledgments")
+        if isinstance(raw_acks, list):
+            sense_check_acknowledgments.extend(
+                item for item in raw_acks if isinstance(item, dict)
+            )
+
+    # If the batch scratch file was never filled, fall back to the latest
+    # audited checkpoint rather than replaying unrelated prior batches.
+    if not task_updates and latest_batch_output_path is None:
+        checkpoint_files = sorted(plan_dir.glob("execution_batch_*.json"), reverse=True)
+        if checkpoint_files:
+            try:
+                cp_data = json.loads(checkpoint_files[0].read_text(encoding="utf-8"))
+            except Exception:
+                cp_data = None
+            if isinstance(cp_data, dict):
+                updates = cp_data.get("task_updates")
+                if isinstance(updates, list):
+                    task_updates.extend(
+                        item for item in updates if isinstance(item, dict)
+                    )
+                raw_acks = cp_data.get("sense_check_acknowledgments")
+                if isinstance(raw_acks, list):
+                    sense_check_acknowledgments.extend(
+                        item for item in raw_acks if isinstance(item, dict)
+                    )
+
+    output_text = (
+        latest_batch_output_payload.get("output")
+        if isinstance(latest_batch_output_payload, dict)
+        else None
+    )
+    if not isinstance(output_text, str) or not output_text.strip():
+        output_text = None
+
+    extra_deviations: list[str] = []
+    if isinstance(latest_batch_output_payload, dict):
+        raw_deviations = latest_batch_output_payload.get("deviations")
+        if isinstance(raw_deviations, list):
+            extra_deviations.extend(
+                item for item in raw_deviations if isinstance(item, str) and item.strip()
+            )
 
     if mode == "doc":
         sections_written = sorted(
@@ -2743,23 +2807,55 @@ def _reconstruct_execute_payload(
                 if isinstance(section, str) and section.strip()
             }
         )
+        deviations = [
+            "Execute response reconstructed from tool calls — model failed to produce JSON report."
+        ]
+        for deviation in extra_deviations:
+            if deviation not in deviations:
+                deviations.append(deviation)
         return {
-            "output": f"[Reconstructed from tool calls] Made {len(tool_calls)} tool calls, wrote {len(sections_written)} sections.",
+            "output": output_text
+            or f"[Reconstructed from tool calls] Made {len(tool_calls)} tool calls, wrote {len(sections_written)} sections.",
             "sections_written": sections_written,
             "commands_run": [],
-            "deviations": ["Execute response reconstructed from tool calls — model failed to produce JSON report."],
+            "deviations": deviations,
             "task_updates": task_updates,
-            "sense_check_acknowledgments": [],
+            "sense_check_acknowledgments": sense_check_acknowledgments,
         }
 
     files_list = sorted(files_changed)
+    if isinstance(latest_batch_output_payload, dict):
+        raw_files_changed = latest_batch_output_payload.get("files_changed")
+        if isinstance(raw_files_changed, list):
+            files_list = sorted(
+                {
+                    *files_list,
+                    *(
+                        item
+                        for item in raw_files_changed
+                        if isinstance(item, str) and item.strip()
+                    ),
+                }
+            )
+        raw_commands_run = latest_batch_output_payload.get("commands_run")
+        if isinstance(raw_commands_run, list):
+            for command in raw_commands_run:
+                if isinstance(command, str) and command and command not in commands_run:
+                    commands_run.append(command)
+    deviations = [
+        "Execute response reconstructed from tool calls — model failed to produce JSON report."
+    ]
+    for deviation in extra_deviations:
+        if deviation not in deviations:
+            deviations.append(deviation)
     return {
-        "output": f"[Reconstructed from tool calls] Made {len(tool_calls)} tool calls, changed {len(files_list)} files.",
+        "output": output_text
+        or f"[Reconstructed from tool calls] Made {len(tool_calls)} tool calls, changed {len(files_list)} files.",
         "files_changed": files_list,
         "commands_run": commands_run,
-        "deviations": ["Execute response reconstructed from tool calls — model failed to produce JSON report."],
+        "deviations": deviations,
         "task_updates": task_updates,
-        "sense_check_acknowledgments": [],
+        "sense_check_acknowledgments": sense_check_acknowledgments,
     }
 
 
