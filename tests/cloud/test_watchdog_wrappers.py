@@ -7482,6 +7482,74 @@ def test_launch_chain_tick_dispatches_meta_repair_on_model_launch_trigger(tmp_pa
     assert "trigger=model_tool_launch_failure" in paths["log_path"].read_text(encoding="utf-8")
 
 
+def test_launch_chain_tick_does_not_treat_stopped_health_as_model_launch_failure(tmp_path: Path) -> None:
+    paths = _prepare_meta_repair_launch_chain_tick_fixture(
+        tmp_path,
+        payload_overrides={
+            "attempts": [
+                {
+                    "attempt_id": 1,
+                    "mechanical_launch": "failed:stopped",
+                    "failure_classification": "blocked_state_or_recovery_error",
+                },
+            ],
+        },
+    )
+    result = _run_launch_chain_tick_meta_repair_script(paths)
+    assert result.returncode == 0, result.stderr
+    assert "META_DISPATCH" not in result.stderr
+    assert "TMUX new-session" in result.stderr
+
+
+def test_compute_meta_repair_trigger_skips_stale_launch_failure_after_success(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "outcome": "live_with_fresh_activity",
+                "attempts": [
+                    {"attempt_id": 1, "mechanical_launch": "failed:tmux_launch_failed"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    observation = json.dumps(
+        {
+            "authoritative_source": "chain_state",
+            "current_refs": {
+                "current_plan_name": "demo-plan",
+                "chain_current_plan_name": "demo-plan",
+                "plan_current_state": "initialized",
+                "chain_last_state": "initialized",
+            },
+            "plan_state": {"present": True},
+            "chain_state": {"present": True},
+            "active_step_heartbeat": {"active": False},
+        }
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            (
+                f"compute_meta_repair_trigger demo-session "
+                f"{shlex.quote(observation)} alive"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "NO_TRIGGER"
+
+
 def test_launch_chain_tick_dispatches_meta_repair_on_partial_liveness_trigger(tmp_path: Path) -> None:
     paths = _prepare_meta_repair_launch_chain_tick_fixture(
         tmp_path,

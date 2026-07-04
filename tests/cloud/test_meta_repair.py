@@ -28,6 +28,7 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     classify_repair_system_failure,
     compute_meta_deadline,
     evaluate_meta_repair_triggers,
+    is_model_tool_launch_failure_status,
     is_meta_budget_exhausted,
     load_meta_repair_record,
     load_redacted_evidence,
@@ -38,6 +39,7 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
 from arnold_pipelines.megaplan.cloud.redact import REDACTION
 from arnold_pipelines.megaplan.cloud.repair_contract import (
     COMPLETE,
+    LIVE_WITH_FRESH_ACTIVITY,
     NEEDS_HUMAN,
     PARTIAL_LIVENESS,
     REPAIR_EXHAUSTED,
@@ -221,6 +223,37 @@ class TestClassifyModelToolLaunchFailure:
         assert result.trigger is None
 
 
+class TestModelToolLaunchFailureStatus:
+    def test_tmux_launch_failure_counts_as_launch_error(self) -> None:
+        assert is_model_tool_launch_failure_status("failed:tmux_launch_failed") is True
+
+    def test_missing_relaunch_command_counts_as_launch_error(self) -> None:
+        assert is_model_tool_launch_failure_status("failed:missing_relaunch_command") is True
+
+    def test_missing_api_key_counts_as_launch_error(self) -> None:
+        assert is_model_tool_launch_failure_status("failed:KIMI_API_KEY missing") is True
+
+    def test_stopped_health_does_not_count_as_launch_error(self) -> None:
+        assert is_model_tool_launch_failure_status("failed:stopped") is False
+
+    def test_retrying_failure_does_not_count_as_launch_error(self) -> None:
+        assert is_model_tool_launch_failure_status("failed:retrying_failure") is False
+
+    def test_state_inspection_status_is_not_launch_error(self) -> None:
+        assert (
+            is_model_tool_launch_failure_status(
+                "failed:state_unreadable: malformed state.json",
+                state_tokens=(
+                    "failed:missing_state_path",
+                    "failed:state_unreadable",
+                    "failed:state_not_object",
+                    "state_inspection_error",
+                ),
+            )
+            is False
+        )
+
+
 class TestClassifyPartialLivenessRecurrence:
     def test_partial_liveness_triggers(self) -> None:
         result = classify_repair_system_failure(
@@ -340,7 +373,18 @@ class TestNonTriggerCases:
         )
         assert result.trigger is None
         assert result.should_dispatch is False
-        assert "no meta-repair trigger condition matched" in result.rationale[0]
+        assert "terminal success outcome" in result.rationale[0]
+
+    def test_success_outcome_suppresses_stale_launch_failure(self) -> None:
+        result = classify_repair_system_failure(
+            session="s19-success-launch",
+            repair_outcome=LIVE_WITH_FRESH_ACTIVITY,
+            has_model_tool_launch_error=True,
+            partial_liveness_ticks=4,
+        )
+        assert result.trigger is None
+        assert result.should_dispatch is False
+        assert "terminal success outcome" in result.rationale[0]
 
     def test_still_repairing_no_trigger(self) -> None:
         result = classify_repair_system_failure(
@@ -426,6 +470,14 @@ class TestClassificationPriority:
             partial_liveness_ticks=5,
         )
         assert result.trigger == MetaRepairTrigger.MODEL_TOOL_LAUNCH_FAILURE
+
+    def test_success_outcome_beats_launch_failure(self) -> None:
+        result = classify_repair_system_failure(
+            session="s27-success",
+            repair_outcome=LIVE_WITH_FRESH_ACTIVITY,
+            has_model_tool_launch_error=True,
+        )
+        assert result.trigger is None
 
 
 # ---------------------------------------------------------------------------
@@ -766,6 +818,50 @@ class TestEvaluateMetaRepairTriggers:
             repair_outcome=COMPLETE,
         )
         assert classification.should_dispatch is False
+        assert prompt is None
+
+    def test_live_with_fresh_activity_suppresses_stale_launch_trigger(
+        self, tmp_path: Path
+    ) -> None:
+        repair_root = _make_session_dir(tmp_path, "eval-s2-live-launch")
+        (repair_root / "eval-s2-live-launch.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "eval-s2-live-launch",
+                    "workspace": "/workspace/test-project",
+                    "plan_name": "test-plan",
+                    "outcome": LIVE_WITH_FRESH_ACTIVITY,
+                    "attempts": [
+                        {
+                            "attempt_id": 1,
+                            "mechanical_launch": "failed:tmux_launch_failed",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        classification, prompt = evaluate_meta_repair_triggers(
+            session="eval-s2-live-launch",
+            repair_data_dir=repair_root,
+            repair_outcome=LIVE_WITH_FRESH_ACTIVITY,
+            has_model_tool_launch_error=True,
+            current_target_observation={
+                "authoritative_source": "chain_state",
+                "active_step_heartbeat": {"active": False},
+                "current_refs": {
+                    "current_plan_name": "test-plan",
+                    "chain_current_plan_name": "test-plan",
+                    "plan_current_state": "initialized",
+                    "chain_last_state": "initialized",
+                },
+                "plan_state": {"present": True},
+                "chain_state": {"present": True},
+            },
+            load_evidence=True,
+        )
+        assert classification.should_dispatch is False
+        assert classification.trigger is None
         assert prompt is None
 
     def test_loads_evidence_when_requested(self, tmp_path: Path) -> None:

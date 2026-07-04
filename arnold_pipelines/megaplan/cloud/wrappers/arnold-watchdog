@@ -3560,7 +3560,10 @@ import sys
 from typing import Any
 
 from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
-from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
+from arnold_pipelines.megaplan.cloud.meta_repair import (
+    evaluate_meta_repair_triggers,
+    is_model_tool_launch_failure_status,
+)
 
 session, repair_data_dir_raw, marker_dir_raw, current_target_observation_raw, current_health = sys.argv[1:]
 repair_data_dir = pathlib.Path(repair_data_dir_raw)
@@ -3669,8 +3672,7 @@ for item in recent_attempts + recent_iterations:
         if isinstance(item, dict)
     )
 has_model_tool_launch_error = any(
-    status.startswith("failed:")
-    and not any(token in status for token in state_tokens)
+    is_model_tool_launch_failure_status(status, state_tokens=state_tokens)
     for status in launch_statuses
 )
 
