@@ -1,1 +1,1 @@
-/workspace/native-composition-followup/Arnold/arnold_pipelines/megaplan/data/epic_skill.md
+/workspace/arnold/arnold_pipelines/megaplan/data/epic_skill.md
