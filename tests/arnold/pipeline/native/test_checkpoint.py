@@ -17,10 +17,13 @@ from pathlib import Path
 import pytest
 
 from arnold.pipeline.native.checkpoint import (
+    COMPOSITE_PARENT_CHILD_CURSOR_KIND,
     CursorUpgradeError,
     NATIVE_CURSOR_VERSION,
     NativeCursorCorruptError,
+    STANDARD_NATIVE_CURSOR_KIND,
     classify_resume_cursor,
+    classify_native_cursor_kind,
     persist_native_cursor,
     read_native_cursor,
     upgrade_graph_cursor_to_native,
@@ -108,6 +111,59 @@ class TestRoundTrip:
                 "parent_run_path": "root",
             }
         ]
+        assert cursor["native_cursor_kind"] == STANDARD_NATIVE_CURSOR_KIND
+
+    def test_composite_parent_child_cursor_round_trip(self, tmp_path: Path) -> None:
+        persist_native_cursor(
+            tmp_path,
+            stage="parent__child_call__pc4",
+            pc=4,
+            native_extra={"suspension_kind": "child_suspended"},
+            composite={
+                "kind": "parent_child",
+                "parent": {
+                    "pc": 4,
+                    "run_path": "root/parent",
+                    "path_stack": [{"kind": "loop", "segment": "review[2]"}],
+                    "state": {"approved": False},
+                    "stages": ["parent__prep__pc0", "parent__review__pc3"],
+                    "loops": {"review": 2},
+                    "frames": {"review": {"last_result": "pending"}},
+                    "envelope": {"lease": "L1"},
+                    "cursor_id": "parent-cursor-1",
+                },
+                "child": {
+                    "cursor_path": "_children/review/resume_cursor.json",
+                    "run_path": "root/parent/review_child",
+                    "call_site_path": ["review_child"],
+                },
+            },
+        )
+
+        cursor = read_native_cursor(tmp_path)
+        assert cursor is not None
+        assert cursor["native_cursor_kind"] == COMPOSITE_PARENT_CHILD_CURSOR_KIND
+        assert classify_native_cursor_kind(cursor) == COMPOSITE_PARENT_CHILD_CURSOR_KIND
+        assert classify_resume_cursor(tmp_path) == "native"
+        assert cursor["composite"] == {
+            "kind": "parent_child",
+            "parent": {
+                "pc": 4,
+                "run_path": "root/parent",
+                "path_stack": [{"kind": "loop", "segment": "review[2]"}],
+                "state": {"approved": False},
+                "stages": ["parent__prep__pc0", "parent__review__pc3"],
+                "loops": {"review": 2},
+                "frames": {"review": {"last_result": "pending"}},
+                "envelope": {"lease": "L1"},
+                "cursor_id": "parent-cursor-1",
+            },
+            "child": {
+                "cursor_path": "_children/review/resume_cursor.json",
+                "run_path": "root/parent/review_child",
+                "call_site_path": ("review_child",),
+            },
+        }
 
     def test_file_is_valid_json(self, tmp_path: Path) -> None:
         persist_native_cursor(
@@ -370,6 +426,58 @@ class TestValidation:
         with pytest.raises(NativeCursorCorruptError, match="required 'version'"):
             read_native_cursor(tmp_path)
 
+    def test_composite_with_absolute_child_cursor_path_raises_corrupt_error(
+        self, tmp_path: Path
+    ) -> None:
+        payload = {
+            "stage": "s",
+            "resume_cursor": None,
+            "native": {"pc": 0, "version": 1, "suspension_kind": "child_suspended"},
+            "composite": {
+                "kind": "parent_child",
+                "parent": {
+                    "pc": 0,
+                    "run_path": "root",
+                    "path_stack": [],
+                    "state": {},
+                    "stages": [],
+                    "loops": {},
+                    "frames": {},
+                },
+                "child": {
+                    "cursor_path": "/tmp/child/resume_cursor.json",
+                    "run_path": "root/child",
+                    "call_site_path": ["child"],
+                },
+            },
+        }
+        (tmp_path / RESUME_CURSOR_FILENAME).write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        with pytest.raises(NativeCursorCorruptError, match="child.cursor_path"):
+            read_native_cursor(tmp_path)
+        with pytest.raises(NativeCursorCorruptError, match="child.cursor_path"):
+            classify_resume_cursor(tmp_path)
+
+    def test_composite_with_non_dict_parent_raises_corrupt_error(
+        self, tmp_path: Path
+    ) -> None:
+        payload = {
+            "stage": "s",
+            "resume_cursor": None,
+            "native": {"pc": 0, "version": 1, "suspension_kind": "child_suspended"},
+            "composite": {
+                "kind": "parent_child",
+                "parent": "not-a-dict",
+                "child": {"cursor_path": "child/resume_cursor.json"},
+            },
+        }
+        (tmp_path / RESUME_CURSOR_FILENAME).write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        with pytest.raises(NativeCursorCorruptError, match="parent and child frames"):
+            read_native_cursor(tmp_path)
+
     def test_native_pc_not_int_raises_corrupt_error(self, tmp_path: Path) -> None:
         payload = {
             "stage": "s",
@@ -406,6 +514,7 @@ class TestValidation:
             reason="awaiting_human",
         )
         assert read_native_cursor(tmp_path) is None
+        assert classify_resume_cursor(tmp_path) == "graph"
 
 
 # ── edge cases ────────────────────────────────────────────────────────

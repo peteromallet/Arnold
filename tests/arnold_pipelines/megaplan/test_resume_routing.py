@@ -23,6 +23,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from arnold.pipeline.resume import persist_composite_resume_cursor
+from arnold.pipeline.types import ContractResult, ContractStatus, HumanSuspension
 from arnold.pipeline.native.checkpoint import (
     NATIVE_CURSOR_VERSION,
     NativeCursorCorruptError,
@@ -35,6 +37,8 @@ from arnold.pipeline.resume import (
     RESUME_CURSOR_FILENAME,
     persist_resume_cursor,
 )
+from arnold_pipelines.megaplan._core.workflow import _resolve_resume_cursor
+from arnold_pipelines.megaplan.types import CliError
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -691,6 +695,135 @@ class TestNoMegaplanStageOrderInRouting:
                 f"{func.__name__} must not reference Megaplan stage names "
                 f"as string literals: {found}"
             )
+
+
+class TestMegaplanResumeSurfaceRouting:
+    def _previous_state(self) -> dict[str, object]:
+        return {
+            "current_state": "blocked",
+            "history": [],
+            "config": {},
+            "sessions": {},
+            "plan_versions": [],
+            "meta": {},
+            "last_gate": {},
+        }
+
+    def test_resolve_resume_cursor_prefers_state_over_typed_contract(
+        self, tmp_path: Path
+    ) -> None:
+        previous_state = self._previous_state()
+        previous_state["resume_cursor"] = {"phase": "review", "retry_strategy": "state-first"}
+        (tmp_path / "state.json").write_text(
+            json.dumps(
+                {
+                    "resume_cursor": {"phase": "review", "retry_strategy": "state-first"},
+                    "contract_result": ContractResult(
+                        status=ContractStatus.SUSPENDED,
+                        suspension=HumanSuspension(
+                            kind="human",
+                            resume_cursor=json.dumps({"phase": "execute"}),
+                        ),
+                    ).to_json(),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        cursor, source, extra = _resolve_resume_cursor(
+            plan_dir=tmp_path,
+            previous_state=previous_state,
+        )
+
+        assert cursor == {"phase": "review", "retry_strategy": "state-first"}
+        assert source == "state"
+        assert extra is None
+
+    def test_resolve_resume_cursor_prefers_typed_contract_over_awaiting_user(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "state.json").write_text(
+            json.dumps(
+                {
+                    "contract_result": ContractResult(
+                        status=ContractStatus.SUSPENDED,
+                        suspension=HumanSuspension(
+                            kind="human",
+                            resume_cursor=json.dumps({"retry_strategy": "typed"}),
+                            resume_input_schema={
+                                "type": "object",
+                                "properties": {
+                                    "choice": {
+                                        "type": "string",
+                                        "enum": ["continue", "stop"],
+                                    }
+                                },
+                            },
+                        ),
+                    ).to_json(),
+                    "_pipeline_paused_stage": "review",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / "awaiting_user.json").write_text(
+            json.dumps({"stage": "gate", "choices": ["legacy"]}),
+            encoding="utf-8",
+        )
+
+        cursor, source, extra = _resolve_resume_cursor(
+            plan_dir=tmp_path,
+            previous_state=self._previous_state(),
+        )
+
+        assert cursor == {
+            "retry_strategy": "typed",
+            "choices": ["continue", "stop"],
+        }
+        assert source == "typed_contract"
+        assert extra is None
+
+    def test_resolve_resume_cursor_prefers_composite_cursor_over_awaiting_user(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "state.json").write_text(json.dumps({}), encoding="utf-8")
+        persist_composite_resume_cursor(
+            tmp_path,
+            children={"child": {"cursor": "token"}},
+            phase="execute",
+        )
+        (tmp_path / "awaiting_user.json").write_text(
+            json.dumps({"stage": "gate", "choices": ["legacy"]}),
+            encoding="utf-8",
+        )
+
+        cursor, source, extra = _resolve_resume_cursor(
+            plan_dir=tmp_path,
+            previous_state=self._previous_state(),
+        )
+
+        assert cursor["kind"] == "composite_suspension"
+        assert cursor["phase"] == "execute"
+        assert source == "composite"
+        assert extra is None
+
+    def test_resolve_resume_cursor_fails_closed_on_corrupt_native_surface(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "state.json").write_text(json.dumps({}), encoding="utf-8")
+        (tmp_path / "resume_cursor.json").write_text(
+            json.dumps({"stage": "native", "resume_cursor": None, "native": "bad"}),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(CliError) as exc_info:
+            _resolve_resume_cursor(
+                plan_dir=tmp_path,
+                previous_state=self._previous_state(),
+            )
+
+        assert getattr(exc_info.value, "code", None) == "invalid_resume_cursor"
+        assert exc_info.value.extra["resume_surface"] == "resume_cursor"
 
     def test_native_routing_module_has_no_megaplan_imports(self) -> None:
         """The native routing module must not import from megaplan paths."""

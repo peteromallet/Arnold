@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import json
+import ast
 from pathlib import Path
 
 from arnold.pipeline.resume import (
     COMPOSITE_RESUME_CURSOR_FILENAME,
     RESUME_CURSOR_FILENAME,
+    extract_typed_resume_metadata,
     persist_composite_resume_cursor,
     persist_resume_cursor,
+    read_awaiting_user_checkpoint,
     read_composite_resume_cursor,
     read_resume_cursor,
+    read_state_resume_cursor,
+    resolve_resume_surface,
 )
 from arnold.pipeline.types import StepContext, StepResult
 
@@ -72,6 +77,138 @@ def test_read_composite_resume_cursor_absorbs_missing_and_malformed(tmp_path: Pa
         encoding="utf-8",
     )
     assert read_composite_resume_cursor(tmp_path) is None
+
+
+def test_read_state_resume_cursor_reads_state_json_payload(tmp_path: Path) -> None:
+    (tmp_path / "state.json").write_text(
+        json.dumps({"resume_cursor": {"phase": "review", "retry_strategy": "rerun"}}),
+        encoding="utf-8",
+    )
+
+    assert read_state_resume_cursor(tmp_path) == {
+        "phase": "review",
+        "retry_strategy": "rerun",
+    }
+
+
+def test_read_awaiting_user_checkpoint_reads_valid_object(tmp_path: Path) -> None:
+    (tmp_path / "awaiting_user.json").write_text(
+        json.dumps({"stage": "human_decide", "choices": ["continue", "stop"]}),
+        encoding="utf-8",
+    )
+
+    assert read_awaiting_user_checkpoint(tmp_path) == {
+        "stage": "human_decide",
+        "choices": ["continue", "stop"],
+    }
+
+
+def test_extract_typed_resume_metadata_reads_suspended_contract_result(
+    tmp_path: Path,
+) -> None:
+    from arnold.pipeline.types import ContractResult, ContractStatus, HumanSuspension
+
+    contract = ContractResult(
+        status=ContractStatus.SUSPENDED,
+        suspension=HumanSuspension(
+            kind="human",
+            resume_cursor=json.dumps({"phase": "review"}),
+            thread_ref="pipeline-123",
+            awaitable="approval/123",
+            resume_input_schema={
+                "properties": {
+                    "choice": {"type": "string", "enum": ["continue", "stop"]}
+                }
+            },
+        ),
+    )
+    (tmp_path / "state.json").write_text(
+        json.dumps({"contract_result": contract.to_json()}),
+        encoding="utf-8",
+    )
+
+    metadata = extract_typed_resume_metadata(tmp_path)
+    assert metadata is not None
+    assert metadata.phase == "review"
+    assert metadata.pipeline == "pipeline-123"
+    assert metadata.awaitable == "approval/123"
+    assert metadata.choices == ["continue", "stop"]
+
+
+def test_resolve_resume_surface_respects_shared_precedence(tmp_path: Path) -> None:
+    from arnold.pipeline.types import ContractResult, ContractStatus, HumanSuspension
+
+    contract = ContractResult(
+        status=ContractStatus.SUSPENDED,
+        suspension=HumanSuspension(
+            kind="human",
+            resume_cursor=json.dumps({"phase": "typed_review"}),
+        ),
+    )
+    (tmp_path / "state.json").write_text(
+        json.dumps(
+            {
+                "resume_cursor": {"phase": "state_review", "retry_strategy": "rerun"},
+                "contract_result": contract.to_json(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    persist_composite_resume_cursor(tmp_path, children={"child": {"cursor": "c1"}})
+    (tmp_path / "awaiting_user.json").write_text(
+        json.dumps({"stage": "human_decide"}),
+        encoding="utf-8",
+    )
+    persist_resume_cursor(tmp_path, stage="graph_review", resume_cursor="cursor-1")
+
+    resolved = resolve_resume_surface(tmp_path)
+
+    assert resolved.source == "state_resume_cursor"
+    assert resolved.kind == "state_resume_cursor"
+    assert resolved.blocked is False
+    assert resolved.payload == {"phase": "state_review", "retry_strategy": "rerun"}
+    assert [item.source for item in resolved.observations] == [
+        "state_resume_cursor",
+        "typed_contract",
+        "composite_resume_cursor",
+        "awaiting_user",
+        "resume_cursor",
+    ]
+
+
+def test_resolve_resume_surface_fails_closed_for_corrupt_native_cursor(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / RESUME_CURSOR_FILENAME).write_text(
+        json.dumps({"stage": "review", "resume_cursor": None, "native": "bad"}),
+        encoding="utf-8",
+    )
+
+    resolved = resolve_resume_surface(tmp_path)
+
+    assert resolved.source == "resume_cursor"
+    assert resolved.kind == "corrupt_native"
+    assert resolved.blocked is True
+    assert resolved.diagnostic is not None
+    assert "native payload is invalid" in resolved.diagnostic
+
+
+def test_resume_module_has_no_megaplan_imports() -> None:
+    resume_path = Path(__file__).resolve().parents[3] / "arnold/pipeline/resume.py"
+    tree = ast.parse(resume_path.read_text(encoding="utf-8"))
+
+    megaplan_imports: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if "megaplan" in alias.name:
+                    megaplan_imports.append(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if "megaplan" in module:
+                megaplan_imports.append(module)
+
+    assert not megaplan_imports
 
 
 # ──────────────────────────────────────────────────────────────────────

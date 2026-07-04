@@ -96,6 +96,7 @@ from arnold.pipeline.native import (
     read_native_cursor,
     require_native_runtime,
     run_native_pipeline,
+    start_from_trace,
     upgrade_graph_cursor_to_native,
 )
 from arnold.pipeline.llm_json import parse_llm_json
@@ -356,6 +357,7 @@ __all__ = [
     "resolve_seam_from_binding_map",
     "require_native_runtime",
     "run_native_pipeline",
+    "start_from_trace",
     "schema_version_for",
     "select",
     "select_audit_mode",

@@ -52,10 +52,11 @@ _DEFAULT_PHASE_MAX_ATTEMPTS = 1
 
 
 @dataclass(frozen=True)
-class _LoopPathFrame:
-    header_pc: int
+class _PathFrame:
     segment: str
     parent_run_path: str
+    kind: str = "loop"
+    header_pc: int | None = None
 
 
 class NativeRuntimeError(Exception):
@@ -91,6 +92,44 @@ class NativeExecutionResult:
         self.suspended = suspended
         self.cursor_path = cursor_path
         self.envelope = envelope
+
+
+def _cancellation_requested(envelope: Any) -> bool:
+    if envelope is None:
+        return False
+    if isinstance(envelope, Mapping):
+        return bool(envelope.get("cancellation"))
+    value = getattr(envelope, "cancellation", None)
+    if value is not None:
+        return bool(value)
+    cross_cutting = getattr(envelope, "cross_cutting", None)
+    if cross_cutting is not None:
+        return bool(getattr(cross_cutting, "cancellation", False))
+    return False
+
+
+def _check_cancellation_boundary(
+    *,
+    boundary: str,
+    instr: NativeInstruction | None,
+    state: Mapping[str, Any],
+    envelope: Any,
+    run_path: str,
+    step_path: str | None = None,
+    call_site_path: tuple[str, ...] = (),
+) -> None:
+    """Observe a future cancellation boundary without changing control flow."""
+
+    _ = (
+        boundary,
+        instr.op if instr is not None else None,
+        instr.name if instr is not None else None,
+        run_path,
+        step_path,
+        call_site_path,
+        bool(state),
+        _cancellation_requested(envelope),
+    )
 
 
 def _normalize_phase_result(result: Any, stage_id: str) -> tuple[dict[str, Any], Any]:
@@ -371,38 +410,48 @@ def _step_path_for_instr(run_path: str, instr: NativeInstruction) -> str:
     return _append_run_path_segments(run_path, step_name)
 
 
-def _serialize_path_stack(path_stack: list[_LoopPathFrame]) -> list[dict[str, Any]]:
-    return [
-        {
-            "header_pc": frame.header_pc,
+def _serialize_path_stack(path_stack: list[_PathFrame]) -> list[dict[str, Any]]:
+    serialized: list[dict[str, Any]] = []
+    for frame in path_stack:
+        item = {
+            "kind": frame.kind,
             "segment": frame.segment,
             "parent_run_path": frame.parent_run_path,
         }
-        for frame in path_stack
-    ]
+        if isinstance(frame.header_pc, int):
+            item["header_pc"] = frame.header_pc
+        serialized.append(item)
+    return serialized
 
 
-def _deserialize_path_stack(raw: Any) -> list[_LoopPathFrame]:
+def _deserialize_path_stack(raw: Any) -> list[_PathFrame]:
     if not isinstance(raw, list):
         return []
-    restored: list[_LoopPathFrame] = []
+    restored: list[_PathFrame] = []
     for item in raw:
         if not isinstance(item, Mapping):
+            continue
+        kind = item.get("kind")
+        if kind is None:
+            kind = "loop"
+        if not isinstance(kind, str) or not kind:
             continue
         header_pc = item.get("header_pc")
         segment = item.get("segment")
         parent_run_path = item.get("parent_run_path")
-        if not isinstance(header_pc, int):
-            continue
         if not isinstance(segment, str) or not segment:
             continue
         if not isinstance(parent_run_path, str) or not parent_run_path:
             continue
+        normalized_header_pc = header_pc if isinstance(header_pc, int) else None
+        if kind == "loop" and normalized_header_pc is None:
+            continue
         restored.append(
-            _LoopPathFrame(
-                header_pc=header_pc,
+            _PathFrame(
                 segment=_validate_path_segment(segment),
                 parent_run_path=_normalize_run_path(parent_run_path),
+                kind=kind,
+                header_pc=normalized_header_pc,
             )
         )
     return restored
@@ -413,7 +462,7 @@ def _cursor_path_metadata(
     program: NativeProgram,
     pc: int,
     run_path: str,
-    path_stack: list[_LoopPathFrame],
+    path_stack: list[_PathFrame],
 ) -> dict[str, Any]:
     current_run_path = _normalize_run_path(run_path)
     current_path_stack = list(path_stack)
@@ -431,6 +480,7 @@ def _cursor_path_metadata(
             if (
                 next_pc <= cur
                 and current_path_stack
+                and current_path_stack[-1].kind == "loop"
                 and next_pc == current_path_stack[-1].header_pc
             ):
                 frame = current_path_stack.pop()
@@ -470,6 +520,44 @@ def _parallel_map_item_state(
     item_state["__parallel_map_item__"] = item
     item_state["__parallel_map_index__"] = index
     return item_state
+
+
+def _loop_identity(
+    instr: NativeInstruction,
+    program: NativeProgram,
+) -> str:
+    loop_identity = instr.name
+    for loop_guard in program.loop_guards:
+        if loop_guard.guard is instr.func:
+            loop_identity = loop_guard.stable_id or loop_guard.name or instr.name
+            break
+    return _validate_path_segment(loop_identity)
+
+
+def _loop_counter_key(
+    *,
+    instr: NativeInstruction,
+    program: NativeProgram,
+    run_path: str,
+) -> str:
+    return _append_run_path_segments(run_path, _loop_identity(instr, program))
+
+
+def _loop_iteration_count(
+    *,
+    instr: NativeInstruction,
+    program: NativeProgram,
+    loops: Mapping[str, int],
+    run_path: str,
+) -> int:
+    scoped_key = _loop_counter_key(instr=instr, program=program, run_path=run_path)
+    value = loops.get(scoped_key)
+    if isinstance(value, int):
+        return value
+    legacy_value = loops.get(instr.name)
+    if isinstance(legacy_value, int):
+        return legacy_value
+    return 0
 
 
 def _resolve_phase_max_attempts(
@@ -611,7 +699,7 @@ def run_native_pipeline(
     trace_parent_run_path = (
         _normalize_run_path(_parent_run_path) if _parent_run_path else None
     )
-    path_stack: list[_LoopPathFrame] = []
+    path_stack: list[_PathFrame] = []
 
     # ── envelope accumulation (matches graph executor pattern) ─────
     envelope: Any = initial_envelope
@@ -636,6 +724,7 @@ def run_native_pipeline(
         loops: dict[str, int] = {}
         frames: dict[str, Any] = {}
         resume_cursor_data: dict[str, Any] | None = None
+        composite_resume: dict[str, Any] | None = None
 
         if resume:
             try:
@@ -649,32 +738,76 @@ def run_native_pipeline(
             # A missing cursor or graph-owned cursor is explicit: native resume starts
             # from pc 0 only when there is no valid native cursor to restore.
             if resume_cursor_data is not None:
-                start_pc = resume_cursor_data["native"]["pc"]
-                stages = list(resume_cursor_data.get("stages", []))
-                if isinstance(_hooks, NativeTraceHooks):
-                    _hooks.seed_stage_sequence(stages)
-                loops = dict(resume_cursor_data.get("loops", {}))
-                frames = dict(resume_cursor_data.get("frames", {}))
-                # Restore working state from cursor if present
-                saved_state = frames.pop("__state__", None)
-                if saved_state is not None:
-                    if not isinstance(saved_state, dict):
-                        raise NativeRuntimeError(
-                            "Cannot resume native pipeline from malformed cursor: "
-                            "frames.__state__ must be an object"
-                        )
-                    restored_state = dict(saved_state)
+                raw_composite = resume_cursor_data.get("composite")
+                if (
+                    isinstance(raw_composite, dict)
+                    and raw_composite.get("kind") == "parent_child"
+                ):
+                    composite_resume = raw_composite
+                    parent_frame = raw_composite["parent"]
+                    start_pc = parent_frame["pc"]
+                    stages = list(parent_frame.get("stages", []))
+                    loops = dict(parent_frame.get("loops", {}))
+                    frames = dict(parent_frame.get("frames", {}))
+                    restored_state = dict(parent_frame.get("state", {}))
                     restored_state.update(initial_state or {})
                     state = restored_state
-                # Restore envelope from cursor frames if present
-                saved_envelope = frames.pop("__envelope__", None)
-                if saved_envelope is not None:
-                    envelope = _deserialize_envelope(saved_envelope)
-                saved_run_path = resume_cursor_data.get("run_path")
-                if isinstance(saved_run_path, str) and saved_run_path:
-                    current_run_path = _normalize_run_path(saved_run_path)
-                    trace_run_path = current_run_path
-                path_stack = _deserialize_path_stack(resume_cursor_data.get("path_stack"))
+                    saved_envelope = parent_frame.get("envelope")
+                    if saved_envelope is not None:
+                        envelope = _deserialize_envelope(saved_envelope)
+                    saved_run_path = parent_frame.get("run_path")
+                    if isinstance(saved_run_path, str) and saved_run_path:
+                        current_run_path = _normalize_run_path(saved_run_path)
+                        trace_run_path = current_run_path
+                    path_stack = _deserialize_path_stack(parent_frame.get("path_stack"))
+                else:
+                    start_pc = resume_cursor_data["native"]["pc"]
+                    stages = list(resume_cursor_data.get("stages", []))
+                    loops = dict(resume_cursor_data.get("loops", {}))
+                    frames = dict(resume_cursor_data.get("frames", {}))
+                    # Restore working state from cursor if present
+                    saved_state = frames.pop("__state__", None)
+                    if saved_state is not None:
+                        if not isinstance(saved_state, dict):
+                            raise NativeRuntimeError(
+                                "Cannot resume native pipeline from malformed cursor: "
+                                "frames.__state__ must be an object"
+                            )
+                        restored_state = dict(saved_state)
+                        restored_state.update(initial_state or {})
+                        state = restored_state
+                    # Restore envelope from cursor frames if present
+                    saved_envelope = frames.pop("__envelope__", None)
+                    if saved_envelope is not None:
+                        envelope = _deserialize_envelope(saved_envelope)
+                    saved_run_path = resume_cursor_data.get("run_path")
+                    if isinstance(saved_run_path, str) and saved_run_path:
+                        current_run_path = _normalize_run_path(saved_run_path)
+                        trace_run_path = current_run_path
+                    path_stack = _deserialize_path_stack(resume_cursor_data.get("path_stack"))
+                    if isinstance(_hooks, NativeTraceHooks):
+                        resumed_step_path = None
+                        resumed_pc = (
+                            composite_resume["parent"]["pc"]
+                            if composite_resume is not None
+                            else start_pc
+                        )
+                        if 0 <= resumed_pc < len(instructions):
+                            resumed_step_path = _step_path_for_instr(
+                                current_run_path,
+                                instructions[resumed_pc],
+                            )
+                        _hooks.seed_stage_sequence(stages)
+                        _hooks.emit_pipeline_resumed(
+                            reason=(
+                                "child_suspended"
+                                if composite_resume is not None
+                                else "native_resume"
+                            ),
+                            run_path=current_run_path,
+                            step_path=resumed_step_path,
+                            call_site_path=_call_site_path_for_run_path(current_run_path),
+                        )
 
         # ── resolve cursor_id (stable across suspension/resume) ──────────
         if override is not None and override_input is not None:
@@ -725,6 +858,15 @@ def run_native_pipeline(
                 stage_id = f"{prefix}__{instr.name}__pc{pc}"
                 current_call_site_path = _call_site_path_for_run_path(current_run_path)
                 current_step_path = _step_path_for_instr(current_run_path, instr)
+                _check_cancellation_boundary(
+                    boundary="step_enter",
+                    instr=instr,
+                    state=state,
+                    envelope=envelope,
+                    run_path=current_run_path,
+                    step_path=current_step_path,
+                    call_site_path=current_call_site_path,
+                )
     
                 max_attempts = _resolve_phase_max_attempts(
                     instr,
@@ -884,6 +1026,13 @@ def run_native_pipeline(
                         extra={**_phase_path_metadata, **_phase_extra},
                     )
                     _hooks.on_checkpoint(_phase_cursor, dict(state))
+                    if isinstance(_hooks, NativeTraceHooks):
+                        _hooks.emit_pipeline_suspended(
+                            reason="phase_suspended",
+                            run_path=current_run_path,
+                            step_path=current_step_path,
+                            call_site_path=current_call_site_path,
+                        )
                     trace_status = "suspended"
                     return NativeExecutionResult(
                         state=dict(state),
@@ -958,6 +1107,13 @@ def run_native_pipeline(
                         extra=_suspension_path_metadata,
                     )
                     _hooks.on_checkpoint(_cursor, dict(state))
+                    if isinstance(_hooks, NativeTraceHooks):
+                        _hooks.emit_pipeline_suspended(
+                            reason="max_phases",
+                            run_path=current_run_path,
+                            step_path=_cursor.get("step_path"),
+                            call_site_path=current_call_site_path,
+                        )
                     trace_status = "suspended"
                     return NativeExecutionResult(
                         state=dict(state),
@@ -971,7 +1127,16 @@ def run_native_pipeline(
                 # ── Hook: on_stage_complete (normal completion) ────────
                 if _should_emit_stage_complete(instr):
                     _hooks.on_stage_complete(instr, ctx, result, state, owned_keys)
-    
+                _check_cancellation_boundary(
+                    boundary="step_exit",
+                    instr=instr,
+                    state=state,
+                    envelope=envelope,
+                    run_path=current_run_path,
+                    step_path=current_step_path,
+                    call_site_path=current_call_site_path,
+                )
+
                 # Advance to next instruction
                 pc = instr.next_pc if instr.next_pc is not None else pc + 1
                 forward_visited.clear()
@@ -1123,7 +1288,14 @@ def run_native_pipeline(
                         extra={**_hg_path_metadata, **_hg_cursor_extra},
                     )
                     _hooks.on_checkpoint(_hg_cursor, dict(_pause_state))
-    
+                    if isinstance(_hooks, NativeTraceHooks):
+                        _hooks.emit_pipeline_suspended(
+                            reason="human_gate",
+                            run_path=current_run_path,
+                            step_path=_hg_cursor.get("step_path"),
+                            call_site_path=_call_site_path_for_run_path(current_run_path),
+                        )
+
                     trace_status = "suspended"
                     return NativeExecutionResult(
                         state=dict(_pause_state),
@@ -1207,21 +1379,34 @@ def run_native_pipeline(
                                 target_pc=target_pc,
                                 program=program,
                                 loops=loops,
+                                run_path=current_run_path,
                             )
                             if _is_loop_body_entry(instr, target_pc, program):
-                                iteration_segment = _loop_iteration_segment(instr, program, loops)
+                                iteration_segment = _loop_iteration_segment(
+                                    instr,
+                                    program,
+                                    loops,
+                                    current_run_path,
+                                )
+                                loop_parent_run_path = current_run_path
                                 path_stack.append(
-                                    _LoopPathFrame(
-                                        header_pc=instr.pc,
+                                    _PathFrame(
                                         segment=iteration_segment,
                                         parent_run_path=current_run_path,
+                                        kind="loop",
+                                        header_pc=instr.pc,
                                     )
                                 )
                                 current_run_path = _append_run_path_segments(
                                     current_run_path,
                                     iteration_segment,
                                 )
-                                iteration = loops.get(instr.name, 0)
+                                iteration = _loop_iteration_count(
+                                    instr=instr,
+                                    program=program,
+                                    loops=loops,
+                                    run_path=loop_parent_run_path,
+                                )
                                 do_halt, halt_reason = _hooks.should_halt_loop(
                                     instr,
                                     state,
@@ -1374,24 +1559,37 @@ def run_native_pipeline(
                         target_pc=target_pc,
                         program=program,
                         loops=loops,
+                        run_path=current_run_path,
                     )
     
                     # ── Hook: should_halt_loop (before loop body) ──────────
                     # Fire when the decision is a loop guard routing to its body
                     if _is_loop_body_entry(instr, target_pc, program):
-                        iteration_segment = _loop_iteration_segment(instr, program, loops)
+                        iteration_segment = _loop_iteration_segment(
+                            instr,
+                            program,
+                            loops,
+                            current_run_path,
+                        )
+                        loop_parent_run_path = current_run_path
                         path_stack.append(
-                            _LoopPathFrame(
-                                header_pc=instr.pc,
+                            _PathFrame(
                                 segment=iteration_segment,
                                 parent_run_path=current_run_path,
+                                kind="loop",
+                                header_pc=instr.pc,
                             )
                         )
                         current_run_path = _append_run_path_segments(
                             current_run_path,
                             iteration_segment,
                         )
-                        iteration = loops.get(instr.name, 0)
+                        iteration = _loop_iteration_count(
+                            instr=instr,
+                            program=program,
+                            loops=loops,
+                            run_path=loop_parent_run_path,
+                        )
                         do_halt, halt_reason = _hooks.should_halt_loop(instr, state, iteration)
                         if do_halt:
                             if _should_emit_stage_complete(instr):
@@ -1421,7 +1619,12 @@ def run_native_pipeline(
                 # Detect forward progress stall
                 if next_pc == pc:
                     break
-                if next_pc <= pc and path_stack and next_pc == path_stack[-1].header_pc:
+                if (
+                    next_pc <= pc
+                    and path_stack
+                    and path_stack[-1].kind == "loop"
+                    and next_pc == path_stack[-1].header_pc
+                ):
                     frame = path_stack.pop()
                     current_run_path = frame.parent_run_path
                 # Back-edge detection: if next_pc <= pc, this is a loop back-edge,
@@ -1455,6 +1658,9 @@ def run_native_pipeline(
                 )
                 mapper_results: list[Any] = []
                 mapper_envelope: Any = None
+                resume_from_index = 0
+                composite_child_root: Path | None = None
+                composite_child_index: int | None = None
                 mapper = parallel_block.mapper
                 if mapper is None:
                     raise NativeRuntimeError(
@@ -1500,6 +1706,55 @@ def run_native_pipeline(
                         items_ref=parallel_block.items_ref,
                         item_path=item_path,
                     )
+                    if composite_resume is not None and index == 0:
+                        target_child_root = _composite_resume_child_root(
+                            artifact_root=artifact_root,
+                            composite=composite_resume,
+                            parent_pc=pc,
+                            child_run_path=item_run_path,
+                        )
+                        if target_child_root is None:
+                            raw_child = composite_resume.get("child")
+                            if isinstance(raw_child, Mapping):
+                                raw_run_path = raw_child.get("run_path")
+                                if isinstance(raw_run_path, str):
+                                    raw_segments = _path_segments_from_run_path(raw_run_path)
+                                    current_segments = _path_segments_from_run_path(
+                                        current_run_path
+                                    )
+                                    if raw_segments[: len(current_segments)] == current_segments:
+                                        for candidate_index, candidate_item in enumerate(items):
+                                            candidate_coordinate = _parallel_map_item_coordinate(
+                                                path_template=parallel_block.path_template,
+                                                item=candidate_item,
+                                                index=candidate_index,
+                                                items_ref=parallel_block.items_ref,
+                                            )
+                                            candidate_run_path = _append_run_path_segments(
+                                                current_run_path,
+                                                *instr.call_site_path,
+                                                candidate_coordinate,
+                                            )
+                                            target_child_root = _composite_resume_child_root(
+                                                artifact_root=artifact_root,
+                                                composite=composite_resume,
+                                                parent_pc=pc,
+                                                child_run_path=candidate_run_path,
+                                            )
+                                            if target_child_root is not None:
+                                                composite_child_index = candidate_index
+                                                break
+                        else:
+                            composite_child_index = index
+                        if target_child_root is not None:
+                            (
+                                mapper_results,
+                                mapper_envelope,
+                                resume_from_index,
+                            ) = _restore_parallel_map_progress(frames, pc=pc)
+                            composite_child_root = target_child_root
+                    if index < resume_from_index:
+                        continue
 
                     if getattr(mapper, "__phase__", False):
                         mapper_instr = NativeInstruction(
@@ -1561,29 +1816,112 @@ def run_native_pipeline(
                                 "Runtime subpipeline depth exceeded "
                                 f"{_MAX_SUBPIPELINE_DEPTH} at {child_identity}"
                             )
-                        child_artifact_root = Path(artifact_root) / f"_child_{child_name}" / _safe_name(
-                            item_coordinate
+                        child_artifact_root = (
+                            composite_child_root.parent
+                            if composite_child_root is not None
+                            and index == composite_child_index
+                            else Path(artifact_root)
+                            / f"_child_{child_name}"
+                            / _safe_name(item_coordinate)
                         )
                         child_artifact_root.mkdir(parents=True, exist_ok=True)
-                        child_initial_state = _extract_child_inputs(item_state, child_program.inputs_schema)
+                        child_initial_state = _extract_child_inputs(
+                            item_state,
+                            child_program.inputs_schema,
+                        )
+                        resume_child = (
+                            composite_child_root is not None
+                            and index == composite_child_index
+                        )
+                        _check_cancellation_boundary(
+                            boundary="child_enter",
+                            instr=instr,
+                            state=item_state,
+                            envelope=envelope,
+                            run_path=item_run_path,
+                            step_path=item_path,
+                            call_site_path=(parallel_block.name or instr.name or "parallel_map", item_coordinate),
+                        )
                         child_result = run_native_pipeline(
                             program=child_program,
                             artifact_root=child_artifact_root,
                             initial_state=child_initial_state,
                             max_phases=None,
-                            resume=False,
+                            resume=resume_child,
+                            human_input=human_input if resume_child else None,
+                            override_input=_resume_override_input if resume_child else None,
                             hooks=_hooks,
                             trace_dir=None,
                             schema_registry=schema_registry,
                             telemetry_path=telemetry_path,
-                        initial_envelope=envelope,
-                        run_path=item_run_path,
-                        phase_max_attempts=phase_max_attempts,
-                        _subpipeline_depth=_subpipeline_depth + 1,
-                        _active_subpipelines=(*_active_subpipelines, child_identity),
-                        _parent_run_path=current_run_path,
+                            initial_envelope=envelope,
+                            run_path=item_run_path,
+                            phase_max_attempts=phase_max_attempts,
+                            _subpipeline_depth=_subpipeline_depth + 1,
+                            _active_subpipelines=(
+                                *_active_subpipelines,
+                                child_identity,
+                            ),
+                            _parent_run_path=current_run_path,
                             _trace_run_kind="parallel_map_item",
                         )
+                        _check_cancellation_boundary(
+                            boundary="child_exit",
+                            instr=instr,
+                            state=child_result.state,
+                            envelope=child_result.envelope,
+                            run_path=item_run_path,
+                            step_path=item_path,
+                            call_site_path=(parallel_block.name or instr.name or "parallel_map", item_coordinate),
+                        )
+                        if child_result.suspended:
+                            _child_cursor = _persist_parent_child_entry_cursor(
+                                artifact_root=artifact_root,
+                                child_artifact_root=child_artifact_root,
+                                program=program,
+                                instr=instr,
+                                pc=pc,
+                                current_run_path=current_run_path,
+                                child_run_path=item_run_path,
+                                path_stack=path_stack,
+                                stages=stages,
+                                loops=loops,
+                                frames=frames,
+                                state=state,
+                                envelope=envelope,
+                                cursor_id=_cursor_id,
+                                suspension_kind="child_suspended",
+                                parent_frame_extra={
+                                    _parallel_map_progress_key(pc): {
+                                        "completed_results": _jsonable_value(
+                                            list(mapper_results)
+                                        ),
+                                        "mapper_envelope": _serialize_envelope(
+                                            mapper_envelope
+                                        )
+                                        if mapper_envelope is not None
+                                        else None,
+                                        "next_index": index,
+                                    }
+                                },
+                            )
+                            _hooks.on_checkpoint(_child_cursor, dict(state))
+                            if isinstance(_hooks, NativeTraceHooks):
+                                _hooks.emit_pipeline_suspended(
+                                    reason="child_suspended",
+                                    run_path=current_run_path,
+                                    step_path=_child_cursor.get("step_path"),
+                                    call_site_path=_child_cursor.get("call_site_path") or (),
+                                )
+                            trace_status = "suspended"
+                            return NativeExecutionResult(
+                                state=dict(state),
+                                stages=list(stages),
+                                pc=pc,
+                                suspended=True,
+                                cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
+                                envelope=envelope,
+                            )
                         item_result = _extract_child_outputs(
                             child_result.state,
                             child_program.outputs_schema,
@@ -1648,26 +1986,72 @@ def run_native_pipeline(
                         )
     
                     # ── Isolate artifact root ──────────────────────────
-                    child_artifact_root = Path(artifact_root) / f"_child_{child_name}"
-                    child_artifact_root.mkdir(parents=True, exist_ok=True)
+                    child_artifact_root = _child_artifact_root(
+                        artifact_root,
+                        child_name=child_name,
+                        call_site_path=instr.call_site_path,
+                    )
                     child_run_path = _append_run_path_segments(
                         current_run_path,
                         *instr.call_site_path,
                     )
+                    composite_child_cursor = _composite_resume_child_root(
+                        artifact_root=artifact_root,
+                        composite=composite_resume,
+                        parent_pc=pc,
+                        child_run_path=child_run_path,
+                    )
+                    if composite_child_cursor is not None:
+                        child_artifact_root = composite_child_cursor.parent
+                    child_artifact_root.mkdir(parents=True, exist_ok=True)
     
                     # ── Schema-filter child inputs from parent state ───
                     child_initial_state = _extract_child_inputs(
                         state,
                         child_program.inputs_schema,
                     )
-    
+
+                    if composite_child_cursor is None:
+                        _child_entry_cursor = _persist_parent_child_entry_cursor(
+                            artifact_root=artifact_root,
+                            child_artifact_root=child_artifact_root,
+                            program=program,
+                            instr=instr,
+                            pc=pc,
+                            current_run_path=current_run_path,
+                            child_run_path=child_run_path,
+                            path_stack=path_stack,
+                            stages=stages,
+                            loops=loops,
+                            frames=frames,
+                            state=state,
+                            envelope=envelope,
+                            cursor_id=_cursor_id,
+                        )
+                        _hooks.on_checkpoint(_child_entry_cursor, dict(state))
+                        _check_cancellation_boundary(
+                            boundary="child_enter",
+                            instr=instr,
+                            state=state,
+                            envelope=envelope,
+                            run_path=child_run_path,
+                            step_path=_step_path_for_instr(current_run_path, instr),
+                            call_site_path=tuple(instr.call_site_path),
+                        )
+
                     # ── Execute child subpipeline ───────────────────────
                     child_result = run_native_pipeline(
                         program=child_program,
                         artifact_root=child_artifact_root,
                         initial_state=child_initial_state,
                         max_phases=None,
-                        resume=False,
+                        resume=composite_child_cursor is not None,
+                        human_input=human_input
+                        if composite_child_cursor is not None
+                        else None,
+                        override_input=_resume_override_input
+                        if composite_child_cursor is not None
+                        else None,
                         hooks=_hooks,
                         schema_registry=schema_registry,
                         telemetry_path=telemetry_path,
@@ -1680,7 +2064,59 @@ def run_native_pipeline(
                         _parent_run_path=current_run_path,
                         _trace_run_kind="subpipeline",
                     )
-    
+                    _check_cancellation_boundary(
+                        boundary="child_exit",
+                        instr=instr,
+                        state=child_result.state,
+                        envelope=child_result.envelope,
+                        run_path=child_run_path,
+                        step_path=_step_path_for_instr(current_run_path, instr),
+                        call_site_path=tuple(instr.call_site_path),
+                    )
+
+                    if child_result.suspended:
+                        _child_suspended_cursor = _persist_parent_child_entry_cursor(
+                            artifact_root=artifact_root,
+                            child_artifact_root=child_artifact_root,
+                            program=program,
+                            instr=instr,
+                            pc=pc,
+                            current_run_path=current_run_path,
+                            child_run_path=child_run_path,
+                            path_stack=path_stack,
+                            stages=stages,
+                            loops=loops,
+                            frames=frames,
+                            state=state,
+                            envelope=envelope,
+                            cursor_id=_cursor_id,
+                            suspension_kind="child_suspended",
+                        )
+                        _hooks.on_checkpoint(_child_suspended_cursor, dict(state))
+                        if isinstance(_hooks, NativeTraceHooks):
+                            _hooks.emit_pipeline_suspended(
+                                reason="child_suspended",
+                                run_path=current_run_path,
+                                step_path=_child_suspended_cursor.get("step_path"),
+                                call_site_path=_child_suspended_cursor.get("call_site_path")
+                                or (),
+                            )
+                        trace_status = "suspended"
+                        return NativeExecutionResult(
+                            state=dict(state),
+                            stages=list(stages),
+                            pc=pc,
+                            suspended=True,
+                            cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
+                            envelope=envelope,
+                        )
+
+                    _clear_parent_child_entry_cursor(
+                        artifact_root=artifact_root,
+                        child_artifact_root=child_artifact_root,
+                        pc=pc,
+                    )
+
                     # ── Merge declared child outputs back into parent state ─
                     child_outputs = _extract_child_outputs(
                         child_result.state,
@@ -1979,6 +2415,7 @@ def _maybe_count_loop_iteration(
     target_pc: int,
     program: NativeProgram,
     loops: dict[str, int],
+    run_path: str,
 ) -> None:
     """Increment the loop counter when a loop-guard decision enters its body.
 
@@ -1993,7 +2430,16 @@ def _maybe_count_loop_iteration(
             # Body branch has the smallest target PC.
             body_pc = min(instr.branches.values())
             if target_pc == body_pc:
-                loops[instr.name] = loops.get(instr.name, 0) + 1
+                scoped_key = _loop_counter_key(
+                    instr=instr,
+                    program=program,
+                    run_path=run_path,
+                )
+                current = loops.get(scoped_key)
+                if not isinstance(current, int):
+                    legacy = loops.pop(instr.name, None)
+                    current = legacy if isinstance(legacy, int) else 0
+                loops[scoped_key] = current + 1
             break
 
 
@@ -2018,14 +2464,16 @@ def _loop_iteration_segment(
     instr: NativeInstruction,
     program: NativeProgram,
     loops: Mapping[str, int],
+    run_path: str,
 ) -> str:
     """Return the stable path segment for the active loop iteration."""
-    loop_identity = instr.name
-    for loop_guard in program.loop_guards:
-        if loop_guard.guard is instr.func:
-            loop_identity = loop_guard.stable_id or loop_guard.name or instr.name
-            break
-    iteration = loops.get(instr.name, 0)
+    loop_identity = _loop_identity(instr, program)
+    iteration = _loop_iteration_count(
+        instr=instr,
+        program=program,
+        loops=loops,
+        run_path=run_path,
+    )
     return _validate_path_segment(f"{loop_identity}[{iteration}]")
 
 
@@ -2118,6 +2566,210 @@ def _build_cursor_dict(
     if final:
         cursor["final"] = True
     return cursor
+
+
+def _child_artifact_root(
+    artifact_root: str | Path,
+    *,
+    child_name: str,
+    call_site_path: Iterable[Any],
+) -> Path:
+    segments = _normalize_call_site_segments(call_site_path)
+    if not segments:
+        segments = (_safe_name(child_name),)
+    child_dir = "_child_" + "_".join(_safe_name(segment) for segment in segments)
+    return Path(artifact_root) / child_dir
+
+
+def _child_cursor_path_for_parent(
+    artifact_root: str | Path,
+    child_artifact_root: Path,
+) -> str:
+    child_cursor_path = child_artifact_root / "resume_cursor.json"
+    try:
+        return child_cursor_path.relative_to(Path(artifact_root)).as_posix()
+    except ValueError:
+        return child_cursor_path.as_posix()
+
+
+def _composite_resume_child_root(
+    *,
+    artifact_root: str | Path,
+    composite: Mapping[str, Any] | None,
+    parent_pc: int,
+    child_run_path: str,
+) -> Path | None:
+    if not isinstance(composite, Mapping):
+        return None
+    parent = composite.get("parent")
+    child = composite.get("child")
+    if not isinstance(parent, Mapping) or not isinstance(child, Mapping):
+        return None
+    if parent.get("pc") != parent_pc:
+        return None
+    saved_child_run_path = child.get("run_path")
+    if (
+        isinstance(saved_child_run_path, str)
+        and _normalize_run_path(saved_child_run_path) != _normalize_run_path(child_run_path)
+    ):
+        return None
+    cursor_path = child.get("cursor_path")
+    if not isinstance(cursor_path, str) or not cursor_path:
+        return None
+    return Path(artifact_root) / cursor_path
+
+
+def _parallel_map_progress_key(pc: int) -> str:
+    return f"__parallel_map_progress_pc_{pc}__"
+
+
+def _restore_parallel_map_progress(
+    frames: dict[str, Any],
+    *,
+    pc: int,
+) -> tuple[list[Any], Any, int]:
+    raw_progress = frames.pop(_parallel_map_progress_key(pc), None)
+    if not isinstance(raw_progress, Mapping):
+        return [], None, 0
+    raw_results = raw_progress.get("completed_results")
+    completed_results = list(raw_results) if isinstance(raw_results, list) else []
+    raw_next_index = raw_progress.get("next_index")
+    next_index = raw_next_index if isinstance(raw_next_index, int) else len(completed_results)
+    if next_index < 0:
+        next_index = 0
+    raw_envelope = raw_progress.get("mapper_envelope")
+    mapper_envelope = (
+        _deserialize_envelope(raw_envelope) if raw_envelope is not None else None
+    )
+    return completed_results, mapper_envelope, next_index
+
+
+def _persist_parent_child_entry_cursor(
+    *,
+    artifact_root: str | Path,
+    child_artifact_root: Path,
+    program: NativeProgram,
+    instr: NativeInstruction,
+    pc: int,
+    current_run_path: str,
+    child_run_path: str,
+    path_stack: list[_PathFrame],
+    stages: list[str],
+    loops: dict[str, int],
+    frames: dict[str, Any],
+    state: dict[str, Any],
+    envelope: Any,
+    cursor_id: str | None,
+    suspension_kind: str | None = None,
+    parent_frame_extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    stage_id = f"{_safe_name(program.name)}__{instr.name}__pc{pc}"
+    parent_frames = dict(frames)
+    if parent_frame_extra:
+        parent_frames.update(dict(parent_frame_extra))
+    frames_with_state = dict(frames)
+    frames_with_state["__state__"] = _jsonable_value(dict(state))
+    if envelope is not None:
+        frames_with_state["__envelope__"] = _serialize_envelope(envelope)
+    path_metadata = _cursor_path_metadata(
+        program=program,
+        pc=pc,
+        run_path=current_run_path,
+        path_stack=path_stack,
+    )
+    composite = {
+        "kind": "parent_child",
+        "parent": {
+            "pc": pc,
+            "run_path": current_run_path,
+            "path_stack": _serialize_path_stack(path_stack),
+            "state": _jsonable_value(dict(state)),
+            "stages": list(stages),
+            "loops": dict(loops),
+            "frames": _jsonable_value(parent_frames),
+            "envelope": _serialize_envelope(envelope) if envelope is not None else None,
+            "cursor_id": cursor_id,
+        },
+        "child": {
+            "cursor_path": _child_cursor_path_for_parent(
+                artifact_root,
+                child_artifact_root,
+            ),
+            "run_path": child_run_path,
+            "call_site_path": list(_call_site_path_for_run_path(child_run_path)),
+        },
+    }
+
+    native_extra = (
+        {"suspension_kind": suspension_kind}
+        if suspension_kind is not None
+        else None
+    )
+    extra: dict[str, Any] = {**path_metadata, "composite": composite}
+    if suspension_kind is not None:
+        extra["suspension_kind"] = suspension_kind
+
+    persist_native_cursor(
+        artifact_root,
+        stage=stage_id,
+        pc=pc,
+        stages=list(stages),
+        reentry_stage=stage_id,
+        loops=dict(loops),
+        frames=frames_with_state,
+        cursor_id=cursor_id,
+        stage_reentry_points=_stage_reentry_points_for(stages),
+        native_extra=native_extra,
+        **extra,
+    )
+    return _build_cursor_dict(
+        stage=stage_id,
+        pc=pc,
+        reentry_stage=stage_id,
+        stages=list(stages),
+        loops=dict(loops),
+        frames=frames_with_state,
+        state=state,
+        envelope=envelope,
+        cursor_id=cursor_id,
+        native_extra=native_extra,
+        extra=extra,
+    )
+
+
+def _clear_parent_child_entry_cursor(
+    *,
+    artifact_root: str | Path,
+    child_artifact_root: Path,
+    pc: int,
+) -> None:
+    cursor_path = Path(artifact_root) / "resume_cursor.json"
+    if not cursor_path.exists():
+        return
+    try:
+        payload = json.loads(cursor_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(payload, dict):
+        return
+    native = payload.get("native")
+    composite = payload.get("composite")
+    if not isinstance(native, dict) or native.get("pc") != pc:
+        return
+    if not isinstance(composite, dict) or composite.get("kind") != "parent_child":
+        return
+    child = composite.get("child")
+    if not isinstance(child, dict):
+        return
+    if child.get("cursor_path") != _child_cursor_path_for_parent(
+        artifact_root,
+        child_artifact_root,
+    ):
+        return
+    try:
+        cursor_path.unlink()
+    except OSError:
+        return
 
 
 def _reentry_stage_for_pc(program: NativeProgram, pc: int) -> str | None:
