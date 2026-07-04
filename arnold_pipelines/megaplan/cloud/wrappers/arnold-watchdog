@@ -95,13 +95,13 @@ maybe_reexec_updated_watchdog() {
   local reexec_path reexec_reason
 
   wrapper_path="$SELF_PATH"
-  wrapper_mtime="$(stat -c %Y "$wrapper_path" 2>/dev/null || echo 0)"
+  wrapper_mtime="$(stat -c %Y "$wrapper_path" 2>/dev/null || stat -f %m "$wrapper_path" 2>/dev/null || echo 0)"
   [[ "$wrapper_mtime" =~ ^[0-9]+$ ]] || wrapper_mtime=0
 
   source_wrapper="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/$(basename "$SELF_PATH")"
   source_mtime=0
   if [[ -f "$source_wrapper" ]]; then
-    source_mtime="$(stat -c %Y "$source_wrapper" 2>/dev/null || echo 0)"
+    source_mtime="$(stat -c %Y "$source_wrapper" 2>/dev/null || stat -f %m "$source_wrapper" 2>/dev/null || echo 0)"
     [[ "$source_mtime" =~ ^[0-9]+$ ]] || source_mtime=0
   fi
 
@@ -5956,7 +5956,11 @@ PY
           report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
         else
           log "session manual_review has unresolved quality blockers; background-dispatched repair loop before needs_human session=$session summary=$human_summary"
-          report_item "$report_items" "$session" "repair" "repair_dispatched" "blocked_recovery manual_review repair loop dispatched before needs_human" "$workspace" "$remote_spec"
+          local repair_reason="blocked_recovery manual_review repair loop dispatched before needs_human"
+          if [[ "$run_kind" == "chain" ]]; then
+            repair_reason="manual_review repair loop dispatched before needs_human"
+          fi
+          report_item "$report_items" "$session" "repair" "repair_dispatched" "$repair_reason" "$workspace" "$remote_spec"
         fi
         return 0
       fi

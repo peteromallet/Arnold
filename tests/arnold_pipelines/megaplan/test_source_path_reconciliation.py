@@ -175,7 +175,6 @@ STALE_PATHS_WITH_LIVE_EQUIVALENTS: tuple[tuple[str, str, str], ...] = (
 NON_EXISTENT_PATHS: tuple[tuple[str, str], ...] = (
     # (label, path_that_must_not_exist)
     ("native_runner.py", "arnold_pipelines.megaplan.native_runner"),
-    ("_compatibility.py (deleted M4 shim)", "arnold_pipelines.megaplan._compatibility"),
     ("cli/arnold.py (separate CLI)", "arnold_pipelines.megaplan.cli.arnold"),
     ("native_hooks.py", "arnold_pipelines.megaplan.native_hooks"),
 )

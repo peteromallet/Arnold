@@ -5543,3 +5543,17 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
     if outcome.status == "infrastructure_error":
         return 9
     return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint for the auto driver."""
+
+    parser = argparse.ArgumentParser(prog="megaplan auto")
+
+    class _StandaloneSubparsers:
+        def add_parser(self, *_args: Any, **_kwargs: Any) -> argparse.ArgumentParser:
+            return parser
+
+    build_auto_parser(_StandaloneSubparsers())
+    args = parser.parse_args(argv)
+    return run_auto(Path.cwd(), args)
