@@ -2665,3 +2665,206 @@ class TestRiskyOrDeferredFixesMarkdown:
         assert "**esc-plan**" in md
         assert "ccc333" in md
         assert "ESCALATE" in md
+
+
+class TestStageMetricsArtifactCounters:
+    def test_gather_aggregates_artifact_backed_stage_metric_counters(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace" / "demo"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "executing",
+                    "iteration": 3,
+                    "last_gate": {"recommendation": "iterate"},
+                    "history": [
+                        {"step": "gate", "result": "iterate", "timestamp": "2099-07-03T16:00:00+00:00"},
+                        {"step": "gate", "result": "blocked", "timestamp": "2099-07-03T16:10:00+00:00"},
+                    ],
+                    "active_step": {"phase": "execute"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (plan_dir / "finalize.json").write_text(
+            json.dumps(
+                {
+                    "user_actions": [
+                        {
+                            "id": "ua-1",
+                            "phase": "execute",
+                            "summary": "Need operator approval",
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "completed": [],
+                    "current_milestone_index": 0,
+                    "current_plan_name": "demo-plan",
+                    "current_state": "blocked",
+                    "last_state": "pr_closed",
+                    "reason": "waiting for CI follow-up",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (workspace / ".megaplan" / "cloud-chain-demo-session.log").write_text(
+            "\n".join(
+                [
+                    "[chain] milestone demo starting",
+                    "[chain] plan demo-plan ended blocked: PR #123 closed",
+                    "[chain] milestone demo starting",
+                    "[chain] plan demo-plan ended blocked: PR #123 closed",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        repair_root = tmp_path / "repair-data"
+        meta_dir = repair_root / "meta"
+        meta_dir.mkdir(parents=True, exist_ok=True)
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "outcome": "repair_timeout",
+                    "attempts": [
+                        {"attempt_id": "attempt-1", "outcome": "repair_timeout"},
+                        {"attempt_id": "attempt-2", "outcome": "repair_timeout"},
+                    ],
+                    "iterations": [
+                        {
+                            "i": 1,
+                            "chain_state_summary": {"current_plan_name": "demo-plan", "last_state": "blocked"},
+                            "plan_latest_failure": {"kind": "phase_failed", "message": "boom"},
+                        },
+                        {
+                            "i": 2,
+                            "chain_state_summary": {"current_plan_name": "demo-plan", "last_state": "blocked"},
+                            "plan_latest_failure": {"kind": "phase_failed", "message": "boom"},
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (meta_dir / "meta-1.json").write_text(
+            json.dumps({"meta_repair_id": "meta-1", "session": "demo-session", "incident_id": "inc-1"}),
+            encoding="utf-8",
+        )
+        meta_runs = tmp_path / "meta-runs"
+        meta_runs.mkdir(parents=True, exist_ok=True)
+        (meta_runs / "20260703T211454Z-demo-session-resp.txt").write_text(
+            "meta repair output\n",
+            encoding="utf-8",
+        )
+
+        patch_dir = tmp_path / "patches"
+        patch_dir.mkdir(parents=True, exist_ok=True)
+        (patch_dir / "sitecustomize.py").write_text(
+            """
+import arnold_pipelines.megaplan.cloud.six_hour_auditor as auditor
+
+def fake_build_audit_input(session, root, now):
+    return {
+        "brief": {
+            "found": True,
+            "incident_id": "inc-1",
+            "next_expected_event": "watchdog.dispatch",
+            "deadline_status": "overdue",
+            "claims": [
+                {"claim_id": "claim-1", "classification": "expired"},
+                {"claim_id": "claim-2", "classification": "expired"},
+            ],
+        },
+        "incident": {"incident_id": "inc-1", "next_expected_event": "watchdog.dispatch"},
+        "problem": {},
+        "projections": {},
+    }
+
+def fake_audit_projection_input(*args, **kwargs):
+    return {
+        "incident_id": "inc-1",
+        "next_expected_event": "watchdog.dispatch",
+        "findings": [
+            {
+                "layer": "stale_claim",
+                "status": "error",
+                "code": "stale_claim_detected",
+                "message": "expired handoff",
+                "claim_ids": ["claim-1", "claim-2"],
+            },
+            {
+                "layer": "live_process",
+                "status": "warn",
+                "code": "live_process_absent",
+                "message": "worker missing",
+                "recommendation": "watchdog.dispatch",
+            },
+        ],
+        "audit_complete": {"outcome": "escalated", "next_expected_event": "watchdog.dispatch"},
+    }
+
+auditor.build_audit_input = fake_build_audit_input
+auditor.audit_projection_input = fake_audit_projection_input
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={
+                "PYTHONPATH": f"{patch_dir}:{REPO_ROOT}",
+                "MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root),
+                "MEGAPLAN_AUDIT_META_RUN_DIR": str(meta_runs),
+            },
+        )
+
+        stage_metrics = findings["stage_metrics"]
+        assert stage_metrics["repair"]["repair_attempts"] == 2
+        assert stage_metrics["repair"]["repair_attempts_evidence"]
+        assert stage_metrics["repair"]["retries"] == 1
+        assert stage_metrics["repair"]["retries_evidence"]
+
+        assert stage_metrics["meta_repair"]["meta_repair_attempts"] == 1
+        assert stage_metrics["meta_repair"]["meta_repair_attempts_evidence"]
+
+        assert stage_metrics["gate"]["retries"] == 2
+        assert stage_metrics["gate"]["retries_evidence"]
+
+        assert stage_metrics["chain"]["retries"] == 1
+        assert stage_metrics["chain"]["retries_evidence"]
+        assert stage_metrics["chain"]["no_op_loops"] == 2
+        assert stage_metrics["chain"]["no_op_loops_evidence"]
+        assert stage_metrics["chain"]["handoff_gaps"] == 2
+        assert stage_metrics["chain"]["handoff_gaps_evidence"]
+
+        assert stage_metrics["human_pr_ci"]["human_waits"] == 1
+        assert stage_metrics["human_pr_ci"]["human_waits_evidence"]
+        assert stage_metrics["human_pr_ci"]["ci_waits"] == 2
+        assert stage_metrics["human_pr_ci"]["ci_waits_evidence"]
+
+        assert stage_metrics["deployment_runtime"]["dead_workers"] == 1
+        assert stage_metrics["deployment_runtime"]["dead_workers_evidence"]
