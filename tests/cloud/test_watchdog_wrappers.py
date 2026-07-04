@@ -10663,6 +10663,9 @@ def test_meta_repair_dispatch_defaults_structural() -> None:
     """Verify META_REPAIR_BIN default and dispatch_meta_repair function exist in watchdog."""
     watchdog_text = _wrapper("arnold-watchdog")
 
+    # Watchdog repair persistence defaults on unless an operator opts out.
+    assert 'PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-1}"' in watchdog_text
+
     # META_REPAIR_BIN default
     assert 'META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-/usr/local/bin/arnold-meta-repair-loop}"' in watchdog_text
 
