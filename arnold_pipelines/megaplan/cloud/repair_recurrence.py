@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Callable
 from typing import Any, Mapping
 
+from arnold_pipelines.megaplan.watchdog.signals import compute_signal_bundle
+
 PROBLEM_SIGNATURE_FIELDS = (
     "failure_kind",
     "current_state",
@@ -62,6 +64,13 @@ def _as_text(value: object) -> str:
 def _as_int(value: object) -> int | None:
     try:
         return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_float(value: object) -> float | None:
+    try:
+        return float(value)
     except (TypeError, ValueError):
         return None
 
@@ -183,6 +192,63 @@ def _probe_git_progress(workspace: Path | None, chain_state: Mapping[str, Any]) 
     return {"available": False, "head": head.stdout.strip(), "reason": reason, "errors": base_errors[-3:]}
 
 
+def _resolve_plan_dir(
+    context: Mapping[str, Any],
+    *,
+    workspace: Path | None,
+) -> Path | None:
+    plan_failure = _as_dict(context.get("plan_latest_failure"))
+    state_path = _as_path(plan_failure.get("state_path"))
+    if state_path is not None:
+        return state_path.parent
+    events_path = _as_path(context.get("plan_events_path"))
+    if events_path is not None:
+        return events_path.parent
+    plan_name = _as_text(
+        _as_dict(context.get("chain_state_summary")).get("current_plan_name")
+        or plan_failure.get("plan_name")
+    )
+    if workspace is not None and plan_name:
+        return workspace / ".megaplan" / "plans" / plan_name
+    return None
+
+
+def _probe_plan_activity(
+    context: Mapping[str, Any],
+    *,
+    workspace: Path | None,
+) -> dict[str, Any]:
+    plan_dir = _resolve_plan_dir(context, workspace=workspace)
+    if plan_dir is None or not plan_dir.exists():
+        return {"available": False, "reason": "missing_plan_dir"}
+    events_path = plan_dir / "events.ndjson"
+    try:
+        signals = compute_signal_bundle(plan_dir)
+    except Exception as exc:
+        return {
+            "available": False,
+            "reason": type(exc).__name__,
+            "plan_dir": str(plan_dir),
+        }
+    try:
+        events_mtime = events_path.stat().st_mtime if events_path.exists() else 0.0
+        events_size = events_path.stat().st_size if events_path.exists() else 0
+    except OSError:
+        events_mtime = 0.0
+        events_size = 0
+    return {
+        "available": True,
+        "plan_dir": str(plan_dir),
+        "events_path": str(events_path),
+        "events_mtime": events_mtime,
+        "events_size": events_size,
+        "liveness": str(signals.liveness or ""),
+        "liveness_reason": str(signals.liveness_reason or ""),
+        "has_in_flight_llm": bool(signals.has_in_flight_llm),
+        "last_event_age_seconds": signals.last_event_age_seconds,
+    }
+
+
 def _first_blocked_task_id(execute_attempt_context: Mapping[str, Any]) -> str:
     context = _as_dict(execute_attempt_context)
     for section_name, key in (
@@ -266,6 +332,7 @@ def build_advancement_snapshot(
     workspace_path = _as_path(workspace) or _as_path(context.get("workspace"))
     pr_check = _probe_pr_state(workspace_path, chain_state.get("pr_number"))
     git_check = _probe_git_progress(workspace_path, chain_state)
+    plan_activity = _probe_plan_activity(context, workspace=workspace_path)
     external_available = bool(pr_check.get("available")) or bool(git_check.get("available"))
     fallback_reason = ""
     if not external_available:
@@ -300,6 +367,7 @@ def build_advancement_snapshot(
                 "reason": fallback_reason,
             },
         },
+        "plan_activity": plan_activity,
     }
 
 
@@ -311,6 +379,20 @@ def has_advancement(
         return False
     prev = _as_dict(previous)
     curr = _as_dict(current)
+    prev_activity = _as_dict(prev.get("plan_activity"))
+    curr_activity = _as_dict(curr.get("plan_activity"))
+    if bool(curr_activity.get("has_in_flight_llm")):
+        return True
+    if bool(prev_activity.get("available")) and bool(curr_activity.get("available")):
+        prev_events_mtime = _as_float(prev_activity.get("events_mtime")) or 0.0
+        curr_events_mtime = _as_float(curr_activity.get("events_mtime")) or 0.0
+        prev_events_size = _as_int(prev_activity.get("events_size")) or 0
+        curr_events_size = _as_int(curr_activity.get("events_size")) or 0
+        if curr_events_mtime > prev_events_mtime or curr_events_size > prev_events_size:
+            return True
+    if _as_text(curr_activity.get("liveness")) == "progressing":
+        return True
+
     curr_external = _as_dict(curr.get("external_checks"))
     curr_pr = _as_dict(curr_external.get("pr"))
     if bool(curr_pr.get("available")) and bool(curr_pr.get("merged")):

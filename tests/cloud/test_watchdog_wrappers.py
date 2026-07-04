@@ -8385,7 +8385,7 @@ def test_chain_health_no_advance_ignores_progressing_plan_events_without_active_
     _write_plan(
         ws / ".megaplan" / "plans" / plan_name,
         {"current_state": "finalized", "iteration": 1},
-        events_body="",
+        events_body="\n",
     )
     _write_chain_state(
         ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
