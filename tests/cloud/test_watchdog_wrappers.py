@@ -9768,6 +9768,9 @@ def test_meta_repair_wrapper_has_codex_dispatch() -> None:
     assert 'codex exec --skip-git-repo-check --sandbox danger-full-access - < "$BRIEF_PATH"' in text
     assert '$(cat "$BRIEF_PATH")' not in text
     assert 'CODEX_TIMEOUT="${MEGAPLAN_META_CODEX_TIMEOUT_SECS:-5400}"' in text
+    assert 'BRIEF_PREFLIGHT_MAX_CHARS="${MEGAPLAN_META_BRIEF_PREFLIGHT_MAX_CHARS:-900000}"' in text
+    assert 'meta-repair brief exceeded preflight char budget; rebuilding emergency brief' in text
+    assert 'classification_and_prompt 1' in text
     assert 'codex CLI missing' in text
 
 
