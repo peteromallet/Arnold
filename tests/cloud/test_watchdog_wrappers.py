@@ -5574,8 +5574,9 @@ def test_watchdog_enforces_single_instance_and_reexecs_after_hot_update() -> Non
     assert 'LOCK_HELD="${CLOUD_WATCHDOG_LOCK_HELD:-0}"' in text
     assert 'exec flock -n "$LOCK_FILE" bash "$SELF_PATH" "${WATCHDOG_ARGS[@]}"' in text
     assert "maybe_reexec_updated_watchdog()" in text
-    assert 'log "watchdog wrapper updated on disk; re-execing current script"' in text
-    assert 'exec bash "$SELF_PATH" "${WATCHDOG_ARGS[@]}"' in text
+    assert 'source_wrapper="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/$(basename "$SELF_PATH")"' in text
+    assert 'log "watchdog wrapper updated on disk; re-execing $reexec_reason"' in text
+    assert 'exec bash "$reexec_path" "${WATCHDOG_ARGS[@]}"' in text
     assert 'log "scan start marker_dir=$MARKER_DIR"' in scan_once
     assert 'sync_editable_source_branch "$report_items" || true' in scan_once
     assert scan_once.count("maybe_reexec_updated_watchdog") == 2
@@ -5595,6 +5596,55 @@ def test_watchdog_refresh_syncs_cloud_runtime_wrappers() -> None:
     assert 'if [[ ! -f "$dest" ]] || ! cmp -s "$wrapper_src_dir/principles.md" "$dest"; then' in text
     assert 'install -m 0644 "$wrapper_src_dir/principles.md" "$dest"' in text
     assert 'sync_cloud_runtime_wrappers >> "$LOG" 2>&1 || return 1' in text
+
+
+def test_watchdog_hot_update_prefers_newer_editable_source_wrapper(tmp_path: Path) -> None:
+    wrapper = tmp_path / "installed" / "arnold-watchdog"
+    wrapper.parent.mkdir(parents=True, exist_ok=True)
+    wrapper.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    src_dir = tmp_path / "src"
+    source_wrapper = src_dir / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers" / "arnold-watchdog"
+    source_wrapper.parent.mkdir(parents=True, exist_ok=True)
+    source_wrapper.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    stale = time.time() - 300
+    fresh = time.time()
+    os.utime(wrapper, (stale, stale))
+    os.utime(source_wrapper, (fresh, fresh))
+
+    fake_bash = tmp_path / "bash"
+    fake_bash.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "print('\\n'.join(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
+    fake_bash.chmod(fake_bash.stat().st_mode | stat.S_IXUSR)
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("maybe_reexec_updated_watchdog"),
+            "log() { :; }",
+            f"SELF_PATH={str(wrapper)!r}",
+            f"SRC_DIR={str(src_dir)!r}",
+            "WATCHDOG_ARGS=(once)",
+            f"WATCHDOG_STARTED_AT={int(stale)}",
+            "maybe_reexec_updated_watchdog",
+        ]
+    )
+
+    env = dict(os.environ)
+    env["PATH"] = f"{tmp_path}:{env.get('PATH', '')}"
+    result = subprocess.run(
+        ["/bin/bash", "-c", script],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [str(source_wrapper), "once"]
 
 
 def test_arnold_chain_wrapper_reloads_hot_env_before_launch() -> None:
