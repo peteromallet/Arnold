@@ -4452,7 +4452,7 @@ if [[ "$INITIAL_HEALTH" == "alive" ]]; then
   if [[ -n "$forced_repair_reason" ]]; then
     log "repair target is alive but marker requires repair session=$SESSION reason=$forced_repair_reason"
   else
-  repair_data_set_outcome "running"
+  repair_data_set_outcome "live_with_fresh_activity"
   clear_repair_markers
   log "repair target already running; no dev-fix needed session=$SESSION"
   exit 0
@@ -4484,7 +4484,7 @@ if repair_dependency_manifests_if_possible; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "dependency manifest repaired; mechanical launch came up and held"
-    repair_data_set_outcome "running"
+    repair_data_set_outcome "live_with_fresh_activity"
     clear_repair_markers
     log "repair loop succeeded after dependency manifest repair"
     exit 0
@@ -4499,7 +4499,7 @@ if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "stale state cleared; mechanical launch came up and held"
-    repair_data_set_outcome "running"
+    repair_data_set_outcome "live_with_fresh_activity"
     clear_repair_markers
     log "repair loop succeeded after stale-state clear"
     exit 0
@@ -4563,7 +4563,7 @@ for iteration in 1 2 3; do
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "$iteration" "$CURRENT_ATTEMPT_ID" "running" "mechanical launch came up and held"
-    repair_data_set_outcome "running"
+    repair_data_set_outcome "live_with_fresh_activity"
     clear_repair_markers
     log "repair loop succeeded mechanically iteration=$iteration"
     exit 0
@@ -4577,7 +4577,7 @@ for iteration in 1 2 3; do
   exit_if_repair_target_complete "iteration-$iteration-pre-kimi"
   resolved_relaunch_command="$(resolve_relaunch_command "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" 2>/dev/null || true)"
   if run_kimi_launch_turn "$iteration" "$RUN_KIND" "$PLAN_NAME" "$resolved_relaunch_command"; then
-    repair_data_set_outcome "running"
+    repair_data_set_outcome "live_with_fresh_activity"
     clear_repair_markers
     log "repair loop succeeded via Kimi iteration=$iteration"
     exit 0
