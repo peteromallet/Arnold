@@ -23,6 +23,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from arnold.security.broker_client import BrokerClient
+from arnold.security.llm_proxy import (
+    broker_production_mode_requested,
+    resolve_brokered_llm_proxy,
+)
+
 _RELOAD_TTL_SECONDS = 60.0
 
 _PROVIDER_KEY_VARS = {
@@ -120,6 +126,13 @@ class KeyEntry:
     failed: bool = False
 
 
+@dataclass
+class BrokeredKey:
+    key: str
+    base_url: str
+    expires_at: int | None = None
+
+
 class KeyPool:
     """Thread-safe API key pool with LRU acquisition and 429 cooldown.
 
@@ -144,6 +157,7 @@ class KeyPool:
         self._entries: dict[str, list[KeyEntry]] = {
             provider: [] for provider in _PROVIDER_KEY_VARS
         }
+        self._broker_keys: dict[str, BrokeredKey] = {}
 
     def _api_keys_path(self) -> Path | None:
         """Return the JSON keys file path via the injected source, or None."""
@@ -213,6 +227,44 @@ class KeyPool:
             self._entries[provider] = [existing.get(key, KeyEntry(key=key)) for key in keys]
         self._next_reload = now + self._ttl_seconds
 
+    def _provider_base_url_unlocked(self, provider: str) -> str:
+        env_var = _PROVIDER_BASE_URL_VARS.get(provider, "")
+        env_override = self._get_api_credential_unlocked(env_var) if env_var else ""
+        default_url = _DEFAULT_BASE_URLS.get(provider, "")
+        if provider == "kimi":
+            sample_key = ""
+            for entry in self._entries.get(provider, []):
+                if entry.key:
+                    sample_key = entry.key
+                    break
+            return resolve_kimi_base_url(sample_key, default_url, env_override)
+        return env_override or default_url
+
+    def _acquire_brokered_key_unlocked(self, provider: str) -> str:
+        current = self._broker_keys.get(provider)
+        now = int(time.time())
+        if current is not None and (current.expires_at is None or current.expires_at > now):
+            return current.key
+        upstream_base_url = self._provider_base_url_unlocked(provider)
+        if not upstream_base_url:
+            return ""
+        try:
+            credential = resolve_brokered_llm_proxy(
+                provider,
+                upstream_base_url,
+                broker_client=BrokerClient.from_environment(),
+            )
+        except Exception:
+            return ""
+        if credential is None or not credential.broker_auth:
+            return ""
+        self._broker_keys[provider] = BrokeredKey(
+            key=credential.broker_auth,
+            base_url=credential.base_url,
+            expires_at=credential.expires_at,
+        )
+        return credential.broker_auth
+
     def _get_api_credential_unlocked(self, env_var: str, hermes_env: dict[str, str] | None = None) -> str:
         source = hermes_env if hermes_env is not None else self._hermes_env
         for candidate in _ENV_ALIASES.get(env_var, (env_var,)):
@@ -224,12 +276,27 @@ class KeyPool:
     def load_hermes_env(self) -> dict[str, str]:
         with self._lock:
             self._load_keys_unlocked(time.monotonic())
+            if broker_production_mode_requested():
+                return {}
             return dict(self._hermes_env)
 
     def get_api_credential(self, env_var: str, hermes_env: dict[str, str] | None = None) -> str:
         with self._lock:
             self._load_keys_unlocked(time.monotonic())
+            if broker_production_mode_requested():
+                return ""
             return self._get_api_credential_unlocked(env_var, hermes_env)
+
+    def resolve_base_url(self, provider: str) -> str:
+        with self._lock:
+            now = time.monotonic()
+            self._load_keys_unlocked(now)
+            if broker_production_mode_requested():
+                self._acquire_brokered_key_unlocked(provider)
+                current = self._broker_keys.get(provider)
+                if current is not None:
+                    return current.base_url
+            return self._provider_base_url_unlocked(provider)
 
     def acquire(self, provider: str) -> str:
         """Acquire the least-recently-used key for *provider*.
@@ -240,6 +307,8 @@ class KeyPool:
         with self._lock:
             now = time.monotonic()
             self._load_keys_unlocked(now)
+            if broker_production_mode_requested():
+                return self._acquire_brokered_key_unlocked(provider)
             eligible = [
                 entry for entry in self._entries.get(provider, [])
                 if not entry.failed and entry.cooldown_until <= now
@@ -277,11 +346,14 @@ class KeyPool:
     def has_keys(self, provider: str) -> bool:
         with self._lock:
             self._load_keys_unlocked(time.monotonic())
+            if broker_production_mode_requested():
+                return bool(self._acquire_brokered_key_unlocked(provider))
             return bool(self._entries.get(provider))
 
 
 __all__ = [
     "KeyEntry",
+    "BrokeredKey",
     "KeyPathSource",
     "KeyPool",
     "minimax_openrouter_model",

@@ -28,6 +28,7 @@ from arnold.pipeline.native import (
 )
 from arnold.pipeline.native.audit import AuditHooks, AuditRecord
 from arnold.pipeline.native.hooks import NullNativeRuntimeHooks
+from arnold.security.audit import record_broker_audit_entry
 
 
 # ── helpers ───────────────────────────────────────────────────────────
@@ -152,6 +153,12 @@ class TestAuditRecordFields:
             "effect_class",
             "effect_lifecycle_state",
             "duplicate_action",
+            "git_command_ref",
+            "git_effect_ref",
+            "prompt_ref",
+            "completion_ref",
+            "redaction_status",
+            "retention_policy",
         }
         assert set(d.keys()) == required_fields
         assert d["attempt_id"] == "abc123"
@@ -164,6 +171,8 @@ class TestAuditRecordFields:
         assert d["status"] == "started"
         assert d["operation"] is None
         assert d["idempotency_key"] is None
+        assert d["redaction_status"] == "sanitized"
+        assert d["retention_policy"] == "audit"
 
     def test_started_at_is_iso_timestamp(self) -> None:
         """started_at must be an ISO-8601 timestamp string."""
@@ -614,6 +623,39 @@ class TestAuditHooksIntegration:
         assert rec["duplicate_action"] is None
         assert isinstance(rec["idempotency_key"], str)
         assert rec["idempotency_key"].endswith(":file_write:out/report.json")
+
+    def test_broker_audit_entry_is_joined_and_redacted_before_flush(self, tmp_path: Path) -> None:
+        audit_dir = tmp_path / "audit"
+        hooks = AuditHooks(audit_dir=audit_dir)
+
+        @phase
+        def brokered_step(ctx: dict) -> dict:
+            record_broker_audit_entry(
+                run_id=hooks._run_id,
+                step_path=ctx["step_path"],
+                git_command_ref="artifact://git-command?token=ghp_1234567890abcdef",
+                git_effect_ref="artifact://git-effect/1",
+                prompt_ref="artifact://prompt/sk-secret-token-1234567890",
+                completion_ref="artifact://completion/1",
+                metadata={"authorization": "Bearer sk-secret-token-1234567890"},
+            )
+            return {"ok": True}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield brokered_step(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        run_native_pipeline(prog, hooks=hooks)
+
+        rec = _step_records(_read_audit_ndjson(audit_dir))[0]
+        assert rec["git_command_ref"] == "artifact://git-command?token=[REDACTED]"
+        assert rec["git_effect_ref"] == "artifact://git-effect/1"
+        assert rec["prompt_ref"] == "artifact://prompt/[REDACTED]"
+        assert rec["completion_ref"] == "artifact://completion/1"
+        assert rec["redaction_status"] == "sanitized"
+        assert rec["retention_policy"] == "audit"
 
 
 # ── AuditHooks constructor tests ──────────────────────────────────────

@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from .approval import ApprovalLink
+from .approval import (
+    BROKER_APPROVAL_SUSPENSION_KIND,
+    ApprovalLink,
+    BrokerApprovalDecision,
+    apply_broker_approval_decision,
+    broker_approval_effect_metadata,
+)
 from .events import OperationEvent
 from .handler import OperationHandler
 from .operation import (
@@ -39,6 +45,8 @@ from .typed_resources import ResourceType, TypedResource
 
 __all__ = [
     "ApprovalLink",
+    "BROKER_APPROVAL_SUSPENSION_KIND",
+    "BrokerApprovalDecision",
     "DurableOpsStore",
     "FileBackedDurableOpsStore",
     "InvalidOperationTransition",
@@ -61,6 +69,8 @@ __all__ = [
     "ScheduledTaskState",
     "TypedResource",
     "TypedResourceAlreadyExists",
+    "apply_broker_approval_decision",
+    "broker_approval_effect_metadata",
     "can_transition_operation",
     "can_transition_scheduled_task",
     "ensure_operation_transition",

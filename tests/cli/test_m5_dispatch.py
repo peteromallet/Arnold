@@ -24,6 +24,7 @@ EXPECTED_WORKFLOW_SUBCOMMANDS = [
 ]
 
 EXPECTED_OPERATOR_COMMANDS = ["inspect", "override", "status", "trace"]
+EXPECTED_EXECUTION_COMMANDS = ["approve", "cancel", "deny", "resume"]
 
 
 def _workflow_parser() -> argparse.ArgumentParser:
@@ -101,4 +102,16 @@ def test_top_level_dispatch_routes_operator_commands(capsys) -> None:
         combined = out + err
         assert f"usage: arnold {cmd}" in combined, f"{cmd} did not route to operators module"
 
+
+def test_top_level_dispatch_routes_execution_approval_commands(capsys) -> None:
+    """arnold approve/deny/cancel/resume route to the execution module."""
+
+    for cmd in EXPECTED_EXECUTION_COMMANDS:
+        try:
+            cli_package.main([cmd, "--help"])
+        except SystemExit:
+            pass
+        out, err = capsys.readouterr()
+        combined = out + err
+        assert f"usage: arnold {cmd}" in combined, f"{cmd} did not route to execution module"
 

@@ -43,6 +43,7 @@ from arnold.conformance.checks import (
     check_never_port_artifacts,
     check_package_name_staleness,
     check_public_workflow_layering,
+    check_security_coverage_matrix,
     check_semantic_coupling,
 )
 from arnold.conformance.join import run_join_conformance_suite
@@ -205,6 +206,7 @@ def run_conformance_suite(
         )
     )
     results.append(check_legacy_reference_allowlist())
+    results.append(check_security_coverage_matrix())
 
     return ConformanceSuiteResult(
         suite_id=suite_id,

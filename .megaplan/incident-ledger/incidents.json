@@ -1,13 +1,4110 @@
 {
-  "incidents": [],
-  "integrity": [],
+  "incidents": [
+    {
+      "actions": [],
+      "attempts": [
+        {
+          "attempt_id": "demo-session-discord_escalated",
+          "event_seqs": [
+            8,
+            14,
+            20,
+            26,
+            33,
+            40,
+            49,
+            54,
+            59,
+            64,
+            70,
+            75,
+            80,
+            85,
+            93,
+            99,
+            105,
+            110,
+            116,
+            122,
+            127
+          ],
+          "latest_outcome": "discord_escalated",
+          "types": [
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "demo-session-repairing",
+          "event_seqs": [
+            4,
+            5,
+            6,
+            7,
+            10,
+            11,
+            12,
+            13,
+            16,
+            17,
+            18,
+            19,
+            22,
+            23,
+            24,
+            25,
+            29,
+            30,
+            31,
+            32,
+            36,
+            37,
+            38,
+            39,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            50,
+            51,
+            52,
+            53,
+            55,
+            56,
+            57,
+            58,
+            60,
+            61,
+            62,
+            63,
+            66,
+            67,
+            68,
+            69,
+            71,
+            72,
+            73,
+            74,
+            76,
+            77,
+            78,
+            79,
+            81,
+            82,
+            83,
+            84,
+            86,
+            87,
+            88,
+            89,
+            90,
+            91,
+            92,
+            95,
+            96,
+            97,
+            98,
+            101,
+            102,
+            103,
+            104,
+            106,
+            107,
+            108,
+            109,
+            112,
+            113,
+            114,
+            115,
+            118,
+            119,
+            120,
+            121,
+            123,
+            124,
+            125,
+            126
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt"
+          ]
+        }
+      ],
+      "claims": [],
+      "deadline_ts": null,
+      "decisions": [],
+      "event_count": 111,
+      "events": [
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-4e32c654eebd",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 4,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:24:24.562997+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-102308288450",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 5,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:24:25.253407+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-c388ab5ff69f",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 6,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:24:25.714287+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-ec595e25b64f",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 7,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:24:27.197299+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-c1b8f3dc7b40",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 8,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:24:28.137736+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-dcb5cf5963da",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 10,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:27:32.240864+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-b42b5b4b8a99",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 11,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:27:32.686832+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-dab16c6a9e85",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 12,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:27:33.117783+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-3c18d61e1067",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 13,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:27:34.496091+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-7a2e62bdbe2f",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 14,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:27:35.335777+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-27542165f560",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 16,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:37:26.120221+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-640b34d40005",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 17,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:37:26.542486+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-580b05e3547a",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 18,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:37:27.013254+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-3cdb150c3073",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 19,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:37:28.398760+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-49ddf8162ca9",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 20,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:37:29.332030+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-48a5a0e873a5",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 22,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:43:43.158086+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-b8ebbfc22eb4",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 23,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:43:43.692488+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-73234b1cfb3d",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 24,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:43:44.335002+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-aaa11e868935",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 25,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:43:45.787334+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-b9da18f7570d",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 26,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:43:46.739668+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-4e7e64cd3496",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 29,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:48:06.169595+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-47417041b7ce",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 30,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:48:06.630314+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-b2a194db7edc",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 31,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:48:07.086456+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-3ce1c30d8163",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 32,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:48:08.408475+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-7c55c9695fa9",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 33,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:48:09.360605+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-7a695fdf62ea",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 36,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:54:39.449116+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-39cb43289aa0",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 37,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:54:39.906150+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-b4c4c4fd88b3",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 38,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:54:40.403917+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-5c543fe30dcf",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 39,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:54:41.853654+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-8e2410f56308",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 40,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T21:54:42.764336+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-1f72914d1f33",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 42,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T22:55:31.522918+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-7218f7b0a913",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 43,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T22:57:22.558217+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-a3d14ea3adb6",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 44,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T22:59:55.170539+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-e7711f8fe682",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 45,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T23:02:48.508805+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-d81bc6ed06a8",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 46,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T23:02:48.976081+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-b348f37632a9",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 47,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T23:02:49.414403+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-bf45b46c7a04",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 48,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T23:02:50.787931+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-d5df22d74719",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 49,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-03T23:02:51.696178+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-9465b9331c8a",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 50,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:38:37.593164+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-53593f8cb1a4",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 51,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:38:38.044832+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-cd9383125f6c",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 52,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:38:38.491699+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-7c91b00fdd2b",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 53,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:38:39.789171+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-6fa8c3d478f7",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 54,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:38:40.707759+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-2d9109dff13e",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 55,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:41:40.946706+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-309db7b7d56f",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 56,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:41:41.492888+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-bf86c4cf8100",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 57,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:41:42.038852+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-ad238405df82",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 58,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:41:43.634776+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-a4f39c530da0",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 59,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:41:44.573761+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-0b2a361f74ed",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 60,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:45:41.578637+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-8de1a557801b",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 61,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:45:42.062102+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-b7581c238753",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 62,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:45:42.529574+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-35cf64d80069",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 63,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:45:43.888600+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-3dc396d2446f",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 64,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:45:44.794364+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-68a97d108068",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 66,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:48:56.595543+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-ada79aa8e896",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 67,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:48:57.060953+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-1e451f1c741f",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 68,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:48:57.500716+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-d96067cbd2bf",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 69,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:48:58.873029+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-c8b95b7e6292",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 70,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:48:59.743930+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-715e00fa2633",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 71,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:58:46.171388+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-4e0e50a81126",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 72,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:58:46.744945+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-a1d29c31092f",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 73,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:58:47.268933+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-722bc74a3175",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 74,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:58:48.953674+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-48f38c8d241b",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 75,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T01:58:50.249571+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-de7e40a1dae9",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 76,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:01:48.713457+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-94cd4ac9ecc4",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 77,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:01:49.403027+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-b7d01144a518",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 78,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:01:49.987624+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-e62af35f82db",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 79,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:01:51.635519+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-93136739ceaf",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 80,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:01:52.851896+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-b62ff8074529",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 81,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:05:13.134263+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-13a419a89974",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 82,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:05:13.654203+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-52f81d1a5ffd",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 83,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:05:14.190465+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-57c103f21648",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 84,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:05:15.740768+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-e249530b48c2",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 85,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:05:16.749892+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-b41108692cd8",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 86,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:16:01.293264+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-f43e6132a554",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 87,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:16:01.793455+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-c2eae4103d3d",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 88,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:16:02.232945+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-1e40a3c9e683",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 89,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:16:52.944691+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-d5207e8d3f02",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 90,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:16:53.462211+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-4290da0ff6b0",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 91,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:16:53.958967+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-aefe0367bf03",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 92,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:16:55.401753+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-eb714184b8f2",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 93,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:16:56.302683+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-de9736f33030",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 95,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:19:31.119585+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-381ea2344a7a",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 96,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:19:31.593674+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-96a7cfc3eca4",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 97,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:19:32.081891+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-788c2c6df2f0",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 98,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:19:33.490348+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-5579c3add6af",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 99,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:19:34.461408+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-2fc5e092b1e3",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 101,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:25:48.852060+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-d3d22f3136ea",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 102,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:25:49.316881+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-42ae8a4d85de",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 103,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:25:49.781952+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-fb968ad09b7b",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 104,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:25:51.110015+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-e82ffc862516",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 105,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:25:52.037383+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-f08bf9c5be27",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 106,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:29:49.724732+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-9c3639f5d6c6",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 107,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:29:50.182056+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-3da942e17122",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 108,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:29:50.615147+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-aa2024f674af",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 109,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:29:51.925951+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-cc5e1d427cfe",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 110,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:29:52.773508+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-fc7e834e09f4",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 112,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:33:29.138839+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-b187c151ac15",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 113,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:33:29.624994+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-c6b529d135c5",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 114,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:33:30.097075+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-7c9e22067c13",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 115,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:33:31.453158+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-75d8777cf73d",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 116,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:33:32.432031+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-e8b0bffbb0d6",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 118,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:36:05.450373+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-c827934bba36",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 119,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:36:05.871275+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-3218918574e2",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 120,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:36:06.358000+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-5206daf8fa99",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 121,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:36:07.703619+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-fc7bce41a2bd",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 122,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:36:08.661214+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-129d6ed6f340",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 123,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:41:34.623257+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-e365dfe41b18",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 124,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:41:35.050400+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-32518a0232ad",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 125,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:41:35.491603+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-0888c01ab5a3",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 126,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:41:36.795171+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "mra-da999f8922ad",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 127,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-04T02:41:37.653604+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        }
+      ],
+      "first_seq": 4,
+      "first_timestamp": "2026-07-03T21:24:24.562997+00:00",
+      "incident_id": "inc-demo-session",
+      "last_seq": 127,
+      "last_timestamp": "2026-07-04T02:41:37.653604+00:00",
+      "latest_actor": "meta_repair",
+      "latest_kind": "incident.repair_attempt",
+      "next_expected_event": "repair_attempt.verification",
+      "outcome": "discord_escalated",
+      "placeholders": {
+        "install_freshness": "unknown",
+        "recurrence": "repeated_attempts_without_new_evidence",
+        "shipped_fix": "unknown"
+      },
+      "problem_ids": [
+        "problem-6e386e382223",
+        "problem-9e338df241c5"
+      ],
+      "session_ids": [
+        "demo-session"
+      ],
+      "state": "repair_attempt",
+      "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace"
+    },
+    {
+      "actions": [],
+      "attempts": [
+        {
+          "attempt_id": "demo-session-repairing",
+          "event_seqs": [
+            0,
+            1,
+            2,
+            3,
+            9,
+            15,
+            21,
+            27,
+            28,
+            34,
+            35,
+            41,
+            65,
+            94,
+            100,
+            111,
+            117
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt"
+          ]
+        }
+      ],
+      "claims": [],
+      "deadline_ts": null,
+      "decisions": [],
+      "event_count": 17,
+      "events": [
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-232b0d67c9a5",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 0,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-03T20:59:15.263244+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-74d10c9c7bb7",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 1,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-03T21:00:20.391826+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-2924cfb178fd",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 2,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-03T21:21:26.101677+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-a4440bcd3505",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 3,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-03T21:24:16.438044+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-a7d8f912ab19",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 9,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-03T21:27:24.285437+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-50eaa5e5a5f5",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 15,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-03T21:29:38.099045+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-3fafa9ad430d",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 21,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-03T21:39:18.964976+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-7cd07c8e3f4f",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 27,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-03T21:45:36.994239+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-ea45a8f5e97f",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 28,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-03T21:46:35.151928+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-adb96b05ed45",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 34,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-03T21:49:56.603832+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-b5ff6e0cbb2d",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 35,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-03T21:52:06.567582+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-5de2be4326ac",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 41,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-03T21:56:23.587883+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-76034bf86080",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 65,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-04T01:48:37.024888+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-ec2b21a3dac4",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 94,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-04T02:19:10.549923+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-ae1f42950105",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 100,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-04T02:25:28.877244+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-62e40a140909",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 111,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-04T02:33:09.412566+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "meta_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "mra-eebfa01ce32e",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 117,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-04T02:35:45.093728+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        }
+      ],
+      "evidence_refs": [
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
+        }
+      ],
+      "first_seq": 0,
+      "first_timestamp": "2026-07-03T20:59:15.263244+00:00",
+      "incident_id": "incident-42",
+      "last_seq": 117,
+      "last_timestamp": "2026-07-04T02:35:45.093728+00:00",
+      "latest_actor": "meta_repair",
+      "latest_kind": "incident.repair_attempt",
+      "next_expected_event": "repair_attempt.verification",
+      "outcome": "attempted",
+      "placeholders": {
+        "install_freshness": "unknown",
+        "recurrence": "repeated_attempts_without_new_evidence",
+        "shipped_fix": "unknown"
+      },
+      "problem_ids": [
+        "problem-68a048c70af7"
+      ],
+      "session_ids": [
+        "demo-session"
+      ],
+      "state": "repair_attempt",
+      "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project"
+    }
+  ],
+  "integrity": [
+    {
+      "code": "loop_break_repeated_attempt_no_new_evidence",
+      "incident_id": "inc-demo-session",
+      "message": "Repeated repair_attempt events did not add a new hypothesis or state change",
+      "recommendation": "system.integrity_repair",
+      "seq": 6,
+      "severity": "error"
+    },
+    {
+      "code": "loop_break_repeated_attempt_no_new_evidence",
+      "incident_id": "incident-42",
+      "message": "Repeated repair_attempt events did not add a new hypothesis or state change",
+      "recommendation": "system.integrity_repair",
+      "seq": 2,
+      "severity": "error"
+    }
+  ],
   "projection": "incidents",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "event_count": 0,
-    "journal_line_count": 0,
-    "last_seq": null,
+    "digest": "sha256:36a0d1068a095d24024183d27264dccb380b02c92830e63a3d111b690607a732",
+    "event_count": 128,
+    "journal_line_count": 128,
+    "last_seq": 127,
     "malformed_line_count": 0
   }
 }

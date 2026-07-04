@@ -19,14 +19,24 @@ from typing import Literal, get_args
 _OPERATION_LITERALS = (
     "file_write",
     "git_branch_create",
+    "git_branch_delete",
     "git_commit",
+    "git_force_push",
+    "git_pr_create",
+    "git_pr_merge",
+    "git_push",
     "git_worktree_op",
 )
 
 Operation = Literal[
     "file_write",
     "git_branch_create",
+    "git_branch_delete",
     "git_commit",
+    "git_force_push",
+    "git_pr_create",
+    "git_pr_merge",
+    "git_push",
     "git_worktree_op",
 ]
 

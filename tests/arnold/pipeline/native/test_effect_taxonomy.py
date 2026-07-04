@@ -39,7 +39,12 @@ class TestEffectTaxonomy:
     def test_valid_operations_recognised(self) -> None:
         assert is_valid_operation("file_write") is True
         assert is_valid_operation("git_branch_create") is True
+        assert is_valid_operation("git_branch_delete") is True
         assert is_valid_operation("git_commit") is True
+        assert is_valid_operation("git_force_push") is True
+        assert is_valid_operation("git_pr_create") is True
+        assert is_valid_operation("git_pr_merge") is True
+        assert is_valid_operation("git_push") is True
         assert is_valid_operation("git_worktree_op") is True
 
     def test_unknown_operation_rejected(self) -> None:
