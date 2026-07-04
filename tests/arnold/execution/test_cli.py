@@ -9,8 +9,12 @@ from pathlib import Path
 
 import pytest
 
+from arnold.cli import execution as execution_cli
 from arnold.cli.execution import main
 from arnold.manifest import WorkflowManifest, WorkflowNode
+from arnold.runtime.durable_ops import FileBackedDurableOpsStore, OperationRun, OperationState
+from arnold.security.approval import apply_broker_approval_required
+from arnold.security.types import ActionResult, ActionVerdict
 
 
 def _manifest_json(tmp_path: Path, nodes: list[WorkflowNode]) -> Path:
@@ -130,3 +134,180 @@ def test_cli_exits_nonzero_on_run_failure(tmp_path: Path) -> None:
     assert rc != 0
     parsed = json.loads((artifact_root / "events.ndjson").read_text().splitlines()[-1])
     assert parsed["kind"] == "run_failed"
+
+
+def _approval_result(action_id: str = "act-gate") -> ActionResult:
+    return ActionResult(
+        verdict=ActionVerdict.APPROVAL_REQUIRED,
+        summary="broker approval required",
+        action_id=action_id,
+        metadata={"repo": "example/repo", "branch": "feature/demo"},
+    )
+
+
+def _seed_broker_approval(tmp_path: Path) -> tuple[Path, Path, FileBackedDurableOpsStore, str]:
+    artifact_root = tmp_path / "artifacts"
+    state_store_dir = tmp_path / "ops-store"
+    store = FileBackedDurableOpsStore(state_store_dir)
+    created = store.create_operation_run(
+        OperationRun(id="op-approve", operation_type="git_force_push")
+    )
+    apply_broker_approval_required(
+        store,
+        created.id,
+        action_result=_approval_result(),
+        artifact_root=artifact_root,
+    )
+    return artifact_root, state_store_dir, store, created.id
+
+
+def test_cli_approve_transitions_run_and_clears_checkpoint(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    artifact_root, state_store_dir, store, operation_id = _seed_broker_approval(tmp_path)
+
+    rc = main(
+        [
+            "approve",
+            "--artifact-root",
+            str(artifact_root),
+            "--state-store-dir",
+            str(state_store_dir),
+            "--operation-id",
+            operation_id,
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "action_id": "act-gate",
+        "resume_cursor": str(artifact_root / "resume_cursor.json"),
+        "state": "running",
+        "status": "approved",
+    }
+    assert store.load_operation_run(operation_id).state is OperationState.RUNNING
+    assert not (artifact_root / "awaiting_user.json").exists()
+    assert not (artifact_root / "resume_cursor.json").exists()
+
+
+def test_cli_resume_after_restart_uses_recorded_decision_payload(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    artifact_root, state_store_dir, store, operation_id = _seed_broker_approval(tmp_path)
+    surface = execution_cli._load_approval_surface(artifact_root, operation_id=operation_id)
+    execution_cli._write_decision_payload(surface, "deny")
+
+    rc = main(
+        [
+            "resume",
+            "--artifact-root",
+            str(artifact_root),
+            "--state-store-dir",
+            str(state_store_dir),
+            "--operation-id",
+            operation_id,
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "action_id": "act-gate",
+        "resume_cursor": str(artifact_root / "resume_cursor.json"),
+        "state": "failed",
+        "status": "denied",
+    }
+    assert store.load_operation_run(operation_id).state is OperationState.FAILED
+    assert not (artifact_root / "awaiting_user.json").exists()
+    assert not (artifact_root / "resume_cursor.json").exists()
+
+
+def test_cli_deny_transitions_run_to_failed(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    artifact_root, state_store_dir, store, operation_id = _seed_broker_approval(tmp_path)
+
+    rc = main(
+        [
+            "deny",
+            "--artifact-root",
+            str(artifact_root),
+            "--state-store-dir",
+            str(state_store_dir),
+            "--operation-id",
+            operation_id,
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "action_id": "act-gate",
+        "resume_cursor": str(artifact_root / "resume_cursor.json"),
+        "state": "failed",
+        "status": "denied",
+    }
+    assert store.load_operation_run(operation_id).state is OperationState.FAILED
+    assert not (artifact_root / "awaiting_user.json").exists()
+    assert not (artifact_root / "resume_cursor.json").exists()
+
+
+def test_cli_resume_without_recorded_decision_stays_awaiting_approval(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    artifact_root, state_store_dir, store, operation_id = _seed_broker_approval(tmp_path)
+
+    rc = main(
+        [
+            "resume",
+            "--artifact-root",
+            str(artifact_root),
+            "--state-store-dir",
+            str(state_store_dir),
+            "--operation-id",
+            operation_id,
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "action_id": "act-gate",
+        "resume_cursor": str(artifact_root / "resume_cursor.json"),
+        "state": "awaiting_approval",
+        "status": "awaiting_decision",
+    }
+    assert store.load_operation_run(operation_id).state is OperationState.AWAITING_APPROVAL
+    assert (artifact_root / "awaiting_user.json").exists()
+    assert (artifact_root / "resume_cursor.json").exists()
+
+
+def test_cli_cancel_transitions_run_to_cancelled(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    artifact_root, state_store_dir, store, operation_id = _seed_broker_approval(tmp_path)
+
+    rc = main(
+        [
+            "cancel",
+            "--artifact-root",
+            str(artifact_root),
+            "--state-store-dir",
+            str(state_store_dir),
+            "--operation-id",
+            operation_id,
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "cancelled"
+    assert payload["state"] == "cancelled"
+    assert payload["action_id"] == "act-gate"
+    assert store.load_operation_run(operation_id).state is OperationState.CANCELLED

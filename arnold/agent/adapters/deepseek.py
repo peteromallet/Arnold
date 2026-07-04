@@ -39,6 +39,7 @@ from arnold.agent.adapters._pricing import estimate_cost_usd
 from arnold.agent.contracts import AgentRequest, AgentResult, ResultProvenance
 from arnold.pipeline.cost_types import CanonicalUsage
 from arnold.agent.costing.token_cost import PricingEntry, estimate_usage_cost
+from arnold.security.llm_proxy import broker_production_mode_requested
 
 
 _PROVIDER_DEFAULT_BASE_URLS: dict[str, str] = {
@@ -171,7 +172,7 @@ class DeepSeekAdapter:
         key = ""
         if self._key_pool is not None:
             key = self._key_pool.acquire(provider)
-        if not key:
+        if not key and not broker_production_mode_requested():
             key = _first_env(_PROVIDER_KEY_VARS[provider])
         if not key:
             raise LookupError(f"no {_provider_display_name(provider)} API key available")
@@ -193,6 +194,10 @@ class DeepSeekAdapter:
             provider,
             self._base_url if provider == "deepseek" else None,
         )
+        if self._key_pool is not None and hasattr(self._key_pool, "resolve_base_url"):
+            resolved = self._key_pool.resolve_base_url(provider)
+            if resolved:
+                base_url = resolved
         url = base_url.rstrip("/") + "/chat/completions"
         if not base_url.rstrip("/").endswith("/v1"):
             url = base_url.rstrip("/") + "/v1/chat/completions"

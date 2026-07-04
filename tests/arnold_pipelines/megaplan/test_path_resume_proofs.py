@@ -129,6 +129,17 @@ def test_megaplan_child_workflow_metadata_covers_tiebreaker_execute_review_gates
     }
 
 
+def test_non_protected_execute_routes_declare_no_review_to_done_contract() -> None:
+    execute_contract = SOURCE_EXECUTE_BATCH_WORKFLOW.metadata["topology_contract"]
+    review_contract = SOURCE_REVIEW_PANEL_WORKFLOW.metadata["topology_contract"]
+
+    assert {
+        route["route_signal"]: route["target_ref"]
+        for route in execute_contract["post_batch_routes"]
+    }["no_review"] == "halt"
+    assert review_contract["no_review_route_signal"] == "pass"
+
+
 def test_execute_gate_protected_action_scope_is_recoverable() -> None:
     finalize_data = {
         "tasks": [

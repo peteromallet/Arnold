@@ -50,6 +50,9 @@ from arnold.pipeline.native.hooks import (
     NullNativeRuntimeHooks,
 )
 from arnold.pipeline.native.ir import NativeInstruction
+from arnold.security.audit import claim_broker_audit_entry
+from arnold.security.redaction import redact_value
+from arnold.security.types import RedactionStatus, RetentionPolicy
 
 
 __all__ = [
@@ -116,6 +119,12 @@ class AuditRecord:
         "effect_class",
         "effect_lifecycle_state",
         "duplicate_action",
+        "git_command_ref",
+        "git_effect_ref",
+        "prompt_ref",
+        "completion_ref",
+        "redaction_status",
+        "retention_policy",
     )
 
     def __init__(
@@ -135,6 +144,12 @@ class AuditRecord:
         effect_class: str | None = None,
         effect_lifecycle_state: str | None = None,
         duplicate_action: str | None = None,
+        git_command_ref: str | None = None,
+        git_effect_ref: str | None = None,
+        prompt_ref: str | None = None,
+        completion_ref: str | None = None,
+        redaction_status: str | None = None,
+        retention_policy: str | None = None,
     ) -> None:
         self.attempt_id = attempt_id
         self.run_id = run_id
@@ -156,6 +171,12 @@ class AuditRecord:
         self.effect_class = effect_class
         self.effect_lifecycle_state = effect_lifecycle_state
         self.duplicate_action = duplicate_action
+        self.git_command_ref = git_command_ref
+        self.git_effect_ref = git_effect_ref
+        self.prompt_ref = prompt_ref
+        self.completion_ref = completion_ref
+        self.redaction_status = redaction_status or RedactionStatus.SANITIZED.value
+        self.retention_policy = retention_policy or RetentionPolicy.AUDIT.value
 
     def mark_success(self, result: Any) -> None:
         """Finalize the record with a success outcome."""
@@ -193,6 +214,12 @@ class AuditRecord:
             "effect_class": self.effect_class,
             "effect_lifecycle_state": self.effect_lifecycle_state,
             "duplicate_action": self.duplicate_action,
+            "git_command_ref": self.git_command_ref,
+            "git_effect_ref": self.git_effect_ref,
+            "prompt_ref": self.prompt_ref,
+            "completion_ref": self.completion_ref,
+            "redaction_status": self.redaction_status,
+            "retention_policy": self.retention_policy,
         }
 
 
@@ -259,15 +286,36 @@ class AuditHooks:
         audit_file = self._audit_path()
         if audit_file is None:
             return
-        line = _json_dumps(record)
+        line = _json_dumps(redact_value(record))
         with open(audit_file, "a", encoding="utf-8") as fh:
             fh.write(line + "\n")
 
     def _flush_active(self) -> None:
         """Flush the active audit record to disk if one exists."""
         if self._active_record is not None:
+            self._join_broker_audit(self._active_record)
             self._append_record(self._active_record.to_dict())
             self._active_record = None
+
+    def _join_broker_audit(self, record: AuditRecord) -> None:
+        """Merge broker audit metadata keyed by ``run_id`` and ``step_path``."""
+
+        broker = claim_broker_audit_entry(record.run_id, record.step_path)
+        if not broker:
+            return
+        effect_refs = broker.get("effect_refs")
+        if not record.git_effect_ref and isinstance(effect_refs, list) and effect_refs:
+            record.git_effect_ref = str(effect_refs[0])
+        record.git_command_ref = broker.get("git_command_ref")
+        record.git_effect_ref = broker.get("git_effect_ref") or record.git_effect_ref
+        record.prompt_ref = broker.get("prompt_ref")
+        record.completion_ref = broker.get("completion_ref")
+        record.redaction_status = str(
+            broker.get("redaction_status") or record.redaction_status
+        )
+        record.retention_policy = str(
+            broker.get("retention_policy") or record.retention_policy
+        )
 
     def _step_key(self, instr: NativeInstruction) -> str:
         """Return a stable key for a step (used for attempt counting)."""
