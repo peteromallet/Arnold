@@ -694,6 +694,20 @@ class _Compiler:
             raise NativeCompileError("parallel_map() requires a step=... argument", call_node)
         return items_ref, mapper, path_template, reducer, explicit_name
 
+    def _infer_parallel_map_collection_schema(
+        self,
+        mapper: Callable[..., Any],
+    ) -> Mapping[str, Any] | None:
+        """Best-effort static item schema for a ``parallel_map`` mapper."""
+        if is_pipeline(mapper):
+            meta = get_pipeline_meta(mapper)
+        else:
+            meta = get_phase_meta(mapper)
+        if not isinstance(meta, Mapping):
+            return None
+        schema = meta.get("inputs")
+        return schema if isinstance(schema, Mapping) else None
+
     def _new_parallel_map_block_name(self, explicit_name: str | None) -> str:
         if explicit_name:
             return explicit_name
@@ -710,11 +724,12 @@ class _Compiler:
         )
         block_name = self._new_parallel_map_block_name(explicit_name)
         mapper_name = getattr(mapper, "__name__", "mapper")
+        call_site_path = self._extract_call_site_path(value) or (block_name,)
 
         parallel_map_pc = self._emit(
             "parallel_map",
             name=block_name,
-            call_site_path=self._extract_call_site_path(value),
+            call_site_path=call_site_path,
         )
         merge_pc = self._pc
         if is_phase(mapper):
@@ -726,6 +741,7 @@ class _Compiler:
             items_ref=items_ref,
             mapper=mapper,
             mapper_name=mapper_name,
+            collection_schema=self._infer_parallel_map_collection_schema(mapper),
             reducer=reducer,
             path_template=path_template,
             merge_pc=merge_pc,
@@ -986,7 +1002,13 @@ class _Compiler:
             )
 
         # Create loop guard
-        loop_guard = NativeLoopGuard(guard=func, body=body_func, name=name)
+        decision_meta = get_decision_meta(func)
+        loop_guard = NativeLoopGuard(
+            guard=func,
+            body=body_func,
+            name=name,
+            stable_id=decision_meta.get("id") if isinstance(decision_meta, Mapping) else None,
+        )
         self._loop_guards.append(loop_guard)
 
         # Emit: loop header (decision-like), body lowered via normal
@@ -1518,7 +1540,7 @@ class _Compiler:
                         parallel_map_index=instr.parallel_map_index,
                     )
 
-        return NativeProgram(
+        program = NativeProgram(
             name=self._pipeline_name,
             stable_id=stable_id,
             inputs_schema=inputs_schema,
@@ -1530,4 +1552,21 @@ class _Compiler:
             parallel_blocks=tuple(self._parallel_blocks),
             parallel_map_blocks=tuple(self._parallel_map_blocks),
             description=description,
+        )
+        from arnold.pipeline.native.graph_projection import derive_topology
+
+        return NativeProgram(
+            name=program.name,
+            stable_id=program.stable_id,
+            inputs_schema=program.inputs_schema,
+            outputs_schema=program.outputs_schema,
+            instructions=program.instructions,
+            phases=program.phases,
+            decisions=program.decisions,
+            loop_guards=program.loop_guards,
+            parallel_blocks=program.parallel_blocks,
+            parallel_map_blocks=program.parallel_map_blocks,
+            routing_topology=program.routing_topology,
+            topology=derive_topology(program),
+            description=program.description,
         )

@@ -186,6 +186,9 @@ class TestWorkflowComponents:
         assert workflows.STEP_COMPONENTS_BY_ID["review"].metadata["runtime_branch_vocabulary"] == (
             "pass",
             "rework",
+            "blocked",
+            "force_proceeded",
+            "deferred_human",
         )
 
     def test_importing_components_does_not_load_legacy_package(self) -> None:

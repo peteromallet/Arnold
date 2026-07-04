@@ -7,6 +7,7 @@ with the native runner's dict-based context and state propagation.
 
 from __future__ import annotations
 
+import builtins
 import inspect
 from typing import Any, Callable
 
@@ -370,7 +371,7 @@ def parallel(
             raise TypeError(
                 f"parallel() branch {i} ({getattr(b, '__name__', b)!r}) is not a @phase-decorated function"
             )
-        bid = id(b)
+        bid = builtins.id(b)
         if bid in seen:
             raise ValueError(
                 f"parallel() contains duplicate branch: {getattr(b, '__name__', b)!r}"

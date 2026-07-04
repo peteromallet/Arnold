@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +10,10 @@ from arnold.execution import ExecutionRegistries, ExecutionState, run
 from arnold.execution.backend import NodeOutcome, NodeState
 from arnold.kernel import read_event_journal
 from arnold.workflow.compiler import compile_pipeline
+from arnold.workflow.source_compiler import lower_workflow_file
 from arnold_pipelines.megaplan.pipeline import build_pipeline
+from arnold_pipelines.megaplan.workflows import components as workflow_components
+from arnold_pipelines.megaplan.workflows import planning as workflow_planning
 from tests.arnold.execution.conftest import FakeBackend
 
 # ── M2 routing-validator and authoring-boundary imports ───────────────────
@@ -49,6 +53,12 @@ def _branch_selections(tmp_path: Path) -> dict[str, str]:
         for event in read_event_journal(tmp_path)
         if event.kind == "branch_selected"
     }
+
+
+def _resolve_component(ref: str) -> Any:
+    module_name, export_name = ref.split(":", 1)
+    module = import_module(module_name)
+    return getattr(module, export_name)
 
 
 class TestCompositionalWorkflowScenarios:
@@ -429,3 +439,51 @@ class TestMegaplanRoutingValidatorCompatibility:
         assert not missing, (
             f"DSL routes not captured in routing topology: {missing}"
         )
+
+    def test_canonical_authored_source_keeps_dynamic_maps_and_child_call_sites_visible(self) -> None:
+        lowered = lower_workflow_file(workflow_planning.AUTHORING_SOURCE_PATH)
+
+        dynamic_map_ids = [step.id for step in lowered.steps if step.kind == "parallel_map"]
+        child_workflow_ids = [step.id for step in lowered.steps if step.kind == "subpipeline"]
+
+        assert dynamic_map_ids == [
+            "critique-fanout",
+            "execute-batches",
+            "review-fan-in",
+            "tiebreaker-execute-batches",
+        ]
+        assert child_workflow_ids == ["tiebreaker"]
+
+    def test_canonical_authored_contracts_expose_review_and_execute_hidden_routes(self) -> None:
+        execute_contract = _resolve_component(
+            "arnold_pipelines.megaplan.workflows.components:SOURCE_EXECUTE_BATCH_WORKFLOW"
+        ).metadata["topology_contract"]
+        review_contract = _resolve_component(
+            "arnold_pipelines.megaplan.workflows.components:SOURCE_REVIEW_PANEL_WORKFLOW"
+        ).metadata["topology_contract"]
+        tiebreaker_contract = _resolve_component(
+            "arnold_pipelines.megaplan.workflows.components:SOURCE_TIEBREAKER_WORKFLOW"
+        ).metadata["topology_contract"]
+
+        assert execute_contract["approval_gate"] == {
+            "required_ref": "state.meta.user_approved_gate",
+            "confirmation_ref": "args.confirm_destructive",
+        }
+        assert {
+            (route["route_signal"], route["target_ref"])
+            for route in execute_contract["post_batch_routes"]
+        } == {
+            ("review_required", "review-fan-in"),
+            ("no_review", "halt"),
+            ("deferred_human", "halt"),
+        }
+        assert review_contract["no_review_route_signal"] == "pass"
+        assert "deferred_human" in workflow_components.RUNTIME_BRANCH_VOCABULARY["review"]
+        assert {
+            (route["action"], route["route_signal"])
+            for route in tiebreaker_contract["decision_routes"]
+        } == {
+            ("pick", "proceed"),
+            ("replan", "iterate"),
+            ("escalate", "escalate"),
+        }

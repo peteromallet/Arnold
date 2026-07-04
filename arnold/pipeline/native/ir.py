@@ -4,6 +4,25 @@ These types represent the intermediate representation produced by
 decorator metadata and consumed by the compiler, graph projection,
 and runtime.  They are deliberately neutral — no runtime evaluation
 logic lives here.
+
+**Path addressing contract**
+
+Native paths use ``/`` as the formal delimiter and form a stable tree
+rooted at ``root``.  Every path segment carries a **machine identity**
+(a canonical, stable name that MUST NOT contain ``/``) and an optional
+**display label** (a human-readable string with no delimiter restriction).
+Stable path addressing uses machine identities only; display labels are
+metadata for human consumption and MUST NOT be used for addressing,
+routing, or persistence.
+
+Child paths are formed by appending authored ``call_site_path`` segments
+separated by ``/``:
+
+  ``root/validate/sub_0/item_2``
+
+where ``root`` is the default root path, ``validate`` is a child-workflow
+call site, ``sub_0`` is a nested child, and ``item_2`` is a dynamic-map
+item index.
 """
 
 from __future__ import annotations
@@ -11,6 +30,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, FrozenSet, Mapping, Protocol, runtime_checkable
 
+# ── Path constants ──────────────────────────────────────────────────
+
+PATH_DELIMITER: str = "/"
+"""Formal path delimiter for stable tree-shaped paths.
+
+Segments joined by this delimiter form the machine-identity path.
+Individual segments MUST NOT contain this character.
+"""
+
+ROOT_PATH: str = "root"
+"""Default root path for all native pipeline path trees."""
+
+# ── Protocol ────────────────────────────────────────────────────────
 
 @runtime_checkable
 class NativeInvocable(Protocol):
@@ -20,6 +52,39 @@ class NativeInvocable(Protocol):
     stable_id: str | None
     inputs_schema: Mapping[str, Any] | None
     outputs_schema: Mapping[str, Any] | None
+
+
+# ── Path primitives ─────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class PathSegment:
+    """A single segment in a stable tree-shaped path.
+
+    Each segment carries a **machine identity** (the canonical stable
+    name used for addressing, routing, and persistence) and an optional
+    **display label** (a human-readable label with no delimiter
+    restrictions).
+
+    The machine identity MUST NOT contain the path delimiter ``/``.
+    Display labels MAY contain any characters.
+    """
+
+    identity: str
+    """Stable machine identity — the canonical name for this segment.
+
+    Used for addressing, routing, and persistence.  Must not contain
+    the path delimiter (``/``).
+    """
+
+    label: str = ""
+    """Optional human-readable display label.
+
+    May contain any characters, including ``/``.  This label is metadata
+    only and MUST NOT be used for addressing or routing.
+    """
+
+    def __str__(self) -> str:
+        return self.identity
 
 
 @dataclass(frozen=True)
@@ -121,6 +186,10 @@ class NativeLoopGuard:
 
     The *guard* callable returns a boolean (``True`` → continue iterating).
     The *body* callable is the decorated function that runs each iteration.
+
+    The ``stable_id`` provides a stable machine identity that survives
+    code renames — it is the preferred identifier for loop nodes in
+    topology graphs and trace paths.
     """
 
     guard: Callable[..., bool] = field(compare=False, hash=False)
@@ -131,6 +200,14 @@ class NativeLoopGuard:
 
     name: str = ""
     """Optional name for diagnostics."""
+
+    stable_id: str | None = None
+    """Stable machine identity for this loop construct.
+
+    Used as the canonical loop node identity in topology graphs and
+    path segments.  When ``None``, the ``name`` field serves as a
+    fallback for identity purposes.
+    """
 
 
 @dataclass(frozen=True)
@@ -244,6 +321,19 @@ class ParallelMapInstruction:
     mapper_name: str = ""
     """Name of the mapper callable (for diagnostics and trace emission)."""
 
+    collection_schema: Mapping[str, Any] | None = field(
+        default=None, compare=False, hash=False
+    )
+    """Declared schema of the runtime collection items.
+
+    When non-``None``, this describes the expected shape of each item
+    in the runtime collection (e.g. a JSON Schema dict).  This is
+    metadata for static topology queries and tooling — the runtime
+    does not enforce it by default.
+
+    When ``None``, no item schema has been declared.
+    """
+
     reducer: Callable[..., Any] | None = field(
         default=None, compare=False, hash=False
     )
@@ -333,6 +423,10 @@ class NativeProgram:
     ``phases``, ``decisions``, and ``loop_guards`` mirror the
     :class:`NativePipeline` IR fields for consumption by graph
     projection.
+
+    The ``topology`` field carries the optional static topology /
+    derived graph produced at compile time.  When populated, it
+    provides a queryable structural graph without requiring execution.
     """
 
     name: str
@@ -374,5 +468,375 @@ class NativeProgram:
     supplying this field.
     """
 
+    topology: Any = field(default=None, compare=False, hash=False)
+    """Optional static topology / derived graph for this program.
+
+    Populated at compile time by :func:`derive_topology`.  When
+    non-``None``, this is a :class:`NativeTopology` instance that
+    provides a queryable structural graph of nodes and edges without
+    requiring execution.
+
+    Excluded from equality/hash.
+    """
+
     description: str = ""
     """Optional human-readable description."""
+
+
+# ── Static topology / derived graph IR ───────────────────────────────
+
+@dataclass(frozen=True)
+class TopologyNode:
+    """A single node in the static topology / derived graph.
+
+    Nodes represent authored structural elements of a native pipeline
+    program: phases, decisions, loop constructs, child workflow call
+    sites, and dynamic-map templates.  The topology is derived at
+    compile time and can be queried without execution.
+    """
+
+    node_id: str
+    """Unique node identifier within the topology.
+
+    Typically derived from the node's stable path (machine identity)
+    to remain unique even when display labels collide.
+    """
+
+    kind: str
+    """Node kind.
+
+    One of:
+
+    - ``'phase'`` — a single step/phase
+    - ``'decision'`` — a decision point with branch labels
+    - ``'loop'`` — a loop construct with a guard
+    - ``'child_workflow'`` — a call site for a child workflow/subpipeline
+    - ``'dynamic_map'`` — a dynamic parallel-map fan-out template
+    """
+
+    label: str = ""
+    """Human-readable display label for this node."""
+
+    path: str = ""
+    """Stable tree path for this node (e.g. ``'root/step_A/sub_1'``).
+
+    Uses ``/`` as the delimiter and machine-identity segments only.
+    """
+
+    stable_id: str | None = None
+    """Stable semantic identity declared on the decorated callable, if any."""
+
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    """Kind-specific metadata.
+
+    For ``'phase'`` nodes: ``inputs_schema``, ``outputs_schema``.
+    For ``'decision'`` nodes: ``vocabulary`` (list of branch labels),
+    ``decision_routes``, ``human_gate``, ``choices``.
+    For ``'loop'`` nodes: ``loop_stable_id``, ``guard_name``.
+    For ``'child_workflow'`` nodes: ``child_name``, ``child_stable_id``,
+    ``inputs_schema``, ``outputs_schema``, ``output_bindings``.
+    For ``'dynamic_map'`` nodes: ``dynamic_map_metadata``
+    (:class:`DynamicMapMetadata`).
+    """
+
+
+@dataclass(frozen=True)
+class TopologyEdge:
+    """A directed edge in the static topology.
+
+    Edges represent control-flow transitions, child-workflow
+    containment, and dynamic-map item template edges.
+    """
+
+    source: str
+    """Source node ID."""
+
+    target: str
+    """Target node ID."""
+
+    label: str = ""
+    """Edge label.
+
+    For control-flow edges this is the branch label (e.g. ``'pass'``,
+    ``'fail'``) or ``'next'`` for unconditional fall-through.
+    For child-workflow edges this is the call-site name.
+    For dynamic-map edges this is the item path template.
+    """
+
+    kind: str = "control_flow"
+    """Edge kind.
+
+    One of:
+
+    - ``'control_flow'`` — sequential or branch transition
+    - ``'child_workflow'`` — parent → child workflow containment
+    - ``'dynamic_map_item'`` — dynamic-map → per-item template edge
+    """
+
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    """Edge-specific metadata, if any."""
+
+
+@dataclass(frozen=True)
+class DynamicMapMetadata:
+    """Static metadata for a dynamic parallel_map node.
+
+    Captures the compile-time information about a dynamic fan-out
+    so the topology graph can describe the template without executing
+    the workflow.
+    """
+
+    items_ref: str = ""
+    """Reference to the runtime collection — a parameter name or
+    state key that resolves to an iterable at execution time."""
+
+    mapper_name: str = ""
+    """Name of the mapper callable (for diagnostics and trace emission)."""
+
+    path_template: str = ""
+    """Path template for per-item call-site paths
+    (e.g. ``'critique/{item_id}'``)."""
+
+    collection_schema: Mapping[str, Any] | None = None
+    """Schema of the collection items, if declared."""
+
+    reducer_name: str = ""
+    """Name of the reducer callable, if any."""
+
+    fan_in: bool = False
+    """Whether a reducer is present for fan-in."""
+
+
+@dataclass(frozen=True)
+class NativeTopology:
+    """Static topology / derived graph for a native pipeline program.
+
+    Built from a :class:`NativeProgram` at compile time without
+    execution.  Provides a queryable structural graph of the workflow's
+    nodes and edges — the canonical answer to "what does this workflow
+    contain?"
+
+    This is the **primary public name** for the topology object.
+    ``DerivedGraph`` is available as a compatibility alias.
+    """
+
+    name: str = ""
+    """Name of the pipeline this topology describes."""
+
+    nodes: tuple[TopologyNode, ...] = ()
+    """Nodes in the topology, in declaration order."""
+
+    edges: tuple[TopologyEdge, ...] = ()
+    """Edges in the topology."""
+
+    root_path: str = ROOT_PATH
+    """Root path for the topology tree."""
+
+    path_delimiter: str = PATH_DELIMITER
+    """Path delimiter used throughout this topology."""
+
+
+# Compatibility alias — NativeTopology is the canonical name.
+DerivedGraph = NativeTopology
+"""Compatibility alias for :class:`NativeTopology`.
+
+Prefer ``NativeTopology`` in new code.  This alias exists so existing
+references to ``DerivedGraph`` do not break.
+"""
+
+
+# ── Composition graph IR (pre-existing, consumed by composition.py) ──
+
+# CompositionNodeKind constants — simple string-based kind identifiers
+# used by the composition graph derivation in composition.py.
+@dataclass(frozen=True)
+class _CompositionNodeKindConstants:
+    ROOT: str = "root"
+    PHASE: str = "phase"
+    DECISION: str = "decision"
+    LOOP: str = "loop"
+    SUBPIPELINE: str = "subpipeline"
+    PARALLEL: str = "parallel"
+    PARALLEL_MAP: str = "parallel_map"
+
+
+CompositionNodeKind = _CompositionNodeKindConstants()
+"""Node-kind constants for the composition graph."""
+
+
+@dataclass(frozen=True)
+class CompositionNode:
+    """A single node in the composition graph.
+
+    Pre-existing type consumed by ``composition.py``.  New code
+    should also consider :class:`TopologyNode` for topology queries.
+    """
+
+    node_id: str
+    """Unique node identifier."""
+
+    kind: str
+    """Node kind (one of ``CompositionNodeKind`` constants)."""
+
+    label: str = ""
+    """Human-readable label."""
+
+    stable_id: str | None = None
+    """Stable semantic identity, if declared."""
+
+    parent_id: str | None = None
+    """Parent node ID, if any."""
+
+    path_segments: tuple[str, ...] = ()
+    """Stable path segments from root to this node."""
+
+    inputs_schema: Mapping[str, Any] | None = None
+    """Declared input schema, if any."""
+
+    outputs_schema: Mapping[str, Any] | None = None
+    """Declared output schema, if any."""
+
+    child_ids: tuple[str, ...] = ()
+    """Ordered child node IDs."""
+
+    # ── Decision-specific ──────────────────────────────────────
+
+    branch_labels: tuple[str, ...] = ()
+    """For decision nodes: all branch labels (taken + untaken)."""
+
+    decision_vocabulary: FrozenSet[str] = field(default_factory=frozenset)
+    """For decision nodes: the full decision vocabulary."""
+
+    untaken_branches: tuple[str, ...] = ()
+    """For decision nodes: branch labels with no wired route."""
+
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    """For loop-decision nodes: loop region metadata
+    (``body_start_pc``, ``exit_pc``, ``back_jump_pc``)."""
+
+    # ── Parallel-specific ──────────────────────────────────────
+
+    parallel_branches: tuple[str, ...] = ()
+    """For parallel nodes: ordered branch names."""
+
+    parallel_map_has_reducer: bool = False
+    """For parallel/parallel_map nodes: whether a reducer is present."""
+
+    # ── Parallel-map-specific ──────────────────────────────────
+
+    parallel_map_items_ref: str = ""
+    """For parallel_map nodes: reference to the runtime collection."""
+
+    parallel_map_path_template: str = ""
+    """For parallel_map nodes: path template for per-item call sites."""
+
+    parallel_map_mapper_name: str = ""
+    """For parallel_map nodes: name of the mapper callable."""
+
+
+@dataclass(frozen=True)
+class CompositionEdge:
+    """A directed edge in the composition graph.
+
+    Pre-existing type consumed by ``composition.py``.
+    """
+
+    source_id: str
+    """Source node ID."""
+
+    target_id: str
+    """Target node ID."""
+
+    label: str = ""
+    """Edge label (branch name, flow kind, etc.)."""
+
+    kind: str = ""
+    """Edge kind (``'flow'``, ``'branch'``, ``'loop'``, etc.)."""
+
+
+@dataclass(frozen=True)
+class NativeCompositionGraph:
+    """Complete composition graph for a native pipeline program.
+
+    Pre-existing type consumed by ``composition.py``.  Contains nodes
+    keyed by ID, ordered edges, and untaken route labels.  Supports
+    serialization via ``to_dict()`` / ``from_dict()``.
+    """
+
+    program_name: str
+    """Name of the pipeline described by this graph."""
+
+    root_id: str
+    """ID of the root node."""
+
+    nodes: Mapping[str, CompositionNode] = field(default_factory=dict)
+    """Nodes keyed by node ID."""
+
+    edges: tuple[CompositionEdge, ...] = ()
+    """Edges in the graph."""
+
+    untaken_route_labels: tuple[str, ...] = ()
+    """Decision branch labels that exist in the vocabulary but have
+    no wired route in the compiled program."""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain dict for embedding in routing_topology."""
+        from dataclasses import asdict as _asdict
+        return {
+            "program_name": self.program_name,
+            "root_id": self.root_id,
+            "nodes": {
+                nid: _asdict(node) for nid, node in self.nodes.items()
+            },
+            "edges": [_asdict(e) for e in self.edges],
+            "untaken_route_labels": list(self.untaken_route_labels),
+        }
+
+    def nodes_by_kind(self, kind: str) -> tuple[CompositionNode, ...]:
+        """Return all nodes of the given *kind*."""
+        return tuple(
+            node for node in self.nodes.values() if node.kind == kind
+        )
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> NativeCompositionGraph:
+        """Deserialize from a plain dict."""
+        return cls(
+            program_name=str(raw.get("program_name", "")),
+            root_id=str(raw.get("root_id", "")),
+            nodes={
+                str(nid): CompositionNode(
+                    node_id=str(node.get("node_id", "")),
+                    kind=str(node.get("kind", "")),
+                    label=str(node.get("label", "")),
+                    stable_id=node.get("stable_id"),
+                    parent_id=node.get("parent_id"),
+                    path_segments=tuple(node.get("path_segments", ())),
+                    inputs_schema=node.get("inputs_schema"),
+                    outputs_schema=node.get("outputs_schema"),
+                    child_ids=tuple(node.get("child_ids", ())),
+                    branch_labels=tuple(node.get("branch_labels", ())),
+                    decision_vocabulary=frozenset(node.get("decision_vocabulary", ())),
+                    untaken_branches=tuple(node.get("untaken_branches", ())),
+                    metadata=dict(node.get("metadata", {})),
+                    parallel_branches=tuple(node.get("parallel_branches", ())),
+                    parallel_map_has_reducer=bool(node.get("parallel_map_has_reducer", False)),
+                    parallel_map_items_ref=str(node.get("parallel_map_items_ref", "")),
+                    parallel_map_path_template=str(node.get("parallel_map_path_template", "")),
+                    parallel_map_mapper_name=str(node.get("parallel_map_mapper_name", "")),
+                )
+                for nid, node in raw.get("nodes", {}).items()
+            },
+            edges=tuple(
+                CompositionEdge(
+                    source_id=str(e.get("source_id", "")),
+                    target_id=str(e.get("target_id", "")),
+                    label=str(e.get("label", "")),
+                    kind=str(e.get("kind", "")),
+                )
+                for e in raw.get("edges", [])
+            ),
+            untaken_route_labels=tuple(
+                str(label) for label in raw.get("untaken_route_labels", ())
+            ),
+        )

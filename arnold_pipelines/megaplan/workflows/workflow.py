@@ -22,6 +22,8 @@ from arnold_pipelines.megaplan.workflows.components import (
     SOURCE_REVISE,
     SOURCE_TIEBREAKER_WORKFLOW,
 )
+
+
 @workflow(id="megaplan", version="m4-phase3", policy=DEFAULT_POLICY)
 def planning_workflow(brief: str) -> None:
     # The V1 source compiler lowers only the decorated workflow body, so this
@@ -72,6 +74,8 @@ def planning_workflow(brief: str) -> None:
         elif gate_route_signal == "iterate":
             SOURCE_REVISE(id="revise", gate_payload=gate_route_signal)
         elif gate_route_signal == "tiebreaker":
+            # Internal pick/replan/escalate semantics stay on the declared child
+            # workflow contract so topology can prove them from the authored call site.
             decision = SOURCE_TIEBREAKER_WORKFLOW(id="tiebreaker", gate_payload=gate_route_signal)
             if decision == "proceed":
                 finalize_payload = SOURCE_FINALIZE(id="tiebreaker_finalize", gate_payload=decision)

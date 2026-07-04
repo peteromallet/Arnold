@@ -79,6 +79,36 @@ class TestRoundTrip:
         assert cursor["frames"] == {"my_guard": {"last_result": "again"}}
         assert cursor["native"] == {"pc": 2, "version": 1}
 
+    def test_path_metadata_round_trip(self, tmp_path: Path) -> None:
+        persist_native_cursor(
+            tmp_path,
+            stage="my_pipe__review__pc2",
+            pc=2,
+            run_path="root/child_call",
+            step_path="root/child_call/review",
+            call_site_path=["child_call"],
+            path_stack=[
+                {
+                    "header_pc": 1,
+                    "segment": "review_loop[2]",
+                    "parent_run_path": "root",
+                }
+            ],
+        )
+
+        cursor = read_native_cursor(tmp_path)
+        assert cursor is not None
+        assert cursor["run_path"] == "root/child_call"
+        assert cursor["step_path"] == "root/child_call/review"
+        assert cursor["call_site_path"] == ("child_call",)
+        assert cursor["path_stack"] == [
+            {
+                "header_pc": 1,
+                "segment": "review_loop[2]",
+                "parent_run_path": "root",
+            }
+        ]
+
     def test_file_is_valid_json(self, tmp_path: Path) -> None:
         persist_native_cursor(
             tmp_path,
