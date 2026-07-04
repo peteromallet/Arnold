@@ -705,3 +705,77 @@ def test_run_chain_does_not_replay_durably_blocked_plan_on_restart(
     assert result["status"] == "stopped"
     assert result["reason"] == "milestone m7 remains blocked"
     assert any("already durably blocked" in message for message in messages)
+
+
+def test_run_chain_rearms_fresh_session_execute_block_on_restart(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    _write_plan_state(
+        tmp_path,
+        current_state="blocked",
+        active_step=None,
+    )
+    plan_dir = tmp_path / ".megaplan" / "plans" / "m7-plan"
+    state_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    state_payload["latest_failure"] = {
+        "kind": "execution_blocked",
+        "message": "execute blocked by quality gates",
+        "phase": "execute",
+        "state": "blocked",
+    }
+    state_payload["resume_cursor"] = {
+        "phase": "execute",
+        "retry_strategy": "fresh_session",
+    }
+    (plan_dir / "state.json").write_text(
+        json.dumps(state_payload) + "\n",
+        encoding="utf-8",
+    )
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=0,
+            current_plan_name="m7-plan",
+            last_state="blocked",
+            pr_number=122,
+            pr_state="open",
+        ),
+    )
+
+    messages: list[str] = []
+    with (
+        patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
+        patch("arnold_pipelines.megaplan.chain._pr_state", return_value="open"),
+        patch("arnold_pipelines.megaplan.chain._plan_state", return_value="blocked"),
+        patch(
+            "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+            return_value="origin/main",
+        ),
+        patch("arnold_pipelines.megaplan.chain._capture_sync_state"),
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+            return_value=DriverOutcome(
+                status="done",
+                plan="m7-plan",
+                final_state="done",
+                iterations=1,
+                reason="execute reran after fresh-session reset",
+            ),
+        ) as drive,
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            writer=messages.append,
+            require_anchor_override=False,
+            missing_anchor_ack_override="unit test uses a minimal chain spec",
+        )
+
+    drive.assert_called_once()
+    updated = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert updated["current_state"] == "finalized"
+    assert "latest_failure" not in updated
+    assert "resume_cursor" not in updated
+    assert result["status"] != "stopped"
+    assert any("fresh-session retry" in message for message in messages)
