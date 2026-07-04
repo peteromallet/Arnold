@@ -1998,6 +1998,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from arnold_pipelines.megaplan.watchdog.signals import compute_signal_bundle
+
 session = sys.argv[1]
 workspace = Path(sys.argv[2])
 remote_spec_raw = sys.argv[3]
@@ -2362,6 +2364,18 @@ plan_state = load_json(plan_state_path) if plan_state_path is not None else {}
 plan_current_state = str(plan_state.get("current_state") or "").strip()
 active_step = plan_state.get("active_step")
 plan_has_active_step = isinstance(active_step, dict) and bool(active_step.get("phase") or active_step.get("worker_pid"))
+plan_signal_liveness = ""
+plan_signal_reason = ""
+plan_has_in_flight_llm = False
+if plan_dir is not None and plan_dir.exists():
+    try:
+        signal_bundle = compute_signal_bundle(plan_dir, plan_state if isinstance(plan_state, dict) else None)
+        plan_signal_liveness = str(signal_bundle.liveness or "").strip()
+        plan_signal_reason = str(signal_bundle.liveness_reason or "").strip()
+        plan_has_in_flight_llm = bool(signal_bundle.has_in_flight_llm)
+    except Exception:
+        pass
+plan_has_live_activity = plan_has_active_step or plan_signal_liveness == "progressing" or plan_has_in_flight_llm
 plan_projected_nonterminal = (
     bool(current_plan_name)
     and not plan_has_active_step
@@ -2394,7 +2408,7 @@ if previous:
     )
     if (
         events_advanced
-        and not plan_has_active_step
+        and not plan_has_live_activity
         and int(previous.get("current_milestone_index") or -1) == current_index
         and int(previous.get("completed_count") or -1) == completed_count
     ):
@@ -2413,6 +2427,10 @@ snapshot = {
     "events_mtime": events_mtime,
     "events_size": events_size,
     "plan_has_active_step": plan_has_active_step,
+    "plan_has_live_activity": plan_has_live_activity,
+    "plan_signal_liveness": plan_signal_liveness,
+    "plan_signal_reason": plan_signal_reason,
+    "plan_has_in_flight_llm": plan_has_in_flight_llm,
     "stuck_ticks": stuck_ticks,
     "no_advance_ticks": no_advance_ticks,
     "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -2743,7 +2761,7 @@ if (
     status == "ok"
     and not completion_guard_repair_eligible
     and last_state in NONTERMINAL_STATES
-    and not plan_has_active_step
+    and not plan_has_live_activity
     and not plan_projected_nonterminal
     and stuck_ticks >= STUCK_TICKS
 ):
