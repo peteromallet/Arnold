@@ -30,6 +30,7 @@ from arnold_pipelines.megaplan.cloud.providers.base import (
 )
 from arnold_pipelines.megaplan.cloud.redact import redact
 from arnold_pipelines.megaplan.cloud.spec import CloudSpec, apply_repo_overrides, load_spec as load_cloud_spec
+from arnold_pipelines.megaplan.cloud import status_format, status_snapshot
 from arnold_pipelines.megaplan.fallback_chains import decode_phase_model_value, encode_phase_model_value
 from arnold_pipelines.megaplan.cloud.template import materialize_deploy_dir, render_ensure_repos_block
 from arnold_pipelines.megaplan.layout import is_canonical_chain_spec
@@ -457,7 +458,7 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
 
         if action == "status":
             if bool(getattr(args, "all", False)):
-                return _run_cloud_chains(spec, provider, args=args)
+                return _run_status_all(spec, provider, args=args)
             if _status_should_use_chain(root, args, spec):
                 return _run_chain_status(root, args, spec, provider)
             payload = cloud_status_payload(args, spec, provider)
@@ -4465,6 +4466,68 @@ def _emit_cloud_sessions_human(payload: dict[str, Any], *, compact: bool) -> Non
             f"{operator_detail}"
             f"{detail} workspace={item.get('workspace')} spec={item.get('remote_spec')}\n"
         )
+
+
+def _in_trusted_container() -> bool:
+    """True when this process is the cloud worker itself (no SSH needed).
+
+    The resident and watchdog set ``MEGAPLAN_TRUSTED_CONTAINER=1`` inside the
+    container; combined with the canonical marker directory being present, that
+    means local observation is the correct status path and SSHing back to our
+    own host would be both unnecessary and likely to fail (no host key).
+    """
+    if os.environ.get("MEGAPLAN_TRUSTED_CONTAINER") != "1":
+        return False
+    return status_snapshot.DEFAULT_MARKER_DIR.exists()
+
+
+def _emit_cloud_status_human(snapshot: dict[str, Any] | None, *, compact: bool) -> None:
+    text = (
+        status_format.format_cloud_status_short(snapshot, max_chars=10**9)[0]
+        if compact
+        else status_format.format_cloud_status_detailed(snapshot)
+    )
+    if text:
+        sys.stderr.write(text + "\n")
+
+
+def _run_status_all(spec: CloudSpec, provider, *, args: argparse.Namespace | None = None) -> int:
+    """``cloud status --all`` against the canonical snapshot.
+
+    Inside the trusted container: read the snapshot the watchdog wrote, or
+    rebuild it locally from observation only — never SSH back to our own host.
+    From a laptop: fetch the same snapshot from the box; if the box has not
+    started producing one yet, fall back to the legacy remote listing so the
+    command never hard-fails during the rollout.
+    """
+    compact = bool(getattr(args, "compact", False)) if args is not None else False
+
+    if _in_trusted_container():
+        snapshot, _degraded = status_snapshot.load_cloud_status_snapshot(
+            status_snapshot.DEFAULT_SNAPSHOT_PATH, max_age_s=3600
+        )
+        if snapshot is None:
+            snapshot = status_snapshot.build_cloud_status_snapshot()
+        _emit_cloud_status_human(snapshot, compact=compact)
+        sys.stdout.write(json.dumps(snapshot, indent=2) + "\n")
+        return 0
+
+    # Laptop path: ask the box for the same snapshot its watchdog produced.
+    try:
+        raw = provider.read_remote_file(str(status_snapshot.DEFAULT_SNAPSHOT_PATH))
+        snapshot = json.loads(raw)
+    except (CliError, OSError, ValueError) as exc:
+        sys.stderr.write(
+            f"cloud status: snapshot unavailable on box ({exc.__class__.__name__}); "
+            "falling back to legacy remote listing\n"
+        )
+        return _run_cloud_chains(spec, provider, args=args)
+    if not isinstance(snapshot, dict):
+        sys.stderr.write("cloud status: box snapshot malformed; falling back to legacy remote listing\n")
+        return _run_cloud_chains(spec, provider, args=args)
+    _emit_cloud_status_human(snapshot, compact=compact)
+    sys.stdout.write(json.dumps(snapshot, indent=2) + "\n")
+    return 0
 
 
 def _run_cloud_chains(spec: CloudSpec, provider, *, args: argparse.Namespace | None = None) -> int:

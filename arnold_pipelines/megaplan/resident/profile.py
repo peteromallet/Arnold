@@ -29,6 +29,7 @@ from arnold_pipelines.megaplan.store import (
 )
 from arnold_pipelines.megaplan.store.export import collect_epic_export, write_epic_export_tar
 from arnold_pipelines.megaplan.types import CliError
+from arnold_pipelines.megaplan.cloud import status_snapshot
 from arnold_pipelines.megaplan.layout import (
     ALLOWED_INITIATIVE_SUBDIRS,
     LAYOUT_POLICY_VERSION,
@@ -60,6 +61,9 @@ from . import vp_todo
 from .subagent import launch_subagent_task
 
 MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v1"
+# The watchdog refreshes the snapshot roughly hourly; tolerate up to two ticks
+# of staleness before treating broad status as degraded.
+_SNAPSHOT_MAX_AGE_S = 2 * 60 * 60
 INITIATIVE_DOC_KIND = Literal["briefs", "research", "decisions", "notes", "assets", "handoff"]
 
 
@@ -429,11 +433,20 @@ class MegaplanResidentProfile:
             "`add_todo_item` (optionally a `when` condition, e.g. 'once epic <id> is done'); use "
             "`read_todo_list` to show what's queued. In conversation you add and read items — a "
             "scheduled sweep picks up pending items and executes them with `launch_subagent`."
+            " For broad status questions ('how's it going?', 'what is active?', 'is it cooking?', "
+            "'why did it not reply?'), answer from `cloud_status_snapshot` / `plan_activity_summary` "
+            "in hot context FIRST. That snapshot is the canonical shared-runner view produced by the "
+            "watchdog; cite its generated_at timestamp. If `cloud_status_degraded` is set or the "
+            "snapshot is missing/stale, say so explicitly before using `local_epic_chain_state` or "
+            "`live_cloud_chain` as fallback — and label that fallback as degraded, not full cloud "
+            "status. Do not answer broad status from an arbitrary `.megaplan/plans` or `.chains` scan "
+            "without labeling it degraded. Targeted per-plan questions may still use the cloud tools."
         )
 
     async def load_hot_context(self, conversation_id: str) -> dict[str, Any]:
         local_epic_chain_state = self._load_local_epic_chain_state_context()
         live_cloud_chain = await self._load_live_cloud_chain_context()
+        cloud_status_snapshot, snapshot_degraded = self._load_cloud_status_snapshot()
         base: dict[str, Any] = {
             "conversation_id": conversation_id,
             "prompt_version": MEGAPLAN_RESIDENT_PROMPT_VERSION,
@@ -456,7 +469,14 @@ class MegaplanResidentProfile:
                 ),
             },
             "configured_cloud_yaml": str(self.config.cloud_yaml_path),
+            # Canonical broad-status snapshot — the first source for "how's it
+            # going?" / "what is active?" questions. Produced by the watchdog
+            # from local observation only; never requires SSH from the resident.
+            "cloud_status_snapshot": cloud_status_snapshot,
+            "plan_activity_summary": status_snapshot.plan_activity_summary(cloud_status_snapshot),
+            "cloud_status_degraded": snapshot_degraded,
             "epic_chain_visibility": _summarize_epic_chain_visibility(local_epic_chain_state, live_cloud_chain),
+            # Supplemental detail only; NOT the canonical shared-runner view.
             "local_epic_chain_state": local_epic_chain_state,
             "live_cloud_chain": live_cloud_chain,
         }
@@ -552,6 +572,21 @@ class MegaplanResidentProfile:
             "summary": result.summary,
             "details": result.details,
         }
+
+    def _load_cloud_status_snapshot(self) -> tuple[dict[str, Any] | None, str | None]:
+        """Load the canonical cloud status snapshot for broad-status answers.
+
+        Returns ``(snapshot, degraded_reason)``. ``degraded_reason`` is ``None``
+        when the snapshot is present and fresh; otherwise it explains why the
+        resident must fall back to local plan evidence (clearly labeled as
+        degraded, not canonical). Never raises — a missing/unreadable snapshot
+        is the degraded-mode signal, not an error.
+        """
+        path = self.config.status_snapshot_path
+        try:
+            return status_snapshot.load_cloud_status_snapshot(path, max_age_s=_SNAPSHOT_MAX_AGE_S)
+        except Exception as exc:  # pragma: no cover - defensive guard for callers
+            return None, f"snapshot load failed at {path}: {exc.__class__.__name__}"
 
     def tools(self) -> ToolRegistry:
         return self.tool_registry

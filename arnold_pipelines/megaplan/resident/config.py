@@ -46,6 +46,9 @@ class ResidentConfig(BaseModel):
     confirmation_expiry_s: float = Field(default=900.0, gt=0)
     require_cloud_start_confirmation: bool = True
     cloud_yaml_path: Path = Path("cloud.yaml")
+    # Canonical broad-status snapshot (written by the watchdog, read by every
+    # status consumer). Defaults to the cloud-box path; overridable for tests.
+    status_snapshot_path: Path = Path("/workspace/.megaplan/status/cloud-status.json")
     resident_export_root: Path = Path(".megaplan/resident_exports")
     escalation_repair_data_dir: Path | None = None
     escalation_repair_lock_dir: Path | None = None
@@ -113,6 +116,9 @@ class ResidentConfig(BaseModel):
                 True,
             ),
             cloud_yaml_path=Path(env.get("MEGAPLAN_RESIDENT_CLOUD_YAML", "cloud.yaml")),
+            status_snapshot_path=Path(
+                env.get("MEGAPLAN_STATUS_SNAPSHOT", "/workspace/.megaplan/status/cloud-status.json")
+            ),
             resident_export_root=Path(env.get("MEGAPLAN_RESIDENT_EXPORT_ROOT", ".megaplan/resident_exports")),
             escalation_repair_data_dir=(
                 Path(env["MEGAPLAN_RESIDENT_REPAIR_DATA_DIR"])
