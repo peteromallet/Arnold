@@ -2733,7 +2733,12 @@ if (
         "treat as chain-layer sickness"
     )
     details = {"stuck_ticks": stuck_ticks}
-if status == "ok" and not completion_guard_repair_eligible and no_advance_ticks >= NO_ADVANCE_TICKS:
+if (
+    status == "ok"
+    and not completion_guard_repair_eligible
+    and not plan_projected_nonterminal
+    and no_advance_ticks >= NO_ADVANCE_TICKS
+):
     status = "chain_no_advance"
     issue_kind = "chain_no_advance"
     recurring_lines = interesting_lines[-3:] if interesting_lines else log_lines[-3:]
