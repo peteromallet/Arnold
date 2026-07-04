@@ -21,6 +21,18 @@ import type { DisposeHandle } from '../../dispose';
 import type { DiagnosticSeverity } from '../../diagnostics';
 import type { TimelineSnapshot } from '../timeline/reader';
 import type { TimelinePatch } from '../timeline/patch';
+import type {
+  ArtifactBoundary,
+  RenderArtifact,
+  RenderMaterialMediaKind,
+  RenderMaterialRef,
+  RenderStorageLocator,
+} from '../rendering/artifacts';
+import type {
+  CapabilityFinding,
+  DeterminismStatus,
+  RenderRoute,
+} from '../rendering/renderability';
 // Cross-family type-only imports:
 import type { ProcessSpawnConfig } from './processes';
 // Live-data type (canonical module under src/sdk/video/liveData.ts):
@@ -233,6 +245,110 @@ export interface ToolSourceRef {
 }
 
 /** An artifact reference produced by a tool. */
+export interface ToolArtifactPromotionProducer {
+  /** Extension that produced the durable record, when known. */
+  readonly extensionId?: string;
+  /** Tool identifier that produced the durable record, when known. */
+  readonly toolId?: string;
+  /** Producer version, when declared by the tool or host. */
+  readonly version?: string;
+}
+
+/**
+ * Promotion evidence carried through {@link ToolArtifactRef.meta}.
+ *
+ * Agent-produced refs remain lightweight at the tool boundary; when the host
+ * promotes them into durable records it reads this evidence from `meta`.
+ */
+export interface ToolArtifactPromotionEvidence {
+  /** Version of the evidence schema used to populate this record. */
+  readonly schemaVersion?: number;
+  /** Durable media kind for the promoted record. */
+  readonly mediaKind?: RenderMaterialMediaKind;
+  /** Durable locator for the promoted bytes. */
+  readonly locator?: RenderStorageLocator;
+  /** Optional hash when not embedded in {@link locator}. */
+  readonly outputHash?: string;
+  /** Determinism posture of the produced material/artifact. */
+  readonly determinism?: DeterminismStatus;
+  /** Replacement behaviour when substituting for live/runtime refs. */
+  readonly replacementPolicy?: RenderMaterialRef['replacementPolicy'];
+  /** Routes this durable record is permitted to satisfy. */
+  readonly routeConstraints?: readonly RenderRoute[];
+  /** Structured provenance required for authoritative export. */
+  readonly provenance?: Record<string, unknown>;
+  /** Source ref IDs consumed while producing this durable record. */
+  readonly consumedRefs?: readonly string[];
+  /** Fully-resolved consumed materials, when already available. */
+  readonly consumedMaterialRefs?: readonly RenderMaterialRef[];
+  /** Stable hash map for the consumed inputs. */
+  readonly inputHashes?: Record<string, string>;
+  /** Capability-style diagnostics already known at promotion time. */
+  readonly diagnostics?: readonly CapabilityFinding[];
+  /** Artifact boundary metadata for asset/artifact promotions. */
+  readonly boundary?: ArtifactBoundary;
+  /** Preferred artifact route when promoting an asset ref. */
+  readonly route?: RenderRoute;
+  /** RFC3339 timestamp describing when the output was produced. */
+  readonly producedAt?: string;
+  /** Producer metadata, supplementing the invocation request. */
+  readonly producer?: ToolArtifactPromotionProducer;
+  /** Optional opaque metadata preserved on the promoted record manifest. */
+  readonly metadata?: Record<string, unknown>;
+}
+
+/** Structured metadata carried on a {@link ToolArtifactRef}. */
+export interface ToolArtifactMeta extends Record<string, unknown> {
+  /** Optional promotion evidence used to create durable host records. */
+  readonly promotion?: ToolArtifactPromotionEvidence;
+}
+
+/** Host-owned producer metadata for a durable promoted record. */
+export interface ToolDurableRecordProducer {
+  readonly extensionId: string;
+  readonly toolId: string;
+  readonly version?: string;
+}
+
+/** Shared durable-promotion metadata added by the host. */
+export interface ToolDurableRecordBase {
+  /** Promotion schema version that produced this durable record. */
+  readonly schemaVersion: number;
+  /** Original lightweight ref string returned by the tool. */
+  readonly sourceRef: string;
+  /** Host-attributed producer metadata for the durable record. */
+  readonly producer: ToolDurableRecordProducer;
+  /** Durable route constraints for later validation and planning. */
+  readonly routeConstraints: readonly RenderRoute[];
+  /** RFC3339 timestamp describing when the durable output was produced. */
+  readonly producedAt: string;
+  /** Stable IDs of source refs consumed while producing this output. */
+  readonly consumedRefs: readonly string[];
+  /** Stable input-hash map used to make determinism auditable. */
+  readonly inputHashes: Readonly<Record<string, string>>;
+  /** Capability-style diagnostics attached to the promoted output. */
+  readonly diagnostics: readonly CapabilityFinding[];
+}
+
+/** Durable material record returned by host promotion. */
+export interface ToolDurableMaterialRef
+  extends RenderMaterialRef, ToolDurableRecordBase {
+  readonly durableKind: 'material';
+}
+
+/** Durable artifact record returned by host promotion. */
+export interface ToolDurableArtifact
+  extends RenderArtifact, ToolDurableRecordBase {
+  readonly durableKind: 'artifact';
+  /** Replacement behaviour retained for later materialization policy checks. */
+  readonly replacementPolicy: RenderMaterialRef['replacementPolicy'];
+}
+
+/** Durable record synthesized by the host from a tool artifact ref. */
+export type ToolDurableRecord =
+  | ToolDurableMaterialRef
+  | ToolDurableArtifact;
+
 export interface ToolArtifactRef {
   /** Artifact identifier (asset key, material key, etc.). */
   ref: string;
@@ -240,8 +356,13 @@ export interface ToolArtifactRef {
   kind: 'asset' | 'material' | 'placeholder';
   /** Human-readable label for UI. */
   label?: string;
-  /** Opaque metadata (e.g. bake parameters, resolution, format). */
-  meta?: Record<string, unknown>;
+  /**
+   * Metadata carrier for bake parameters plus optional durable-promotion
+   * evidence under `meta.promotion`.
+   */
+  meta?: ToolArtifactMeta;
+  /** Host-owned durable record synthesized after promotion, when available. */
+  durableRecord?: ToolDurableRecord;
 }
 
 /** A search result match from an enrichment tool. */

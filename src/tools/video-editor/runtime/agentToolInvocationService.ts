@@ -14,21 +14,36 @@
 
 import type {
   AgentToolInvocationRequest,
-  AgentToolHandler,
-  DisposeHandle,
   ToolResult,
   ToolMutationProposalResult,
+  ToolMaterialArtifactResult,
+  ToolArtifactRef,
   ToolUISummaryResult,
   ToolResultDiagnostic,
-  ProcessSpawnConfig,
-  ToolProcessResult,
   ProposalRuntime,
 } from '@reigh/editor-sdk';
 import type { AgentToolRegistry } from '@/tools/video-editor/runtime/agentToolRegistry';
+import type {
+  ToolArtifactMeta,
+  ToolArtifactPromotionEvidence,
+  ToolDurableArtifact,
+  ToolDurableMaterialRef,
+} from '@/sdk/video/families/agentTools';
+import type {
+  ArtifactBoundary,
+  RenderArtifact,
+  RenderMaterialMediaKind,
+  RenderMaterialRef,
+  RenderStorageLocator,
+} from '@/sdk/video/rendering/artifacts';
+import type {
+  CapabilityFinding,
+  DeterminismStatus,
+  RenderRoute,
+} from '@/sdk/video/rendering/renderability';
 import {
   isTimelineEditableResult,
   toolResultToTimelineProposalInputs,
-  validateToolResult,
 } from '@/tools/video-editor/runtime/agentToolContracts';
 
 // ---------------------------------------------------------------------------
@@ -75,6 +90,200 @@ export interface CreateAgentToolInvocationServiceOptions {
   proposalRuntime: ProposalRuntime;
 }
 
+const VALID_RENDER_ROUTES = new Set<RenderRoute>([
+  'preview',
+  'browser-export',
+  'worker-export',
+  'sidecar-export',
+]);
+
+const VALID_DETERMINISM_STATUSES = new Set<DeterminismStatus>([
+  'deterministic',
+  'preview-only',
+  'live-unbaked',
+  'process-dependent',
+  'unknown',
+]);
+
+const VALID_MEDIA_KINDS = new Set<RenderMaterialMediaKind>([
+  'image',
+  'video',
+  'audio',
+  'text',
+  'json',
+  'binary',
+  'sidecar',
+  'unknown',
+]);
+
+type PromotionProducer = {
+  extensionId: string;
+  toolId: string;
+  version?: string;
+};
+
+type PromotionOutcome = {
+  ref: ToolArtifactRef;
+  diagnostics: ToolResultDiagnostic[];
+};
+
+/**
+ * Promote a single artifact ref to a durable record using
+ * {@link ToolArtifactMeta.promotion} evidence.
+ *
+ * Returns the original ref unchanged (with diagnostics) when required
+ * provenance is absent or when the ref is a placeholder.
+ *
+ * @public M3c — exported for session-hook promotion wiring.
+ */
+export function promoteArtifactRef(
+  ref: ToolArtifactRef,
+  source: { extensionId: string; toolId: string },
+): PromotionOutcome {
+  if (ref.kind === 'placeholder') {
+    return {
+      ref,
+      diagnostics: [
+        createPromotionDiagnostic(
+          'warning',
+          'agent-tool/material-promotion-skipped-placeholder',
+          `Skipped durable promotion for placeholder ref "${ref.ref}".`,
+          {
+            ref: ref.ref,
+            kind: ref.kind,
+            toolId: source.toolId,
+            extensionId: source.extensionId,
+          },
+        ),
+      ],
+    };
+  }
+
+  const evidence = readPromotionEvidence(ref.meta);
+  const missingEvidence = collectMissingEvidence(evidence);
+  if (missingEvidence.length > 0) {
+    const code = missingEvidence.includes('provenance')
+      ? 'agent-tool/material-promotion-missing-provenance'
+      : 'agent-tool/material-promotion-missing-evidence';
+    return {
+      ref,
+      diagnostics: [
+        createPromotionDiagnostic(
+          'error',
+          code,
+          `Cannot promote "${ref.ref}" without durable provenance evidence.`,
+          {
+            ref: ref.ref,
+            kind: ref.kind,
+            missingEvidence,
+            toolId: source.toolId,
+            extensionId: source.extensionId,
+          },
+        ),
+      ],
+    };
+  }
+
+  const producer: PromotionProducer = {
+    extensionId: evidence.producer?.extensionId ?? source.extensionId,
+    toolId: evidence.producer?.toolId ?? source.toolId,
+    version: evidence.producer?.version,
+  };
+  const locator = normalizeLocator(evidence);
+  const routeConstraints = normalizeRouteConstraints(evidence.routeConstraints);
+  const determinism = evidence.determinism as DeterminismStatus;
+  const mediaKind = evidence.mediaKind as RenderMaterialMediaKind;
+  const replacementPolicy =
+    evidence.replacementPolicy ?? 'preserve-live-ref';
+  const producedAt = evidence.producedAt as string;
+  const provenance = normalizeRecord(evidence.provenance) ?? {};
+  const consumedRefs = normalizeStringArray(evidence.consumedRefs);
+  const inputHashes = normalizeStringRecord(evidence.inputHashes);
+  const diagnostics = normalizeCapabilityFindings(
+    evidence.diagnostics,
+    ref.ref,
+    { extensionId: source.extensionId, toolId: source.toolId, contributionId: `${source.extensionId}:${source.toolId}` },
+  );
+
+  const durableRecord =
+    ref.kind === 'material'
+      ? createDurableMaterialRecord({
+          sourceRef: ref.ref,
+          producer,
+          schemaVersion: evidence.schemaVersion as number,
+          mediaKind,
+          locator,
+          determinism,
+          replacementPolicy,
+          provenance,
+          routeConstraints,
+          consumedRefs,
+          inputHashes,
+          diagnostics,
+          producedAt,
+        })
+      : createDurableArtifactRecord({
+          sourceRef: ref.ref,
+          producer,
+          schemaVersion: evidence.schemaVersion as number,
+          mediaKind,
+          locator,
+          determinism,
+          replacementPolicy,
+          provenance,
+          routeConstraints,
+          consumedRefs,
+          inputHashes,
+          diagnostics,
+          producedAt,
+          route: normalizeArtifactRoute(evidence, routeConstraints),
+          boundary: normalizeArtifactBoundary(
+            evidence.boundary,
+            normalizeArtifactRoute(evidence, routeConstraints),
+          ),
+          metadata: normalizeRecord(evidence.metadata),
+          consumedMaterialRefs: normalizeConsumedMaterialRefs(
+            evidence.consumedMaterialRefs,
+          ),
+        });
+
+  return {
+    ref: {
+      ...ref,
+      durableRecord,
+    },
+    diagnostics: [],
+  };
+}
+
+/**
+ * Promote a batch of {@link ToolArtifactRef}s to durable records.
+ *
+ * This is the canonical entry point for session-hook promotion wiring
+ * (M3c).  It delegates to {@link promoteArtifactRef} for each ref and
+ * collects all diagnostics.
+ *
+ * @param refs - The refs to promote.
+ * @param source - Fallback producer metadata used when the ref's own
+ *   {@link ToolArtifactPromotionEvidence.producer} is absent.
+ * @returns The promoted refs and any promotion diagnostics.
+ *
+ * @public M3c
+ */
+export function promoteMaterialArtifactBatch(
+  refs: readonly ToolArtifactRef[],
+  source: { extensionId: string; toolId: string },
+): { promotedRefs: ToolArtifactRef[]; diagnostics: ToolResultDiagnostic[] } {
+  const diagnostics: ToolResultDiagnostic[] = [];
+  const promotedRefs = refs.map((ref) => {
+    const outcome = promoteArtifactRef(ref, source);
+    diagnostics.push(...outcome.diagnostics);
+    return outcome.ref;
+  });
+
+  return { promotedRefs, diagnostics };
+}
+
 /**
  * Create the frontend invocation service.
  *
@@ -107,6 +316,10 @@ export function createAgentToolInvocationService(
     // 3. If the result is a timeline-editing result, route through ProposalRuntime
     if (isTimelineEditableResult(result)) {
       return routeTimelineEditableResult(result, request);
+    }
+
+    if (result.family === 'material/artifact') {
+      return promoteMaterialArtifactResult(result, request);
     }
 
     // 4. Non-timeline-editing results pass through unchanged
@@ -209,8 +422,413 @@ export function createAgentToolInvocationService(
     return uiResult;
   }
 
+  function promoteMaterialArtifactResult(
+    result: ToolMaterialArtifactResult,
+    request: AgentToolInvocationRequest,
+  ): ToolMaterialArtifactResult {
+    const { promotedRefs, diagnostics: promotionDiagnostics } =
+      promoteMaterialArtifactBatch(result.refs, {
+        extensionId: request.extensionId,
+        toolId: request.toolId,
+      });
+
+    return {
+      ...result,
+      refs: promotedRefs,
+      diagnostics:
+        promotionDiagnostics.length > 0
+          ? [...(result.diagnostics ?? []), ...promotionDiagnostics]
+          : result.diagnostics,
+    };
+  }
+
   return {
     invokeTool,
     registry,
   };
+}
+
+function readPromotionEvidence(
+  meta: ToolArtifactMeta | undefined,
+): ToolArtifactPromotionEvidence {
+  const fallback = normalizeRecord(meta) ?? {};
+  const promotion = normalizeRecord(meta?.promotion);
+  return {
+    ...fallback,
+    ...promotion,
+  } as ToolArtifactPromotionEvidence;
+}
+
+function collectMissingEvidence(
+  evidence: ToolArtifactPromotionEvidence,
+): string[] {
+  const missing: string[] = [];
+
+  if (!isPositiveInteger(evidence.schemaVersion)) {
+    missing.push('schemaVersion');
+  }
+  if (!isValidMediaKind(evidence.mediaKind)) {
+    missing.push('mediaKind');
+  }
+  if (!hasValidLocator(evidence)) {
+    missing.push('locator');
+  }
+  if (!isValidDeterminism(evidence.determinism)) {
+    missing.push('determinism');
+  }
+  if (normalizeRouteConstraints(evidence.routeConstraints).length === 0) {
+    missing.push('routeConstraints');
+  }
+  if (!normalizeRecord(evidence.provenance) || Object.keys(evidence.provenance ?? {}).length === 0) {
+    missing.push('provenance');
+  }
+  if (!isNonEmptyString(evidence.producedAt)) {
+    missing.push('producedAt');
+  }
+  if (normalizeStringArray(evidence.consumedRefs).length === 0) {
+    missing.push('consumedRefs');
+  }
+  if (Object.keys(normalizeStringRecord(evidence.inputHashes)).length === 0) {
+    missing.push('inputHashes');
+  }
+
+  return missing;
+}
+
+function createDurableMaterialRecord(params: {
+  sourceRef: string;
+  producer: PromotionProducer;
+  schemaVersion: number;
+  mediaKind: RenderMaterialMediaKind;
+  locator: RenderStorageLocator;
+  determinism: DeterminismStatus;
+  replacementPolicy: RenderMaterialRef['replacementPolicy'];
+  provenance: Record<string, unknown>;
+  routeConstraints: readonly RenderRoute[];
+  consumedRefs: readonly string[];
+  inputHashes: Record<string, string>;
+  diagnostics: readonly CapabilityFinding[];
+  producedAt: string;
+}): ToolDurableMaterialRef {
+  return {
+    durableKind: 'material',
+    schemaVersion: params.schemaVersion,
+    sourceRef: params.sourceRef,
+    producer: params.producer,
+    routeConstraints: params.routeConstraints,
+    producedAt: params.producedAt,
+    consumedRefs: params.consumedRefs,
+    inputHashes: params.inputHashes,
+    diagnostics: params.diagnostics,
+    id: params.sourceRef,
+    mediaKind: params.mediaKind,
+    locator: params.locator,
+    producerExtensionId: params.producer.extensionId,
+    producerVersion: params.producer.version,
+    provenance: params.provenance,
+    determinism: params.determinism,
+    replacementPolicy: params.replacementPolicy,
+  };
+}
+
+function createDurableArtifactRecord(params: {
+  sourceRef: string;
+  producer: PromotionProducer;
+  schemaVersion: number;
+  mediaKind: RenderMaterialMediaKind;
+  locator: RenderStorageLocator;
+  determinism: DeterminismStatus;
+  replacementPolicy: RenderMaterialRef['replacementPolicy'];
+  provenance: Record<string, unknown>;
+  routeConstraints: readonly RenderRoute[];
+  consumedRefs: readonly string[];
+  inputHashes: Record<string, string>;
+  diagnostics: readonly CapabilityFinding[];
+  producedAt: string;
+  route: RenderRoute;
+  boundary: ArtifactBoundary;
+  metadata?: Record<string, unknown>;
+  consumedMaterialRefs: readonly RenderMaterialRef[];
+}): ToolDurableArtifact {
+  const artifact: RenderArtifact = {
+    id: params.sourceRef,
+    route: params.route,
+    locator: params.locator,
+    mediaKind: params.mediaKind,
+    producerExtensionId: params.producer.extensionId,
+    producerVersion: params.producer.version,
+    consumedMaterialRefs: params.consumedMaterialRefs,
+    determinism: params.determinism,
+    boundary: params.boundary,
+    findings: params.diagnostics,
+    manifest: {
+      id: `manifest.${params.sourceRef}`,
+      schemaVersion: 1,
+      artifactId: params.sourceRef,
+      route: params.route,
+      determinism: params.determinism,
+      producerExtensionId: params.producer.extensionId,
+      producerVersion: params.producer.version,
+      locator: params.locator,
+      mediaKind: params.mediaKind,
+      consumedMaterialRefs: params.consumedMaterialRefs,
+      sidecars: [],
+      diagnostics: params.diagnostics,
+      provenance: params.provenance,
+      inputHashes: params.inputHashes,
+      createdAt: params.producedAt,
+      metadata: params.metadata,
+    },
+  };
+
+  return {
+    durableKind: 'artifact',
+    schemaVersion: params.schemaVersion,
+    sourceRef: params.sourceRef,
+    producer: params.producer,
+    routeConstraints: params.routeConstraints,
+    producedAt: params.producedAt,
+    consumedRefs: params.consumedRefs,
+    inputHashes: params.inputHashes,
+    diagnostics: params.diagnostics,
+    replacementPolicy: params.replacementPolicy,
+    ...artifact,
+  };
+}
+
+function normalizeLocator(
+  evidence: ToolArtifactPromotionEvidence,
+): RenderStorageLocator {
+  const locator = normalizeRecord(evidence.locator) ?? {};
+  const contentSha256 = isNonEmptyString(locator.contentSha256)
+    ? locator.contentSha256
+    : isNonEmptyString(evidence.outputHash)
+      ? evidence.outputHash
+      : undefined;
+
+  return {
+    kind: String(locator.kind),
+    uri: String(locator.uri),
+    mimeType: isNonEmptyString(locator.mimeType) ? locator.mimeType : undefined,
+    contentSha256,
+    expiresAt: isNonEmptyString(locator.expiresAt) ? locator.expiresAt : undefined,
+  };
+}
+
+function hasValidLocator(evidence: ToolArtifactPromotionEvidence): boolean {
+  const locator = normalizeRecord(evidence.locator);
+  if (!locator) return false;
+  if (!isNonEmptyString(locator.kind) || !isNonEmptyString(locator.uri)) {
+    return false;
+  }
+  return isNonEmptyString(locator.contentSha256) || isNonEmptyString(evidence.outputHash);
+}
+
+function normalizeArtifactRoute(
+  evidence: ToolArtifactPromotionEvidence,
+  routeConstraints: readonly RenderRoute[],
+): RenderRoute {
+  if (isValidRenderRoute(evidence.route) && routeConstraints.includes(evidence.route)) {
+    return evidence.route;
+  }
+  return routeConstraints[0] ?? 'preview';
+}
+
+function normalizeArtifactBoundary(
+  boundary: ToolArtifactPromotionEvidence['boundary'],
+  route: RenderRoute,
+): ArtifactBoundary {
+  const boundaryRecord = normalizeRecord(boundary);
+  const source = boundaryRecord?.source;
+  const target = boundaryRecord?.target;
+  const failureBehavior = boundaryRecord?.failureBehavior;
+
+  if (
+    isNonEmptyString(source)
+    && isNonEmptyString(target)
+    && isNonEmptyString(failureBehavior)
+  ) {
+    return {
+      source: source as ArtifactBoundary['source'],
+      target: target as ArtifactBoundary['target'],
+      route,
+      failureBehavior: failureBehavior as ArtifactBoundary['failureBehavior'],
+    };
+  }
+
+  return {
+    source: route === 'preview' ? 'browser' : 'artifact-store',
+    target: route === 'preview' ? 'browser' : 'export-output',
+    route,
+    failureBehavior: 'block-export',
+  };
+}
+
+function normalizeCapabilityFindings(
+  diagnostics: ToolArtifactPromotionEvidence['diagnostics'],
+  ref: string,
+  request: AgentToolInvocationRequest,
+): CapabilityFinding[] {
+  if (!Array.isArray(diagnostics)) {
+    return [];
+  }
+
+  return diagnostics.flatMap((diagnostic, index) => {
+    const record = normalizeRecord(diagnostic);
+    if (!record) return [];
+    const diagnosticCode = isNonEmptyString(record.code)
+      ? record.code
+      : isNonEmptyString(record.id)
+        ? record.id
+        : undefined;
+    if (!isCapabilitySeverity(record.severity) || !diagnosticCode || !isNonEmptyString(record.message)) {
+      return [];
+    }
+    const detail = normalizeRecord(record.detail);
+    return [{
+      id: isNonEmptyString(record.id)
+        ? record.id
+        : `agent-tool-promotion:${diagnosticCode}:${request.extensionId}:${request.toolId}:${ref}:${index}`,
+      severity: record.severity,
+      route: isValidRenderRoute(record.route) ? record.route : undefined,
+      reason: isNonEmptyString(record.reason) ? record.reason as CapabilityFinding['reason'] : undefined,
+      message: record.message,
+      extensionId: isNonEmptyString(record.extensionId) ? record.extensionId : request.extensionId,
+      contributionId: isNonEmptyString(record.contributionId) ? record.contributionId : request.contributionId,
+      materialRefId: isNonEmptyString(record.materialRefId) ? record.materialRefId : ref,
+      detail: {
+        ...(detail ?? {}),
+        toolDiagnosticCode: diagnosticCode,
+      },
+    }];
+  });
+}
+
+function normalizeRouteConstraints(
+  routes: ToolArtifactPromotionEvidence['routeConstraints'],
+): RenderRoute[] {
+  if (!Array.isArray(routes)) {
+    return [];
+  }
+  const normalized = routes.filter(isValidRenderRoute);
+  return normalized.filter((route, index) => normalized.indexOf(route) === index);
+}
+
+function normalizeConsumedMaterialRefs(
+  refs: ToolArtifactPromotionEvidence['consumedMaterialRefs'],
+): RenderMaterialRef[] {
+  if (!Array.isArray(refs)) {
+    return [];
+  }
+
+  return refs.flatMap((ref) => {
+    const record = normalizeRecord(ref);
+    if (!record) return [];
+    if (
+      !isNonEmptyString(record.id)
+      || !isValidMediaKind(record.mediaKind)
+      || !normalizeRecord(record.locator)
+      || !isValidDeterminism(record.determinism)
+      || !isNonEmptyString(record.replacementPolicy)
+    ) {
+      return [];
+    }
+    return [{
+      id: record.id,
+      mediaKind: record.mediaKind,
+      locator: {
+        kind: String((record.locator as Record<string, unknown>).kind),
+        uri: String((record.locator as Record<string, unknown>).uri),
+        mimeType: isNonEmptyString((record.locator as Record<string, unknown>).mimeType)
+          ? String((record.locator as Record<string, unknown>).mimeType)
+          : undefined,
+        contentSha256: isNonEmptyString((record.locator as Record<string, unknown>).contentSha256)
+          ? String((record.locator as Record<string, unknown>).contentSha256)
+          : undefined,
+        expiresAt: isNonEmptyString((record.locator as Record<string, unknown>).expiresAt)
+          ? String((record.locator as Record<string, unknown>).expiresAt)
+          : undefined,
+      },
+      producerExtensionId: isNonEmptyString(record.producerExtensionId)
+        ? record.producerExtensionId
+        : undefined,
+      producerVersion: isNonEmptyString(record.producerVersion)
+        ? record.producerVersion
+        : undefined,
+      provenance: normalizeRecord(record.provenance) ?? undefined,
+      determinism: record.determinism,
+      replacementPolicy: record.replacementPolicy as RenderMaterialRef['replacementPolicy'],
+    }];
+  });
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter(isNonEmptyString);
+}
+
+function normalizeStringRecord(value: unknown): Record<string, string> {
+  const record = normalizeRecord(value);
+  if (!record) {
+    return {};
+  }
+
+  const normalized: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(record)) {
+    if (typeof entry === 'string' && entry.length > 0) {
+      normalized[key] = entry;
+    }
+  }
+  return normalized;
+}
+
+function normalizeRecord(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function createPromotionDiagnostic(
+  severity: ToolResultDiagnostic['severity'],
+  code: string,
+  message: string,
+  detail: Record<string, unknown>,
+): ToolResultDiagnostic {
+  return {
+    severity,
+    code,
+    message,
+    detail,
+  };
+}
+
+function isValidRenderRoute(value: unknown): value is RenderRoute {
+  return typeof value === 'string' && VALID_RENDER_ROUTES.has(value as RenderRoute);
+}
+
+function isValidDeterminism(value: unknown): value is DeterminismStatus {
+  return typeof value === 'string'
+    && VALID_DETERMINISM_STATUSES.has(value as DeterminismStatus);
+}
+
+function isValidMediaKind(value: unknown): value is RenderMaterialMediaKind {
+  return typeof value === 'string' && VALID_MEDIA_KINDS.has(value as RenderMaterialMediaKind);
+}
+
+function isCapabilitySeverity(
+  value: unknown,
+): value is CapabilityFinding['severity'] {
+  return value === 'error' || value === 'warning' || value === 'info';
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
 }

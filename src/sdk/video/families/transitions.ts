@@ -16,6 +16,26 @@ import type { ContributionId } from '../../ids';
 import type { DisposeHandle } from '../../dispose';
 
 /**
+ * A descriptor-declared named material slot for transitions.
+ *
+ * Transitions that consume material inputs (e.g. mask textures) declare
+ * named slots here.  At runtime the host binds a {@link MaterialRef} /
+ * {@link RenderMaterialRef} to each declared slot through the internal
+ * {@code material.attach} graph preview operation.  No new material
+ * identity types (such as {@code MaskMaterialRef}) are introduced —
+ * bound materials use the existing {@link MaterialRef} / {@link RenderMaterialRef}
+ * identity contract.
+ *
+ * @publicContract
+ */
+export interface TransitionMaterialSlotDeclaration {
+  /** Unique slot name within the transition (used as the key in materialSlots). */
+  name: string;
+  /** Human-readable label for UI diagnostics / inspector. */
+  label?: string;
+}
+
+/**
  * M8: A transition contribution declared in an extension manifest.
  *
  * Trusted component transitions render in the browser preview and are blocked
@@ -42,6 +62,15 @@ export interface TransitionContribution {
   allowWorkerExport?: boolean;
   /** Lower values sort first. Default 0. */
   order?: number;
+  /**
+   * M5-ready named material (mask) slot declarations.
+   *
+   * Each slot can receive a {@link MaterialRef} / {@link RenderMaterialRef}
+   * binding at runtime via the internal {@code material.attach} graph
+   * preview operation.  Omitted or empty means the transition accepts no
+   * material inputs.
+   */
+  materialSlots?: readonly TransitionMaterialSlotDeclaration[];
 }
 
 /**

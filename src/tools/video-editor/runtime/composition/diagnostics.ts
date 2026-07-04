@@ -103,6 +103,9 @@ export const COMPOSITION_DIAGNOSTIC_CODE = {
   /** A resolved material is incompatible with the selected render route. */
   MATERIAL_ROUTE_INCOMPATIBLE: 'composition/material-route-incompatible',
 
+  /** A material ref id could not be resolved for attach-time preview validation. */
+  MATERIAL_NOT_RESOLVED: 'composition/material-not-resolved',
+
   // ---------------------------------------------------------------------------
   // Deterministic capture (M3b) conversion diagnostic codes
   // ---------------------------------------------------------------------------
@@ -219,6 +222,7 @@ const MATERIAL_ERROR_DIAGNOSTIC_CODES = new Set<CompositionDiagnosticCode>([
   COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_STATUS_INVALID,
   COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_FAILED,
   COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_ROUTE_INCOMPATIBLE,
+  COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_NOT_RESOLVED,
 ]);
 
 /** All material diagnostic codes (M3a). */
@@ -230,6 +234,7 @@ const MATERIAL_DIAGNOSTIC_CODES: ReadonlySet<CompositionDiagnosticCode> = new Se
   COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_STATUS_INVALID,
   COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_FAILED,
   COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_ROUTE_INCOMPATIBLE,
+  COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_NOT_RESOLVED,
 ]);
 
 /** All deterministic capture conversion diagnostic codes (M3b). */

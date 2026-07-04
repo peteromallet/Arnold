@@ -255,6 +255,16 @@ export interface HostMaterialRuntimeProjection {
   readonly hasAuthoritativeBlockers: boolean;
 }
 
+export type ResolveMaterialAttachEntryResult =
+  | Readonly<{
+      readonly ok: true;
+      readonly entry: HostMaterialRuntimeEntry;
+    }>
+  | Readonly<{
+      readonly ok: false;
+      readonly diagnostic: ExtensionDiagnostic;
+    }>;
+
 function freezeDetail(
   detail: RenderMaterialStatusDetail | undefined,
 ): RenderMaterialStatusDetail | undefined {
@@ -1483,4 +1493,73 @@ export function collectMaterialRuntimeDiagnostics(
   }
 
   return Object.freeze(diagnostics);
+}
+
+function firstAttachBlockingDiagnostic(
+  entry: HostMaterialRuntimeEntry,
+): ExtensionDiagnostic | undefined {
+  const existing = entry.diagnostics[0];
+  if (existing) {
+    return existing;
+  }
+
+  if (!entry.blocksAuthoritativeExport) {
+    return undefined;
+  }
+
+  const blockedRoute = entry.routeScopes.find((scope) => scope.fit === 'blocked')?.route;
+  const derived = blockedRoute
+    ? buildMaterialDiagnosticsForEntry(entry, blockedRoute)[0]
+    : buildMaterialDiagnosticsForEntry(entry)[0];
+  if (derived) {
+    return derived;
+  }
+
+  return buildCompositionDiagnostic(
+    COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_STATUS_INVALID,
+    `Material "${entry.materialRef.id}" cannot be attached in the current runtime state.`,
+    buildMaterialDiagnosticDetail(entry, blockedRoute),
+  );
+}
+
+export function resolveMaterialAttachEntry(
+  projection: HostMaterialRuntimeProjection | undefined,
+  materialRefId: string,
+): ResolveMaterialAttachEntryResult {
+  const normalizedMaterialRefId = materialRefId.trim();
+  const entry = normalizedMaterialRefId.length > 0
+    ? projection?.byMaterialRefId.get(normalizedMaterialRefId)
+    : undefined;
+
+  if (!entry) {
+    return Object.freeze({
+      ok: false,
+      diagnostic: buildCompositionDiagnostic(
+        COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_NOT_RESOLVED,
+        `Material "${normalizedMaterialRefId}" could not be resolved for attach preview.`,
+        {
+          materialRefId: normalizedMaterialRefId,
+        },
+      ),
+    });
+  }
+
+  if (entry.diagnostics.length > 0) {
+    return Object.freeze({
+      ok: false,
+      diagnostic: entry.diagnostics[0]!,
+    });
+  }
+
+  if (entry.blocksAuthoritativeExport) {
+    return Object.freeze({
+      ok: false,
+      diagnostic: firstAttachBlockingDiagnostic(entry)!,
+    });
+  }
+
+  return Object.freeze({
+    ok: true,
+    entry,
+  });
 }

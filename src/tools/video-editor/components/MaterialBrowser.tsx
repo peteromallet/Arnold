@@ -71,11 +71,7 @@ function actionFor(
 ): VideoEditorPlannerNextActionDescriptor | undefined {
   const isMaterialRepairAction = (action: VideoEditorPlannerNextActionDescriptor) =>
     action.kind === 'materialize'
-    || action.kind === 'bake'
-    || (
-      action.detail?.specificKind === 'resolve-blocker'
-      && (action.label.toLowerCase().includes('materialize') || action.message?.toLowerCase().includes('material'))
-    );
+    || action.kind === 'bake';
   const materialActions = actions.filter((action) =>
     isMaterialRepairAction(action));
   return materialActions.find((action) => action.message?.includes(material.id) || action.label.includes(material.id))

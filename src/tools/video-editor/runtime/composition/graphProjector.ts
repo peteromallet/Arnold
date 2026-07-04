@@ -8,6 +8,7 @@ import type {
   TimelineSnapshot,
 } from '@reigh/editor-sdk';
 import { contributionRefKey } from '@reigh/editor-sdk';
+import type { HostMaterialRuntimeProjection } from '@/tools/video-editor/runtime/composition/materialRuntime.ts';
 import {
   buildCompositionDiagnostic,
   COMPOSITION_DIAGNOSTIC_CODE,
@@ -29,11 +30,31 @@ export interface CompositionGraphPatchOverlay {
   readonly shaders?: readonly TimelineShaderSummary[];
 }
 
+export interface CompositionGraphMaterialSlotOwnerIdentity {
+  readonly kind: 'effect' | 'transition';
+  readonly clipId: string;
+  readonly ownerId: string;
+}
+
+export interface CompositionGraphMaterialSlotDeclaration {
+  readonly owner: CompositionGraphMaterialSlotOwnerIdentity;
+  readonly slotName: string;
+}
+
+export interface CompositionGraphMaterialSlotBinding {
+  readonly owner: CompositionGraphMaterialSlotOwnerIdentity;
+  readonly slotName: string;
+  readonly materialRefId: string;
+}
+
 export interface CompositionGraphInput {
   readonly snapshot: TimelineSnapshot;
   readonly contributionIndex: ContributionIndex | undefined;
   readonly runtimeOverlay?: CompositionGraphRuntimeOverlay;
   readonly patchOverlay?: CompositionGraphPatchOverlay;
+  readonly materialRuntime?: HostMaterialRuntimeProjection;
+  readonly materialSlotDeclarations?: readonly CompositionGraphMaterialSlotDeclaration[];
+  readonly materialSlotBindings?: readonly CompositionGraphMaterialSlotBinding[];
 }
 
 const EMPTY_NODES: readonly CompositionGraphNode[] = Object.freeze([]);

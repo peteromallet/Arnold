@@ -1,5 +1,6 @@
 /**
- * Internal graph patch preview — M1b shader.assign / shader.remove preview.
+ * Internal graph patch preview — host-owned shader, material-slot, and
+ * keyframe preview operations.
  *
  * This module provides host-owned preview logic that clones a composition
  * graph input, applies internal patch operations, re-projects the graph,
@@ -10,16 +11,26 @@
  * @hostOwned — NOT exported through public SDK contracts.
  */
 
-import type { TimelineShaderSummary } from '@reigh/editor-sdk';
-import type { CompositionGraphPreviewResult } from '@reigh/editor-sdk';
-import type { CompositionGraphInput } from '@/tools/video-editor/runtime/composition/graphProjector.ts';
-import type { TimelineSnapshot } from '@reigh/editor-sdk';
+import type {
+  CompositionGraphPreviewResult,
+  ExtensionDiagnostic,
+  TimelineSnapshot,
+  TimelineShaderSummary,
+} from '@reigh/editor-sdk';
+import type {
+  CompositionGraphInput,
+  CompositionGraphMaterialSlotBinding,
+  CompositionGraphMaterialSlotOwnerIdentity,
+} from '@/tools/video-editor/runtime/composition/graphProjector.ts';
 import type {
   CaptureCollisionPolicy,
   ClipKeyframe,
   KeyframeInterpolation,
 } from '@/tools/video-editor/types/index.ts';
 import { projectCompositionGraph } from '@/tools/video-editor/runtime/composition/graphProjector.ts';
+import {
+  resolveMaterialAttachEntry,
+} from '@/tools/video-editor/runtime/composition/materialRuntime.ts';
 
 // ---------------------------------------------------------------------------
 // Internal patch operation types
@@ -47,6 +58,26 @@ export interface GraphShaderRemoveOp {
   readonly scope: 'clip' | 'postprocess';
   /** Clip id when scope is 'clip'. */
   readonly clipId?: string;
+}
+
+/**
+ * Internal attach operation: assign a material ref to a descriptor-declared
+ * named slot owned by a transition or effect instance.
+ */
+export interface GraphMaterialAttachOp {
+  readonly kind: 'material.attach';
+  readonly owner: CompositionGraphMaterialSlotOwnerIdentity;
+  readonly slotName: string;
+  readonly materialRefId: string;
+}
+
+/**
+ * Internal remove operation: clear a descriptor-declared named material slot.
+ */
+export interface GraphMaterialRemoveOp {
+  readonly kind: 'material.remove';
+  readonly owner: CompositionGraphMaterialSlotOwnerIdentity;
+  readonly slotName: string;
 }
 
 /**
@@ -123,6 +154,8 @@ export interface GraphKeyframeRemoveOp {
 export type GraphPreviewOperation =
   | GraphShaderAssignOp
   | GraphShaderRemoveOp
+  | GraphMaterialAttachOp
+  | GraphMaterialRemoveOp
   | GraphKeyframeAddOp
   | GraphKeyframeUpdateOp
   | GraphKeyframeRemoveOp;
@@ -193,10 +226,38 @@ function applyShaderRemove(
 type MutablePreviewClip = TimelineSnapshot['clips'][number] & {
   automation?: MutablePreviewAutomation[];
   keyframes?: Record<string, ClipKeyframe[]>;
+  effects?: MutablePreviewEffect[];
+  transition?: MutablePreviewTransition;
+  materialRefs?: MutablePreviewMaterialRefSummary[];
 };
 
 type MutablePreviewAutomation = NonNullable<TimelineSnapshot['clips'][number]['automation']>[number] & {
   keyframes?: ClipKeyframe[];
+};
+
+type MutablePreviewEffect = NonNullable<TimelineSnapshot['clips'][number]['effects']>[number] & {
+  params?: Record<string, unknown>;
+};
+
+type MutablePreviewTransition = NonNullable<TimelineSnapshot['clips'][number]['transition']> & {
+  params?: Record<string, unknown>;
+};
+
+type MutablePreviewMaterialRefSummary = NonNullable<TimelineSnapshot['clips'][number]['materialRefs']>[number] & {
+  ownerId?: string;
+  ownerKind?: CompositionGraphMaterialSlotOwnerIdentity['kind'];
+  slotName?: string;
+};
+
+type MutablePreviewSnapshot = TimelineSnapshot & {
+  clips: MutablePreviewClip[];
+  shaders?: TimelineShaderSummary[];
+  materialRefs?: MutablePreviewMaterialRefSummary[];
+};
+
+type MutableGraphPreviewInput = CompositionGraphInput & {
+  snapshot: MutablePreviewSnapshot;
+  materialSlotBindings?: CompositionGraphMaterialSlotBinding[];
 };
 
 function cloneKeyframe(keyframe: ClipKeyframe): ClipKeyframe {
@@ -232,6 +293,71 @@ function cloneAutomation(
     }
     return clone;
   });
+}
+
+function cloneParams(
+  params: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!params) {
+    return undefined;
+  }
+
+  const clone: Record<string, unknown> = { ...params };
+  const materialSlots = clone.materialSlots;
+  if (materialSlots && typeof materialSlots === 'object' && !Array.isArray(materialSlots)) {
+    clone.materialSlots = { ...(materialSlots as Record<string, unknown>) };
+  }
+  return clone;
+}
+
+function cloneEffects(
+  effects: TimelineSnapshot['clips'][number]['effects'],
+): MutablePreviewEffect[] | undefined {
+  if (!effects?.length) {
+    return effects ? [] : undefined;
+  }
+
+  return effects.map((effect) => ({
+    ...effect,
+    params: cloneParams(effect.params),
+  }));
+}
+
+function cloneTransition(
+  transition: TimelineSnapshot['clips'][number]['transition'],
+): MutablePreviewTransition | undefined {
+  if (!transition) {
+    return undefined;
+  }
+
+  return {
+    ...transition,
+    params: cloneParams(transition.params),
+  };
+}
+
+function cloneMaterialRefs(
+  materialRefs: TimelineSnapshot['clips'][number]['materialRefs'],
+): MutablePreviewMaterialRefSummary[] | undefined {
+  if (!materialRefs?.length) {
+    return materialRefs ? [] : undefined;
+  }
+
+  return materialRefs.map((materialRef) => ({ ...materialRef }));
+}
+
+function cloneMaterialSlotBindings(
+  bindings: readonly CompositionGraphMaterialSlotBinding[] | undefined,
+): CompositionGraphMaterialSlotBinding[] | undefined {
+  if (!bindings?.length) {
+    return bindings ? [] : undefined;
+  }
+
+  return bindings.map((binding) => ({
+    owner: { ...binding.owner },
+    slotName: binding.slotName,
+    materialRefId: binding.materialRefId,
+  }));
 }
 
 function canonicalizeKeyframeParamName(paramName: string): string | undefined {
@@ -394,6 +520,217 @@ function applyKeyframeRemove(clips: MutablePreviewClip[], op: GraphKeyframeRemov
   syncAutomationKeyframeCount(clip, op.paramName, keyframes);
 }
 
+function normalizeMaterialSlotName(slotName: string): string | undefined {
+  const normalized = slotName.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function ownerKey(owner: CompositionGraphMaterialSlotOwnerIdentity): string {
+  return `${owner.kind}:${owner.clipId}:${owner.ownerId}`;
+}
+
+function sameOwner(
+  left: CompositionGraphMaterialSlotOwnerIdentity,
+  right: CompositionGraphMaterialSlotOwnerIdentity,
+): boolean {
+  return ownerKey(left) === ownerKey(right);
+}
+
+function hasDeclaredMaterialSlot(
+  input: CompositionGraphInput,
+  owner: CompositionGraphMaterialSlotOwnerIdentity,
+  slotName: string,
+): boolean {
+  return (input.materialSlotDeclarations ?? []).some((declaration) => (
+    sameOwner(declaration.owner, owner) && declaration.slotName === slotName
+  ));
+}
+
+function findMaterialSlotOwner(
+  clips: MutablePreviewClip[],
+  owner: CompositionGraphMaterialSlotOwnerIdentity,
+): MutablePreviewEffect | MutablePreviewTransition | undefined {
+  const clip = clips.find((candidate) => candidate.id === owner.clipId);
+  if (!clip) {
+    return undefined;
+  }
+
+  if (owner.kind === 'transition') {
+    return clip.transition?.id === owner.ownerId ? clip.transition : undefined;
+  }
+
+  return clip.effects?.find((effect) => effect.id === owner.ownerId);
+}
+
+function ensureMaterialSlotRecord(
+  owner: MutablePreviewEffect | MutablePreviewTransition,
+): Record<string, unknown> {
+  owner.params ??= {};
+  const current = owner.params.materialSlots;
+  if (current && typeof current === 'object' && !Array.isArray(current)) {
+    return current as Record<string, unknown>;
+  }
+
+  const next: Record<string, unknown> = {};
+  owner.params.materialSlots = next;
+  return next;
+}
+
+function removeMaterialSlotRecord(
+  owner: MutablePreviewEffect | MutablePreviewTransition,
+  slotName: string,
+): void {
+  const params = owner.params;
+  if (!params) {
+    return;
+  }
+
+  const record = params.materialSlots;
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    return;
+  }
+
+  delete (record as Record<string, unknown>)[slotName];
+  if (Object.keys(record as Record<string, unknown>).length === 0) {
+    delete params.materialSlots;
+  }
+}
+
+function syncSnapshotMaterialRefs(snapshot: MutablePreviewSnapshot): void {
+  const materialRefs = snapshot.clips.flatMap((clip) => clip.materialRefs ?? []);
+  snapshot.materialRefs = materialRefs.length > 0
+    ? materialRefs.map((materialRef) => ({ ...materialRef }))
+    : undefined;
+}
+
+function syncClipMaterialRefSummary(
+  snapshot: MutablePreviewSnapshot,
+  owner: CompositionGraphMaterialSlotOwnerIdentity,
+  slotName: string,
+  materialRefId: string | undefined,
+  materialDetail?: Readonly<{
+    mediaKind?: string;
+    determinism?: MutablePreviewMaterialRefSummary['determinism'];
+  }>,
+): void {
+  const clip = snapshot.clips.find((candidate) => candidate.id === owner.clipId);
+  if (!clip) {
+    return;
+  }
+
+  const nextRefs = [...(clip.materialRefs ?? [])].filter((materialRef) => !(
+    materialRef.ownerKind === owner.kind
+    && materialRef.ownerId === owner.ownerId
+    && materialRef.slotName === slotName
+  ));
+
+  if (materialRefId) {
+    nextRefs.push({
+      id: materialRefId,
+      clipId: owner.clipId,
+      ownerId: owner.ownerId,
+      ownerKind: owner.kind,
+      slotName,
+      ...(materialDetail?.mediaKind ? { mediaKind: materialDetail.mediaKind } : {}),
+      ...(materialDetail?.determinism ? { determinism: materialDetail.determinism } : {}),
+    });
+  }
+
+  clip.materialRefs = nextRefs.length > 0 ? nextRefs : undefined;
+  syncSnapshotMaterialRefs(snapshot);
+}
+
+function ensureMutableMaterialBindings(
+  input: MutableGraphPreviewInput,
+): CompositionGraphMaterialSlotBinding[] {
+  const existing = input.materialSlotBindings;
+  if (existing) {
+    return existing;
+  }
+
+  const next = cloneMaterialSlotBindings(input.materialSlotBindings) ?? [];
+  input.materialSlotBindings = next;
+  return next;
+}
+
+function applyMaterialAttach(
+  input: MutableGraphPreviewInput,
+  op: GraphMaterialAttachOp,
+  diagnostics: ExtensionDiagnostic[],
+): void {
+  const slotName = normalizeMaterialSlotName(op.slotName);
+  if (!slotName || !hasDeclaredMaterialSlot(input, op.owner, slotName)) {
+    return;
+  }
+
+  const owner = findMaterialSlotOwner(input.snapshot.clips, op.owner);
+  if (!owner) {
+    return;
+  }
+
+  const resolution = resolveMaterialAttachEntry(input.materialRuntime, op.materialRefId);
+  if (!resolution.ok) {
+    diagnostics.push(resolution.diagnostic);
+    return;
+  }
+
+  const materialSlots = ensureMaterialSlotRecord(owner);
+  materialSlots[slotName] = resolution.entry.materialRef.id;
+
+  const bindings = ensureMutableMaterialBindings(input);
+  const nextBinding: CompositionGraphMaterialSlotBinding = {
+    owner: { ...op.owner },
+    slotName,
+    materialRefId: resolution.entry.materialRef.id,
+  };
+  const existingIndex = bindings.findIndex((binding) => (
+    sameOwner(binding.owner, op.owner) && binding.slotName === slotName
+  ));
+  if (existingIndex >= 0) {
+    bindings[existingIndex] = nextBinding;
+  } else {
+    bindings.push(nextBinding);
+  }
+
+  syncClipMaterialRefSummary(
+    input.snapshot,
+    op.owner,
+    slotName,
+    resolution.entry.materialRef.id,
+    {
+      mediaKind: resolution.entry.materialRef.mediaKind,
+      determinism: resolution.entry.materialRef.determinism,
+    },
+  );
+}
+
+function applyMaterialRemove(
+  input: MutableGraphPreviewInput,
+  op: GraphMaterialRemoveOp,
+): void {
+  const slotName = normalizeMaterialSlotName(op.slotName);
+  if (!slotName || !hasDeclaredMaterialSlot(input, op.owner, slotName)) {
+    return;
+  }
+
+  const owner = findMaterialSlotOwner(input.snapshot.clips, op.owner);
+  if (!owner) {
+    return;
+  }
+
+  removeMaterialSlotRecord(owner, slotName);
+
+  const bindings = ensureMutableMaterialBindings(input);
+  const existingIndex = bindings.findIndex((binding) => (
+    sameOwner(binding.owner, op.owner) && binding.slotName === slotName
+  ));
+  if (existingIndex >= 0) {
+    bindings.splice(existingIndex, 1);
+  }
+
+  syncClipMaterialRefSummary(input.snapshot, op.owner, slotName, undefined);
+}
+
 function cloneInput(input: CompositionGraphInput): CompositionGraphInput {
   return {
     snapshot: {
@@ -403,13 +740,18 @@ function cloneInput(input: CompositionGraphInput): CompositionGraphInput {
         clone.automation = cloneAutomation(clip.automation);
         const clipWithKeyframes = clip as MutablePreviewClip;
         clone.keyframes = cloneKeyframeRecord(clipWithKeyframes.keyframes);
+        clone.effects = cloneEffects(clip.effects);
+        clone.transition = cloneTransition(clip.transition);
+        clone.materialRefs = cloneMaterialRefs(clip.materialRefs);
         return clone;
       }),
       shaders: input.snapshot.shaders ? cloneShaders(input.snapshot.shaders) : [],
+      materialRefs: input.snapshot.materialRefs ? input.snapshot.materialRefs.map((materialRef) => ({ ...materialRef })) : undefined,
     },
     contributionIndex: input.contributionIndex,
-    // runtime overlay is intentionally not carried forward because the
-    // preview operates on the cloned snapshot shaders directly.
+    materialRuntime: input.materialRuntime,
+    materialSlotDeclarations: input.materialSlotDeclarations,
+    materialSlotBindings: cloneMaterialSlotBindings(input.materialSlotBindings),
   };
 }
 
@@ -437,7 +779,8 @@ export function applyGraphPreviewOperations(
     return undefined;
   }
 
-  const clone = cloneInput(input);
+  const clone = cloneInput(input) as MutableGraphPreviewInput;
+  const operationDiagnostics: ExtensionDiagnostic[] = [];
 
   for (const op of operations) {
     switch (op.kind) {
@@ -446,6 +789,12 @@ export function applyGraphPreviewOperations(
         break;
       case 'shader.remove':
         applyShaderRemove(clone.snapshot.shaders ?? [], op);
+        break;
+      case 'material.attach':
+        applyMaterialAttach(clone, op, operationDiagnostics);
+        break;
+      case 'material.remove':
+        applyMaterialRemove(clone, op);
         break;
       case 'keyframe.add':
         applyKeyframeAdd(clone.snapshot.clips as MutablePreviewClip[], op);
@@ -465,7 +814,9 @@ export function applyGraphPreviewOperations(
     nodes: projected.nodes,
     edges: projected.edges,
     referenceStates: projected.referenceStates,
-    diagnostics: projected.diagnostics,
+    diagnostics: operationDiagnostics.length > 0
+      ? Object.freeze([...projected.diagnostics, ...operationDiagnostics])
+      : projected.diagnostics,
   };
 }
 

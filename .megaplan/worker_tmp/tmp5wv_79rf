@@ -1,0 +1,302 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `plan`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3c-agent-material-promotion-20260704-0238`
+Current milestone: `m3c-agent-material-promotion`
+
+### Phase Instruction
+Build a plan that advances the local brief while preserving the North Star. If scope is narrowed, state whether the narrowing is a bridge or a contradiction.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are creating an implementation plan for the following idea.
+
+        Engineering brief produced from the codebase and task details:
+
+        ### Task Summary
+        Implement material.attach and material.remove as internal graph-patch operations (modeled on shader.assign/shader.remove in patchPreview.ts), add the composition/material-not-resolved diagnostic code, bridge the agent-output-to-material-runtime promotion gap in agentToolInvocationService, and extend VideoEditorTransitionDescriptor with a named material slot model for M5 forward-compatibility. The existing planner matrix, MaterialRef alias, provenance infrastructure, and specificKind compatibility wrapper are all ready — the core gap is the missing attach/remove write-path and one missing diagnostic code.
+
+        ### Key Evidence
+        - material.attach and material.remove do not exist anywhere in the codebase — no implementation, stub, type signature, or test skeleton (source: Full-text search across entire repository: zero results for 'material.attach', 'material.remove', 'materialAttach', 'materialRemove', 'promoteMaterial'; relevance: high)
+- shader.assign/shader.remove in patchPreview.ts defines the internal graph-patch operation pattern (GraphShaderAssignOp/GraphShaderRemoveOp with kind, detail, validated preview) that material.attach/material.remove should follow (source: src/tools/video-editor/runtime/composition/patchPreview.ts lines 32-49; relevance: high)
+- Agent-produced material/artifact results flow through agentToolInvocationService.ts line 108-113 where they 'pass through unchanged' — this is the exact promotion gap that must be closed (source: src/tools/video-editor/runtime/agentToolInvocationService.ts; relevance: high)
+- The 60-row MATERIAL_RUNTIME_PLANNER_MATRIX is a ready pre-attach validation gate: only state='resolved' with authoritative route-fit and no quality issues produces blocker='none'; all other states are blocked with appropriate diagnostic codes (source: src/tools/video-editor/runtime/composition/materialRuntime.ts lines 1090-1128; relevance: high)
+- composition/material-not-resolved diagnostic code does NOT exist — confirmed by full-text search returning zero results. All six other required material diagnostics already exist (missing-provenance, stale, failed, weaker-provenance, route-incompatible, status-invalid) (source: src/tools/video-editor/runtime/composition/diagnostics.ts lines 86-104, 225-233; materialRuntime.ts lines 1259-1276; relevance: high)
+- MaterialRef is already a transparent alias for RenderMaterialRef (references.ts:70), satisfying the M5 identity contract for transition mask slot consumption without introducing new identity types (source: src/sdk/video/composition/references.ts line 70; relevance: high)
+- VideoEditorTransitionDescriptor carries zero material slot fields — only id, extensionId, order, transitionId, label, allowBrowserExport, allowWorkerExport, hasRendererMetadata. TransitionContribution likewise has no slot declarations (source: src/tools/video-editor/runtime/extensionSurface.ts lines 350-364; src/sdk/video/families/transitions.ts lines 25-45; relevance: high)
+- detail.specificKind: 'resolve-blocker' is an established old-UI compatibility wrapper preserved by three producers (shaderMaterializationAction, buildResolveBlockerAction, outputFormatProjector) and consumed by MaterialBrowser.isMaterialRepairAction — the true action kind is always preserved in the top-level kind field (source: src/tools/video-editor/runtime/renderPlanner.ts lines 543-559, 1030-1062; src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts lines 106-113; relevance: medium)
+- MaterialBrowser.isMaterialRepairAction uses fragile secondary string-matching on label/message (lowercase contains 'materialize' or 'material') that could silently drop resolve-blocker actions if labels change (source: src/tools/video-editor/components/MaterialBrowser.tsx lines 72-78; relevance: medium)
+- Existing 'promotion' flows (usePromoteVariantToGeneration, useAddVariantAsGeneration) deal with generation assets not RenderMaterial/RenderArtifact — no duplication or overlap with M3c material promotion (source: src/shared/hooks/variants/usePromoteVariantToGeneration.ts; src/tools/video-editor/hooks/useAddVariantAsGeneration.ts; relevance: medium)
+- The transition adapter is an explicit placeholder (expiration M8) and is the correct extension point for adding material slot normalization to transition descriptors (source: src/tools/video-editor/runtime/families/transitionAdapter.ts lines 12-23; relevance: medium)
+- ToolArtifactRef carries only ref, kind, label, meta — no provenance, determinism, locator, or RenderMaterialRef shape. Promotion must construct the full RenderMaterialRef shape from agent output (source: src/sdk/video/families/agentTools.ts lines 169-245; src/sdk/video/rendering/artifacts.ts lines 172-190; relevance: high)
+
+        ### Relevant Code
+        | File | Functions | Why |
+| --- | --- | --- |
+| src/tools/video-editor/runtime/composition/patchPreview.ts | buildShaderAssignPatch, buildShaderRemovePatch, GraphShaderAssignOp, GraphShaderRemoveOp, applyShaderAssignToSlotPreview, applyShaderRemoveToSlotPreview | Defines the GraphShaderAssignOp/GraphShaderRemoveOp pattern with assign/remove shape, validated preview, and kind-specific detail — the model for material.attach/material.remove graph-patch operations |
+| src/tools/video-editor/runtime/agentToolInvocationService.ts | routeTimelineEditableResult, executeToolCall | Lines 108-113 are the promotion gap — material/artifact results pass through unchanged. This is the primary integration point for bridging agent output into the material runtime |
+| src/tools/video-editor/runtime/composition/materialRuntime.ts | projectHostMaterialRuntime, getMaterialRuntimeMatrixRow, createPlannerMatrix, HostMaterialRuntimeProjection.byMaterialRefId, HostMaterialRuntimePredicates | Hosts the 60-row planner matrix for pre-attach validation gates, projectHostMaterialRuntime for entry projection, HostMaterialRuntimeProjection.byMaterialRefId for O(1) lookup, and the MATERIAL_RUNTIME_TO_COMPOSITION_CODE mapping |
+| src/tools/video-editor/runtime/composition/diagnostics.ts | COMPOSITION_DIAGNOSTIC_CODE, MATERIAL_DIAGNOSTIC_CODES, resolveCompositionDiagnostic | Source of truth for all composition/ diagnostic codes including the existing 7 material codes. Must be extended with composition/material-not-resolved |
+| src/tools/video-editor/runtime/extensionSurface.ts | VideoEditorTransitionDescriptor, VideoEditorPlannerNextActionDetail, VideoEditorFamilyDescriptor | Defines VideoEditorTransitionDescriptor (no material slots — must be extended), VideoEditorPlannerNextActionDetail (specificKind contract), and the extension surface types that M5 consumes |
+| src/sdk/video/composition/references.ts | MaterialRef | Defines MaterialRef as transparent alias of RenderMaterialRef — the identity type for transition mask slot declarations in M5 |
+| src/sdk/video/rendering/artifacts.ts | RenderMaterialRef, RenderMaterial, hasProvenance, describeProvenanceGap, RenderStorageLocator | Defines RenderMaterialRef shape (provenance, determinism, locator, producerExtensionId), hasProvenance(), describeProvenanceGap(), and RenderMaterial extension — the target promotion shape |
+| src/tools/video-editor/hooks/useAgentSession.ts | onSuccess | Lines 396-442 onSuccess is the edge proposal import point where material/artifact results would need promotion logic before timeline invalidation |
+| src/tools/video-editor/components/MaterialBrowser.tsx | isMaterialRepairAction | Consumer of specificKind: 'resolve-blocker' via isMaterialRepairAction — uses fragile label/message string matching that is a latent bug surface |
+| src/tools/video-editor/runtime/renderPlanner.ts | shaderMaterializationAction, buildResolveBlockerAction, buildMaterialPlannerAction | Produces specificKind: 'resolve-blocker' through shaderMaterializationAction, buildResolveBlockerAction, and buildMaterialPlannerAction |
+| src/tools/video-editor/runtime/families/transitionAdapter.ts | buildTransitionDescriptors | Placeholder adapter (expiration M8) — correct extension point for adding material slot normalization to transition descriptors |
+| src/tools/video-editor/runtime/families/slotAdapter.ts | buildSlotDescriptors | Demonstrates family-owned slot semantics pattern with single-occupancy slot-name keys — the model for transition material slot declarations |
+
+        ### Test Expectations
+        - [fail_to_pass] material-attach-resolved-ref: material.attach succeeds when the ref is resolved, has provenance, determinism is not stale/failed, and route-fit is authoritative
+- [fail_to_pass] material-attach-rejects-unresolved: material.attach rejects with composition/material-not-resolved when the ref is missing or has no RenderMaterialRef record
+- [fail_to_pass] material-attach-rejects-pending: material.attach rejects pending (live-only) refs with composition/material-live-only
+- [fail_to_pass] material-attach-rejects-stale: material.attach rejects stale refs with composition/material-stale
+- [fail_to_pass] material-attach-rejects-failed: material.attach rejects failed-generation refs with composition/material-failed
+- [fail_to_pass] material-attach-rejects-route-incompatible: material.attach rejects route-incompatible refs with composition/material-route-incompatible
+- [fail_to_pass] material-attach-rejects-missing-provenance: material.attach rejects refs lacking provenance with composition/material-missing-provenance
+- [fail_to_pass] material-remove-detaches-ref: material.remove clears a named slot, leaving it empty and eligible for new attachment
+- [fail_to_pass] material-remove-noop-empty-slot: material.remove on an already-empty slot is a no-op (idempotent)
+- [fail_to_pass] material-attach-single-occupancy: material.attach to an already-occupied slot replaces the existing ref (single-occupancy enforced)
+- [fail_to_pass] promotion-constructs-full-render-material-ref: Agent-produced ToolArtifactRef with only ref/kind/label/meta is promoted to a full RenderMaterialRef with id, mediaKind, locator, producerExtensionId, provenance, determinism, replacementPolicy
+- [fail_to_pass] promotion-no-provenance-rejected: Agent output lacking provenance data is rejected at promotion time — a RenderMaterial cannot be created without required provenance
+- [fail_to_pass] transition-descriptor-exposes-material-slots: VideoEditorTransitionDescriptor exposes named material slots (e.g., mask) populated via material.attach, consumed by M5
+- [fail_to_pass] specifickind-wrapper-preserves-true-kind: Actions with specificKind: 'resolve-blocker' retain their true kind (materialize, bake, open-settings, select-route) in the top-level kind field
+- [fail_to_pass] material-browser-resolve-blocker-filter-safe: MaterialBrowser.isMaterialRepairAction correctly identifies all resolve-blocker actions meant for material repair without false negatives from label/message changes
+- [fail_to_pass] attach-composition-material-not-resolved-diagnostic: Attaching a non-existent material ref ID emits exactly one diagnostic: composition/material-not-resolved with appropriate message and target ref ID
+
+        ### Constraints
+        - material.attach and material.remove are internal graph-patch operations, not public effect/transition node kinds
+- Promotion must construct full RenderMaterialRef shape from agent output — provenance is non-negotiable for resolved status
+- Slot routing is slot-based via named slots, not arbitrary graph routing — descriptor-declared named slots allowed only when family owns slot semantics
+- Do not introduce new material identity types (MaskMaterialRef) — use existing MaterialRef/RenderMaterialRef
+- Do not bypass material status validation for agent-produced refs — the planner matrix is the single gate
+- Do not mutate timeline state directly from agent execution — promotion is a separate, validated step
+- Do not add process execution, process lifecycle, or output-format concepts
+- specificKind: 'resolve-blocker' must be preserved for old-UI compatibility in any new material-attach-related action production
+- Transitions consume materials via MaterialRef alias only — no arbitrary material graphs, texture routing, shader stacks, or FBO chains
+
+        ### Suggested Approach
+        Phase 1 — Diagnostic foundation: Add composition/material-not-resolved to diagnostics.ts (COMPOSITION_DIAGNOSTIC_CODE, MATERIAL_DIAGNOSTIC_CODES) and to the MATERIAL_RUNTIME_TO_COMPOSITION_CODE mapping in materialRuntime.ts. Update the 'missing' state matrix row to emit this code. Phase 2 — Attach/remove write-path: Implement GraphMaterialAttachOp (kind: 'material.attach') and GraphMaterialRemoveOp (kind: 'material.remove') in materialRuntime.ts or a new adjacent module, following the validated-preview pattern from patchPreview.ts (GraphShaderAssignOp/GraphShaderRemoveOp). Use projectHostMaterialRuntime() as the pre-attach gate — if entry.blocksAuthoritativeExport is true, reject with the appropriate diagnostic code from the entry. Phase 3 — Agent promotion bridge: Extend agentToolInvocationService.routeTimelineEditableResult to handle material/artifact family results by constructing full RenderMaterialRef records (id, mediaKind, locator, producerExtensionId, producerVersion, provenance, determinism, replacementPolicy) from ToolArtifactRef input and validating provenance before promotion. Wire into useAgentSession.onSuccess to trigger promotion before timeline invalidation. Phase 4 — Transition slot model: Extend VideoEditorTransitionDescriptor with named material slots (e.g., mask?: MaterialRef) declared as record-style single-occupancy fields, following the slotAdapter.ts family-owned slot semantics pattern. Implement slot normalization in transitionAdapter.ts. The attach/remove operations target these named slots. Phase 5 — specificKind preservation: Verify that any new material-attach-related planner actions emitted through buildResolveBlockerAction carry specificKind: 'resolve-blocker' and preserve true kind. Optionally harden MaterialBrowser.isMaterialRepairAction to use a kind-based filter instead of fragile label/message string matching.
+
+### Open Questions
+- [assume_and_proceed] Should material.attach/material.remove be implemented as graph-patch operations (GraphMaterialAttachOp/GraphMaterialRemoveOp in or adjacent to patchPreview.ts) or as runtime mutation functions directly on materialRuntime.ts? _(assumption: Implement as graph-patch operations (like shader.assign/shader.remove) with kind 'material.attach'/'material.remove', a validated preview, and kind-specific detail. This follows the established internal operation pattern and keeps the planner matrix as the validation gate without adding mutation functions to the read-only materialRuntime module.)_
+- [assume_and_proceed] Should the fragile isMaterialRepairAction string-matching filter in MaterialBrowser.tsx be hardened in M3c or left as-is? _(assumption: Leave the string-matching filter as-is for M3c. The task requires preserving specificKind through detail.specificKind for old UI compatibility, not refactoring the consumer. The latent bug (actions whose labels change could be silently dropped) is noted for future work but is not blocking for M3c promotion pipeline delivery.)_
+- [assume_and_proceed] At what point in the promotion pipeline should agent-produced ToolArtifactRefs be assigned unique RenderMaterialRef IDs — in the Edge Function, in agentToolInvocationService, or in material.attach? _(assumption: Assign IDs in agentToolInvocationService during promotion (Phase 3), before calling material.attach. The Edge Function produces raw tool results; promotion constructs the durable record. This keeps the Edge Function simple and centralizes identity construction with validation.)_
+
+        The engineering brief above is evidence gathered from the codebase. Treat it as the default working context, challenge its conclusions when the code disagrees, and only do targeted repository lookups when a concrete gap remains. Open questions in the brief are candidate concerns, not mandates — act on ones that materially affect the plan, dismiss immaterial or already-resolved ones with a brief reason, and treat question count as noise.
+
+        Idea:
+# M3c: Agent Material Promotion
+
+## Outcome
+
+Promote agent-produced masks and materials into durable `RenderMaterial` or `RenderArtifact` records that can satisfy graph validation and later transition mask slots.
+
+## Execution Posture
+
+Treat agent output as untrusted for export until it has durable identity, provenance, route constraints, determinism, hashes, and diagnostics. Attach only already-resolved refs to existing slots.
+
+## Scope
+
+IN:
+- Promote agent-produced masks/materials to durable `RenderMaterial`/`RenderArtifact`.
+- Enforce promotion provenance: schema version, producer extension/tool where known, produced timestamp, consumed refs, route constraints, determinism, input hashes, output locator/hash, and diagnostics.
+- Execute `material.attach` and `material.remove` only for `resolved` refs and existing material slots.
+- Add promotion diagnostics for missing provenance, stale inputs, failed generation, weaker provenance, route incompatibility, and unresolved material refs.
+- Prepare transition-mask consumption for M5 using `MaterialRef` alias and descriptor-declared material slot model.
+- Preserve specific planner action kinds through `detail.specificKind` for old UI compatibility.
+
+OUT:
+- Process execution and process lifecycle vocabulary.
+- Output-format sidecars.
+- Public effect/transition node kinds.
+- Arbitrary material graphs.
+- New material identity types such as `MaskMaterialRef`.
+
+## Locked Decisions
+
+- Agent output cannot be `resolved` without required provenance.
+- `material.attach` rejects missing, pending, live-only, stale, failed, or route-incompatible refs.
+- The transition mask path uses `RenderMaterial`/`RenderArtifact` identity.
+- Descriptor-declared named slots are allowed only when a family owns slot semantics.
+- Slot routing remains slot-based, not arbitrary graph routing.
+
+## Constraints
+
+- Do not introduce arbitrary texture routing, shader stacks, FBO chains, or material graphs.
+- Do not bypass material status validation for agent-produced refs.
+- Do not mutate timeline state from agent execution directly.
+- Do not add process or output-format concepts.
+- Keep promotion diagnostics structured by material ref, route scope, provenance, and next action.
+
+## Done Criteria
+
+- Agent-produced material can be promoted and later satisfy a transition mask slot.
+- Attaching unresolved or invalid refs is rejected with `composition/material-not-resolved` or a more specific material diagnostic.
+- Promoted artifacts/materials cannot be `resolved` without provenance.
+- Transition mask preparation uses `RenderMaterial`/`RenderArtifact` identity only.
+- Old UI compatibility wrappers preserve true specific action kinds.
+
+## Touchpoints
+
+- `src/sdk/video/rendering/artifacts.ts`
+- `src/sdk/video/composition/graph.ts`
+- `src/tools/video-editor/runtime/composition/**`
+- `src/tools/video-editor/hooks/useAgentSession.ts`
+- `src/tools/video-editor/components/**`
+- `supabase/functions/ai-timeline-agent/**`
+- `tests/**/video-editor/**`
+- `examples/video-editor-extension/**`
+
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+
+
+
+
+        No prior clarification artifact exists. Identify ambiguities, ask clarifying questions, and state your assumptions inside the plan output.
+
+        Open tickets for this repo:
+
+- 01KS384XKZNEWQRSXN2NXQ0DTJ — Video editor: extensibility plan (preserves variation potential, ships none)  [video-editor, design, refactor, oss]
+- 01KV8XVYW2EYDDDY30V48YX520 — Megaplan plan extraction can pass malformed/escaped-newline payloads to Markdown validator  [megaplan, validator, hermes, json-extraction, plan-phase]
+
+The planner may PROPOSE linking tickets to this plan with `resolves_on_complete=true` in the plan output, but the actual linking is performed via the explicit `megaplan ticket link` CLI after planning — the planner never directly links tickets.
+
+        Requirements:
+        - If the engineering brief suggests an approach, use it as your starting hypothesis — but before committing, consider if there's a simpler or more fundamental fix. The brief is well-researched input, not a final answer.
+        - If the brief is absent, incomplete, or says "skip", inspect the repository yourself before planning.
+        - Stay focused on the requested idea. If repo exploration surfaces unrelated issues or docs, ignore them and return to the task.
+        - Prefer source code, tests, and directly relevant config files. Avoid `.megaplan/`, prior plan artifacts, and unrelated `docs/` or ops/deployment material unless the task explicitly depends on them.
+        - Stop exploring once you have enough evidence to name the concrete touch points and validation path. Do not keep browsing after you can write the plan.
+        - Produce a concrete implementation plan in markdown.
+        - Define observable success criteria as objects with `criterion` (string) and `priority` (`must`, `should`, or `info`):
+          - `must` — hard gate. The reviewer will block on failure. Use for correctness, functional requirements, and verifiable outcomes (e.g., "all existing tests pass", "API returns 200 for valid input"). Every `must` criterion must have a clear yes/no answer.
+          - `should` — quality target. The reviewer flags but does not block. Use for subjective goals, numeric guidelines, and best-effort improvements (e.g., "file under ~300 lines", "no deeply nested conditionals", "each function has a single responsibility").
+          - `info` — documented for humans, reviewer skips. Use for criteria that cannot be verified in this pipeline (e.g., "13 manual smoke tests pass", "stakeholder sign-off obtained").
+        - Each success criterion should include a `requires` field listing the capabilities needed for verification. Valid capability strings: `run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, `run_linter` (container), `drive_browser`, `inspect_runtime_ui`, `observe_runtime_logs`, `subjective_judgment`, `verify_physical_device` (human). `must` criteria MUST have non-empty `requires`. Example: `{"criterion": "All tests pass", "priority": "must", "requires": ["run_tests"]}`.
+        - Use the `questions` field for ambiguities that would materially change implementation.
+        - Use the `assumptions` field for defaults you are making so planning can proceed now.
+        - Prefer cheap validation steps early.
+        - Keep the plan proportional to the task. A 1-line fix needs a 2-step plan (apply fix + run tests), not a 5-step investigation.
+        - Size each step so it can be implemented AND verified in a single worker turn (~15 min, one model conversation). A step that bundles "create the abstraction AND migrate every consumer AND write all the tests" is too large to finish in one turn and will fail (the worker runs out of time before it can implement, leaving the step blocked). For large mechanical refactors, split along the natural seam — one step to add the new abstraction + its unit tests, then one step per consumer to migrate (the last migration step also adds parity tests) — rather than one giant step. Higher complexity does not earn a step more time; it only routes to a stronger model for the same single turn.
+        - If user notes answer earlier questions, incorporate them into the draft plan instead of re-asking them.
+        - Fix the problem fully. Do not limit scope just to avoid breaking existing tests — update the tests too if needed.
+        - Prefer the simplest, most direct fix. No fallbacks, type conversions, or defensive wrappers without concrete evidence they are needed.
+        - If the task or issue hints suggest a specific approach, follow it. Only deviate with concrete counter-evidence.
+        - Assign every plan step a complexity score 1–5 before finalize. Reason about complexity in the plan markdown (e.g. "Complexity: 2" per step), and surface it informally so the reviewer can audit:
+          - 1 = trivial single-file mechanical change
+          - 2 = simple change with tests to update
+          - 3 = multi-file change with non-trivial logic
+          - 4 = cross-cutting change with architecture implications
+          - 5 = fundamental system change with high regression risk
+        - Populate `changed_surfaces` with every concrete file path your plan will change or create. Include both source files and test files. Use repo-relative paths (e.g., `src/prompts.py`, `tests/test_prompts.py`). This list drives the deterministic test-selection blast radius; be complete. If your plan touches a file, list it.
+        - (Optional) Populate `test_blast_radius` with your own scoped test-selection proposal. This complements the deterministic floor the system computes from `changed_surfaces`. Provide `strategy` ("scoped", "full", or "none"), `selectors` (array of `{"kind": "path", "value": "<path>", "reason": "<why>"}` objects), and a `rationale` string. The system merges your proposal with the deterministic floor; you cannot narrow below the floor, but you can widen with additional selectors or escalate to full. If you intend a scoped finalize baseline while keeping the full suite as a hard gate, set `strategy` to "scoped", include concrete `selectors`, and set `full_suite_fallback` to true; the floor's full-suite requirement will be honored by the fallback without forcing the baseline strategy to "full".
+
+        Plan template — simple format (adapt to the actual repo and scope):
+````md
+# Implementation Plan: [Title]
+
+## Overview
+Summarize the goal, current repository shape, and the constraints that matter.
+
+## Main Phase
+
+### Step 1: Audit the current behavior (`src/prompts.py`)
+**Scope:** Small
+1. **Inspect** the current implementation and call out the exact insertion points (`src/prompts.py:29`).
+
+### Step 2: Add the first change (`src/evaluation.py`)
+**Scope:** Medium
+1. **Implement** the smallest viable change with exact file references (`src/evaluation.py:1`).
+2. **Capture** any tricky behavior with a short example.
+   ```python
+   issues = validate_plan_structure(plan_text)
+   ```
+
+### Step 3: Wire downstream behavior (`src/handlers.py`, `src/workers.py`)
+**Scope:** Medium
+1. **Update** the runtime flow in the touched files (`src/handlers.py:400`, `src/workers.py:199`).
+
+### Step 4: Prove the change (`tests/test_validator.py`, `tests/test_integration.py`)
+**Scope:** Small
+1. **Run** the cheapest targeted checks first (`tests/test_validator.py:1`).
+2. **Finish** with broader verification once the wiring is in place (`tests/test_integration.py:1`).
+
+## Execution Order
+1. Update prompts and mocks before enforcing stricter validation.
+2. Land higher-risk wiring after the validator and tests are ready.
+
+## Validation Order
+1. Start with focused unit tests.
+2. Run the broader suite after the flow changes are in place.
+````
+
+For complex plans, use multiple phases:
+````md
+## Phase 1: Foundation — Dependencies, DB, Types
+
+### Step 1: Install dependencies (`package.json`)
+...
+
+### Step 2: Create database migration (`supabase/migrations/`)
+...
+
+## Phase 2: Core Integration
+
+### Step 3: Port the main component (`src/components/`)
+...
+````
+
+Template guidance:
+- Simple plans: use `## Main Phase` with `### Step N:` sections underneath.
+- Complex plans: use multiple `## Phase N:` sections, each containing `### Step N:` steps. Step numbers are global (not per-phase).
+- The flat `## Step N:` format (without phases) also works for backwards compatibility.
+- Key invariants: one H1 title, one `## Overview`, numbered step sections (`### Step N:` or `## Step N:`), and at least one ordering section.

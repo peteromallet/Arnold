@@ -346,6 +346,21 @@ export interface VideoEditorEffectDescriptor {
 // M8: Trusted component transition descriptors
 // ---------------------------------------------------------------------------
 
+/**
+ * A normalized material slot surfaced from a transition's descriptor-declared
+ * {@link TransitionMaterialSlotDeclaration}.
+ *
+ * Each slot can receive a {@link MaterialRef} / {@link RenderMaterialRef}
+ * binding at runtime through the internal material.attach graph preview
+ * operation.  No new material identity types are introduced — bound
+ * materials reuse the existing {@link MaterialRef} / {@link RenderMaterialRef}
+ * contract.
+ */
+export interface VideoEditorTransitionMaterialSlotDescriptor {
+  readonly name: string;
+  readonly label?: string;
+}
+
 /** A normalized component-backed transition descriptor produced by runtime normalization. */
 export interface VideoEditorTransitionDescriptor {
   id: string;
@@ -361,6 +376,12 @@ export interface VideoEditorTransitionDescriptor {
   allowWorkerExport: boolean;
   /** Whether the contribution has renderer metadata (always true for active descriptors). */
   hasRendererMetadata: boolean;
+  /**
+   * M5-ready named material (mask) slot declarations normalized from the
+   * contribution manifest.  An empty array means the transition declares
+   * no material inputs.
+   */
+  materialSlots: readonly VideoEditorTransitionMaterialSlotDescriptor[];
 }
 
 // ---------------------------------------------------------------------------
@@ -623,6 +644,8 @@ const EMPTY_METADATA_FACETS: readonly VideoEditorMetadataFacetDescriptor[] = Obj
 const EMPTY_ASSET_DETAIL_SECTIONS: readonly VideoEditorAssetDetailSectionDescriptor[] = Object.freeze([]);
 const EMPTY_EFFECTS: readonly VideoEditorEffectDescriptor[] = Object.freeze([]);
 const EMPTY_TRANSITIONS: readonly VideoEditorTransitionDescriptor[] = Object.freeze([]);
+
+const EMPTY_TRANSITION_MATERIAL_SLOTS: readonly VideoEditorTransitionMaterialSlotDescriptor[] = Object.freeze([]);
 const EMPTY_SHADERS: readonly VideoEditorShaderDescriptor[] = Object.freeze([]);
 const EMPTY_AGENT_TOOLS: readonly VideoEditorAgentToolDescriptor[] = Object.freeze([]);
 

@@ -1,0 +1,692 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `critique_evaluator`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3c-agent-material-promotion-20260704-0238`
+Current milestone: `m3c-agent-material-promotion`
+
+### Phase Instruction
+Select critique checks that can catch North Star violations, scope substitution, or unsupported claims of alignment.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are the Critique Evaluator. Your job is to decide which critique
+        lenses to fire and to rate each selected lens's difficulty on a 1–5
+        complexity scale. The profile will map your complexity scores to
+        models — you do NOT name models or vendors.
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M3c: Agent Material Promotion
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Finished plan:
+        # Implementation Plan: Agent Material Promotion
+
+## Overview
+The targeted source check supports the brief. `patchPreview.ts` already owns internal graph patch previews for `shader.assign` / `shader.remove`; `materialRuntime.ts` owns the 60-row validation gate and maps material runtime blockers to composition diagnostics; `composition/material-not-resolved` is absent; `agentToolInvocationService.ts` routes timeline-editing results but currently has no material/artifact promotion path; transition descriptors and SDK transition contributions have no material slot declaration.
+
+This plan is a bridge, not a scope contradiction: it prepares durable material identity and named transition slots while preserving the North Star constraints that extensions do not mutate raw timeline internals, attach/remove remain host-owned internal graph-patch operations, and V1 does not introduce arbitrary material graphs, shader stacks, FBO chains, or generic texture routing.
+
+## Phase 1: Diagnostic And Validation Foundation
+
+### Step 1: Add the unresolved material diagnostic
+**Files:** `src/tools/video-editor/runtime/composition/diagnostics.ts`, `src/tools/video-editor/runtime/composition/materialRuntime.ts`
+**Complexity: 2**
+1. Add `COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_NOT_RESOLVED` with value `composition/material-not-resolved` and include it in `MATERIAL_DIAGNOSTIC_CODES`.
+2. If needed, add a runtime-level unresolved/missing-ref mapping; otherwise let attach preview synthesize this diagnostic when `byMaterialRefId` lookup misses.
+3. Update `materialRuntime.test.ts` for diagnostic classification and unchanged existing material codes.
+
+### Step 2: Define attach-time material validation
+**Files:** `src/tools/video-editor/runtime/composition/materialRuntime.ts`
+**Complexity: 3**
+1. Add a small exported helper that resolves a material ref id against `HostMaterialRuntimeProjection.byMaterialRefId`.
+2. Return either the runtime entry or exactly one structured diagnostic.
+3. Use `entry.blocksAuthoritativeExport` plus existing entry diagnostics as the single attach gate.
+4. Prefer specific diagnostics for stale, failed, live-only, route-incompatible, missing provenance, weaker provenance, and status-invalid cases.
+
+## Phase 2: Internal Material Patch Operations
+
+### Step 3: Implement `material.attach` and `material.remove` previews
+**Files:** `src/tools/video-editor/runtime/composition/patchPreview.ts`
+**Complexity: 4**
+1. Add `GraphMaterialAttachOp` and `GraphMaterialRemoveOp` to `GraphPreviewOperation`.
+2. Target descriptor-declared named material slots only, with owner identity, slot name, and material ref id in operation detail.
+3. Validate attach through the helper from Step 2 before applying the preview.
+4. Make attach single-occupancy replacement; make remove idempotent for empty slots.
+5. Re-project cloned graph input through `projectCompositionGraph()` after applying operations.
+
+### Step 4: Add attach/remove tests
+**Files:** `src/tools/video-editor/runtime/composition/patchPreview.test.ts`, `src/tools/video-editor/runtime/composition/materialRuntime.test.ts`
+**Complexity: 3**
+1. Cover resolved attach, unresolved attach, pending/live-only, stale, failed, route-incompatible, missing provenance, replacement, remove clears, and remove no-op.
+2. Prove missing ref emits exactly one `composition/material-not-resolved` diagnostic with target ref id.
+
+## Phase 3: Agent Material Promotion
+
+### Step 5: Promote material/artifact results
+**Files:** `src/tools/video-editor/runtime/agentToolInvocationService.ts`, `src/sdk/video/families/agentTools.ts`
+**Complexity: 4**
+1. Add handling for `ToolMaterialArtifactResult` (`family: 'material/artifact'`).
+2. Construct durable `RenderMaterialRef` / `RenderArtifact`-compatible records with identity, media kind, locator/hash, producer metadata, provenance, route constraints, determinism, replacement policy, and diagnostics.
+3. Reject promotion when required provenance is absent.
+4. Keep `ToolArtifactRef.meta` as the carrier if adequate; add typed SDK fields only if needed.
+5. Do not attach or mutate timeline state from agent execution.
+
+### Step 6: Wire promotion into agent session success
+**Files:** `src/tools/video-editor/hooks/useAgentSession.ts`
+**Complexity: 3**
+1. Route successful material/artifact tool results through promotion before edge proposal import and timeline invalidation.
+2. Preserve existing behavior for non-material results and generation-variant promotion hooks.
+3. Surface promotion diagnostics through existing tool/result and material diagnostic channels.
+
+### Step 7: Add promotion tests
+**Files:** `src/tools/video-editor/runtime/agentToolInvocationService.test.ts`, `src/tools/video-editor/hooks/useAgentSession.test.ts`
+**Complexity: 3**
+1. Test full durable ref construction from `ToolArtifactRef` plus provenance metadata.
+2. Test missing provenance rejection.
+3. Test promotion does not call attach or timeline mutation directly.
+
+## Phase 4: Transition Material Slots
+
+### Step 8: Add named material slot declarations
+**Files:** `src/sdk/video/families/transitions.ts`, `src/tools/video-editor/runtime/extensionSurface.ts`
+**Complexity: 3**
+1. Add transition material slot declarations using existing `MaterialRef` / `RenderMaterialRef` identity.
+2. Extend `VideoEditorTransitionDescriptor` with normalized named material slots, including M5-ready mask slots.
+3. Do not introduce `MaskMaterialRef` or arbitrary material routing.
+
+### Step 9: Normalize transition slots
+**Files:** `src/tools/video-editor/runtime/families/projectors/transitionProjector.ts`, `src/tools/video-editor/runtime/families/transitionAdapter.ts`
+**Complexity: 3**
+1. Normalize SDK transition slot declarations in `buildTransitionDescriptors()`.
+2. Keep `transitionAdapter.ts` delegated if possible; the projector is the concrete normalization point.
+3. Add tests for slot exposure and `MaterialRef` identity.
+
+## Phase 5: Planner Compatibility And UI Safety
+
+### Step 10: Preserve resolve-blocker compatibility
+**Files:** `src/tools/video-editor/runtime/renderPlanner.ts`, `src/tools/video-editor/components/MaterialBrowser.tsx`
+**Complexity: 2**
+1. Verify new material repair actions preserve true top-level `kind` while using `detail.specificKind: 'resolve-blocker'` only for old UI compatibility.
+2. If new actions would be hidden by `MaterialBrowser.isMaterialRepairAction`, replace label/message substring matching with structured filtering.
+3. Keep this limited to material repair action visibility.
+
+### Step 11: Add planner/UI compatibility tests
+**Files:** `src/tools/video-editor/runtime/renderPlanner.test.ts`, `src/tools/video-editor/components/MaterialBrowser.test.tsx`
+**Complexity: 2**
+1. Test top-level action kind preservation for resolve-blocker wrappers.
+2. If MaterialBrowser changes, test resolve-blocker material actions remain discoverable when labels/messages change.
+
+## Execution Order
+1. Land diagnostics first.
+2. Add material runtime attach validation, then `material.attach` / `material.remove` previews.
+3. Implement promotion construction and provenance rejection, then wire agent session handling.
+4. Add transition slot contracts and projector normalization.
+5. Finish with planner compatibility and UI filtering only where required.
+
+## Validation Order
+1. Run `src/tools/video-editor/runtime/composition/materialRuntime.test.ts`.
+2. Run `src/tools/video-editor/runtime/composition/patchPreview.test.ts`.
+3. Run `src/tools/video-editor/runtime/agentToolInvocationService.test.ts` and hook tests if added.
+4. Run transition projector/adapter tests.
+5. Run render planner and MaterialBrowser tests if touched.
+6. Finish with TypeScript typecheck and the relevant video-editor test target from `package.json`.
+
+
+        Task graph (plan metadata):
+        {
+  "version": 1,
+  "timestamp": "2026-07-04T02:50:02Z",
+  "hash": "sha256:07e1da23c8b8529e8480779e8754cb3630dd7741390e2ee1a6198a1f7535ec81",
+  "questions": [
+    "Where should promoted durable `RenderMaterialRef` / `RenderArtifact` records be persisted if the current agent invocation service has no material store dependency: should an existing material registry/store be injected, or should promotion return records for an already-existing caller to persist?",
+    "Should `ToolArtifactRef.meta` remain the carrier for provenance evidence, or should M3c add a typed optional provenance payload to `ToolArtifactRef` / `ToolMaterialArtifactResult` for safer extension authorship?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`composition/material-not-resolved` is registered as a material diagnostic and missing material ref attachment emits exactly one diagnostic with that code and target ref id.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`material.attach` succeeds for resolved refs with required provenance, acceptable determinism, and authoritative route fit, and rejects missing, pending/live-only, stale, failed, route-incompatible, missing-provenance, weaker-provenance, and status-invalid refs with the expected material diagnostic.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`material.remove` clears named slots idempotently, and `material.attach` replaces any existing ref in the same slot.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Attach/remove are implemented as internal graph-patch preview operations and do not add public effect/transition node kinds, arbitrary material graphs, generic texture routing, shader stacks, or FBO chains.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Agent-produced material/artifact outputs cannot become resolved durable refs without required provenance evidence.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Agent material/artifact promotion constructs durable records with identity, media kind, locator/hash, producer metadata, provenance, determinism, route constraints, replacement policy, and diagnostics before those refs can satisfy graph validation.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Agent execution does not mutate timeline state or attach materials directly; slot changes occur only through `material.attach` / `material.remove`.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Transition descriptors expose descriptor-declared named material slots using the existing `MaterialRef` / `RenderMaterialRef` identity, with no new material identity type.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "New or affected planner actions preserve true top-level `kind` while retaining `detail.specificKind: 'resolve-blocker'` where old UI compatibility requires it.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Focused video-editor runtime, composition, agent promotion, transition projector, render planner, and MaterialBrowser tests pass for touched surfaces.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The implementation keeps validation centralized in material runtime/planner matrix helpers rather than spreading route/provenance rules through UI components.",
+      "priority": "should",
+      "requires": [
+        "subjective_judgment",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "New type shapes remain narrow and explicit enough for extension authors to understand required material slot and provenance contracts.",
+      "priority": "should",
+      "requires": [
+        "subjective_judgment",
+        "read_files"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The source check confirms no existing `material.attach` or `material.remove` implementation; adding them to `patchPreview.ts` is the simplest fit with the established internal operation pattern.",
+    "`material.attach` / `material.remove` are internal host-owned graph-patch previews, not public SDK mutation families or public transition/effect node kinds.",
+    "Absent material refs should be handled at attach validation time with `composition/material-not-resolved`; existing material runtime matrix diagnostics should continue to handle refs that exist but are invalid for export.",
+    "Material IDs should be assigned during agent output promotion before attach, not by the Edge Function and not by `material.attach`.",
+    "Promotion should use existing `ToolArtifactRef.meta` for provenance if adequate; adding typed SDK fields is only justified if implementation finds required evidence cannot be represented safely.",
+    "Transition slot work is a bridge toward M5 and does not contradict current scope because it adds named descriptor slots without arbitrary routing or new material identity types.",
+    "`MaterialBrowser.isMaterialRepairAction` should be changed only if new structured resolve-blocker actions would otherwise be missed; the core requirement is preserving structured action kind data."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "reason": "Covers material diagnostic classification and runtime validation mapping."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+        "reason": "Covers internal graph patch attach/remove behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "reason": "Covers resolve-blocker action compatibility if planner actions change."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+        "reason": "Covers structured material repair filtering if the component changes."
+      },
+      {
+        "kind": "command",
+        "value": "TypeScript typecheck",
+        "reason": "SDK and descriptor type changes affect compile-time contracts across the video editor."
+      }
+    ],
+    "changed_surfaces": [
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+      "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+      "src/tools/video-editor/runtime/agentToolInvocationService.ts",
+      "src/tools/video-editor/runtime/agentToolInvocationService.test.ts",
+      "src/tools/video-editor/hooks/useAgentSession.ts",
+      "src/tools/video-editor/hooks/useAgentSession.test.ts",
+      "src/sdk/video/families/agentTools.ts",
+      "src/sdk/video/families/transitions.ts",
+      "src/tools/video-editor/runtime/extensionSurface.ts",
+      "src/tools/video-editor/runtime/families/projectors/transitionProjector.ts",
+      "src/tools/video-editor/runtime/families/projectors/transitionProjector.test.ts",
+      "src/tools/video-editor/runtime/families/transitionAdapter.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/renderPlanner.test.ts",
+      "src/tools/video-editor/components/MaterialBrowser.tsx",
+      "src/tools/video-editor/components/MaterialBrowser.test.tsx"
+    ],
+    "always_run": [
+      "TypeScript typecheck",
+      "Relevant video-editor Vitest target from package scripts"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/sdk/video/families/agentTools.ts, src/sdk/video/families/transitions.ts, src/tools/video-editor/components/MaterialBrowser.test.tsx, src/tools/video-editor/components/MaterialBrowser.tsx, src/tools/video-editor/hooks/useAgentSession.test.ts, src/tools/video-editor/hooks/useAgentSession.ts, src/tools/video-editor/runtime/agentToolInvocationService.test.ts, src/tools/video-editor/runtime/agentToolInvocationService.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/materialRuntime.test.ts, src/tools/video-editor/runtime/composition/materialRuntime.ts, src/tools/video-editor/runtime/composition/patchPreview.test.ts, src/tools/video-editor/runtime/composition/patchPreview.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/families/projectors/transitionProjector.test.ts, src/tools/video-editor/runtime/families/projectors/transitionProjector.ts, src/tools/video-editor/runtime/families/transitionAdapter.ts, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/renderPlanner.ts. Candidate: The blast radius is mostly scoped to composition runtime, agent promotion, transition projection, and one compatibility UI path. Because SDK type changes and descriptor changes can affect broad consumers, a full-suite fallback is appropriate after focused tests pass. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/tools/video-editor/runtime/agentToolInvocationService.test.ts, src/tools/video-editor/hooks/useAgentSession.test.ts, src/tools/video-editor/runtime/families/projectors/transitionProjector.test.ts.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/tools/video-editor/runtime/agentToolInvocationService.test.ts",
+      "src/tools/video-editor/hooks/useAgentSession.test.ts",
+      "src/tools/video-editor/runtime/families/projectors/transitionProjector.test.ts"
+    ]
+  },
+  "structure_warnings": []
+}
+
+        Idea:
+# M3c: Agent Material Promotion
+
+## Outcome
+
+Promote agent-produced masks and materials into durable `RenderMaterial` or `RenderArtifact` records that can satisfy graph validation and later transition mask slots.
+
+## Execution Posture
+
+Treat agent output as untrusted for export until it has durable identity, provenance, route constraints, determinism, hashes, and diagnostics. Attach only already-resolved refs to existing slots.
+
+## Scope
+
+IN:
+- Promote agent-produced masks/materials to durable `RenderMaterial`/`RenderArtifact`.
+- Enforce promotion provenance: schema version, producer extension/tool where known, produced timestamp, consumed refs, route constraints, determinism, input hashes, output locator/hash, and diagnostics.
+- Execute `material.attach` and `material.remove` only for `resolved` refs and existing material slots.
+- Add promotion diagnostics for missing provenance, stale inputs, failed generation, weaker provenance, route incompatibility, and unresolved material refs.
+- Prepare transition-mask consumption for M5 using `MaterialRef` alias and descriptor-declared material slot model.
+- Preserve specific planner action kinds through `detail.specificKind` for old UI compatibility.
+
+OUT:
+- Process execution and process lifecycle vocabulary.
+- Output-format sidecars.
+- Public effect/transition node kinds.
+- Arbitrary material graphs.
+- New material identity types such as `MaskMaterialRef`.
+
+## Locked Decisions
+
+- Agent output cannot be `resolved` without required provenance.
+- `material.attach` rejects missing, pending, live-only, stale, failed, or route-incompatible refs.
+- The transition mask path uses `RenderMaterial`/`RenderArtifact` identity.
+- Descriptor-declared named slots are allowed only when a family owns slot semantics.
+- Slot routing remains slot-based, not arbitrary graph routing.
+
+## Constraints
+
+- Do not introduce arbitrary texture routing, shader stacks, FBO chains, or material graphs.
+- Do not bypass material status validation for agent-produced refs.
+- Do not mutate timeline state from agent execution directly.
+- Do not add process or output-format concepts.
+- Keep promotion diagnostics structured by material ref, route scope, provenance, and next action.
+
+## Done Criteria
+
+- Agent-produced material can be promoted and later satisfy a transition mask slot.
+- Attaching unresolved or invalid refs is rejected with `composition/material-not-resolved` or a more specific material diagnostic.
+- Promoted artifacts/materials cannot be `resolved` without provenance.
+- Transition mask preparation uses `RenderMaterial`/`RenderArtifact` identity only.
+- Old UI compatibility wrappers preserve true specific action kinds.
+
+## Touchpoints
+
+- `src/sdk/video/rendering/artifacts.ts`
+- `src/sdk/video/composition/graph.ts`
+- `src/tools/video-editor/runtime/composition/**`
+- `src/tools/video-editor/hooks/useAgentSession.ts`
+- `src/tools/video-editor/components/**`
+- `supabase/functions/ai-timeline-agent/**`
+- `tests/**/video-editor/**`
+- `examples/video-editor-extension/**`
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3c-agent-material-promotion-20260704-0238/critique_evaluator_output.json
+        Read this file first by calling `read_file` with `path` exactly `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m3c-agent-material-promotion-20260704-0238/critique_evaluator_output.json` — it contains the expected JSON structure with all known check IDs pre-populated in `skipped`.
+        If you cannot supply that exact non-empty path, do not call `read_file`.
+        Move checks you are firing to `selections`, fill `why` for the rest, and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        ## Prep that preceded this plan
+
+This plan was produced after a multi-step prep phase (triage -> research
+fan-out -> distill). Use the prep record below when deciding which lenses
+to fire: areas prep researched thoroughly may need less scrutiny, while
+areas prep flagged as gaps, contradictions, or timed-out research warrant
+extra attention from the critics.
+
+**Prep coverage:** area_count=3, fanout_count=3, completed_count=3, partial_count=0, timed_out_count=0, error_count=0
+
+**Contradictions surfaced in research:**
+- file src/sdk/video/composition/graph.ts appears in multiple areas with differing evidence/status: agent-material-promotion-pipeline=complete, transition-mask-slot-model=complete
+- file src/sdk/video/composition/references.ts appears in multiple areas with differing evidence/status: agent-material-promotion-pipeline=complete, transition-mask-slot-model=complete
+- file src/sdk/video/rendering/artifacts.ts appears in multiple areas with differing evidence/status: agent-material-promotion-pipeline=complete, transition-mask-slot-model=complete
+- file src/tools/video-editor/runtime/composition/diagnostics.ts appears in multiple areas with differing evidence/status: agent-material-promotion-pipeline=complete, diagnostic-gap-and-specifickind-audit=complete, transition-mask-slot-model=complete
+- file src/tools/video-editor/runtime/composition/materialRuntime.ts appears in multiple areas with differing evidence/status: agent-material-promotion-pipeline=complete, diagnostic-gap-and-specifickind-audit=complete, transition-mask-slot-model=complete
+- file src/tools/video-editor/runtime/extensionSurface.ts appears in multiple areas with differing evidence/status: diagnostic-gap-and-specifickind-audit=complete, transition-mask-slot-model=complete
+
+**Prep dossier:**
+
+# Prep Research Dossier
+
+## Triage
+
+M3c introduces the first agent-output-to-durable-material promotion pipeline. M3a already delivered the five-status material model, the host material runtime projection, provenance gap detection, and six composition/ material diagnostic codes. M3b added live-binding capture but explicitly left agent material promotion out. The core gap is that no `material.attach` / `material.remove` functions exist, no `composition/material-not-resolved` diagnostic exists, agent output (from the Edge Function through `useAgentSession`) has no bridge into the material runtime, and transition descriptors (`VideoEditorTransitionDescriptor`) carry no material/mask slot model that M5 would consume. The research needs to (a) map the agent-output-to-material-runtime integration point, (b) design the transition mask slot contract for M5 forward-compatibility, and (c) audit diagnostic gaps and existing `specificKind` usage to ensure old-UI wrappers survive.
+
+## Research Areas
+
+1. agent-material-promotion-pipeline: Trace the full path from agent-produced mask/material output to durable RenderMaterial/RenderArtifact records. Identify where `material.attach` and `material.remove` should live (likely in or adjacent to `materialRuntime.ts`), what callers feed them (Edge Function proposals, `useAgentSession`, agent tool results), what validation gates are needed per the locked decisions (reject missing, pending, live-only, stale, failed, route-incompatible refs), and what the concrete function signatures and return types should be. Also identify any existing promotion-like flows (e.g., `useAddVariantAsGeneration`, `usePromoteVariantToGeneration`) to avoid duplication.
+2. transition-mask-slot-model: Design the descriptor-declared material slot model that transitions will use to consume mask materials in M5. Audit `VideoEditorTransitionDescriptor` for existing extension points and determine how named material slots (e.g., 'mask', 'displacement') should be declared. Verify that `MaterialRef` (already a transparent alias of `RenderMaterialRef` in `references.ts`) satisfies the identity contract, and define the slot routing rules: slots are single-occupancy, family-owned, and resolved via `material.attach`/`material.remove`. The output should be a concrete shape proposal for the slot declaration in transition descriptors that M5 can consume without redesign.
+3. diagnostic-gap-and-specifickind-audit: Map every required promotion diagnostic from the task scope against the existing `composition/` diagnostic codes. The task requires diagnostics for: missing provenance, stale inputs, failed generation, weaker provenance, route incompatibility, and unresolved material refs. `material-missing-provenance`, `material-stale`, `material-failed`, `material-weaker-provenance`, and `material-route-incompatible` already exist. `composition/material-not-resolved` does NOT exist and must be added. Audit whether 'stale inputs' and 'failed generation' are fully covered by existing codes or need new ones. Separately, audit every `detail.specificKind: 'resolve-blocker'` usage in `renderPlanner.ts` and any other consumers to ensure old-UI compatibility wrappers preserve the true action kind. Produce a concrete mapping: required diagnostic → existing code or → new code needed.
+
+## Findings
+
+### agent-material-promotion-pipeline (complete)
+
+Trace the full path from agent-produced mask/material output to durable RenderMaterial/RenderArtifact records, identifying where material.attach/material.remove should live and what validation gates are needed.
+
+- **material.attach and material.remove do not exist anywhere in the codebase.** A full search for 'material.attach', 'material.remove', 'materialAttach', 'materialRemove', 'promoteMaterial' returned zero results. The task description names are aspirational — no implementation, stub, or type signature exists yet.
+- **The shader.assign/shader.remove pattern in patchPreview.ts is the closest analog and intended model.** `GraphShaderAssignOp` (kind: 'shader.assign') and `GraphShaderRemoveOp` (kind: 'shader.remove') in `src/tools/video-editor/runtime/composition/patchPreview.ts` define internal graph patch operations with assign/remove shape, validated preview, and kind-specific detail. The M3c `material.attach`/`material.remove` should follow this same internal-operation pattern, likely as `GraphMaterialAttachOp` (kind: 'material.attach') and `GraphMaterialRemoveOp` (kind: 'material.remove') in the same module or adjacent in `materialRuntime.ts`.
+- **The agent output path flows through three layers, none of which currently promote material/artifact results.** (1) Edge Function (`supabase/functions/ai-timeline-agent/tool-calls.ts`) extracts tool calls from LLM response into `ExtractedToolCall` objects; (2) `agentToolContracts.ts` validates the `ToolMaterialArtifactResult` shape (family: 'material/artifact', refs: ToolArtifactRef[]) structurally but does NOT promote refs to `RenderMaterialRef`/`RenderArtifact`; (3) `agentToolInvocationService.ts` only routes `mutation/proposal` results through `ProposalRuntime` — it passes non-timeline-editing results (including `material/artifact`) through unchanged (line 113: 'Non-timeline-editing results pass through unchanged').
+- **Existing 'promotion' flows are unrelated variant-to-generation operations, not material promotions.** `usePromoteVariantToGeneration` (`src/shared/hooks/variants/usePromoteVariantToGeneration.ts`) is a permanently disabled legacy flow (always throws `VariantPromotionUnsupportedError`). `useAddVariantAsGeneration` (`src/tools/video-editor/hooks/useAddVariantAsGeneration.ts`) promotes a variant to a generation and inserts it on the timeline — it deals with generation assets, not `RenderMaterial`/`RenderArtifact` records. Neither duplicates or overlaps with M3c material promotion.
+- **The materialRuntime.ts module is read-only validation infrastructure, not a write-path.** It projects `HostMaterialRuntimeEntry` records from `RenderMaterialRef` + `RenderMaterialStatus` inputs through a 60-row planner matrix (`MATERIAL_RUNTIME_PLANNER_MATRIX`). It computes determinants (determinismPosture, provenancePosture, routeFit, blocker, nextAction) and diagnostics — all frozen/immutable. It has no mutation functions for attaching or removing material refs from slots.
+- **Validation gates are pre-encoded in the planner matrix.** The matrix already classifies every state×phase×quality combination into validity/blocker/diagnostic codes: pending ('materialization-pending'), live-only ('live-runtime-only'), stale ('stale'), failed ('failed'), route-incompatible ('route-incompatible'), weaker-provenance ('weaker-provenance'). The locked decisions reject missing, pending, live-only, stale, failed, route-incompatible refs — all five states are already distinguishable in `HostMaterialRuntimeEntry.blocker` and `HostMaterialRuntimePredicates`. A `material.attach` function can use `projectHostMaterialRuntime()` as a pre-attach gate: if `entry.blocksAuthoritativeExport` is true, reject with the appropriate diagnostic code.
+- **The 'composition/material-not-resolved' diagnostic code mentioned in Done Criteria does not exist yet.** The existing material diagnostic codes in `composition/diagnostics.ts` include `composition/material-missing-provenance`, `composition/material-live-only`, `composition/material-stale`, `composition/material-failed`, `composition/material-weaker-provenance`, `composition/material-route-incompatible`, but NOT `composition/material-not-resolved`. This would need to be added.
+- **The MaterialRef alias is already defined for transition-mask consumption.** `src/sdk/video/composition/references.ts:70` defines `export type MaterialRef = RenderMaterialRef` as 'a composition-facing alias for RenderMaterialRef' — a transparent alias to be used in M5 for transition-mask slot declarations, not a new identity type.
+- **Agent-produced material/artifact refs currently carry no provenance, determinism, or RenderMaterialRef shape.** `ToolArtifactRef` (from SDK) has only `ref: string`, `kind: 'asset'|'material'|'placeholder'`, `label?`, `meta?`. To promote to a durable `RenderMaterialRef`, the promotion pipeline must construct the full shape: `id`, `mediaKind`, `locator` (RenderStorageLocator), `producerExtensionId`, `producerVersion`, `provenance` record, `determinism`, and `replacementPolicy`. The `agent-tools-canary` extension produces fake refs that explicitly warn 'no real bake occurred'.
+- **Callers for material.attach/material.remove would be:** (a) `useAgentSession.onSuccess` — after edge proposals return material/artifact results, promote them before timeline invalidation (similar to how it currently imports `mutation/proposal` proposals); (b) `agentToolInvocationService.routeTimelineEditableResult` — extend to handle `material/artifact` family results with promotion logic; (c) Direct tool invocation from `AgentToolsPanel` component.
+- **Slot routing is explicitly slot-based, not graph-based.** Per the constraints: 'Slot routing remains slot-based, not arbitrary graph routing.' and 'Descriptor-declared named slots are allowed only when a family owns slot semantics.' This means `material.attach` targets a specific named slot (e.g., `transition-mask`) declared by a family's descriptor, not an arbitrary graph node.
+
+### transition-mask-slot-model (complete)
+
+Design the descriptor-declared material slot model that transitions will use to consume mask materials in M5.
+
+- MaterialRef is a transparent alias of RenderMaterialRef (references.ts:70). RenderMaterialRef carries id, mediaKind, locator, producerExtensionId, producerVersion, provenance, determinism, replacementPolicy (artifacts.ts:172-181). This satisfies the identity contract for material references in transition slots.
+- VideoEditorTransitionDescriptor currently has NO material slot fields — only id, extensionId, order, transitionId, label, allowBrowserExport, allowWorkerExport, hasRendererMetadata (extensionSurface.ts:350-364). The descriptor is a pure data projection with no material attachment surface.
+- TransitionContribution (SDK, transitions.ts:25-45) likewise carries no material slot declarations. Fields: id, kind:'transition', transitionId, label, allowBrowserExport, allowWorkerExport, order. No slot model exists.
+- No material.attach or material.remove operations exist anywhere in the codebase. These are net-new M3c operations that must be implemented.
+- No composition/material-not-resolved diagnostic code exists yet. Current material diagnostic codes (diagnostics.ts:86-104) cover missing, status-invalid, missing-provenance, live-only, stale, failed, weaker-provenance, route-incompatible. A new code must be added for attach-time rejection.
+- The material status validation matrix (materialRuntime.ts:1090-1128) defines 60 combinations (5 states × 3 phases × 2 qualities). Only state='resolved' with no quality issues produces route-fit authoritative='supported' and blocker='none'. All other states are blocked for authoritative export. This matrix is the natural gate for material.attach eligibility.
+- HostMaterialRuntimeProjection.byMaterialRefId (materialRuntime.ts:252) provides O(1) lookup from material ref ID to full HostMaterialRuntimeEntry including status, matrix row, determinism posture, provenance posture, route scopes, and blockers — ready infrastructure for attach-time validation.
+- The transition adapter (transitionAdapter.ts:12-23) is explicitly a placeholder: 'Transition descriptor projection is delegated pending a dedicated real adapter' with expiration M8. This means the transition family adapter is the correct extension point for adding material slot normalization.
+- The slot adapter pattern (slotAdapter.ts:41-65) demonstrates family-owned slot semantics: it produces VideoEditorSlotDescriptor[] with {slot, render} from contributions. The transition family would follow this pattern to produce named material slots (e.g., 'mask', 'displacement') on transition descriptors.
+- The composition graph (graph.ts) has edge kinds 'consumes', 'animates', 'binds-live' but no material-oriented edge kind. Material slot attachment does not currently flow through the graph authority surface.
+- Provenance enforcement infrastructure is ready: hasProvenance() (artifacts.ts:121-125), describeProvenanceGap() (artifacts.ts:137-162), MaterialRuntimeProvenancePosture ('recorded' | 'derivable' | 'unattributed') (materialRuntime.ts:184-187). Agent output without provenance will be classified as 'unattributed' and blocked.
+- RenderMaterial extends RenderMaterialRef with durationSeconds, frameRange, sampleRange, inputHash, metadata (artifacts.ts:184-190). The transition mask slot would reference RenderMaterialRef (via MaterialRef alias), not RenderMaterial, keeping identity separate from temporal/materialization metadata.
+- The task specifies slots are single-occupancy, family-owned, and resolved via material.attach/material.remove. The slot adapter pattern already enforces single-occupancy through slot-name keys (slotAdapter.ts:57-61). This maps naturally to named material slots as record-style fields on the transition descriptor.
+
+### diagnostic-gap-and-specifickind-audit (complete)
+
+Map every required promotion diagnostic against existing composition/ diagnostic codes, identify gaps, and audit detail.specificKind: 'resolve-blocker' usage for old-UI compatibility
+
+- Diagnostic gap confirmed: `composition/material-not-resolved` does NOT exist anywhere in the codebase. A full-text search across the entire project returned zero matches. This code must be added to satisfy the Done Criteria requiring rejection of unresolved refs with `composition/material-not-resolved` or a more specific material diagnostic.
+- All other six required promotion diagnostics already exist: `composition/material-missing-provenance`, `composition/material-stale`, `composition/material-failed`, `composition/material-weaker-provenance`, `composition/material-route-incompatible`, and `composition/material-status-invalid`.
+- 'Stale inputs' is fully covered by `composition/material-stale`. The matrix row for `stale` state carries `determinismPosture: 'stale'`, blocker reason `'materialization-failed'` (when no quality), and the diagnostic message reads 'Material "{id}" is stale and must be re-materialized.' The stale+weaker-provenance variant emits both `STALE` and `WEAKER_PROVENANCE` codes. No additional code is needed for 'stale inputs'.
+- 'Failed generation' is fully covered by `composition/material-failed`. The matrix row for `failed` state carries `determinismPosture: 'failed'`, blocker reason `'materialization-error'`, and the diagnostic message reads 'Materialization failed for "{id}".' The failed+route-incompatible variant also emits `ROUTE_INCOMPATIBLE`. No additional code is needed for 'failed generation'.
+- No diagnostic exists for the case where a material ref is unresolved because it references a non-existent or unresolvable ref. The existing `missing` state row in the matrix has an empty `diagnosticCodes` array and uses blocker reason `'missing-material'` but emits no `composition/` diagnostic code. This is the gap that `composition/material-not-resolved` would fill.
+- All seven existing material diagnostic codes have corresponding entries in the `MATERIAL_RUNTIME_TO_COMPOSITION_CODE` mapping in `materialRuntime.ts` and in the `MATERIAL_DIAGNOSTIC_CODES` set in `diagnostics.ts`. The new `composition/material-not-resolved` would need entries in both.
+- specificKind audit: `detail.specificKind: 'resolve-blocker'` is used as an old-UI compatibility wrapper. The interface `VideoEditorPlannerNextActionDetail` (extensionSurface.ts:258-260) declares `specificKind?: 'resolve-blocker'` as the only allowed value. The true action kind is always preserved in the top-level `kind` field.
+- Three producer sites emit `specificKind: 'resolve-blocker'`: (a) `shaderMaterializationAction()` in renderPlanner.ts:556 — always paired with `kind: 'materialize'`; (b) `buildResolveBlockerAction()` in renderPlanner.ts:1042 — generic, called with various kinds (`bake`, `materialize`, `open-settings`, `select-route`) from `buildMaterialPlannerAction()`; (c) `outputFormatProjector.ts:111` — paired with `kind: 'open-settings'`.
+- The lone consumer is `MaterialBrowser.tsx` `isMaterialRepairAction()` (lines 72-78). It uses `specificKind === 'resolve-blocker'` as a fallback when `kind` is neither `materialize` nor `bake`, then further filters with fragile string matching on `action.label.toLowerCase().includes('materialize')` and `action.message?.toLowerCase().includes('material')`. This fragile secondary filter is a risk: if labels or messages change, `open-settings` or `select-route` actions with `resolve-blocker` could be incorrectly excluded.
+- Test files (`renderPlanner.test.ts`, `MaterialBrowser.test.tsx`, `extensionSurface.test.ts`) consistently use `expect.objectContaining({ specificKind: 'resolve-blocker' })` assertions, confirming the wrapper is an established contract. The tests preserve true `kind` values (`materialize`, `bake`) alongside `specificKind`.
+- The old-UI compatibility wrapper works correctly in that it never overwrites the true `kind`. However, the `MaterialBrowser.tsx` consumer's secondary string-matching filter creates a latent bug surface: any `resolve-blocker` action whose label/message doesn't contain 'materialize' or 'material' substrings won't be surfaced as a material repair action in the browser UI, even though the planner correctly emitted it.
+
+## Adjudication
+
+### Gap Notes
+
+- (none)
+
+### Contradiction Notes
+
+- file src/sdk/video/composition/graph.ts appears in multiple areas with differing evidence/status: agent-material-promotion-pipeline=complete, transition-mask-slot-model=complete
+- file src/sdk/video/composition/references.ts appears in multiple areas with differing evidence/status: agent-material-promotion-pipeline=complete, transition-mask-slot-model=complete
+- file src/sdk/video/rendering/artifacts.ts appears in multiple areas with differing evidence/status: agent-material-promotion-pipeline=complete, transition-mask-slot-model=complete
+- file src/tools/video-editor/runtime/composition/diagnostics.ts appears in multiple areas with differing evidence/status: agent-material-promotion-pipeline=complete, diagnostic-gap-and-specifickind-audit=complete, transition-mask-slot-model=complete
+- file src/tools/video-editor/runtime/composition/materialRuntime.ts appears in multiple areas with differing evidence/status: agent-material-promotion-pipeline=complete, diagnostic-gap-and-specifickind-audit=complete, transition-mask-slot-model=complete
+- file src/tools/video-editor/runtime/extensionSurface.ts appears in multiple areas with differing evidence/status: diagnostic-gap-and-specifickind-audit=complete, transition-mask-slot-model=complete
+
+### Overlap Groups
+
+- file: src/sdk/video/composition/graph.ts [agent-material-promotion-pipeline, transition-mask-slot-model]
+- file: src/sdk/video/composition/references.ts [agent-material-promotion-pipeline, transition-mask-slot-model]
+- file: src/sdk/video/rendering/artifacts.ts [agent-material-promotion-pipeline, transition-mask-slot-model]
+- file: src/tools/video-editor/runtime/composition/diagnostics.ts [agent-material-promotion-pipeline, diagnostic-gap-and-specifickind-audit, transition-mask-slot-model]
+- file: src/tools/video-editor/runtime/composition/materialRuntime.ts [agent-material-promotion-pipeline, diagnostic-gap-and-specifickind-audit, transition-mask-slot-model]
+- file: src/tools/video-editor/runtime/extensionSurface.ts [diagnostic-gap-and-specifickind-audit, transition-mask-slot-model]
+
+### Bounded Cross-Reference
+
+- Performed: yes
+- Shared files: src/sdk/video/composition/references.ts, src/sdk/video/rendering/artifacts.ts, src/tools/video-editor/components/MaterialBrowser.tsx, src/tools/video-editor/hooks/useAgentSession.ts, src/tools/video-editor/runtime/agentToolInvocationService.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/materialRuntime.ts, src/tools/video-editor/runtime/composition/patchPreview.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/families/slotAdapter.ts, src/tools/video-editor/runtime/families/transitionAdapter.ts, src/tools/video-editor/runtime/renderPlanner.ts
+- Missing files: (none)
+
+## Metrics
+
+- Areas triaged: 3
+- Fan-out units run: 3
+- Complete: 3
+- Partial: 0
+- Timed out: 0
+- Errors: 0
+- Missed units: (none)
+
+
+## Critique Lens Catalog (9 lenses)
+
+        ### Lens: `issue_hints` (tier: core, category: completeness)
+**Question:** Did the work fully address the issue hints, user notes, and approved plan requirements?
+**Guidance:** Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.
+
+### Lens: `correctness` (tier: core, category: correctness)
+**Question:** Are the proposed changes technically correct?
+**Guidance:** Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases — not just the one reported in the issue.
+
+### Lens: `scope` (tier: core, category: completeness)
+**Question:** Search for related code that handles the same concept. Is the reported issue a symptom of something broader — and is any single step sized to fit one worker turn?
+**Guidance:** Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes. Also audit step SIZING: each step/task is executed in ONE worker turn (~15 min, one conversation) and must be fully implemented AND verified there. A single step that bundles multiple concerns — e.g. 'extract this 2000-line file into modules AND write tests', or 'consolidate the roots AND migrate N registries AND add parity tests' — is a god-task: it cannot finish in one turn and the worker will run out of time mid-implementation. Raising complexity does not buy more time, only a stronger model for the same single turn. Flag any such step and recommend splitting along the natural seam (one step to add the abstraction + its unit tests, then one step per consumer/module to migrate, parity tests on the last).
+
+### Lens: `all_locations` (tier: core, category: completeness)
+**Question:** Does the change touch all locations AND supporting infrastructure?
+**Guidance:** Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.
+
+### Lens: `callers` (tier: core, category: correctness)
+**Question:** Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?
+**Guidance:** Grep for call sites. For each caller, check what values it passes — especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?
+
+### Lens: `conventions` (tier: extended, category: maintainability)
+**Question:** Does the approach match how the codebase solves similar problems?
+**Guidance:** Check not just naming/style but how similar PROBLEMS are solved in this codebase. If the codebase adds new methods for similar cases, the plan should too. Do not spend findings on trivial stylistic preferences.
+
+### Lens: `verification` (tier: extended, category: completeness)
+**Question:** Is there convincing verification for the change?
+**Guidance:** Flag missing tests or weak validation. If verification tests exist, trace the test's execution path through your patch — does every branch it exercises produce the expected result? A patch can look correct but fail because it misses one code path the test covers. If you manually verify an edge case because existing tests don't cover it, also test the cases next to it.
+
+### Lens: `criteria_quality` (tier: extended, category: completeness)
+**Question:** Are the success criteria well-prioritized and verifiable?
+**Guidance:** Check that each `must` criterion has a clear yes/no answer verifiable from code, tests, or git diff. Subjective goals, numeric guidelines, and aspirational targets should be `should`, not `must`. Criteria requiring manual testing or human judgment should be `info`. Flag any `must` criterion that is ambiguous, subjective, or unverifiable in the review pipeline.
+
+### Lens: `prerequisite_ordering` (tier: core, category: correctness)
+**Question:** Do tasks that depend on a precondition gracefully handle that precondition only partially holding?
+**Guidance:** Walk the task graph. For each task that depends on a precondition produced by an earlier task (e.g. 'after T5 regen, remove ref()'), check what happens if the precondition only partially holds — some inputs fail, some succeed. Then re-read the brief: does it lock a graceful-fallback policy for the earlier task (e.g. 'failed templates get skipped with a diagnostic') AND simultaneously demand absolute completion for the dependent task (e.g. 'zero callers remain', 'all migrated')? That's a brief contradiction the planner will transcribe faithfully and the executor will hit at runtime. Flag the conflicting paragraphs and recommend conditionalizing the dependent task, or specifying explicit deferral behavior.
+
+
+        ## Complexity Rubric (1–5)
+
+        Rate each selected lens on its **hardest realistic** aspect, not a
+        worst-case imagining. When genuinely torn between two tiers, choose the
+        LOWER one UNLESS you can name the specific cascading, test-evading
+        failure that earns the higher tier in the justification.
+
+        - **1 = trivial, mechanical check.** The lens's question can be
+          answered by pattern-matching a single file or a grep hit. A weak
+          model cannot get it wrong.
+        - **2 = simple, localized check.** The lens touches one or two
+          files, the question has a linear answer, and the failure mode
+          (missing something) is obvious.
+        - **3 = multi-step check with non-trivial reasoning.** The lens
+          requires holding multiple files or a dataflow in your head;
+          correctness is not self-evident from a quick skim.
+        - **4 = cross-cutting or high-stakes check.** A defect this lens would
+          miss is **non-local and not caught by an obvious test** — it
+          propagates through a shared contract or invariant that code the plan
+          does NOT touch relies on. Spanning several modules is NOT sufficient
+          on its own; a lens whose failure is local and obvious is tier 2-3.
+        - **5 = fundamental system-level check.** The lens probes a
+          security-sensitive path, a schema migration, an auth boundary, or
+          a contract relied on by the whole system, where a subtle error would
+          pass the full suite and corrupt state. Only assign tier 5 when the
+          lens genuinely requires system-level reasoning — not merely
+          "important" or central code.
+
+        **FLOOR rules (hard minimum) — these two lenses ONLY:**
+        - `correctness` — NEVER below tier 4. A correctness defect that
+          slips through is the most expensive failure mode.
+        - `prerequisite_ordering` — NEVER below tier 4. Partial-precondition
+          contradictions are subtle and cascade into runtime failures; a
+          weak model will miss them.
+        Every OTHER lens must EARN tier 4-5 under the rubric above; the
+        expected home for an ordinary, locally-verifiable check is tier 2-3.
+        Do not let "this plan is large" inflate a lens whose own question is
+        answerable by a focused read.
+
+        ## Assignment Contract
+
+        Select the FEWEST lenses that cover the real risk; keep the set lean
+        rather than firing broad, overlapping checks. If a check's verification
+        would likely depend on things outside this project root (external or
+        sibling repos), files the plan only creates later, or runtime-only
+        behavior, either scope the lens to what is statically checkable in this
+        repo or name that dependency in its justification so the worker and gate
+        expect a partial or `unverifiable` result.
+
+        - **Select deliberately**: a lens fires only when it covers a concrete
+          risk in this plan.
+        - **Justify to skip**: every skipped lens must include a concrete, specific
+          `why` — a reason grounded in the plan's content, not a generic dismissal.
+        - **Every lens is assigned exactly once**: the union of `selections` and
+          `skipped` must cover all 9 lens ids with no overlap
+          and no omission.
+        - **At least one lens must be selected** — an all-skip verdict is rejected.
+        - **Every selected catalog lens** must emit a `complexity` (int 1–5) and
+          a `complexity_justification` (one or two sentences citing why this
+          lens sits at exactly that tier — reference the lens's question, the
+          plan's concrete files/interfaces/risks). The justification must be
+          defensible against a reviewer who disagrees. A bare restatement of the
+          rubric ("this is complex") is not acceptable.
+        - **`other` custom areas**: an `other` selection is additive (does not
+          replace a catalog lens). It requires `area` (a non-empty name for the
+          custom critique area), `why` (the probe question for the critic),
+          `complexity`, and `complexity_justification`. At most 2
+          `other` areas.
+        - **Do not invent check IDs**: North Star, anchor, product, or project-
+          specific concerns must either use one of the catalog lens IDs above
+          or `check_id: "other"` with the specific concern named in `area`.
+          Values such as `north_star_alignment`, `compatibility_shim_risk`, or
+          `behavior_preservation` are invalid as `check_id`s.
+
+        Your output must be a JSON object with these keys:
+        - `selections`: list of objects. For catalog lenses:
+          {check_id, complexity (int 1–5), complexity_justification, why?}
+          For `other` custom areas:
+          {check_id: "other", area, why, complexity (int 1–5), complexity_justification}
+        - `skipped`: list of {check_id, why} objects
+        - `evaluator_model`: your own model identifier string
+        - `flag_verifications`: list of
+          {flag_id, lens, outcome, rationale} objects where outcome is
+          one of "verified" / "open" / "accepted_tradeoff"; use [] when the
+          Flag Resolution Verification section is absent. `lens` must be
+          exactly one catalog lens id; combined lens strings such as
+          `correctness/all_locations` are invalid.
+
+        Remember: prefer the smallest selected set that still covers the real
+        risk.  Skipping requires a justification.  When you skip, explain *why
+        this specific lens is unnecessary for this specific plan* — do not
+        write generic cop-outs.

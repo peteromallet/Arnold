@@ -7,10 +7,32 @@ import { useProposalRuntimeFromStoreSafe, useTimelineStoreApiSafe } from '@/tool
 import { importEdgeProposals } from '@/tools/video-editor/lib/proposal-runtime.ts';
 import type { ProposalEnvelope, TimelineProposal, ProposalState } from '@/sdk/index';
 import type { ProposalImportDiagnosticsState } from '@/tools/video-editor/hooks/timelineStore.ts';
+import { promoteMaterialArtifactBatch } from '@/tools/video-editor/runtime/agentToolInvocationService';
+import type { ToolArtifactRef, ToolResultDiagnostic } from '@/sdk/video/families/agentTools';
 
 const TIMELINE_AGENT_SESSIONS_TABLE = 'timeline_agent_sessions';
 const AUTO_CONTINUE_LIMIT = 10;
 const AUTO_CONTINUE_DELAY_MS = 300;
+
+type AgentInvocationMaterialArtifact = {
+  refs: Array<{
+    ref: string;
+    kind: 'asset' | 'material' | 'placeholder';
+    label?: string;
+    meta?: Record<string, unknown>;
+  }>;
+  rationale?: string;
+  diagnostics?: Array<{
+    severity: string;
+    code: string;
+    message: string;
+    detail?: Record<string, unknown>;
+  }>;
+  source?: {
+    extensionId: string;
+    toolId: string;
+  };
+};
 
 type AgentInvocationResponse = {
   session_id: string;
@@ -25,6 +47,8 @@ type AgentInvocationResponse = {
     expiresAt?: number;
     patch: { version: number; operations: Array<{ op: string; target: string; payload?: Record<string, unknown> }> };
   }>;
+  /** M3c: Material/artifact results produced by agent tool invocations. */
+  material_artifacts?: AgentInvocationMaterialArtifact[];
   mutation_applied?: boolean;
 };
 
@@ -120,6 +144,36 @@ function normalizeInvokeResponse(value: unknown): AgentInvocationResponse {
     response.proposals = record.proposals.filter(
       (p: unknown): p is AgentInvocationResponse['proposals'][number] =>
         isRecord(p) && typeof p.id === 'string' && typeof p.state === 'string',
+    );
+  }
+
+  // M3c: Preserve material_artifacts array from edge response
+  if (Array.isArray(record.material_artifacts)) {
+    response.material_artifacts = record.material_artifacts.flatMap(
+      (entry: unknown): AgentInvocationMaterialArtifact[] => {
+        if (!isRecord(entry)) return [];
+        if (!Array.isArray(entry.refs)) return [];
+        const normalizedRefs = entry.refs.filter(
+          (r: unknown): r is AgentInvocationMaterialArtifact['refs'][number] =>
+            isRecord(r) && typeof r.ref === 'string' && (r.kind === 'asset' || r.kind === 'material' || r.kind === 'placeholder'),
+        );
+        if (normalizedRefs.length === 0) return [];
+        const source: AgentInvocationMaterialArtifact['source'] =
+          isRecord(entry.source) && typeof entry.source.extensionId === 'string' && typeof entry.source.toolId === 'string'
+            ? { extensionId: entry.source.extensionId as string, toolId: entry.source.toolId as string }
+            : undefined;
+        return [{
+          refs: normalizedRefs,
+          rationale: typeof entry.rationale === 'string' ? entry.rationale : undefined,
+          diagnostics: Array.isArray(entry.diagnostics)
+            ? entry.diagnostics.filter(
+                (d: unknown): d is AgentInvocationMaterialArtifact['diagnostics'][number] =>
+                  isRecord(d) && typeof d.severity === 'string' && typeof d.code === 'string' && typeof d.message === 'string',
+              )
+            : undefined,
+          source,
+        }];
+      },
     );
   }
 
@@ -395,6 +449,63 @@ export function useSendMessage(sessionId: string | null | undefined, timelineId?
     },
     onSuccess: (data: AgentInvocationResponse) => {
       setLocalError(null);
+
+      // M3c: Promote material/artifact results through the promotion path
+      // BEFORE edge proposal import and timeline invalidation, so durable
+      // records are attached to refs before any downstream consumer reads them.
+      if (data.material_artifacts && data.material_artifacts.length > 0) {
+        const now = Date.now();
+        const allPromotionDiagnostics: ToolResultDiagnostic[] = [];
+
+        for (const artifactResult of data.material_artifacts) {
+          const source = artifactResult.source ?? {
+            extensionId: 'unknown',
+            toolId: 'unknown',
+          };
+
+          // Cast the serialized refs back to ToolArtifactRef shape for promotion.
+          // The meta field arrives as a plain Record; promoteMaterialArtifactBatch
+          // reads ToolArtifactMeta.promotion evidence from it.
+          const refs = artifactResult.refs as ToolArtifactRef[];
+          const { diagnostics: promotionDiags } = promoteMaterialArtifactBatch(
+            refs,
+            source,
+          );
+
+          allPromotionDiagnostics.push(...promotionDiags);
+
+          // Surface any result-level diagnostics carried on the edge response
+          if (artifactResult.diagnostics && artifactResult.diagnostics.length > 0) {
+            for (const d of artifactResult.diagnostics) {
+              allPromotionDiagnostics.push({
+                severity: d.severity as ToolResultDiagnostic['severity'],
+                code: d.code,
+                message: d.message,
+                detail: d.detail,
+              });
+            }
+          }
+        }
+
+        // M3c: Surface promotion diagnostics through the existing
+        // proposal-import diagnostic channel so that the ProposalPanel and
+        // material diagnostic consumers can observe promotion outcomes.
+        if (storeApi && allPromotionDiagnostics.length > 0) {
+          const diagnosticsState: ProposalImportDiagnosticsState = {
+            imported: 0,
+            skipped: 0,
+            rejected: 0,
+            diagnostics: allPromotionDiagnostics.map((d) => ({
+              severity: d.severity === 'error' ? 'error' : 'warning',
+              code: d.code,
+              message: d.message,
+              detail: d.detail,
+            })),
+            timestamp: now,
+          };
+          storeApi.getState().setProposalImportDiagnostics(diagnosticsState);
+        }
+      }
 
       // M3: Import edge proposals into the provider-scoped ProposalRuntime
       // BEFORE timeline invalidation decisions so the panel has data to render
