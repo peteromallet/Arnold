@@ -597,6 +597,26 @@ class TestBuildMetaRepairPrompt:
         )
         assert "/tmp/repair-data" in prompt
 
+    def test_prompt_compacts_large_evidence_to_budget(self) -> None:
+        huge_text = "A" * 300_000
+        classification = classify_repair_system_failure(
+            session="p9",
+            evidence={
+                "repair_data": {
+                    "marker_json": huge_text,
+                    "failure_context": {
+                        "chain_log_tail": huge_text,
+                    },
+                }
+            },
+            repair_outcome=REPAIR_TIMEOUT,
+            repair_budget_exhausted=True,
+        )
+        prompt = build_meta_repair_prompt(classification)
+        assert len(prompt) < 250_000
+        assert "truncated" in prompt
+        assert huge_text not in prompt
+
 
 # ---------------------------------------------------------------------------
 # Combined evaluate_meta_repair_triggers
@@ -650,6 +670,34 @@ class TestEvaluateMetaRepairTriggers:
         )
         assert prompt is not None
         assert "test context" in prompt
+
+    def test_load_evidence_compacts_huge_repair_data_before_prompt(self, tmp_path: Path) -> None:
+        repair_root = _make_session_dir(tmp_path, "eval-s5")
+        payload = json.loads((repair_root / "eval-s5.repair-data.json").read_text(encoding="utf-8"))
+        huge_text = "B" * 350_000
+        payload["initial_facts"] = {
+            "marker_json": huge_text,
+            "failure_context": {
+                "chain_log_tail": huge_text,
+            },
+        }
+        (repair_root / "eval-s5.repair-data.json").write_text(
+            json.dumps(payload),
+            encoding="utf-8",
+        )
+
+        classification, prompt = evaluate_meta_repair_triggers(
+            session="eval-s5",
+            repair_data_dir=repair_root,
+            repair_outcome=REPAIR_TIMEOUT,
+            repair_budget_exhausted=True,
+            load_evidence=True,
+        )
+        assert classification.should_dispatch is True
+        assert prompt is not None
+        assert len(prompt) < 250_000
+        assert huge_text not in prompt
+        assert "truncated" in prompt
 
 
 # ---------------------------------------------------------------------------
