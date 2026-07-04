@@ -6,9 +6,11 @@ import json
 import os
 import tempfile
 from copy import deepcopy
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Literal, Mapping, TypeAlias, TypedDict, cast
 
 from arnold.runtime.state_persistence import atomic_write_json as _atomic_write_json
 from arnold_pipelines.megaplan.cloud.redact import redact_payload as canonical_redact_payload
@@ -69,6 +71,600 @@ _RETENTION_WINDOWS_DAYS = {
 }
 _SNAPSHOT_RETENTION_DAYS = 30
 _MIN_ATTEMPTS_PER_SESSION = 20
+
+
+BLOCKER_FINGERPRINT_VERSION = 1
+BLOCKER_FINGERPRINT_V1_PREFIX = "repair-blocker-fingerprint/v1"
+BLOCKER_ID_V1_PREFIX = "blocker:v1:"
+
+RepairRequestStatus: TypeAlias = Literal[
+    "accepted",
+    "coalesced",
+    "stale",
+    "superseded",
+    "dispatched",
+]
+REQUEST_STATUS_ACCEPTED: RepairRequestStatus = "accepted"
+REQUEST_STATUS_COALESCED: RepairRequestStatus = "coalesced"
+REQUEST_STATUS_STALE: RepairRequestStatus = "stale"
+REQUEST_STATUS_SUPERSEDED: RepairRequestStatus = "superseded"
+REQUEST_STATUS_DISPATCHED: RepairRequestStatus = "dispatched"
+REPAIR_REQUEST_STATUSES: frozenset[RepairRequestStatus] = frozenset(
+    {
+        REQUEST_STATUS_ACCEPTED,
+        REQUEST_STATUS_COALESCED,
+        REQUEST_STATUS_STALE,
+        REQUEST_STATUS_SUPERSEDED,
+        REQUEST_STATUS_DISPATCHED,
+    }
+)
+
+RepairAttemptState: TypeAlias = Literal[
+    "claimed",
+    "running",
+    "succeeded",
+    "failed",
+    "cancelled",
+]
+ATTEMPT_STATE_CLAIMED: RepairAttemptState = "claimed"
+ATTEMPT_STATE_RUNNING: RepairAttemptState = "running"
+ATTEMPT_STATE_SUCCEEDED: RepairAttemptState = "succeeded"
+ATTEMPT_STATE_FAILED: RepairAttemptState = "failed"
+ATTEMPT_STATE_CANCELLED: RepairAttemptState = "cancelled"
+REPAIR_ATTEMPT_STATES: frozenset[RepairAttemptState] = frozenset(
+    {
+        ATTEMPT_STATE_CLAIMED,
+        ATTEMPT_STATE_RUNNING,
+        ATTEMPT_STATE_SUCCEEDED,
+        ATTEMPT_STATE_FAILED,
+        ATTEMPT_STATE_CANCELLED,
+    }
+)
+
+RepairCustodyBucket: TypeAlias = Literal[
+    "repairing",
+    "repairable_not_repairing",
+    "human_required",
+    "broken_superfixer",
+]
+CUSTODY_BUCKET_REPAIRING: RepairCustodyBucket = "repairing"
+CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING: RepairCustodyBucket = "repairable_not_repairing"
+CUSTODY_BUCKET_HUMAN_REQUIRED: RepairCustodyBucket = "human_required"
+CUSTODY_BUCKET_BROKEN_SUPERFIXER: RepairCustodyBucket = "broken_superfixer"
+REPAIR_CUSTODY_BUCKETS: frozenset[RepairCustodyBucket] = frozenset(
+    {
+        CUSTODY_BUCKET_REPAIRING,
+        CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING,
+        CUSTODY_BUCKET_HUMAN_REQUIRED,
+        CUSTODY_BUCKET_BROKEN_SUPERFIXER,
+    }
+)
+
+RepairDispatchIntent: TypeAlias = Literal[
+    "dispatch_l1",
+    "queue_only",
+    "human_required",
+    "broken_superfixer",
+]
+DISPATCH_INTENT_L1: RepairDispatchIntent = "dispatch_l1"
+DISPATCH_INTENT_QUEUE_ONLY: RepairDispatchIntent = "queue_only"
+DISPATCH_INTENT_HUMAN_REQUIRED: RepairDispatchIntent = "human_required"
+DISPATCH_INTENT_BROKEN_SUPERFIXER: RepairDispatchIntent = "broken_superfixer"
+REPAIR_DISPATCH_INTENTS: frozenset[RepairDispatchIntent] = frozenset(
+    {
+        DISPATCH_INTENT_L1,
+        DISPATCH_INTENT_QUEUE_ONLY,
+        DISPATCH_INTENT_HUMAN_REQUIRED,
+        DISPATCH_INTENT_BROKEN_SUPERFIXER,
+    }
+)
+
+
+class BlockerFingerprintV1(TypedDict):
+    """Canonical blocker identity payload shared across custody consumers."""
+
+    schema_version: Literal[1]
+    current_state: str
+    retry_strategy: str
+    failure_kind: str
+    phase_or_step: str
+    milestone_or_plan: str
+    blocked_task_id: str
+    target_fingerprint: str
+
+
+_BLOCKER_FINGERPRINT_V1_FIELDS = (
+    "current_state",
+    "retry_strategy",
+    "failure_kind",
+    "phase_or_step",
+    "milestone_or_plan",
+    "blocked_task_id",
+    "target_fingerprint",
+)
+
+
+def normalize_blocker_fingerprint_v1(
+    payload: Mapping[str, Any] | None,
+) -> BlockerFingerprintV1 | None:
+    """Return a canonical v1 blocker fingerprint or ``None`` for unsafe inputs."""
+
+    if not isinstance(payload, Mapping):
+        return None
+    schema_version = payload.get("schema_version")
+    if schema_version != BLOCKER_FINGERPRINT_VERSION:
+        return None
+
+    normalized: dict[str, Any] = {"schema_version": BLOCKER_FINGERPRINT_VERSION}
+    for field in _BLOCKER_FINGERPRINT_V1_FIELDS:
+        value = payload.get(field)
+        if not isinstance(value, str):
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        normalized[field] = cleaned
+    return cast(BlockerFingerprintV1, normalized)
+
+
+def blocker_id_for_fingerprint(payload: Mapping[str, Any] | None) -> str | None:
+    """Return a deterministic blocker id for a canonical v1 fingerprint."""
+
+    normalized = normalize_blocker_fingerprint_v1(payload)
+    if normalized is None:
+        return None
+    canonical_payload = {
+        "prefix": BLOCKER_FINGERPRINT_V1_PREFIX,
+        "fingerprint": normalized,
+    }
+    digest = sha256(
+        json.dumps(canonical_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return f"{BLOCKER_ID_V1_PREFIX}{digest}"
+
+
+class RepairRequestDecisionRecord(TypedDict):
+    decision_id: str
+    request_id: str
+    decision: RepairRequestStatus | str
+    reason: str
+    related_request_id: str
+    created_at: str
+    path: str
+
+
+class RepairCustodyRequestRecord(TypedDict):
+    request_id: str
+    session: str
+    source: str
+    path: str
+    blocker_id: str
+    blocker_fingerprint: BlockerFingerprintV1 | None
+    problem_signature: dict[str, Any]
+    target: dict[str, Any]
+    status: RepairRequestStatus | str
+    active: bool
+    decision: RepairRequestDecisionRecord | None
+    decision_history: list[RepairRequestDecisionRecord]
+
+
+class RepairCustodyAttemptRecord(TypedDict):
+    attempt_id: str
+    session: str
+    source: str
+    path: str
+    blocker_id: str
+    blocker_fingerprint: BlockerFingerprintV1 | None
+    request_id: str
+    state: RepairAttemptState
+    outcome: str
+    terminal: bool
+    recorded_at: str
+    raw: dict[str, Any]
+
+
+class RepairCustodyProjection(TypedDict):
+    blocker_id: str
+    blocker_fingerprint: BlockerFingerprintV1 | None
+    custody_bucket: RepairCustodyBucket
+    current_state: str
+    retry_strategy: str
+    failure_kind: str
+    request_status_counts: dict[str, int]
+    active_request_ids: list[str]
+    terminal_outcomes: list[str]
+    requests: list[RepairCustodyRequestRecord]
+    attempts: list[RepairCustodyAttemptRecord]
+    plan_state: dict[str, Any]
+    current_target: dict[str, Any]
+
+
+RepairDispatchDecisionKind: TypeAlias = Literal[
+    "dispatch_l1_repair",
+    "repairing",
+    "human_required",
+    "broken_superfixer",
+    "no_action",
+    "terminal",
+]
+DISPATCH_DECISION_L1: RepairDispatchDecisionKind = "dispatch_l1_repair"
+DISPATCH_DECISION_REPAIRING: RepairDispatchDecisionKind = "repairing"
+DISPATCH_DECISION_HUMAN_REQUIRED: RepairDispatchDecisionKind = "human_required"
+DISPATCH_DECISION_BROKEN_SUPERFIXER: RepairDispatchDecisionKind = "broken_superfixer"
+DISPATCH_DECISION_NO_ACTION: RepairDispatchDecisionKind = "no_action"
+DISPATCH_DECISION_TERMINAL: RepairDispatchDecisionKind = "terminal"
+REPAIR_DISPATCH_DECISION_KINDS: frozenset[RepairDispatchDecisionKind] = frozenset(
+    {
+        DISPATCH_DECISION_L1,
+        DISPATCH_DECISION_REPAIRING,
+        DISPATCH_DECISION_HUMAN_REQUIRED,
+        DISPATCH_DECISION_BROKEN_SUPERFIXER,
+        DISPATCH_DECISION_NO_ACTION,
+        DISPATCH_DECISION_TERMINAL,
+    }
+)
+
+
+@dataclass(frozen=True)
+class RepairDispatchDecision:
+    """Shared classifier result for watchdog/trigger repair dispatch."""
+
+    decision: RepairDispatchDecisionKind
+    dispatch_intent: RepairDispatchIntent
+    rationale: tuple[str, ...] = field(default_factory=tuple)
+    blocker_id: str = ""
+    request_id: str = ""
+    custody_bucket: str = ""
+    current_state: str = ""
+    retry_strategy: str = ""
+    failure_kind: str = ""
+
+
+def blocker_fingerprint_from_evidence(
+    *,
+    plan_state: Mapping[str, Any] | None = None,
+    current_target: Mapping[str, Any] | None = None,
+    problem_signature: Mapping[str, Any] | None = None,
+) -> BlockerFingerprintV1 | None:
+    """Build a canonical blocker fingerprint from existing compatibility artifacts."""
+
+    plan_payload = _as_mapping(plan_state)
+    target_payload = _as_mapping(current_target)
+    signature = _as_mapping(problem_signature)
+    resume_cursor = _as_mapping(plan_payload.get("resume_cursor"))
+    latest_failure = _as_mapping(plan_payload.get("latest_failure"))
+    latest_failure_meta = _as_mapping(latest_failure.get("metadata"))
+    target_plan_state = _as_mapping(target_payload.get("plan_state"))
+    target_current_refs = _as_mapping(target_payload.get("current_refs"))
+    target_event_cursors = _as_mapping(target_payload.get("event_cursors"))
+
+    payload: dict[str, Any] = {
+        "schema_version": BLOCKER_FINGERPRINT_VERSION,
+        "current_state": _first_non_empty(
+            _as_text(plan_payload.get("current_state")),
+            _as_text(target_current_refs.get("plan_current_state")),
+            _as_text(signature.get("current_state")),
+        ),
+        "retry_strategy": _first_non_empty(
+            _as_text(resume_cursor.get("retry_strategy")),
+            _as_text(target_event_cursors.get("resume_retry_strategy")),
+            _as_text(signature.get("retry_strategy")),
+        ),
+        "failure_kind": _first_non_empty(
+            _as_text(latest_failure.get("kind")),
+            _as_text(signature.get("failure_kind")),
+        ),
+        "phase_or_step": _first_non_empty(
+            _as_text(latest_failure.get("phase")),
+            _as_text(plan_payload.get("phase")),
+            _as_text(signature.get("phase_or_step")),
+        ),
+        "milestone_or_plan": _first_non_empty(
+            _as_text(plan_payload.get("name")),
+            _as_text(target_current_refs.get("current_plan_name")),
+            _as_text(target_current_refs.get("chain_current_plan_name")),
+            _as_text(signature.get("milestone_or_plan")),
+        ),
+        "blocked_task_id": _first_non_empty(
+            _as_text(latest_failure.get("blocked_task_id")),
+            _as_text(latest_failure.get("task_id")),
+            _as_text(latest_failure_meta.get("blocked_task_id")),
+            _as_text(latest_failure_meta.get("task_id")),
+            _as_text(signature.get("blocked_task_id")),
+        ),
+        "target_fingerprint": _first_non_empty(
+            _as_text(target_plan_state.get("fingerprint")),
+            _as_text(_as_mapping(target_payload.get("chain_state")).get("fingerprint")),
+            _as_text(signature.get("target_fingerprint")),
+        ),
+    }
+    return normalize_blocker_fingerprint_v1(payload)
+
+
+def project_repair_custody(
+    *,
+    plan_state: Mapping[str, Any] | None = None,
+    current_target: Mapping[str, Any] | None = None,
+    marker_dir: str | Path | None = None,
+    queue_dir: str | Path | None = None,
+    repair_data_dir: str | Path | None = None,
+    sidecar_dir: str | Path | None = None,
+) -> RepairCustodyProjection:
+    """Project plan, queue, and repair-data artifacts into one custody view."""
+
+    from arnold_pipelines.megaplan.cloud import repair_requests
+
+    plan_payload = _as_mapping(plan_state)
+    target_payload = _as_mapping(current_target)
+    queue_root: Path | None = None
+    if queue_dir is not None:
+        queue_root = Path(queue_dir)
+    elif marker_dir is not None:
+        queue_root = repair_requests.repair_queue_dir(marker_dir)
+
+    queue_requests = (
+        repair_requests.iter_repair_requests(queue_root, marker_dir=False) if queue_root is not None else []
+    )
+    queue_decisions = (
+        repair_requests.iter_repair_decisions(queue_root, marker_dir=False) if queue_root is not None else []
+    )
+    decision_history = _decision_history_by_request(queue_decisions)
+
+    fingerprint = blocker_fingerprint_from_evidence(plan_state=plan_payload, current_target=target_payload)
+    blocker_id = blocker_id_for_fingerprint(fingerprint)
+
+    requests: list[RepairCustodyRequestRecord] = []
+    for record in queue_requests:
+        problem_signature = _stable_mapping(_as_mapping(record.get("problem_signature")))
+        request_fingerprint = blocker_fingerprint_from_evidence(
+            plan_state=plan_payload,
+            current_target=target_payload,
+            problem_signature=problem_signature,
+        )
+        request_blocker_id = blocker_id_for_fingerprint(request_fingerprint) or ""
+        if blocker_id and request_blocker_id and request_blocker_id != blocker_id:
+            continue
+        if blocker_id is None and request_blocker_id and blocker_id != request_blocker_id:
+            blocker_id = request_blocker_id
+            fingerprint = request_fingerprint
+        history = decision_history.get(str(record.get("request_id") or ""), [])
+        latest_decision = _effective_request_decision(history)
+        status = (
+            str(latest_decision["decision"])
+            if latest_decision is not None
+            else REQUEST_STATUS_ACCEPTED
+        )
+        requests.append(
+            {
+                "request_id": _as_text(record.get("request_id")),
+                "session": _as_text(record.get("session")),
+                "source": _as_text(record.get("source")),
+                "path": _as_text(record.get("_path")),
+                "blocker_id": request_blocker_id,
+                "blocker_fingerprint": request_fingerprint,
+                "problem_signature": problem_signature,
+                "target": _stable_mapping(_as_mapping(record.get("target"))),
+                "status": status,
+                "active": status in {REQUEST_STATUS_ACCEPTED, REQUEST_STATUS_DISPATCHED},
+                "decision": latest_decision,
+                "decision_history": history,
+            }
+        )
+
+    attempts = _collect_custody_attempts(
+        repair_data_dir=repair_data_dir,
+        sidecar_dir=sidecar_dir,
+        blocker_id=blocker_id or "",
+        fingerprint=fingerprint,
+    )
+
+    active_request_ids = sorted(
+        request["request_id"] for request in requests if request["active"] and request["request_id"]
+    )
+    request_status_counts: dict[str, int] = {}
+    for request in requests:
+        status = str(request["status"])
+        request_status_counts[status] = int(request_status_counts.get(status, 0)) + 1
+    terminal_outcomes = sorted(
+        {
+            attempt["outcome"]
+            for attempt in attempts
+            if attempt["terminal"] and attempt["outcome"]
+        }
+    )
+
+    has_active_attempt = any(not attempt["terminal"] for attempt in attempts)
+    if has_active_attempt:
+        bucket = CUSTODY_BUCKET_REPAIRING
+    elif active_request_ids:
+        bucket = CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING
+    else:
+        current_state = _as_text(plan_payload.get("current_state"))
+        retry_strategy = _as_text(_as_mapping(plan_payload.get("resume_cursor")).get("retry_strategy"))
+        if current_state == "blocked" and retry_strategy == "manual_review":
+            bucket = CUSTODY_BUCKET_HUMAN_REQUIRED
+        else:
+            bucket = CUSTODY_BUCKET_BROKEN_SUPERFIXER
+
+    return {
+        "blocker_id": blocker_id or "",
+        "blocker_fingerprint": fingerprint,
+        "custody_bucket": bucket,
+        "current_state": _as_text(plan_payload.get("current_state")),
+        "retry_strategy": _as_text(_as_mapping(plan_payload.get("resume_cursor")).get("retry_strategy")),
+        "failure_kind": _as_text(_as_mapping(plan_payload.get("latest_failure")).get("kind")),
+        "request_status_counts": request_status_counts,
+        "active_request_ids": active_request_ids,
+        "terminal_outcomes": terminal_outcomes,
+        "requests": requests,
+        "attempts": attempts,
+        "plan_state": dict(plan_payload),
+        "current_target": dict(target_payload),
+    }
+
+
+def classify_repair_dispatch(
+    *,
+    plan_state: Mapping[str, Any] | None = None,
+    retry_strategy: str = "",
+    latest_failure: Mapping[str, Any] | None = None,
+    current_target: Mapping[str, Any] | None = None,
+    human_blocker_classification: Any = None,
+    lock_evidence: Any = None,
+    process_evidence: Mapping[str, Any] | None = None,
+    custody_projection: Mapping[str, Any] | None = None,
+) -> RepairDispatchDecision:
+    """Classify one repair dispatch decision from shared custody evidence.
+
+    Conservative defaults apply: unknown or ambiguous blocker shapes never
+    auto-dispatch. The only currently whitelisted L1 dispatch shape is the
+    known blocked/manual_review/blocked_recovery_not_resolved custody path.
+    """
+
+    plan_payload = _as_mapping(plan_state)
+    failure_payload = _as_mapping(latest_failure or plan_payload.get("latest_failure"))
+    target_payload = _as_mapping(current_target)
+    custody = _as_mapping(custody_projection)
+
+    normalized_retry_strategy = _first_non_empty(
+        _as_text(retry_strategy),
+        _as_text(_as_mapping(plan_payload.get("resume_cursor")).get("retry_strategy")),
+        _as_text(_as_mapping(custody.get("plan_state")).get("resume_cursor")),
+    )
+    current_state = _first_non_empty(
+        _as_text(plan_payload.get("current_state")),
+        _as_text(_as_mapping(custody.get("plan_state")).get("current_state")),
+    )
+    failure_kind = _first_non_empty(
+        _as_text(failure_payload.get("kind")),
+        _as_text(custody.get("failure_kind")),
+    )
+    blocker_id = _as_text(custody.get("blocker_id"))
+    active_request_ids = [
+        value for value in (_as_list(custody.get("active_request_ids")) if custody else []) if _as_text(value)
+    ]
+    request_id = _as_text(active_request_ids[0]) if active_request_ids else ""
+    custody_bucket = _as_text(custody.get("custody_bucket"))
+    terminal_outcomes = [
+        value for value in (_as_list(custody.get("terminal_outcomes")) if custody else []) if _as_text(value)
+    ]
+
+    rationale: list[str] = []
+
+    if _is_terminal_dispatch_state(current_state, terminal_outcomes):
+        rationale.append("plan or repair evidence is terminal")
+        return RepairDispatchDecision(
+            decision=DISPATCH_DECISION_TERMINAL,
+            dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+            rationale=tuple(rationale),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=normalized_retry_strategy,
+            failure_kind=failure_kind,
+        )
+
+    human_gate = _human_blocker_dispatch_gate(human_blocker_classification)
+    if human_gate == DISPATCH_INTENT_HUMAN_REQUIRED:
+        rationale.append("human-blocker classification gates repair dispatch")
+        return RepairDispatchDecision(
+            decision=DISPATCH_DECISION_HUMAN_REQUIRED,
+            dispatch_intent=DISPATCH_INTENT_HUMAN_REQUIRED,
+            rationale=tuple(rationale),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=normalized_retry_strategy,
+            failure_kind=failure_kind,
+        )
+    if human_gate == DISPATCH_INTENT_BROKEN_SUPERFIXER:
+        rationale.append("mechanical or contradictory needs-human evidence blocks dispatch")
+        return RepairDispatchDecision(
+            decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
+            dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
+            rationale=tuple(rationale),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=normalized_retry_strategy,
+            failure_kind=failure_kind,
+        )
+
+    if _has_active_repair(lock_evidence=lock_evidence, process_evidence=process_evidence, custody=custody):
+        rationale.append("active repair ownership or runtime evidence already exists")
+        return RepairDispatchDecision(
+            decision=DISPATCH_DECISION_REPAIRING,
+            dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+            rationale=tuple(rationale),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=normalized_retry_strategy,
+            failure_kind=failure_kind,
+        )
+
+    if _is_known_repairable_shape(
+        current_state=current_state,
+        retry_strategy=normalized_retry_strategy,
+        failure_kind=failure_kind,
+        current_target=target_payload,
+    ):
+        if request_id:
+            rationale.append("known repairable blocker has active custody and no competing owner")
+            return RepairDispatchDecision(
+                decision=DISPATCH_DECISION_L1,
+                dispatch_intent=DISPATCH_INTENT_L1,
+                rationale=tuple(rationale),
+                blocker_id=blocker_id,
+                request_id=request_id,
+                custody_bucket=custody_bucket,
+                current_state=current_state,
+                retry_strategy=normalized_retry_strategy,
+                failure_kind=failure_kind,
+            )
+        rationale.append("known repairable blocker lacks an active request to dispatch")
+        return RepairDispatchDecision(
+            decision=DISPATCH_DECISION_NO_ACTION,
+            dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+            rationale=tuple(rationale),
+            blocker_id=blocker_id,
+            request_id="",
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=normalized_retry_strategy,
+            failure_kind=failure_kind,
+        )
+
+    if current_state == "blocked" or normalized_retry_strategy == "manual_review":
+        rationale.append("blocked or manual-review state is not a whitelisted repairable shape")
+        return RepairDispatchDecision(
+            decision=DISPATCH_DECISION_HUMAN_REQUIRED,
+            dispatch_intent=DISPATCH_INTENT_HUMAN_REQUIRED,
+            rationale=tuple(rationale),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=normalized_retry_strategy,
+            failure_kind=failure_kind,
+        )
+
+    rationale.append("state and evidence do not map to a safe repair dispatch policy")
+    return RepairDispatchDecision(
+        decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
+        dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
+        rationale=tuple(rationale),
+        blocker_id=blocker_id,
+        request_id=request_id,
+        custody_bucket=custody_bucket,
+        current_state=current_state,
+        retry_strategy=normalized_retry_strategy,
+        failure_kind=failure_kind,
+    )
 
 
 def load_json(path: str | Path, *, default: Any | None = None) -> Any:
@@ -1273,12 +1869,414 @@ def _record_preserved(summary: dict[str, Any], category: str, reason: str) -> No
     summary["preserved_reasons"][reason] = int(summary["preserved_reasons"].get(reason, 0)) + 1
 
 
+def _decision_history_by_request(
+    records: list[Mapping[str, Any]],
+) -> dict[str, list[RepairRequestDecisionRecord]]:
+    history: dict[str, list[RepairRequestDecisionRecord]] = {}
+    for record in records:
+        request_id = _as_text(record.get("request_id"))
+        if not request_id:
+            continue
+        history.setdefault(request_id, []).append(
+            {
+                "decision_id": _as_text(record.get("decision_id")),
+                "request_id": request_id,
+                "decision": _as_text(record.get("decision")),
+                "reason": _as_text(record.get("reason")),
+                "related_request_id": _as_text(record.get("related_request_id")),
+                "created_at": _as_text(record.get("created_at")),
+                "path": _as_text(record.get("_path")),
+            }
+        )
+    return history
+
+
+def _effective_request_decision(
+    history: list[RepairRequestDecisionRecord],
+) -> RepairRequestDecisionRecord | None:
+    if not history:
+        return None
+    priority = {
+        REQUEST_STATUS_SUPERSEDED: 5,
+        REQUEST_STATUS_STALE: 4,
+        REQUEST_STATUS_DISPATCHED: 3,
+        REQUEST_STATUS_COALESCED: 2,
+        REQUEST_STATUS_ACCEPTED: 1,
+    }
+    return max(
+        history,
+        key=lambda item: (
+            int(priority.get(str(item["decision"]), 0)),
+            str(item["created_at"]),
+            str(item["decision_id"]),
+        ),
+    )
+
+
+def _collect_custody_attempts(
+    *,
+    repair_data_dir: str | Path | None,
+    sidecar_dir: str | Path | None,
+    blocker_id: str,
+    fingerprint: BlockerFingerprintV1 | None,
+) -> list[RepairCustodyAttemptRecord]:
+    attempts: list[RepairCustodyAttemptRecord] = []
+    snapshot_request_ids = _collect_snapshot_request_ids(repair_data_dir)
+    if repair_data_dir is not None:
+        for path in sorted(Path(repair_data_dir).glob("*.repair-data.json")):
+            payload = load_json(path, default={})
+            if not isinstance(payload, Mapping):
+                continue
+            attempts.extend(
+                _attempts_from_snapshot(
+                    path=path,
+                    payload=payload,
+                    blocker_id=blocker_id,
+                    fingerprint=fingerprint,
+                )
+            )
+    if sidecar_dir is not None:
+        attempts.extend(
+            _attempts_from_sidecar(
+                sidecar_dir=Path(sidecar_dir),
+                blocker_id=blocker_id,
+                fingerprint=fingerprint,
+                snapshot_request_ids=snapshot_request_ids,
+            )
+        )
+    attempts.sort(key=lambda item: (item["recorded_at"], item["attempt_id"], item["path"]))
+    return attempts
+
+
+def _collect_snapshot_request_ids(
+    repair_data_dir: str | Path | None,
+) -> set[tuple[str, str]]:
+    request_ids: set[tuple[str, str]] = set()
+    if repair_data_dir is None:
+        return request_ids
+    for path in sorted(Path(repair_data_dir).glob("*.repair-data.json")):
+        payload = load_json(path, default={})
+        if not isinstance(payload, Mapping):
+            continue
+        session = _record_session_id(payload, path)
+        for attempt in _as_list(payload.get("attempts")):
+            request_id = _as_scalar_text(_as_mapping(attempt).get("request_id"))
+            attempt_id = _as_scalar_text(_as_mapping(attempt).get("attempt_id"))
+            if request_id and attempt_id:
+                request_ids.add((session, attempt_id))
+    return request_ids
+
+
+def _attempts_from_snapshot(
+    *,
+    path: Path,
+    payload: Mapping[str, Any],
+    blocker_id: str,
+    fingerprint: BlockerFingerprintV1 | None,
+) -> list[RepairCustodyAttemptRecord]:
+    session = _record_session_id(payload, path)
+    snapshot_outcome = _as_text(payload.get("outcome")) or REPAIRING
+    attempts: list[RepairCustodyAttemptRecord] = []
+    for attempt in _as_list(payload.get("attempts")):
+        record = _as_mapping(attempt)
+        attempt_id = _as_scalar_text(record.get("attempt_id"))
+        if not attempt_id:
+            continue
+        attempts.append(
+            _build_attempt_record(
+                attempt_id=attempt_id,
+                session=session,
+                source="repair_data_snapshot",
+                path=str(path),
+                blocker_id=blocker_id,
+                fingerprint=fingerprint,
+                request_id=_as_scalar_text(record.get("request_id")),
+                state=_attempt_state_from_snapshot(payload, record),
+                outcome=snapshot_outcome,
+                recorded_at=_repair_data_recorded_at(payload),
+                raw=record,
+            )
+        )
+    if attempts:
+        return attempts
+    current_attempt_id = _as_scalar_text(payload.get("current_attempt_id"))
+    if current_attempt_id:
+        payload_request_id = _as_scalar_text(
+            payload.get("request_id")
+        ) or _as_scalar_text(
+            (payload.get("current_recurrence") or {}).get("request_id")
+            if isinstance(payload.get("current_recurrence"), Mapping)
+            else None
+        )
+        attempts.append(
+            _build_attempt_record(
+                attempt_id=current_attempt_id,
+                session=session,
+                source="repair_data_snapshot",
+                path=str(path),
+                blocker_id=blocker_id,
+                fingerprint=fingerprint,
+                request_id=payload_request_id,
+                state=_attempt_state_from_snapshot(payload, {}),
+                outcome=snapshot_outcome,
+                recorded_at=_repair_data_recorded_at(payload),
+                raw=dict(payload),
+            )
+        )
+    return attempts
+
+
+def _attempts_from_sidecar(
+    *,
+    sidecar_dir: Path,
+    blocker_id: str,
+    fingerprint: BlockerFingerprintV1 | None,
+    snapshot_request_ids: set[tuple[str, str]],
+) -> list[RepairCustodyAttemptRecord]:
+    path = _sidecar_jsonl_path(sidecar_dir, "attempts")
+    records = read_jsonl_records(path, skip_parse_errors=True)
+    attempts: list[RepairCustodyAttemptRecord] = []
+    for record in records:
+        session = _as_scalar_text(record.get("session_id"))
+        attempt_id = _as_scalar_text(record.get("attempt_id"))
+        if not session or not attempt_id or (session, attempt_id) in snapshot_request_ids:
+            continue
+        attempts.append(
+            _build_attempt_record(
+                attempt_id=attempt_id,
+                session=session,
+                source="attempt_sidecar",
+                path=str(path),
+                blocker_id=blocker_id,
+                fingerprint=fingerprint,
+                request_id=_as_scalar_text(record.get("request_id")),
+                state=_attempt_state_from_sidecar(record),
+                outcome=_as_text(record.get("outcome")),
+                recorded_at=_as_text(record.get("_timestamp")),
+                raw=record,
+            )
+        )
+    return attempts
+
+
+def _build_attempt_record(
+    *,
+    attempt_id: str,
+    session: str,
+    source: str,
+    path: str,
+    blocker_id: str,
+    fingerprint: BlockerFingerprintV1 | None,
+    request_id: str,
+    state: RepairAttemptState,
+    outcome: str,
+    recorded_at: str,
+    raw: Mapping[str, Any],
+) -> RepairCustodyAttemptRecord:
+    normalized_outcome = outcome or (REPAIRING if state in {ATTEMPT_STATE_CLAIMED, ATTEMPT_STATE_RUNNING} else "")
+    return {
+        "attempt_id": attempt_id,
+        "session": session,
+        "source": source,
+        "path": path,
+        "blocker_id": blocker_id,
+        "blocker_fingerprint": fingerprint,
+        "request_id": request_id,
+        "state": state,
+        "outcome": normalized_outcome,
+        "terminal": normalized_outcome != "" and is_terminal_outcome(normalized_outcome),
+        "recorded_at": recorded_at,
+        "raw": dict(raw),
+    }
+
+
+def _attempt_state_from_snapshot(
+    payload: Mapping[str, Any],
+    record: Mapping[str, Any],
+) -> RepairAttemptState:
+    outcome = _as_text(payload.get("outcome")) or REPAIRING
+    if not is_terminal_outcome(outcome):
+        if _attempt_record_is_running(record):
+            return ATTEMPT_STATE_RUNNING
+        return ATTEMPT_STATE_CLAIMED
+    if is_success_outcome(outcome):
+        return ATTEMPT_STATE_SUCCEEDED
+    if outcome in {"cancelled", "canceled"}:
+        return ATTEMPT_STATE_CANCELLED
+    return ATTEMPT_STATE_FAILED
+
+
+def _attempt_state_from_sidecar(record: Mapping[str, Any]) -> RepairAttemptState:
+    outcome = _as_text(record.get("outcome"))
+    if outcome:
+        if not is_terminal_outcome(outcome):
+            return ATTEMPT_STATE_RUNNING
+        if is_success_outcome(outcome):
+            return ATTEMPT_STATE_SUCCEEDED
+        if outcome in {"cancelled", "canceled"}:
+            return ATTEMPT_STATE_CANCELLED
+        return ATTEMPT_STATE_FAILED
+    status = _as_text(record.get("status")).lower()
+    if status in {"claimed", "queued"}:
+        return ATTEMPT_STATE_CLAIMED
+    if status in {"running", "active", "repairing", "in_progress"}:
+        return ATTEMPT_STATE_RUNNING
+    if status in {"succeeded", "complete", "completed"}:
+        return ATTEMPT_STATE_SUCCEEDED
+    if status in {"cancelled", "canceled"}:
+        return ATTEMPT_STATE_CANCELLED
+    return ATTEMPT_STATE_FAILED
+
+
+def _attempt_record_is_running(record: Mapping[str, Any]) -> bool:
+    for key in ("mechanical_launch", "kimi_launch"):
+        if _as_text(record.get(key)) == "running":
+            return True
+    return False
+
+
+def _as_mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _as_text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _as_scalar_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    return ""
+
+
+def _stable_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
+    return {str(key): value[key] for key in sorted(value)}
+
+
+def _first_non_empty(*values: str) -> str:
+    for value in values:
+        if value:
+            return value
+    return ""
+
+
+def _is_terminal_dispatch_state(current_state: str, terminal_outcomes: list[Any]) -> bool:
+    if terminal_outcomes:
+        return True
+    return current_state in {
+        "aborted",
+        "cancelled",
+        "complete",
+        "completed",
+        "done",
+        "error",
+        "failed",
+        "resolved",
+        "succeeded",
+        "success",
+    }
+
+
+def _human_blocker_dispatch_gate(classification: Any) -> RepairDispatchIntent | None:
+    if classification is None:
+        return None
+    from arnold_pipelines.megaplan.cloud.human_blockers import dispatch_gate_for_human_blocker
+
+    return dispatch_gate_for_human_blocker(classification)
+
+
+def _has_active_repair(
+    *,
+    lock_evidence: Any,
+    process_evidence: Mapping[str, Any] | None,
+    custody: Mapping[str, Any],
+) -> bool:
+    attempts = _as_list(custody.get("attempts"))
+    if any(not bool(_as_mapping(item).get("terminal")) for item in attempts if isinstance(item, Mapping)):
+        return True
+    if _as_text(custody.get("custody_bucket")) == CUSTODY_BUCKET_REPAIRING:
+        return True
+
+    lock_status = _as_text(getattr(lock_evidence, "status", ""))
+    if not lock_status and isinstance(lock_evidence, Mapping):
+        lock_status = _as_text(lock_evidence.get("status"))
+    if lock_status in {"acquired", "busy", "claimed", "already_claimed"}:
+        return True
+
+    process_payload = _as_mapping(process_evidence)
+    process_status = _as_text(process_payload.get("status"))
+    if process_payload.get("active") is True or process_payload.get("live") is True:
+        return True
+    return process_status in {"active", "busy", "claimed", "repairing", "running"}
+
+
+def _is_known_repairable_shape(
+    *,
+    current_state: str,
+    retry_strategy: str,
+    failure_kind: str,
+    current_target: Mapping[str, Any],
+) -> bool:
+    if current_state != "blocked":
+        return False
+    if retry_strategy != "manual_review":
+        return False
+    if failure_kind != "blocked_recovery_not_resolved":
+        return False
+    return _has_current_target_evidence(current_target)
+
+
+def _has_current_target_evidence(current_target: Mapping[str, Any]) -> bool:
+    target_payload = _as_mapping(current_target)
+    current_refs = _as_mapping(target_payload.get("current_refs"))
+    plan_state = _as_mapping(target_payload.get("plan_state"))
+    chain_state = _as_mapping(target_payload.get("chain_state"))
+    if _as_text(plan_state.get("fingerprint")):
+        return True
+    if _as_text(chain_state.get("fingerprint")):
+        return True
+    if _as_text(target_payload.get("authoritative_source")) and _as_text(
+        current_refs.get("current_plan_name")
+    ):
+        return True
+    return bool(plan_state.get("present")) or bool(chain_state.get("present"))
+
+
 __all__ = [
     "ADDITIVE_FIELD_DEFAULTS",
+    "ATTEMPT_STATE_CLAIMED",
+    "ATTEMPT_STATE_RUNNING",
+    "ATTEMPT_STATE_SUCCEEDED",
+    "ATTEMPT_STATE_FAILED",
+    "ATTEMPT_STATE_CANCELLED",
     "ALL_OUTCOMES",
+    "BLOCKER_FINGERPRINT_V1_PREFIX",
+    "BLOCKER_FINGERPRINT_VERSION",
+    "BLOCKER_ID_V1_PREFIX",
+    "BlockerFingerprintV1",
     "COMPLETE",
+    "CUSTODY_BUCKET_BROKEN_SUPERFIXER",
+    "CUSTODY_BUCKET_HUMAN_REQUIRED",
+    "CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING",
+    "CUSTODY_BUCKET_REPAIRING",
     "CURRENT_SCHEMA_VERSION",
     "DEFAULT_REPAIR_BUDGET_SECS",
+    "DISPATCH_DECISION_BROKEN_SUPERFIXER",
+    "DISPATCH_DECISION_HUMAN_REQUIRED",
+    "DISPATCH_DECISION_L1",
+    "DISPATCH_DECISION_NO_ACTION",
+    "DISPATCH_DECISION_REPAIRING",
+    "DISPATCH_DECISION_TERMINAL",
+    "DISPATCH_INTENT_BROKEN_SUPERFIXER",
+    "DISPATCH_INTENT_HUMAN_REQUIRED",
+    "DISPATCH_INTENT_L1",
+    "DISPATCH_INTENT_QUEUE_ONLY",
     "DISCORD_ESCALATED",
     "LIVE_WITH_FRESH_ACTIVITY",
     "NEEDS_HUMAN",
@@ -1298,7 +2296,10 @@ __all__ = [
     "append_repair_event",
     "atomic_write_json",
     "atomic_write_repair_index",
+    "blocker_fingerprint_from_evidence",
+    "blocker_id_for_fingerprint",
     "build_verification_record",
+    "classify_repair_dispatch",
     "classify_verification_outcome",
     "cleanup_repair_data_retention",
     "compute_deadline",
@@ -1309,6 +2310,10 @@ __all__ = [
     "load_json",
     "load_repair_index",
     "merge_additive_fields",
+    "normalize_blocker_fingerprint_v1",
+    "project_repair_custody",
+    "RepairDispatchDecision",
+    "RepairDispatchDecisionKind",
     "read_repair_index",
     "read_jsonl_records",
     "redact_repair_index",

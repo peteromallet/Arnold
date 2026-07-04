@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
+from threading import Barrier
 
 from arnold_pipelines.megaplan.cloud import repair_requests
 
@@ -23,6 +26,121 @@ def test_queue_dir_is_marker_dir_adjacent(tmp_path: Path) -> None:
     marker_dir = tmp_path / ".megaplan" / "chain-markers"
 
     assert repair_requests.repair_queue_dir(marker_dir) == tmp_path / ".megaplan" / "repair-queue"
+
+
+def test_concurrent_active_repair_request_claim_has_one_winner_and_typed_losers(
+    tmp_path: Path,
+) -> None:
+    queue_dir = tmp_path / "repair-queue"
+    blocker_id = "blocker:v1:shared"
+    request_id = "req-active"
+    contenders = 8
+    barrier = Barrier(contenders)
+
+    def claim(index: int) -> repair_requests.ActiveRepairClaimResult:
+        barrier.wait(timeout=10)
+        return repair_requests.claim_active_repair_request(
+            queue_dir,
+            blocker_id=blocker_id,
+            request_id=request_id,
+            actor=f"worker-{index}",
+            session="demo-session",
+            pid=10_000 + index,
+            command="repair-trigger",
+            cwd="/workspace/project",
+            hostname="worker-host",
+            is_pid_live=lambda pid: True,
+        )
+
+    with ThreadPoolExecutor(max_workers=contenders) as executor:
+        results = list(executor.map(claim, range(contenders)))
+
+    winners = [result for result in results if result.claimed]
+    losers = [result for result in results if result.already_claimed]
+    assert len(winners) == 1
+    assert len(losers) == contenders - 1
+    assert winners[0].owner is not None
+    assert winners[0].owner["kind"] == "active_repair_request_claim"
+    assert winners[0].owner["actor"].startswith("worker-")
+    assert winners[0].owner["session"] == "demo-session"
+    assert winners[0].owner["request_id"] == request_id
+    assert winners[0].owner["blocker_id"] == blocker_id
+    assert winners[0].owner["pid"] in {10_000 + index for index in range(contenders)}
+    assert all(loser.evidence is not None for loser in losers)
+    assert {loser.evidence["status"] for loser in losers if loser.evidence} == {"already_claimed"}
+    assert {loser.evidence["owner_request_id"] for loser in losers if loser.evidence} == {request_id}
+    assert {loser.evidence["owner_blocker_id"] for loser in losers if loser.evidence} == {blocker_id}
+
+
+def test_active_repair_claim_for_different_request_reports_busy_owner(
+    tmp_path: Path,
+) -> None:
+    queue_dir = tmp_path / "repair-queue"
+    first = repair_requests.claim_active_repair_request(
+        queue_dir,
+        blocker_id="blocker:v1:shared",
+        request_id="req-a",
+        actor="trigger-a",
+        session="demo-session",
+        pid=111,
+        is_pid_live=lambda pid: True,
+    )
+
+    second = repair_requests.claim_active_repair_request(
+        queue_dir,
+        blocker_id="blocker:v1:shared",
+        request_id="req-b",
+        actor="trigger-b",
+        session="demo-session",
+        pid=222,
+        is_pid_live=lambda pid: True,
+    )
+
+    assert first.claimed
+    assert second.busy
+    assert second.evidence is not None
+    assert second.evidence["status"] == "busy"
+    assert second.evidence["owner_request_id"] == "req-a"
+    assert second.evidence["request_id"] == "req-b"
+    assert second.evidence["owner_actor"] == "trigger-a"
+
+
+def test_active_repair_claim_preserves_stale_lock_evidence(tmp_path: Path) -> None:
+    queue_dir = tmp_path / "repair-queue"
+    first = repair_requests.claim_active_repair_request(
+        queue_dir,
+        blocker_id="blocker:v1:stale",
+        request_id="req-stale",
+        actor="trigger-a",
+        session="demo-session",
+        pid=333,
+        started_at="2026-07-04T01:00:00+00:00",
+        timeout_seconds=60,
+        is_pid_live=lambda pid: True,
+    )
+    assert first.claimed
+    owner_path = first.lock_dir / "owner.json"
+    snapshot = owner_path.read_text(encoding="utf-8")
+
+    stale = repair_requests.claim_active_repair_request(
+        queue_dir,
+        blocker_id="blocker:v1:stale",
+        request_id="req-stale",
+        actor="trigger-b",
+        session="demo-session",
+        pid=444,
+        now=datetime(2026, 7, 4, 1, 10, tzinfo=timezone.utc),
+        is_pid_live=lambda pid: False,
+    )
+
+    assert stale.stale
+    assert stale.evidence is not None
+    assert stale.evidence["kind"] == "active_repair_claim_stale"
+    assert stale.evidence["stale_evidence"]["owner"]["request_id"] == "req-stale"
+    assert "owner_pid_not_live" in stale.evidence["stale_evidence"]["reasons"]
+    assert "timeout_expired" in stale.evidence["stale_evidence"]["reasons"]
+    assert owner_path.read_text(encoding="utf-8") == snapshot
+    assert first.lock_dir.exists()
 
 
 def test_enqueue_writes_once_and_never_stores_raw_root_cause_text(tmp_path: Path) -> None:

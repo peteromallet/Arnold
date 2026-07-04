@@ -2379,7 +2379,7 @@ repair_data_init() {
   tmux_info="$(tmux capture-pane -pt "$SESSION" -S -80 2>/dev/null || true)"
   chain_state="$(find "$WORKSPACE/.megaplan" -path '*/.chains/*.json' -o -name 'chain_state.json' 2>/dev/null | sort | tail -10)"
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$run_kind" "$plan_name")"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$ARNOLD_SRC" "$SYNC_BRANCH" "$RUN_DIR" "$relaunch_command" "$initial_health" "$marker_json" "$source_git" "$workspace_git" "$chain_log" "$watchdog_log" "$tmux_info" "$chain_state" "$failure_context" <<'PY'
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$ARNOLD_SRC" "$SYNC_BRANCH" "$RUN_DIR" "$relaunch_command" "$initial_health" "$marker_json" "$source_git" "$workspace_git" "$chain_log" "$watchdog_log" "$tmux_info" "$chain_state" "$failure_context" "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'PY'
 import json
 import pathlib
 import sys
@@ -2411,6 +2411,8 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     tmux_info,
     chain_state,
     failure_context,
+    request_id,
+    blocker_id,
 ) = sys.argv[1:]
 failure_context_payload = json.loads(failure_context)
 data_path = pathlib.Path(path)
@@ -2423,6 +2425,10 @@ repair_run_count = int(existing.get("repair_run_count") or 0) + 1
 # Derive a stable incident_id from the session so the incident bridge and
 # watchdog can both reference the same incident across repair cycles.
 incident_id = str(existing.get("incident_id") or "").strip() or f"inc-{session}"
+
+# Preserve dispatch-level request/blocker identity from triggering env.
+dispatch_request_id = str(request_id or existing.get("request_id") or "").strip()
+dispatch_blocker_id = str(blocker_id or existing.get("blocker_id") or "").strip()
 
 payload = {
     "session": session,
@@ -2475,6 +2481,8 @@ payload = {
     "run_recurrence_detected": False,
     "iterations": [],
     "outcome": "repairing",
+    "request_id": dispatch_request_id,
+    "blocker_id": dispatch_blocker_id,
 }
 resolver_output = failure_context_payload.get("resolver_output")
 payload["initial_facts"]["resolver_output"] = resolver_output or {}
@@ -2589,6 +2597,8 @@ attempt["dispatched_at"] = (payload.get("current_recurrence") or {}).get("dispat
 attempt["problem_signature"] = payload.get("current_signature") or {}
 attempt["advancement_snapshot"] = payload.get("current_advancement_snapshot") or {}
 attempt["recurrence"] = payload.get("current_recurrence") or {}
+attempt["request_id"] = payload.get("request_id") or (payload.get("current_recurrence") or {}).get("request_id") or ""
+attempt["blocker_id"] = payload.get("blocker_id") or (payload.get("current_recurrence") or {}).get("blocker_id") or ""
 attempt["failure_context"] = payload.get("current_failure_context") or {}
 attempt["failure_classification"] = entry["failure_classification"]
 attempt["raw_failure_signals"] = entry["raw_failure_signals"]
@@ -3171,7 +3181,7 @@ repair_recurrence_prepare_attempt() {
   local dispatch_model="$3"
   local failure_context
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$failure_context" "$iteration" "$requested_model" "$dispatch_model" "$REPAIR_RECURRENCE_MIN_DISPATCHES" "$REPAIR_RECURRENCE_WINDOW_SECS" <<'PY'
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$failure_context" "$iteration" "$requested_model" "$dispatch_model" "$REPAIR_RECURRENCE_MIN_DISPATCHES" "$REPAIR_RECURRENCE_WINDOW_SECS" "${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}" "${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}" <<'PY'
 import datetime as dt
 import json
 import pathlib
@@ -3188,6 +3198,8 @@ from arnold_pipelines.megaplan.cloud import repair_recurrence
     dispatch_model,
     min_dispatches_raw,
     window_seconds_raw,
+    request_id,
+    blocker_id,
 ) = sys.argv[1:]
 data_path = pathlib.Path(data_path_raw)
 progress_path = pathlib.Path(progress_path_raw)
@@ -3227,6 +3239,10 @@ payload["current_attempt_id"] = attempt_id
 payload["current_failure_context"] = failure_context
 payload["current_signature"] = signature
 payload["current_advancement_snapshot"] = advancement
+dispatch_request_id = str(request_id or payload.get("request_id") or "").strip()
+dispatch_blocker_id = str(blocker_id or payload.get("blocker_id") or "").strip()
+payload["request_id"] = dispatch_request_id or payload.get("request_id")
+payload["blocker_id"] = dispatch_blocker_id or payload.get("blocker_id")
 payload["current_recurrence"] = {
     **recurrence,
     "attempt_id": attempt_id,
@@ -3235,6 +3251,8 @@ payload["current_recurrence"] = {
     "dispatch_model": dispatch_model,
     "dispatched_at": dispatched_at,
     "root_cause_mode": bool(recurrence.get("detected")),
+    "request_id": dispatch_request_id,
+    "blocker_id": dispatch_blocker_id,
 }
 payload["run_recurrence_detected"] = bool(payload.get("run_recurrence_detected")) or bool(recurrence.get("detected"))
 repair_recurrence.atomic_write_json(data_path, payload)

@@ -960,6 +960,210 @@ PY
   rm -f "$payload_tmp" "$dm_result_tmp" "$escalation_context_tmp"
 }
 
+manual_review_dispatch_status_env() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec_path="$3"
+  local run_kind="${4:-chain}"
+  local plan_name="${5:-}"
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" "$MARKER_DIR" "$REPAIR_DATA_DIR" <<'PY'
+import hashlib
+import json
+import shlex
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
+from arnold_pipelines.megaplan.cloud.repair_contract import classify_repair_dispatch, project_repair_custody
+from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
+
+session, workspace_raw, remote_spec_raw, run_kind, plan_name, marker_dir_raw, repair_data_dir_raw = sys.argv[1:]
+workspace = Path(workspace_raw)
+marker_dir = Path(marker_dir_raw)
+repair_data_dir = Path(repair_data_dir_raw)
+needs_human_path = repair_data_dir / f"{session}.needs-human.json"
+
+
+def emit(name: str, value: str) -> None:
+    print(f"{name}={shlex.quote(value)}")
+
+
+def load_json_dict(path: Path | None) -> dict[str, object]:
+    if path is None:
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def plan_state_path() -> Path | None:
+    if plan_name:
+        return workspace / ".megaplan" / "plans" / plan_name / "state.json"
+    if run_kind != "plan":
+        return None
+    plans_root = workspace / ".megaplan" / "plans"
+    candidates = sorted(plans_root.glob("*/state.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+    return candidates[0] if candidates else None
+
+
+def chain_state_path() -> Path | None:
+    if run_kind != "chain" or not remote_spec_raw:
+        return None
+    spec_path = Path(remote_spec_raw)
+    if not spec_path.is_absolute():
+        spec_path = workspace / spec_path
+    try:
+        spec_resolved = spec_path.resolve()
+    except Exception:
+        spec_resolved = spec_path
+    digest = hashlib.sha1(str(spec_resolved).encode("utf-8")).hexdigest()[:12]
+    candidates = (
+        workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json",
+        workspace / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json",
+        spec_resolved.parent / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json",
+        spec_resolved.parent / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json",
+        spec_resolved.with_name("chain_state.json"),
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+state_path = plan_state_path()
+plan_state = load_json_dict(state_path)
+resolved_plan_name = str(plan_state.get("name") or plan_name or "").strip()
+if not resolved_plan_name and state_path is not None:
+    resolved_plan_name = state_path.parent.name
+
+target = {}
+if marker_dir.joinpath(f"{session}.json").exists():
+    target = resolve_current_target(
+        session,
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+if not target:
+    plan_path = state_path
+    plan_record = {
+        "path": str(plan_path) if plan_path is not None else "",
+        "present": bool(plan_path and plan_path.exists()),
+        "name": resolved_plan_name,
+        "current_state": str(plan_state.get("current_state") or ""),
+        "resume_cursor": plan_state.get("resume_cursor") if isinstance(plan_state.get("resume_cursor"), dict) else {},
+        "fingerprint": "",
+    }
+    if plan_path is not None and plan_path.exists():
+        plan_record["fingerprint"] = "sha256:" + hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    chain_path = chain_state_path()
+    chain_state = load_json_dict(chain_path)
+    chain_record = {
+        "path": str(chain_path) if chain_path is not None else "",
+        "present": bool(chain_path and chain_path.exists()),
+        "current_plan_name": str(chain_state.get("current_plan_name") or resolved_plan_name),
+        "last_state": str(chain_state.get("last_state") or ""),
+        "fingerprint": "",
+    }
+    if chain_path is not None and chain_path.exists():
+        chain_record["fingerprint"] = "sha256:" + hashlib.sha256(chain_path.read_bytes()).hexdigest()
+    target = {
+        "schema_version": 1,
+        "session": session,
+        "target_id": f"{session}:{resolved_plan_name or run_kind or 'unknown'}",
+        "authoritative_source": "chain_state" if chain_record["present"] else "plan_state",
+        "target_session": session,
+        "current_refs": {
+            "workspace": str(workspace),
+            "run_kind": run_kind,
+            "remote_spec": remote_spec_raw,
+            "current_plan_name": resolved_plan_name,
+            "chain_current_plan_name": chain_record["current_plan_name"],
+            "chain_last_state": chain_record["last_state"],
+            "plan_current_state": plan_record["current_state"],
+        },
+        "plan_state": plan_record,
+        "chain_state": chain_record,
+        "event_cursors": {
+            "resume_retry_strategy": str(
+                (plan_state.get("resume_cursor") or {}).get("retry_strategy")
+                if isinstance(plan_state.get("resume_cursor"), dict)
+                else ""
+            ),
+        },
+        "stale_evidence": [],
+        "needs_human": {"path": str(needs_human_path), "present": needs_human_path.exists()},
+    }
+
+projection = project_repair_custody(
+    plan_state=plan_state,
+    current_target=target,
+    marker_dir=marker_dir,
+    repair_data_dir=repair_data_dir,
+)
+if not projection.get("active_request_ids"):
+    latest_failure = plan_state.get("latest_failure")
+    latest_failure = latest_failure if isinstance(latest_failure, dict) else {}
+    metadata = latest_failure.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    enqueue_repair_request(
+        marker_dir=marker_dir,
+        session=session,
+        source="watchdog",
+        target={
+            "workspace": str(workspace),
+            "remote_spec": remote_spec_raw,
+            "run_kind": run_kind,
+            "plan_name": resolved_plan_name,
+        },
+        workspace=str(workspace),
+        run_kind=run_kind,
+        problem_signature={
+            "failure_kind": str(latest_failure.get("kind") or ""),
+            "current_state": str(plan_state.get("current_state") or ""),
+            "phase_or_step": str(latest_failure.get("phase") or ""),
+            "milestone_or_plan": resolved_plan_name,
+            "gate_recommendation": "",
+            "blocked_task_id": str(metadata.get("blocked_task_id") or ""),
+        },
+        root_cause_hint=str(latest_failure.get("message") or ""),
+    )
+    projection = project_repair_custody(
+        plan_state=plan_state,
+        current_target=target,
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+
+human_blocker = None
+if needs_human_path.exists():
+    human_blocker = classify_needs_human_blocker(
+        session,
+        current_plan=resolved_plan_name,
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+        needs_human_path=needs_human_path,
+        resolver_record=target,
+    )
+
+decision = classify_repair_dispatch(
+    plan_state=plan_state,
+    current_target=target,
+    human_blocker_classification=human_blocker,
+    custody_projection=projection,
+)
+
+emit("PLAN_STATUS_DISPATCH_DECISION", decision.decision)
+emit("PLAN_STATUS_DISPATCH_INTENT", decision.dispatch_intent)
+emit("PLAN_STATUS_CUSTODY_BUCKET", decision.custody_bucket)
+emit("PLAN_STATUS_BLOCKER_ID", decision.blocker_id)
+emit("PLAN_STATUS_REQUEST_ID", decision.request_id)
+emit("PLAN_STATUS_TARGET_SOURCE", str(target.get("authoritative_source") or ""))
+PY
+}
+
 adopt_unmarked_tmux_sessions() {
   local discover_bin="${DISCOVER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
   [[ -f "$discover_bin" ]] || return 0
@@ -3105,7 +3309,7 @@ dispatch_kimi_repair() {
   local session="$1"
   local workspace="$2"
   local remote_spec="$3"
-  local pgid_path repair_busy
+  local pgid_path repair_busy claim_status
   REPAIR_DISPATCH_RESULT="unavailable"
   if [[ ! -x "$PRIMARY_REPAIR_BIN" ]]; then
     emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop binary unavailable" "unavailable" "immediate_repair"
@@ -3118,21 +3322,87 @@ dispatch_kimi_repair() {
     emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop already active" "busy" "immediate_repair"
     return 0
   fi
+  if declare -F claim_active_repair_launch >/dev/null 2>&1; then
+    claim_status="$(claim_active_repair_launch "$session" "$workspace" "$remote_spec")"
+  else
+    claim_status=""
+  fi
+  case "$claim_status" in
+    ""|claimed)
+      ;;
+    already_claimed|busy)
+      log "repair request already claimed; skipping dispatch session=$session request=${PLAN_STATUS_REQUEST_ID:-unknown}"
+      REPAIR_DISPATCH_RESULT="busy"
+      emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair request already claimed" "busy" "immediate_repair"
+      return 0
+      ;;
+    stale)
+      log "repair request claim is stale; refusing dispatch session=$session request=${PLAN_STATUS_REQUEST_ID:-unknown}"
+      emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair request claim is stale" "busy" "immediate_repair"
+      return 0
+      ;;
+    *)
+      log "repair request claim failed; refusing dispatch session=$session request=${PLAN_STATUS_REQUEST_ID:-unknown} status=$claim_status"
+      emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair request claim failed" "unavailable" "immediate_repair"
+      return 1
+      ;;
+  esac
   pgid_path="$(kimi_pgid_path "$session")"
   kimi_dispatch_marker_set "$session"
   if command -v setsid >/dev/null 2>&1; then
-    setsid bash -c 'echo "$$" > "$1"; exec "$2" "$3" "$4" "$5"' \
-      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" \
+    setsid bash -c 'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; exec "$2" "$3" "$4" "$5"' \
+      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" "${PLAN_STATUS_REQUEST_ID:-}" "${PLAN_STATUS_BLOCKER_ID:-}" \
       >> "$LOG" 2>&1 < /dev/null &
   else
-    bash -c 'echo "$$" > "$1"; exec "$2" "$3" "$4" "$5"' \
-      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" \
+    bash -c 'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; exec "$2" "$3" "$4" "$5"' \
+      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" "${PLAN_STATUS_REQUEST_ID:-}" "${PLAN_STATUS_BLOCKER_ID:-}" \
       >> "$LOG" 2>&1 < /dev/null &
   fi
   log "repair loop background-dispatched session=$session pid=$!"
   REPAIR_DISPATCH_RESULT="dispatched"
   emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop background-dispatched" "dispatched" "immediate_repair"
   return 0
+}
+
+claim_active_repair_launch() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  if [[ -z "${PLAN_STATUS_BLOCKER_ID:-}" || -z "${PLAN_STATUS_REQUEST_ID:-}" ]]; then
+    printf '\n'
+    return 0
+  fi
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - \
+    "$MARKER_DIR" \
+    "$session" \
+    "$workspace" \
+    "$remote_spec" \
+    "${PLAN_STATUS_BLOCKER_ID:-}" \
+    "${PLAN_STATUS_REQUEST_ID:-}" \
+    "$$" <<'PY'
+import sys
+
+from arnold_pipelines.megaplan.cloud import repair_requests
+
+marker_dir, session, workspace, remote_spec, blocker_id, request_id, pid_text = sys.argv[1:]
+try:
+    pid = int(pid_text)
+except ValueError:
+    pid = None
+
+result = repair_requests.claim_active_repair_request(
+    repair_requests.repair_queue_dir(marker_dir),
+    blocker_id=blocker_id,
+    request_id=request_id,
+    actor="arnold-watchdog",
+    session=session,
+    pid=pid,
+    command=f"arnold-repair-loop {session} {workspace} {remote_spec}",
+    cwd=workspace,
+    extra={"workspace": workspace, "remote_spec": remote_spec},
+)
+print(result.status)
+PY
 }
 
 # ---- meta-repair dispatch ----------------------------------------------------
@@ -5071,6 +5341,12 @@ PY
   PLAN_STATUS_CHAIN_COMPLETE=0
   PLAN_STATUS_CHAIN_CURRENT_INDEX=
   PLAN_STATUS_CHAIN_MILESTONE_COUNT=
+  PLAN_STATUS_DISPATCH_DECISION=
+  PLAN_STATUS_DISPATCH_INTENT=
+  PLAN_STATUS_CUSTODY_BUCKET=
+  PLAN_STATUS_BLOCKER_ID=
+  PLAN_STATUS_REQUEST_ID=
+  PLAN_STATUS_TARGET_SOURCE=
   # If the helper emits nothing, keep the tick on the default non-attention path.
   plan_status_env="$(plan_attention_status_env "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" 2>>"$LOG" || true)"
   if [[ -n "$plan_status_env" ]]; then
@@ -5166,7 +5442,7 @@ PY
     return 0
   fi
   if [[ "${PLAN_STATUS_MANUAL_REVIEW:-0}" == "1" ]]; then
-    local human_summary repair_busy repair_summary manual_review_origin
+    local human_summary repair_busy repair_summary manual_review_origin manual_review_dispatch_env manual_review_report_reason
     manual_review_origin="${PLAN_STATUS_MANUAL_REVIEW_ORIGIN:-}"
     human_summary="manual_review halt; state=${PLAN_STATUS_CURRENT_STATE:-unknown}; retry=${PLAN_STATUS_RETRY_STRATEGY:-unknown}; failure=${PLAN_STATUS_FAILURE_KIND:-unknown}"
     if [[ -n "$manual_review_origin" ]]; then
@@ -5181,7 +5457,11 @@ PY
     if [[ -n "${PLAN_STATUS_PUSHED_COMMITS:-}" ]]; then
       human_summary="$human_summary; commits=${PLAN_STATUS_PUSHED_COMMITS}"
     fi
-    if [[ "$manual_review_origin" == "auto_stall" || "$manual_review_origin" == "auto_stall_legacy" ]]; then
+    manual_review_dispatch_env="$(manual_review_dispatch_status_env "$session" "$workspace" "$remote_spec_path" "$run_kind" "${PLAN_STATUS_PLAN_NAME:-$plan_name}" 2>>"$LOG" || true)"
+    if [[ -n "$manual_review_dispatch_env" ]]; then
+      eval "$manual_review_dispatch_env"
+    fi
+    if [[ "${PLAN_STATUS_DISPATCH_DECISION:-}" == "dispatch_l1_repair" || "$manual_review_origin" == "auto_stall" || "$manual_review_origin" == "auto_stall_legacy" ]]; then
       if [[ -f "$(repair_needs_human_path "$session")" ]]; then
         local stale_marker_plans
         stale_marker_plans="$(repair_needs_human_matches_current_plan "$session" "${PLAN_STATUS_PLAN_NAME:-}" 2>/dev/null)" || {
@@ -5200,28 +5480,32 @@ PY
           return 0
         fi
       fi
+      manual_review_report_reason="manual_review repair loop dispatched before needs_human"
+      if [[ "$manual_review_origin" == "auto_stall" || "$manual_review_origin" == "auto_stall_legacy" ]]; then
+        manual_review_report_reason="auto_stall manual_review repair loop dispatched before needs_human"
+      fi
       repair_busy="$(repair_loop_busy_state "$session")"
       if [[ "$repair_busy" == "same_session" ]]; then
-        log "session auto-stalled into manual_review; repair already running session=$session summary=$human_summary"
-        report_item "$report_items" "$session" "repair" "repair_running" "auto_stall manual_review repair already running" "$workspace" "$remote_spec"
+        log "session manual_review classified for repair dispatch; repair already running session=$session summary=$human_summary"
+        report_item "$report_items" "$session" "repair" "repair_running" "$manual_review_report_reason" "$workspace" "$remote_spec"
         return 0
       fi
       if [[ "$repair_busy" == "other_session" ]]; then
-        log "session auto-stalled into manual_review; another repair loop already running so waiting turn session=$session summary=$human_summary"
+        log "session manual_review classified for repair dispatch; another repair loop already running so waiting turn session=$session summary=$human_summary"
         report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
         return 0
       fi
       if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
         if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
-          log "session auto-stalled into manual_review; another repair loop already running so waiting turn session=$session summary=$human_summary"
+          log "session manual_review classified for repair dispatch; another repair loop already running so waiting turn session=$session summary=$human_summary"
           report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
         else
-          log "session auto-stalled into manual_review; background-dispatched repair loop before needs_human session=$session summary=$human_summary"
-          report_item "$report_items" "$session" "repair" "repair_dispatched" "auto_stall manual_review repair loop dispatched before needs_human" "$workspace" "$remote_spec"
+          log "session manual_review classified for repair dispatch; background-dispatched repair loop before needs_human session=$session summary=$human_summary"
+          report_item "$report_items" "$session" "repair" "repair_dispatched" "$manual_review_report_reason" "$workspace" "$remote_spec"
         fi
         return 0
       fi
-      log "session auto-stalled into manual_review but repair loop is unavailable; needs human session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
+      log "session manual_review classified for repair dispatch but repair loop is unavailable; needs human session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
     fi
     log "session requires human review session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
     notify_needs_human "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$human_summary"

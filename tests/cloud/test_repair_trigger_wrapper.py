@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
 import stat
 import subprocess
 import sys
@@ -9,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from arnold_pipelines.megaplan.cloud import repair_contract
+from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud import repair_requests
 from arnold_pipelines.megaplan.cloud.repair_lock import acquire_repair_lock, release_repair_lock
 
@@ -18,7 +21,7 @@ TRIGGER = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers" / "
 
 def _signature(**overrides: str) -> dict[str, str]:
     base = {
-        "failure_kind": "execute_failed",
+        "failure_kind": "blocked_recovery_not_resolved",
         "current_state": "blocked",
         "phase_or_step": "execute",
         "milestone_or_plan": "m3",
@@ -96,6 +99,8 @@ def _run_trigger(
         env.pop("ARNOLD_REPAIR_TRIGGER_ENABLED", None)
     if env_overrides:
         env.update(env_overrides)
+    if not enabled and not (env_overrides and "ARNOLD_CLOUD_HOT_ENV" in env_overrides):
+        env["ARNOLD_REPAIR_TRIGGER_ENABLED"] = "0"
     cmd = [
         sys.executable,
         str(TRIGGER),
@@ -130,6 +135,57 @@ def _read_json_eventually(path: Path, *, timeout_s: float = 2.0) -> dict[str, An
     raise FileNotFoundError(path)
 
 
+def _project_request_custody(marker_dir: Path, request: dict[str, object]) -> dict[str, Any]:
+    request_payload = request["request"]
+    assert isinstance(request_payload, dict)
+    session = str(request_payload["session"])
+    target = resolve_current_target(
+        session,
+        marker_dir=marker_dir,
+        repair_data_dir=None,
+        session_is_live=lambda _session: False,
+        pid_is_live=lambda _pid: False,
+    )
+    signature = request_payload["problem_signature"]
+    assert isinstance(signature, dict)
+    current_refs = dict(target.get("current_refs") or {}) if isinstance(target.get("current_refs"), dict) else {}
+    target_plan = dict(target.get("plan_state") or {}) if isinstance(target.get("plan_state"), dict) else {}
+    current_plan_name = str(
+        current_refs.get("current_plan_name")
+        or current_refs.get("marker_plan_name")
+        or signature.get("milestone_or_plan")
+        or ""
+    )
+    if current_plan_name and not current_refs.get("current_plan_name"):
+        current_refs["current_plan_name"] = current_plan_name
+    if current_plan_name and not target_plan.get("name"):
+        target_plan["name"] = current_plan_name
+    if not target_plan.get("present") and current_plan_name:
+        target_plan["present"] = True
+    remote_spec = Path(str(current_refs.get("remote_spec") or ""))
+    if remote_spec.exists() and not target_plan.get("fingerprint"):
+        target_plan["fingerprint"] = "sha256:" + hashlib.sha256(remote_spec.read_bytes()).hexdigest()
+    normalized_target = dict(target)
+    normalized_target["current_refs"] = current_refs
+    normalized_target["plan_state"] = target_plan
+    plan_state = {
+        "name": current_plan_name,
+        "current_state": str(current_refs.get("plan_current_state") or signature.get("current_state") or ""),
+        "resume_cursor": {"retry_strategy": "manual_review"},
+        "latest_failure": {
+            "kind": str(signature.get("failure_kind") or ""),
+            "phase": str(signature.get("phase_or_step") or ""),
+            "metadata": {"blocked_task_id": str(signature.get("blocked_task_id") or "")},
+        },
+    }
+    return repair_contract.project_repair_custody(
+        plan_state=plan_state,
+        current_target=normalized_target,
+        marker_dir=marker_dir,
+        repair_data_dir=None,
+    )
+
+
 def test_trigger_observes_without_dispatch_when_disabled(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     workspace = tmp_path / "workspace"
@@ -144,6 +200,9 @@ def test_trigger_observes_without_dispatch_when_disabled(tmp_path: Path) -> None
     assert not (tmp_path / "repair-args.json").exists()
     assert "dispatched" not in {item["decision"] for item in _decisions(marker_dir)}
     assert str(spec) in result.stdout
+    observe = next(event for event in _events(result) if event["event"] == "repair_trigger_observe")
+    assert observe["dispatch_decision"] == "dispatch_l1_repair"
+    assert observe["custody_bucket"] == "repairable_not_repairing"
 
 
 def test_trigger_reports_current_target_resolution_evidence(tmp_path: Path) -> None:
@@ -169,6 +228,7 @@ def test_trigger_reports_current_target_resolution_evidence(tmp_path: Path) -> N
     assert observe["target"]["authoritative_source"] == "chain_state"
     assert observe["target"]["target_session"] == "demo"
     assert observe["target"]["current_refs"]["remote_spec"] == str(spec)
+    assert observe["dispatch_decision"] == "dispatch_l1_repair"
 
 
 def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) -> None:
@@ -187,6 +247,49 @@ def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) ->
     payload = _read_json_eventually(tmp_path / "repair-args.json")
     assert payload["argv"] == ["demo", str(workspace), str(spec)]
     assert payload["request_id"] == queued["request"]["request_id"]
+
+
+def test_trigger_does_not_launch_when_request_claim_is_already_held(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    _write_marker(marker_dir, workspace)
+    queued = _enqueue(marker_dir, workspace)
+    repair_bin = _repair_stub(tmp_path)
+    projection = _project_request_custody(marker_dir, queued)
+    blocker_id = projection["blocker_id"]
+    assert blocker_id
+    claim = repair_requests.claim_active_repair_request(
+        repair_requests.repair_queue_dir(marker_dir),
+        blocker_id=blocker_id,
+        request_id=queued["request"]["request_id"],
+        actor="other-trigger",
+        session="demo",
+        pid=os.getpid(),
+    )
+    assert claim.claimed
+
+    result = _run_trigger(marker_dir, repair_bin, enabled=True)
+
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "repair-args.json").exists()
+    claim_event = next(event for event in _events(result) if event["event"] == "repair_trigger_claim")
+    assert claim_event["status"] == "already_claimed"
+    assert {item["decision"] for item in _decisions(marker_dir)} == {"accepted"}
+
+
+def test_trigger_keeps_accepted_request_visible_until_dispatchable(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    _write_marker(marker_dir, workspace)
+    queued = _enqueue(marker_dir, workspace)
+
+    result = _run_trigger(marker_dir, _repair_stub(tmp_path), enabled=False)
+
+    assert result.returncode == 0, result.stderr
+    observe = next(event for event in _events(result) if event["event"] == "repair_trigger_observe")
+    assert observe["request_id"] == queued["request"]["request_id"]
+    assert observe["dispatch_intent"] == "dispatch_l1"
+    assert {item["decision"] for item in _decisions(marker_dir)} == {"accepted"}
 
 
 def test_trigger_loads_hot_env_for_systemd_latency_path(tmp_path: Path) -> None:

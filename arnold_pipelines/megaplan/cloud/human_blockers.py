@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence
 
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.redact import redact_payload
@@ -79,6 +79,23 @@ class HumanBlockerClassification:
             BlockerVerdict.AMBIGUOUS_BLOCKER,
             BlockerVerdict.MECHANICAL_BLOCKER,
         )
+
+
+HumanBlockerDispatchGate = Literal["human_required", "broken_superfixer", "clear"]
+
+
+def dispatch_gate_for_human_blocker(
+    classification: HumanBlockerClassification | None,
+) -> HumanBlockerDispatchGate:
+    """Map human-blocker evidence into the shared repair-dispatch gate."""
+
+    if classification is None:
+        return "clear"
+    if classification.is_true_blocker or classification.is_ambiguous:
+        return "human_required"
+    if classification.is_mechanical:
+        return "broken_superfixer"
+    return "clear"
 
 
 def classify_needs_human_blocker(
@@ -895,11 +912,13 @@ def _safe_marker_text(value: object) -> str:
 __all__ = [
     "BlockerVerdict",
     "EscalationLedgerWriter",
+    "HumanBlockerDispatchGate",
     "HumanBlockerClassification",
     "build_needs_human_marker",
     "classify_needs_human_blocker",
     "clear_needs_human_marker",
     "compute_escalation_id",
+    "dispatch_gate_for_human_blocker",
     "supersede_needs_human_marker",
     "write_needs_human_marker_payload",
 ]

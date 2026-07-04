@@ -5,20 +5,55 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import socket
+import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
 from arnold_pipelines.megaplan.cloud import repair_contract
 from arnold_pipelines.megaplan.cloud.redact import redact_payload
+from arnold_pipelines.megaplan.cloud.repair_lock import (
+    RepairLockResult,
+    acquire_repair_lock,
+    inspect_repair_lock,
+    release_repair_lock,
+)
 from arnold_pipelines.megaplan.cloud.repair_recurrence import PROBLEM_SIGNATURE_FIELDS
 
 QUEUE_DIR_NAME = "repair-queue"
 REQUESTS_DIR_NAME = "requests"
 DECISIONS_DIR_NAME = "decisions"
+ACTIVE_CLAIMS_DIR_NAME = "active-claims"
 CURRENT_SCHEMA_VERSION = 1
 
 DecisionKind = Literal["accepted", "coalesced", "stale", "superseded", "malformed", "dispatched"]
+ActiveRepairClaimStatus = Literal["claimed", "already_claimed", "busy", "stale"]
+
+
+@dataclass(frozen=True)
+class ActiveRepairClaimResult:
+    status: ActiveRepairClaimStatus
+    lock_dir: Path
+    owner: dict[str, Any] | None = None
+    evidence: dict[str, Any] | None = None
+
+    @property
+    def claimed(self) -> bool:
+        return self.status == "claimed"
+
+    @property
+    def already_claimed(self) -> bool:
+        return self.status == "already_claimed"
+
+    @property
+    def busy(self) -> bool:
+        return self.status == "busy"
+
+    @property
+    def stale(self) -> bool:
+        return self.status == "stale"
 
 
 def utc_now() -> str:
@@ -38,6 +73,17 @@ def requests_dir(queue_dir: str | Path) -> Path:
 
 def decisions_dir(queue_dir: str | Path) -> Path:
     return Path(queue_dir) / DECISIONS_DIR_NAME
+
+
+def active_claims_dir(queue_dir: str | Path) -> Path:
+    return Path(queue_dir) / ACTIVE_CLAIMS_DIR_NAME
+
+
+def active_repair_claim_lock_dir(queue_dir: str | Path, blocker_id: str) -> Path:
+    """Return the blocker-scoped active repair claim lock directory."""
+
+    normalized = _normalize_claim_identity(blocker_id, "blocker_id")
+    return active_claims_dir(queue_dir) / f"{_claim_path_token(normalized)}.lock"
 
 
 def normalize_problem_signature(problem_signature: Mapping[str, Any]) -> dict[str, str]:
@@ -249,6 +295,39 @@ def iter_repair_requests(
     return records
 
 
+def iter_repair_decisions(
+    marker_dir_or_queue_dir: str | Path,
+    *,
+    marker_dir: bool = True,
+    include_malformed: bool = False,
+) -> list[dict[str, Any]]:
+    """Return immutable decision records in deterministic order."""
+
+    queue_root = repair_queue_dir(marker_dir_or_queue_dir) if marker_dir else Path(marker_dir_or_queue_dir)
+    records: list[dict[str, Any]] = []
+    malformed: list[dict[str, Any]] = []
+    for path in sorted(decisions_dir(queue_root).glob("*.json"), key=lambda item: item.name):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            malformed.append(_malformed_decision(path, exc))
+            continue
+        if not isinstance(payload, dict):
+            malformed.append(_malformed_decision(path, ValueError("decision record is not a JSON object")))
+            continue
+        required = {"schema_version", "kind", "decision_id", "request_id", "decision", "created_at"}
+        if not required.issubset(payload) or payload.get("kind") != "repair_request_decision":
+            malformed.append(_malformed_decision(path, ValueError("decision record has invalid shape")))
+            continue
+        payload = dict(payload)
+        payload["_path"] = str(path)
+        records.append(payload)
+    records.sort(key=_decision_sort_key)
+    if include_malformed:
+        records.extend(sorted(malformed, key=lambda item: item["path"]))
+    return records
+
+
 def find_pending_by_signature(
     queue_dir: str | Path,
     problem_signature: Mapping[str, Any],
@@ -298,6 +377,91 @@ def write_decision(
     return {**record, "_path": str(path)}
 
 
+def claim_active_repair_request(
+    queue_dir: str | Path,
+    *,
+    blocker_id: str,
+    request_id: str,
+    actor: str,
+    session: str,
+    blocker_fingerprint: Mapping[str, Any] | None = None,
+    pid: int | None = None,
+    command: str | None = None,
+    started_at: str | None = None,
+    cwd: str | None = None,
+    timeout_seconds: float | None = None,
+    hostname: str | None = None,
+    now: datetime | None = None,
+    is_pid_live: Any | None = None,
+    extra: Mapping[str, Any] | None = None,
+) -> ActiveRepairClaimResult:
+    """Atomically claim active repair ownership for one blocker.
+
+    The mkdir lock is keyed by ``blocker_id`` so only one request can actively
+    own the blocker at a time. The owner payload also records ``request_id`` so
+    same-request contenders get a typed ``already_claimed`` result, while a
+    different active request is reported as ``busy``.
+    """
+
+    normalized_blocker_id = _normalize_claim_identity(blocker_id, "blocker_id")
+    normalized_request_id = _normalize_claim_identity(request_id, "request_id")
+    normalized_actor = _normalize_claim_identity(actor, "actor")
+    normalized_session = _normalize_claim_identity(session, "session")
+    claim_lock_dir = active_repair_claim_lock_dir(queue_dir, normalized_blocker_id)
+    metadata = {
+        "kind": "active_repair_request_claim",
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "actor": normalized_actor,
+        "session": normalized_session,
+        "request_id": normalized_request_id,
+        "blocker_id": normalized_blocker_id,
+        "blocker_fingerprint": dict(blocker_fingerprint or {}),
+    }
+    if extra:
+        metadata.update(dict(extra))
+
+    result = acquire_repair_lock(
+        claim_lock_dir,
+        session=normalized_session,
+        target_id=normalized_blocker_id,
+        pid=pid,
+        command=command,
+        started_at=started_at,
+        cwd=cwd,
+        timeout_seconds=timeout_seconds,
+        hostname=hostname or _hostname(),
+        extra=metadata,
+        now=now,
+        is_pid_live=is_pid_live,
+    )
+    result = _settle_owner_write_race(
+        result,
+        now=now,
+        is_pid_live=is_pid_live,
+    )
+    return _claim_result_from_lock(
+        result,
+        blocker_id=normalized_blocker_id,
+        request_id=normalized_request_id,
+    )
+
+
+def release_active_repair_request_claim(
+    queue_dir: str | Path,
+    *,
+    blocker_id: str,
+    owner: Mapping[str, Any] | None = None,
+    expected_pid: int | None = None,
+) -> bool:
+    """Release an active repair claim if the owner expectation matches."""
+
+    return release_repair_lock(
+        active_repair_claim_lock_dir(queue_dir, blocker_id),
+        owner=owner,
+        expected_pid=expected_pid,
+    )
+
+
 def record_malformed_file(queue_dir: str | Path, path: str | Path, reason: str) -> dict[str, Any]:
     return write_decision(
         queue_dir,
@@ -345,6 +509,88 @@ def _write_once_json(path: Path, payload: Mapping[str, Any]) -> bool:
             pass
 
 
+def _claim_result_from_lock(
+    result: RepairLockResult,
+    *,
+    blocker_id: str,
+    request_id: str,
+) -> ActiveRepairClaimResult:
+    if result.acquired:
+        return ActiveRepairClaimResult(status="claimed", lock_dir=result.lock_dir, owner=result.owner)
+    if result.stale:
+        return ActiveRepairClaimResult(
+            status="stale",
+            lock_dir=result.lock_dir,
+            owner=result.owner,
+            evidence={
+                "kind": "active_repair_claim_stale",
+                "blocker_id": blocker_id,
+                "request_id": request_id,
+                "lock_status": result.status,
+                "stale_evidence": result.stale_evidence or {},
+                "owner": result.owner or {},
+            },
+        )
+
+    owner = result.owner or {}
+    owner_request_id = str(owner.get("request_id") or "")
+    status: ActiveRepairClaimStatus = "already_claimed" if owner_request_id == request_id else "busy"
+    return ActiveRepairClaimResult(
+        status=status,
+        lock_dir=result.lock_dir,
+        owner=result.owner,
+        evidence={
+            "kind": "active_repair_claim_contention",
+            "status": status,
+            "blocker_id": blocker_id,
+            "request_id": request_id,
+            "owner_request_id": owner_request_id,
+            "owner_blocker_id": str(owner.get("blocker_id") or ""),
+            "owner_actor": str(owner.get("actor") or ""),
+            "owner_session": str(owner.get("session") or ""),
+            "owner_pid": owner.get("pid"),
+            "owner": owner,
+        },
+    )
+
+
+def _settle_owner_write_race(
+    result: RepairLockResult,
+    *,
+    now: datetime | None,
+    is_pid_live: Any | None,
+) -> RepairLockResult:
+    evidence = result.stale_evidence or {}
+    reasons = evidence.get("reasons")
+    if not result.stale or reasons != ["owner_metadata_missing"]:
+        return result
+    for _ in range(20):
+        time.sleep(0.01)
+        inspected = inspect_repair_lock(result.lock_dir, now=now, is_pid_live=is_pid_live)
+        inspected_reasons = (inspected.stale_evidence or {}).get("reasons")
+        if inspected.status != "stale" or inspected_reasons != ["owner_metadata_missing"]:
+            return inspected
+    return result
+
+
+def _normalize_claim_identity(value: str, field: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError(f"{field} is required")
+    return normalized
+
+
+def _claim_path_token(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _hostname() -> str:
+    try:
+        return socket.gethostname()
+    except OSError:
+        return ""
+
+
 def _sha256_json(value: Any) -> str:
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -358,6 +604,10 @@ def _request_sort_key(record: Mapping[str, Any]) -> tuple[str, str]:
     return (str(record.get("created_at") or ""), str(record.get("request_id") or ""))
 
 
+def _decision_sort_key(record: Mapping[str, Any]) -> tuple[str, str]:
+    return (str(record.get("created_at") or ""), str(record.get("decision_id") or ""))
+
+
 def _malformed_record(path: Path, exc: Exception) -> dict[str, Any]:
     return {
         "kind": "malformed_repair_request",
@@ -366,17 +616,33 @@ def _malformed_record(path: Path, exc: Exception) -> dict[str, Any]:
     }
 
 
+def _malformed_decision(path: Path, exc: Exception) -> dict[str, Any]:
+    return {
+        "kind": "malformed_repair_decision",
+        "path": str(path),
+        "reason": str(exc),
+    }
+
+
 __all__ = [
+    "ACTIVE_CLAIMS_DIR_NAME",
     "PROBLEM_SIGNATURE_FIELDS",
+    "ActiveRepairClaimResult",
+    "ActiveRepairClaimStatus",
     "DecisionKind",
+    "active_claims_dir",
+    "active_repair_claim_lock_dir",
+    "claim_active_repair_request",
     "enqueue_human_gate_repair_request",
     "enqueue_repair_request",
     "find_pending_by_signature",
+    "iter_repair_decisions",
     "iter_repair_requests",
     "normalize_problem_signature",
     "problem_signature_key",
     "record_malformed_file",
     "redacted_hint_hash",
+    "release_active_repair_request_claim",
     "repair_queue_dir",
     "request_id_for",
     "write_decision",

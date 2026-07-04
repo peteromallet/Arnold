@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from arnold_pipelines.megaplan.cloud import repair_lock
+from arnold_pipelines.megaplan.cloud import repair_lock, repair_requests
 from arnold_pipelines.megaplan.cloud.redact import REDACTION
 
 
@@ -211,7 +211,7 @@ def _run_repair_data_init(
 ) -> subprocess.CompletedProcess[str]:
     program = _extract_repair_program(
         "repair_data_init",
-        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$PROGRESS_FILE\" \"$SESSION\" \"$WORKSPACE\" \"$REMOTE_SPEC\" \"$run_kind\" \"$plan_name\" \"$ARNOLD_SRC\" \"$SYNC_BRANCH\" \"$RUN_DIR\" \"$relaunch_command\" \"$initial_health\" \"$marker_json\" \"$source_git\" \"$workspace_git\" \"$chain_log\" \"$watchdog_log\" \"$tmux_info\" \"$chain_state\" \"$failure_context\" <<'PY'",
+        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$PROGRESS_FILE\" \"$SESSION\" \"$WORKSPACE\" \"$REMOTE_SPEC\" \"$run_kind\" \"$plan_name\" \"$ARNOLD_SRC\" \"$SYNC_BRANCH\" \"$RUN_DIR\" \"$relaunch_command\" \"$initial_health\" \"$marker_json\" \"$source_git\" \"$workspace_git\" \"$chain_log\" \"$watchdog_log\" \"$tmux_info\" \"$chain_state\" \"$failure_context\" \"${CLOUD_WATCHDOG_REPAIR_REQUEST_ID:-}\" \"${CLOUD_WATCHDOG_REPAIR_BLOCKER_ID:-}\" <<'PY'",
     )
     return _run_embedded_python(
         program,
@@ -235,6 +235,8 @@ def _run_repair_data_init(
         tmux_info,
         chain_state,
         json.dumps(failure_context or {}),
+        "",
+        "",
     )
 
 
@@ -1215,6 +1217,8 @@ def test_repair_data_init_preserves_legacy_top_level_shape_via_contract(tmp_path
         "run_recurrence_detected": False,
         "iterations": [],
         "outcome": "repairing",
+        "request_id": "",
+        "blocker_id": "",
         "schema_version": 1,
         "target": {"target_id": "demo-session:demo-plan", "authoritative_source": "marker"},
         "incident_id": "inc-demo-session",
@@ -1404,6 +1408,8 @@ def test_repair_data_dev_and_mechanical_writers_preserve_legacy_shapes(tmp_path:
             "problem_signature": {},
             "advancement_snapshot": {},
             "recurrence": {},
+            "request_id": "",
+            "blocker_id": "",
             "failure_context": failure_context,
             "failure_classification": "cli_or_argument_error",
             "raw_failure_signals": ["stderr: unrecognized arguments"],
@@ -2226,7 +2232,7 @@ def test_watchdog_kimi_repair_is_backgrounded_so_it_cannot_block_the_tick() -> N
     # repair on one session cannot block the tick from scanning/reporting the
     # other sessions.
     assert "dispatch_kimi_repair()" in text
-    assert 'setsid bash -c \'echo "$$" > "$1"; exec "$2" "$3" "$4" "$5"\'' in text
+    assert 'setsid bash -c \'echo "$$" > "$1"; export CLOUD_WATCHDOG_REPAIR_REQUEST_ID="$6"; export CLOUD_WATCHDOG_REPAIR_BLOCKER_ID="$7"; exec "$2" "$3" "$4" "$5"\'' in text
     assert 'PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-/usr/local/bin/arnold-repair-loop}"' in text
     assert "kimi_dispatch_marker_set" in text
     assert "mechanical_relaunch_attempted_previously" in text
@@ -2477,6 +2483,68 @@ sleep 0.1
     assert result.stdout.strip().splitlines() == ["first:dispatched", "second:busy"]
     assert launch_log.read_text(encoding="utf-8").strip().splitlines() == ["demo-a"]
     assert "repair loop already active; skipping dispatch session=demo-a" in log_path.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_watchdog_dispatch_skips_when_request_claim_is_already_held(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    log_path = tmp_path / "watchdog.log"
+    launch_log = tmp_path / "repair-launches.log"
+    repair_bin = tmp_path / "fake-repair-loop"
+    repair_bin.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$1\" >> {str(launch_log)!r}\n"
+        "sleep 5\n",
+        encoding="utf-8",
+    )
+    repair_bin.chmod(repair_bin.stat().st_mode | stat.S_IXUSR)
+    blocker_id = "blocker:v1:test"
+    request_id = "req-test"
+    repair_requests.claim_active_repair_request(
+        repair_requests.repair_queue_dir(marker_dir),
+        blocker_id=blocker_id,
+        request_id=request_id,
+        actor="other-trigger",
+        session="demo-a",
+        pid=os.getpid(),
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("repair_pidfile_path"),
+            _extract_wrapper_function("repair_loop_pid_matches_session"),
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_set"),
+            _extract_wrapper_function("kimi_operator_running"),
+            _extract_wrapper_function("repair_loop_busy_state"),
+            _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
+            _extract_wrapper_function("claim_active_repair_launch"),
+            _extract_wrapper_function("dispatch_kimi_repair"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"PRIMARY_REPAIR_BIN={str(repair_bin)!r}",
+            f"PRIMARY_REPAIR_BASENAME={repair_bin.name!r}",
+            f"LOG={str(log_path)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"PLAN_STATUS_BLOCKER_ID={blocker_id!r}",
+            f"PLAN_STATUS_REQUEST_ID={request_id!r}",
+            """
+log() { printf '%s\n' "$*" >> "$LOG"; }
+dispatch_kimi_repair demo-a /tmp/ws /tmp/spec
+echo "status:${REPAIR_DISPATCH_RESULT:-unset}"
+""".strip(),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines() == ["status:busy"]
+    assert not launch_log.exists()
+    assert "repair request already claimed; skipping dispatch session=demo-a request=req-test" in log_path.read_text(
         encoding="utf-8"
     )
 
@@ -4495,6 +4563,102 @@ tmux() { echo TMUX >&2; return 1; }
     assert "REPAIR" not in result.stderr
     assert "TMUX" not in result.stderr
     assert "needs-human webhook unset" in log_path.read_text(encoding="utf-8")
+
+
+def test_watchdog_manual_review_repairable_fixture_dispatches_l1_without_needs_human(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "agentic-replay-viewer"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "iteration": 4,
+            "name": plan_name,
+            "current_state": "blocked",
+            "resume_cursor": {"phase": "execute", "retry_strategy": "manual_review"},
+            "latest_failure": {
+                "kind": "blocked_recovery_not_resolved",
+                "message": "repairable blocker",
+                "phase": "execute",
+                "metadata": {"blocked_task_id": "T1"},
+            },
+        },
+        events_body="{}\n",
+    )
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True, exist_ok=True)
+    import hashlib
+
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    (chain_dir / f"{spec_path.stem}-{digest}.json").write_text(
+        json.dumps({"current_plan_name": plan_name, "last_state": "blocked"}),
+        encoding="utf-8",
+    )
+    (marker_dir / "demo-chain.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-chain",
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+                "run_kind": "chain",
+                "plan_name": plan_name,
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_attention_status_env"),
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+session_health_status() { echo stopped; }
+session_terminal_status() { return 0; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
+resolve_existing_remote_spec() { printf '%s\n' "$3"; }
+dispatch_kimi_repair() { echo DISPATCH >&2; REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+notify_needs_human() {
+  report_item "$1" "$2" "observe" "needs_human" "$7" "$3" "$4"
+  log "needs-human webhook unset"
+}
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/initiatives/demo-chain/chain.yaml {str(report_path)!r} chain '' ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\trepair\trepair_dispatched\tmanual_review repair loop dispatched before needs_human\t" in report
+    assert "\tobserve\tneeds_human\t" not in report
+    assert "DISPATCH" in result.stderr
+    assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
 
 
 def test_watchdog_awaiting_human_chain_state_dispatches_repair_before_needs_human(
