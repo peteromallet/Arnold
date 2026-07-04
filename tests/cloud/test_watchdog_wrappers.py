@@ -6347,7 +6347,7 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert 'DEV_REQUESTED_MODEL="codex:gpt-5.5"' in text
     assert 'CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM:-0' in text
     assert 'GLM_FALLBACK="zhipu:glm-5.2 disabled by default for watchdog repair; using gpt-5.4 for iteration 1"' in text
-    assert 'repair_data_set_outcome "running"' in text
+    assert 'repair_data_set_outcome "live_with_fresh_activity"' in text
     assert 'repair_data_set_outcome "recurring_retry_pending"' in text
     assert 'repair_data_set_outcome "discord_escalated"' in text
     assert text.index('exit_if_repair_target_complete "post-iterations"') < text.index('repair_data_set_outcome "discord_escalated"')
@@ -8876,6 +8876,46 @@ def test_chain_health_no_advance_ignores_projected_blocked_plan() -> None:
     for i in range(3):
         events_path.write_text(
             events_path.read_text(encoding="utf-8") + json.dumps({"kind": "stderr", "i": i}) + "\n",
+            encoding="utf-8",
+        )
+        result = _run_chain_health(ws, marker, repair_dir, env_overrides=env)
+        assert result["CHAIN_HEALTH_STATUS"] == "ok"
+        assert result["CHAIN_HEALTH_ARTIFACT_PATH"] == ""
+
+
+def test_chain_health_no_advance_ignores_progressing_plan_events_without_active_step() -> None:
+    tmp = Path(tempfile.mkdtemp())
+    ws = tmp / "ws"
+    marker = tmp / "markers"
+    repair_dir = tmp / "repair-data"
+    plan_name = "demo-plan"
+    _write_plan(
+        ws / ".megaplan" / "plans" / plan_name,
+        {"current_state": "finalized", "iteration": 1},
+        events_body="\n",
+    )
+    _write_chain_state(
+        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        {
+            "current_milestone_index": 2,
+            "current_plan_name": plan_name,
+            "last_state": "finalized",
+            "pr_state": "open",
+            "completed": [{"label": "m1"}],
+        },
+    )
+
+    env = {"CLOUD_WATCHDOG_CHAIN_NO_ADVANCE_TICKS": "2"}
+    assert _run_chain_health(ws, marker, repair_dir, env_overrides=env)["CHAIN_HEALTH_STATUS"] == "ok"
+    events_path = ws / ".megaplan" / "plans" / plan_name / "events.ndjson"
+    for i in range(3):
+        stamp = dt.datetime.now(dt.timezone.utc).isoformat()
+        kind = "llm_call_start" if i == 0 else "llm_token_heartbeat"
+        payload = {"kind": kind, "ts_utc": stamp}
+        if kind == "llm_call_start":
+            payload["payload"] = {"request_id": "req-1"}
+        events_path.write_text(
+            events_path.read_text(encoding="utf-8") + json.dumps(payload) + "\n",
             encoding="utf-8",
         )
         result = _run_chain_health(ws, marker, repair_dir, env_overrides=env)

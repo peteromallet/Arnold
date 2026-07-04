@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime as dt
+import json
 from pathlib import Path
 from subprocess import CompletedProcess
 
@@ -317,5 +319,57 @@ def test_completed_session_state_is_progress_when_external_checks_unavailable() 
         window_seconds=3600,
     )
 
+    assert updated["advancement_since_last_dispatch"] is True
+    assert updated["layer2_recurrence"] is False
+
+
+def test_plan_event_growth_resets_no_advance_without_state_counter_change(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    plan_dir.mkdir(parents=True)
+    state_path = plan_dir / "state.json"
+    state_path.write_text(json.dumps({"current_state": "finalized"}), encoding="utf-8")
+    events_path = plan_dir / "events.ndjson"
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    events_path.write_text(json.dumps({"kind": "llm_call_start", "ts_utc": now}) + "\n", encoding="utf-8")
+
+    previous_context = _failure_context()
+    previous_context["workspace"] = str(workspace)
+    previous_context["plan_latest_failure"]["state_path"] = str(state_path)
+    previous_context["plan_events_path"] = str(events_path)
+    previous = repair_recurrence.build_advancement_snapshot(previous_context, run_kind="chain")
+
+    events_path.write_text(
+        events_path.read_text(encoding="utf-8")
+        + json.dumps(
+            {
+                "kind": "llm_token_heartbeat",
+                "ts_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    current_context = _failure_context()
+    current_context["workspace"] = str(workspace)
+    current_context["plan_latest_failure"]["state_path"] = str(state_path)
+    current_context["plan_events_path"] = str(events_path)
+    current = repair_recurrence.build_advancement_snapshot(current_context, run_kind="chain")
+
+    updated = repair_recurrence.update_session_repair_snapshot(
+        {
+            "last_dispatch_snapshot": previous,
+            "no_advance_dispatches": [
+                "2026-06-30T00:00:00+00:00",
+                "2026-06-30T00:05:00+00:00",
+            ],
+        },
+        current,
+        dispatched_at="2026-06-30T00:10:00+00:00",
+        min_dispatches=3,
+        window_seconds=3600,
+    )
+
+    assert current["plan_activity"]["liveness"] == "progressing"
     assert updated["advancement_since_last_dispatch"] is True
     assert updated["layer2_recurrence"] is False
