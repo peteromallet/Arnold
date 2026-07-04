@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 from arnold.pipeline.native import (
+    EffectLedgerHooks,
     compile_pipeline,
     phase,
     pipeline,
@@ -145,6 +146,12 @@ class TestAuditRecordFields:
             "status",
             "error_type",
             "error_message",
+            "operation",
+            "target",
+            "idempotency_key",
+            "effect_class",
+            "effect_lifecycle_state",
+            "duplicate_action",
         }
         assert set(d.keys()) == required_fields
         assert d["attempt_id"] == "abc123"
@@ -155,6 +162,8 @@ class TestAuditRecordFields:
         assert d["call_site_path"] == []
         assert d["attempt"] == 1
         assert d["status"] == "started"
+        assert d["operation"] is None
+        assert d["idempotency_key"] is None
 
     def test_started_at_is_iso_timestamp(self) -> None:
         """started_at must be an ISO-8601 timestamp string."""
@@ -580,6 +589,31 @@ class TestAuditHooksIntegration:
         # Context dict contains at minimum: state, inputs, run_path, step_path, etc.
         assert "state" in step_recs[0]["input_keys"]
         assert "inputs" in step_recs[0]["input_keys"]
+
+    def test_side_effect_metadata_is_recorded(self, tmp_path: Path) -> None:
+        audit_dir = tmp_path / "audit"
+
+        @phase(operation="file_write", target="out/report.json", effect_class="filesystem_mutation")
+        def write_report(ctx: dict) -> dict:
+            return {"ok": True}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield write_report(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        hooks = AuditHooks(inner=EffectLedgerHooks(), audit_dir=audit_dir)
+        run_native_pipeline(prog, hooks=hooks)
+
+        rec = _step_records(_read_audit_ndjson(audit_dir))[0]
+        assert rec["operation"] == "file_write"
+        assert rec["target"] == "out/report.json"
+        assert rec["effect_class"] == "filesystem_mutation"
+        assert rec["effect_lifecycle_state"] == "fulfilled"
+        assert rec["duplicate_action"] is None
+        assert isinstance(rec["idempotency_key"], str)
+        assert rec["idempotency_key"].endswith(":file_write:out/report.json")
 
 
 # ── AuditHooks constructor tests ──────────────────────────────────────

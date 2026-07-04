@@ -113,6 +113,36 @@ class TestRoundTrip:
         ]
         assert cursor["native_cursor_kind"] == STANDARD_NATIVE_CURSOR_KIND
 
+    def test_effect_metadata_round_trip(self, tmp_path: Path) -> None:
+        persist_native_cursor(
+            tmp_path,
+            stage="my_pipe__write__pc0",
+            pc=0,
+            effect={
+                "idempotency_key": "my_pipe/write:file_write:out/report.json",
+                "step_path": "root/write",
+                "operation": "file_write",
+                "target": "out/report.json",
+                "attempt": 2,
+                "lifecycle_state": "fulfilled",
+                "effect_class": "filesystem_mutation",
+                "duplicate_action": "skip",
+            },
+        )
+
+        cursor = read_native_cursor(tmp_path)
+        assert cursor is not None
+        assert cursor["effect"] == {
+            "idempotency_key": "my_pipe/write:file_write:out/report.json",
+            "step_path": "root/write",
+            "operation": "file_write",
+            "target": "out/report.json",
+            "attempt": 2,
+            "lifecycle_state": "fulfilled",
+            "effect_class": "filesystem_mutation",
+            "duplicate_action": "skip",
+        }
+
     def test_composite_parent_child_cursor_round_trip(self, tmp_path: Path) -> None:
         persist_native_cursor(
             tmp_path,

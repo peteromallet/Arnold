@@ -110,6 +110,12 @@ class AuditRecord:
         "status",
         "error_type",
         "error_message",
+        "operation",
+        "target",
+        "idempotency_key",
+        "effect_class",
+        "effect_lifecycle_state",
+        "duplicate_action",
     )
 
     def __init__(
@@ -123,6 +129,12 @@ class AuditRecord:
         call_site_path: list[str] | None = None,
         attempt: int = 1,
         input_keys: list[str] | None = None,
+        operation: str | None = None,
+        target: str | None = None,
+        idempotency_key: str | None = None,
+        effect_class: str | None = None,
+        effect_lifecycle_state: str | None = None,
+        duplicate_action: str | None = None,
     ) -> None:
         self.attempt_id = attempt_id
         self.run_id = run_id
@@ -138,6 +150,12 @@ class AuditRecord:
         self.status: str = "started"
         self.error_type: str | None = None
         self.error_message: str | None = None
+        self.operation = operation
+        self.target = target
+        self.idempotency_key = idempotency_key
+        self.effect_class = effect_class
+        self.effect_lifecycle_state = effect_lifecycle_state
+        self.duplicate_action = duplicate_action
 
     def mark_success(self, result: Any) -> None:
         """Finalize the record with a success outcome."""
@@ -169,6 +187,12 @@ class AuditRecord:
             "status": self.status,
             "error_type": self.error_type,
             "error_message": self.error_message,
+            "operation": self.operation,
+            "target": self.target,
+            "idempotency_key": self.idempotency_key,
+            "effect_class": self.effect_class,
+            "effect_lifecycle_state": self.effect_lifecycle_state,
+            "duplicate_action": self.duplicate_action,
         }
 
 
@@ -307,6 +331,8 @@ class AuditHooks:
         if self._audit_dir is not None:
             step_key = self._step_key(instr)
             step_path = self._resolve_step_path(ctx)
+            effect_meta = ctx.get("effect")
+            effect_meta = effect_meta if isinstance(effect_meta, Mapping) else {}
             self._active_record = AuditRecord(
                 attempt_id=uuid4().hex,
                 run_id=self._run_id,
@@ -316,6 +342,12 @@ class AuditHooks:
                 call_site_path=self._resolve_call_site_path(ctx),
                 attempt=self._next_attempt(step_key),
                 input_keys=_dict_keys_summary(ctx),
+                operation=instr.operation,
+                target=instr.target,
+                idempotency_key=instr.idempotency_key,
+                effect_class=instr.effect_class,
+                effect_lifecycle_state=effect_meta.get("lifecycle_state"),
+                duplicate_action=effect_meta.get("duplicate_action"),
             )
         return ctx
 
@@ -328,6 +360,7 @@ class AuditHooks:
         result = self._inner.on_step_end(instr, ctx, result)
         if self._audit_dir is not None and self._active_record is not None:
             self._active_record.mark_success(result)
+            self._active_record.effect_lifecycle_state = "fulfilled"
             self._flush_active()
         return result
 
@@ -340,6 +373,7 @@ class AuditHooks:
         self._inner.on_step_error(instr, ctx, exc)
         if self._audit_dir is not None and self._active_record is not None:
             self._active_record.mark_failure(exc)
+            self._active_record.effect_lifecycle_state = "failed"
             self._flush_active()
 
     def merge_state(

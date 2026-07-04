@@ -45,6 +45,14 @@ from arnold.pipeline.native.ir import (
     NativeProgram,
     ParallelInstruction,
 )
+from arnold.pipeline.native.reconcile import (
+    ReconcileDecision,
+    ReconcileMetadata,
+    reconcile_file_write,
+    reconcile_git_branch_create,
+    reconcile_git_commit,
+    reconcile_git_worktree,
+)
 from arnold.pipeline.native.trace import NativeTraceHooks
 
 _MAX_SUBPIPELINE_DEPTH = 32
@@ -898,6 +906,23 @@ def run_native_pipeline(
 
                     # ── Hook: on_step_start (may rewrite ctx) ─────────────
                     ctx = _hooks.on_step_start(instr, ctx)
+                    _resume_reconcile = _reconcile_resumed_effect(
+                        resume_cursor_data=resume_cursor_data,
+                        instr=instr,
+                        ctx=ctx,
+                        state=state,
+                        artifact_root=artifact_root,
+                    )
+                    if _resume_reconcile is not None:
+                        ctx["effect_reconcile"] = _reconcile_decision_payload(
+                            _resume_reconcile
+                        )
+                        if _resume_reconcile.skip_execution:
+                            result = {}
+                            break
+                    if _should_skip_effect_execution(ctx):
+                        result = {}
+                        break
 
                     # Invoke the phase
                     try:
@@ -1007,6 +1032,7 @@ def run_native_pipeline(
                         resume_cursor=_phase_resume_cursor,
                         cursor_id=_cursor_id,
                         stage_reentry_points=_stage_reentry_points_for(stages),
+                        effect=_hook_checkpoint_effect_metadata(_hooks),
                         native_extra={"suspension_kind": "phase_suspended"},
                         **_phase_path_metadata,
                         **_phase_extra,
@@ -1021,6 +1047,7 @@ def run_native_pipeline(
                         state=state,
                         envelope=envelope,
                         cursor_id=_cursor_id,
+                        effect=_hook_checkpoint_effect_metadata(_hooks),
                         resume_cursor=_phase_resume_cursor,
                         native_extra={"suspension_kind": "phase_suspended"},
                         extra={**_phase_path_metadata, **_phase_extra},
@@ -1092,6 +1119,7 @@ def run_native_pipeline(
                         envelope=envelope,
                         cursor_id=_cursor_id,
                         path_metadata=_suspension_path_metadata,
+                        effect=_hook_checkpoint_effect_metadata(_hooks),
                     )
                     # ── Hook: on_checkpoint (after cursor persistence) ──
                     _cursor = _build_cursor_dict(
@@ -1104,6 +1132,7 @@ def run_native_pipeline(
                         state=state,
                         envelope=envelope,
                         cursor_id=_cursor_id,
+                        effect=_hook_checkpoint_effect_metadata(_hooks),
                         extra=_suspension_path_metadata,
                     )
                     _hooks.on_checkpoint(_cursor, dict(state))
@@ -1267,6 +1296,7 @@ def run_native_pipeline(
                         resume_cursor=_resume_cursor,
                         cursor_id=_cursor_id,
                         stage_reentry_points=_hg_stage_reentry,
+                        effect=_hook_checkpoint_effect_metadata(_hooks),
                         native_extra={"suspension_kind": "human_gate"},
                         **_hg_path_metadata,
                         **_hg_cursor_extra,
@@ -1283,6 +1313,7 @@ def run_native_pipeline(
                         state=_pause_state,
                         envelope=envelope,
                         cursor_id=_cursor_id,
+                        effect=_hook_checkpoint_effect_metadata(_hooks),
                         resume_cursor=_resume_cursor,
                         native_extra={"suspension_kind": "human_gate"},
                         extra={**_hg_path_metadata, **_hg_cursor_extra},
@@ -1477,6 +1508,39 @@ def run_native_pipeline(
     
                 # ── Hook: on_step_start (may rewrite ctx) ─────────────
                 ctx = _hooks.on_step_start(instr, ctx)
+                _resume_reconcile = _reconcile_resumed_effect(
+                    resume_cursor_data=resume_cursor_data,
+                    instr=instr,
+                    ctx=ctx,
+                    state=state,
+                    artifact_root=artifact_root,
+                )
+                if _resume_reconcile is not None:
+                    ctx["effect_reconcile"] = _reconcile_decision_payload(
+                        _resume_reconcile
+                    )
+                    if _resume_reconcile.skip_execution:
+                        result = {"__reconcile_skipped__": True}
+                        result = _hooks.on_step_end(instr, ctx, result)
+                        label = _resolve_decision_label(result)
+                        target_pc = instr.branches.get(label) if instr.branches else None
+                        if target_pc is not None and 0 <= target_pc < len(instructions):
+                            pc = target_pc
+                            forward_visited.clear()
+                            continue
+                        pc = instr.next_pc if instr.next_pc is not None else pc + 1
+                        continue
+                if _should_skip_effect_execution(ctx):
+                    result = {"__reconcile_skipped__": True}
+                    result = _hooks.on_step_end(instr, ctx, result)
+                    label = _resolve_decision_label(result)
+                    target_pc = instr.branches.get(label) if instr.branches else None
+                    if target_pc is not None and 0 <= target_pc < len(instructions):
+                        pc = target_pc
+                        forward_visited.clear()
+                        continue
+                    pc = instr.next_pc if instr.next_pc is not None else pc + 1
+                    continue
     
                 # ── Control override short-circuit ──────────────────────
                 # When a hook (e.g. MegaplanNativeRuntimeHooks) resolves a
@@ -1842,6 +1906,11 @@ def run_native_pipeline(
                             step_path=item_path,
                             call_site_path=(parallel_block.name or instr.name or "parallel_map", item_coordinate),
                         )
+                        if resume_child:
+                            _reconcile_child_resume_cursor(
+                                child_artifact_root=child_artifact_root,
+                                child_program=child_program,
+                            )
                         child_result = run_native_pipeline(
                             program=child_program,
                             artifact_root=child_artifact_root,
@@ -1891,6 +1960,7 @@ def run_native_pipeline(
                                 envelope=envelope,
                                 cursor_id=_cursor_id,
                                 suspension_kind="child_suspended",
+                                effect=_hook_checkpoint_effect_metadata(_hooks),
                                 parent_frame_extra={
                                     _parallel_map_progress_key(pc): {
                                         "completed_results": _jsonable_value(
@@ -2027,6 +2097,7 @@ def run_native_pipeline(
                             state=state,
                             envelope=envelope,
                             cursor_id=_cursor_id,
+                            effect=_hook_checkpoint_effect_metadata(_hooks),
                         )
                         _hooks.on_checkpoint(_child_entry_cursor, dict(state))
                         _check_cancellation_boundary(
@@ -2040,6 +2111,11 @@ def run_native_pipeline(
                         )
 
                     # ── Execute child subpipeline ───────────────────────
+                    if composite_child_cursor is not None:
+                        _reconcile_child_resume_cursor(
+                            child_artifact_root=child_artifact_root,
+                            child_program=child_program,
+                        )
                     child_result = run_native_pipeline(
                         program=child_program,
                         artifact_root=child_artifact_root,
@@ -2091,6 +2167,7 @@ def run_native_pipeline(
                             envelope=envelope,
                             cursor_id=_cursor_id,
                             suspension_kind="child_suspended",
+                            effect=_hook_checkpoint_effect_metadata(_hooks),
                         )
                         _hooks.on_checkpoint(_child_suspended_cursor, dict(state))
                         if isinstance(_hooks, NativeTraceHooks):
@@ -2157,6 +2234,7 @@ def run_native_pipeline(
             envelope=envelope,
             final=True,
             cursor_id=_cursor_id,
+            effect=_hook_checkpoint_effect_metadata(_hooks),
             extra=_cursor_path_metadata(
                 program=program,
                 pc=pc,
@@ -2487,6 +2565,251 @@ def _stage_reentry_points_for(stages: list[str]) -> dict[str, Any]:
     return stage_reentry_points
 
 
+def _hook_checkpoint_effect_metadata(hooks: Any) -> dict[str, Any] | None:
+    """Walk wrapper hooks and return the latest effect metadata snapshot."""
+    current = hooks
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        getter = getattr(current, "checkpoint_effect_metadata", None)
+        if callable(getter):
+            metadata = getter()
+            if isinstance(metadata, dict):
+                return dict(metadata)
+        current = getattr(current, "_inner", None)
+    return None
+
+
+def _should_skip_effect_execution(ctx: Mapping[str, Any]) -> bool:
+    effect = ctx.get("effect")
+    if not isinstance(effect, Mapping):
+        return False
+    return effect.get("duplicate_action") == "skip"
+
+
+def _reconcile_resumed_effect(
+    *,
+    resume_cursor_data: Mapping[str, Any] | None,
+    instr: NativeInstruction,
+    ctx: Mapping[str, Any],
+    state: Mapping[str, Any],
+    artifact_root: str | Path,
+) -> ReconcileDecision | None:
+    if resume_cursor_data is None or not instr.operation:
+        return None
+    effect = resume_cursor_data.get("effect")
+    if not isinstance(effect, Mapping):
+        return None
+    if not _effect_matches_instruction(effect, instr, ctx):
+        return None
+
+    lifecycle_state = effect.get("lifecycle_state")
+    if lifecycle_state == "fulfilled":
+        return _fulfilled_effect_skip_decision(effect)
+
+    metadata = _reconcile_metadata_from_effect(effect, state)
+    decision = _dispatch_reconcile_decision(
+        artifact_root=artifact_root,
+        metadata=metadata,
+        effect=effect,
+    )
+    if decision.blocked:
+        raise NativeRuntimeError(_format_reconcile_block(instr, effect, decision))
+    return decision
+
+
+def _reconcile_child_resume_cursor(
+    *,
+    child_artifact_root: Path,
+    child_program: NativeProgram,
+) -> None:
+    try:
+        child_cursor = read_native_cursor(child_artifact_root)
+    except NativeCursorCorruptError as exc:
+        raise NativeRuntimeError(
+            f"Cannot resume child pipeline from corrupt cursor at "
+            f"{exc.cursor_path or child_artifact_root / 'resume_cursor.json'}: "
+            f"{exc.detail}"
+        ) from exc
+    if child_cursor is None:
+        return
+    child_pc = child_cursor.get("native", {}).get("pc")
+    if not isinstance(child_pc, int) or child_pc < 0 or child_pc >= len(child_program.instructions):
+        return
+    frames = child_cursor.get("frames")
+    child_state: Mapping[str, Any] = {}
+    if isinstance(frames, Mapping) and isinstance(frames.get("__state__"), Mapping):
+        child_state = frames["__state__"]
+    instr = child_program.instructions[child_pc]
+    run_path = child_cursor.get("run_path")
+    if not isinstance(run_path, str) or not run_path:
+        run_path = ROOT_PATH
+    ctx = {"step_path": _step_path_for_instr(run_path, instr)}
+    _reconcile_resumed_effect(
+        resume_cursor_data=child_cursor,
+        instr=instr,
+        ctx=ctx,
+        state=child_state,
+        artifact_root=child_artifact_root,
+    )
+
+
+def _effect_matches_instruction(
+    effect: Mapping[str, Any],
+    instr: NativeInstruction,
+    ctx: Mapping[str, Any],
+) -> bool:
+    key = effect.get("idempotency_key")
+    if isinstance(key, str) and instr.idempotency_key == key:
+        return True
+    step_path = effect.get("step_path")
+    if isinstance(step_path, str) and step_path == ctx.get("step_path"):
+        return True
+    return (
+        effect.get("operation") == instr.operation
+        and effect.get("target") == instr.target
+        and instr.operation is not None
+    )
+
+
+def _reconcile_metadata_from_effect(
+    effect: Mapping[str, Any],
+    state: Mapping[str, Any],
+) -> ReconcileMetadata:
+    hints = _effect_reconcile_hints(effect, state)
+    merged: dict[str, Any] = dict(effect)
+    merged.update(hints)
+    return ReconcileMetadata(
+        operation=str(merged.get("operation") or ""),
+        target=_optional_str(merged.get("target")),
+        owned_paths=frozenset(
+            path
+            for path in merged.get("owned_paths", ())
+            if isinstance(path, str) and path
+        ),
+        expected_ref=_optional_str(merged.get("expected_ref")),
+        expected_commit=_optional_str(merged.get("expected_commit")),
+        expected_content=_optional_str(merged.get("expected_content")),
+        expected_sha256=_optional_str(merged.get("expected_sha256")),
+    )
+
+
+def _effect_reconcile_hints(
+    effect: Mapping[str, Any],
+    state: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    raw = state.get("__effect_reconcile__")
+    if not isinstance(raw, Mapping):
+        return {}
+    for key in (effect.get("idempotency_key"), effect.get("step_path")):
+        if isinstance(key, str) and isinstance(raw.get(key), Mapping):
+            return raw[key]
+    return {}
+
+
+def _dispatch_reconcile_decision(
+    *,
+    artifact_root: str | Path,
+    metadata: ReconcileMetadata,
+    effect: Mapping[str, Any],
+) -> ReconcileDecision:
+    operation = metadata.operation
+    if operation == "file_write":
+        return reconcile_file_write(_effect_file_path(artifact_root, metadata), metadata)
+
+    repo_path = _effect_path(
+        artifact_root,
+        _optional_str(effect.get("repo_path")),
+        default=Path(artifact_root),
+    )
+    status_path = _effect_path(
+        artifact_root,
+        _optional_str(effect.get("status_path")),
+        default=repo_path,
+    )
+    if operation == "git_branch_create":
+        return reconcile_git_branch_create(
+            repo_path,
+            metadata,
+            status_path=status_path,
+        )
+    if operation == "git_commit":
+        return reconcile_git_commit(repo_path, metadata, status_path=status_path)
+    if operation == "git_worktree_op":
+        return reconcile_git_worktree(repo_path, metadata, status_path=status_path)
+    return ReconcileDecision(
+        state="unknown",
+        action="block",
+        continue_execution=False,
+        skip_execution=False,
+        detail=f"unsupported side-effect operation: {operation!r}",
+        required_metadata=(),
+    )
+
+
+def _fulfilled_effect_skip_decision(effect: Mapping[str, Any]) -> ReconcileDecision:
+    return ReconcileDecision(
+        state="fulfilled_duplicate",
+        action="skip",
+        continue_execution=False,
+        skip_execution=True,
+        detail=f"side effect already fulfilled: {effect.get('idempotency_key')!r}",
+        required_metadata=(),
+    )
+
+
+def _reconcile_decision_payload(decision: ReconcileDecision) -> dict[str, Any]:
+    return {
+        "state": decision.state,
+        "action": decision.action,
+        "continue_execution": decision.continue_execution,
+        "skip_execution": decision.skip_execution,
+        "detail": decision.detail,
+        "required_metadata": list(decision.required_metadata),
+    }
+
+
+def _format_reconcile_block(
+    instr: NativeInstruction,
+    effect: Mapping[str, Any],
+    decision: ReconcileDecision,
+) -> str:
+    return (
+        "Cannot resume native side-effecting step "
+        f"{instr.name or instr.op!r} ({effect.get('idempotency_key')!r}): "
+        f"reconcile state={decision.state!r}, action={decision.action!r}, "
+        f"detail={decision.detail!r}, required_metadata={list(decision.required_metadata)!r}."
+    )
+
+
+def _effect_file_path(
+    artifact_root: str | Path,
+    metadata: ReconcileMetadata,
+) -> Path:
+    target = metadata.target
+    if target:
+        return _effect_path(artifact_root, target, default=Path(artifact_root))
+    return Path(artifact_root)
+
+
+def _effect_path(
+    artifact_root: str | Path,
+    raw_path: str | None,
+    *,
+    default: Path,
+) -> Path:
+    if raw_path is None:
+        return default
+    path = Path(raw_path)
+    if path.is_absolute():
+        return path
+    return Path(artifact_root) / path
+
+
+def _optional_str(value: Any) -> str | None:
+    return value if isinstance(value, str) else None
+
+
 def _resolve_native_human_gate_artifact_path(
     artifact_root: str | Path,
     artifact_stage: str,
@@ -2512,6 +2835,7 @@ def _build_cursor_dict(
     envelope: Any = None,
     final: bool = False,
     cursor_id: str | None = None,
+    effect: dict[str, Any] | None = None,
     resume_cursor: str | None = None,
     native_extra: dict[str, Any] | None = None,
     extra: dict[str, Any] | None = None,
@@ -2560,6 +2884,8 @@ def _build_cursor_dict(
         "cursor_id": cursor_id,
         "stage_reentry_points": _stage_reentry_points_for(stages),
     }
+    if effect is not None:
+        cursor["effect"] = dict(effect)
     # Merge additive native restoration metadata if provided.
     if extra:
         cursor.update(extra)
@@ -2661,6 +2987,7 @@ def _persist_parent_child_entry_cursor(
     envelope: Any,
     cursor_id: str | None,
     suspension_kind: str | None = None,
+    effect: dict[str, Any] | None = None,
     parent_frame_extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     stage_id = f"{_safe_name(program.name)}__{instr.name}__pc{pc}"
@@ -2719,6 +3046,7 @@ def _persist_parent_child_entry_cursor(
         frames=frames_with_state,
         cursor_id=cursor_id,
         stage_reentry_points=_stage_reentry_points_for(stages),
+        effect=effect,
         native_extra=native_extra,
         **extra,
     )
@@ -2732,6 +3060,7 @@ def _persist_parent_child_entry_cursor(
         state=state,
         envelope=envelope,
         cursor_id=cursor_id,
+        effect=effect,
         native_extra=native_extra,
         extra=extra,
     )
@@ -2807,6 +3136,7 @@ def _persist_suspension(
     envelope: Any = None,
     cursor_id: str | None = None,
     path_metadata: Mapping[str, Any] | None = None,
+    effect: dict[str, Any] | None = None,
 ) -> None:
     """Persist a resume cursor at the suspension point.
 
@@ -2841,6 +3171,7 @@ def _persist_suspension(
             frames=frames_with_state,
             cursor_id=cursor_id,
             stage_reentry_points=stage_reentry_points,
+            effect=effect,
             **dict(path_metadata or _cursor_path_metadata(
                 program=program,
                 pc=pc,

@@ -36,7 +36,7 @@ from arnold.pipeline.native import (
     workflow,
 )
 from arnold.pipeline.native.checkpoint import read_native_cursor
-from arnold.pipeline.native.hooks import NullNativeRuntimeHooks
+from arnold.pipeline.native.hooks import EffectLedgerHooks, NullNativeRuntimeHooks
 from arnold.pipeline.types import ContractResult, ContractStatus, HumanSuspension, StepResult
 from arnold.runtime.envelope import RunEnvelope
 
@@ -3784,6 +3784,130 @@ class TestPhaseContractSuspension:
         assert resumed.state["approved"] is True
         assert resumed.state["review_status"] == "done"
         assert resumed.state["after"] == "done"
+
+    def test_resume_skips_fulfilled_side_effect_without_replaying(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from arnold.pipeline.types import (
+            ContractResult,
+            ContractStatus,
+            StepResult,
+            Suspension,
+        )
+
+        calls = {"write": 0}
+
+        @phase(
+            operation="file_write",
+            target="out.txt",
+            effect_class="filesystem_mutation",
+        )
+        def write_once(ctx: dict) -> StepResult:
+            calls["write"] += 1
+            (Path(ctx["artifact_root"]) / "out.txt").write_text(
+                f"call-{calls['write']}\n",
+                encoding="utf-8",
+            )
+            return StepResult(
+                outputs={"status": "waiting"},
+                contract_result=ContractResult(
+                    status=ContractStatus.SUSPENDED,
+                    suspension=Suspension(
+                        kind="human",
+                        awaitable="review",
+                        prompt="Review",
+                        resume_cursor="review-cursor",
+                    ),
+                ),
+            )
+
+        @phase
+        def after(ctx: dict) -> dict:
+            return {"after": True}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            s = yield write_once(ctx)
+            s = yield after(ctx)
+            return s
+
+        hooks = EffectLedgerHooks()
+        prog = compile_pipeline(my_pipe)
+        first = run_native_pipeline(prog, artifact_root=tmp_path, hooks=hooks)
+        assert first.suspended is True
+
+        resumed = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            resume=True,
+            hooks=hooks,
+        )
+
+        assert resumed.suspended is False
+        assert calls["write"] == 1
+        assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "call-1\n"
+
+    def test_resume_blocks_unreconciled_unowned_file_write(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from arnold.pipeline.types import (
+            ContractResult,
+            ContractStatus,
+            StepResult,
+            Suspension,
+        )
+
+        @phase(
+            operation="file_write",
+            target="out.txt",
+            effect_class="filesystem_mutation",
+        )
+        def write_then_suspend(ctx: dict) -> StepResult:
+            (Path(ctx["artifact_root"]) / "out.txt").write_text(
+                "partial\n",
+                encoding="utf-8",
+            )
+            return StepResult(
+                outputs={"status": "waiting"},
+                contract_result=ContractResult(
+                    status=ContractStatus.SUSPENDED,
+                    suspension=Suspension(
+                        kind="human",
+                        awaitable="review",
+                        prompt="Review",
+                        resume_cursor="review-cursor",
+                    ),
+                ),
+            )
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield write_then_suspend(ctx)
+            return state
+
+        hooks = EffectLedgerHooks()
+        prog = compile_pipeline(my_pipe)
+        first = run_native_pipeline(prog, artifact_root=tmp_path, hooks=hooks)
+        assert first.suspended is True
+
+        cursor_path = tmp_path / "resume_cursor.json"
+        cursor = json.loads(cursor_path.read_text(encoding="utf-8"))
+        cursor["effect"]["lifecycle_state"] = "intended"
+        cursor["effect"]["expected_content"] = "complete\n"
+        cursor_path.write_text(json.dumps(cursor), encoding="utf-8")
+
+        with pytest.raises(
+            NativeRuntimeError,
+            match="Cannot resume native side-effecting step",
+        ):
+            run_native_pipeline(
+                prog,
+                artifact_root=tmp_path,
+                resume=True,
+                hooks=hooks,
+            )
 
     def test_phase_suspension_resume_rejects_malformed_saved_state(
         self,
