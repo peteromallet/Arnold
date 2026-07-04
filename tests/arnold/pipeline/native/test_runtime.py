@@ -129,6 +129,31 @@ class TestSequentialExecution:
         assert result.state == {"x": 1, "y": 2, "z": 3}
         assert len(result.stages) == 3
 
+    def test_phase_context_exposes_root_run_and_step_paths(self) -> None:
+        seen: dict[str, object] = {}
+
+        @phase
+        def inspect(ctx: dict) -> dict:
+            seen["run_path"] = ctx["run_path"]
+            seen["step_path"] = ctx["step_path"]
+            seen["call_site_path"] = ctx["call_site_path"]
+            return {"ok": True}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield inspect(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        result = run_native_pipeline(prog)
+
+        assert result.state["ok"] is True
+        assert seen == {
+            "run_path": "root",
+            "step_path": "root/inspect",
+            "call_site_path": (),
+        }
+
     def test_state_accumulates_across_phases(self) -> None:
         @phase
         def first(ctx: dict) -> dict:
@@ -370,6 +395,40 @@ class TestPcAndStageTracking:
 
         assert result.state == {"child_status": "done"}
 
+    def test_subpipeline_context_composes_child_run_path(self) -> None:
+        seen: dict[str, object] = {}
+
+        @phase
+        def child_step(ctx: dict) -> dict:
+            seen["run_path"] = ctx["run_path"]
+            seen["step_path"] = ctx["step_path"]
+            seen["call_site_path"] = ctx["call_site_path"]
+            return {"child": "done"}
+
+        @workflow(
+            name="child_flow",
+            inputs={"type": "object"},
+            outputs={"type": "object", "required": ["child"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield child(ctx, id="child_call")
+            return state
+
+        prog = compile_pipeline(parent)
+        result = run_native_pipeline(prog)
+
+        assert result.state == {"child": "done"}
+        assert seen == {
+            "run_path": "root/child_call",
+            "step_path": "root/child_call/child_step",
+            "call_site_path": ("child_call",),
+        }
+
     def test_parallel_map_uses_parameter_precedence_and_preserves_item_order(self) -> None:
         seen_ids: list[str] = []
 
@@ -408,6 +467,8 @@ class TestPcAndStageTracking:
             return {
                 "item_id": ctx["state"]["item_id"],
                 "path": "/".join(ctx["call_site_path"]),
+                "run_path": ctx["run_path"],
+                "step_path": ctx["step_path"],
             }
 
         def reduce_paths(results: list[dict[str, str]]) -> dict:
@@ -432,8 +493,18 @@ class TestPcAndStageTracking:
         )
 
         assert reducer_inputs == [[
-            {"item_id": "a", "path": "critique_batch/critique/a"},
-            {"item_id": "b", "path": "critique_batch/critique/b"},
+            {
+                "item_id": "a",
+                "path": "critique_batch/critique/a",
+                "run_path": "root/critique_batch/critique/a",
+                "step_path": "root/critique_batch/critique/a/mapper",
+            },
+            {
+                "item_id": "b",
+                "path": "critique_batch/critique/b",
+                "run_path": "root/critique_batch/critique/b",
+                "step_path": "root/critique_batch/critique/b/mapper",
+            },
         ]]
         assert result.state["paths"] == [
             "critique_batch/critique/a",
@@ -843,6 +914,95 @@ class TestMaxPhasesAndResume:
             "b__pc1",
         ]
 
+    def test_traced_subpipeline_emits_tree_metadata_while_stages_stay_flat(
+        self, tmp_path: Path
+    ) -> None:
+        @phase
+        def child_step(ctx: dict) -> dict:
+            return {"child": True}
+
+        @workflow(
+            name="child_flow",
+            outputs={"type": "object", "required": ["child"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @phase
+        def after(ctx: dict) -> dict:
+            return {"after": True}
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield child(ctx, id="child_call")
+            state = yield after(ctx)
+            return state
+
+        trace_dir = tmp_path / "trace"
+        result = run_native_pipeline(
+            compile_pipeline(parent),
+            artifact_root=tmp_path,
+            trace_dir=trace_dir,
+        )
+
+        assert result.suspended is False
+        stages = json.loads((trace_dir / "stages.json").read_text(encoding="utf-8"))
+        assert stages == ["child_step__pc0", "after__pc1"]
+        assert all(isinstance(stage, str) for stage in stages)
+
+        tree = json.loads((trace_dir / "tree.json").read_text(encoding="utf-8"))
+        nodes = {node["path"]: node for node in tree["nodes"]}
+        assert nodes["root"]["kind"] == "pipeline"
+        assert nodes["root"]["children"] == ["root/child_call", "root/after"]
+        assert nodes["root/child_call"]["kind"] == "subpipeline"
+        assert nodes["root/child_call"]["parent_path"] == "root"
+        assert nodes["root/child_call/child_step"]["kind"] == "phase"
+        assert nodes["root/child_call/child_step"]["parent_path"] == "root/child_call"
+        assert nodes["root/after"]["kind"] == "phase"
+        assert nodes["root/after"]["parent_path"] == "root"
+
+    def test_traced_parallel_map_phase_mapper_emits_item_tree_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        @phase
+        def mapper(ctx: dict) -> dict:
+            return {"value": ctx["item"]["id"]}
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield parallel_map(
+                items="items",
+                step=mapper,
+                name="critique_batch",
+                path_template="critique/{id}",
+            )
+            return state
+
+        trace_dir = tmp_path / "trace"
+        result = run_native_pipeline(
+            compile_pipeline(parent),
+            artifact_root=tmp_path,
+            initial_state={"items": [{"id": "a"}, {"id": "b"}]},
+            trace_dir=trace_dir,
+        )
+
+        assert result.suspended is False
+        stages = json.loads((trace_dir / "stages.json").read_text(encoding="utf-8"))
+        assert len(stages) == 2
+        assert all(isinstance(stage, str) for stage in stages)
+
+        tree = json.loads((trace_dir / "tree.json").read_text(encoding="utf-8"))
+        nodes = {node["path"]: node for node in tree["nodes"]}
+        assert nodes["root/critique_batch"]["kind"] == "parallel_map"
+        assert "root/critique_batch/critique" in nodes["root/critique_batch"]["children"]
+        assert nodes["root/critique_batch/critique"]["children"] == [
+            "root/critique_batch/critique/a",
+            "root/critique_batch/critique/b",
+        ]
+        assert nodes["root/critique_batch/critique/a/mapper"]["parent_path"] == "root/critique_batch/critique/a"
+        assert nodes["root/critique_batch/critique/b/mapper"]["parent_path"] == "root/critique_batch/critique/b"
+
 
 # ── decision branching ────────────────────────────────────────────────
 
@@ -1125,6 +1285,42 @@ class TestWhileLoopExecution:
 
         assert result.state["count"] == 2
         assert recorded_iterations == [1, 2]
+
+    def test_loop_body_context_uses_iteration_path_segments(self) -> None:
+        seen_run_paths: list[str] = []
+        seen_step_paths: list[str] = []
+        counter = {"count": 0}
+
+        @phase
+        def body(ctx: dict) -> dict:
+            seen_run_paths.append(ctx["run_path"])
+            seen_step_paths.append(ctx["step_path"])
+            counter["count"] += 1
+            return {"count": counter["count"]}
+
+        @decision(name="critique_loop", vocabulary={"again", "done"})
+        def guard(ctx: dict) -> str:
+            return "again" if counter["count"] < 2 else "done"
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state: dict = {}
+            while guard(ctx) == "again":
+                state = yield body(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        result = run_native_pipeline(prog)
+
+        assert result.state["count"] == 2
+        assert seen_run_paths == [
+            "root/critique_loop[1]",
+            "root/critique_loop[2]",
+        ]
+        assert seen_step_paths == [
+            "root/critique_loop[1]/body",
+            "root/critique_loop[2]/body",
+        ]
 
     def test_runtime_subpipeline_cycle_guard_rejects_recursive_program(self) -> None:
         recursive = NativeProgram(
@@ -2690,6 +2886,40 @@ class TestHumanGateSuspension:
         assert native["suspension_kind"] == "human_gate"
         assert native["pc"] >= 0
         assert native["version"] == 1
+
+    def test_phase_suspension_cursor_persists_path_metadata_for_child_run(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from arnold.pipeline.types import ContractResult, ContractStatus, StepResult, Suspension
+
+        @phase
+        def review(ctx: dict) -> StepResult:
+            return StepResult(
+                outputs={"review": "waiting"},
+                contract_result=ContractResult(
+                    status=ContractStatus.SUSPENDED,
+                    suspension=Suspension(kind="human", resume_cursor="review-cursor"),
+                ),
+            )
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield review(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        result = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            run_path="root/child_call",
+        )
+
+        assert result.state["review"] == "waiting"
+        cursor = json.loads((tmp_path / "resume_cursor.json").read_text(encoding="utf-8"))
+        assert cursor["run_path"] == "root/child_call"
+        assert cursor["step_path"] == "root/child_call/review"
+        assert cursor["call_site_path"] == ["child_call"]
 
     def test_human_gate_cursor_is_classified_as_native(self, tmp_path: Path) -> None:
         """classify_resume_cursor correctly identifies a human-gate native cursor."""

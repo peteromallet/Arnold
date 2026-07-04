@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from arnold.pipeline.native import (
+    DynamicMapMetadata,
     NativeCompileError,
     NativeDecision,
     NativeInstruction,
@@ -20,9 +21,11 @@ from arnold.pipeline.native import (
     NativePhase,
     NativePipeline,
     NativeProgram,
+    NativeTopology,
     ParallelInstruction,
     ParallelMapInstruction,
     compile_pipeline,
+    derive_topology,
     decision,
     parallel,
     parallel_map,
@@ -1374,3 +1377,142 @@ class TestNestedWorkflowMetadataCompilation:
         with pytest.raises(NativeCompileError) as exc_info:
             compile_pipeline(alpha)
         assert "Workflow cycle detected: alpha -> beta -> alpha" in str(exc_info.value)
+
+
+class TestDerivedTopologyCompilation:
+    def test_compile_pipeline_populates_static_topology_without_execution(self) -> None:
+        executed: list[str] = []
+
+        @phase(
+            id="draft.phase",
+            inputs={"type": "object", "required": ["prompt"]},
+            outputs={"type": "object", "required": ["draft"]},
+        )
+        def draft(ctx: object) -> dict:
+            executed.append("draft")
+            return {"draft": "ok"}
+
+        @decision(name="route.decision", vocabulary={"ship", "revise", "defer"})
+        def route(ctx: object) -> str:
+            executed.append("route")
+            return "ship"
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            executed.append("child_step")
+            return {"child": True}
+
+        @_workflow(
+            name="child",
+            id="workflow.child",
+            inputs={"type": "object", "required": ["seed"]},
+            outputs={"type": "object", "required": ["child"]},
+        )
+        def child(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @decision(name="loop.guard", vocabulary={"again", "done"})
+        def guard(ctx: object) -> str:
+            executed.append("guard")
+            return "done"
+
+        @phase(
+            inputs={"type": "object", "required": ["item"]},
+            outputs={"type": "object", "required": ["verdict"]},
+        )
+        def mapper(ctx: object) -> dict:
+            executed.append("mapper")
+            return {"verdict": "ok"}
+
+        def reduce_results(results: list[dict[str, str]]) -> dict:
+            return {"results": results}
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield draft(ctx)
+            if route(ctx) == "ship":
+                state = yield child(ctx, id="child.call")
+            while guard(ctx) == "again":
+                state = yield draft(ctx)
+            state = yield parallel_map(
+                items="checks",
+                step=mapper,
+                reducer=reduce_results,
+                path_template="item/{item_id}",
+                name="review_batch",
+                id="review.batch",
+            )
+            return state
+
+        program = compile_pipeline(parent)
+
+        assert executed == []
+        assert isinstance(program.topology, NativeTopology)
+        assert derive_topology(program) == program.topology
+
+        nodes_by_kind: dict[str, list[object]] = {}
+        for node in program.topology.nodes:
+            nodes_by_kind.setdefault(node.kind, []).append(node)
+
+        phase_paths = {node.path for node in nodes_by_kind["phase"]}
+        assert "root/draft.phase" in phase_paths
+        assert "root/review.batch/item/{item_id}" in phase_paths
+
+        decision_node = nodes_by_kind["decision"][0]
+        assert decision_node.path == "root/route.decision"
+        assert decision_node.metadata["vocabulary"] == ["defer", "revise", "ship"]
+
+        loop_node = nodes_by_kind["loop"][0]
+        assert loop_node.path == "root/loop.guard"
+        assert loop_node.metadata["loop_stable_id"] == "loop.guard"
+        assert loop_node.metadata["guard_name"] == "guard"
+
+        child_node = nodes_by_kind["child_workflow"][0]
+        assert child_node.path == "root/child.call"
+        assert child_node.metadata["child_stable_id"] == "workflow.child"
+        assert child_node.metadata["inputs_schema"] == {
+            "type": "object",
+            "required": ["seed"],
+        }
+        assert child_node.metadata["outputs_schema"] == {
+            "type": "object",
+            "required": ["child"],
+        }
+
+        dynamic_map_node = nodes_by_kind["dynamic_map"][0]
+        dynamic_map_metadata = dynamic_map_node.metadata["dynamic_map_metadata"]
+        assert isinstance(dynamic_map_metadata, DynamicMapMetadata)
+        assert dynamic_map_metadata.items_ref == "checks"
+        assert dynamic_map_metadata.mapper_name == "mapper"
+        assert dynamic_map_metadata.path_template == "item/{item_id}"
+        assert dynamic_map_metadata.collection_schema == {
+            "type": "object",
+            "required": ["item"],
+        }
+        assert dynamic_map_metadata.reducer_name == "reduce_results"
+        assert dynamic_map_metadata.fan_in is True
+
+    def test_repeated_child_call_sites_keep_distinct_topology_paths(self) -> None:
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @_workflow
+        def child(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child(ctx, id="child.first")
+            state = yield child(ctx, id="child.second")
+            return state
+
+        program = compile_pipeline(parent)
+        child_paths = [
+            node.path
+            for node in program.topology.nodes
+            if node.kind == "child_workflow"
+        ]
+        assert child_paths == ["root/child.first", "root/child.second"]

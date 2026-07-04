@@ -48,7 +48,7 @@ RUNTIME_BRANCH_VOCABULARY = MappingProxyType(
             "force_proceed",
         ),
         "tiebreaker_decide": ("iterate", "proceed", "escalate"),
-        "review": ("pass", "rework"),
+        "review": ("pass", "rework", "blocked", "force_proceeded", "deferred_human"),
         "override": ("abort", "force_proceed", "replan"),
     }
 )
@@ -952,6 +952,11 @@ SOURCE_CRITIQUE_PANEL_WORKFLOW = _workflow(
     metadata={
         "policy_refs": ("megaplan:robustness", "megaplan:model-routing"),
         "mapper_step_ref": "arnold_pipelines.megaplan.handlers:handle_critique",
+        "topology_contract": {
+            "kind": "critique_fanout",
+            "fanout_ref": "megaplan.policy.critique_lenses",
+            "route_signal": "critique_payload",
+        },
     },
 )
 SOURCE_TIEBREAKER_WORKFLOW = _workflow(
@@ -963,6 +968,16 @@ SOURCE_TIEBREAKER_WORKFLOW = _workflow(
     metadata={
         "policy_refs": ("megaplan:tiebreaker", "megaplan:model-routing"),
         "child_steps": ("tiebreaker_run", "tiebreaker_decide"),
+        "topology_contract": {
+            "kind": "child_workflow",
+            "entry_step_id": "tiebreaker_run",
+            "decision_step_id": "tiebreaker_decide",
+            "decision_routes": (
+                {"action": "pick", "route_signal": "proceed", "target_ref": "finalize"},
+                {"action": "replan", "route_signal": "iterate", "target_ref": "critique-fanout"},
+                {"action": "escalate", "route_signal": "escalate", "target_ref": "override"},
+            ),
+        },
     },
 )
 SOURCE_EXECUTE_BATCH_WORKFLOW = _workflow(
@@ -973,7 +988,20 @@ SOURCE_EXECUTE_BATCH_WORKFLOW = _workflow(
     label="Megaplan execute batch child workflow",
     metadata={
         "policy_refs": ("megaplan:default", "megaplan:model-routing"),
+        "dag_ref": "megaplan.execute.dag",
         "batch_source_ref": "finalize.task_batches",
+        "topology_contract": {
+            "kind": "execute_batch_child",
+            "approval_gate": {
+                "required_ref": "state.meta.user_approved_gate",
+                "confirmation_ref": "args.confirm_destructive",
+            },
+            "post_batch_routes": (
+                {"route_signal": "review_required", "target_ref": "review-fan-in"},
+                {"route_signal": "no_review", "target_ref": "halt"},
+                {"route_signal": "deferred_human", "target_ref": "halt"},
+            ),
+        },
     },
 )
 SOURCE_REVIEW_PANEL_WORKFLOW = _workflow(
@@ -985,6 +1013,19 @@ SOURCE_REVIEW_PANEL_WORKFLOW = _workflow(
     metadata={
         "policy_refs": ("megaplan:review", "megaplan:model-routing"),
         "fan_in_ref": "review.checks",
+        "topology_contract": {
+            "kind": "review_fan_in",
+            "criteria_ref": "review.criteria",
+            "route_signal_ref": "review.route_signal",
+            "no_review_route_signal": "pass",
+            "reducer_routes": (
+                {"route_signal": "pass", "target_ref": "halt"},
+                {"route_signal": "rework", "target_ref": "revise"},
+                {"route_signal": "blocked", "target_ref": "halt"},
+                {"route_signal": "force_proceeded", "target_ref": "halt"},
+                {"route_signal": "deferred_human", "target_ref": "halt"},
+            ),
+        },
     },
 )
 

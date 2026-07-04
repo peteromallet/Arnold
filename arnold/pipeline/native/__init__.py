@@ -45,12 +45,18 @@ from arnold.pipeline.native.decorators import (
     workflow,
 )
 from arnold.pipeline.native.flags import force_legacy_runtime, native_runtime_enabled
-from arnold.pipeline.native.graph_projection import project_graph
+from arnold.pipeline.native.graph_projection import derive_topology, project_graph
 from arnold.pipeline.native.hooks import (
     NativeRuntimeHooks,
     NullNativeRuntimeHooks,
 )
 from arnold.pipeline.native.ir import (
+    CompositionEdge,
+    CompositionNode,
+    CompositionNodeKind,
+    DerivedGraph,
+    DynamicMapMetadata,
+    NativeCompositionGraph,
     NativeDecision,
     NativeInstruction,
     NativeInvocable,
@@ -58,14 +64,21 @@ from arnold.pipeline.native.ir import (
     NativePhase,
     NativePipeline,
     NativeProgram,
+    NativeTopology,
+    PATH_DELIMITER,
     ParallelInstruction,
     ParallelMapInstruction,
+    PathSegment,
+    ROOT_PATH,
+    TopologyEdge,
+    TopologyNode,
 )
 from arnold.pipeline.native.runtime import (
     NativeExecutionResult,
     NativeRuntimeError,
     run_native_pipeline,
 )
+from arnold.pipeline.native.audit import AuditHooks
 from arnold.pipeline.native.trace import NativeTraceHooks
 from arnold.pipeline.native.validator import (
     RoutingPurityDiagnostic,
@@ -75,11 +88,18 @@ from arnold.pipeline.native.validator import (
 )
 
 __all__ = [
+    "AuditHooks",
     "NATIVE_CURSOR_VERSION",
     "NativeCompileError",
     "NativeCursorCorruptError",
     "CursorUpgradeError",
     "CursorUpgradeResult",
+    "CompositionEdge",
+    "CompositionNode",
+    "CompositionNodeKind",
+    "DerivedGraph",
+    "DynamicMapMetadata",
+    "NativeCompositionGraph",
     "NativeDecision",
     "NativeExecutionResult",
     "NativeInstruction",
@@ -91,14 +111,21 @@ __all__ = [
     "NativeRuntimeDisabledError",
     "NativeRuntimeError",
     "NativeRuntimeHooks",
+    "NativeTopology",
     "NativeTraceHooks",
+    "PATH_DELIMITER",
+    "ParallelInstruction",
+    "ParallelMapInstruction",
+    "PathSegment",
+    "ROOT_PATH",
     "RoutingPurityDiagnostic",
     "RoutingPurityReport",
     "NullNativeRuntimeHooks",
-    "ParallelInstruction",
-    "ParallelMapInstruction",
+    "TopologyEdge",
+    "TopologyNode",
     "compile_pipeline",
     "decision",
+    "derive_topology",
     "force_legacy_runtime",
     "get_decision_meta",
     "get_phase_meta",

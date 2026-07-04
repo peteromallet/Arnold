@@ -61,3 +61,240 @@ review_targets:
     target: halt
   - label: rework
     target: revise
+
+canonical_authoring:
+  source_path: arnold_pipelines/megaplan/workflows/workflow.py
+  workflow_id: megaplan
+  workflow_version: m4-phase3
+  semantic_nodes:
+    - prep
+    - plan
+    - critique-fanout
+    - gate
+    - revise
+    - tiebreaker
+    - finalize
+    - execute-batches
+    - review-fan-in
+    - override
+    - tiebreaker-execute-batches
+    - execute
+    - halt
+  excluded_wrapper_nodes:
+    - blocked_override
+    - fallback_execute
+    - fallback_finalize
+    - force_execute
+    - force_finalize
+    - gate_abort
+    - gate_suspend
+    - override_execute
+    - override_finalize
+    - override_halt
+    - override_revise
+    - override_unknown
+    - review_halt
+    - review_revise
+    - tiebreaker_finalize
+    - tiebreaker_override
+  gate_routes:
+    - route_id: gate-finalize
+      label: proceed
+      target: finalize
+      lowered_target: finalize
+      condition_ref: gate.gate_route_signal.eq.proceed
+    - route_id: gate-revise
+      label: iterate
+      target: revise
+      lowered_target: revise
+      condition_ref: gate.gate_route_signal.eq.iterate
+    - route_id: gate-tiebreaker
+      label: tiebreaker
+      target: tiebreaker
+      lowered_target: tiebreaker
+      condition_ref: gate.gate_route_signal.eq.tiebreaker
+    - route_id: gate-override
+      label: escalate
+      target: override
+      lowered_target: override
+      condition_ref: gate.gate_route_signal.eq.escalate
+    - route_id: gate-gate_abort
+      label: abort
+      target: halt
+      lowered_target: gate_abort
+      condition_ref: gate.gate_route_signal.eq.abort
+    - route_id: gate-gate_suspend
+      label: suspend
+      target: halt
+      lowered_target: gate_suspend
+      condition_ref: gate.gate_route_signal.eq.suspend
+    - route_id: gate-blocked_override
+      label: blocked_preflight
+      target: override
+      lowered_target: blocked_override
+      condition_ref: gate.gate_route_signal.eq.blocked_preflight
+    - route_id: gate-force_finalize
+      label: force_proceed
+      target: finalize
+      lowered_target: force_finalize
+      condition_ref: gate.gate_route_signal.eq.force_proceed
+    - route_id: gate-fallback_finalize
+      label: else
+      target: finalize
+      lowered_target: fallback_finalize
+      condition_ref: gate.gate_route_signal.else
+  review_routes:
+    - route_id: review-fan-in-halt
+      label: pass
+      target: halt
+      lowered_target: halt
+      condition_ref: review-fan-in.review_route_signal.eq.pass
+    - route_id: review-fan-in-review_revise
+      label: rework
+      target: revise
+      lowered_target: review_revise
+      condition_ref: review-fan-in.review_route_signal.eq.rework
+    - route_id: review-fan-in-review_halt
+      label: else
+      target: halt
+      lowered_target: review_halt
+      condition_ref: review-fan-in.review_route_signal.else
+  override_routes:
+    - route_id: override-override_halt
+      label: abort
+      target: halt
+      lowered_target: override_halt
+      condition_ref: override.override_result.eq.abort
+    - route_id: override-override_finalize
+      label: force_proceed
+      target: finalize
+      lowered_target: override_finalize
+      condition_ref: override.override_result.eq.force_proceed
+    - route_id: override-override_revise
+      label: replan
+      target: revise
+      lowered_target: override_revise
+      condition_ref: override.override_result.eq.replan
+    - route_id: override-override_unknown
+      label: else
+      target: halt
+      lowered_target: override_unknown
+      condition_ref: override.override_result.else
+  tiebreaker_routes:
+    - route_id: tiebreaker-tiebreaker_finalize
+      label: proceed
+      target: finalize
+      lowered_target: tiebreaker_finalize
+      condition_ref: tiebreaker.decision.eq.proceed
+    - route_id: tiebreaker-tiebreaker_override
+      label: escalate
+      target: override
+      lowered_target: tiebreaker_override
+      condition_ref: tiebreaker.decision.eq.escalate
+  dynamic_maps:
+    - id: critique-fanout
+      items_ref: megaplan.policy.critique_lenses
+      mapper_ref: arnold_pipelines.megaplan.workflows.components:SOURCE_CRITIQUE_PANEL_WORKFLOW
+      reducer_ref: arnold_pipelines.megaplan.workflows.components:SOURCE_CRITIQUE
+      path_template: critique/{item_id}
+      iteration_coordinate: "{item_id}"
+      call_site_path: critique-fanout
+      topology_contract:
+        kind: critique_fanout
+        fanout_ref: megaplan.policy.critique_lenses
+        route_signal: critique_payload
+    - id: execute-batches
+      items_ref: megaplan.execute.batches
+      mapper_ref: arnold_pipelines.megaplan.workflows.components:SOURCE_EXECUTE_BATCH_WORKFLOW
+      reducer_ref: arnold_pipelines.megaplan.workflows.components:SOURCE_EXECUTE
+      path_template: execute/{index}
+      iteration_coordinate: "{index}"
+      call_site_path: execute-batches
+      topology_contract:
+        kind: execute_batch_child
+        approval_gate:
+          required_ref: state.meta.user_approved_gate
+          confirmation_ref: args.confirm_destructive
+        post_batch_routes:
+          - route_signal: review_required
+            target_ref: review-fan-in
+          - route_signal: no_review
+            target_ref: halt
+          - route_signal: deferred_human
+            target_ref: halt
+    - id: review-fan-in
+      items_ref: execute_payload
+      mapper_ref: arnold_pipelines.megaplan.workflows.components:SOURCE_REVIEW_PANEL_WORKFLOW
+      reducer_ref: arnold_pipelines.megaplan.workflows.components:SOURCE_REVIEW
+      path_template: review/{item_id}
+      iteration_coordinate: "{item_id}"
+      call_site_path: review-fan-in
+      topology_contract:
+        kind: review_fan_in
+        criteria_ref: review.criteria
+        route_signal_ref: review.route_signal
+        no_review_route_signal: pass
+        reducer_routes:
+          - route_signal: pass
+            target_ref: halt
+          - route_signal: rework
+            target_ref: revise
+          - route_signal: blocked
+            target_ref: halt
+          - route_signal: force_proceeded
+            target_ref: halt
+          - route_signal: deferred_human
+            target_ref: halt
+    - id: tiebreaker-execute-batches
+      items_ref: megaplan.execute.batches
+      mapper_ref: arnold_pipelines.megaplan.workflows.components:SOURCE_EXECUTE_BATCH_WORKFLOW
+      reducer_ref: arnold_pipelines.megaplan.workflows.components:SOURCE_EXECUTE
+      path_template: execute/{index}
+      iteration_coordinate: "{index}"
+      call_site_path: tiebreaker-execute-batches
+      topology_contract:
+        kind: execute_batch_child
+        approval_gate:
+          required_ref: state.meta.user_approved_gate
+          confirmation_ref: args.confirm_destructive
+        post_batch_routes:
+          - route_signal: review_required
+            target_ref: review-fan-in
+          - route_signal: no_review
+            target_ref: halt
+          - route_signal: deferred_human
+            target_ref: halt
+  child_workflows:
+    - id: tiebreaker
+      child_workflow_id: tiebreaker_child
+      call_site_path: megaplan/tiebreaker
+      parent_path: megaplan
+      inputs_schema:
+        - gate_payload
+      outputs_schema:
+        - decision
+      topology_contract:
+        kind: child_workflow
+        entry_step_id: tiebreaker_run
+        decision_step_id: tiebreaker_decide
+        decision_routes:
+          - action: pick
+            route_signal: proceed
+            target_ref: finalize
+          - action: replan
+            route_signal: iterate
+            target_ref: critique-fanout
+          - action: escalate
+            route_signal: escalate
+            target_ref: override
+  suspension_routes:
+    gate:
+      - route_id: gate:human
+        capability_id: human:gate
+    review:
+      - route_id: review:human
+        capability_id: human:review
+    tiebreaker:
+      - route_id: tiebreaker:loop
+        capability_id: megaplan:planning
+        reentry_id: tiebreaker:loop

@@ -15,11 +15,23 @@ from collections.abc import Iterable, Mapping
 from typing import Any, Callable
 
 from arnold.pipeline.declaration_lowering import derive_binding_map
+from arnold.pipeline.native.decorators import (
+    get_decision_meta,
+    get_phase_meta,
+    is_phase,
+    is_pipeline,
+)
 from arnold.pipeline.native.ir import (
+    DynamicMapMetadata,
     NativeInstruction,
+    NativeTopology,
     NativeProgram,
+    PATH_DELIMITER,
     ParallelInstruction,
     ParallelMapInstruction,
+    ROOT_PATH,
+    TopologyEdge,
+    TopologyNode,
 )
 from arnold.pipeline.pattern_dynamic import (
     FanoutConcurrency,
@@ -747,12 +759,391 @@ def project_graph(program: NativeProgram, key_mode: str = "pc") -> Pipeline:
     )
 
 
+def derive_topology(program: NativeProgram) -> NativeTopology:
+    """Derive a static topology from a compiled native program without execution."""
+    return _TopologyBuilder(program).build()
+
+
 # ── helpers ─────────────────────────────────────────────────────────
 
 
 def _safe_name(name: str) -> str:
     """Return a name safe for use as a stage-name prefix."""
     return name.replace(" ", "_").replace("-", "_")
+
+
+class _TopologyBuilder:
+    """Build a structural topology alongside the execution projection."""
+
+    def __init__(self, program: NativeProgram) -> None:
+        self.program = program
+        self.instructions = program.instructions
+        self.nodes: list[TopologyNode] = []
+        self.edges: list[TopologyEdge] = []
+        self.node_ids_by_pc: dict[int, str] = {}
+        self._used_paths: set[str] = set()
+        self._loop_guards_by_pc = self._detect_loop_headers()
+
+    def build(self) -> NativeTopology:
+        for instr in self.instructions:
+            if not self._is_public_topology_instruction(instr):
+                continue
+            node = self._build_node(instr)
+            self.nodes.append(node)
+            self.node_ids_by_pc[instr.pc] = node.node_id
+            if instr.op == "subpipeline":
+                self._inline_child_program(node, instr.subprogram, edge_kind="child_workflow")
+            elif instr.op == "parallel_map":
+                self._inline_parallel_map_mapper(node, instr.subprogram)
+
+        for instr in self.instructions:
+            if instr.pc not in self.node_ids_by_pc:
+                continue
+            source = self.node_ids_by_pc[instr.pc]
+            if instr.op == "decision":
+                vocabulary = frozenset(instr.decision_vocabulary or frozenset())
+                labels = tuple(sorted(vocabulary | frozenset(instr.branches.keys())))
+                for label in labels:
+                    branch_pc = instr.branches.get(label)
+                    if branch_pc is None:
+                        continue
+                    target_pc = self._resolve_next_public_pc(branch_pc)
+                    if target_pc is None:
+                        continue
+                    target = self.node_ids_by_pc.get(target_pc)
+                    if target is None:
+                        continue
+                    self.edges.append(
+                        TopologyEdge(
+                            source=source,
+                            target=target,
+                            label=label,
+                            kind="control_flow",
+                        )
+                    )
+                continue
+
+            next_pc = instr.next_pc
+            if next_pc is None:
+                continue
+            target_pc = self._resolve_next_public_pc(next_pc)
+            if target_pc is None:
+                continue
+            target = self.node_ids_by_pc.get(target_pc)
+            if target is None:
+                continue
+            self.edges.append(
+                TopologyEdge(
+                    source=source,
+                    target=target,
+                    label="next",
+                    kind="control_flow",
+                )
+            )
+
+        return NativeTopology(
+            name=self.program.name,
+            nodes=tuple(self.nodes),
+            edges=tuple(self.edges),
+            root_path=ROOT_PATH,
+            path_delimiter=PATH_DELIMITER,
+        )
+
+    def _detect_loop_headers(self) -> dict[int, Any]:
+        loop_header_pcs: list[int] = []
+        for index, instr in enumerate(self.instructions):
+            if instr.op == "jump" and instr.next_pc is not None and instr.next_pc < index:
+                loop_header_pcs.append(instr.next_pc)
+        return {
+            pc: self.program.loop_guards[index]
+            for index, pc in enumerate(loop_header_pcs)
+            if index < len(self.program.loop_guards)
+        }
+
+    def _is_public_topology_instruction(self, instr: NativeInstruction) -> bool:
+        return instr.op in {"phase", "decision", "subpipeline", "parallel_map"}
+
+    def _build_node(self, instr: NativeInstruction) -> TopologyNode:
+        if instr.op == "phase":
+            meta = get_phase_meta(instr.func) if instr.func is not None else None
+            path = self._reserve_path(ROOT_PATH, self._node_segments(instr, meta))
+            return TopologyNode(
+                node_id=path,
+                kind="phase",
+                label=instr.name,
+                path=path,
+                stable_id=meta.get("id") if isinstance(meta, Mapping) else None,
+                metadata={
+                    "inputs_schema": meta.get("inputs") if isinstance(meta, Mapping) else None,
+                    "outputs_schema": meta.get("outputs") if isinstance(meta, Mapping) else None,
+                },
+            )
+
+        if instr.op == "subpipeline":
+            child_program = instr.subprogram if isinstance(instr.subprogram, NativeProgram) else None
+            path = self._reserve_path(ROOT_PATH, self._node_segments(instr, None))
+            return TopologyNode(
+                node_id=path,
+                kind="child_workflow",
+                label=instr.name,
+                path=path,
+                stable_id=child_program.stable_id if child_program is not None else None,
+                metadata={
+                    "child_name": child_program.name if child_program is not None else instr.name,
+                    "child_stable_id": child_program.stable_id if child_program is not None else None,
+                    "inputs_schema": child_program.inputs_schema if child_program is not None else None,
+                    "outputs_schema": child_program.outputs_schema if child_program is not None else None,
+                    "output_bindings": dict(instr.output_bindings),
+                },
+            )
+
+        if instr.op == "parallel_map":
+            block = instr.subprogram if isinstance(instr.subprogram, ParallelMapInstruction) else None
+            path = self._reserve_path(ROOT_PATH, self._node_segments(instr, None))
+            dynamic_map_metadata = DynamicMapMetadata(
+                items_ref=block.items_ref if block is not None else "",
+                mapper_name=block.mapper_name if block is not None else "",
+                path_template=block.path_template if block is not None else "",
+                collection_schema=block.collection_schema if block is not None else None,
+                reducer_name=getattr(block.reducer, "__name__", "") if block is not None and block.reducer is not None else "",
+                fan_in=bool(block is not None and block.reducer is not None),
+            )
+            return TopologyNode(
+                node_id=path,
+                kind="dynamic_map",
+                label=instr.name,
+                path=path,
+                metadata={"dynamic_map_metadata": dynamic_map_metadata},
+            )
+
+        decision_meta = get_decision_meta(instr.func) if instr.func is not None else None
+        loop_guard = self._loop_guards_by_pc.get(instr.pc)
+        if loop_guard is not None:
+            stable_id = loop_guard.stable_id or (
+                decision_meta.get("id") if isinstance(decision_meta, Mapping) else None
+            )
+            stable_identity = stable_id or loop_guard.name or instr.name
+            path = self._reserve_path(
+                ROOT_PATH,
+                self._node_segments(
+                    instr,
+                    {"id": stable_identity, "name": loop_guard.name or instr.name},
+                ),
+            )
+            return TopologyNode(
+                node_id=path,
+                kind="loop",
+                label=loop_guard.name or instr.name,
+                path=path,
+                stable_id=stable_identity,
+                metadata={
+                    "loop_stable_id": stable_identity,
+                    "guard_name": getattr(loop_guard.guard, "__name__", loop_guard.name),
+                    "vocabulary": sorted(instr.decision_vocabulary or ()),
+                },
+            )
+
+        path = self._reserve_path(ROOT_PATH, self._node_segments(instr, decision_meta))
+        return TopologyNode(
+            node_id=path,
+            kind="decision",
+            label=instr.name,
+            path=path,
+            stable_id=decision_meta.get("id") if isinstance(decision_meta, Mapping) else None,
+            metadata={
+                "vocabulary": sorted(instr.decision_vocabulary or ()),
+                "decision_routes": dict(getattr(instr, "branches", {})),
+                "human_gate": bool(decision_meta.get("human_gate")) if isinstance(decision_meta, Mapping) else False,
+                "choices": tuple(decision_meta.get("choices", ())) if isinstance(decision_meta, Mapping) else (),
+            },
+        )
+
+    def _node_segments(
+        self,
+        instr: NativeInstruction,
+        meta: Mapping[str, Any] | None,
+    ) -> tuple[str, ...]:
+        if instr.call_site_path:
+            return tuple(str(segment) for segment in instr.call_site_path if str(segment))
+        stable_id = meta.get("id") if isinstance(meta, Mapping) else None
+        preferred = stable_id or instr.name or instr.op
+        return (str(preferred),)
+
+    def _reserve_path(self, base_path: str, segments: tuple[str, ...]) -> str:
+        normalized = tuple(segment for segment in segments if segment)
+        if not normalized:
+            normalized = ("node",)
+        candidate = _join_topology_path(base_path, normalized)
+        if candidate not in self._used_paths:
+            self._used_paths.add(candidate)
+            return candidate
+        stem = normalized[-1]
+        index = 1
+        while True:
+            candidate = _join_topology_path(base_path, (*normalized[:-1], f"{stem}_{index}"))
+            if candidate not in self._used_paths:
+                self._used_paths.add(candidate)
+                return candidate
+            index += 1
+
+    def _resolve_next_public_pc(self, start_pc: int) -> int | None:
+        visited: set[int] = set()
+        current = start_pc
+        while current >= 0 and current < len(self.instructions):
+            if current in visited:
+                return None
+            visited.add(current)
+            if current in self.node_ids_by_pc:
+                return current
+            instr = self.instructions[current]
+            if instr.op == "halt":
+                return None
+            if instr.op == "jump":
+                current = instr.next_pc if instr.next_pc is not None else -1
+            else:
+                current += 1
+        return None
+
+    def _inline_child_program(
+        self,
+        parent_node: TopologyNode,
+        child_program: Any,
+        *,
+        edge_kind: str,
+        edge_label: str = "",
+    ) -> None:
+        if not isinstance(child_program, NativeProgram):
+            return
+        child_topology = child_program.topology
+        if not isinstance(child_topology, NativeTopology):
+            child_topology = derive_topology(child_program)
+        rebased_nodes, rebased_edges = _rebase_topology(child_topology, parent_node.path)
+        if rebased_nodes:
+            self.edges.append(
+                TopologyEdge(
+                    source=parent_node.node_id,
+                    target=rebased_nodes[0].node_id,
+                    label=edge_label or parent_node.label,
+                    kind=edge_kind,
+                )
+            )
+        for node in rebased_nodes:
+            if node.node_id not in self._used_paths:
+                self._used_paths.add(node.node_id)
+            self.nodes.append(node)
+        self.edges.extend(rebased_edges)
+
+    def _inline_parallel_map_mapper(
+        self,
+        parent_node: TopologyNode,
+        subprogram: Any,
+    ) -> None:
+        if not isinstance(subprogram, ParallelMapInstruction) or subprogram.mapper is None:
+            return
+        template_segments = tuple(
+            segment for segment in subprogram.path_template.split(PATH_DELIMITER) if segment
+        ) or ("item",)
+        if is_pipeline(subprogram.mapper):
+            from arnold.pipeline.native.compiler import compile_pipeline
+
+            mapper_program = compile_pipeline(subprogram.mapper)
+            mapper_topology = mapper_program.topology
+            if not isinstance(mapper_topology, NativeTopology):
+                mapper_topology = derive_topology(mapper_program)
+            rebased_nodes, rebased_edges = _rebase_topology(
+                mapper_topology,
+                _join_topology_path(parent_node.path, template_segments),
+            )
+            if rebased_nodes:
+                self.edges.append(
+                    TopologyEdge(
+                        source=parent_node.node_id,
+                        target=rebased_nodes[0].node_id,
+                        label=subprogram.path_template or PATH_DELIMITER.join(template_segments),
+                        kind="dynamic_map_item",
+                    )
+                )
+            for node in rebased_nodes:
+                if node.node_id not in self._used_paths:
+                    self._used_paths.add(node.node_id)
+                self.nodes.append(node)
+            self.edges.extend(rebased_edges)
+            return
+
+        if not is_phase(subprogram.mapper):
+            return
+        mapper_meta = get_phase_meta(subprogram.mapper)
+        mapper_path = self._reserve_path(parent_node.path, template_segments)
+        self.nodes.append(
+            TopologyNode(
+                node_id=mapper_path,
+                kind="phase",
+                label=subprogram.mapper_name or getattr(subprogram.mapper, "__name__", "mapper"),
+                path=mapper_path,
+                stable_id=mapper_meta.get("id") if isinstance(mapper_meta, Mapping) else None,
+                metadata={
+                    "inputs_schema": mapper_meta.get("inputs") if isinstance(mapper_meta, Mapping) else None,
+                    "outputs_schema": mapper_meta.get("outputs") if isinstance(mapper_meta, Mapping) else None,
+                },
+            )
+        )
+        self.edges.append(
+            TopologyEdge(
+                source=parent_node.node_id,
+                target=mapper_path,
+                label=subprogram.path_template or PATH_DELIMITER.join(template_segments),
+                kind="dynamic_map_item",
+            )
+        )
+
+
+def _join_topology_path(base_path: str, segments: tuple[str, ...]) -> str:
+    if not segments:
+        return base_path
+    return PATH_DELIMITER.join((base_path, *segments))
+
+
+def _relative_topology_segments(path: str) -> tuple[str, ...]:
+    if not path or path == ROOT_PATH:
+        return ()
+    prefix = f"{ROOT_PATH}{PATH_DELIMITER}"
+    if path.startswith(prefix):
+        path = path[len(prefix):]
+    return tuple(segment for segment in path.split(PATH_DELIMITER) if segment)
+
+
+def _rebase_topology(
+    topology: NativeTopology,
+    base_path: str,
+) -> tuple[list[TopologyNode], list[TopologyEdge]]:
+    node_id_map: dict[str, str] = {}
+    rebased_nodes: list[TopologyNode] = []
+    for node in topology.nodes:
+        relative_segments = _relative_topology_segments(node.path)
+        new_path = _join_topology_path(base_path, relative_segments)
+        node_id_map[node.node_id] = new_path
+        rebased_nodes.append(
+            TopologyNode(
+                node_id=new_path,
+                kind=node.kind,
+                label=node.label,
+                path=new_path,
+                stable_id=node.stable_id,
+                metadata=node.metadata,
+            )
+        )
+    rebased_edges = [
+        TopologyEdge(
+            source=node_id_map.get(edge.source, edge.source),
+            target=node_id_map.get(edge.target, edge.target),
+            label=edge.label,
+            kind=edge.kind,
+            metadata=edge.metadata,
+        )
+        for edge in topology.edges
+        if edge.source in node_id_map and edge.target in node_id_map
+    ]
+    return rebased_nodes, rebased_edges
 
 
 def _coerce_step_result(result: Any) -> StepResult:

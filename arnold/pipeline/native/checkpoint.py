@@ -31,6 +31,12 @@ run.  ``stage_reentry_points`` maps each completed phase name to its
 full stage identifier, enabling external tooling to locate reentry
 targets without parsing the ``stages`` list.
 
+Additive path metadata may also be present at the top level:
+``run_path`` (full stable run path), ``step_path`` (current executable
+step path), ``call_site_path`` (path segments below ``root``), and
+``path_stack`` (loop-iteration stack used to restore composed paths on
+resume). These fields do not participate in cursor classification.
+
 Resume routing
 --------------
 
@@ -625,6 +631,22 @@ def read_native_cursor(artifact_root: str | Path) -> dict[str, Any] | None:
         data["cursor_id"] = None
     if "stage_reentry_points" not in data or not isinstance(data.get("stage_reentry_points"), dict):
         data["stage_reentry_points"] = {}
+    if "run_path" in data and not isinstance(data.get("run_path"), str):
+        data["run_path"] = None
+    if "step_path" in data and not isinstance(data.get("step_path"), str):
+        data["step_path"] = None
+    raw_call_site_path = data.get("call_site_path")
+    if isinstance(raw_call_site_path, (list, tuple)):
+        data["call_site_path"] = tuple(
+            str(segment)
+            for segment in raw_call_site_path
+            if isinstance(segment, str) and segment
+        )
+    elif "call_site_path" in data:
+        data["call_site_path"] = ()
+    raw_path_stack = data.get("path_stack")
+    if not isinstance(raw_path_stack, list):
+        data["path_stack"] = []
 
     return data
 
