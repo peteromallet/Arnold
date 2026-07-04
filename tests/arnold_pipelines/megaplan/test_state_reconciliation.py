@@ -82,6 +82,51 @@ def test_load_plan_keeps_awaiting_human_when_user_actions_unsatisfied(tmp_path: 
     assert state["latest_failure"] == {"kind": "phase_failed"}
 
 
+def test_load_plan_reconciles_completed_review_to_done(tmp_path: Path) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "reviewed-plan"
+    _write_plan_state(
+        plan_dir,
+        {
+            "name": "reviewed-plan",
+            "current_state": "executed",
+            "iteration": 2,
+            "config": {},
+            "sessions": {},
+            "plan_versions": [],
+            "history": [],
+            "meta": {},
+            "last_gate": {},
+            "latest_failure": {"kind": "control_binding_mismatch"},
+            "resume_cursor": {"phase": "review", "retry_strategy": "repair_control_binding"},
+        },
+    )
+    (plan_dir / "review.json").write_text(
+        json.dumps(
+            {
+                "review_verdict": "approved",
+                "outcome": {
+                    "result": "success",
+                    "review_verdict": "approved",
+                    "state": "done",
+                    "next_step": None,
+                },
+                "issues": [],
+                "rework_items": [],
+                "criteria": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _, state = load_plan_from_dir(plan_dir)
+    persisted = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+
+    assert state["current_state"] == "done"
+    assert persisted["current_state"] == "done"
+    assert persisted["latest_failure"] is None
+    assert "resume_cursor" not in persisted
+
+
 def test_save_state_merge_meta_preserves_newer_disk_transition(tmp_path: Path) -> None:
     plan_dir = tmp_path / ".megaplan" / "plans" / "clarified-plan"
     stale_note_state = {
