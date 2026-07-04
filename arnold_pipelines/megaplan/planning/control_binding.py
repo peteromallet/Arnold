@@ -37,6 +37,7 @@ from arnold.control.interface import (
 from arnold.runtime.outcome import RunOutcome
 from arnold_pipelines.megaplan.profiles import effective_premium_vendor
 from arnold_pipelines.megaplan.profiles.policy import DEFAULT_AGENT_ROUTING, ROBUSTNESS_ACCEPTED, normalize_robustness
+from arnold_pipelines.megaplan.fallback_chains import decode_phase_model_value, select_fallback_spec
 from arnold_pipelines.megaplan.types import (
     AgentSpec,
     CliError,
@@ -689,7 +690,13 @@ def _write_force_proceed_artifacts(
     return len(flags)
 
 
-def _load_resolved_profile(state: Mapping[str, object]) -> dict[str, str] | None:
+def _selected_profile_spec_value(spec_value: str | list[str], *, path: str) -> str:
+    if isinstance(spec_value, str):
+        return spec_value
+    return select_fallback_spec(spec_value, 0, path=path)
+
+
+def _load_resolved_profile(state: Mapping[str, object]) -> dict[str, str | list[str]] | None:
     config = state.get("config")
     profile_name = config.get("profile") if isinstance(config, Mapping) else None
     if not isinstance(profile_name, str) or not profile_name:
@@ -706,15 +713,22 @@ def _infer_phase_agent(phase: str, state: Mapping[str, object]) -> str | None:
     if isinstance(phase_models, list):
         for raw in phase_models:
             if isinstance(raw, str) and "=" in raw:
-                pm_phase, pm_spec = raw.split("=", 1)
+                pm_phase, chain = decode_phase_model_value(raw)
                 if pm_phase == phase:
-                    return parse_agent_spec(_resolve_symbolic_phase_spec(pm_spec, state)).agent
+                    return parse_agent_spec(
+                        _resolve_symbolic_phase_spec(chain.selected(), state)
+                    ).agent
     try:
         resolved = _load_resolved_profile(state)
     except Exception:
         resolved = None
     if resolved and phase in resolved:
-        return parse_agent_spec(_resolve_symbolic_phase_spec(resolved[phase], state)).agent
+        return parse_agent_spec(
+            _resolve_symbolic_phase_spec(
+                _selected_profile_spec_value(resolved[phase], path=f"profile.{phase}"),
+                state,
+            )
+        ).agent
     default_spec = DEFAULT_AGENT_ROUTING.get(phase, "")
     return parse_agent_spec(_resolve_symbolic_phase_spec(default_spec, state)).agent if default_spec else None
 
@@ -725,15 +739,18 @@ def _current_phase_spec(phase: str, state: Mapping[str, object]) -> str:
     if isinstance(phase_models, list):
         for raw in phase_models:
             if isinstance(raw, str) and "=" in raw:
-                pm_phase, pm_spec = raw.split("=", 1)
+                pm_phase, chain = decode_phase_model_value(raw)
                 if pm_phase == phase:
-                    return _resolve_symbolic_phase_spec(pm_spec, state)
+                    return _resolve_symbolic_phase_spec(chain.selected(), state)
     try:
         resolved = _load_resolved_profile(state)
     except Exception:
         resolved = None
     if resolved and phase in resolved:
-        return _resolve_symbolic_phase_spec(resolved[phase], state)
+        return _resolve_symbolic_phase_spec(
+            _selected_profile_spec_value(resolved[phase], path=f"profile.{phase}"),
+            state,
+        )
     return _resolve_symbolic_phase_spec(DEFAULT_AGENT_ROUTING.get(phase, ""), state)
 
 

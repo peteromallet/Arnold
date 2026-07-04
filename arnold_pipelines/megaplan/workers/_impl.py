@@ -23,6 +23,11 @@ from typing import Any, Callable, Literal
 
 from arnold_pipelines.megaplan.audits.robustness import build_empty_template
 from arnold_pipelines.megaplan.forms.provocations import select_active_checks
+from arnold_pipelines.megaplan.fallback_chains import (
+    configured_fallback_chain_for_phase,
+    decode_phase_model_value,
+    fallback_observability_fields,
+)
 from arnold_pipelines.megaplan.profiles import DEFAULT_AGENT_ROUTING, effective_premium_vendor
 from arnold_pipelines.megaplan.schemas import SCHEMAS, get_execution_schema_key
 from arnold_pipelines.megaplan.orchestration.progress import strip_progress_env
@@ -677,6 +682,11 @@ class WorkerResult:
     worker_channel: str | None = None
     auth_channel: str | None = None
     auth_metadata: dict[str, Any] | None = None
+    configured_specs: tuple[str, ...] = ()
+    attempt_index: int = 0
+    attempted_specs: tuple[str, ...] = ()
+    failed_attempt_reasons: tuple[str, ...] = ()
+    fallback_trigger: str | None = None
 
     @classmethod
     def from_agent_result(cls, agent_result: Any) -> WorkerResult:
@@ -704,6 +714,11 @@ class WorkerResult:
             worker_channel=metadata.get("worker_channel"),
             auth_channel=metadata.get("auth_channel"),
             auth_metadata=metadata.get("auth_metadata"),
+            configured_specs=tuple(metadata.get("configured_specs", ())),
+            attempt_index=int(metadata.get("attempt_index", 0) or 0),
+            attempted_specs=tuple(metadata.get("attempted_specs", ())),
+            failed_attempt_reasons=tuple(metadata.get("failed_attempt_reasons", ())),
+            fallback_trigger=metadata.get("fallback_trigger"),
         )
 
     def to_agent_result(self) -> Any:
@@ -717,6 +732,11 @@ class WorkerResult:
                 "worker_channel": self.worker_channel,
                 "auth_channel": self.auth_channel,
                 "auth_metadata": self.auth_metadata,
+                "configured_specs": list(self.configured_specs),
+                "attempt_index": self.attempt_index,
+                "attempted_specs": list(self.attempted_specs),
+                "failed_attempt_reasons": list(self.failed_attempt_reasons),
+                "fallback_trigger": self.fallback_trigger,
             }.items()
             if value is not None
         }
@@ -4081,9 +4101,9 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
     if phase_model_matches:
         for pm in phase_models:
             if "=" in pm:
-                pm_step, pm_spec = pm.split("=", 1)
+                pm_step, chain = decode_phase_model_value(pm)
                 if pm_step == step:
-                    pm_parsed = parse_agent_spec(pm_spec)
+                    pm_parsed = parse_agent_spec(chain.selected())
                     agent = pm_parsed.agent
                     model = pm_parsed.model
                     effort = pm_parsed.effort
@@ -4368,6 +4388,37 @@ def _shannon_to_agent_result(
             continue
 
 
+def _selected_step_spec(agent: str, model: str | None, effort: str | None) -> str:
+    return format_selected_spec(agent, model, effort) or agent
+
+
+def _initial_fallback_metadata(
+    step: str,
+    args: argparse.Namespace,
+    *,
+    agent: str,
+    model: str | None,
+    effort: str | None,
+) -> dict[str, Any]:
+    configured = configured_fallback_chain_for_phase(getattr(args, "phase_model", None), step)
+    configured_specs = configured.specs if configured is not None else (_selected_step_spec(agent, model, effort),)
+    return {
+        "configured_specs": configured_specs,
+        "attempt_index": 0,
+        "attempted_specs": (configured_specs[0],),
+        "failed_attempt_reasons": (),
+        "fallback_trigger": None,
+    }
+
+
+def _assign_worker_fallback_metadata(worker: WorkerResult, metadata: dict[str, Any]) -> None:
+    worker.configured_specs = tuple(metadata["configured_specs"])
+    worker.attempt_index = int(metadata["attempt_index"])
+    worker.attempted_specs = tuple(metadata["attempted_specs"])
+    worker.failed_attempt_reasons = tuple(metadata["failed_attempt_reasons"])
+    worker.fallback_trigger = metadata["fallback_trigger"]
+
+
 def run_step_with_worker(
     step: str,
     state: PlanState,
@@ -4388,6 +4439,11 @@ def run_step_with_worker(
     ledger_tier: int | None = None,
     ledger_complexity: int | None = None,
     ledger_tier_routing_active: bool = False,
+    ledger_configured_specs: tuple[str, ...] | list[str] | str | None = None,
+    ledger_attempt_index: int | None = None,
+    ledger_attempted_specs: tuple[str, ...] | list[str] | str | None = None,
+    ledger_failed_attempt_reasons: tuple[str, ...] | list[str] | None = None,
+    ledger_fallback_trigger: str | None = None,
 ) -> tuple[WorkerResult, str, str, bool]:
     am = resolved or resolve_agent_mode(step, args)
     agent = am.agent if isinstance(am, AgentMode) else am[0]
@@ -4410,6 +4466,29 @@ def run_step_with_worker(
     effective_refreshed = refreshed or step not in _CROSS_CALL_PERSISTENT_STEPS
     explicit_agent = _agent_requested_explicitly(step, args)
     attempted_agents: set[str] = set()
+    if ledger_configured_specs is not None:
+        ledger_fields = fallback_observability_fields(
+            ledger_configured_specs,
+            attempt_index=int(ledger_attempt_index or 0),
+            attempted_specs=ledger_attempted_specs,
+            failed_attempt_reasons=ledger_failed_attempt_reasons,
+            fallback_trigger=ledger_fallback_trigger,
+        )
+        fallback_metadata = {
+            "configured_specs": tuple(ledger_fields["configured_specs"]),
+            "attempt_index": ledger_fields["selected_spec_index"],
+            "attempted_specs": tuple(ledger_fields["attempted_specs"]),
+            "failed_attempt_reasons": tuple(ledger_fields["failed_attempt_reasons"]),
+            "fallback_trigger": ledger_fields["fallback_trigger"],
+        }
+    else:
+        fallback_metadata = _initial_fallback_metadata(
+            step,
+            args,
+            agent=agent,
+            model=model,
+            effort=effort,
+        )
     while True:
         attempted_agents.add(agent)
         try:
@@ -4616,6 +4695,7 @@ def run_step_with_worker(
                     },
                 )
                 worker = WorkerResult.from_agent_result(_dispatcher.dispatch(_request))
+            _assign_worker_fallback_metadata(worker, fallback_metadata)
             if record_routing and (step != "execute" or ledger_step_label is not None):
                 actual_model = getattr(worker, "model_actual", None)
                 if actual_model is None and agent == "codex":
@@ -4632,10 +4712,22 @@ def run_step_with_worker(
                     tier=ledger_tier,
                     complexity=ledger_complexity,
                     tier_routing_active=ledger_tier_routing_active,
+                    configured_specs=worker.configured_specs,
+                    attempt_index=worker.attempt_index,
+                    attempted_specs=worker.attempted_specs,
+                    failed_attempt_reasons=worker.failed_attempt_reasons,
+                    fallback_trigger=worker.fallback_trigger,
                 )
             return worker, agent, mode, effective_refreshed
         except CliError as error:
-            if explicit_agent or error.code not in {"auth_error", "connection_error"}:
+            suppress_ambient_fallback = bool(
+                (worker_options or {}).get("_suppress_ambient_agent_fallback")
+            )
+            if (
+                explicit_agent
+                or suppress_ambient_fallback
+                or error.code not in {"auth_error", "connection_error"}
+            ):
                 raise
             fallback_candidates = [
                 candidate
@@ -4650,6 +4742,7 @@ def run_step_with_worker(
                 "resolved": fallback_agent,
                 "reason": f"{agent} runtime unhealthy: {error.code}",
             }
+            failed_spec = _selected_step_spec(agent, model, effort)
             agent = fallback_agent
             model = None
             effort = None
@@ -4662,4 +4755,23 @@ def run_step_with_worker(
                 if fallback_agent in ("claude", "codex")
                 else None
             )
+            selected_fallback_spec = _selected_step_spec(agent, model, effort)
+            configured_specs = list(fallback_metadata["configured_specs"])
+            if failed_spec not in configured_specs:
+                configured_specs.append(failed_spec)
+            if selected_fallback_spec not in configured_specs:
+                configured_specs.append(selected_fallback_spec)
+            fallback_metadata = {
+                "configured_specs": tuple(configured_specs),
+                "attempt_index": configured_specs.index(selected_fallback_spec),
+                "attempted_specs": (
+                    *fallback_metadata["attempted_specs"],
+                    selected_fallback_spec,
+                ),
+                "failed_attempt_reasons": (
+                    *fallback_metadata["failed_attempt_reasons"],
+                    error.code,
+                ),
+                "fallback_trigger": error.code,
+            }
             effective_refreshed = True

@@ -11,6 +11,11 @@ from typing import Any, Callable
 
 import arnold_pipelines.megaplan.workers as worker_module
 from arnold_pipelines.megaplan.execute.batch import build_monitor_hint
+from arnold_pipelines.megaplan.fallback_chains import (
+    configured_fallback_chain_for_phase,
+    fallback_observability_fields,
+)
+from arnold_pipelines.megaplan.observability.routing_ledger import format_selected_spec
 from arnold_pipelines.megaplan.profiles import apply_profile_expansion
 from arnold_pipelines.megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
 from arnold_pipelines.megaplan.receipts import build_receipt
@@ -60,6 +65,26 @@ def _agent_mode_parts(resolved: AgentMode | tuple[str, str, bool, str | None]) -
     if isinstance(resolved, AgentMode):
         return resolved.agent, resolved.mode, resolved.refreshed, resolved.model
     return resolved
+
+
+def _active_step_fallback_fields(
+    step: str,
+    args: argparse.Namespace,
+    *,
+    agent: str,
+    model: str | None,
+    effort: str | None = None,
+) -> dict[str, Any]:
+    configured = configured_fallback_chain_for_phase(getattr(args, "phase_model", None), step)
+    selected_spec = format_selected_spec(agent, model, effort) or agent
+    fields = fallback_observability_fields(configured.specs if configured is not None else selected_spec)
+    return {
+        "configured_specs": fields["configured_specs"],
+        "attempt_index": fields["selected_spec_index"],
+        "attempted_specs": fields["attempted_specs"],
+        "failed_attempt_reasons": fields["failed_attempt_reasons"],
+        "fallback_trigger": fields["fallback_trigger"],
+    }
 
 
 def _append_to_meta(state: PlanState, field: str, value: Any) -> None:
@@ -224,7 +249,15 @@ def _run_worker(
     mode = res.mode if isinstance(res, AgentMode) else res[1]
     refreshed = res.refreshed if isinstance(res, AgentMode) else res[2]
     model = res.resolved_model if isinstance(res, AgentMode) else res[3]
-    run_id = set_active_step(state, step=step, agent=agent, mode=mode, model=model)
+    effort = res.effort if isinstance(res, AgentMode) else None
+    run_id = set_active_step(
+        state,
+        step=step,
+        agent=agent,
+        mode=mode,
+        model=model,
+        **_active_step_fallback_fields(step, args, agent=agent, model=model, effort=effort),
+    )
     _emit_phase_notice(step)
     # Phases hold the lock for many minutes; merge meta to avoid clobbering
     # concurrent override appends to ``meta.notes`` / ``meta.overrides``.
