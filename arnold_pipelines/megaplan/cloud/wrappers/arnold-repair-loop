@@ -779,6 +779,8 @@ if isinstance(failure_context, dict):
     if isinstance(latest_failure, dict) and latest_failure:
         kind = str(latest_failure.get("kind") or "").strip()
         state = str(latest_failure.get("current_state") or "").strip()
+        if state in {"finalized", "awaiting_pr_merge", "done", "complete", "completed"}:
+            raise SystemExit(1)
         if kind or state:
             print(f"live_plan_failure:{kind or 'unknown'}:{state or 'unknown'}")
             raise SystemExit(0)
