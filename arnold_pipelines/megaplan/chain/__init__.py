@@ -53,7 +53,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from arnold_pipelines.megaplan.auto import (
     DEFAULT_MAX_ITERATIONS,
@@ -3222,6 +3222,33 @@ def _plan_state_payload_from_name(root: Path, plan: str | None) -> dict[str, Any
     return raw
 
 
+def _plan_has_live_active_step(plan_state: Mapping[str, Any]) -> bool:
+    active_step = plan_state.get("active_step")
+    if not isinstance(active_step, Mapping):
+        return False
+    return bool(
+        active_step.get("phase")
+        or active_step.get("worker_pid")
+        or active_step.get("pid")
+        or active_step.get("session_id")
+    )
+
+
+def _blocked_plan_replay_would_be_redundant(
+    state: ChainState,
+    *,
+    plan_state: Mapping[str, Any],
+) -> bool:
+    current_state = plan_state.get("current_state")
+    if not isinstance(current_state, str):
+        return False
+    return (
+        state.last_state == STATE_BLOCKED
+        and current_state == STATE_BLOCKED
+        and not _plan_has_live_active_step(plan_state)
+    )
+
+
 def _chain_policy_milestone_label(plan_state: dict[str, Any]) -> str | None:
     meta = plan_state.get("meta")
     if not isinstance(meta, dict):
@@ -4450,6 +4477,27 @@ def run_chain(
                 not in ("missing",)
             ):
                 plan_name = state.current_plan_name
+                plan_state = _plan_state_payload_from_name(root, plan_name)
+                if _blocked_plan_replay_would_be_redundant(state, plan_state=plan_state):
+                    _append_reconciliation_audit(
+                        state,
+                        plan_name=plan_name,
+                        plan_state=dict(plan_state),
+                        pr_number=state.pr_number,
+                        pr_state=state.pr_state,
+                    )
+                    chain_spec.save_chain_state(spec_path, state)
+                    writer(
+                        f"[chain] plan {plan_name} is already durably blocked with no "
+                        "active step; preserving the stop without replaying the plan\n"
+                    )
+                    return _result(
+                        "stopped",
+                        state,
+                        events,
+                        spec=spec,
+                        reason=f"milestone {milestone.label} remains blocked",
+                    )
                 state = _sync_chain_last_state_from_plan(
                     root,
                     spec_path,

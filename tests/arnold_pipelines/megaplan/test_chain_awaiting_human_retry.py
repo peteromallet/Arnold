@@ -18,6 +18,8 @@ from arnold_pipelines.megaplan.chain import (
 from arnold_pipelines.megaplan.chain.spec import ChainSpec, ChainState, load_chain_state, load_spec
 from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_PR_MERGE
 
+_DEFAULT_ACTIVE_STEP = object()
+
 
 def _write_chain_spec(tmp_path: Path, *, merge_policy: str = "review") -> Path:
     spec_path = tmp_path / "chain.yaml"
@@ -44,17 +46,21 @@ def _write_plan_state(
     *,
     plan_name: str = "m7-plan",
     current_state: str = "finalized",
+    active_step: object = _DEFAULT_ACTIVE_STEP,
 ) -> None:
     plan_dir = tmp_path / ".megaplan" / "plans" / plan_name
     plan_dir.mkdir(parents=True, exist_ok=True)
+    serialized_active_step = json.dumps(
+        {"phase": "execute"} if active_step is _DEFAULT_ACTIVE_STEP else active_step
+    )
     (plan_dir / "state.json").write_text(
         (
             '{"name":"%s","current_state":"%s","latest_failure":null,'
             '"last_gate":{"recommendation":"PROCEED"},'
-            '"active_step":{"phase":"execute"},'
+            '"active_step":%s,'
             '"meta":{"chain_policy":{"milestone_label":"m7"}}}'
         )
-        % (plan_name, current_state),
+        % (plan_name, current_state, serialized_active_step),
         encoding="utf-8",
     )
 
@@ -660,3 +666,42 @@ def test_run_chain_resumes_when_reconciled_finalized_pr_is_open(
     saved = load_chain_state(spec_path)
     assert saved.last_state == "finalized"
     assert saved.pr_state == "open"
+
+
+def test_run_chain_does_not_replay_durably_blocked_plan_on_restart(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    _write_plan_state(tmp_path, current_state="blocked", active_step=None)
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=0,
+            current_plan_name="m7-plan",
+            last_state="blocked",
+            pr_number=122,
+            pr_state="open",
+        ),
+    )
+
+    messages: list[str] = []
+    with (
+        patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
+        patch("arnold_pipelines.megaplan.chain._pr_state", return_value="open"),
+        patch("arnold_pipelines.megaplan.chain._plan_state", return_value="blocked"),
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery"
+        ) as drive,
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            writer=messages.append,
+            require_anchor_override=False,
+            missing_anchor_ack_override="unit test uses a minimal chain spec",
+        )
+
+    drive.assert_not_called()
+    assert result["status"] == "stopped"
+    assert result["reason"] == "milestone m7 remains blocked"
+    assert any("already durably blocked" in message for message in messages)
