@@ -646,37 +646,58 @@ def _resolve_resume_cursor(
     plan_dir: Path,
     previous_state: PlanState,
 ) -> tuple[dict[str, Any], str, dict[str, Any] | None]:
-    state_cursor = previous_state.get("resume_cursor")
-    if isinstance(state_cursor, dict):
-        return dict(state_cursor), "state", None
+    from arnold.pipeline.resume import TypedResumeMetadata, resolve_resume_surface
 
-    typed_cursor = _cursor_from_typed_suspension(plan_dir)
-    if typed_cursor is not None:
-        return typed_cursor, "typed_contract", None
-
-    from arnold_pipelines.megaplan.runtime.resume import (
-        check_awaiting_user,
-        load_composite_resume_cursor,
-    )
-
-    composite_cursor = load_composite_resume_cursor(plan_dir)
-    if isinstance(composite_cursor, dict):
-        return dict(composite_cursor), "composite", None
-
-    awaiting_user = check_awaiting_user(plan_dir)
-    if awaiting_user is None:
+    resolved = resolve_resume_surface(plan_dir)
+    if resolved.source == "none":
         raise CliError(
             "missing_resume_cursor",
             f"Plan '{plan_dir.name}' has no resume cursor",
         )
-
-    return (
-        {
-            "retry_strategy": "awaiting_user",
-            "kind": "awaiting_user",
+    if resolved.blocked:
+        raise CliError(
+            "invalid_resume_cursor",
+            f"Plan '{plan_dir.name}' has an invalid resume cursor",
+            extra={
+                "resume_surface": resolved.source,
+                "diagnostic": resolved.diagnostic,
+                "path": resolved.path,
+            },
+        )
+    if resolved.source == "state_resume_cursor" and isinstance(resolved.payload, dict):
+        return dict(resolved.payload), "state", None
+    if resolved.source == "typed_contract" and isinstance(
+        resolved.payload, TypedResumeMetadata
+    ):
+        metadata = resolved.payload
+        cursor_data = metadata.cursor_data
+        cursor = dict(cursor_data) if isinstance(cursor_data, Mapping) else {}
+        if metadata.phase and not isinstance(cursor.get("phase"), str):
+            cursor["phase"] = metadata.phase
+        if metadata.choices and not isinstance(cursor.get("choices"), list):
+            cursor["choices"] = list(metadata.choices)
+        return cursor, "typed_contract", None
+    if resolved.source == "composite_resume_cursor" and isinstance(resolved.payload, dict):
+        return dict(resolved.payload), "composite", None
+    if resolved.source == "awaiting_user":
+        return (
+            {
+                "retry_strategy": "awaiting_user",
+                "kind": "awaiting_user",
+            },
+            "awaiting_user",
+            {"awaiting_user": resolved.payload},
+        )
+    if resolved.source == "resume_cursor" and isinstance(resolved.payload, dict):
+        return dict(resolved.payload), "resume_cursor", None
+    raise CliError(
+        "invalid_resume_cursor",
+        f"Plan '{plan_dir.name}' has an invalid resume cursor",
+        extra={
+            "resume_surface": resolved.source,
+            "diagnostic": resolved.diagnostic,
+            "path": resolved.path,
         },
-        "awaiting_user",
-        {"awaiting_user": awaiting_user},
     )
 
 

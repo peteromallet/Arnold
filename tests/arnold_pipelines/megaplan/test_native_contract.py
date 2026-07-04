@@ -18,6 +18,8 @@ import pytest
 
 from arnold.pipeline.native.ir import NativePipeline, NativeProgram
 from arnold.pipeline.types import Pipeline as NeutralPipeline
+from arnold.workflow.source_compiler import lower_workflow_file
+from arnold_pipelines.megaplan.workflows.planning import AUTHORING_SOURCE_PATH
 
 
 # ── Subpipeline baselines (what the canonical pipeline must match) ────────
@@ -209,14 +211,18 @@ class TestCanonicalMegaplanNativeContract:
     def test_canonical_metadata_consistent_dsl_vs_native(self) -> None:
         """Canonical metadata must be consistent between DSL and native views."""
         from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline
+        from arnold_pipelines.megaplan.planning.operations import canonical_metadata
+        from arnold_pipelines.megaplan.workflows import planning as workflow_planning
 
         pipeline = build_and_compile_pipeline()
         metadata = getattr(pipeline, "metadata", {}) or {}
+        canonical = canonical_metadata()
 
         # DSL metadata carries product + max_critique_iterations
         assert metadata.get("product") == "megaplan", (
             "Canonical pipeline metadata must identify product=megaplan"
         )
+        assert canonical["authored_source_path"] == str(workflow_planning.AUTHORING_SOURCE_PATH.resolve())
 
         native_program = getattr(pipeline, "native_program", None)
         if native_program is not None:
@@ -227,6 +233,18 @@ class TestCanonicalMegaplanNativeContract:
                 f"NativeProgram name should not be empty "
                 f"(pipeline id: {pipeline_id})"
             )
+
+    def test_authoring_source_can_expand_wrapper_nodes_without_breaking_native_shell(self) -> None:
+        from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline
+
+        shell = build_and_compile_pipeline()
+        lowered = lower_workflow_file(AUTHORING_SOURCE_PATH)
+
+        assert len(shell.native_program.instructions) == 12
+        assert len(lowered.steps) > len(shell.native_program.instructions)
+        assert {step.id for step in lowered.steps}.issuperset(
+            {"gate_abort", "tiebreaker_finalize", "override_finalize"}
+        )
 
 
 class TestNativeRoutingIndependence:

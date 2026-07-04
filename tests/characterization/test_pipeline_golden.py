@@ -8,8 +8,10 @@ deterministic graph shape exposed by the canonical megaplan pipeline.
 from __future__ import annotations
 
 from arnold.workflow.compiler import compile_pipeline
+from arnold.workflow.source_compiler import lower_workflow_file
 from arnold.workflow.dsl import Pipeline
 from arnold_pipelines.megaplan.pipeline import build_pipeline
+from arnold_pipelines.megaplan.workflows.planning import AUTHORING_SOURCE_PATH
 
 
 EXPECTED_STEP_ORDER = (
@@ -74,6 +76,26 @@ EXPECTED_CAPABILITIES = (
     ("human:review", "default", False),
 )
 
+LOWERED_WRAPPER_STEP_IDS = {
+    "review_revise",
+    "review_halt",
+    "tiebreaker_finalize",
+    "tiebreaker_execute",
+    "tiebreaker_override",
+    "override_halt",
+    "override_finalize",
+    "override_execute",
+    "override_revise",
+    "override_unknown",
+    "gate_abort",
+    "gate_suspend",
+    "blocked_override",
+    "force_finalize",
+    "force_execute",
+    "fallback_finalize",
+    "fallback_execute",
+}
+
 
 def test_build_pipeline_returns_workflow_first_pipeline() -> None:
     pipeline = build_pipeline()
@@ -121,3 +143,17 @@ def test_compiled_manifest_preserves_workflow_graph_shape() -> None:
     assert tuple(
         (c.capability_id, c.route, c.required) for c in manifest.capabilities
     ) == EXPECTED_CAPABILITIES
+
+
+def test_authored_source_lowering_can_expand_nested_wrappers_without_changing_public_shell() -> None:
+    lowered = lower_workflow_file(AUTHORING_SOURCE_PATH)
+
+    lowered_ids = {step.id for step in lowered.steps}
+    assert lowered_ids.issuperset(EXPECTED_STEP_ORDER)
+    assert LOWERED_WRAPPER_STEP_IDS.issubset(lowered_ids)
+
+
+def test_authored_source_lowering_keeps_observable_entry_spine_prefix() -> None:
+    lowered = lower_workflow_file(AUTHORING_SOURCE_PATH)
+
+    assert tuple(step.id for step in lowered.steps[:4]) == ("prep", "plan", "critique", "gate")

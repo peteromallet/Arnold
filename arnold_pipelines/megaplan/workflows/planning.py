@@ -2,27 +2,36 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from arnold.manifest import (
+    AuthorityRequirement,
+    BudgetPolicy,
     ControlTransitionSlot,
+    EffectRef,
+    EscalationPolicy,
     LoopPolicy,
+    RetryPolicy,
     SuspensionRoute,
     TimingPolicy,
+    TopologyOverlaySlot,
     WorkflowPolicy,
 )
 from arnold.workflow.authoring import ComponentProvenance, StepComponent
-from arnold.workflow.dsl import Capability, Input, Output, Pipeline
+from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
 from arnold.workflow.source_compiler import lower_workflow_file
 from arnold_pipelines.megaplan.workflows.components import (
     ALL_STEP_COMPONENTS,
+    ARTIFACT_CONTRACT_POLICY,
     CAPABILITY_REQUIREMENTS,
     DEFAULT_POLICY,
     M4_LOOP_MAX_ITERATIONS,
+    MODEL_ROUTING_POLICY,
     REVISE,
+    ROBUSTNESS_POLICY,
     STEP_COMPONENTS_BY_ID,
+    SUSPENSION_POLICY,
     TIEBREAKER_DECIDE,
 )
 
@@ -71,40 +80,6 @@ AUTHOR_TIEBREAKER_DECIDE = StepComponent(
 )
 
 
-_CANONICAL_ROUTE_SPECS = (
-    ("prep:plan", "prep", "plan", "default", None, "default"),
-    ("plan:critique", "plan", "critique", "default", None, "default"),
-    ("critique:gate", "critique", "gate", "default", None, "default"),
-    ("gate:finalize", "gate", "finalize", "proceed", "proceed", "proceed"),
-    ("gate:revise", "gate", "revise", "iterate", "iterate", "iterate"),
-    ("gate:tiebreaker", "gate", "tiebreaker_run", "tiebreaker", "tiebreaker", "tiebreaker"),
-    ("gate:override", "gate", "override", "escalate", "escalate", "escalate"),
-    ("gate:halt", "gate", "halt", "abort", "abort", "abort"),
-    ("gate:suspend", "gate", "halt", "suspend", "suspend", "suspend"),
-    ("gate:blocked", "gate", "override", "blocked_preflight", "blocked", "blocked_preflight"),
-    ("gate:force_proceed", "gate", "finalize", "force_proceed", "force_proceed", "force_proceed"),
-    ("revise:critique", "revise", "critique", "default", "revise:loop", "default"),
-    ("tiebreaker_run:decide", "tiebreaker_run", "tiebreaker_decide", "default", None, "default"),
-    (
-        "tiebreaker_decide:critique",
-        "tiebreaker_decide",
-        "critique",
-        "iterate",
-        "tiebreaker:loop",
-        "iterate",
-    ),
-    ("tiebreaker_decide:finalize", "tiebreaker_decide", "finalize", "proceed", "proceed", "proceed"),
-    ("tiebreaker_decide:override", "tiebreaker_decide", "override", "escalate", "escalate", "escalate"),
-    ("finalize:execute", "finalize", "execute", "default", None, "default"),
-    ("execute:review", "execute", "review", "default", None, "default"),
-    ("review:halt", "review", "halt", "default", "pass", "pass"),
-    ("review:revise", "review", "revise", "rework", "rework", "rework"),
-    ("override:halt", "override", "halt", "abort", "abort", "abort"),
-    ("override:finalize", "override", "finalize", "force_proceed", "force_proceed", "force_proceed"),
-    ("override:revise", "override", "revise", "replan", "replan", "replan"),
-)
-
-
 def _component_io(items: Sequence[Mapping[str, str]], io_type: type[Input] | type[Output]) -> tuple[Any, ...]:
     values: list[Any] = []
     for item in items:
@@ -119,6 +94,10 @@ def _policy_from_config(config: Mapping[str, Any], *, timeout_seconds: float | N
             route_id=route["route_id"],
             capability_id=route.get("capability_id"),
             reentry_id=route.get("reentry_id"),
+            payload_schema_hash=route.get("payload_schema_hash"),
+            resume_schema_hash=route.get("resume_schema_hash"),
+            resume_schema_ref=route.get("resume_schema_ref"),
+            resume_payload_ref=route.get("resume_payload_ref"),
         )
         for route in config.get("suspension_routes", ())
     )
@@ -132,18 +111,86 @@ def _policy_from_config(config: Mapping[str, Any], *, timeout_seconds: float | N
         )
         for transition in config.get("control_transitions", ())
     )
+    retry = None
+    if isinstance(config.get("retry"), Mapping):
+        retry_config = config["retry"]
+        retry = RetryPolicy(
+            max_attempts=int(retry_config.get("max_attempts", 1)),
+            backoff=str(retry_config.get("backoff", "none")),
+            retry_on=tuple(str(item) for item in retry_config.get("retry_on", ())),
+        )
+    escalation = None
+    if isinstance(config.get("escalation"), Mapping):
+        escalation_config = config["escalation"]
+        escalation = EscalationPolicy(
+            targets=tuple(str(item) for item in escalation_config.get("targets", ())),
+            escalate_after_attempts=escalation_config.get("escalate_after_attempts"),
+            policy_ref=escalation_config.get("policy_ref"),
+            backoff=str(escalation_config.get("backoff", "none")),
+        )
+    budget = None
+    if isinstance(config.get("budget"), Mapping):
+        budget_config = config["budget"]
+        budget = BudgetPolicy(
+            max_cost=budget_config.get("max_cost"),
+            max_seconds=budget_config.get("max_seconds"),
+            max_attempts=budget_config.get("max_attempts"),
+            token_budget=budget_config.get("token_budget"),
+        )
+    effects = tuple(
+        EffectRef(
+            effect_id=str(effect["effect_id"]),
+            route=str(effect.get("route", "default")),
+            payload_ref=effect.get("payload_ref"),
+            payload_schema_hash=effect.get("payload_schema_hash"),
+        )
+        for effect in config.get("effects", ())
+    )
+    topology_overlays = tuple(
+        TopologyOverlaySlot(
+            overlay_id=str(overlay["overlay_id"]),
+            overlay_type=str(overlay["overlay_type"]),
+            source_ref=overlay.get("source_ref"),
+            target_refs=tuple(str(item) for item in overlay.get("target_refs", ())),
+            condition_ref=overlay.get("condition_ref"),
+            payload_schema_hash=overlay.get("payload_schema_hash"),
+        )
+        for overlay in config.get("topology_overlays", ())
+    )
+    authority = tuple(
+        AuthorityRequirement(
+            authority_id=str(requirement["authority_id"]),
+            action=str(requirement["action"]),
+            evidence_schema_hash=requirement.get("evidence_schema_hash"),
+            capability_id=requirement.get("capability_id"),
+        )
+        for requirement in config.get("authority", ())
+    )
     loop_policy = None
     if "max_iterations" in config or "until_ref" in config:
         loop_policy = LoopPolicy(
             max_iterations=config.get("max_iterations"),
             until_ref=config.get("until_ref"),
         )
-    timing = TimingPolicy(timeout_seconds=timeout_seconds) if timeout_seconds is not None else None
+    effective_timeout = timeout_seconds if "timeout_seconds_ref" in config else None
+    timing = None
+    if effective_timeout is not None or "deadline_ref" in config or "ttl_seconds" in config:
+        timing = TimingPolicy(
+            timeout_seconds=effective_timeout,
+            deadline_ref=config.get("deadline_ref"),
+            ttl_seconds=config.get("ttl_seconds"),
+        )
     return WorkflowPolicy(
+        budget=budget,
+        retry=retry,
         timing=timing,
         loop=loop_policy,
+        effects=effects,
+        escalation=escalation,
         suspension_routes=suspension_routes,
         control_transitions=control_transitions,
+        topology_overlays=topology_overlays,
+        authority=authority,
     )
 
 
@@ -163,53 +210,91 @@ def _metadata_for_step(step_id: str) -> dict[str, Any]:
         metadata["terminal"] = True
     if step_id == "revise":
         metadata["max_iterations"] = M4_LOOP_MAX_ITERATIONS
+    for key in ("policy_refs", "override_actions"):
+        value = component.metadata.get(key)
+        if value:
+            metadata[key] = value
     return metadata
 
 
-def _canonical_steps(lowered: Pipeline, *, timeout_seconds: float | None) -> tuple[Any, ...]:
-    lowered_by_id = {}
-    for step in lowered.steps:
-        lowered_by_id.setdefault(step.id, step)
+def _merge_policies(*policies: WorkflowPolicy) -> WorkflowPolicy:
+    return WorkflowPolicy(
+        budget=next((policy.budget for policy in reversed(policies) if policy.budget is not None), None),
+        retry=next((policy.retry for policy in reversed(policies) if policy.retry is not None), None),
+        loop=next((policy.loop for policy in reversed(policies) if policy.loop is not None), None),
+        fanout=next((policy.fanout for policy in reversed(policies) if policy.fanout is not None), None),
+        timing=next((policy.timing for policy in reversed(policies) if policy.timing is not None), None),
+        idempotency=next(
+            (policy.idempotency for policy in reversed(policies) if policy.idempotency is not None),
+            None,
+        ),
+        effects=tuple(effect for policy in policies for effect in policy.effects),
+        reducers=tuple(reducer for policy in policies for reducer in policy.reducers),
+        compensation=next(
+            (policy.compensation for policy in reversed(policies) if policy.compensation is not None),
+            None,
+        ),
+        escalation=next(
+            (policy.escalation for policy in reversed(policies) if policy.escalation is not None),
+            None,
+        ),
+        control_transitions=tuple(
+            transition for policy in policies for transition in policy.control_transitions
+        ),
+        topology_overlays=tuple(
+            overlay for policy in policies for overlay in policy.topology_overlays
+        ),
+        authority=tuple(requirement for policy in policies for requirement in policy.authority),
+        suspension_routes=tuple(route for policy in policies for route in policy.suspension_routes),
+    )
 
+
+def _manifest_policy(*, timeout_seconds: float | None) -> WorkflowPolicy:
+    return _merge_policies(
+        _policy_from_config(DEFAULT_POLICY.config, timeout_seconds=timeout_seconds),
+        _policy_from_config(MODEL_ROUTING_POLICY.config, timeout_seconds=None),
+        _policy_from_config(ROBUSTNESS_POLICY.config, timeout_seconds=None),
+        _policy_from_config(ARTIFACT_CONTRACT_POLICY.config, timeout_seconds=None),
+        _policy_from_config(SUSPENSION_POLICY.config, timeout_seconds=None),
+    )
+
+
+def _canonical_steps(*, timeout_seconds: float | None) -> tuple[Step, ...]:
     steps = []
     for component in ALL_STEP_COMPONENTS:
         step_id = component.id.removeprefix("megaplan:")
-        lowered_step = lowered_by_id[step_id]
         steps.append(
-            replace(
-                lowered_step,
-                label=None,
+            Step(
+                id=step_id,
+                kind=component.step_type,
                 inputs=_component_io(component.metadata.get("inputs", ()), Input),
                 outputs=_component_io(component.metadata.get("outputs", ()), Output),
-                capabilities=(),
                 policy=_policy_for_step(step_id, timeout_seconds=timeout_seconds),
-                source_span=None,
                 metadata=_metadata_for_step(step_id),
             )
         )
     return tuple(steps)
 
 
-def _canonical_routes(lowered: Pipeline) -> tuple[Any, ...]:
-    routes_by_source_label: dict[tuple[str, str], list[Any]] = {}
-    for route in lowered.routes:
-        routes_by_source_label.setdefault((route.source, route.label), []).append(route)
-
-    routes = []
-    for route_id, source, target, label, condition_ref, source_label in _CANONICAL_ROUTE_SPECS:
-        candidates = routes_by_source_label[(source, source_label)]
-        route = candidates[0]
-        routes.append(
-            replace(
-                route,
-                id=route_id,
-                target=target,
-                label=label,
-                condition_ref=condition_ref,
-                source_span=None,
-                metadata={},
+def _canonical_routes() -> tuple[Route, ...]:
+    routes: list[Route] = []
+    for component in ALL_STEP_COMPONENTS:
+        source = component.id.removeprefix("megaplan:")
+        for binding in component.metadata.get("route_bindings", ()):
+            routes.append(
+                Route(
+                    id=str(binding["id"]),
+                    source=source,
+                    target=str(binding["target_ref"]),
+                    label=str(binding.get("label", "default")),
+                    condition_ref=(
+                        str(binding["condition_ref"])
+                        if binding.get("condition_ref") is not None
+                        else None
+                    ),
+                    metadata={},
+                )
             )
-        )
     return tuple(routes)
 
 
@@ -232,16 +317,23 @@ def build_pipeline(
     """Return the canonical Megaplan planning workflow as a DSL pipeline."""
 
     lowered = lower_workflow_file(AUTHORING_SOURCE_PATH)
-    return replace(
-        lowered,
-        steps=_canonical_steps(lowered, timeout_seconds=timeout_seconds),
-        routes=_canonical_routes(lowered),
+    return Pipeline(
+        id=lowered.id,
+        version=lowered.version,
+        steps=_canonical_steps(timeout_seconds=timeout_seconds),
+        routes=_canonical_routes(),
         capabilities=_canonical_capabilities(),
-        policy=_policy_from_config(DEFAULT_POLICY.config, timeout_seconds=timeout_seconds),
-        source_span=None,
+        policy=_manifest_policy(timeout_seconds=timeout_seconds),
         metadata={
             "product": "megaplan",
             "max_critique_iterations": max_critique_iterations,
+            "policy_refs": (
+                DEFAULT_POLICY.id,
+                MODEL_ROUTING_POLICY.id,
+                ROBUSTNESS_POLICY.id,
+                ARTIFACT_CONTRACT_POLICY.id,
+                SUSPENSION_POLICY.id,
+            ),
         },
     )
 

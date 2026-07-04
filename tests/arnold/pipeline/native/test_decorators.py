@@ -17,17 +17,28 @@ from arnold.pipeline.native import (
     NativeLoopGuard,
     NativePhase,
     NativePipeline,
+    NativeProgram,
+    NativeInvocable,
+    ParallelInstruction,
+    ParallelMapInstruction,
     decision,
     get_decision_meta,
     get_phase_meta,
     get_pipeline_meta,
+    get_step_meta,
+    get_workflow_meta,
     is_decision,
     is_phase,
     is_pipeline,
+    is_step,
+    is_workflow,
     native_panel,
     parallel,
+    parallel_map,
     phase,
     pipeline,
+    step,
+    workflow,
 )
 
 
@@ -53,9 +64,13 @@ class TestImports:
         assert is_pipeline is not None
         assert is_phase is not None
         assert is_decision is not None
+        assert is_step is not None
+        assert is_workflow is not None
         assert get_pipeline_meta is not None
         assert get_phase_meta is not None
         assert get_decision_meta is not None
+        assert get_step_meta is not None
+        assert get_workflow_meta is not None
 
     def test_ir_types_importable(self) -> None:
         assert NativePipeline is not None
@@ -155,6 +170,187 @@ class TestPhaseDecorator:
         assert is_pipeline(step) is False
 
 
+# ── @step alias tests ──────────────────────────────────────────────────
+
+
+class TestStepDecorator:
+    """``@step`` is a public alias for ``@phase`` — identical behavior."""
+
+    def test_no_parens_attaches_metadata(self) -> None:
+        @step
+        def do_work(ctx: object) -> dict:
+            return {"x": 1}
+
+        # Recognized as both a step and a phase
+        assert is_step(do_work) is True
+        assert is_phase(do_work) is True
+        assert is_pipeline(do_work) is False
+        assert is_decision(do_work) is False
+
+        meta = get_step_meta(do_work)
+        assert meta is not None
+        assert meta["name"] == "do_work"
+
+        # get_phase_meta also works (they share the same backing)
+        phase_meta = get_phase_meta(do_work)
+        assert phase_meta is not None
+        assert phase_meta["name"] == "do_work"
+
+    def test_with_name_override(self) -> None:
+        @step(name="custom_step")
+        def do_work(ctx: object) -> dict:
+            return {"x": 1}
+
+        meta = get_step_meta(do_work)
+        assert meta is not None
+        assert meta["name"] == "custom_step"
+
+    def test_with_stable_id_and_schemas(self) -> None:
+        @step(
+            name="typed_step",
+            id="my.step.id",
+            inputs={"type": "object", "required": ["text"]},
+            outputs={"type": "object", "required": ["result"]},
+        )
+        def do_work(ctx: object) -> dict:
+            return {"result": "ok"}
+
+        meta = get_step_meta(do_work)
+        assert meta is not None
+        assert meta["name"] == "typed_step"
+        assert meta["id"] == "my.step.id"
+        assert meta["inputs"] == {"type": "object", "required": ["text"]}
+        assert meta["outputs"] == {"type": "object", "required": ["result"]}
+
+        # Dunder attributes are also present
+        assert do_work.__step_id__ == "my.step.id"
+        assert do_work.__step_inputs__ == {"type": "object", "required": ["text"]}
+        assert do_work.__step_outputs__ == {"type": "object", "required": ["result"]}
+
+    def test_callable_behavior_preserved(self) -> None:
+        @step
+        def multiply(a: int, b: int) -> int:
+            return a * b
+
+        assert multiply(3, 4) == 12
+
+    def test_not_step_for_undecorated(self) -> None:
+        def plain() -> None:
+            pass
+
+        assert is_step(plain) is False
+        assert get_step_meta(plain) is None
+
+    def test_step_parens_no_name_defaults_to_func_name(self) -> None:
+        @step()
+        def my_fn(ctx: object) -> dict:
+            return {}
+
+        meta = get_step_meta(my_fn)
+        assert meta is not None
+        assert meta["name"] == "my_fn"
+
+    def test_step_is_not_workflow(self) -> None:
+        @step
+        def fn(ctx: object) -> dict:
+            return {}
+
+        assert is_workflow(fn) is False
+
+
+# ── @workflow alias tests ──────────────────────────────────────────────
+
+
+class TestWorkflowDecorator:
+    """``@workflow`` is a public alias for ``@pipeline`` — identical behavior."""
+
+    def test_no_parens_attaches_metadata(self) -> None:
+        @workflow
+        def my_wf(ctx: object) -> str:
+            return "done"
+
+        # Recognized as both a workflow and a pipeline
+        assert is_workflow(my_wf) is True
+        assert is_pipeline(my_wf) is True
+        assert is_phase(my_wf) is False
+        assert is_step(my_wf) is False
+        assert is_decision(my_wf) is False
+
+        meta = get_workflow_meta(my_wf)
+        assert meta is not None
+        assert meta["name"] == "my_wf"
+        assert meta["description"] == ""
+        assert meta["phases"] == []
+        assert meta["decisions"] == []
+
+        # get_pipeline_meta also works (they share the same backing)
+        pipe_meta = get_pipeline_meta(my_wf)
+        assert pipe_meta is not None
+        assert pipe_meta["name"] == "my_wf"
+
+    def test_with_name_and_description(self) -> None:
+        @workflow(name="custom_wf", description="A test workflow")
+        def my_wf(ctx: object) -> str:
+            return "done"
+
+        meta = get_workflow_meta(my_wf)
+        assert meta is not None
+        assert meta["name"] == "custom_wf"
+        assert meta["description"] == "A test workflow"
+
+    def test_with_stable_id_and_schemas(self) -> None:
+        @workflow(
+            name="typed_wf",
+            id="my.workflow.id",
+            inputs={"type": "object", "required": ["query"]},
+            outputs={"type": "object", "required": ["answer"]},
+        )
+        def my_wf(ctx: object) -> str:
+            return "finished"
+
+        meta = get_workflow_meta(my_wf)
+        assert meta is not None
+        assert meta["name"] == "typed_wf"
+        assert meta["id"] == "my.workflow.id"
+        assert meta["inputs"] == {"type": "object", "required": ["query"]}
+        assert meta["outputs"] == {"type": "object", "required": ["answer"]}
+
+        # Dunder attributes are also present
+        assert my_wf.__workflow_id__ == "my.workflow.id"
+        assert my_wf.__workflow_inputs__ == {"type": "object", "required": ["query"]}
+        assert my_wf.__workflow_outputs__ == {"type": "object", "required": ["answer"]}
+
+    def test_callable_behavior_preserved(self) -> None:
+        @workflow
+        def add(a: int, b: int) -> int:
+            return a + b
+
+        assert add(2, 3) == 5
+
+    def test_not_workflow_for_undecorated(self) -> None:
+        def plain() -> None:
+            pass
+
+        assert is_workflow(plain) is False
+        assert get_workflow_meta(plain) is None
+
+    def test_workflow_parens_no_name_defaults_to_func_name(self) -> None:
+        @workflow()
+        def my_fn(ctx: object) -> str:
+            return "ok"
+
+        meta = get_workflow_meta(my_fn)
+        assert meta is not None
+        assert meta["name"] == "my_fn"
+
+    def test_workflow_is_not_step(self) -> None:
+        @workflow
+        def fn(ctx: object) -> str:
+            return "ok"
+
+        assert is_step(fn) is False
+
+
 # ── @decision decorator tests ─────────────────────────────────────────
 
 
@@ -236,12 +432,20 @@ class TestMetadataHelpersCrossCutting:
             return "done"
 
         @phase
-        def step(ctx: object) -> dict:
+        def step_fn(ctx: object) -> dict:
             return {}
 
         @decision
         def decide(ctx: object) -> str:
             return "x"
+
+        @step
+        def step_alias(ctx: object) -> dict:
+            return {}
+
+        @workflow
+        def wf_alias(ctx: object) -> str:
+            return "done"
 
         # Pipeline
         assert is_pipeline(pipe) is True
@@ -249,14 +453,28 @@ class TestMetadataHelpersCrossCutting:
         assert is_decision(pipe) is False
 
         # Phase
-        assert is_pipeline(step) is False
-        assert is_phase(step) is True
-        assert is_decision(step) is False
+        assert is_pipeline(step_fn) is False
+        assert is_phase(step_fn) is True
+        assert is_decision(step_fn) is False
 
         # Decision
         assert is_pipeline(decide) is False
         assert is_phase(decide) is False
         assert is_decision(decide) is True
+
+        # Step alias: recognized as both step and phase, not pipeline/decision
+        assert is_step(step_alias) is True
+        assert is_phase(step_alias) is True
+        assert is_pipeline(step_alias) is False
+        assert is_decision(step_alias) is False
+        assert is_workflow(step_alias) is False
+
+        # Workflow alias: recognized as both workflow and pipeline, not phase/decision
+        assert is_workflow(wf_alias) is True
+        assert is_pipeline(wf_alias) is True
+        assert is_phase(wf_alias) is False
+        assert is_step(wf_alias) is False
+        assert is_decision(wf_alias) is False
 
 
 # ── IR dataclass tests ────────────────────────────────────────────────
@@ -272,6 +490,25 @@ class TestNativePhase:
         np = NativePhase(name="test_phase", func=my_func)
         assert np.name == "test_phase"
         assert np.func is my_func
+        assert np.stable_id is None
+        assert np.inputs_schema is None
+        assert np.outputs_schema is None
+
+    def test_invocable_metadata(self) -> None:
+        def my_func(ctx: object) -> dict:
+            return {}
+
+        np = NativePhase(
+            name="test_phase",
+            func=my_func,
+            stable_id="phase.stable",
+            inputs_schema={"type": "object"},
+            outputs_schema={"type": "object"},
+        )
+        assert isinstance(np, NativeInvocable)
+        assert np.stable_id == "phase.stable"
+        assert np.inputs_schema == {"type": "object"}
+        assert np.outputs_schema == {"type": "object"}
 
     def test_frozen(self) -> None:
         def my_func(ctx: object) -> dict:
@@ -361,6 +598,9 @@ class TestNativePipeline:
         p = NativePipeline(name="test_pipe", func=pipe_fn)
         assert p.name == "test_pipe"
         assert p.func is pipe_fn
+        assert p.stable_id is None
+        assert p.inputs_schema is None
+        assert p.outputs_schema is None
         assert p.phases == ()
         assert p.decisions == ()
         assert p.loop_guards == ()
@@ -399,6 +639,22 @@ class TestNativePipeline:
         assert p.loop_guards == loops
         assert p.description == "A full pipeline"
 
+    def test_invocable_metadata(self) -> None:
+        def pipe_fn(ctx: object) -> str:
+            return "ok"
+
+        p = NativePipeline(
+            name="full_pipe",
+            func=pipe_fn,
+            stable_id="workflow.stable",
+            inputs_schema={"type": "object"},
+            outputs_schema={"type": "object"},
+        )
+        assert isinstance(p, NativeInvocable)
+        assert p.stable_id == "workflow.stable"
+        assert p.inputs_schema == {"type": "object"}
+        assert p.outputs_schema == {"type": "object"}
+
     def test_frozen(self) -> None:
         def pipe_fn(ctx: object) -> str:
             return "ok"
@@ -415,7 +671,12 @@ class TestDecoratorToIR:
     """Smoke test that decorator metadata can feed IR construction."""
 
     def test_phase_to_native_phase(self) -> None:
-        @phase(name="my_step")
+        @phase(
+            name="my_step",
+            id="step.stable",
+            inputs={"type": "object"},
+            outputs={"type": "object"},
+        )
         def step(ctx: object) -> dict:
             return {"status": "ok"}
 
@@ -425,6 +686,9 @@ class TestDecoratorToIR:
         ir_phase = NativePhase(name=meta["name"], func=step)
         assert ir_phase.name == "my_step"
         assert ir_phase.func is step
+        assert meta["id"] == "step.stable"
+        assert meta["inputs"] == {"type": "object"}
+        assert meta["outputs"] == {"type": "object"}
         # callable still works
         assert step(None) == {"status": "ok"}
 
@@ -446,7 +710,13 @@ class TestDecoratorToIR:
         assert branch(None) == "left"
 
     def test_pipeline_to_native_pipeline_minimal(self) -> None:
-        @pipeline(name="demo", description="demo pipeline")
+        @pipeline(
+            name="demo",
+            description="demo pipeline",
+            id="workflow.stable",
+            inputs={"type": "object"},
+            outputs={"type": "object"},
+        )
         def demo(ctx: object) -> str:
             return "finished"
 
@@ -456,10 +726,70 @@ class TestDecoratorToIR:
         ir_pipe = NativePipeline(
             name=meta["name"],
             func=demo,
+            stable_id=meta["id"],
+            inputs_schema=meta["inputs"],
+            outputs_schema=meta["outputs"],
             description=meta["description"],
         )
         assert ir_pipe.name == "demo"
         assert ir_pipe.description == "demo pipeline"
+        assert ir_pipe.stable_id == "workflow.stable"
+        assert ir_pipe.inputs_schema == {"type": "object"}
+        assert ir_pipe.outputs_schema == {"type": "object"}
+        assert demo(None) == "finished"
+
+    def test_step_alias_to_native_phase(self) -> None:
+        """@step is an alias for @phase; IR construction is identical."""
+
+        @step(
+            name="my_step",
+            id="step.stable",
+            inputs={"type": "object"},
+            outputs={"type": "object"},
+        )
+        def do_work(ctx: object) -> dict:
+            return {"status": "ok"}
+
+        meta = get_step_meta(do_work)
+        assert meta is not None
+
+        ir_phase = NativePhase(name=meta["name"], func=do_work)
+        assert ir_phase.name == "my_step"
+        assert ir_phase.func is do_work
+        assert meta["id"] == "step.stable"
+        assert meta["inputs"] == {"type": "object"}
+        assert meta["outputs"] == {"type": "object"}
+        assert do_work(None) == {"status": "ok"}
+
+    def test_workflow_alias_to_native_pipeline(self) -> None:
+        """@workflow is an alias for @pipeline; IR construction is identical."""
+
+        @workflow(
+            name="demo_wf",
+            description="demo workflow",
+            id="workflow.stable",
+            inputs={"type": "object"},
+            outputs={"type": "object"},
+        )
+        def demo(ctx: object) -> str:
+            return "finished"
+
+        meta = get_workflow_meta(demo)
+        assert meta is not None
+
+        ir_pipe = NativePipeline(
+            name=meta["name"],
+            func=demo,
+            stable_id=meta["id"],
+            inputs_schema=meta["inputs"],
+            outputs_schema=meta["outputs"],
+            description=meta["description"],
+        )
+        assert ir_pipe.name == "demo_wf"
+        assert ir_pipe.description == "demo workflow"
+        assert ir_pipe.stable_id == "workflow.stable"
+        assert ir_pipe.inputs_schema == {"type": "object"}
+        assert ir_pipe.outputs_schema == {"type": "object"}
         assert demo(None) == "finished"
 
 
@@ -682,6 +1012,275 @@ class TestNativePanelShape:
         reducer = np_result.__parallel_reducer__
         np_reduced = reducer([{"x": 1}])
         assert np_reduced == {"only.x": 1}
+
+
+# ── parallel_map decorator and helper tests ────────────────────────────
+
+
+class TestParallelMapImport:
+    """``parallel_map`` and ``ParallelMapInstruction`` are importable
+    from ``arnold.pipeline.native``."""
+
+    def test_parallel_map_importable(self) -> None:
+        assert parallel_map is not None
+        assert callable(parallel_map)
+
+    def test_parallel_map_instruction_importable(self) -> None:
+        assert ParallelMapInstruction is not None
+
+
+class TestParallelMapHelper:
+    """``parallel_map()`` produces a metadata-carrying declaration
+    distinct from :func:`parallel`."""
+
+    def test_basic_declaration(self) -> None:
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {"status": "ok"}
+
+        decl = parallel_map(items="checks", step=my_step)
+        assert decl is not None
+        assert decl.__parallel_map_items__ == "checks"
+        assert decl.__parallel_map_step__ is my_step
+        assert decl.__parallel_map_reducer__ is None
+        assert decl.__parallel_map_path_template__ == ""
+        assert decl.__parallel_map_name__ is None
+
+    def test_full_declaration(self) -> None:
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {"status": "ok"}
+
+        def my_reducer(results: list) -> dict:
+            return {"merged": True}
+
+        decl = parallel_map(
+            items="checks",
+            step=my_step,
+            reducer=my_reducer,
+            path_template="critique/{item_id}",
+            name="batch_critique",
+        )
+        assert decl.__parallel_map_items__ == "checks"
+        assert decl.__parallel_map_step__ is my_step
+        assert decl.__parallel_map_reducer__ is my_reducer
+        assert decl.__parallel_map_path_template__ == "critique/{item_id}"
+        assert decl.__parallel_map_name__ == "batch_critique"
+
+    def test_not_a_list(self) -> None:
+        """``parallel_map`` returns a declaration object, not a list."""
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {"status": "ok"}
+
+        decl = parallel_map(items="checks", step=my_step)
+        assert not isinstance(decl, list)
+        assert not isinstance(decl, (tuple, set))
+
+    def test_empty_items_rejected(self) -> None:
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {"status": "ok"}
+
+        with pytest.raises(TypeError, match="non-empty str"):
+            parallel_map(items="", step=my_step)
+
+    def test_non_string_items_rejected(self) -> None:
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {"status": "ok"}
+
+        with pytest.raises(TypeError, match="non-empty str"):
+            parallel_map(items=123, step=my_step)  # type: ignore[arg-type]
+
+    def test_non_callable_step_rejected(self) -> None:
+        with pytest.raises(TypeError, match="callable"):
+            parallel_map(items="checks", step="not_callable")  # type: ignore[arg-type]
+
+    def test_keyword_only_signature(self) -> None:
+        """``parallel_map`` enforces keyword-only arguments."""
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {"status": "ok"}
+
+        with pytest.raises(TypeError):
+            parallel_map("checks", my_step)  # type: ignore[misc]
+
+
+class TestParallelMapDistinctFromParallel:
+    """``parallel_map`` is a distinct construct, not overloading
+    static ``parallel`` semantics."""
+
+    def test_different_return_type(self) -> None:
+        """``parallel()`` returns a list-like; ``parallel_map()`` does not."""
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {}
+
+        par = parallel([my_step])
+        pm = parallel_map(items="checks", step=my_step)
+
+        # parallel returns a _ParallelBranchList (a list subclass)
+        assert isinstance(par, list)
+        # parallel_map returns a _ParallelMapDeclaration (not a list)
+        assert not isinstance(pm, list)
+
+    def test_different_metadata_attributes(self) -> None:
+        """``parallel()`` and ``parallel_map()`` carry different metadata."""
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {}
+
+        par = parallel([my_step])
+        pm = parallel_map(items="checks", step=my_step)
+
+        # parallel has branch-list metadata
+        assert hasattr(par, "__parallel_branches__")
+        assert hasattr(par, "__parallel_reducer__")
+        assert hasattr(par, "__parallel_name__")
+
+        # parallel_map has its own metadata namespace
+        assert hasattr(pm, "__parallel_map_items__")
+        assert hasattr(pm, "__parallel_map_step__")
+        assert hasattr(pm, "__parallel_map_reducer__")
+        assert hasattr(pm, "__parallel_map_path_template__")
+        assert hasattr(pm, "__parallel_map_name__")
+
+        # parallel_map does NOT have parallel metadata
+        assert not hasattr(pm, "__parallel_branches__")
+
+        # parallel does NOT have parallel_map metadata
+        assert not hasattr(par, "__parallel_map_items__")
+
+    def test_different_ir_types(self) -> None:
+        """``ParallelInstruction`` and ``ParallelMapInstruction`` are
+        distinct frozen dataclasses with different fields."""
+
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {}
+
+        # Construct the two IR types
+        pi = ParallelInstruction(
+            name="static_par",
+            branches=("my_step",),
+            branch_funcs=(my_step,),
+        )
+        pmi = ParallelMapInstruction(
+            name="dynamic_map",
+            items_ref="checks",
+            mapper=my_step,
+            mapper_name="my_step",
+        )
+
+        # They are different types
+        assert not isinstance(pi, ParallelMapInstruction)
+        assert not isinstance(pmi, ParallelInstruction)
+
+        # They carry different fields
+        assert hasattr(pi, "branches")
+        assert not hasattr(pi, "items_ref")
+
+        assert hasattr(pmi, "items_ref")
+        assert not hasattr(pmi, "branches")
+
+    def test_different_ir_defaults(self) -> None:
+        """``ParallelMapInstruction`` has sensible defaults."""
+
+        pmi = ParallelMapInstruction()
+        assert pmi.name == ""
+        assert pmi.items_ref == ""
+        assert pmi.mapper is None
+        assert pmi.mapper_name == ""
+        assert pmi.reducer is None
+        assert pmi.path_template == ""
+        assert pmi.merge_pc is None
+
+    def test_parallel_map_instruction_frozen(self) -> None:
+        """``ParallelMapInstruction`` is frozen — fields cannot be mutated."""
+
+        pmi = ParallelMapInstruction(name="test")
+        with pytest.raises(Exception):
+            pmi.name = "other"  # type: ignore[misc]
+        with pytest.raises(Exception):
+            pmi.items_ref = "other"  # type: ignore[misc]
+
+
+class TestParallelMapIRRoundTrip:
+    """``parallel_map()`` metadata can feed ``ParallelMapInstruction``
+    construction."""
+
+    def test_declaration_to_ir(self) -> None:
+        @phase
+        def my_step(ctx: object) -> dict:
+            return {"status": "ok"}
+
+        def my_reducer(results: list) -> dict:
+            return {"total": len(results)}
+
+        decl = parallel_map(
+            items="checks",
+            step=my_step,
+            reducer=my_reducer,
+            path_template="item/{id}",
+            name="batch",
+        )
+
+        # Round-trip: metadata → ParallelMapInstruction
+        pmi = ParallelMapInstruction(
+            name=decl.__parallel_map_name__ or "",
+            items_ref=decl.__parallel_map_items__,
+            mapper=decl.__parallel_map_step__,
+            mapper_name=getattr(decl.__parallel_map_step__, "__name__", ""),
+            reducer=decl.__parallel_map_reducer__,
+            path_template=decl.__parallel_map_path_template__,
+        )
+        assert pmi.name == "batch"
+        assert pmi.items_ref == "checks"
+        assert pmi.mapper is my_step
+        assert pmi.mapper_name == "my_step"
+        assert pmi.reducer is my_reducer
+        assert pmi.path_template == "item/{id}"
+
+    def test_declaration_with_workflow_step(self) -> None:
+        """``parallel_map`` accepts ``@workflow``-decorated callables as step."""
+        @workflow
+        def child_wf(ctx: object) -> dict:
+            return {"result": "ok"}
+
+        decl = parallel_map(items="items", step=child_wf)
+        assert decl.__parallel_map_step__ is child_wf
+
+    def test_native_program_parallel_map_blocks(self) -> None:
+        """``NativeProgram`` can carry ``parallel_map_blocks``."""
+        pmi = ParallelMapInstruction(name="dyn", items_ref="items")
+        prog = NativeProgram(
+            name="test",
+            parallel_map_blocks=(pmi,),
+        )
+        assert prog.parallel_map_blocks == (pmi,)
+        assert len(prog.parallel_map_blocks) == 1
+
+    def test_native_program_default_parallel_map_blocks(self) -> None:
+        """``NativeProgram.parallel_map_blocks`` defaults to empty tuple."""
+        prog = NativeProgram(name="test")
+        assert prog.parallel_map_blocks == ()
+
+    def test_native_program_coexists_with_parallel_blocks(self) -> None:
+        """``parallel_blocks`` and ``parallel_map_blocks`` coexist
+        without interference."""
+        pi = ParallelInstruction(name="static")
+        pmi = ParallelMapInstruction(name="dynamic", items_ref="items")
+
+        prog = NativeProgram(
+            name="mixed",
+            parallel_blocks=(pi,),
+            parallel_map_blocks=(pmi,),
+        )
+        assert len(prog.parallel_blocks) == 1
+        assert len(prog.parallel_map_blocks) == 1
+        assert prog.parallel_blocks[0].name == "static"
+        assert prog.parallel_map_blocks[0].name == "dynamic"
 
 
 # ── Human-gate decision metadata tests ────────────────────────────────
@@ -969,287 +1568,170 @@ class TestDecisionHumanGateMetadata:
             nd.override_routes = {"ok": "halt"}  # type: ignore[misc]
 
 
-# ── parallel_map decorator and helper tests ────────────────────────────
+# ── Decision source-location and routing-body marker tests ─────────────
 
 
-class TestParallelMapImport:
-    """``parallel_map`` and ``ParallelMapInstruction`` are importable
-    from ``arnold.pipeline.native``."""
+class TestDecisionSourceLocation:
+    """``@decision`` exposes source_file, first_lineno, and routing_body
+    via dunders and :func:`get_decision_meta` without breaking existing
+    metadata keys.
+    """
 
-    def test_parallel_map_importable(self) -> None:
-        from arnold.pipeline.native import parallel_map as pm, ParallelMapInstruction as PMI
-        assert pm is not None
-        assert callable(pm)
-        assert PMI is not None
+    def test_source_file_exposed(self) -> None:
+        @decision(vocabulary={"pass", "fail"})
+        def check(ctx: object) -> str:
+            return "pass"
 
+        meta = get_decision_meta(check)
+        assert meta is not None
+        assert "source_file" in meta
+        # The source file should end with this test file's name
+        assert meta["source_file"] is not None
+        assert meta["source_file"].endswith("test_decorators.py")
 
-class TestParallelMapHelper:
-    """``parallel_map()`` produces a metadata-carrying declaration
-    distinct from :func:`parallel`."""
+    def test_first_lineno_exposed(self) -> None:
+        @decision(vocabulary={"pass", "fail"})
+        def check(ctx: object) -> str:
+            return "pass"
 
-    def test_basic_declaration(self) -> None:
-        from arnold.pipeline.native import parallel_map
+        meta = get_decision_meta(check)
+        assert meta is not None
+        assert "first_lineno" in meta
+        assert isinstance(meta["first_lineno"], int)
+        assert meta["first_lineno"] > 0
 
-        @phase
-        def my_step(ctx: object) -> dict:
-            return {"status": "ok"}
+    def test_routing_body_exposed(self) -> None:
+        @decision(vocabulary={"pass", "fail"})
+        def check(ctx: object) -> str:
+            return "pass"
 
-        decl = parallel_map(items="checks", step=my_step)
-        assert decl is not None
-        assert decl.__parallel_map_items__ == "checks"
-        assert decl.__parallel_map_step__ is my_step
-        assert decl.__parallel_map_reducer__ is None
-        assert decl.__parallel_map_path_template__ == ""
-        assert decl.__parallel_map_name__ is None
+        meta = get_decision_meta(check)
+        assert meta is not None
+        assert "routing_body" in meta
+        assert meta["routing_body"] is True
 
-    def test_full_declaration(self) -> None:
-        from arnold.pipeline.native import parallel_map
+    def test_dunder_attributes_present(self) -> None:
+        @decision(vocabulary={"pass", "fail"})
+        def check(ctx: object) -> str:
+            return "pass"
 
-        @phase
-        def my_step(ctx: object) -> dict:
-            return {"status": "ok"}
+        assert check.__decision_source_file__ is not None  # type: ignore[attr-defined]
+        assert isinstance(check.__decision_first_lineno__, int)  # type: ignore[attr-defined]
+        assert check.__decision_routing_body__ is True  # type: ignore[attr-defined]
 
-        def my_reducer(results: list) -> dict:
-            return {"merged": True}
-
-        decl = parallel_map(
-            items="checks",
-            step=my_step,
-            reducer=my_reducer,
-            path_template="critique/{item_id}",
-            name="batch_critique",
+    def test_existing_metadata_keys_preserved(self) -> None:
+        """The new source-location keys do not displace existing keys."""
+        @decision(
+            name="gate",
+            vocabulary={"continue", "stop"},
+            human_gate=True,
+            artifact_stage="writer",
+            choices=("continue", "stop"),
         )
-        assert decl.__parallel_map_items__ == "checks"
-        assert decl.__parallel_map_step__ is my_step
-        assert decl.__parallel_map_reducer__ is my_reducer
-        assert decl.__parallel_map_path_template__ == "critique/{item_id}"
-        assert decl.__parallel_map_name__ == "batch_critique"
+        def gate(ctx: object) -> str:
+            return "continue"
 
-    def test_not_a_list(self) -> None:
-        """``parallel_map`` returns a declaration object, not a list."""
-        from arnold.pipeline.native import parallel_map
+        meta = get_decision_meta(gate)
+        assert meta is not None
+        # All existing keys are still present
+        assert meta["name"] == "gate"
+        assert meta["vocabulary"] == frozenset({"continue", "stop"})
+        assert meta["human_gate"] is True
+        assert meta["artifact_stage"] == "writer"
+        assert meta["choices"] == ("continue", "stop")
+        # New keys are also present
+        assert meta["source_file"] is not None
+        assert isinstance(meta["first_lineno"], int)
+        assert meta["routing_body"] is True
 
-        @phase
-        def my_step(ctx: object) -> dict:
-            return {"status": "ok"}
+    def test_ordinary_decision_still_has_routing_body(self) -> None:
+        """Even an ordinary @decision (no human_gate) is a routing body."""
+        @decision(vocabulary={"yes", "no"})
+        def plain(ctx: object) -> str:
+            return "yes"
 
-        decl = parallel_map(items="checks", step=my_step)
-        assert not isinstance(decl, list)
-        assert not isinstance(decl, (tuple, set))
+        meta = get_decision_meta(plain)
+        assert meta is not None
+        # Existing defaults are intact
+        assert meta["human_gate"] is False
+        # New keys are present
+        assert meta["routing_body"] is True
+        assert meta["source_file"] is not None
+        assert isinstance(meta["first_lineno"], int)
 
-    def test_empty_items_rejected(self) -> None:
-        from arnold.pipeline.native import parallel_map
+    def test_not_decision_has_no_source_location(self) -> None:
+        """get_decision_meta returns None for non-decision callables."""
+        def plain() -> str:
+            return "x"
 
-        @phase
-        def my_step(ctx: object) -> dict:
-            return {"status": "ok"}
-
-        with pytest.raises(TypeError, match="non-empty str"):
-            parallel_map(items="", step=my_step)
-
-    def test_non_string_items_rejected(self) -> None:
-        from arnold.pipeline.native import parallel_map
-
-        @phase
-        def my_step(ctx: object) -> dict:
-            return {"status": "ok"}
-
-        with pytest.raises(TypeError, match="non-empty str"):
-            parallel_map(items=123, step=my_step)  # type: ignore[arg-type]
-
-    def test_non_callable_step_rejected(self) -> None:
-        from arnold.pipeline.native import parallel_map
-
-        with pytest.raises(TypeError, match="callable"):
-            parallel_map(items="checks", step="not_callable")  # type: ignore[arg-type]
-
-    def test_keyword_only_signature(self) -> None:
-        """``parallel_map`` enforces keyword-only arguments."""
-        from arnold.pipeline.native import parallel_map
-
-        @phase
-        def my_step(ctx: object) -> dict:
-            return {"status": "ok"}
-
-        with pytest.raises(TypeError):
-            parallel_map("checks", my_step)  # type: ignore[misc]
+        assert get_decision_meta(plain) is None
 
 
-class TestParallelMapDistinctFromParallel:
-    """``parallel_map`` is a distinct construct, not overloading
-    static ``parallel`` semantics."""
-
-    def test_different_return_type(self) -> None:
-        """``parallel()`` returns a list-like; ``parallel_map()`` does not."""
-        from arnold.pipeline.native import parallel, parallel_map
-
-        @phase
-        def my_step(ctx: object) -> dict:
-            return {}
-
-        par = parallel([my_step])
-        pm = parallel_map(items="checks", step=my_step)
-
-        # parallel returns a _ParallelBranchList (a list subclass)
-        assert isinstance(par, list)
-        # parallel_map returns a _ParallelMapDeclaration (not a list)
-        assert not isinstance(pm, list)
-
-    def test_different_metadata_attributes(self) -> None:
-        """``parallel()`` and ``parallel_map()`` carry different metadata."""
-        from arnold.pipeline.native import parallel, parallel_map
-
-        @phase
-        def my_step(ctx: object) -> dict:
-            return {}
-
-        par = parallel([my_step])
-        pm = parallel_map(items="checks", step=my_step)
-
-        # parallel has branch-list metadata
-        assert hasattr(par, "__parallel_branches__")
-        assert hasattr(par, "__parallel_reducer__")
-        assert hasattr(par, "__parallel_name__")
-
-        # parallel_map has its own metadata namespace
-        assert hasattr(pm, "__parallel_map_items__")
-        assert hasattr(pm, "__parallel_map_step__")
-        assert hasattr(pm, "__parallel_map_reducer__")
-        assert hasattr(pm, "__parallel_map_path_template__")
-        assert hasattr(pm, "__parallel_map_name__")
-
-        # parallel_map does NOT have parallel metadata
-        assert not hasattr(pm, "__parallel_branches__")
-
-        # parallel does NOT have parallel_map metadata
-        assert not hasattr(par, "__parallel_map_items__")
-
-    def test_different_ir_types(self) -> None:
-        """``ParallelInstruction`` and ``ParallelMapInstruction`` are
-        distinct frozen dataclasses with different fields."""
-        from arnold.pipeline.native import ParallelInstruction, ParallelMapInstruction
-
-        @phase
-        def my_step(ctx: object) -> dict:
-            return {}
-
-        pi = ParallelInstruction(
-            name="static_par",
-            branches=("my_step",),
-            branch_funcs=(my_step,),
-        )
-        pmi = ParallelMapInstruction(
-            name="dynamic_map",
-            items_ref="checks",
-            mapper=my_step,
-            mapper_name="my_step",
-        )
-
-        assert not isinstance(pi, ParallelMapInstruction)
-        assert not isinstance(pmi, ParallelInstruction)
-
-        assert hasattr(pi, "branches")
-        assert not hasattr(pi, "items_ref")
-
-        assert hasattr(pmi, "items_ref")
-        assert not hasattr(pmi, "branches")
-
-    def test_different_ir_defaults(self) -> None:
-        """``ParallelMapInstruction`` has sensible defaults."""
-        from arnold.pipeline.native import ParallelMapInstruction
-
-        pmi = ParallelMapInstruction()
-        assert pmi.name == ""
-        assert pmi.items_ref == ""
-        assert pmi.mapper is None
-        assert pmi.mapper_name == ""
-        assert pmi.reducer is None
-        assert pmi.path_template == ""
-        assert pmi.merge_pc is None
-
-    def test_parallel_map_instruction_frozen(self) -> None:
-        """``ParallelMapInstruction`` is frozen — fields cannot be mutated."""
-        from arnold.pipeline.native import ParallelMapInstruction
-
-        pmi = ParallelMapInstruction(name="test")
-        with pytest.raises(Exception):
-            pmi.name = "other"  # type: ignore[misc]
-        with pytest.raises(Exception):
-            pmi.items_ref = "other"  # type: ignore[misc]
+# ── NativeProgram.routing_topology backward-compatibility tests ───────
 
 
-class TestParallelMapIRRoundTrip:
-    """``parallel_map()`` metadata can feed ``ParallelMapInstruction``
-    construction."""
+class TestNativeProgramRoutingTopology:
+    """``NativeProgram.routing_topology`` is defaulted so existing
+    construction sites remain compatible.
+    """
 
-    def test_declaration_to_ir(self) -> None:
-        from arnold.pipeline.native import parallel_map, ParallelMapInstruction
-
-        @phase
-        def my_step(ctx: object) -> dict:
-            return {"status": "ok"}
-
-        def my_reducer(results: list) -> dict:
-            return {"total": len(results)}
-
-        decl = parallel_map(
-            items="checks",
-            step=my_step,
-            reducer=my_reducer,
-            path_template="item/{id}",
-            name="batch",
-        )
-
-        pmi = ParallelMapInstruction(
-            name=decl.__parallel_map_name__ or "",
-            items_ref=decl.__parallel_map_items__,
-            mapper=decl.__parallel_map_step__,
-            mapper_name=getattr(decl.__parallel_map_step__, "__name__", ""),
-            reducer=decl.__parallel_map_reducer__,
-            path_template=decl.__parallel_map_path_template__,
-        )
-        assert pmi.name == "batch"
-        assert pmi.items_ref == "checks"
-        assert pmi.mapper is my_step
-        assert pmi.mapper_name == "my_step"
-        assert pmi.reducer is my_reducer
-        assert pmi.path_template == "item/{id}"
-
-    def test_native_program_parallel_map_blocks(self) -> None:
-        """``NativeProgram`` can carry ``parallel_map_blocks``."""
-        from arnold.pipeline.native import NativeProgram, ParallelMapInstruction
-
-        pmi = ParallelMapInstruction(name="dyn", items_ref="items")
-        prog = NativeProgram(
-            name="test",
-            parallel_map_blocks=(pmi,),
-        )
-        assert prog.parallel_map_blocks == (pmi,)
-        assert len(prog.parallel_map_blocks) == 1
-
-    def test_native_program_default_parallel_map_blocks(self) -> None:
-        """``NativeProgram.parallel_map_blocks`` defaults to empty tuple."""
-        from arnold.pipeline.native import NativeProgram
-
+    def test_default_routing_topology_empty_dict(self) -> None:
+        """Constructing NativeProgram without routing_topology defaults
+        to an empty dict."""
         prog = NativeProgram(name="test")
-        assert prog.parallel_map_blocks == ()
+        assert prog.routing_topology == {}
 
-    def test_native_program_coexists_with_parallel_blocks(self) -> None:
-        """``parallel_blocks`` and ``parallel_map_blocks`` coexist
-        without interference."""
-        from arnold.pipeline.native import (
-            NativeProgram, ParallelInstruction, ParallelMapInstruction,
-        )
+    def test_explicit_routing_topology(self) -> None:
+        """NativeProgram accepts an explicit routing_topology dict."""
+        topo = {"edges": [("a", "b")], "entry": "a"}
+        prog = NativeProgram(name="test", routing_topology=topo)
+        assert prog.routing_topology == topo
+        assert prog.routing_topology["edges"] == [("a", "b")]
 
-        pi = ParallelInstruction(name="static")
-        pmi = ParallelMapInstruction(name="dynamic", items_ref="items")
-
+    def test_routing_topology_does_not_break_existing_fields(self) -> None:
+        """All existing NativeProgram fields work as before when
+        routing_topology is omitted."""
         prog = NativeProgram(
-            name="mixed",
-            parallel_blocks=(pi,),
-            parallel_map_blocks=(pmi,),
+            name="full",
+            stable_id="wf.stable",
+            inputs_schema={"type": "object"},
+            outputs_schema={"type": "object"},
+            instructions=(),
+            phases=(),
+            decisions=(),
+            loop_guards=(),
+            parallel_blocks=(),
+            description="A full program",
         )
-        assert len(prog.parallel_blocks) == 1
-        assert len(prog.parallel_map_blocks) == 1
-        assert prog.parallel_blocks[0].name == "static"
-        assert prog.parallel_map_blocks[0].name == "dynamic"
+        assert prog.name == "full"
+        assert prog.stable_id == "wf.stable"
+        assert prog.inputs_schema == {"type": "object"}
+        assert prog.outputs_schema == {"type": "object"}
+        assert prog.instructions == ()
+        assert prog.phases == ()
+        assert prog.decisions == ()
+        assert prog.loop_guards == ()
+        assert prog.parallel_blocks == ()
+        assert prog.description == "A full program"
+        assert prog.routing_topology == {}
+
+    def test_routing_topology_frozen(self) -> None:
+        """routing_topology is on a frozen dataclass and the field
+        itself cannot be reassigned."""
+        prog = NativeProgram(name="test")
+        with pytest.raises(Exception):
+            prog.routing_topology = {"x": 1}  # type: ignore[misc]
+
+    def test_routing_topology_with_instructions(self) -> None:
+        """routing_topology works alongside instructions (common
+        compiler output pattern)."""
+        from arnold.pipeline.native import NativeInstruction
+
+        instr = NativeInstruction(pc=0, op="halt")
+        prog = NativeProgram(
+            name="compiled",
+            instructions=(instr,),
+            routing_topology={"entry": "start"},
+        )
+        assert prog.instructions == (instr,)
+        assert prog.routing_topology == {"entry": "start"}

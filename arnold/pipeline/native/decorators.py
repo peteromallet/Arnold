@@ -7,8 +7,8 @@ with the native runner's dict-based context and state propagation.
 
 from __future__ import annotations
 
-import inspect
 import builtins
+import inspect
 from typing import Any, Callable
 
 

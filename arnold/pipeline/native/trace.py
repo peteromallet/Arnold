@@ -31,13 +31,13 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from arnold.pipeline.native.hooks import (
     NativeRuntimeHooks,
     NullNativeRuntimeHooks,
 )
-from arnold.pipeline.native.ir import NativeInstruction
+from arnold.pipeline.native.ir import PATH_DELIMITER, ROOT_PATH, NativeInstruction, NativeProgram
 from arnold.runtime.event_journal import NdjsonEventJournal
 
 
@@ -62,6 +62,26 @@ def _sha256_hex(data: bytes) -> str:
 def _ensure_dir(path: Path) -> None:
     """Create directory *path* if it does not exist."""
     path.mkdir(parents=True, exist_ok=True)
+
+
+def _normalize_trace_path(path: Any) -> str:
+    text = str(path or "").strip()
+    if not text:
+        return ROOT_PATH
+    parts = [segment for segment in text.split(PATH_DELIMITER) if segment]
+    if not parts:
+        return ROOT_PATH
+    if parts[0] != ROOT_PATH:
+        parts.insert(0, ROOT_PATH)
+    return PATH_DELIMITER.join(parts)
+
+
+def _parent_trace_path(path: Any) -> str | None:
+    normalized = _normalize_trace_path(path)
+    parts = normalized.split(PATH_DELIMITER)
+    if len(parts) <= 1:
+        return None
+    return PATH_DELIMITER.join(parts[:-1])
 
 
 def _trace_stage_id(stage_id: str) -> str:
@@ -146,6 +166,9 @@ class NativeTraceHooks:
         self.halt_reason: str | None = None
         self._journal: NdjsonEventJournal | None = None
         self._stage_seq: list[str] = []
+        self._active_runs: list[str] = []
+        self._tree_nodes: dict[str, dict[str, Any]] = {}
+        self._tree_order: list[str] = []
 
         if self._trace_dir is not None:
             _ensure_dir(self._trace_dir)
@@ -175,6 +198,18 @@ class NativeTraceHooks:
             _json_dumps(self._stage_seq), encoding="utf-8"
         )
 
+    def _write_tree_json(self) -> None:
+        if self._trace_dir is None:
+            return
+        nodes = [self._tree_nodes[path] for path in self._tree_order if path in self._tree_nodes]
+        payload = {
+            "root_path": ROOT_PATH,
+            "nodes": nodes,
+        }
+        (self._trace_dir / "tree.json").write_text(
+            _json_dumps(payload), encoding="utf-8"
+        )
+
     def _write_artifacts_json(self) -> None:
         """Write an artifact inventory as ``artifacts.json``."""
         if self._trace_dir is None:
@@ -197,10 +232,338 @@ class NativeTraceHooks:
                 if isinstance(cursor.get("native"), dict)
                 else None
             ),
+            "run_path": cursor.get("run_path"),
+            "step_path": cursor.get("step_path"),
+            "call_site_path": cursor.get("call_site_path"),
+            "tree_file": "tree.json",
+            "tree_node_count": len(self._tree_nodes),
         }
         (self._trace_dir / "checkpoint.json").write_text(
             _json_dumps(payload), encoding="utf-8"
         )
+
+    def _active_depth(self) -> int:
+        return len(self._active_runs)
+
+    def _should_write_root_artifacts(self) -> bool:
+        return self._active_depth() <= 1
+
+    def _trace_context(
+        self,
+        *,
+        instr: NativeInstruction | None = None,
+        ctx: Mapping[str, Any] | None = None,
+        path: Any = None,
+        run_path: Any = None,
+        step_path: Any = None,
+        parent_path: Any = None,
+        parent_run_path: Any = None,
+        call_site_path: Any = None,
+        kind: str | None = None,
+    ) -> dict[str, Any]:
+        raw_run_path = run_path
+        if raw_run_path is None and ctx is not None:
+            raw_run_path = ctx.get("run_path")
+        normalized_run_path = _normalize_trace_path(raw_run_path)
+        raw_step_path = step_path
+        if raw_step_path is None and ctx is not None:
+            raw_step_path = ctx.get("step_path")
+        normalized_step_path = (
+            _normalize_trace_path(raw_step_path) if raw_step_path else None
+        )
+        raw_call_site_path = call_site_path
+        if raw_call_site_path is None and ctx is not None:
+            raw_call_site_path = ctx.get("call_site_path")
+        normalized_call_site_path = []
+        if isinstance(raw_call_site_path, (list, tuple)):
+            normalized_call_site_path = [str(segment) for segment in raw_call_site_path]
+        raw_path = path if path is not None else normalized_step_path or normalized_run_path
+        normalized_path = _normalize_trace_path(raw_path)
+        raw_parent_path = parent_path
+        if raw_parent_path is None:
+            raw_parent_path = _parent_trace_path(normalized_path)
+        normalized_parent_path = (
+            _normalize_trace_path(raw_parent_path) if raw_parent_path else None
+        )
+        raw_parent_run_path = parent_run_path
+        if raw_parent_run_path is None and ctx is not None:
+            raw_parent_run_path = ctx.get("parent_run_path")
+        normalized_parent_run_path = (
+            _normalize_trace_path(raw_parent_run_path) if raw_parent_run_path else None
+        )
+        trace_kind = kind or (instr.op if instr is not None else "run")
+        trace_ctx: dict[str, Any] = {
+            "path": normalized_path,
+            "parent_path": normalized_parent_path,
+            "run_path": normalized_run_path,
+            "step_path": normalized_step_path,
+            "parent_run_path": normalized_parent_run_path,
+            "call_site_path": normalized_call_site_path,
+            "kind": trace_kind,
+        }
+        if instr is not None:
+            trace_ctx["op"] = instr.op
+            trace_ctx["name"] = instr.name
+            trace_ctx["pc"] = instr.pc
+        return trace_ctx
+
+    def _ensure_tree_node(
+        self,
+        *,
+        path: Any,
+        kind: str,
+        name: str,
+        run_path: Any,
+        step_path: Any = None,
+        parent_path: Any = None,
+        parent_run_path: Any = None,
+        call_site_path: Any = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        trace_ctx = self._trace_context(
+            path=path,
+            run_path=run_path,
+            step_path=step_path,
+            parent_path=parent_path,
+            parent_run_path=parent_run_path,
+            call_site_path=call_site_path,
+            kind=kind,
+        )
+        node_path = trace_ctx["path"]
+        node = self._tree_nodes.get(node_path)
+        if node is None:
+            node = {
+                "path": node_path,
+                "parent_path": trace_ctx["parent_path"],
+                "run_path": trace_ctx["run_path"],
+                "step_path": trace_ctx["step_path"],
+                "parent_run_path": trace_ctx["parent_run_path"],
+                "call_site_path": trace_ctx["call_site_path"],
+                "kind": kind,
+                "name": name,
+                "children": [],
+                "metadata": {},
+            }
+            self._tree_nodes[node_path] = node
+            self._tree_order.append(node_path)
+        else:
+            node.update(
+                {
+                    "parent_path": trace_ctx["parent_path"],
+                    "run_path": trace_ctx["run_path"],
+                    "step_path": trace_ctx["step_path"],
+                    "parent_run_path": trace_ctx["parent_run_path"],
+                    "call_site_path": trace_ctx["call_site_path"],
+                    "kind": kind,
+                    "name": name,
+                }
+            )
+        if metadata:
+            node["metadata"].update(dict(metadata))
+        parent = trace_ctx["parent_path"]
+        if parent:
+            parent_node = self._ensure_tree_node(
+                path=parent,
+                kind=self._tree_nodes.get(parent, {}).get("kind", "run"),
+                name=parent.split(PATH_DELIMITER)[-1],
+                run_path=parent,
+                parent_path=_parent_trace_path(parent),
+                parent_run_path=_parent_trace_path(parent),
+                call_site_path=parent.split(PATH_DELIMITER)[1:],
+            )
+            if node_path not in parent_node["children"]:
+                parent_node["children"].append(node_path)
+        return node
+
+    def on_run_enter(
+        self,
+        program: NativeProgram,
+        *,
+        run_path: str,
+        parent_run_path: str | None = None,
+        kind: str = "pipeline",
+        call_site_path: tuple[str, ...] = (),
+    ) -> None:
+        normalized_run_path = _normalize_trace_path(run_path)
+        parent_path = _normalize_trace_path(parent_run_path) if parent_run_path else _parent_trace_path(normalized_run_path)
+        self._active_runs.append(normalized_run_path)
+        node = self._ensure_tree_node(
+            path=normalized_run_path,
+            kind=kind,
+            name=program.name,
+            run_path=normalized_run_path,
+            parent_path=parent_path,
+            parent_run_path=parent_run_path,
+            call_site_path=call_site_path,
+            metadata={
+                "program_name": program.name,
+                "program_stable_id": program.stable_id,
+                "status": "running",
+            },
+        )
+        if self._journal is not None:
+            self._journal.emit(
+                "run.enter",
+                payload={"trace": dict(node), "program_name": program.name, "program_stable_id": program.stable_id},
+                phase=program.name,
+            )
+
+    def on_run_exit(
+        self,
+        program: NativeProgram,
+        *,
+        run_path: str,
+        status: str,
+    ) -> None:
+        normalized_run_path = _normalize_trace_path(run_path)
+        node = self._ensure_tree_node(
+            path=normalized_run_path,
+            kind=self._tree_nodes.get(normalized_run_path, {}).get("kind", "pipeline"),
+            name=program.name,
+            run_path=normalized_run_path,
+            metadata={"program_name": program.name, "program_stable_id": program.stable_id, "status": status},
+        )
+        if self._journal is not None:
+            self._journal.emit(
+                "run.exit",
+                payload={"trace": dict(node), "status": status},
+                phase=program.name,
+            )
+        if self._active_runs and self._active_runs[-1] == normalized_run_path:
+            self._active_runs.pop()
+        elif normalized_run_path in self._active_runs:
+            self._active_runs.remove(normalized_run_path)
+
+    def on_parallel_map_enter(
+        self,
+        instr: NativeInstruction,
+        *,
+        run_path: str,
+        path: str,
+        parent_run_path: str | None = None,
+        call_site_path: tuple[str, ...] = (),
+    ) -> None:
+        node = self._ensure_tree_node(
+            path=path,
+            kind="parallel_map",
+            name=instr.name or instr.op,
+            run_path=run_path,
+            parent_path=run_path,
+            parent_run_path=parent_run_path,
+            call_site_path=call_site_path,
+            metadata={"op": instr.op, "pc": instr.pc},
+        )
+        if self._journal is not None:
+            self._journal.emit(
+                "parallel_map.enter",
+                payload={"trace": dict(node)},
+                phase=instr.name,
+            )
+
+    def on_parallel_map_exit(
+        self,
+        instr: NativeInstruction,
+        *,
+        run_path: str,
+        path: str,
+    ) -> None:
+        node = self._ensure_tree_node(
+            path=path,
+            kind="parallel_map",
+            name=instr.name or instr.op,
+            run_path=run_path,
+            parent_path=run_path,
+            metadata={"op": instr.op, "pc": instr.pc, "status": "completed"},
+        )
+        if self._journal is not None:
+            self._journal.emit(
+                "parallel_map.exit",
+                payload={"trace": dict(node)},
+                phase=instr.name,
+            )
+
+    def trace_only_step_start(
+        self,
+        instr: NativeInstruction,
+        ctx: Mapping[str, Any],
+    ) -> None:
+        trace = self._trace_context(instr=instr, ctx=ctx)
+        self._ensure_tree_node(
+            path=trace["path"],
+            kind=instr.op,
+            name=instr.name or instr.op,
+            run_path=trace["run_path"],
+            step_path=trace["step_path"],
+            parent_path=trace["parent_path"],
+            parent_run_path=trace["parent_run_path"],
+            call_site_path=trace["call_site_path"],
+            metadata={"pc": instr.pc, "op": instr.op},
+        )
+        if self._journal is not None:
+            self._journal.emit(
+                "phase.start",
+                payload={"phase": instr.name, "pc": instr.pc, "trace": trace},
+                phase=instr.name,
+            )
+
+    def trace_only_step_end(
+        self,
+        instr: NativeInstruction,
+        ctx: Mapping[str, Any],
+    ) -> None:
+        trace = self._trace_context(instr=instr, ctx=ctx)
+        if self._journal is not None:
+            self._journal.emit(
+                "phase.end",
+                payload={"phase": instr.name, "pc": instr.pc, "trace": trace},
+                phase=instr.name,
+            )
+
+    def trace_only_step_error(
+        self,
+        instr: NativeInstruction,
+        ctx: Mapping[str, Any],
+        exc: BaseException,
+    ) -> None:
+        trace = self._trace_context(instr=instr, ctx=ctx)
+        if self._journal is not None:
+            self._journal.emit(
+                "error",
+                payload={
+                    "phase": instr.name,
+                    "pc": instr.pc,
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                    "trace": trace,
+                },
+                phase=instr.name,
+            )
+
+    def trace_only_stage_complete(
+        self,
+        instr: NativeInstruction,
+        ctx: Mapping[str, Any],
+    ) -> None:
+        stage_id = _trace_stage_id(f"{instr.name}__pc{instr.pc}")
+        trace = self._trace_context(instr=instr, ctx=ctx)
+        node = self._ensure_tree_node(
+            path=trace["path"],
+            kind=instr.op,
+            name=instr.name or instr.op,
+            run_path=trace["run_path"],
+            step_path=trace["step_path"],
+            parent_path=trace["parent_path"],
+            parent_run_path=trace["parent_run_path"],
+            call_site_path=trace["call_site_path"],
+            metadata={"pc": instr.pc, "op": instr.op, "stage_id": stage_id},
+        )
+        self._stage_seq.append(stage_id)
+        if self._journal is not None:
+            self._journal.emit(
+                "stage.complete",
+                payload={"stage": stage_id, "pc": instr.pc, "trace": dict(node)},
+                phase=instr.name,
+            )
 
     # ── NativeRuntimeHooks callbacks ─────────────────────────────────
 
@@ -210,12 +573,7 @@ class NativeTraceHooks:
         ctx: dict[str, Any],
     ) -> dict[str, Any]:
         ctx = self._inner.on_step_start(instr, ctx)
-        if self._journal is not None:
-            self._journal.emit(
-                "phase.start",
-                payload={"phase": instr.name, "pc": instr.pc},
-                phase=instr.name,
-            )
+        self.trace_only_step_start(instr, ctx)
         return ctx
 
     def on_step_end(
@@ -225,12 +583,7 @@ class NativeTraceHooks:
         result: Any,
     ) -> Any:
         result = self._inner.on_step_end(instr, ctx, result)
-        if self._journal is not None:
-            self._journal.emit(
-                "phase.end",
-                payload={"phase": instr.name, "pc": instr.pc},
-                phase=instr.name,
-            )
+        self.trace_only_step_end(instr, ctx)
         return result
 
     def on_step_error(
@@ -240,17 +593,7 @@ class NativeTraceHooks:
         exc: BaseException,
     ) -> None:
         self._inner.on_step_error(instr, ctx, exc)
-        if self._journal is not None:
-            self._journal.emit(
-                "error",
-                payload={
-                    "phase": instr.name,
-                    "pc": instr.pc,
-                    "error_type": type(exc).__name__,
-                    "error_message": str(exc),
-                },
-                phase=instr.name,
-            )
+        self.trace_only_step_error(instr, ctx, exc)
 
     def merge_state(
         self,
@@ -294,16 +637,9 @@ class NativeTraceHooks:
         owned_keys: frozenset[str],
     ) -> None:
         self._inner.on_stage_complete(instr, ctx, result, state, owned_keys)
-        # Build stage id the same way the runtime does
-        stage_id = _trace_stage_id(f"{instr.name}__pc{instr.pc}")
-        self._stage_seq.append(stage_id)
-        self._write_state_json(state)
-        if self._journal is not None:
-            self._journal.emit(
-                "stage.complete",
-                payload={"stage": stage_id, "pc": instr.pc},
-                phase=instr.name,
-            )
+        self.trace_only_stage_complete(instr, ctx)
+        if self._should_write_root_artifacts():
+            self._write_state_json(state)
 
     def on_checkpoint(
         self,
@@ -312,15 +648,64 @@ class NativeTraceHooks:
     ) -> None:
         self._inner.on_checkpoint(cursor, state)
         final = bool(cursor.get("final", False))
-        self._write_state_json(state)
-        self._write_stages_json()
-        self._write_artifacts_json()
-        self._write_checkpoint_json(cursor, final=final)
+        if self._should_write_root_artifacts():
+            self._write_state_json(state)
+            self._write_stages_json()
+            self._write_tree_json()
+            self._write_artifacts_json()
+            self._write_checkpoint_json(cursor, final=final)
+        trace = self._trace_context(
+            path=cursor.get("step_path") or cursor.get("run_path") or ROOT_PATH,
+            run_path=cursor.get("run_path"),
+            step_path=cursor.get("step_path"),
+            call_site_path=cursor.get("call_site_path"),
+        )
         if self._journal is not None:
             self._journal.emit(
                 "checkpoint",
                 payload={
                     "final": final,
                     "stage_count": len(self._stage_seq),
+                    "trace": trace,
                 },
+            )
+
+    def emit_pipeline_suspended(
+        self,
+        *,
+        reason: str,
+        run_path: Any = None,
+        step_path: Any = None,
+        call_site_path: Any = None,
+    ) -> None:
+        trace = self._trace_context(
+            path=step_path or run_path or ROOT_PATH,
+            run_path=run_path,
+            step_path=step_path,
+            call_site_path=call_site_path,
+        )
+        if self._journal is not None:
+            self._journal.emit(
+                "pipeline_suspended",
+                payload={"reason": reason, "trace": trace},
+            )
+
+    def emit_pipeline_resumed(
+        self,
+        *,
+        reason: str,
+        run_path: Any = None,
+        step_path: Any = None,
+        call_site_path: Any = None,
+    ) -> None:
+        trace = self._trace_context(
+            path=step_path or run_path or ROOT_PATH,
+            run_path=run_path,
+            step_path=step_path,
+            call_site_path=call_site_path,
+        )
+        if self._journal is not None:
+            self._journal.emit(
+                "pipeline_resumed",
+                payload={"reason": reason, "trace": trace},
             )

@@ -189,6 +189,28 @@ REQUIRES_STATE_RE = re.compile(
     r"requires state ['\"](?P<required>[^'\"]+)['\"], got ['\"](?P<got>[^'\"]+)['\"]"
 )
 
+# Stable-ID → flat-name resolution for canonical dispatch surfaces.
+# When the auto-driver receives a stable component ID (e.g. "megaplan:prep"),
+# it resolves to the flat phase name the native program expects.  Flat names
+# pass through unchanged so existing callers are not broken.
+_STABLE_ID_TO_PHASE: dict[str, str] = {
+    "megaplan:prep": "prep",
+    "megaplan:plan": "plan",
+    "megaplan:critique": "critique",
+    "megaplan:gate": "gate",
+    "megaplan:revise": "revise",
+    "megaplan:tiebreaker_run": "tiebreaker_run",
+    "megaplan:tiebreaker_decide": "tiebreaker_decide",
+    "megaplan:finalize": "finalize",
+    "megaplan:execute": "execute",
+    "megaplan:review": "review",
+}
+
+
+def _resolve_phase_name(raw: str) -> str:
+    """Return the flat phase name for *raw*, resolving any stable-ID prefix."""
+    return _STABLE_ID_TO_PHASE.get(raw, raw)
+
 
 @dataclass
 class DriverOutcome:
@@ -649,7 +671,8 @@ def _run_native_planning_phase(
 ) -> tuple[int, str, str] | None:
     """Run a canonical phase through the compiled shell's native program."""
 
-    phase = args[0] if args else ""
+    raw_phase = args[0] if args else ""
+    phase = _resolve_phase_name(raw_phase)
     if phase not in PHASE_NAMES:
         return None
     try:
@@ -3276,7 +3299,7 @@ def drive(
                 invocation_id="synthesized",
                 exit_kind=ExitKind.context_exhausted.value,
             )
-        elif next_step not in PHASE_NAMES:
+        elif _resolve_phase_name(next_step) not in PHASE_NAMES:
             # Non-phase commands (e.g. 'override add-note') — no synthesis
             result = None
         elif code == 0:
@@ -5145,7 +5168,7 @@ def drive(
                         # on the stronger model before we consider climbing more.
                         execute_fail_streak = 0
             last_execute_progress = progress_sig
-        elif next_step in PHASE_NAMES:
+        elif _resolve_phase_name(next_step) in PHASE_NAMES:
             # Moving off execute to another phase — the execute failure streak
             # is per-execute and must not leak across phases.
             execute_fail_streak = 0

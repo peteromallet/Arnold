@@ -17,7 +17,6 @@ import threading
 import textwrap
 from typing import Any, Callable, Mapping, Sequence
 
-from arnold.pipeline.native.composition import attach_composition_graph
 from arnold.pipeline.native.decorators import (
     get_decision_meta,
     get_phase_meta,
@@ -188,9 +187,6 @@ class _Compiler:
         self._pc: int = 0
         self._pending_halt: bool = False
         self._parallel_block_counter: int = 0
-        # Per-parent occurrence counters for deterministic call-site path
-        # suffixes when no explicit id= is provided (SD2 / T3).
-        self._call_site_occurrences: dict[str, int] = {}
 
     def _build_native_phase(
         self,
@@ -265,18 +261,6 @@ class _Compiler:
                 return (kw.value.value,)
             raise NativeCompileError("Call-site id must be a string literal", kw.value)
         return ()
-
-    def _next_call_site_occurrence(self, base_key: str) -> int:
-        """Return the next zero-based occurrence index for *base_key*.
-
-        Deterministic by source order within the parent scope (SD2 / T3).
-        The first occurrence returns 0 (callers may leave call_site_path empty
-        to fall through to stable_id); repeated occurrences return idx >= 1
-        and must be disambiguated.
-        """
-        idx = self._call_site_occurrences.get(base_key, 0)
-        self._call_site_occurrences[base_key] = idx + 1
-        return idx
 
     def _schema_field_names(self, schema: Mapping[str, Any] | None) -> tuple[str, ...]:
         if not isinstance(schema, Mapping):
@@ -499,20 +483,11 @@ class _Compiler:
                     func_node,
                 )
             child_program = compile_pipeline(func)
-            call_site_path = self._extract_call_site_path(value)
-            if not call_site_path:
-                # Generate deterministic per-parent occurrence suffix (SD2 / T3).
-                # First occurrence leaves call_site_path empty (falls through to
-                # stable_id); repeated occurrences get _1, _2, ... suffixes.
-                base_key = child_program.name
-                occ = self._next_call_site_occurrence(base_key)
-                if occ > 0:
-                    call_site_path = (f"{base_key}_{occ}",)
             self._emit(
                 "subpipeline",
                 name=child_program.name,
                 subprogram=child_program,
-                call_site_path=call_site_path,
+                call_site_path=self._extract_call_site_path(value),
                 output_bindings=self._extract_output_bindings(value),
                 consumes=self._schema_consumes(child_program.inputs_schema),
                 produces=self._schema_produces(child_program.outputs_schema),
@@ -571,17 +546,7 @@ class _Compiler:
         )
 
         block_name = self._new_parallel_block_name(explicit_name)
-        # explicit_name is a display label (metadata-only per SD2);
-        # only call_site_id is a stable call-site identity.
-        if call_site_id:
-            call_site_path: tuple[str, ...] = (call_site_id,)
-        else:
-            base_key = explicit_name or block_name
-            occ = self._next_call_site_occurrence(base_key)
-            if occ > 0:
-                call_site_path = (f"{base_key}_{occ}",)
-            else:
-                call_site_path = ()
+        call_site_path: tuple[str, ...] = (call_site_id,) if call_site_id else ()
 
         # Emit a single parallel instruction — no per-branch phase instructions
         parallel_pc = self._emit(
@@ -628,7 +593,7 @@ class _Compiler:
         call_node: ast.Call,
         *,
         context_name: str = "yield parallel_map(...)",
-    ) -> tuple[str, Callable[..., Any], str, Callable[..., Any] | None, str | None, str | None]:
+    ) -> tuple[str, Callable[..., Any], str, Callable[..., Any] | None, str | None]:
         try:
             func = self._resolve_callable(call_node.func)
         except NativeCompileError as exc:
@@ -654,7 +619,6 @@ class _Compiler:
         path_template = ""
         reducer: Callable[..., Any] | None = None
         explicit_name: str | None = None
-        explicit_id: str | None = None
 
         for kw in call_node.keywords:
             if kw.arg is None:
@@ -718,7 +682,6 @@ class _Compiler:
                         "parallel_map() id must be a string literal",
                         kw.value,
                     )
-                explicit_id = kw.value.value
             else:
                 raise NativeCompileError(
                     f"Unsupported parallel_map() keyword: {kw.arg!r}",
@@ -729,7 +692,21 @@ class _Compiler:
             raise NativeCompileError("parallel_map() requires an items=... argument", call_node)
         if mapper is None:
             raise NativeCompileError("parallel_map() requires a step=... argument", call_node)
-        return items_ref, mapper, path_template, reducer, explicit_name, explicit_id
+        return items_ref, mapper, path_template, reducer, explicit_name
+
+    def _infer_parallel_map_collection_schema(
+        self,
+        mapper: Callable[..., Any],
+    ) -> Mapping[str, Any] | None:
+        """Best-effort static item schema for a ``parallel_map`` mapper."""
+        if is_pipeline(mapper):
+            meta = get_pipeline_meta(mapper)
+        else:
+            meta = get_phase_meta(mapper)
+        if not isinstance(meta, Mapping):
+            return None
+        schema = meta.get("inputs")
+        return schema if isinstance(schema, Mapping) else None
 
     def _new_parallel_map_block_name(self, explicit_name: str | None) -> str:
         if explicit_name:
@@ -742,22 +719,12 @@ class _Compiler:
         value = yield_node.value
         assert isinstance(value, ast.Call), "_lower_yield already guards this"
 
-        items_ref, mapper, path_template, reducer, explicit_name, explicit_id = self._parse_parallel_map_call(
+        items_ref, mapper, path_template, reducer, explicit_name = self._parse_parallel_map_call(
             value
         )
         block_name = self._new_parallel_map_block_name(explicit_name)
         mapper_name = getattr(mapper, "__name__", "mapper")
-        # explicit_name is a display label (metadata-only per SD2);
-        # only explicit_id is a stable call-site identity.
-        if explicit_id:
-            call_site_path: tuple[str, ...] = (explicit_id,)
-        else:
-            base_key = explicit_name or mapper_name
-            occ = self._next_call_site_occurrence(base_key)
-            if occ > 0:
-                call_site_path = (f"{base_key}_{occ}",)
-            else:
-                call_site_path = ()
+        call_site_path = self._extract_call_site_path(value) or (block_name,)
 
         parallel_map_pc = self._emit(
             "parallel_map",
@@ -774,6 +741,7 @@ class _Compiler:
             items_ref=items_ref,
             mapper=mapper,
             mapper_name=mapper_name,
+            collection_schema=self._infer_parallel_map_collection_schema(mapper),
             reducer=reducer,
             path_template=path_template,
             merge_pc=merge_pc,
@@ -1034,7 +1002,13 @@ class _Compiler:
             )
 
         # Create loop guard
-        loop_guard = NativeLoopGuard(guard=func, body=body_func, name=name)
+        decision_meta = get_decision_meta(func)
+        loop_guard = NativeLoopGuard(
+            guard=func,
+            body=body_func,
+            name=name,
+            stable_id=decision_meta.get("id") if isinstance(decision_meta, Mapping) else None,
+        )
         self._loop_guards.append(loop_guard)
 
         # Emit: loop header (decision-like), body lowered via normal
@@ -1451,17 +1425,7 @@ class _Compiler:
                 iter_node.func,
             )
         block_name = self._new_parallel_block_name(explicit_name)
-        # explicit_name is a display label (metadata-only per SD2);
-        # only call_site_id is a stable call-site identity.
-        if call_site_id:
-            call_site_path: tuple[str, ...] = (call_site_id,)
-        else:
-            base_key = explicit_name or block_name
-            occ = self._next_call_site_occurrence(base_key)
-            if occ > 0:
-                call_site_path = (f"{base_key}_{occ}",)
-            else:
-                call_site_path = ()
+        call_site_path: tuple[str, ...] = (call_site_id,) if call_site_id else ()
 
         # Emit the parallel instruction as a placeholder; its metadata is
         # patched after branch bodies are lowered.  At runtime the marker is a
@@ -1589,4 +1553,20 @@ class _Compiler:
             parallel_map_blocks=tuple(self._parallel_map_blocks),
             description=description,
         )
-        return attach_composition_graph(program)
+        from arnold.pipeline.native.graph_projection import derive_topology
+
+        return NativeProgram(
+            name=program.name,
+            stable_id=program.stable_id,
+            inputs_schema=program.inputs_schema,
+            outputs_schema=program.outputs_schema,
+            instructions=program.instructions,
+            phases=program.phases,
+            decisions=program.decisions,
+            loop_guards=program.loop_guards,
+            parallel_blocks=program.parallel_blocks,
+            parallel_map_blocks=program.parallel_map_blocks,
+            routing_topology=program.routing_topology,
+            topology=derive_topology(program),
+            description=program.description,
+        )

@@ -15,6 +15,7 @@ import pytest
 from arnold.pipeline.native import (
     NativeCompileError,
     compile_pipeline,
+    derive_topology,
     decision,
     parallel_map,
     phase,
@@ -2653,9 +2654,7 @@ class TestParallelMapProjection:
         stage = graph.stages["batch"]
         assert stage.step.kind == "native_parallel_map"
         assert stage.step.parallel_map.items_ref == "checks"
-        # name="batch" is a display label (metadata-only per SD2); call_site_path
-        # is driven by explicit id= (none provided here).
-        assert stage.step.call_site_path == ()
+        assert stage.step.call_site_path == ("batch",)
         assert stage.step.fanout_metadata.join_contract.result_kind == "collect"
 
     def test_parallel_map_stage_run_preserves_item_order_and_paths(self, tmp_path) -> None:
@@ -2689,11 +2688,56 @@ class TestParallelMapProjection:
                 inputs={"checks": [{"slug": "a"}, {"slug": "b"}]},
             )
         )
-        # name="batch" is a display label (metadata-only per SD2); the runtime
-        # call_site_path for each item is driven by path_template + item identity,
-        # not by the display name.
-        assert seen_paths == ["item/a", "item/b"]
+        assert seen_paths == ["batch/item/a", "batch/item/b"]
         assert result.outputs == {"slugs": ["a", "b"]}
+
+
+class TestStaticTopologyDerivation:
+    def test_project_graph_remains_separate_from_static_topology(self) -> None:
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": True}
+
+        @workflow(id="workflow.child")
+        def child(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @decision(vocabulary={"left", "right"})
+        def route(ctx: object) -> str:
+            return "left"
+
+        @phase
+        def mapper(ctx: dict) -> dict:
+            return {"slug": ctx["item"]["slug"]}
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            if route(ctx) == "left":
+                state = yield child(ctx, id="child.call")
+            state = yield parallel_map(
+                items="checks",
+                step=mapper,
+                path_template="item/{slug}",
+                name="batch",
+            )
+            return state
+
+        program = compile_pipeline(parent)
+        topology = derive_topology(program)
+        graph = project_graph(program, key_mode="phase")
+
+        assert program.topology == topology
+        assert graph.native_program is program
+        assert "route" in graph.stages
+        assert "child.call" in graph.stages
+        assert "batch" in graph.stages
+
+        topology_kinds = {(node.kind, node.path) for node in topology.nodes}
+        assert ("decision", "root/route") in topology_kinds
+        assert ("child_workflow", "root/child.call") in topology_kinds
+        assert ("dynamic_map", "root/batch") in topology_kinds
+        assert ("phase", "root/batch/item/{slug}") in topology_kinds
 
 
 # ──────────────────────────────────────────────────────────────────────

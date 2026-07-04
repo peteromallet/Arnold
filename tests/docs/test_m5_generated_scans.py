@@ -200,3 +200,216 @@ def test_skills_and_composed_rules_are_scanned() -> None:
                 if term in line:
                     violations.append(f"{path}:{lineno}: {term!r}")
     assert not violations, "forbidden patterns in active skills/composed rules:\n" + "\n".join(violations)
+
+
+# ── M6 composition forbidden-pattern extensions ───────────────────────────
+
+_M6_FORBIDDEN_SHIM_FALLBACK = (
+    "shim",
+    "fallback builder",
+    "graph fallback",
+    "dual-mode package",
+    "compatibility namespace",
+    "_legacy.py",
+    "temporary wrapper",
+    "--driver graph",
+)
+
+_M6_FORBIDDEN_DIRECT_AUTHORITY = (
+    "hand-authored WorkflowManifest",
+    "hand-authored NativeProgram",
+    "direct IR construction",
+    "native_program as source of truth",
+    "native_program defines composition",
+)
+
+_M6_REJECTION_MARKERS = (
+    "do not",
+    "do **not**",
+    "must not",
+    "cannot",
+    "forbidden",
+    "prohibited",
+    "rejected",
+    "invalid",
+    "legacy",
+    "migration",
+    "delete",
+    "archival",
+    "no longer",
+    "banned",
+    "non-conformant",
+    "not conformant",
+    "explicitly disallowed",
+    "never",
+    "tolerated",
+    "bridge debt",
+    "not the source-authoritative",
+)
+
+
+def _m6_is_rejection(line: str) -> bool:
+    lowered = line.lower()
+    # Normalize markdown bold/italic
+    lowered = lowered.replace("**", "").replace("*", "").replace("__", "")
+    return any(m in lowered for m in _M6_REJECTION_MARKERS)
+
+_M6_COMPOSITION_DOCS = (
+    Path("docs/arnold/native-composition-contract.md"),
+    Path("docs/arnold/authoring-guide.md"),
+    Path("docs/arnold/package-authoring-contract.md"),
+    Path("docs/arnold/workflow-authoring.md"),
+    Path("docs/arnold/creating-a-new-pipeline.md"),
+)
+
+_LEGACY_SCAFFOLD = Path("arnold/pipelines/_template")
+
+
+def _m6_paragraph_has_rejection(para_lines: list[str]) -> bool:
+    """Return True if any line in the paragraph has a rejection marker."""
+    return any(_m6_is_rejection(line) for line in para_lines)
+
+
+def _m6_paragraphs(lines: list[str]) -> list[tuple[int, list[str]]]:
+    """Split lines into (start_line, paragraph_lines) groups on blank lines."""
+    paragraphs: list[tuple[int, list[str]]] = []
+    current: list[str] = []
+    start = 1
+    for lineno, line in enumerate(lines, start=1):
+        if line.strip() == "":
+            if current:
+                paragraphs.append((start, current))
+                current = []
+            start = lineno + 1
+        else:
+            current.append(line)
+    if current:
+        paragraphs.append((start, current))
+    return paragraphs
+
+
+def test_m6_active_docs_no_forbidden_shim_fallback() -> None:
+    """Active composition docs must not teach shim/fallback authority patterns."""
+    violations: list[str] = []
+    for rel in _M6_COMPOSITION_DOCS:
+        p = REPO_ROOT / rel
+        if not p.exists():
+            continue
+        text = p.read_text(encoding="utf-8")
+        for start, para_lines in _m6_paragraphs(text.splitlines()):
+            if _m6_paragraph_has_rejection(para_lines):
+                continue
+            for offset, line in enumerate(para_lines):
+                stripped = line.strip()
+                if stripped.startswith("|") or stripped.startswith("```"):
+                    continue
+                lineno = start + offset
+                lowered = line.lower()
+                for term in _M6_FORBIDDEN_SHIM_FALLBACK:
+                    if term.lower() in lowered:
+                        violations.append(f"{rel}:{lineno}: {term!r}")
+    assert not violations, "Active docs contain forbidden shim/fallback terms:\n" + "\n".join(violations)
+
+
+def test_m6_active_docs_no_direct_manifest_authority() -> None:
+    """Active composition docs must not teach direct manifest/native_program authority."""
+    violations: list[str] = []
+    for rel in _M6_COMPOSITION_DOCS:
+        p = REPO_ROOT / rel
+        if not p.exists():
+            continue
+        text = p.read_text(encoding="utf-8")
+        bullets_in_toleration: set[int] = set()
+        all_paragraphs = _m6_paragraphs(text.splitlines())
+        for i, (start, para_lines) in enumerate(all_paragraphs):
+            para_text = " ".join(line.strip() for line in para_lines).lower()
+            if "tolerated" in para_text and "bridge debt" in para_text:
+                if i + 1 < len(all_paragraphs):
+                    next_start, next_lines = all_paragraphs[i + 1]
+                    if next_lines and next_lines[0].strip().startswith("-"):
+                        for off in range(len(next_lines)):
+                            bullets_in_toleration.add(next_start + off)
+        for start, para_lines in all_paragraphs:
+            if _m6_paragraph_has_rejection(para_lines):
+                continue
+            for offset, line in enumerate(para_lines):
+                stripped = line.strip()
+                if stripped.startswith("|") or stripped.startswith("```"):
+                    continue
+                lineno = start + offset
+                if lineno in bullets_in_toleration:
+                    continue
+                lowered = line.lower()
+                for term in _M6_FORBIDDEN_DIRECT_AUTHORITY:
+                    if term.lower() in lowered:
+                        violations.append(f"{rel}:{lineno}: {term!r}")
+    assert not violations, (
+        "Active docs contain forbidden direct-manifest authority terms:\n" + "\n".join(violations)
+    )
+
+
+def test_m6_legacy_scaffold_not_resurrected() -> None:
+    """The legacy ``arnold/pipelines/_template/`` directory must not exist."""
+    assert not (REPO_ROOT / _LEGACY_SCAFFOLD).exists(), (
+        f"Legacy scaffold path {_LEGACY_SCAFFOLD} must NOT exist. "
+        f"Use active path: arnold_pipelines/_template/"
+    )
+
+
+def test_m6_active_scaffold_not_reference_legacy() -> None:
+    """Active scaffold files must not reference the legacy scaffold path."""
+    active = REPO_ROOT / "arnold_pipelines" / "_template"
+    violations: list[str] = []
+    for f in sorted(active.rglob("*")):
+        if not f.is_file():
+            continue
+        try:
+            text = f.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        if "arnold/pipelines/_template" in text:
+            violations.append(str(f.relative_to(REPO_ROOT)))
+    assert not violations, (
+        f"Active scaffold references legacy path: {violations}"
+    )
+
+
+def test_m6_scaffold_skill_native_program_substrate() -> None:
+    """Scaffold SKILL.md files mentioning native_program must use substrate/dispatch language."""
+    active = REPO_ROOT / "arnold_pipelines" / "_template"
+    violations: list[str] = []
+    for md_file in sorted(active.rglob("*.md")):
+        text = md_file.read_text(encoding="utf-8").lower()
+        if "native_program" in text:
+            if "substrate" not in text and "dispatch" not in text:
+                violations.append(str(md_file.relative_to(REPO_ROOT)))
+    assert not violations, (
+        "Scaffold SKILL.md mentions native_program without substrate/dispatch:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_m6_scaffold_python_fences_in_docs_compile() -> None:
+    """Python code fences in active composition docs must be syntactically valid."""
+    failures: list[str] = []
+    for rel in _M6_COMPOSITION_DOCS:
+        p = REPO_ROOT / rel
+        if not p.exists():
+            continue
+        text = p.read_text(encoding="utf-8")
+        for index, snippet in enumerate(_extract_python_fences(text), start=1):
+            # Try compiling as top-level code first
+            try:
+                compile(snippet, f"{p}:fence-{index}", "exec")
+                continue
+            except SyntaxError:
+                pass
+            # Try compiling as generator body (wrapped in a function for yield support)
+            try:
+                # Indent and wrap in an async generator function to support yield
+                indented = "\n".join("    " + line for line in snippet.splitlines())
+                wrapped = f"async def _fence_wrapper():\n{indented}"
+                compile(wrapped, f"{p}:fence-{index}", "exec")
+            except SyntaxError as exc:
+                failures.append(f"{rel} fence {index}: {exc}")
+    assert not failures, "Composition doc code fences with syntax errors:\n" + "\n".join(failures)

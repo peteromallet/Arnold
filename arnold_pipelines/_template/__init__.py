@@ -1,4 +1,4 @@
-"""Template package for Arnold pipeline authors (native-first).
+"""Template package for Arnold pipeline authors (native-first compositional).
 
 Copy this directory, rename it (without a leading underscore), fill in the
 contract fields, and replace the skeleton phases with real logic. The
@@ -15,7 +15,12 @@ from typing import Any
 from arnold.pipeline.native import project_graph
 from arnold.pipeline.types import Pipeline
 
-from arnold_pipelines._template.pipelines import build_native_program
+from arnold_pipelines._template.pipelines import (
+    build_native_program,
+    inputs,
+    outputs,
+    resume_from_trace_example,
+)
 
 
 # ── Required contract fields ─────────────────────────────────────────────
@@ -51,6 +56,9 @@ recommended_profiles: tuple[str, ...] = ()
 capabilities: tuple[str, ...] = ("skeleton",)
 """Labels used by the CLI and registry to classify this pipeline."""
 
+authoring_style: str = "compositional"
+"""Opt into the compositional scaffold validator checks."""
+
 
 def _native_program() -> Any:
     """Compile and return the native program for the template pipeline."""
@@ -75,13 +83,17 @@ def build_pipeline() -> Pipeline:
 
 __all__ = [
     "arnold_api_version",
+    "authoring_style",
     "build_pipeline",
     "capabilities",
     "default_profile",
     "description",
     "driver",
     "entrypoint",
+    "inputs",
     "name",
+    "outputs",
     "recommended_profiles",
+    "resume_from_trace_example",
     "supported_modes",
 ]

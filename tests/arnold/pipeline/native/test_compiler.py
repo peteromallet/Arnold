@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from arnold.pipeline.native import (
-    CompositionNodeKind,
+    DynamicMapMetadata,
     NativeCompileError,
     NativeDecision,
     NativeInstruction,
@@ -21,9 +21,11 @@ from arnold.pipeline.native import (
     NativePhase,
     NativePipeline,
     NativeProgram,
+    NativeTopology,
     ParallelInstruction,
     ParallelMapInstruction,
     compile_pipeline,
+    derive_topology,
     decision,
     parallel,
     parallel_map,
@@ -32,7 +34,6 @@ from arnold.pipeline.native import (
     step as _step,
     workflow as _workflow,
 )
-from arnold.pipeline.native.composition import extract_composition_graph
 
 
 # ── sequential pipeline ───────────────────────────────────────────────
@@ -1209,7 +1210,7 @@ class TestParallelMapCompilation:
         assert [instr.op for instr in prog.instructions] == ["parallel_map", "halt"]
         instr = prog.instructions[0]
         assert instr.name == "critique_batch"
-        assert instr.call_site_path == ()
+        assert instr.call_site_path == ("critique_batch",)
         assert instr.parallel_map_index == 0
         assert instr.parallel_index is None
         assert isinstance(instr.subprogram, ParallelMapInstruction)
@@ -1378,294 +1379,140 @@ class TestNestedWorkflowMetadataCompilation:
         assert "Workflow cycle detected: alpha -> beta -> alpha" in str(exc_info.value)
 
 
-class TestCompositionGraphEmbedding:
-    def test_compile_pipeline_embeds_composition_graph_additively(self) -> None:
-        @phase
-        def start(ctx: object) -> dict:
-            return {}
+class TestDerivedTopologyCompilation:
+    def test_compile_pipeline_populates_static_topology_without_execution(self) -> None:
+        executed: list[str] = []
+
+        @phase(
+            id="draft.phase",
+            inputs={"type": "object", "required": ["prompt"]},
+            outputs={"type": "object", "required": ["draft"]},
+        )
+        def draft(ctx: object) -> dict:
+            executed.append("draft")
+            return {"draft": "ok"}
+
+        @decision(name="route.decision", vocabulary={"ship", "revise", "defer"})
+        def route(ctx: object) -> str:
+            executed.append("route")
+            return "ship"
 
         @phase
-        def finish(ctx: object) -> dict:
-            return {}
+        def child_step(ctx: object) -> dict:
+            executed.append("child_step")
+            return {"child": True}
 
-        @decision(vocabulary={"left", "right", "defer"})
-        def branch(ctx: object) -> str:
-            return "left"
-
-        @pipeline
-        def parent(ctx: object) -> dict:
-            state = yield start(ctx)
-            if branch(ctx) == "left":
-                state = yield finish(ctx)
+        @_workflow(
+            name="child",
+            id="workflow.child",
+            inputs={"type": "object", "required": ["seed"]},
+            outputs={"type": "object", "required": ["child"]},
+        )
+        def child(ctx: object) -> dict:
+            state = yield child_step(ctx)
             return state
 
-        prog = compile_pipeline(parent)
-
-        assert "composition_graph" in prog.routing_topology
-        graph = extract_composition_graph(prog)
-        assert graph is not None
-        assert graph.root_id is not None
-
-        decision_nodes = graph.nodes_by_kind(CompositionNodeKind.DECISION)
-        assert len(decision_nodes) == 1
-        assert decision_nodes[0].branch_labels[0] == "left"
-        assert set(decision_nodes[0].branch_labels) == {"left", "right", "defer"}
-        assert decision_nodes[0].decision_vocabulary == frozenset({"left", "right", "defer"})
-
-    def test_composition_graph_captures_child_workflows_loops_and_parallel_map(self) -> None:
-        @phase(id="phase.leaf")
-        def leaf(ctx: object) -> dict:
-            return {"leaf": True}
-
-        @decision(vocabulary={"again", "done"})
-        def keep_going(ctx: object) -> str:
+        @decision(name="loop.guard", vocabulary={"again", "done"})
+        def guard(ctx: object) -> str:
+            executed.append("guard")
             return "done"
 
-        @_workflow(id="workflow.child")
-        def child(ctx: object) -> dict:
-            while keep_going(ctx) == "again":
-                state = yield leaf(ctx)
-            return state
+        @phase(
+            inputs={"type": "object", "required": ["item"]},
+            outputs={"type": "object", "required": ["verdict"]},
+        )
+        def mapper(ctx: object) -> dict:
+            executed.append("mapper")
+            return {"verdict": "ok"}
+
+        def reduce_results(results: list[dict[str, str]]) -> dict:
+            return {"results": results}
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = yield child(ctx, id="child.call")
+            state = yield draft(ctx)
+            if route(ctx) == "ship":
+                state = yield child(ctx, id="child.call")
+            while guard(ctx) == "again":
+                state = yield draft(ctx)
             state = yield parallel_map(
                 items="checks",
-                step=leaf,
-                path_template="checks/{item_id}",
-                name="batch",
+                step=mapper,
+                reducer=reduce_results,
+                path_template="item/{item_id}",
+                name="review_batch",
+                id="review.batch",
             )
             return state
 
-        prog = compile_pipeline(parent)
-        graph = extract_composition_graph(prog)
+        program = compile_pipeline(parent)
 
-        assert graph is not None
-        subpipelines = graph.nodes_by_kind(CompositionNodeKind.SUBPIPELINE)
-        assert len(subpipelines) == 1
-        child_node = subpipelines[0]
-        assert child_node.path_segments == ("child.call",)
-        assert child_node.stable_id == "workflow.child"
+        assert executed == []
+        assert isinstance(program.topology, NativeTopology)
+        assert derive_topology(program) == program.topology
 
-        child_descendants = graph.descendants_of(child_node.node_id)
-        child_labels = {node.label for node in child_descendants}
-        assert "leaf" in child_labels
-        assert any(node.kind == CompositionNodeKind.LOOP for node in child_descendants)
+        nodes_by_kind: dict[str, list[object]] = {}
+        for node in program.topology.nodes:
+            nodes_by_kind.setdefault(node.kind, []).append(node)
 
-        loop_node = next(node for node in child_descendants if node.kind == CompositionNodeKind.LOOP)
-        # Path segments are anchored by stable/call-site identity (SD2);
-        # display name "keep_going_guard" is metadata-only and does not
-        # appear in path segments.
-        assert len(loop_node.path_segments) == 2
-        assert loop_node.path_segments[0] == "child.call"
-        assert loop_node.path_segments[1].startswith("decision_pc")
+        phase_paths = {node.path for node in nodes_by_kind["phase"]}
+        assert "root/draft.phase" in phase_paths
+        assert "root/review.batch/item/{item_id}" in phase_paths
 
-        parallel_map_nodes = graph.nodes_by_kind(CompositionNodeKind.PARALLEL_MAP)
-        assert len(parallel_map_nodes) == 1
-        parallel_map_node = parallel_map_nodes[0]
-        assert parallel_map_node.parallel_map_items_ref == "checks"
-        assert parallel_map_node.parallel_map_path_template == "checks/{item_id}"
-        assert parallel_map_node.parallel_map_mapper_name == "leaf"
+        decision_node = nodes_by_kind["decision"][0]
+        assert decision_node.path == "root/route.decision"
+        assert decision_node.metadata["vocabulary"] == ["defer", "revise", "ship"]
 
+        loop_node = nodes_by_kind["loop"][0]
+        assert loop_node.path == "root/loop.guard"
+        assert loop_node.metadata["loop_stable_id"] == "loop.guard"
+        assert loop_node.metadata["guard_name"] == "guard"
 
-class TestCallSitePathIdentity:
-    """T3: Stabilize call-site path identity — explicit id=, occurrence
-    suffixes for repeated calls, and display labels metadata-only (SD2)."""
+        child_node = nodes_by_kind["child_workflow"][0]
+        assert child_node.path == "root/child.call"
+        assert child_node.metadata["child_stable_id"] == "workflow.child"
+        assert child_node.metadata["inputs_schema"] == {
+            "type": "object",
+            "required": ["seed"],
+        }
+        assert child_node.metadata["outputs_schema"] == {
+            "type": "object",
+            "required": ["child"],
+        }
 
-    def test_repeated_child_workflow_without_id_gets_distinct_paths(self) -> None:
-        """Repeated child workflow calls without explicit id= produce
-        distinct, deterministic path segments in the composition graph."""
+        dynamic_map_node = nodes_by_kind["dynamic_map"][0]
+        dynamic_map_metadata = dynamic_map_node.metadata["dynamic_map_metadata"]
+        assert isinstance(dynamic_map_metadata, DynamicMapMetadata)
+        assert dynamic_map_metadata.items_ref == "checks"
+        assert dynamic_map_metadata.mapper_name == "mapper"
+        assert dynamic_map_metadata.path_template == "item/{item_id}"
+        assert dynamic_map_metadata.collection_schema == {
+            "type": "object",
+            "required": ["item"],
+        }
+        assert dynamic_map_metadata.reducer_name == "reduce_results"
+        assert dynamic_map_metadata.fan_in is True
 
+    def test_repeated_child_call_sites_keep_distinct_topology_paths(self) -> None:
         @phase
-        def inner(ctx: object) -> dict:
-            return {}
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
 
-        @_workflow(name="child", id="wf.child")
+        @_workflow
         def child(ctx: object) -> dict:
-            state = yield inner(ctx)
+            state = yield child_step(ctx)
             return state
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = yield child(ctx)
-            state = yield child(ctx)
+            state = yield child(ctx, id="child.first")
+            state = yield child(ctx, id="child.second")
             return state
 
-        prog = compile_pipeline(parent)
-        graph = extract_composition_graph(prog)
-        assert graph is not None
-
-        sub_nodes = graph.nodes_by_kind(CompositionNodeKind.SUBPIPELINE)
-        assert len(sub_nodes) == 2
-
-        paths = [n.path_segments for n in sub_nodes]
-        assert paths[0] != paths[1], (
-            f"Repeated child workflows must have distinct paths: {paths}"
-        )
-        # First occurrence falls through to stable_id (no explicit call_site_path).
-        assert paths[0] == ("wf.child",)
-        # Second occurrence gets a per-parent occurrence suffix.
-        assert paths[1] == ("child_1",)
-
-    def test_repeated_parallel_map_without_id_gets_distinct_paths(self) -> None:
-        """Repeated parallel_map calls without explicit id= produce
-        distinct, deterministic path segments."""
-
-        @phase
-        def mapper(ctx: dict) -> dict:
-            return {"item": ctx["item"]}
-
-        @pipeline
-        def parent(ctx: dict) -> dict:
-            state = yield parallel_map(items="a", step=mapper, name="batch")
-            state = yield parallel_map(items="b", step=mapper, name="batch")
-            return state
-
-        prog = compile_pipeline(parent)
-        graph = extract_composition_graph(prog)
-        assert graph is not None
-
-        pm_nodes = graph.nodes_by_kind(CompositionNodeKind.PARALLEL_MAP)
-        assert len(pm_nodes) == 2
-
-        paths = [n.path_segments for n in pm_nodes]
-        assert paths[0] != paths[1], (
-            f"Repeated parallel_map must have distinct paths: {paths}"
-        )
-        # First occurrence: no call_site_path, no stable_id → pc fallback.
-        assert paths[0][0].startswith("parallel_map_pc")
-        # Second occurrence gets an occurrence suffix.
-        assert paths[1] == ("batch_1",)
-
-    def test_display_label_name_is_metadata_only(self) -> None:
-        """Changing only the display label (name=) must leave path_segments
-        unchanged — display labels are metadata-only per SD2."""
-
-        @phase
-        def mapper(ctx: dict) -> dict:
-            return {"item": ctx["item"]}
-
-        @pipeline
-        def parent_a(ctx: dict) -> dict:
-            state = yield parallel_map(
-                items="x", step=mapper, name="label_one", id="my_batch"
-            )
-            return state
-
-        @pipeline
-        def parent_b(ctx: dict) -> dict:
-            state = yield parallel_map(
-                items="x", step=mapper, name="label_two", id="my_batch"
-            )
-            return state
-
-        prog_a = compile_pipeline(parent_a)
-        prog_b = compile_pipeline(parent_b)
-        graph_a = extract_composition_graph(prog_a)
-        graph_b = extract_composition_graph(prog_b)
-        assert graph_a is not None
-        assert graph_b is not None
-
-        nodes_a = graph_a.nodes_by_kind(CompositionNodeKind.PARALLEL_MAP)
-        nodes_b = graph_b.nodes_by_kind(CompositionNodeKind.PARALLEL_MAP)
-        assert len(nodes_a) == 1
-        assert len(nodes_b) == 1
-
-        # Paths must be identical — driven by id=, not name=.
-        assert nodes_a[0].path_segments == nodes_b[0].path_segments == ("my_batch",)
-        # Labels differ (metadata-only).
-        assert nodes_a[0].label == "label_one"
-        assert nodes_b[0].label == "label_two"
-
-    def test_repeated_child_with_authored_ids_uses_explicit_paths(self) -> None:
-        """When explicit id= is provided, it MUST be used as the call-site
-        path identity regardless of occurrence order."""
-
-        @phase
-        def inner(ctx: object) -> dict:
-            return {}
-
-        @_workflow(name="child")
-        def child(ctx: object) -> dict:
-            state = yield inner(ctx)
-            return state
-
-        @pipeline
-        def parent(ctx: object) -> dict:
-            state = yield child(ctx, id="call.first")
-            state = yield child(ctx, id="call.second")
-            return state
-
-        prog = compile_pipeline(parent)
-        graph = extract_composition_graph(prog)
-        assert graph is not None
-
-        sub_nodes = graph.nodes_by_kind(CompositionNodeKind.SUBPIPELINE)
-        assert len(sub_nodes) == 2
-        paths = [n.path_segments for n in sub_nodes]
-        assert paths == [("call.first",), ("call.second",)]
-
-    def test_paths_are_deterministic_across_compilations(self) -> None:
-        """Compiling the same pipeline twice must produce identical node_ids
-        and path_segments."""
-
-        @phase
-        def mapper(ctx: dict) -> dict:
-            return {"item": ctx["item"]}
-
-        @_workflow(name="child", id="wf.child")
-        def child(ctx: object) -> dict:
-            state = yield mapper(ctx)
-            return state
-
-        @pipeline
-        def parent(ctx: dict) -> dict:
-            state = yield child(ctx)
-            state = yield child(ctx)
-            state = yield parallel_map(items="a", step=mapper, name="batch")
-            state = yield parallel_map(items="b", step=mapper, name="batch")
-            return state
-
-        prog_a = compile_pipeline(parent)
-        prog_b = compile_pipeline(parent)
-        graph_a = extract_composition_graph(prog_a)
-        graph_b = extract_composition_graph(prog_b)
-
-        ids_a = {nid for nid in graph_a.nodes}
-        ids_b = {nid for nid in graph_b.nodes}
-        assert ids_a == ids_b, (
-            f"Node IDs must be deterministic: {sorted(ids_a ^ ids_b)}"
-        )
-
-        paths_a = {nid: n.path_segments for nid, n in graph_a.nodes.items()}
-        paths_b = {nid: n.path_segments for nid, n in graph_b.nodes.items()}
-        assert paths_a == paths_b, "Path segments must be deterministic"
-
-    def test_parallel_without_id_first_occurrence_uses_pc(self) -> None:
-        """A single parallel() call without id= uses pc-based fallback,
-        which is deterministic but not semantically meaningful."""
-
-        @phase
-        def branch_a(ctx: object) -> dict:
-            return {"a": 1}
-
-        @phase
-        def branch_b(ctx: object) -> dict:
-            return {"b": 2}
-
-        @pipeline
-        def parent(ctx: object) -> dict:
-            state = yield parallel([branch_a, branch_b], name="fanout")
-            return state
-
-        prog = compile_pipeline(parent)
-        graph = extract_composition_graph(prog)
-        assert graph is not None
-
-        par_nodes = graph.nodes_by_kind(CompositionNodeKind.PARALLEL)
-        assert len(par_nodes) == 1
-        # Without id= and first occurrence → pc fallback.
-        assert par_nodes[0].path_segments[0].startswith("parallel_pc")
-        # Label is metadata-only (name=).
-        assert par_nodes[0].label == "fanout"
+        program = compile_pipeline(parent)
+        child_paths = [
+            node.path
+            for node in program.topology.nodes
+            if node.kind == "child_workflow"
+        ]
+        assert child_paths == ["root/child.first", "root/child.second"]
