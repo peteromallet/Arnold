@@ -303,3 +303,54 @@ def test_megaplan_resident_hot_context_labels_missing_snapshot_degraded(
     assert context["cloud_status_degraded"] is not None
     assert "missing" in context["cloud_status_degraded"]
     assert context["plan_activity_summary"]["degraded"] is True
+
+
+def test_megaplan_resident_hot_context_builds_fresh_snapshot_in_trusted_container(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In-container, the resident builds a fresh local snapshot each turn instead
+    of reading the (stale, hourly) on-disk file, so newly-started sessions appear
+    immediately and the on-disk file is refreshed."""
+    import json
+    from arnold_pipelines.megaplan.cloud import status_snapshot
+
+    marker_dir = tmp_path / "cloud-sessions"
+    marker_dir.mkdir()
+    ws = tmp_path / "live"
+    ws.mkdir()
+    (marker_dir / "live.json").write_text(
+        json.dumps(
+            {
+                "session": "live",
+                "workspace": str(ws),
+                "remote_spec": "/spec/live",
+                "started_at": "2026-07-04T20:00:00Z",
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    monkeypatch.setattr(status_snapshot, "DEFAULT_MARKER_DIR", marker_dir)
+    monkeypatch.setattr(status_snapshot, "DEFAULT_WATCHDOG_REPORT", tmp_path / "absent-report.json")
+    on_disk = tmp_path / "cloud-status.json"
+
+    profile = MegaplanResidentProfile(
+        store=FileStore(tmp_path / "store"),
+        # Points at a nonexistent file; in-container it must be ignored in favor of a fresh build.
+        config=ResidentConfig(status_snapshot_path=on_disk),
+        cloud_backend=FakeCloudBackend(),
+    )
+    monkeypatch.chdir(tmp_path)
+
+    context = asyncio.run(profile.load_hot_context("c"))
+
+    snap = context["cloud_status_snapshot"]
+    assert snap is not None
+    assert context["cloud_status_degraded"] is None
+    assert any(s["session"] == "live" for s in snap["sessions"])
+    # The fresh build also refreshed the on-disk file for CLI/laptop consumers.
+    assert on_disk.exists()
+    written = json.loads(on_disk.read_text(encoding="utf-8"))
+    assert any(s["session"] == "live" for s in written["sessions"])

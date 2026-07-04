@@ -385,6 +385,17 @@ def test_load_missing_snapshot_returns_degraded_reason(tmp_path):
     assert "missing" in reason
 
 
+def test_is_trusted_container_requires_env_and_marker_dir(tmp_path, monkeypatch):
+    monkeypatch.delenv("MEGAPLAN_TRUSTED_CONTAINER", raising=False)
+    monkeypatch.setattr(ss, "DEFAULT_MARKER_DIR", tmp_path)
+    assert ss.is_trusted_container() is False
+    monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    assert ss.is_trusted_container() is True  # marker dir exists now
+    missing = tmp_path / "does-not-exist"
+    monkeypatch.setattr(ss, "DEFAULT_MARKER_DIR", missing)
+    assert ss.is_trusted_container() is False
+
+
 # --- formatter contract ---------------------------------------------------
 
 
