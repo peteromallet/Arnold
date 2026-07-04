@@ -24,6 +24,13 @@ from arnold.pipeline.native.context import (
     NativeRuntimeDisabledError,
     require_native_runtime,
 )
+from arnold.pipeline.native.effect_taxonomy import (
+    EffectClass,
+    Operation,
+    derive_idempotency_key,
+    is_valid_effect_class,
+    is_valid_operation,
+)
 from arnold.pipeline.native.decorators import (
     decision,
     get_decision_meta,
@@ -47,6 +54,7 @@ from arnold.pipeline.native.decorators import (
 from arnold.pipeline.native.flags import force_legacy_runtime, native_runtime_enabled
 from arnold.pipeline.native.graph_projection import derive_topology, project_graph
 from arnold.pipeline.native.hooks import (
+    EffectLedgerHooks,
     NativeRuntimeHooks,
     NullNativeRuntimeHooks,
 )
@@ -78,6 +86,17 @@ from arnold.pipeline.native.runtime import (
     NativeRuntimeError,
     run_native_pipeline,
 )
+from arnold.pipeline.native.reconcile import (
+    ACTION_TABLE,
+    ReconcileActionTableEntry,
+    ReconcileDecision,
+    ReconcileMetadata,
+    action_entry,
+    reconcile_file_write,
+    reconcile_git_branch_create,
+    reconcile_git_commit,
+    reconcile_git_worktree,
+)
 from arnold.pipeline.native.start_from_path import start_from_trace
 from arnold.pipeline.native.audit import AuditHooks
 from arnold.pipeline.native.trace import NativeTraceHooks
@@ -89,7 +108,10 @@ from arnold.pipeline.native.validator import (
 )
 
 __all__ = [
+    "ACTION_TABLE",
     "AuditHooks",
+    "EffectClass",
+    "EffectLedgerHooks",
     "NATIVE_CURSOR_VERSION",
     "NativeCompileError",
     "NativeCursorCorruptError",
@@ -121,11 +143,17 @@ __all__ = [
     "ROOT_PATH",
     "RoutingPurityDiagnostic",
     "RoutingPurityReport",
+    "ReconcileActionTableEntry",
+    "ReconcileDecision",
+    "ReconcileMetadata",
     "NullNativeRuntimeHooks",
+    "Operation",
     "TopologyEdge",
     "TopologyNode",
+    "action_entry",
     "compile_pipeline",
     "decision",
+    "derive_idempotency_key",
     "derive_topology",
     "force_legacy_runtime",
     "get_decision_meta",
@@ -137,6 +165,8 @@ __all__ = [
     "is_phase",
     "is_pipeline",
     "is_step",
+    "is_valid_effect_class",
+    "is_valid_operation",
     "is_workflow",
     "native_runtime_enabled",
     "native_panel",
@@ -147,6 +177,10 @@ __all__ = [
     "pipeline",
     "project_graph",
     "read_native_cursor",
+    "reconcile_file_write",
+    "reconcile_git_branch_create",
+    "reconcile_git_commit",
+    "reconcile_git_worktree",
     "require_native_runtime",
     "run_native_pipeline",
     "start_from_trace",

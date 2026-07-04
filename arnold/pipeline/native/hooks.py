@@ -36,14 +36,22 @@ No ``megaplan`` imports.  No forbidden vocabulary literals.
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
+from arnold.kernel.effect import EffectDescriptor, EffectKind
+from arnold.kernel.effect_ledger import EffectLedger, EffectRecordState
 from arnold.pipeline.native.ir import NativeInstruction
 
 __all__ = [
+    "DuplicateFulfilledAction",
+    "EffectLedgerHooks",
     "NativeRuntimeHooks",
     "NullNativeRuntimeHooks",
 ]
+
+
+DuplicateFulfilledAction = Literal["skip", "retry", "fail"]
+_VALID_DUPLICATE_ACTIONS = frozenset({"skip", "retry", "fail"})
 
 
 @runtime_checkable
@@ -291,3 +299,181 @@ class NullNativeRuntimeHooks:
         state: dict[str, Any],
     ) -> None:
         pass
+
+
+class EffectLedgerHooks:
+    """Hook wrapper that tracks side-effect lifecycle in an EffectLedger."""
+
+    halt_reason: str | None
+
+    def __init__(
+        self,
+        inner: NativeRuntimeHooks | None = None,
+        *,
+        duplicate_fulfilled_action: DuplicateFulfilledAction = "skip",
+    ) -> None:
+        if duplicate_fulfilled_action not in _VALID_DUPLICATE_ACTIONS:
+            raise ValueError(
+                "duplicate_fulfilled_action must be one of 'skip', 'retry', or 'fail'"
+            )
+        self._inner: NativeRuntimeHooks = (
+            inner if inner is not None else NullNativeRuntimeHooks()
+        )
+        self._ledger = EffectLedger()
+        self._duplicate_fulfilled_action = duplicate_fulfilled_action
+        self._active_effect_metadata: dict[str, Any] | None = None
+        self._last_effect_metadata: dict[str, Any] | None = None
+        self.halt_reason = None
+
+    def _build_effect_descriptor(self, instr: NativeInstruction) -> EffectDescriptor | None:
+        if not instr.operation or not instr.idempotency_key:
+            return None
+        return EffectDescriptor(
+            effect_id=f"{instr.name or instr.op}__pc{instr.pc}",
+            kind=EffectKind.INTENT,
+            target=instr.target or "",
+            idempotency_key=instr.idempotency_key,
+            payload_schema_hash="",
+        )
+
+    def _build_effect_metadata(
+        self,
+        instr: NativeInstruction,
+        ctx: dict[str, Any],
+        *,
+        lifecycle_state: str,
+        duplicate_action: str | None,
+    ) -> dict[str, Any]:
+        attempt = ctx.get("attempt")
+        return {
+            "idempotency_key": instr.idempotency_key,
+            "step_path": ctx.get("step_path"),
+            "operation": instr.operation,
+            "target": instr.target,
+            "attempt": attempt if isinstance(attempt, int) else 1,
+            "lifecycle_state": lifecycle_state,
+            "effect_class": instr.effect_class,
+            "duplicate_action": duplicate_action,
+        }
+
+    def checkpoint_effect_metadata(self) -> dict[str, Any] | None:
+        """Return a copy of the most recent effect metadata snapshot."""
+        if self._last_effect_metadata is None:
+            return None
+        return dict(self._last_effect_metadata)
+
+    def on_step_start(
+        self,
+        instr: NativeInstruction,
+        ctx: dict[str, Any],
+    ) -> dict[str, Any]:
+        ctx = self._inner.on_step_start(instr, ctx)
+        descriptor = self._build_effect_descriptor(instr)
+        if descriptor is None:
+            self._active_effect_metadata = None
+            return ctx
+
+        prerecorded = self._ledger.prerecord(descriptor)
+        record = self._ledger.get_record(descriptor.idempotency_key)
+        duplicate_action: str | None = None
+        lifecycle_state = EffectRecordState.INTENDED.value
+        if record is not None:
+            lifecycle_state = record.state.value
+            if not prerecorded:
+                duplicate_action = (
+                    self._duplicate_fulfilled_action
+                    if record.state is EffectRecordState.FULFILLED
+                    else "retry"
+                )
+
+        metadata = self._build_effect_metadata(
+            instr,
+            ctx,
+            lifecycle_state=lifecycle_state,
+            duplicate_action=duplicate_action,
+        )
+        ctx["effect"] = dict(metadata)
+        self._active_effect_metadata = dict(metadata)
+        self._last_effect_metadata = dict(metadata)
+        return ctx
+
+    def on_step_end(
+        self,
+        instr: NativeInstruction,
+        ctx: dict[str, Any],
+        result: Any,
+    ) -> Any:
+        result = self._inner.on_step_end(instr, ctx, result)
+        if self._active_effect_metadata is not None and instr.idempotency_key:
+            self._ledger.mark_fulfilled(instr.idempotency_key)
+            self._active_effect_metadata["lifecycle_state"] = (
+                EffectRecordState.FULFILLED.value
+            )
+            self._last_effect_metadata = dict(self._active_effect_metadata)
+            self._active_effect_metadata = None
+        return result
+
+    def on_step_error(
+        self,
+        instr: NativeInstruction,
+        ctx: dict[str, Any],
+        exc: BaseException,
+    ) -> None:
+        self._inner.on_step_error(instr, ctx, exc)
+        if self._active_effect_metadata is not None and instr.idempotency_key:
+            self._ledger.mark_failed(instr.idempotency_key)
+            self._active_effect_metadata["lifecycle_state"] = (
+                EffectRecordState.FAILED.value
+            )
+            self._last_effect_metadata = dict(self._active_effect_metadata)
+            self._active_effect_metadata = None
+
+    def merge_state(
+        self,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        outputs: dict[str, Any],
+        owned_keys: frozenset[str],
+    ) -> tuple[dict[str, Any], frozenset[str]]:
+        return self._inner.merge_state(instr, state, outputs, owned_keys)
+
+    def join_envelope(
+        self,
+        instr: NativeInstruction,
+        current_envelope: Any,
+        step_envelope: Any,
+    ) -> Any:
+        return self._inner.join_envelope(instr, current_envelope, step_envelope)
+
+    def should_suspend(
+        self,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        result: Any,
+    ) -> tuple[bool, str | None]:
+        return self._inner.should_suspend(instr, state, result)
+
+    def should_halt_loop(
+        self,
+        instr: NativeInstruction,
+        state: dict[str, Any],
+        iteration: int,
+    ) -> tuple[bool, str | None]:
+        return self._inner.should_halt_loop(instr, state, iteration)
+
+    def on_stage_complete(
+        self,
+        instr: NativeInstruction,
+        ctx: dict[str, Any],
+        result: Any,
+        state: dict[str, Any],
+        owned_keys: frozenset[str],
+    ) -> None:
+        self._inner.on_stage_complete(instr, ctx, result, state, owned_keys)
+
+    def on_checkpoint(
+        self,
+        cursor: dict[str, Any],
+        state: dict[str, Any],
+    ) -> None:
+        self._inner.on_checkpoint(cursor, state)

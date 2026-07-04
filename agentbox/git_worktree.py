@@ -48,6 +48,14 @@ class GitOperationStatus:
     markers: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class GitDirtyStatus:
+    """Current dirty-path summary for one checkout."""
+
+    is_dirty: bool
+    entries: tuple[str, ...]
+
+
 def git(
     cwd: Path | str,
     *args: str,
@@ -84,6 +92,12 @@ def resolve_ref(repo_path: Path | str, ref: str) -> str:
     return git(repo_path, "rev-parse", "--verify", f"{ref}^{{commit}}").stdout
 
 
+def ref_exists(repo_path: Path | str, ref: str) -> bool:
+    """Return true when ``ref`` resolves to any git reference."""
+
+    return _show_ref_exists(repo_path, ref)
+
+
 def has_local_branch(repo_path: Path | str, branch: str) -> bool:
     """Return true when ``branch`` exists under ``refs/heads``."""
 
@@ -95,6 +109,15 @@ def has_remote_tracking_ref(repo_path: Path | str, ref: str) -> bool:
 
     remote_ref = ref if ref.startswith("refs/remotes/") else f"refs/remotes/{ref}"
     return _show_ref_exists(repo_path, remote_ref)
+
+
+def commit_exists(repo_path: Path | str, ref: str) -> bool:
+    """Return true when ``ref`` resolves to a commit object."""
+
+    return (
+        git(repo_path, "rev-parse", "--verify", f"{ref}^{{commit}}", check=False).returncode
+        == 0
+    )
 
 
 def parse_worktree_porcelain(output: str) -> tuple[WorktreeInfo, ...]:
@@ -175,6 +198,21 @@ def git_operation_status(repo_path: Path | str) -> GitOperationStatus:
     return GitOperationStatus(in_progress=bool(markers), markers=markers)
 
 
+def git_dirty_status(repo_path: Path | str) -> GitDirtyStatus:
+    """Return tracked/untracked dirty entries from ``git status --porcelain``."""
+
+    completed = subprocess.run(
+        ("git", "status", "--porcelain"),
+        cwd=Path(repo_path),
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    entries = tuple(line for line in completed.stdout.splitlines() if line.strip())
+    return GitDirtyStatus(is_dirty=bool(entries), entries=entries)
+
+
 def create_branch_worktree(
     repo_path: Path | str,
     worktree_path: Path | str,
@@ -243,19 +281,23 @@ def _lookup_registered_worktree(
 
 
 __all__ = [
+    "GitDirtyStatus",
     "GitOperationStatus",
     "GitResult",
     "GitWorktreeError",
     "WorktreeInfo",
     "attach_existing_local_branch",
     "checked_out_branch_worktree",
+    "commit_exists",
     "create_branch_worktree",
     "git",
+    "git_dirty_status",
     "git_operation_status",
     "has_local_branch",
     "has_remote_tracking_ref",
     "is_registered_worktree",
     "list_worktrees",
     "parse_worktree_porcelain",
+    "ref_exists",
     "resolve_ref",
 ]

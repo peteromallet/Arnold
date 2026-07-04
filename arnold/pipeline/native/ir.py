@@ -119,6 +119,26 @@ class NativePhase:
     consumes: tuple = ()
     """Typed ports this phase consumes (PortRef instances)."""
 
+    # ── Side-effect metadata (M1) ──
+
+    operation: str | None = None
+    """For side-effecting phases: canonical operation from the effect
+    taxonomy (e.g. ``'file_write'``, ``'git_commit'``).  ``None`` for pure
+    phases."""
+
+    target: str | None = None
+    """For side-effecting phases: stable target identifier for the
+    operation (e.g. a relpath, branch name).  ``None`` for pure phases."""
+
+    idempotency_key: str | None = None
+    """For side-effecting phases: explicit or derived idempotency key.
+    ``None`` for pure phases."""
+
+    effect_class: str | None = None
+    """For side-effecting phases: effect class from the taxonomy
+    (e.g. ``'filesystem_mutation'``, ``'git_repo_mutation'``).
+    ``None`` for pure phases."""
+
 
 @dataclass(frozen=True)
 class NativeDecision:
@@ -413,6 +433,30 @@ class NativeInstruction:
     decision_vocabulary: FrozenSet[str] = field(default_factory=frozenset)
     """For ``decision`` ops: the set of valid return labels
     (e.g. ``frozenset({'pass', 'fail'})``).  Empty for non-decision ops."""
+
+    # ── Side-effect metadata (M1 — side-effect reconcile & idempotency) ──
+
+    operation: str | None = None
+    """For side-effecting phase ops: the canonical operation type from the
+    effect taxonomy (e.g. ``'file_write'``, ``'git_commit'``).  ``None`` for
+    pure steps and non-phase instructions."""
+
+    target: str | None = None
+    """For side-effecting phase ops: a stable target identifier for the
+    operation (e.g. a relpath, branch name, or artifact logical-root id).
+    ``None`` when no target is declared or the instruction is pure."""
+
+    idempotency_key: str | None = None
+    """For side-effecting phase ops: the idempotency key used by the effect
+    ledger for deduplication and reconciliation.  When explicitly supplied via
+    the decorator this is used verbatim; otherwise derived from
+    ``(step_path, operation, target)`` at compile time.  ``None`` for pure
+    steps and non-phase instructions."""
+
+    effect_class: str | None = None
+    """For side-effecting phase ops: the effect class from the taxonomy
+    (e.g. ``'filesystem_mutation'``, ``'git_repo_mutation'``).  ``None`` for
+    pure steps and non-phase instructions."""
 
 
 @dataclass(frozen=True)

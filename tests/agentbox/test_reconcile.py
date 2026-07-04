@@ -11,7 +11,7 @@ from agentbox.operations import (
     open_operation_store,
     update_agentbox_operation,
 )
-from agentbox.reconcile import reconcile
+from agentbox.reconcile import parse_porcelain_paths, probe_file, reconcile
 from agentbox.repos import register_repo
 from agentbox.run_dirs import ensure_run_dir
 from agentbox.tmux import SessionStatus, session_name
@@ -135,6 +135,31 @@ def test_reconcile_reports_missing_and_orphan_run_dirs(tmp_path: Path) -> None:
     assert report.operations[0].run_dir.exists is False
     assert report.orphan_run_dirs[0].operation_id == "orphan"
     assert report.orphan_run_dirs[0].state == "orphan_run_dir"
+
+
+def test_parse_porcelain_paths_handles_simple_and_rename_entries() -> None:
+    assert parse_porcelain_paths([" M tracked.txt", "R  old.txt -> new.txt"]) == (
+        "tracked.txt",
+        "new.txt",
+    )
+
+
+def test_probe_file_reports_match_and_hash(tmp_path: Path) -> None:
+    target = tmp_path / "report.txt"
+    target.write_text("hello\n", encoding="utf-8")
+
+    matched = probe_file(target, expected_content="hello\n")
+    assert matched.exists is True
+    assert matched.content_matches is True
+    assert matched.sha256 is not None
+
+    mismatched = probe_file(target, expected_sha256="0" * 64)
+    assert mismatched.exists is True
+    assert mismatched.sha256_matches is False
+
+    missing = probe_file(tmp_path / "missing.txt", expected_content="hello\n")
+    assert missing.exists is False
+    assert missing.content_matches is False
 
 
 def _registered_repo(tmp_path: Path) -> tuple[AgentBoxConfig, Path]:

@@ -640,6 +640,7 @@ def persist_native_cursor(
     cursor_id: str | None = None,
     reentry_stage: str | None = None,
     stage_reentry_points: dict[str, Any] | None = None,
+    effect: dict[str, Any] | None = None,
     native_extra: dict[str, Any] | None = None,
     version: int = NATIVE_CURSOR_VERSION,
     **extra: Any,
@@ -660,6 +661,7 @@ def persist_native_cursor(
         cursor_id: Stable identifier for this cursor instance (uuid4 hex).
         reentry_stage: Stable stage identifier where resume should re-enter.
         stage_reentry_points: Mapping of phase name → stable stage identifier.
+        effect: Compact side-effect metadata snapshot for reconciliation.
         native_extra: Additional keys to merge into the nested ``native``
             payload while preserving the canonical ``pc`` and ``version``.
         version: Native cursor schema version (default ``1``).
@@ -701,6 +703,8 @@ def persist_native_cursor(
         payload_extra["reentry_stage"] = reentry_stage
     if stage_reentry_points is not None:
         payload_extra["stage_reentry_points"] = stage_reentry_points
+    if effect is not None:
+        payload_extra["effect"] = dict(effect)
 
     # Merge caller-supplied additive metadata (e.g. human-gate fields)
     # into the cursor payload.  These become top-level keys that graph
@@ -813,6 +817,77 @@ def read_native_cursor(artifact_root: str | Path) -> dict[str, Any] | None:
         data["run_path"] = None
     if "step_path" in data and not isinstance(data.get("step_path"), str):
         data["step_path"] = None
+    raw_effect = data.get("effect")
+    if isinstance(raw_effect, dict):
+        normalized_effect = {
+            "idempotency_key": raw_effect.get("idempotency_key"),
+            "step_path": raw_effect.get("step_path"),
+            "operation": raw_effect.get("operation"),
+            "target": raw_effect.get("target"),
+            "attempt": raw_effect.get("attempt"),
+            "lifecycle_state": raw_effect.get("lifecycle_state"),
+            "effect_class": raw_effect.get("effect_class"),
+            "duplicate_action": raw_effect.get("duplicate_action"),
+        }
+        for key in (
+            "owned_paths",
+            "expected_ref",
+            "expected_commit",
+            "expected_content",
+            "expected_sha256",
+            "repo_path",
+            "status_path",
+        ):
+            if key in raw_effect:
+                normalized_effect[key] = raw_effect.get(key)
+        if not isinstance(normalized_effect["idempotency_key"], str):
+            normalized_effect["idempotency_key"] = None
+        if not isinstance(normalized_effect["step_path"], str):
+            normalized_effect["step_path"] = None
+        if not isinstance(normalized_effect["operation"], str):
+            normalized_effect["operation"] = None
+        if normalized_effect["target"] is not None and not isinstance(
+            normalized_effect["target"], str
+        ):
+            normalized_effect["target"] = None
+        if not isinstance(normalized_effect["attempt"], int):
+            normalized_effect["attempt"] = None
+        if not isinstance(normalized_effect["lifecycle_state"], str):
+            normalized_effect["lifecycle_state"] = None
+        if normalized_effect["effect_class"] is not None and not isinstance(
+            normalized_effect["effect_class"], str
+        ):
+            normalized_effect["effect_class"] = None
+        if normalized_effect["duplicate_action"] is not None and not isinstance(
+            normalized_effect["duplicate_action"], str
+        ):
+            normalized_effect["duplicate_action"] = None
+        if "owned_paths" in normalized_effect:
+            if not isinstance(normalized_effect["owned_paths"], list):
+                normalized_effect["owned_paths"] = []
+            else:
+                normalized_effect["owned_paths"] = [
+                    path
+                    for path in normalized_effect["owned_paths"]
+                    if isinstance(path, str) and path
+                ]
+        for key in (
+            "expected_ref",
+            "expected_commit",
+            "expected_content",
+            "expected_sha256",
+            "repo_path",
+            "status_path",
+        ):
+            if (
+                key in normalized_effect
+                and normalized_effect[key] is not None
+                and not isinstance(normalized_effect[key], str)
+            ):
+                normalized_effect[key] = None
+        data["effect"] = normalized_effect
+    elif "effect" in data:
+        data["effect"] = None
     raw_call_site_path = data.get("call_site_path")
     if isinstance(raw_call_site_path, (list, tuple)):
         data["call_site_path"] = tuple(
