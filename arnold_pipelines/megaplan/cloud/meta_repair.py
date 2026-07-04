@@ -653,13 +653,32 @@ def _repair_evidence_superseded_by_current_target(
     advancement = repair_data.get("current_advancement_snapshot")
     if not isinstance(advancement, Mapping):
         advancement = {}
+    failure_context = repair_data.get("current_failure_context")
+    if not isinstance(failure_context, Mapping):
+        failure_context = {}
+    latest_failure = failure_context.get("plan_latest_failure")
+    if not isinstance(latest_failure, Mapping):
+        latest_failure = {}
+    plan_runtime_state = failure_context.get("plan_runtime_state")
+    if not isinstance(plan_runtime_state, Mapping):
+        plan_runtime_state = {}
 
     repair_plan_name = _meta_safe_text(
         current_signature.get("milestone_or_plan")
-    ) or _meta_safe_text(advancement.get("milestone_or_plan"))
+    ) or _meta_safe_text(advancement.get("milestone_or_plan")) or _meta_safe_text(
+        latest_failure.get("plan_name")
+    ) or _meta_safe_text(
+        (failure_context.get("chain_state_summary") or {}).get("current_plan_name")
+        if isinstance(failure_context.get("chain_state_summary"), Mapping)
+        else ""
+    )
     repair_state = _meta_safe_text(
         current_signature.get("current_state")
-    ) or _meta_safe_text(advancement.get("current_state"))
+    ) or _meta_safe_text(advancement.get("current_state")) or _meta_safe_text(
+        latest_failure.get("current_state")
+    ) or _meta_safe_text(
+        plan_runtime_state.get("current_state")
+    )
     repair_state = repair_state.lower()
 
     if repair_plan_name and current_plan_name and repair_plan_name != current_plan_name:
