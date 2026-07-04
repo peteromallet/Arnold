@@ -20,12 +20,10 @@ that could trigger a recursive or destructive action.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from arnold_pipelines.megaplan.cloud.feature_flags import (
-    meta_repair_commit_enabled,
-)
 from arnold_pipelines.megaplan.cloud.repair_contract import (
     NEEDS_HUMAN,
     load_json,
@@ -185,7 +183,12 @@ def can_commit_changes(
     Args:
         session: Optional session for context (included in the reason string).
     """
-    enabled = meta_repair_commit_enabled()
+    enabled = os.environ.get("ARNOLD_META_REPAIR_COMMIT_ENABLED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
     if enabled:
         reason = "META_REPAIR_COMMIT_ENABLED is on; commits are permitted"

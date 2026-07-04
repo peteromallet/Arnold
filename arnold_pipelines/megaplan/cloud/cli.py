@@ -291,7 +291,7 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
     status_parser.add_argument(
         "--since",
         default=None,
-        help="With --all, only print compact rows with real activity since a duration or ISO timestamp, e.g. 12h",
+        help="With --all, filter sessions to real activity since a duration or ISO timestamp, e.g. 12h",
     )
     status_parser.add_argument(
         "--remote-spec",
@@ -321,10 +321,20 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         help="Fetch recent logs without streaming",
     )
 
-    cloud_sub.add_parser(
+    chains_parser = cloud_sub.add_parser(
         "chains",
         parents=[shared],
         help="List active cloud chain tmux sessions on the shared runner",
+    )
+    chains_parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="Print a compact operator table before the JSON payload",
+    )
+    chains_parser.add_argument(
+        "--since",
+        default=None,
+        help="Filter sessions to real activity since a duration or ISO timestamp, e.g. 12h",
     )
 
     exec_parser = cloud_sub.add_parser(

@@ -157,6 +157,35 @@ class TestClassifyPersistentRecurringRetry:
         )
         assert result.trigger is None  # not enough of the same kind
 
+    def test_recurring_retry_skips_stale_repair_data_when_current_target_recovered(self) -> None:
+        result = classify_repair_system_failure(
+            session="s7b",
+            evidence={
+                "repair_data": {
+                    "current_signature": {
+                        "milestone_or_plan": "demo-plan",
+                        "current_state": "blocked",
+                    }
+                }
+            },
+            current_target_observation={
+                "authoritative_source": "chain_state",
+                "current_refs": {
+                    "current_plan_name": "demo-plan",
+                    "plan_current_state": "finalized",
+                    "chain_last_state": "finalized",
+                },
+                "plan_state": {"present": True},
+                "chain_state": {"present": True},
+                "active_step_heartbeat": {"active": False},
+            },
+            failure_kinds=["phase_failed", "phase_failed", "phase_failed"],
+            attempt_outcomes=[REPAIRING, REPAIRING, REPAIRING],
+        )
+        assert result.trigger is None
+        assert result.should_dispatch is False
+        assert "supersedes stale recurring repair evidence" in result.rationale[0]
+
 
 class TestClassifyStateInspectionFailure:
     def test_state_inspection_error_triggers(self) -> None:
