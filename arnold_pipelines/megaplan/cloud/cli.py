@@ -1937,9 +1937,13 @@ def _chain_start_command(
         f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
     )
     if engine_dir:
-        engine_path = shlex.quote(engine_dir)
         cwd = shlex.quote(project_dir or engine_dir)
-        prefix += f"cd {cwd} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
+        engine_path = shlex.quote(engine_dir)
+        prefix += (
+            'ENGINE_DIR="${MEGAPLAN_RUNTIME_SRC:-}"; '
+            f'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR={engine_path}; fi; '
+            f'cd {cwd} && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${{PYTHONPATH:-}}" '
+        )
     return (
         f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start {flags} "
         f">> {log_target} 2>&1"
@@ -1982,6 +1986,7 @@ def _megaplan_refresh_command(
     spec: CloudSpec | None = None,
     *,
     force_clean_editable_install: bool = False,
+    runtime_src_path: str | None = None,
 ) -> str:
     src = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     repo = (spec.megaplan.repo or "") if spec is not None else ""
@@ -1992,6 +1997,7 @@ def _megaplan_refresh_command(
         f"SRC={shlex.quote(src)}",
         f"REPO={shlex.quote(repo)}",
         f"REF={shlex.quote(ref)}",
+        f"RUNTIME_SRC={shlex.quote(runtime_src_path or '')}",
         'if [ -n "$REPO" ] && [ ! -d "$SRC/.git" ]; then',
         '  mkdir -p "$(dirname "$SRC")"',
         '  CLONE_URL="$REPO"',
@@ -2016,16 +2022,33 @@ def _megaplan_refresh_command(
             else []
         ),
         '  if [ -n "$(git -C "$SRC" status --porcelain --untracked-files=no)" ]; then',
-        '    echo "[megaplan-refresh] refusing editable install refresh: tracked changes in source checkout at $SRC"',
-        "    exit 19",
+        '    if [ -n "$RUNTIME_SRC" ]; then',
+        '      echo "[megaplan-refresh] source checkout dirty; using clean runtime mirror at $RUNTIME_SRC"',
+        '      rm -rf "$RUNTIME_SRC"',
+        '      mkdir -p "$(dirname "$RUNTIME_SRC")"',
+        '      git clone --shared --no-checkout "$SRC" "$RUNTIME_SRC"',
+        '      git -C "$RUNTIME_SRC" fetch origin "$REF"',
+        '      git -C "$RUNTIME_SRC" checkout --detach "origin/$REF"',
+        '      export MEGAPLAN_RUNTIME_SRC="$RUNTIME_SRC"',
+        "    else",
+        '      echo "[megaplan-refresh] refusing editable install refresh: tracked changes in source checkout at $SRC"',
+        "      exit 19",
+        "    fi",
+        "  else",
+        '    if ! git -C "$SRC" merge-base --is-ancestor HEAD "origin/$REF"; then',
+        '      echo "[megaplan-refresh] refusing editable install refresh: $SRC has local commits not contained in origin/$REF"',
+        '      git -C "$SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true',
+        "      exit 20",
+        "    fi",
+        '    git -C "$SRC" pull --ff-only origin "$REF"',
+        '    export MEGAPLAN_RUNTIME_SRC="$SRC"',
         "  fi",
-        '  if ! git -C "$SRC" merge-base --is-ancestor HEAD "origin/$REF"; then',
-        '    echo "[megaplan-refresh] refusing editable install refresh: $SRC has local commits not contained in origin/$REF"',
-        '    git -C "$SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true',
+        '  if ! git -C "$MEGAPLAN_RUNTIME_SRC" merge-base --is-ancestor HEAD "origin/$REF"; then',
+        '    echo "[megaplan-refresh] refusing editable install refresh: $MEGAPLAN_RUNTIME_SRC has local commits not contained in origin/$REF"',
+        '    git -C "$MEGAPLAN_RUNTIME_SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true',
         "    exit 20",
         "  fi",
-        '  git -C "$SRC" pull --ff-only origin "$REF"',
-        '  pip install -e "$SRC"',
+        '  pip install -e "$MEGAPLAN_RUNTIME_SRC"',
         "else",
         '  echo "[megaplan-refresh] source clone missing at $SRC; skipping editable install"',
         "fi",
@@ -2045,9 +2068,15 @@ def _refresh_then_chain_start_command(
     force_clean_editable_install: bool = False,
     log_relative: str = _CHAIN_LOG_RELATIVE,
 ) -> str:
+    runtime_src_path = (
+        str(PurePosixPath(project_dir) / ".megaplan" / "runtime" / "editable-engine")
+        if project_dir
+        else None
+    )
     refresh = _megaplan_refresh_command(
         spec,
         force_clean_editable_install=force_clean_editable_install,
+        runtime_src_path=runtime_src_path,
     )
     engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     return (
@@ -2192,7 +2221,11 @@ def _epic_chain_start_command(
     )
     if engine_dir:
         engine_path = shlex.quote(engine_dir)
-        prefix += f"cd {shlex.quote(workspace)} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
+        prefix += (
+            'ENGINE_DIR="${MEGAPLAN_RUNTIME_SRC:-}"; '
+            f'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR={engine_path}; fi; '
+            f'cd {shlex.quote(workspace)} && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${{PYTHONPATH:-}}" '
+        )
     return (
         f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan epic-chain start {flags} "
         f">> {log_target} 2>&1"
@@ -2207,7 +2240,10 @@ def _refresh_then_epic_chain_start_command(
     one_shot: bool = False,
     log_relative: str,
 ) -> str:
-    refresh = _megaplan_refresh_command(spec)
+    refresh = _megaplan_refresh_command(
+        spec,
+        runtime_src_path=str(PurePosixPath(workspace) / ".megaplan" / "runtime" / "editable-engine"),
+    )
     engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     log_target = str(PurePosixPath(workspace) / log_relative)
     return (
