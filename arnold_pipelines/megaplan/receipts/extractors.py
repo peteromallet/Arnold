@@ -8,6 +8,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from arnold_pipelines.megaplan.prep_payload import suggested_approach_lines
+
 
 def _safe(fn):
     def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -256,7 +258,9 @@ def prep_metrics(
         "relevant_code_count": len(_as_list(payload.get("relevant_code"))),
         "test_expectations_count": len(_as_list(payload.get("test_expectations"))),
         "constraints_count": len(_as_list(payload.get("constraints"))),
-        "suggested_approach_present": bool(str(payload.get("suggested_approach") or "").strip()),
+        "suggested_approach_present": bool(
+            suggested_approach_lines(payload.get("suggested_approach"))
+        ),
         "primary_criterion_present": bool(str(payload.get("primary_criterion") or "").strip()),
         "area_count": area_count,
         "fanout_count": fanout_count,
