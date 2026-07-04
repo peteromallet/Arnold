@@ -11,6 +11,7 @@ import { Slider } from '@/shared/components/ui/slider.tsx';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/components/ui/tabs.tsx';
 import { Textarea } from '@/shared/components/ui/textarea.tsx';
 import { ParameterControls, getDefaultValues } from '@/tools/video-editor/components/ParameterControls.tsx';
+import { BlockerActionCard } from '@/tools/video-editor/components/BlockerActionCard.tsx';
 import { SequenceParamEditor } from '@/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.tsx';
 import {
   clipTypeUsesHoldTiming,
@@ -1220,13 +1221,12 @@ export function ClipPanel({
                 </Select>
 
                 {shaderDiagnostic && (
-                  <div
-                    className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-xs text-destructive"
-                    data-testid="clip-panel-shader-diagnostic"
-                    role="alert"
-                  >
-                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                    <span>{shaderDiagnostic}</span>
+                  <div data-testid="clip-panel-shader-diagnostic">
+                    <BlockerActionCard
+                      severity="error"
+                      code="shader/clip-scope-occupied"
+                      message={shaderDiagnostic}
+                    />
                   </div>
                 )}
 
@@ -1252,10 +1252,11 @@ export function ClipPanel({
                 })()}
 
                 {clipShader && !resolvedClipShaderRecord && (
-                  <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
-                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                    <span>Shader "{clipShader.shaderId}" is not available. The extension may have been removed.</span>
-                  </div>
+                  <BlockerActionCard
+                    severity="error"
+                    code="shader/missing-ref"
+                    message={`Shader "${clipShader.shaderId}" is not available. The extension may have been removed.`}
+                  />
                 )}
 
                 {clipShader && (
@@ -1379,10 +1380,11 @@ export function ClipPanel({
 
                 {/* Unresolvable / missing transition row */}
                 {isTransitionUnresolvable && clip.transition && (
-                  <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-xs text-destructive">
-                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                    <span>Transition "{clip.transition.type}" is not available. The extension may have been removed.</span>
-                  </div>
+                  <BlockerActionCard
+                    severity="error"
+                    code="composition/transition-missing-ref"
+                    message={`Transition "${clip.transition.type}" is not available. The extension may have been removed.`}
+                  />
                 )}
 
                 {/* Duration editing */}

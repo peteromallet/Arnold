@@ -7,6 +7,7 @@ import {
   MATERIAL_RUNTIME_PLANNER_MATRIX_BY_KEY,
   materialRuntimeMatrixKey,
   projectHostMaterialRuntime,
+  resolveMaterialAttachEntry,
 } from '@/tools/video-editor/runtime/composition/materialRuntime.ts';
 import type {
   ExtensionDiagnostic,
@@ -609,6 +610,217 @@ describe('projectHostMaterialRuntime', () => {
           },
         },
       ],
+    });
+  });
+});
+
+describe('resolveMaterialAttachEntry', () => {
+  const transitionMaskContext = Object.freeze({
+    clipId: 'clip-1',
+    scope: 'clip' as const,
+    ownerKind: 'transition',
+    ownerId: 'clip-1.transition.dissolve',
+    materialSlot: 'transition-mask',
+    refKey: 'transition:com.example.transitions:dissolve',
+    extensionId: 'com.example.transitions',
+    contributionId: 'dissolve',
+    resolverState: 'resolved' as const,
+    packageState: 'loaded',
+  });
+
+  it('maps unresolved attach states to material-not-resolved with transition slot repair detail', () => {
+    const projection = projectHostMaterialRuntime({
+      materialRefs: [makeMaterialRef('mat-pending')],
+      materialStatuses: [
+        {
+          materialRefId: 'mat-pending',
+          state: 'pending',
+          detail: {
+            phase: 'active',
+          },
+        },
+      ],
+      canonicalRoutes: ['worker-export'],
+    });
+
+    expect(resolveMaterialAttachEntry(projection, 'mat-missing', transitionMaskContext)).toMatchObject({
+      ok: false,
+      diagnostic: {
+        code: 'composition/material-not-resolved',
+        severity: 'error',
+        detail: {
+          clipId: 'clip-1',
+          scope: 'clip',
+          ownerKind: 'transition',
+          ownerId: 'clip-1.transition.dissolve',
+          materialSlot: 'transition-mask',
+          materialRefId: 'mat-missing',
+          refKey: 'transition:com.example.transitions:dissolve',
+          refState: 'resolved',
+          resolverState: 'resolved',
+          packageState: 'loaded',
+          nextAction: {
+            kind: 'materialize',
+          },
+          repairAction: {
+            kind: 'materialize',
+            clipId: 'clip-1',
+            ownerKind: 'transition',
+            ownerId: 'clip-1.transition.dissolve',
+            materialSlot: 'transition-mask',
+            materialRefId: 'mat-missing',
+          },
+        },
+      },
+    });
+
+    expect(resolveMaterialAttachEntry(projection, 'mat-pending', transitionMaskContext)).toMatchObject({
+      ok: false,
+      diagnostic: {
+        code: 'composition/material-not-resolved',
+        severity: 'error',
+        detail: {
+          materialRefId: 'mat-pending',
+          materialStatus: 'pending',
+          detailPhase: 'active',
+          materialSlot: 'transition-mask',
+          nextAction: {
+            kind: 'bake',
+          },
+          repairAction: {
+            kind: 'bake',
+            clipId: 'clip-1',
+            ownerKind: 'transition',
+            ownerId: 'clip-1.transition.dissolve',
+            materialSlot: 'transition-mask',
+            materialRefId: 'mat-pending',
+          },
+        },
+      },
+    });
+  });
+
+  it('maps stale, failed, and route-incompatible attach states to the matching diagnostics', () => {
+    const projection = projectHostMaterialRuntime({
+      materialRefs: [
+        makeMaterialRef('mat-stale', { determinism: 'deterministic' }),
+        makeMaterialRef('mat-failed'),
+        makeMaterialRef('mat-route', { determinism: 'deterministic' }),
+      ],
+      materialStatuses: [
+        {
+          materialRefId: 'mat-stale',
+          state: 'stale',
+        },
+        {
+          materialRefId: 'mat-failed',
+          state: 'failed',
+        },
+        {
+          materialRefId: 'mat-route',
+          state: 'resolved',
+          detail: {
+            quality: 'route-incompatible',
+          },
+        },
+      ],
+      requestedRoutes: ['preview'],
+      canonicalRoutes: ['worker-export'],
+    });
+
+    expect(resolveMaterialAttachEntry(projection, 'mat-stale', transitionMaskContext)).toMatchObject({
+      ok: false,
+      diagnostic: {
+        code: 'composition/material-stale',
+        severity: 'warning',
+        detail: {
+          materialRefId: 'mat-stale',
+          materialStatus: 'stale',
+          materialSlot: 'transition-mask',
+          nextAction: {
+            kind: 'materialize',
+          },
+          repairAction: {
+            kind: 'materialize',
+            materialRefId: 'mat-stale',
+          },
+        },
+      },
+    });
+
+    expect(resolveMaterialAttachEntry(projection, 'mat-failed', transitionMaskContext)).toMatchObject({
+      ok: false,
+      diagnostic: {
+        code: 'composition/material-failed',
+        severity: 'error',
+        detail: {
+          materialRefId: 'mat-failed',
+          materialStatus: 'failed',
+          materialSlot: 'transition-mask',
+          nextAction: {
+            kind: 'open-settings',
+          },
+          repairAction: {
+            kind: 'open-settings',
+            materialRefId: 'mat-failed',
+          },
+        },
+      },
+    });
+
+    expect(resolveMaterialAttachEntry(projection, 'mat-route', transitionMaskContext)).toMatchObject({
+      ok: false,
+      diagnostic: {
+        code: 'composition/material-route-incompatible',
+        severity: 'error',
+        detail: {
+          materialRefId: 'mat-route',
+          materialStatus: 'resolved',
+          detailQuality: 'route-incompatible',
+          routeScope: 'worker-export',
+          materialSlot: 'transition-mask',
+          nextAction: {
+            kind: 'select-route',
+            route: 'worker-export',
+          },
+          repairAction: {
+            kind: 'select-route',
+            route: 'worker-export',
+            materialRefId: 'mat-route',
+          },
+        },
+      },
+    });
+  });
+
+  it('does not block attach for resolved materials that only carry warning diagnostics', () => {
+    const projection = projectHostMaterialRuntime({
+      materialRefs: [
+        makeMaterialRef('mat-warning', {
+          determinism: 'deterministic',
+          provenance: {
+            contributionId: 'shader.contrib',
+          },
+        }),
+      ],
+      materialStatuses: [
+        {
+          materialRefId: 'mat-warning',
+          state: 'resolved',
+          detail: {
+            quality: 'weaker-provenance',
+          },
+        },
+      ],
+    });
+
+    expect(resolveMaterialAttachEntry(projection, 'mat-warning', transitionMaskContext)).toMatchObject({
+      ok: true,
+      entry: {
+        materialRef: {
+          id: 'mat-warning',
+        },
+      },
     });
   });
 });

@@ -1,0 +1,1681 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+Review the implementation against the success criteria.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M5: Effects, Transitions, Live Data, And Agent Mask Material
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: M5 Effects, Transitions, Live Data, And Agent Mask Material
+
+## Overview
+M5 extends the existing composition spine without changing the public graph node model: effects and transitions remain `contribution` nodes, `consumes` remains the edge kind, and transition masks consume existing resolved `MaterialRef` / `RenderMaterialRef` identities through declared material slots. This is aligned with the Epic North Star because graph facts become authoritative for effect, transition, live-binding, and mask-material composition while extensions still do not mutate raw timeline internals.
+
+This is not a scope narrowing. Output-format route conformance, process runtime, sidecars, sandboxing, arbitrary material routing, and `consumes-mask` remain OUT by North Star and local locked decisions. One brief/task tension is material: the brief suggests generic ref diagnostics are reusable, but the task constraints require effect and transition missing/disabled refs not collapse into generic diagnostics. The plan chooses the stricter local requirement: reuse resolver state classification, but emit M5 kind-specific diagnostic codes for effect and transition references.
+
+## Phase 1: Graph Identity And Projection
+
+### Step 1: Preserve render identifiers in the contribution index
+**Complexity: 3**
+
+Add `ContributionIndexEntry.renderId` for bridged effect and transition contributions from `effectId` and `transitionId`. Test runtime assembly keeps both contribution identity and render identity.
+
+### Step 2: Add projector lookup helpers
+**Complexity: 3**
+
+Resolve effect/transition timeline summaries by `(kind, managedBy?, renderId)` and only fall back to contribution ID when unambiguous. Keep graph node IDs keyed by contribution refs.
+
+### Step 3: Project effect consumes edges
+**Complexity: 3**
+
+Iterate `clip.effects`, emit clip-to-effect `consumes` edges with typed detail, and add projector tests for effect contribution targeting.
+
+### Step 4: Project transition and mask-material consumes edges
+**Complexity: 4**
+
+Iterate `clip.transition` and `input.materialSlotBindings` for transition owners. Emit standard `consumes` edges with mask detail including `consumedKind`, `targetSlot`, `materialRefId`, `clipId`, and owner provenance.
+
+## Phase 2: Diagnostics And Export Blocking
+
+### Step 5: Add M5 diagnostic codes and detail fields
+**Complexity: 3**
+
+Add material slot and owner fields, effect/transition ref diagnostic codes, and transition-mask missing / route-incompatible codes.
+
+### Step 6: Emit M5 graph diagnostics
+**Complexity: 4**
+
+Resolve effect/transition refs during graph projection and emit kind-specific diagnostics with resolver state, package state, contribution ref, and target path or material slot.
+
+### Step 7: Add transition mask diagnostics at material attach boundaries
+**Complexity: 4**
+
+Map unresolved, stale, failed, and route-incompatible transition slot material states to M5 diagnostics and repair next actions. Keep `material.attach` as the only write path.
+
+### Step 8: Funnel M5 diagnostics through export guard and planner
+**Complexity: 3**
+
+Promote M5 graph diagnostics to export findings/blockers and planner blockers. Verify export blocks before repair/bake and clears afterward.
+
+## Phase 3: Repair UI
+
+### Step 9: Add a shared blocker/action component
+**Complexity: 2**
+
+Create `BlockerActionCard` for severity, code/message, and one next-action button wired to `onAction`.
+
+### Step 10: Integrate repair affordances into existing surfaces
+**Complexity: 4**
+
+Use the shared component in `MaterialBrowser` and relevant inspector/export/status surfaces. Do not add a new top-level UI surface.
+
+## Phase 4: Composed Examples And Canaries
+
+### Step 11: Update flagship descriptors
+**Complexity: 2**
+
+Add a descriptor-declared `transition-mask` slot to Flagship Wipe and test descriptor projection.
+
+### Step 12: Add EX-02 graph-backed effect/live/bake canary
+**Complexity: 4**
+
+Compose Flagship Glow with an effect-param live binding, assert `consumes` and `binds-live`, assert export blocked before bake, and clear after bake.
+
+### Step 13: Add EX-03 graph-backed transition/mask canary
+**Complexity: 4**
+
+Compose Flagship Wipe with an agent-promoted deterministic mask material attached to `transition-mask`, and assert transition and mask-material graph edges.
+
+### Step 14: Add browser acceptance coverage
+**Complexity: 4**
+
+Cover one happy path and one blocker/repair path each for EX-02 and EX-03 using the existing Testing Library patterns.
+
+### Step 15: Update release example docs
+**Complexity: 2**
+
+Document EX-02 and EX-03 as graph-backed M5 examples, and confirm EX-01 remains M4-owned and non-breaking.
+
+## Execution Order
+1. Add render identity to the contribution index first.
+2. Land projector tests and graph projection next.
+3. Add diagnostics, then export/planner funneling.
+4. Add UI repair affordances after diagnostic payloads stabilize.
+5. Add composed canaries and browser acceptance last.
+6. Run EX-01 clip-local-shader canary as the regression gate.
+
+## Validation Order
+1. Projector unit tests.
+2. Material runtime and patch preview tests.
+3. Export guard and render planner tests.
+4. UI component tests.
+5. EX-01, EX-02, and EX-03 canaries.
+6. Typecheck/lint and broader video-editor tests if shared types changed.
+
+
+        Review execution context (`finalize.json` + `execution.json`, prompt projection only):
+        {
+  "tasks": [
+    {
+      "id": "T1",
+      "depends_on": [],
+      "status": "skipped",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "deferred_baseline_unavailable",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This touches the contribution index contract in `src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts` and its tests. It is multi-file and identity-sensitive, but the new field is additive and should be caught by focused runtime assembly tests.",
+      "executor_notes": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative.",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": []
+    },
+    {
+      "id": "T2",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 2: Add graph projector lookup helpers that resolve effect and transition timeline summaries by `(kind, managedBy?, renderId)` and fall back to contribution ID only when unambiguous; keep graph node IDs keyed by contribution refs.",
+      "complexity_justification": "The change is centered in `src/tools/video-editor/runtime/composition/graphProjector.ts` and projector tests, with non-trivial matching rules around `managedBy`, render IDs, and ambiguous fallback. The risk is local to projection lookup semantics rather than a system-wide schema change.",
+      "executor_notes": "Added EffectTransitionContributionLookup type and three exported functions (resolveEffectTransitionContributionEntry, resolveEffectContributionEntry, resolveTransitionContributionEntry) to graphProjector.ts. The core resolver uses a two-tier strategy: primary matches by (kind, managedBy?, renderId?) when at least managedBy or renderId is provided; fallback matches by contributionId only when exactly one entry matches. Convenience wrappers delegate from TimelineEffectSummary/TimelineTransitionSummary. All 63 composition tests pass (28 projector tests including 18 new M5 tests) with zero regr...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/graphProjector.ts",
+        "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/"
+      ]
+    },
+    {
+      "id": "T3",
+      "depends_on": [
+        "T2"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 3: Project effect `consumes` edges by iterating `clip.effects`, targeting effect contribution nodes with typed edge detail, and add projector tests for effect contribution targeting without adding public effect node kinds.",
+      "complexity_justification": "This adds new graph edge emission in `graphProjector.ts` plus focused assertions in `compositionGraphProjector.test.ts`. Correctness depends on existing graph identity conventions, but failures should be visible in projector unit tests.",
+      "executor_notes": "Added effect consumes edge projection block in projectCompositionGraph (graphProjector.ts lines 795-842) that iterates clip.effects, resolves contribution entries via resolveEffectContributionEntry (reusing T2 lookup helpers), and emits consumes edges with typed detail (effectId, clipId, effectType, refKey, consumedKind: 'effect', scope: 'clip'). Effect target nodes are standard 'contribution' nodes \u2014 no public effect node kinds introduced. Added 4 projector tests: (1) managed effect primary match, (2) unmanaged effect fallback contributionId match, (3) unresolvable effect skip, (4) cross-c...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/graphProjector.ts",
+        "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/"
+      ]
+    },
+    {
+      "id": "T4",
+      "depends_on": [
+        "T3"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 4: Project transition and transition mask-material consumption by iterating `clip.transition` and transition-owner `input.materialSlotBindings`; emit only standard `consumes` edges with detail fields including `consumedKind`, `targetSlot`, `materialRefId`, `clipId`, and owner provenance.",
+      "complexity_justification": "This changes graph projection for transition ownership and material attachment details that export and diagnostics will later depend on. A subtle wrong owner or edge detail can propagate through multiple consumers while still producing a graph, which warrants tier 4.",
+      "executor_notes": "Added transition consumes projection for `clip.transition` and transition-owner mask-material consumes projection for `input.materialSlotBindings` in `projectCompositionGraph()`. Both paths emit only `kind: 'consumes'` edges targeting standard transition contribution nodes, with detail carrying `consumedKind`, `clipId`, `refKey`, owner provenance (`ownerKind`, `ownerId`), and for mask-material edges `targetSlot` plus `materialRefId`. Added projector coverage for managed and unmanaged transitions, mask-material detail/provenance, and owner-mismatch skipping. Verified with `npx vitest run --c...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/graphProjector.ts",
+        "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ]
+    },
+    {
+      "id": "T5",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 5: Extend M5 graph diagnostic types and codes with effect/transition ref codes plus material slot, material ref, owner, contribution ref, resolver state, package state, and repair-action detail fields.",
+      "complexity_justification": "The task updates diagnostic definitions in `src/tools/video-editor/runtime/composition/diagnostics.ts` and nearby type consumers. It is a shared data shape, but the additions are M5-specific and should be directly exercised by later diagnostic/export tests.",
+      "executor_notes": "Extended COMPOSITION_DIAGNOSTIC_CODE with 18 M5-specific effect/transition ref codes (EFFECT_MISSING_REF through EFFECT_UNKNOWN_REF, TRANSITION_MISSING_REF through TRANSITION_UNKNOWN_REF). Added 6 new detail fields to CompositionDiagnosticDetail: materialSlot, ownerKind, ownerId, resolverState, packageState, repairAction. Added exported helpers: referenceStateToEffectDiagnosticCode, referenceStateToTransitionDiagnosticCode, isEffectDiagnosticCode, isTransitionDiagnosticCode, effectDiagnosticSeverity, transitionDiagnosticSeverity. Updated buildCompositionDiagnostic to route effect/transition...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/diagnostics.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/referenceResolver.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/exportGuard.test.ts"
+      ]
+    },
+    {
+      "id": "T6",
+      "depends_on": [
+        "T5"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 6: Emit M5 graph diagnostics during projection for unresolved, missing, disabled, stale, or failed effect and transition refs using kind-specific diagnostic codes and resolver/package/contribution/target-path details.",
+      "complexity_justification": "This wires resolver state classification into graph projection while preserving the settled decision not to collapse effect and transition refs into generic diagnostics. A mistake can affect export, planner, and UI blocker behavior downstream, so the task should be isolated at tier 4.",
+      "executor_notes": "Added an M5 effect/transition diagnostic pass in graph projection that records reference states and emits kind-specific effect/transition codes instead of generic ref diagnostics, carrying resolverState, packageState, owner, and slot/material detail where present. Added projector assertions for missing effect refs and disabled transition plus transition-slot refs; `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts` passed (37 tests).",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/graphProjector.ts",
+        "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ]
+    },
+    {
+      "id": "T7",
+      "depends_on": [
+        "T6"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 7: Add transition mask diagnostics at material attach boundaries by mapping unresolved, stale, failed, and route-incompatible slot material states to M5 diagnostics and repair next actions while keeping `material.attach` as the only write path.",
+      "complexity_justification": "This spans `materialRuntime.ts`, `patchPreview.ts`, and their tests at the boundary where graph-owned material attachment is validated. The risk is non-local because the same diagnostics must align with projector, export guard, and repair UI expectations.",
+      "executor_notes": "Mapped material.attach attach-boundary failures to transition-slot diagnostics instead of generic first-entry material diagnostics: unresolved/missing and pending states now emit `composition/material-not-resolved`; stale emits `composition/material-stale`; failed emits `composition/material-failed`; route-incompatible emits route-scoped `composition/material-route-incompatible`. The attach-boundary detail now carries `materialSlot`, owner provenance, transition ref identity, `resolverState`, `packageState`, `nextAction`, and a richer `repairAction`, while resolved warning-only materials no...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "src/tools/video-editor/runtime/composition/patchPreview.ts",
+        "src/tools/video-editor/runtime/composition/patchPreview.test.ts"
+      ],
+      "commands_run": [
+        "pnpm vitest src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts"
+      ]
+    },
+    {
+      "id": "T8",
+      "depends_on": [
+        "T7"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 8: Funnel M5 graph diagnostics through export guard and render planner blockers, including tests that export blocks before repair/bake and clears after diagnostics are resolved.",
+      "complexity_justification": "This updates `exportGuard.ts`, render planner graph tests, and export guard tests to recognize already-defined diagnostic codes. It touches important export behavior, but the change is a direct blocker mapping with clear test oracles.",
+      "executor_notes": "Added BLOCKING_M5_COMPOSITION_DIAGNOSTIC_CODES (union of EFFECT_ERROR_DIAGNOSTIC_CODES and TRANSITION_ERROR_DIAGNOSTIC_CODES) plus isBlockingM5CompositionDiagnosticCode and m5CompositionBlockerReason helpers in diagnostics.ts. Added scanCompositionGraphM5ExportBlockers to exportGuard.ts that maps M5 effect/transition diagnostic codes to export/effect-unresolved-ref and export/transition-unresolved-ref export diagnostics with per-route findings and blockers for error-severity codes; non-blocking warning codes surface as findings only (no blockers). Updated renderPlanner.ts compositionDiagnos...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/diagnostics.ts",
+        "src/tools/video-editor/runtime/exportGuard.ts",
+        "src/tools/video-editor/runtime/renderPlanner.ts",
+        "src/tools/video-editor/runtime/exportGuard.test.ts",
+        "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/exportGuard.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+      ]
+    },
+    {
+      "id": "T9",
+      "depends_on": [
+        "T8"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Step 9: Create a shared `BlockerActionCard` component that renders severity, diagnostic code/message, and one next-action button wired to `onAction`, with focused component tests.",
+      "complexity_justification": "This is a localized UI component and test in `src/tools/video-editor/components/BlockerActionCard.tsx` and its test file. The behavior is linear rendering and callback invocation with limited integration risk.",
+      "executor_notes": "Created BlockerActionCard component at src/tools/video-editor/components/BlockerActionCard.tsx that renders severity badge (with data-video-editor-blocker-severity-badge attribute), diagnostic code in a <code> element, message in a <p>, and exactly one next-action button when both nextAction and onAction props are present. The action button carries data-video-editor-blocker-action-kind from nextAction.kind, uses nextAction.label as text, nextAction.message as title tooltip, and invokes onAction on click. No button renders when either nextAction or onAction is missing (null/undefined). Expor...",
+      "files_changed": [
+        "src/tools/video-editor/components/BlockerActionCard.tsx",
+        "src/tools/video-editor/components/BlockerActionCard.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/BlockerActionCard.test.tsx"
+      ]
+    },
+    {
+      "id": "T10",
+      "depends_on": [
+        "T9"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 10: Integrate `BlockerActionCard` into existing repair/status surfaces, including `MaterialBrowser`, relevant clip inspector/export/status surfaces, and `ExtensionStatusDrawer`, without adding a new top-level UI surface.",
+      "complexity_justification": "This changes multiple existing UI surfaces that consume diagnostic payloads and action callbacks. The risk is coordination across shared UI state and repair affordances, not raw component complexity, so it deserves a tier 4 isolated task.",
+      "executor_notes": "MaterialBrowser now renders shared blocker cards from planner/material findings and keeps repair callbacks wired through `onAction`; ClipPanel uses the shared card for existing shader and transition missing-state diagnostics inside the inspector; ExtensionStatusDrawer renders export/planner blocker cards inline in the drawer without adding a new top-level repair surface. Verified with `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/BlockerActionCard.test.tsx src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/component...",
+      "files_changed": [
+        "src/tools/video-editor/components/BlockerActionCard.tsx",
+        "src/tools/video-editor/components/MaterialBrowser.tsx",
+        "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+        "src/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx",
+        "src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx",
+        "src/tools/video-editor/components/PropertiesPanel/ClipPanel.transition.test.tsx",
+        "src/tools/video-editor/runtime/ExtensionStatusDrawer.tsx",
+        "src/tools/video-editor/runtime/ExtensionStatusDrawer.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/BlockerActionCard.test.tsx src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx src/tools/video-editor/components/PropertiesPanel/ClipPanel.transition.test.tsx src/tools/video-editor/runtime/ExtensionStatusDrawer.test.tsx"
+      ]
+    },
+    {
+      "id": "T11",
+      "depends_on": [
+        "T10"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Step 11: Update flagship extension descriptors so Flagship Wipe declares a `transition-mask` material slot, and add descriptor projection tests that treat the slot as example/test data rather than a production SDK constant.",
+      "complexity_justification": "The change is localized to `src/tools/video-editor/examples/extensions/flagship-local/index.ts` and flagship descriptor tests. The slot is example metadata and not a new public graph or SDK primitive.",
+      "executor_notes": "Added materialSlots with a single 'transition-mask' slot (name: 'transition-mask', label: 'Transition Mask') to the Flagship Wipe transition contribution in flagship-local/index.ts. The slot is clearly annotated as example/test metadata, not a production SDK constant. Created transitionProjector.test.ts with 16 tests covering: basic descriptor projection, label fallback, export flag defaults/preservation, skipping contributions without transitionId, material slot projection (single, multiple, empty, undefined, frozen immutability, example/test data semantics), multiple-contribution ordering...",
+      "files_changed": [
+        "src/tools/video-editor/examples/extensions/flagship-local/index.ts",
+        "src/tools/video-editor/runtime/families/projectors/transitionProjector.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families/projectors/transitionProjector.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/flagship-local-transition.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families/"
+      ]
+    },
+    {
+      "id": "T12",
+      "depends_on": [
+        "T11"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 12: Add the EX-02 graph-backed effect/live/bake canary composing Flagship Glow with an effect-param live binding; assert effect `consumes`, `binds-live`, export block before bake, and clearance after bake.",
+      "complexity_justification": "This creates a new integration canary that spans extension descriptors, graph projection, live binding, export blocking, and bake resolution. A weak test could pass while missing one of the cross-surface guarantees, so it is tier 4.",
+      "executor_notes": "Added `flagship-local-m5-effect-live-canary.integration.test.tsx` to compose Flagship Glow with an effect-param live binding, assert pre-bake `export/live-binding-unresolved`, then bake a deterministic-capture ref and assert a graph-backed `consumes` edge plus `binds-live` edge targeting `effect-param` `intensity`, with export/planner clearance after bake. The canary exposed that real flagship descriptors were missing contribution-index `renderId` population and default render-id forwarding in effect/transition lookup wrappers, so both were wired before verification. `npx vitest run --confi...",
+      "files_changed": [
+        "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx",
+        "src/tools/video-editor/runtime/composition/graphProjector.ts",
+        "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx"
+      ]
+    },
+    {
+      "id": "T13",
+      "depends_on": [
+        "T12"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 13: Add the EX-03 graph-backed transition/mask canary composing Flagship Wipe with an agent-promoted deterministic mask material attached to `transition-mask`; assert transition `consumes` and mask-material slot consumption with matching `materialRefId`.",
+      "complexity_justification": "This canary verifies the M5 transition/material path across agent material promotion, attach state, and graph edges. The important failure mode is a graph that looks valid but carries the wrong material identity or owner provenance.",
+      "executor_notes": "Added `flagship-local-m5-transition-mask-canary.integration.test.tsx` to compose Flagship Wipe, promote a deterministic mask material through the agent-tool durable-promotion path, attach it to `transition-mask`, and assert graph-backed `consumes` edges for both the transition and the mask-material slot with the exact attached `materialRefId`. Verified with `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx`.",
+      "files_changed": [
+        "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx"
+      ]
+    },
+    {
+      "id": "T14",
+      "depends_on": [
+        "T13"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 14: Add Testing Library browser acceptance coverage for EX-02 and EX-03, with one happy path and one blocker/repair path for each using the repository's existing `.browser.test.tsx` patterns.",
+      "complexity_justification": "This adds browser-style integration coverage over composed examples and repair UI behavior, likely in `m5-composed-examples.browser.test.tsx`. It is tier 4 because it must coordinate graph state, export blockers, and UI actions without drifting into a brittle e2e rewrite.",
+      "executor_notes": "Added `m5-composed-examples.browser.test.tsx` with Testing Library browser acceptance coverage for EX-02 and EX-03. EX-02 covers graph-backed effect/live happy and blocker/repair paths; EX-03 covers transition-mask happy and blocker/repair paths through the material browser action surface. Verified with `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx` (4 tests passed).",
+      "files_changed": [
+        "src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx"
+      ]
+    },
+    {
+      "id": "T15",
+      "depends_on": [
+        "T14"
+      ],
+      "status": "done",
+      "kind": "docs",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Step 15: Update release example documentation to identify EX-01, EX-02, and EX-03 as graph-backed V1 examples, document EX-02/EX-03 M5 behavior, and state that legacy planner data is compatibility-only.",
+      "complexity_justification": "This is a focused documentation update in `docs/extensions/composition-spine/m0-release-examples.md` after implementation details have stabilized. It requires accuracy against the new tests but no complex code reasoning.",
+      "executor_notes": "Updated m0-release-examples.md with four targeted edits: (1) Ownership Snapshot table now identifies EX-01, EX-02, and EX-03 as 'Graph-backed V1 example'. (2) Posture section now states legacy planner data is compatibility-only for V1, explicitly naming all three examples. (3) EX-02 section gains 'M5 implementation evidence (V1 graph-backed)' subsection documenting the effect consumes edge, binds-live edge, export block before bake, clearance after bake, and browser acceptance happy/blocker-repair paths \u2014 all verified against the actual integration test (flagship-local-m5-effect-live-canary...",
+      "files_changed": [
+        "docs/extensions/composition-spine/m0-release-examples.md"
+      ],
+      "commands_run": []
+    },
+    {
+      "id": "T16",
+      "depends_on": [
+        "T15"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This is a scoped validation and triage task across the files changed by M5. It can involve diagnosing multiple failures, but it should not implement new features or chase unrelated baseline failures.",
+      "executor_notes": "Ran all five command blocks from the task. Found and fixed one M5 regression: contributionRenderId in FamilyRuntimeAssembly.ts threw TypeError when processing inactive-reserved contributions (which don't carry the full 'contribution' object \u2014 only contributionId). Added null guard. After fix: all runtime tests (156), component tests (60), and all reachable integration tests (6) pass cleanly. The clip-local-shader-canary.integration.test.tsx hangs during module initialization \u2014 this is a pre-existing environment issue (hangs before any test runs, same behavior with thread and fork pools).",
+      "files_changed": [
+        "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts (37 passed)",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts (27 passed)",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts (92 passed)",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/BlockerActionCard.test.tsx src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx src/tools/video-editor/runtime/ExtensionStatusDrawer.test.tsx (60 passed, after fix)",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx (HUNG \u2014 pre-existing env issue)",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx (1 passed)",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx (1 passed)",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx (4 passed)"
+      ]
+    }
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "verdict": "",
+      "question": "Does the contribution index preserve both stable contribution refs and render IDs for effect and transition contributions, with tests covering both `effectId` and `transitionId`?",
+      "executor_note": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative."
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "verdict": "",
+      "question": "Do projector lookups prefer `(kind, managedBy?, renderId)` and use contribution ID fallback only when the fallback is unambiguous?",
+      "executor_note": "CONFIRMED: The lookup implementation prefers (kind, managedBy?, renderId?) via the primary strategy. managedBy maps to the contribution index extensionId, and renderId (when present) provides an additional filter. The primary strategy only activates when at least managedBy or renderId is supplied \u2014 a bare kind match is treated as too broad. The contribution-ID-only fallback activates only when primary is inactive or ambiguous, and returns a result only when exactly one entry matches (unambiguous). Tests cover primary with managedBy, primary with renderId, fallback with unambiguous match, am..."
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "verdict": "",
+      "question": "Are effect consumptions projected as `consumes` edges to contribution nodes without introducing public effect node kinds?",
+      "executor_note": "CONFIRMED. Effect consumptions are projected as consumes edges (kind: 'consumes') from clip nodes to contribution nodes with detail consumedKind: 'effect'. The target nodes use the existing 'contribution' node kind \u2014 no new 'effect' node kind is introduced. Verified by test 'projects consumes edges for clip effects targeting contribution nodes without public effect node kinds' which asserts nodeKinds restricted to ['clip', 'timeline-postprocess', 'contribution'] and confirms the edge structure."
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "verdict": "",
+      "question": "Are transition and mask-material consumptions projected through the existing `consumes` edge kind with the required detail fields and no `consumes-mask` edge kind?",
+      "executor_note": "Confirmed. Transition and transition mask-material consumptions are both projected through the existing `consumes` edge kind. No `consumes-mask` edge was added. The emitted detail includes `consumedKind`, `clipId`, owner provenance (`ownerKind`, `ownerId`), and for mask-material edges also `targetSlot` and `materialRefId`, as verified by the added projector assertions."
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "verdict": "",
+      "question": "Do the diagnostic types include M5-specific effect/transition codes and all required material slot, owner, resolver, package, and repair-action fields?",
+      "executor_note": "CONFIRMED. The diagnostic types include all M5-specific effect/transition codes: 9 effect codes (missing, disabled, inactive-reserved, invalid-package, duplicate, settings-error, runtime-error, version-incompatible, unknown) and 9 transition codes (same states). CompositionDiagnosticDetail now includes materialSlot (for slot bindings like 'transition-mask'), ownerKind and ownerId (for owner provenance), resolverState (resolver classification), packageState (contribution index package state), and repairAction (UI repair payload). The existing materialRefId, refKey, extensionId, and contribut..."
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "verdict": "",
+      "question": "Do missing and disabled effect/transition refs emit M5 kind-specific diagnostics rather than generic reference diagnostics, while still carrying resolver state details?",
+      "executor_note": "Yes. Projector coverage now shows missing effect refs emit `composition/effect-missing-ref` and disabled transition refs emit `composition/transition-disabled-ref`, both with `resolverState` detail, and the tests assert that generic `composition/missing-ref` / `composition/disabled-ref` are not used for those M5 refs."
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "verdict": "",
+      "question": "Do transition mask missing, stale, failed, and route-incompatible states produce diagnostics at material attach boundaries without adding any write path besides `material.attach`?",
+      "executor_note": "Confirmed. Transition mask attach-boundary failures now surface diagnostics for missing/unresolved, pending, stale, failed, and route-incompatible material states with slot/owner/ref/repairAction detail, and the only write path remains `material.attach`."
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "verdict": "",
+      "question": "Do export guard and render planner blockers surface M5 graph diagnostics before repair or bake and clear once the underlying diagnostic state is resolved?",
+      "executor_note": "CONFIRMED: M5 graph diagnostics now flow through both export guard and render planner blockers. Error-severity effect/transition diagnostic codes (disabled-ref, invalid-package-ref, duplicate-ref, settings-error-ref, runtime-error-ref, version-incompatible-ref, unknown-ref) produce export blockers (severity: error, reason: inactive-extension/missing-contribution/unknown) that prevent canBrowserExport and canWorkerExport. Warning-severity codes (missing-ref, inactive-reserved-ref) produce findings but no blockers. When the graph has no diagnostics (resolved state), blockers clear and export..."
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "verdict": "",
+      "question": "Does `BlockerActionCard` render severity, code, message, and exactly one next-action control that invokes `onAction`?",
+      "executor_note": "YES. BlockerActionCard renders severity (uppercase badge: ERROR/WARNING/INFO with data-video-editor-blocker-severity-badge attribute), diagnostic code (inside a <code> element with class blocker-action-card-code), and message (in a <p> element with class blocker-action-card-message). Exactly one next-action button is rendered \u2014 only when both nextAction and onAction props are non-null. The button carries data-video-editor-blocker-action-kind from nextAction.kind, uses nextAction.label as accessible button name, and invokes onAction on click (verified via vi.fn() mock with toHaveBeenCalledTi..."
+    },
+    {
+      "id": "SC10",
+      "task_id": "T10",
+      "verdict": "",
+      "question": "Do existing material, inspector, export, and status surfaces use the shared blocker/action component without adding a new top-level repair surface?",
+      "executor_note": "Yes. Existing material, clip inspector, and status regions now consume the shared BlockerActionCard inline: MaterialBrowser uses it for material/planner blockers with repair callbacks, ClipPanel uses it for existing shader/transition blocker rows, and ExtensionStatusDrawer uses it for export/planner blocker diagnostics. No new top-level repair surface was introduced."
+    },
+    {
+      "id": "SC11",
+      "task_id": "T11",
+      "verdict": "",
+      "question": "Does Flagship Wipe declare a descriptor-level `transition-mask` slot only as example/test metadata, with descriptor projection coverage?",
+      "executor_note": "Yes. Flagship Wipe now declares a descriptor-level `transition-mask` material slot via `materialSlots: [{ name: 'transition-mask', label: 'Transition Mask' }]` in its TransitionContribution. The slot is explicitly annotated as example/test metadata (not a production SDK constant). Descriptor projection coverage is provided by 16 tests in the new transitionProjector.test.ts file, including dedicated tests that verify the slot projects through `buildTransitionDescriptors` into the `VideoEditorTransitionDescriptor.materialSlots` array with correct name/label, frozen immutability, and that no i..."
+    },
+    {
+      "id": "SC12",
+      "task_id": "T12",
+      "verdict": "",
+      "question": "Does EX-02 prove effect `consumes`, effect-param `binds-live`, export blocking before bake, and export clearance after bake?",
+      "executor_note": "Confirmed by the new EX-02 canary: the baked snapshot projects a `consumes` edge for Flagship Glow and a `binds-live` edge targeting the effect `intensity` param, while the unbaked config blocks export with `export/live-binding-unresolved` and the deterministic-capture bake clears both export and planner blockers."
+    },
+    {
+      "id": "SC13",
+      "task_id": "T13",
+      "verdict": "",
+      "question": "Does EX-03 prove transition `consumes` plus mask-material slot consumption with the exact attached `materialRefId`?",
+      "executor_note": "Yes. EX-03 now asserts the Flagship Wipe transition `consumes` edge and the `consumes` edge for `consumedKind: 'mask-material'` targeting `transition-mask`, with the edge detail `materialRefId` matching the exact agent-promoted deterministic material attached in the preview op."
+    },
+    {
+      "id": "SC14",
+      "task_id": "T14",
+      "verdict": "",
+      "question": "Does browser acceptance cover both happy and blocker/repair paths for EX-02 and EX-03 using existing Testing Library patterns?",
+      "executor_note": "Browser acceptance now covers EX-02 and EX-03 with one happy path and one blocker/repair path each in `m5-composed-examples.browser.test.tsx`, following the repository's Testing Library `.browser.test.tsx` pattern."
+    },
+    {
+      "id": "SC15",
+      "task_id": "T15",
+      "verdict": "",
+      "question": "Do the release example docs identify EX-01, EX-02, and EX-03 as graph-backed V1 examples and state that legacy planner data is compatibility-only?",
+      "executor_note": "CONFIRMED: The release example docs now identify EX-01, EX-02, and EX-03 as 'Graph-backed V1 example' in the Ownership Snapshot table. The Posture section explicitly states legacy planner data is compatibility-only: 'Legacy planner data (descriptor-level fields that predate the composition graph) is compatibility-only in V1. EX-01, EX-02, and EX-03 assert their release readiness through graph-backed edges projected from the composition graph rather than through legacy planner lookups.' EX-02 and EX-03 each have new 'M5 implementation evidence (V1 graph-backed)' subsections documenting their..."
+    },
+    {
+      "id": "SC16",
+      "task_id": "T16",
+      "verdict": "",
+      "question": "Did the scoped validation suite run after all implementation tasks, with any failures classified as new M5 regressions versus pre-existing baseline failures?",
+      "executor_note": "The scoped validation suite was run after all implementation tasks. One M5 regression was found and fixed: contributionRenderId() crashed on undefined contributions from inactive-reserved items. After fix, all test suites pass (156 runtime + 60 component + 6 integration = 222 tests). The clip-local-shader-canary.integration.test.tsx hangs during module initialization \u2014 this is a pre-existing environment issue, not an M5 regression, as it hangs before any test code executes."
+    }
+  ],
+  "task_updates": [
+    {
+      "task_id": "T2",
+      "status": "done",
+      "executor_notes": "Added EffectTransitionContributionLookup type and three exported functions (resolveEffectTransitionContributionEntry, resolveEffectContributionEntry, resolveTransitionContributionEntry) to graphProjector.ts. The core resolver uses a two-tier strategy: primary matches by (kind, managedBy?, renderId?) when at least managedBy or renderId is provided; fallback matches by contributionId only when exactly one entry matches. Convenience wrappers delegate from TimelineEffectSummary/TimelineTransitionSummary. All 63 composition tests pass (28 projector tests including 18 new M5 tests) with zero regr...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/graphProjector.ts",
+        "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/"
+      ]
+    },
+    {
+      "task_id": "T3",
+      "status": "done",
+      "executor_notes": "Added effect consumes edge projection block in projectCompositionGraph (graphProjector.ts lines 795-842) that iterates clip.effects, resolves contribution entries via resolveEffectContributionEntry (reusing T2 lookup helpers), and emits consumes edges with typed detail (effectId, clipId, effectType, refKey, consumedKind: 'effect', scope: 'clip'). Effect target nodes are standard 'contribution' nodes \u2014 no public effect node kinds introduced. Added 4 projector tests: (1) managed effect primary match, (2) unmanaged effect fallback contributionId match, (3) unresolvable effect skip, (4) cross-c...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/graphProjector.ts",
+        "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/"
+      ]
+    },
+    {
+      "task_id": "T4",
+      "status": "done",
+      "executor_notes": "Added transition consumes projection for `clip.transition` and transition-owner mask-material consumes projection for `input.materialSlotBindings` in `projectCompositionGraph()`. Both paths emit only `kind: 'consumes'` edges targeting standard transition contribution nodes, with detail carrying `consumedKind`, `clipId`, `refKey`, owner provenance (`ownerKind`, `ownerId`), and for mask-material edges `targetSlot` plus `materialRefId`. Added projector coverage for managed and unmanaged transitions, mask-material detail/provenance, and owner-mismatch skipping. Verified with `npx vitest run --c...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/graphProjector.ts",
+        "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ]
+    },
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "Extended COMPOSITION_DIAGNOSTIC_CODE with 18 M5-specific effect/transition ref codes (EFFECT_MISSING_REF through EFFECT_UNKNOWN_REF, TRANSITION_MISSING_REF through TRANSITION_UNKNOWN_REF). Added 6 new detail fields to CompositionDiagnosticDetail: materialSlot, ownerKind, ownerId, resolverState, packageState, repairAction. Added exported helpers: referenceStateToEffectDiagnosticCode, referenceStateToTransitionDiagnosticCode, isEffectDiagnosticCode, isTransitionDiagnosticCode, effectDiagnosticSeverity, transitionDiagnosticSeverity. Updated buildCompositionDiagnostic to route effect/transition...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/diagnostics.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/referenceResolver.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/exportGuard.test.ts"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "Added an M5 effect/transition diagnostic pass in graph projection that records reference states and emits kind-specific effect/transition codes instead of generic ref diagnostics, carrying resolverState, packageState, owner, and slot/material detail where present. Added projector assertions for missing effect refs and disabled transition plus transition-slot refs; `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts` passed (37 tests).",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/graphProjector.ts",
+        "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ]
+    },
+    {
+      "task_id": "T7",
+      "status": "done",
+      "executor_notes": "Mapped material.attach attach-boundary failures to transition-slot diagnostics instead of generic first-entry material diagnostics: unresolved/missing and pending states now emit `composition/material-not-resolved`; stale emits `composition/material-stale`; failed emits `composition/material-failed`; route-incompatible emits route-scoped `composition/material-route-incompatible`. The attach-boundary detail now carries `materialSlot`, owner provenance, transition ref identity, `resolverState`, `packageState`, `nextAction`, and a richer `repairAction`, while resolved warning-only materials no...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+        "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "src/tools/video-editor/runtime/composition/patchPreview.ts",
+        "src/tools/video-editor/runtime/composition/patchPreview.test.ts"
+      ],
+      "commands_run": [
+        "pnpm vitest src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts"
+      ]
+    },
+    {
+      "task_id": "T8",
+      "status": "done",
+      "executor_notes": "Added BLOCKING_M5_COMPOSITION_DIAGNOSTIC_CODES (union of EFFECT_ERROR_DIAGNOSTIC_CODES and TRANSITION_ERROR_DIAGNOSTIC_CODES) plus isBlockingM5CompositionDiagnosticCode and m5CompositionBlockerReason helpers in diagnostics.ts. Added scanCompositionGraphM5ExportBlockers to exportGuard.ts that maps M5 effect/transition diagnostic codes to export/effect-unresolved-ref and export/transition-unresolved-ref export diagnostics with per-route findings and blockers for error-severity codes; non-blocking warning codes surface as findings only (no blockers). Updated renderPlanner.ts compositionDiagnos...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/diagnostics.ts",
+        "src/tools/video-editor/runtime/exportGuard.ts",
+        "src/tools/video-editor/runtime/renderPlanner.ts",
+        "src/tools/video-editor/runtime/exportGuard.test.ts",
+        "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/exportGuard.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts"
+      ]
+    },
+    {
+      "task_id": "T9",
+      "status": "done",
+      "executor_notes": "Created BlockerActionCard component at src/tools/video-editor/components/BlockerActionCard.tsx that renders severity badge (with data-video-editor-blocker-severity-badge attribute), diagnostic code in a <code> element, message in a <p>, and exactly one next-action button when both nextAction and onAction props are present. The action button carries data-video-editor-blocker-action-kind from nextAction.kind, uses nextAction.label as text, nextAction.message as title tooltip, and invokes onAction on click. No button renders when either nextAction or onAction is missing (null/undefined). Expor...",
+      "files_changed": [
+        "src/tools/video-editor/components/BlockerActionCard.tsx",
+        "src/tools/video-editor/components/BlockerActionCard.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/BlockerActionCard.test.tsx"
+      ]
+    },
+    {
+      "task_id": "T10",
+      "status": "done",
+      "executor_notes": "MaterialBrowser now renders shared blocker cards from planner/material findings and keeps repair callbacks wired through `onAction`; ClipPanel uses the shared card for existing shader and transition missing-state diagnostics inside the inspector; ExtensionStatusDrawer renders export/planner blocker cards inline in the drawer without adding a new top-level repair surface. Verified with `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/BlockerActionCard.test.tsx src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/component...",
+      "files_changed": [
+        "src/tools/video-editor/components/BlockerActionCard.tsx",
+        "src/tools/video-editor/components/MaterialBrowser.tsx",
+        "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+        "src/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx",
+        "src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx",
+        "src/tools/video-editor/components/PropertiesPanel/ClipPanel.transition.test.tsx",
+        "src/tools/video-editor/runtime/ExtensionStatusDrawer.tsx",
+        "src/tools/video-editor/runtime/ExtensionStatusDrawer.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/BlockerActionCard.test.tsx src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx src/tools/video-editor/components/PropertiesPanel/ClipPanel.transition.test.tsx src/tools/video-editor/runtime/ExtensionStatusDrawer.test.tsx"
+      ]
+    },
+    {
+      "task_id": "T11",
+      "status": "done",
+      "executor_notes": "Added materialSlots with a single 'transition-mask' slot (name: 'transition-mask', label: 'Transition Mask') to the Flagship Wipe transition contribution in flagship-local/index.ts. The slot is clearly annotated as example/test metadata, not a production SDK constant. Created transitionProjector.test.ts with 16 tests covering: basic descriptor projection, label fallback, export flag defaults/preservation, skipping contributions without transitionId, material slot projection (single, multiple, empty, undefined, frozen immutability, example/test data semantics), multiple-contribution ordering...",
+      "files_changed": [
+        "src/tools/video-editor/examples/extensions/flagship-local/index.ts",
+        "src/tools/video-editor/runtime/families/projectors/transitionProjector.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families/projectors/transitionProjector.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/flagship-local-transition.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families/"
+      ]
+    },
+    {
+      "task_id": "T12",
+      "status": "done",
+      "executor_notes": "Added `flagship-local-m5-effect-live-canary.integration.test.tsx` to compose Flagship Glow with an effect-param live binding, assert pre-bake `export/live-binding-unresolved`, then bake a deterministic-capture ref and assert a graph-backed `consumes` edge plus `binds-live` edge targeting `effect-param` `intensity`, with export/planner clearance after bake. The canary exposed that real flagship descriptors were missing contribution-index `renderId` population and default render-id forwarding in effect/transition lookup wrappers, so both were wired before verification. `npx vitest run --confi...",
+      "files_changed": [
+        "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx",
+        "src/tools/video-editor/runtime/composition/graphProjector.ts",
+        "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx"
+      ]
+    },
+    {
+      "task_id": "T13",
+      "status": "done",
+      "executor_notes": "Added `flagship-local-m5-transition-mask-canary.integration.test.tsx` to compose Flagship Wipe, promote a deterministic mask material through the agent-tool durable-promotion path, attach it to `transition-mask`, and assert graph-backed `consumes` edges for both the transition and the mask-material slot with the exact attached `materialRefId`. Verified with `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx`.",
+      "files_changed": [
+        "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx"
+      ]
+    },
+    {
+      "task_id": "T14",
+      "status": "done",
+      "executor_notes": "Added `m5-composed-examples.browser.test.tsx` with Testing Library browser acceptance coverage for EX-02 and EX-03. EX-02 covers graph-backed effect/live happy and blocker/repair paths; EX-03 covers transition-mask happy and blocker/repair paths through the material browser action surface. Verified with `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx` (4 tests passed).",
+      "files_changed": [
+        "src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx"
+      ]
+    },
+    {
+      "task_id": "T15",
+      "status": "done",
+      "executor_notes": "Updated m0-release-examples.md with four targeted edits: (1) Ownership Snapshot table now identifies EX-01, EX-02, and EX-03 as 'Graph-backed V1 example'. (2) Posture section now states legacy planner data is compatibility-only for V1, explicitly naming all three examples. (3) EX-02 section gains 'M5 implementation evidence (V1 graph-backed)' subsection documenting the effect consumes edge, binds-live edge, export block before bake, clearance after bake, and browser acceptance happy/blocker-repair paths \u2014 all verified against the actual integration test (flagship-local-m5-effect-live-canary...",
+      "files_changed": [
+        "docs/extensions/composition-spine/m0-release-examples.md"
+      ],
+      "commands_run": []
+    },
+    {
+      "task_id": "T16",
+      "status": "done",
+      "executor_notes": "Ran all five command blocks from the task. Found and fixed one M5 regression: contributionRenderId in FamilyRuntimeAssembly.ts threw TypeError when processing inactive-reserved contributions (which don't carry the full 'contribution' object \u2014 only contributionId). Added null guard. After fix: all runtime tests (156), component tests (60), and all reachable integration tests (6) pass cleanly. The clip-local-shader-canary.integration.test.tsx hangs during module initialization \u2014 this is a pre-existing environment issue (hangs before any test runs, same behavior with thread and fork pools).",
+      "files_changed": [
+        "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts (37 passed)",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts (27 passed)",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts (92 passed)",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/BlockerActionCard.test.tsx src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx src/tools/video-editor/runtime/ExtensionStatusDrawer.test.tsx (60 passed, after fix)",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx (HUNG \u2014 pre-existing env issue)",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx (1 passed)",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx (1 passed)",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx (4 passed)"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC2",
+      "executor_note": "CONFIRMED: The lookup implementation prefers (kind, managedBy?, renderId?) via the primary strategy. managedBy maps to the contribution index extensionId, and renderId (when present) provides an additional filter. The primary strategy only activates when at least managedBy or renderId is supplied \u2014 a bare kind match is treated as too broad. The contribution-ID-only fallback activates only when primary is inactive or ambiguous, and returns a result only when exactly one entry matches (unambiguous). Tests cover primary with managedBy, primary with renderId, fallback with unambiguous match, am..."
+    },
+    {
+      "sense_check_id": "SC3",
+      "executor_note": "CONFIRMED. Effect consumptions are projected as consumes edges (kind: 'consumes') from clip nodes to contribution nodes with detail consumedKind: 'effect'. The target nodes use the existing 'contribution' node kind \u2014 no new 'effect' node kind is introduced. Verified by test 'projects consumes edges for clip effects targeting contribution nodes without public effect node kinds' which asserts nodeKinds restricted to ['clip', 'timeline-postprocess', 'contribution'] and confirms the edge structure."
+    },
+    {
+      "sense_check_id": "SC4",
+      "executor_note": "Confirmed. Transition and transition mask-material consumptions are both projected through the existing `consumes` edge kind. No `consumes-mask` edge was added. The emitted detail includes `consumedKind`, `clipId`, owner provenance (`ownerKind`, `ownerId`), and for mask-material edges also `targetSlot` and `materialRefId`, as verified by the added projector assertions."
+    },
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "CONFIRMED. The diagnostic types include all M5-specific effect/transition codes: 9 effect codes (missing, disabled, inactive-reserved, invalid-package, duplicate, settings-error, runtime-error, version-incompatible, unknown) and 9 transition codes (same states). CompositionDiagnosticDetail now includes materialSlot (for slot bindings like 'transition-mask'), ownerKind and ownerId (for owner provenance), resolverState (resolver classification), packageState (contribution index package state), and repairAction (UI repair payload). The existing materialRefId, refKey, extensionId, and contribut..."
+    },
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "Yes. Projector coverage now shows missing effect refs emit `composition/effect-missing-ref` and disabled transition refs emit `composition/transition-disabled-ref`, both with `resolverState` detail, and the tests assert that generic `composition/missing-ref` / `composition/disabled-ref` are not used for those M5 refs."
+    },
+    {
+      "sense_check_id": "SC7",
+      "executor_note": "Confirmed. Transition mask attach-boundary failures now surface diagnostics for missing/unresolved, pending, stale, failed, and route-incompatible material states with slot/owner/ref/repairAction detail, and the only write path remains `material.attach`."
+    },
+    {
+      "sense_check_id": "SC8",
+      "executor_note": "CONFIRMED: M5 graph diagnostics now flow through both export guard and render planner blockers. Error-severity effect/transition diagnostic codes (disabled-ref, invalid-package-ref, duplicate-ref, settings-error-ref, runtime-error-ref, version-incompatible-ref, unknown-ref) produce export blockers (severity: error, reason: inactive-extension/missing-contribution/unknown) that prevent canBrowserExport and canWorkerExport. Warning-severity codes (missing-ref, inactive-reserved-ref) produce findings but no blockers. When the graph has no diagnostics (resolved state), blockers clear and export..."
+    },
+    {
+      "sense_check_id": "SC9",
+      "executor_note": "YES. BlockerActionCard renders severity (uppercase badge: ERROR/WARNING/INFO with data-video-editor-blocker-severity-badge attribute), diagnostic code (inside a <code> element with class blocker-action-card-code), and message (in a <p> element with class blocker-action-card-message). Exactly one next-action button is rendered \u2014 only when both nextAction and onAction props are non-null. The button carries data-video-editor-blocker-action-kind from nextAction.kind, uses nextAction.label as accessible button name, and invokes onAction on click (verified via vi.fn() mock with toHaveBeenCalledTi..."
+    },
+    {
+      "sense_check_id": "SC10",
+      "executor_note": "Yes. Existing material, clip inspector, and status regions now consume the shared BlockerActionCard inline: MaterialBrowser uses it for material/planner blockers with repair callbacks, ClipPanel uses it for existing shader/transition blocker rows, and ExtensionStatusDrawer uses it for export/planner blocker diagnostics. No new top-level repair surface was introduced."
+    },
+    {
+      "sense_check_id": "SC11",
+      "executor_note": "Yes. Flagship Wipe now declares a descriptor-level `transition-mask` material slot via `materialSlots: [{ name: 'transition-mask', label: 'Transition Mask' }]` in its TransitionContribution. The slot is explicitly annotated as example/test metadata (not a production SDK constant). Descriptor projection coverage is provided by 16 tests in the new transitionProjector.test.ts file, including dedicated tests that verify the slot projects through `buildTransitionDescriptors` into the `VideoEditorTransitionDescriptor.materialSlots` array with correct name/label, frozen immutability, and that no i..."
+    },
+    {
+      "sense_check_id": "SC12",
+      "executor_note": "Confirmed by the new EX-02 canary: the baked snapshot projects a `consumes` edge for Flagship Glow and a `binds-live` edge targeting the effect `intensity` param, while the unbaked config blocks export with `export/live-binding-unresolved` and the deterministic-capture bake clears both export and planner blockers."
+    },
+    {
+      "sense_check_id": "SC13",
+      "executor_note": "Yes. EX-03 now asserts the Flagship Wipe transition `consumes` edge and the `consumes` edge for `consumedKind: 'mask-material'` targeting `transition-mask`, with the edge detail `materialRefId` matching the exact agent-promoted deterministic material attached in the preview op."
+    },
+    {
+      "sense_check_id": "SC14",
+      "executor_note": "Browser acceptance now covers EX-02 and EX-03 with one happy path and one blocker/repair path each in `m5-composed-examples.browser.test.tsx`, following the repository's Testing Library `.browser.test.tsx` pattern."
+    },
+    {
+      "sense_check_id": "SC15",
+      "executor_note": "CONFIRMED: The release example docs now identify EX-01, EX-02, and EX-03 as 'Graph-backed V1 example' in the Ownership Snapshot table. The Posture section explicitly states legacy planner data is compatibility-only: 'Legacy planner data (descriptor-level fields that predate the composition graph) is compatibility-only in V1. EX-01, EX-02, and EX-03 assert their release readiness through graph-backed edges projected from the composition graph rather than through legacy planner lookups.' EX-02 and EX-03 each have new 'M5 implementation evidence (V1 graph-backed)' subsections documenting their..."
+    },
+    {
+      "sense_check_id": "SC16",
+      "executor_note": "The scoped validation suite was run after all implementation tasks. One M5 regression was found and fixed: contributionRenderId() crashed on undefined contributions from inactive-reserved items. After fix, all test suites pass (156 runtime + 60 component + 6 integration = 222 tests). The clip-local-shader-canary.integration.test.tsx hangs during module initialization \u2014 this is a pre-existing environment issue, not an M5 regression, as it hangs before any test code executes."
+    },
+    {
+      "sense_check_id": "SC1",
+      "executor_note": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative."
+    }
+  ],
+  "output": "Aggregated execute batches: completed 15/15. Batch 1: Added graph projector lookup helpers (resolveEffectTransitionContributionEntry, resolveEffectContributionEntry, resolveTransitionContributionEntry) that resolve effect and transition timeline summaries by (kind, managedBy?, renderId) and fall back to contribution ID only when unambiguous. All 63 composition tests pass, including 18 new M5-specific tests. Batch 2: Added effect consumes edge projection in graphProjector.ts (lines 795-842) that iterates clip.effects, resolves contribution entries via resolveEffectContributionEntry, and emits consumes edges to contribution nodes with typed detail (effectId, clipId, effectType, refKey, consumedKind: 'effect', scope: 'clip'). No public effect node kinds introduced \u2014 effects target existing 'contribution' nodes. Added 4 new tests covering managed/primary match, unmanaged/fallback match, unresolvable skip, and cross-clip deduplication. All 67 composition tests pass (32 projector tests) with zero regressions. Batch 3: Projected transition consumes edges and transition mask-material consumes edges through the existing `consumes` edge kind, with clip and owner provenance detail, and verified with the scoped composition projector test file. Batch 4: Successfully extended M5 graph diagnostic types and codes. Added 18 new effect/transition-specific diagnostic codes (9 effect + 9 transition), 6 new detail fields (materialSlot, ownerKind, ownerId, resolverState, packageState, repairAct...",
+  "deviations": [
+    "Advisory quality: .megaplan/telemetry/m5-effects-transitions-live-20260704-1310.ndjson grew by 219 lines (threshold 200).",
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/graphProjector.ts",
+    "Advisory audit finding: Executor claimed changed files not present in git status: src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/graphProjector.ts",
+    "Advisory audit finding: Sense check SC3 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC11 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC12 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC13 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC14 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC15 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC16 is missing an executor acknowledgment.",
+    "Advisory audit finding: Tasks left pending after execute (executor never started them): T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16",
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/graphProjector.ts",
+    "Advisory audit finding: Executor claimed changed files not present in git status: src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/graphProjector.ts",
+    {
+      "omitted_count": 137,
+      "reason": "prompt projection"
+    }
+  ],
+  "files_changed": [
+    "src/tools/video-editor/runtime/composition/graphProjector.ts",
+    "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+    "src/tools/video-editor/runtime/composition/diagnostics.ts",
+    "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+    "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+    "src/tools/video-editor/runtime/composition/patchPreview.ts",
+    "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+    "src/tools/video-editor/runtime/exportGuard.ts",
+    "src/tools/video-editor/runtime/renderPlanner.ts",
+    "src/tools/video-editor/runtime/exportGuard.test.ts",
+    "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+    "src/tools/video-editor/components/BlockerActionCard.tsx",
+    "src/tools/video-editor/components/BlockerActionCard.test.tsx",
+    "src/tools/video-editor/components/MaterialBrowser.tsx",
+    "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+    "src/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx",
+    "src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx",
+    "src/tools/video-editor/components/PropertiesPanel/ClipPanel.transition.test.tsx",
+    "src/tools/video-editor/runtime/ExtensionStatusDrawer.tsx",
+    "src/tools/video-editor/runtime/ExtensionStatusDrawer.test.tsx"
+  ],
+  "commands_run": [
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/referenceResolver.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/exportGuard.test.ts",
+    "pnpm vitest src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/BlockerActionCard.test.tsx",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/BlockerActionCard.test.tsx src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx src/tools/video-editor/components/PropertiesP...",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families/projectors/transitionProjector.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/flagship-local-transition.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families/",
+    "npx tsx -e \"import { flagshipLocalExtension } from './src/tools/video-editor/examples/extensions/flagship-local/index.ts'; import { normalizeExtensionRuntime } from './src/tools/video-editor/runtime/extensionSurface.ts'; import { buildTimelineData } from './src/tools/video-editor/lib/timeline-dat...",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/BlockerActionCard.test.tsx src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx src/tools/video-editor/runtime/ExtensionStatu...",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx"
+  ],
+  "watch_items": [
+    "Preserve Epic North Star constraints: extensions and processes must not mutate raw timeline internals, and graph-authoritative fact families must flow through the host-projected `CompositionGraph`.",
+    "Do not introduce public effect or transition node kinds; effects and transitions remain `contribution` nodes.",
+    "Do not introduce `consumes-mask`; transition masks must use the existing `consumes` edge kind with M5 detail fields.",
+    "Keep V1 target paths limited to clip/effect/transition params and shader uniforms; do not broaden into generic material graphs, texture routing, shader stacks, FBO chains, or WebGPU.",
+    "M5 effect and transition missing/disabled diagnostics must use kind-specific codes, even if resolver state classification is shared internally.",
+    "`transition-mask` is a Flagship example/test slot name, not a production constant or SDK-wide reserved slot.",
+    "`material.attach` remains the only write path for transition mask bindings; repair UI should call established actions rather than mutating graph or timeline structures directly.",
+    "Browser acceptance is expected to use Testing Library `.browser.test.tsx` patterns per settled decision SD3; do not switch to Playwright unless a later human instruction requires it.",
+    "The two M5 canary files may not exist yet and should be created during execution.",
+    "Final verification should include EX-01 as a regression gate so M4 clip-local shader graph semantics remain unchanged."
+  ],
+  "user_actions": [],
+  "meta_commentary": "Execute the tasks in order; the DAG intentionally isolates tier-4 graph, diagnostic, attach-boundary, UI integration, and composed-canary work so each worker turn has one coherent contract. Treat plan and gate decisions as settled: no `consumes-mask`, no public effect/transition node kinds, no process runtime or sandbox work, and no generic material routing. Prefer the files named in each task and the plan blast radius, but let repo structure guide exact placement. Tests should be scoped to the changed surfaces and compared against any recorded baseline; do not spend the final validation task trying to fix unrelated pre-existing failures."
+}
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-04T15:34:59Z",
+  "hash": "sha256:de8c0754b74e76669842df49444be6e4272544a9e4ef71e11934953cc9f1e134",
+  "questions": [
+    "Should M5 introduce separate diagnostic codes for every non-resolved effect/transition ref state, or only for missing/disabled while other states use generic reference diagnostics with M5 detail?",
+    "Should browser acceptance live under Testing Library integration tests or Playwright e2e specs?",
+    "Should ticket `01KS384XKZNEWQRSXN2NXQ0DTJ` be proposed as `resolves_on_complete=true`, or is it broader than M5?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Graph projector emits typed effect `consumes` edges without public effect node kinds.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Graph projector emits transition and mask-material `consumes` edges using the existing `consumes` edge kind, never `consumes-mask`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Effect-param live bindings continue to project `binds-live` edges to effect contribution nodes.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Missing/disabled effect and transition refs produce M5-specific diagnostics with resolver and contribution details.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Transition mask missing and route-incompatible states produce diagnostics with `materialSlot`, `materialRefId`, and repair action detail.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Export guard and planner block on M5 graph diagnostics and clear once diagnostics are resolved.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Shared blocker/action UI renders code/message/severity and invokes the next-action callback.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "inspect_runtime_ui",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "EX-02 is graph-backed and proves effect consumes, effect-param live binding, export block, and bake clearance.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "EX-03 is graph-backed and proves transition consumes plus mask-material slot consumption with matching `materialRefId`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "EX-01 clip + shader + keyframes canary remains passing unchanged in graph semantics.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Browser acceptance covers happy and blocker/repair paths for EX-02 and EX-03.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "drive_browser",
+        "inspect_runtime_ui"
+      ]
+    },
+    {
+      "criterion": "Docs identify EX-01/EX-02/EX-03 as graph-backed V1 examples and state legacy planner data is compatibility-only.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    }
+  ],
+  "assumptions": [
+    "No `consumes-mask`, no public effect/transition node kinds, no process runtime, and no arbitrary material routing.",
+    "`ContributionIndexEntry.renderId` should be populated for effect/transition contributions rather than adding new public timeline ref fields first.",
+    "The existing `material.attach` preview operation is the graph-owned write path for transition mask bindings.",
+    "`transition-mask` is a Flagship example/test slot name, not a production constant.",
+    "Testing Library integration tests count as browser acceptance unless the reviewer requires Playwright."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "reason": "Direct graph projector coverage."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/exportGuard.test.ts",
+        "reason": "M5 diagnostic export funnel."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+        "reason": "Planner graph diagnostic behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+        "reason": "Repair UI integration."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx",
+        "reason": "EX-01 regression gate."
+      }
+    ],
+    "changed_surfaces": [
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.test.ts",
+      "src/tools/video-editor/runtime/composition/graphProjector.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+      "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+      "src/tools/video-editor/runtime/exportGuard.ts",
+      "src/tools/video-editor/runtime/exportGuard.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+      "src/tools/video-editor/components/BlockerActionCard.tsx",
+      "src/tools/video-editor/components/BlockerActionCard.test.tsx",
+      "src/tools/video-editor/components/MaterialBrowser.tsx",
+      "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+      "src/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx",
+      "src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx",
+      "src/tools/video-editor/runtime/ExtensionStatusDrawer.tsx",
+      "src/tools/video-editor/runtime/ExtensionStatusDrawer.test.tsx",
+      "src/tools/video-editor/examples/extensions/flagship-local/index.ts",
+      "src/tools/video-editor/examples/extensions/__tests__/flagship-local-transition.test.ts",
+      "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/agent-tools-canary.test.ts",
+      "src/tools/video-editor/examples/extensions/__tests__/live-generated-frame-canary.test.ts",
+      "src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx",
+      "docs/extensions/composition-spine/m0-release-examples.md"
+    ],
+    "always_run": [
+      "pnpm vitest src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "pnpm vitest src/tools/video-editor/runtime/exportGuard.test.ts",
+      "pnpm vitest src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/tools/video-editor/components/BlockerActionCard.test.tsx, src/tools/video-editor/components/BlockerActionCard.tsx, src/tools/video-editor/components/MaterialBrowser.test.tsx, src/tools/video-editor/components/MaterialBrowser.tsx, src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx, src/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx, src/tools/video-editor/examples/extensions/__tests__/agent-tools-canary.test.ts, src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/flagship-local-transition.test.ts, src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/live-generated-frame-canary.test.ts, src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx, src/tools/video-editor/examples/extensions/flagship-local/index.ts, src/tools/video-editor/runtime/ExtensionStatusDrawer.test.tsx, src/tools/video-editor/runtime/ExtensionStatusDrawer.tsx, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/graphProjector.ts, src/tools/video-editor/runtime/composition/materialRuntime.test.ts, src/tools/video-editor/runtime/composition/materialRuntime.ts, src/tools/video-editor/runtime/composition/patchPreview.test.ts, src/tools/video-editor/runtime/composition/patchPreview.ts, src/tools/video-editor/runtime/exportGuard.test.ts, src/tools/video-editor/runtime/exportGuard.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.test.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts, src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts. Ignored documentation-only change(s) for selector derivation: docs/extensions/composition-spine/m0-release-examples.md. Candidate: The work is cross-cutting but localized to video-editor graph projection, diagnostics/export, UI repair, and canary examples. Scoped tests catch the intended blast radius; full-suite fallback is appropriate because shared runtime types are touched. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx"
+    ]
+  },
+  "structure_warnings": [
+    "Each step section should include at least one numbered substep.",
+    "Each step section should reference at least one file in backticks."
+  ]
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "PROCEED",
+  "passed": true,
+  "rationale_brief": "No blocking flags exist at iteration 1. The plan aligns with the Epic North Star: effects and transitions remain `contribution` nodes, `consumes` is the sole edge kind (no `consumes-mask`), no public effect/transition node kinds are introduced, and process runtime/sandbox/marketplace stay OUT. The 15-step plan across 4 phases is coherently structured with clear execution and validation ordering.",
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "Effect and transition missing/disabled ref diagnostics use M5-specific codes rather than collapsing into generic reference diagnostics, even though the brief suggested generic ref diagnostics are reusable.",
+      "rationale": "The plan explicitly resolves this tension in favor of the stricter task-level constraint. Resolver state classification is reused internally, but diagnostic emission uses kind-specific codes for effect and transition references."
+    },
+    {
+      "id": "SD2",
+      "decision": "No `consumes-mask` edge kind is introduced; transition mask material consumption projects through the existing `consumes` edge with detail fields `consumedKind: 'mask-material'` and `targetSlot: 'transition-mask'`.",
+      "rationale": "Aligned with the Epic North Star constraint against arbitrary material routing and the locked decision that transition mask slots consume resolved `MaterialRef` identities through declared material slots."
+    },
+    {
+      "id": "SD3",
+      "decision": "Browser acceptance tests live under Testing Library integration tests (`.browser.test.tsx`) rather than Playwright e2e specs.",
+      "rationale": "The plan metadata assumption states Testing Library integration tests count as browser acceptance unless reviewer requires Playwright. The blast radius confirms the test file `m5-composed-examples.browser.test.tsx`."
+    },
+    {
+      "id": "SD4",
+      "decision": "The `transition-mask` slot name is a Flagship example/test convention, not a production constant.",
+      "rationale": "Explicitly noted in plan assumptions. This keeps the slot name descriptive for the composed example without baking it into the SDK surface."
+    }
+  ],
+  "warnings": [
+    "Criterion 6 (export guard and planner block/clear) requires `run_build_output` and `inspect_runtime_ui` verification during execution \u2014 ensure the executor has a strategy for build-output inspection, not just test assertions.",
+    "Two test files in the blast radius (`flagship-local-m5-effect-live-canary.integration.test.tsx`, `flagship-local-m5-transition-mask-canary.integration.test.tsx`) do not yet exist and must be created during execution \u2014 plan assumes they are authored, not pre-existing.",
+    "Plan metadata structure_warnings (missing numbered substeps, missing backticked file references in some step sections) are cosmetic and do not affect executability, but the executor should verify each step has clear file targets before beginning."
+  ],
+  "orchestrator_guidance": "First iteration; follow gate recommendation: PROCEED.",
+  "carried_flags": [],
+  "iteration": 1,
+  "produced_at": "2026-07-04T15:43:49Z"
+}
+
+        Settled decisions (verify the executor implemented these correctly):
+- SD1: Effect and transition missing/disabled ref diagnostics use M5-specific codes rather than collapsing into generic reference diagnostics, even though the brief suggested generic ref diagnostics are reusable. (The plan explicitly resolves this tension in favor of the stricter task-level constraint. Resolver state classification is reused internally, but diagnostic emission uses kind-specific codes for effect and transition references.)
+- SD2: No `consumes-mask` edge kind is introduced; transition mask material consumption projects through the existing `consumes` edge with detail fields `consumedKind: 'mask-material'` and `targetSlot: 'transition-mask'`. (Aligned with the Epic North Star constraint against arbitrary material routing and the locked decision that transition mask slots consume resolved `MaterialRef` identities through declared material slots.)
+- SD3: Browser acceptance tests live under Testing Library integration tests (`.browser.test.tsx`) rather than Playwright e2e specs. (The plan metadata assumption states Testing Library integration tests count as browser acceptance unless reviewer requires Playwright. The blast radius confirms the test file `m5-composed-examples.browser.test.tsx`.)
+- SD4: The `transition-mask` slot name is a Flagship example/test convention, not a production constant. (Explicitly noted in plan assumptions. This keeps the slot name descriptive for the composed example without baking it into the SDK surface.)
+
+
+Critique flags to re-verify against the final diff:
+            [
+  {
+    "id": "verifiability-0",
+    "concern": "Criterion 6: requires human verification (inspect_runtime_ui).",
+    "severity": "minor",
+    "status": "open"
+  },
+  {
+    "id": "verifiability-1",
+    "concern": "Criterion 10: requires human verification (drive_browser, inspect_runtime_ui).",
+    "severity": "minor",
+    "status": "open"
+  }
+]
+
+            For each flag above that was raised during critique, verify whether the final diff actually addresses the concern.
+            A flag is resolved only if the final diff contains code that directly addresses the concern.
+            Do not trust pre-execute promises or plan claims; check the diff itself.
+            Add resolved flag IDs to `verified_flag_ids`.
+            Add flag IDs that are unresolved only by prose judgment, without a deterministic pre/post failing check, to `disputed_flag_ids`.
+            For any unresolved flag that is backed by a deterministic pre/post failing check, add a `rework_items` entry with a typed `target`, `issue`, `expected`, `actual`, `evidence_file`, `flag_id`, `source: "review_flag_reverify"`, and `deterministic_check`. Use `target.kind: "task"` with `task_id` for a single finalize task, `target.kind: "bulk"` with `task_ids` for a bulk operation that maps to multiple finalize tasks, or `target.kind: "manifest"` with `task_ids` for manifest-backed routes. Only use legacy `task_id: "REVIEW"` when the finding is a review blocker with no routable finalize target; execute treats that as telemetry/blocker compatibility, not runnable rework.
+
+Advisory mechanical pre-check flags:
+            [
+  {
+    "id": "PRECHECK-DIFF_SIZE_SANITY",
+    "check": "diff_size_sanity",
+    "detail": "Diff size looks larger than expected: changed_lines=5142, expected\u2248480, ratio=10.71, files=27, hunks=78.",
+    "severity": "minor",
+    "evidence_file": "docs/extensions/composition-spine/m0-release-examples.md"
+  }
+]
+
+            Copy this list verbatim into the output `pre_check_flags` field.
+
+        Historical execution audit context (`execution_audit.json`, prompt projection only):
+        {
+  "skipped": false,
+  "reason": "",
+  "findings": [
+    "Executor claimed changed files not present in git status: docs/extensions/composition-spine/m0-release-examples.md, src/tools/video-editor/components/BlockerActionCard.test.tsx, src/tools/video-editor/components/BlockerActionCard.tsx, src/tools/video-editor/components/MaterialBrowser.test.tsx, src/tools/video-editor/components/MaterialBrowser.tsx, src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx, src/tools/video-editor/components/PropertiesPanel/ClipPanel.transition.test.tsx, src/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx, src/tools/video-editor/e..."
+  ],
+  "files_in_diff": [
+    "docs/extensions/composition-spine/m0-release-examples.md",
+    "src/tools/video-editor/components/BlockerActionCard.test.tsx",
+    "src/tools/video-editor/components/BlockerActionCard.tsx",
+    "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+    "src/tools/video-editor/components/MaterialBrowser.tsx",
+    "src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx",
+    "src/tools/video-editor/components/PropertiesPanel/ClipPanel.transition.test.tsx",
+    "src/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx",
+    "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx",
+    "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx",
+    "src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx",
+    "src/tools/video-editor/examples/extensions/flagship-local/index.ts",
+    "src/tools/video-editor/runtime/ExtensionStatusDrawer.test.tsx",
+    "src/tools/video-editor/runtime/ExtensionStatusDrawer.tsx",
+    "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+    "src/tools/video-editor/runtime/composition/diagnostics.ts",
+    "src/tools/video-editor/runtime/composition/graphProjector.ts",
+    "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+    "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+    "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+    "src/tools/video-editor/runtime/composition/patchPreview.ts",
+    "src/tools/video-editor/runtime/exportGuard.test.ts",
+    "src/tools/video-editor/runtime/exportGuard.ts",
+    "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+    "src/tools/video-editor/runtime/families/projectors/transitionProjector.test.ts",
+    "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+    "src/tools/video-editor/runtime/renderPlanner.ts"
+  ],
+  "files_claimed": [
+    "docs/extensions/composition-spine/m0-release-examples.md",
+    "src/tools/video-editor/components/BlockerActionCard.test.tsx",
+    "src/tools/video-editor/components/BlockerActionCard.tsx",
+    "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+    "src/tools/video-editor/components/MaterialBrowser.tsx",
+    "src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx",
+    "src/tools/video-editor/components/PropertiesPanel/ClipPanel.transition.test.tsx",
+    "src/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx",
+    "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx",
+    "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx",
+    "src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx",
+    "src/tools/video-editor/examples/extensions/flagship-local/index.ts",
+    "src/tools/video-editor/runtime/ExtensionStatusDrawer.test.tsx",
+    "src/tools/video-editor/runtime/ExtensionStatusDrawer.tsx",
+    "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+    "src/tools/video-editor/runtime/composition/diagnostics.ts",
+    "src/tools/video-editor/runtime/composition/graphProjector.ts",
+    "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+    "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+    "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+    "src/tools/video-editor/runtime/composition/patchPreview.ts",
+    "src/tools/video-editor/runtime/exportGuard.test.ts",
+    "src/tools/video-editor/runtime/exportGuard.ts",
+    "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+    "src/tools/video-editor/runtime/families/projectors/transitionProjector.test.ts",
+    "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+    "src/tools/video-editor/runtime/renderPlanner.ts"
+  ]
+}
+
+        Fresh review-time evidence (`review_evidence.json`):
+        {
+  "projection": "bounded_prompt_summary",
+  "full_artifact": "review_evidence.json",
+  "schema": "megaplan.review_evidence",
+  "schema_version": 1,
+  "evidence_contract_version": 1,
+  "mode": "shadow",
+  "subject": {
+    "kind": "plan",
+    "name": "plan",
+    "to_state": "done",
+    "from_state": "executed",
+    "phase": "review",
+    "plan_name": "plan",
+    "milestone_label": null
+  },
+  "accepted": false,
+  "would_block": false,
+  "failures": [
+    "green_suite: verification suite ran but delta is not computable (collection parse failure in baseline or verification)"
+  ],
+  "providers_used": [
+    "phase_coverage",
+    "landed_diff",
+    "worker_did_work",
+    "green_suite",
+    "execution_acceptance_contract",
+    "review_disposition",
+    "declared_noop"
+  ],
+  "legacy_evidence_count": 0,
+  "unknown_evidence_count": 1,
+  "would_block_reasons": [
+    "green_suite: verification suite ran but delta is not computable (collection parse failure in baseline or verification)"
+  ],
+  "artifact": "review_evidence.json",
+  "generated_at": "2026-07-04T18:41:26Z",
+  "phase": "review",
+  "iteration": 1,
+  "base_sha": "52167a72db7fa3b7d8f95e4c7a03ae90da6a8b7a",
+  "head_sha": "9d82b26ffce0e7e6c5c41a8de4468dd1dd9b1bef",
+  "invocation_id": "851f073e0e024225",
+  "provider_diagnostics": {
+    "phase_coverage": {
+      "ok": true
+    },
+    "landed_diff": {
+      "ok": true
+    },
+    "worker_did_work": {
+      "ok": true
+    },
+    "green_suite": {
+      "ok": true
+    },
+    "execution_acceptance_contract": {
+      "ok": true
+    },
+    "review_disposition": {
+      "ok": true
+    },
+    "declared_noop": {
+      "ok": true
+    }
+  },
+  "diagnostics": {
+    "base_sha": {
+      "ok": true,
+      "source": "state.meta.chain_policy.milestone_base_sha"
+    },
+    "head_sha": {
+      "ok": true,
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "source": "git_rev_parse_head"
+    },
+    "invocation_id": {
+      "ok": true,
+      "source": "state.meta.current_invocation_id"
+    }
+  },
+  "evidence": [
+    {
+      "kind": "phase_coverage",
+      "status": "satisfied",
+      "summary": "all batch tasks done",
+      "trust_class": "judgment",
+      "provider": "PhaseCoverageProvider",
+      "provider_version": "1",
+      "source": "phase_result.json",
+      "subject": "plan",
+      "artifact": {
+        "path": "phase_result.json",
+        "sha256": "sha256:04ec992ff47c948a9312e96ed2467585e5c94ad851de8baca3b39dbcea312701",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "phase": "execute",
+        "exit_kind": "success",
+        "reason": "finalize.json",
+        "evidence_id": "sha256:00c44a13e45d5375c75f949808099866f0223701cae34a28fbb70fe78e7eb432"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "landed_diff",
+      "status": "satisfied",
+      "summary": "diff present and claim-consistent",
+      "trust_class": "judgment",
+      "provider": "LandedDiffProvider",
+      "provider_version": "1",
+      "source": "execution_evidence.validate_execution_evidence",
+      "subject": "plan",
+      "artifact": {
+        "path": "finalize.json",
+        "sha256": "sha256:fed7dcaf6f75ffce4e579fd0dc29c56d59272ade4d1b29f56ae64834a12df8ab",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "preview": "{\n  \"findings\": [],\n  \"files_in_diff\": [\n    \"docs/extensions/composition-spine/m0-release-examples.md\",\n    \"src/tools/video-editor/components/BlockerActionCard.test.tsx\",\n    \"src/tools/video-editor/components/BlockerActionCard.tsx\",\n    \"src/tools/video-editor/components/MaterialBrowser.test.tsx\",\n    \"src/tools/video-editor/components/MaterialBrowser.tsx\",\n    \"src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx\",\n    \"src/tools/video-editor/components/PropertiesPanel/ClipPanel.transition.test.tsx\",\n    \"src/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx\",\n    \"src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx\",\n    \"src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx\",\n    \"src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx\",\n    \"src/tools/video-editor/examples/extensions/flagship-local/index.ts\",\n    \"src/tools/video-editor/runtime/ExtensionStatusDrawer.test.tsx\",\n    \"src/tools/video-editor/runtime/ExtensionStatusDrawer.tsx\",\n    \"src/tools/video-editor/runtime/composition/com\n\n[truncated 3,276 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "worker_did_work",
+      "status": "satisfied",
+      "summary": "worker activity present",
+      "trust_class": "evidence",
+      "provider": "WorkerDidWorkProvider",
+      "provider_version": "1",
+      "source": "execution_batch_*.json",
+      "subject": "plan",
+      "artifacts": [
+        {
+          "path": "execution_batch_10.json",
+          "sha256": "sha256:96012fc3465f55235fbc59abdef2bd1670c3b638ab3276e7db1cb7a61556d681",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_11.json",
+          "sha256": "sha256:45cd484e3ff7a13351381919d917aacbfa4559df793b82c4825f4a2b4c2db1d3",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_12.json",
+          "sha256": "sha256:fc9c72c7869232c1eabf3c5d6341a5b36d00114b7514180985a5f1bc687ac5c2",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_13.json",
+          "sha256": "sha256:3eb18c93f9c29768ebc50073872c6cbffc2867bbf8b18a795d7e3f4b09cd8e53",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_14.json",
+          "sha256": "sha256:b93d30e3fbd697b5f46b209bccdd3f2b49cd946e459fcc3a3858e5f7fcb4f16b",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_15.json",
+          "sha256": "sha256:f5d19c5a2d7b4ad77cf6c20c788fccf6d289beec6377d893449bfe15f1596741",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_16.json",
+          "sha256": "sha256:01c93e14c78571bac9dc20c1ad9264bbfd7e8408d9d740ce1d080f9e0e3e5a49",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_2.json",
+          "sha256": "sha256:5d6358fa11499a1025568fe6164c2c67572894fe5b48e1b1c062ff5bbc160287",
+          "artifact_type": "application/json"
+        }
+      ],
+      "artifacts_omitted": 7,
+      "details_preview": {
+        "files_changed": 74,
+        "commands_run": 67,
+        "sections_written": 0,
+        "batches": 15,
+        "batch_artifacts": [
+          "execution_batch_10.json",
+          "execution_batch_11.json",
+          "execution_batch_12.json",
+          "execution_batch_13.json",
+          "execution_batch_14.json",
+          "execution_batch_15.json",
+          "execution_batch_16.json",
+          "execution_batch_2.json",
+          "execution_batch_3.json",
+          "execution_batch_4.json",
+          "execution_batch_5.json",
+          "execution_batch_6.json",
+          "execution_batch_7.json",
+          "execution_batch_8.json",
+          "execution_batch_9.json"
+        ],
+        "activity_source": "execution_batch_records",
+        "evidence_id": "sha256:90483cde2acd82608bb6169ac0d40ef2d1cedf00603fa6e3f223bfd2b1031f60"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "green_suite",
+      "status": "unsatisfied",
+      "summary": "verification suite ran but delta is not computable (collection parse failure in baseline or verification)",
+      "trust_class": "evidence",
+      "provider": "GreenSuiteProvider",
+      "provider_version": "1",
+      "source": "verification:7d9b16c5c742",
+      "subject": "plan:plan",
+      "observed_at": "1783190486.9592154",
+      "code_hash": "sha256:b92e354b8e249cdb0db1b114f54da58c078cc759b68d8b4894bd47040bb98511",
+      "artifact": {
+        "path": "verification/raw_7d9b16c5c742.log",
+        "sha256": "sha256:210018fc5d381005f1a54925f2921e8711772fdbbd76f9c3b12ac25d10a0bfdc",
+        "artifact_type": "text/plain"
+      },
+      "artifacts": [
+        {
+          "path": "verification/raw_7d9b16c5c742.log",
+          "sha256": "sha256:210018fc5d381005f1a54925f2921e8711772fdbbd76f9c3b12ac25d10a0bfdc",
+          "artifact_type": "text/plain"
+        },
+        {
+          "path": "verification/suite_runs.ndjson",
+          "sha256": "sha256:98d45f9cfb3e9c283ebbf4e198d24ee7b58d394dcabb4417b426a0775b274b25",
+          "artifact_type": "application/x-ndjson"
+        }
+      ],
+      "details_preview": {
+        "preview": "{\n  \"run_id\": \"7d9b16c5c742\",\n  \"phase\": \"verification\",\n  \"command\": \"/root/.pyenv/versions/3.11.11/bin/python -m pytest src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx --tb=no -q --no-header -rA\",\n  \"duration\": 0.31595587998162955,\n  \"collected\": 0,\n  \"collected_ids\": [],\n  \"failure_count\": 0,\n  \"failures\": [\n    \"runner_error\"\n  ],\n  \"pass_count\": 0,\n  \"status\": \"runner_error\",\n  \"exit_code\": 4,\n  \"code_hash\": \"sha256:b92e354b8e249cdb0db1b114f54da58c078cc759b68d8b4894bd47040bb98511\",\n  \"collections_parse_ok\": false,\n  \"collection_errors\": [],\n  \"raw_log_path\": \"/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m5-effects-transitions-live-20260704-1310/verification/raw_7d9b16c5c742.log\",\n  \"freshness_cache_hit\": false,\n  \"baseline_test_command\": null,\n  \"baseline_test_note\": \"Baseline capture failed: runner error (exit code: 4)\",\n  \"delta\": {\n\n\n[truncated 1,146 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "execution_acceptance_contract",
+      "status": "unknown",
+      "summary": "execute acceptance contract could not be verified because suite evidence is runner_error",
+      "trust_class": "evidence",
+      "provider": "ExecuteAcceptanceContractProvider",
+      "provider_version": "1",
+      "source": "gate.json|gate_signals_v*.json + verification/suite_runs.ndjson",
+      "subject": "plan",
+      "details_preview": {
+        "preview": "{\n  \"contract\": {\n    \"scope\": \"execute\",\n    \"verification_mode\": \"verification_suite\",\n    \"required_checks\": [\n      {\n        \"id\": \"correctness\",\n        \"question\": \"Are the proposed changes technically correct?\",\n        \"reason\": \"src/sdk/video/timeline/reader.ts defines effect/transition summaries with `effectType`/`transitionType` and `managedBy` but no `contributionId`, and src/tools/video-editor/lib/timeline-reader.ts constructs them without preserving contribution IDs.\",\n        \"complexity\": 4,\n        \"attention\": \"high_complexity_unverifiable\"\n      },\n      {\n        \"id\": \"scope\",\n        \"question\": \"Search for related code that handles the same concept. Is the reported issue a symptom of something broader \\u2014 and is any single step sized to fit one worker turn?\",\n        \"reason\": \"`src/tools/video-editor/runtime/renderPlanner.ts` calls `getCapabilityRequirements(nonShaderSnapshot)` when a composition graph exists, and `src/sdk/capabilities.ts` still derives effect/transition requirements from `snapshot.clips[*].effects` and `clip.transition`. Separately, `src/tools/video-editor/runtime/exportGuard.ts` still scans raw effect/transition types in `scanEffect()`\n\n[truncated 1,244 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "review_disposition",
+      "status": "not_applicable",
+      "summary": "no review.json (review may have been skipped)",
+      "trust_class": "judgment",
+      "provider": "ReviewDispositionProvider",
+      "provider_version": "1",
+      "subject": "plan",
+      "details_preview": {
+        "evidence_id": "sha256:519e446830e0c539cd39205827fa57231e722b8cf892a97834d8200a3ebfdc63"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "declared_noop",
+      "status": "not_applicable",
+      "summary": "no declared no-op/waiver artifact (absence is not a failure)",
+      "trust_class": "claim",
+      "provider": "DeclaredNoopProvider",
+      "provider_version": "1",
+      "source": "completion/noop.json|completion_noop.json",
+      "subject": "plan",
+      "details_preview": {
+        "evidence_id": "sha256:c5a9ab90387234220c35d0514efb5fab48bd80d5d3066b982919aa7d976625c8"
+      },
+      "details_full_location": "review_evidence.json"
+    }
+  ],
+  "evidence_count": 7,
+  "green_suite": {
+    "delta": {
+      "computable": false,
+      "newly_failing": 0,
+      "newly_passing": 0,
+      "still_red": 0,
+      "still_green": 0,
+      "deleted_tests": 0,
+      "added_tests": 0,
+      "flakes": 0,
+      "tests_collected": 0,
+      "duration": 0.31595587998162955,
+      "flake_retry_skipped": false,
+      "flake_retry_reason": ""
+    }
+  }
+}
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m5-effects-transitions-live-20260704-1310/review_output.json
+        Read this file first — it contains the expected JSON structure with pre-populated `task_verdicts`, `sense_check_verdicts`, and `criteria`.
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Git diff summary:
+        ?? .megaplan/epics/m5-effects-transitions-live-20260704-1310/
+
+        Requirements:
+        - Verify each success criterion explicitly.
+        - Fresh repository inspection and `review_evidence.json` outrank stale execution-time claims from `execution_audit.json`, `finalize.json`, and executor notes.
+        - Use repository tools to inspect relevant files and run focused verification commands when behavior or tests are part of a criterion; include concrete repository-backed evidence for every criterion verdict.
+        - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
+          - `must` criteria are hard gates only when backed by a deterministic runnable check that failed on the pre-execute baseline and still fails after execution. Ungrounded prose concerns are advisory.
+          - `should` criteria are quality targets. If the spirit is met but the letter is not, mark `pass` with evidence explaining the gap. Only mark `fail` if the intent was clearly missed. A `should` failure alone does NOT require `needs_rework`.
+          - `info` criteria are for human reference. Mark them `waived` with a note — do not evaluate them.
+          - If a criterion has `requires` capabilities that are not satisfiable by container workers (e.g., `drive_browser`, `subjective_judgment`), mark it `deferred_human` — NOT `fail` or `waived`. Deferred-human criteria do NOT count toward `needs_rework`.
+          - If a criterion (any priority) cannot be verified in this context (e.g., requires manual testing or runtime observation), mark it `waived` with an explanation.
+        - Set `review_verdict` to `needs_rework` only for a rework item with `deterministic_check: {"command": "...", "baseline_status": "failed", "post_status": "failed"}`. Use `approved` for prose-only concerns; record those as advisory issues instead.
+        - Set `review_completion_status` to `"incomplete"` when you could not inspect the repository or run verification commands; otherwise set it to `"complete"`.
+        - The decisions listed above were settled at the gate stage. Verify that the executor implemented each settled decision correctly. Flag deviations from these decisions, but do not question the decisions themselves.
+        - baseline_test_failures in finalize.json lists tests that were already failing before execution. Do not flag these as rework items unless the executor introduced new failures in those same tests.
+        - Cross-reference each task's `files_changed` and `commands_run` against the git diff and any audit findings.
+        - Review every `sense_check` explicitly and treat perfunctory acknowledgments as a reason to dig deeper.
+        - Follow this JSON shape exactly:
+        ```json
+        {
+          "review_verdict": "approved",
+          "review_completion_status": "complete",
+          "criteria": [
+            {
+              "name": "All existing tests pass",
+              "priority": "must",
+              "pass": "pass",
+              "evidence": "Test suite ran green — 42 passed, 0 failed."
+            },
+            {
+              "name": "File under ~300 lines",
+              "priority": "should",
+              "pass": "pass",
+              "evidence": "File is 375 lines — above the target but reasonable given the component's responsibilities. Spirit met."
+            },
+            {
+              "name": "Manual smoke tests pass",
+              "priority": "info",
+              "pass": "waived",
+              "evidence": "Cannot be verified in automated review. Noted for manual QA."
+            }
+          ],
+          "issues": [],
+          "rework_items": [],
+          "summary": "Approved. All must criteria pass. The should criterion on line count is close enough given the component scope.",
+          "task_verdicts": [
+            {
+              "task_id": "T6",
+              "reviewer_verdict": "Pass. Claimed handler changes and command evidence match the repo state.",
+              "evidence_files": ["megaplan/handlers.py", "megaplan/evaluation.py"]
+            }
+          ],
+          "sense_check_verdicts": [
+            {
+              "sense_check_id": "SC6",
+              "verdict": "Confirmed. The execute blocker only fires when both evidence arrays are empty."
+            }
+          ]
+        }
+        ```
+        - `rework_items` must be an array of structured rework directives. When `review_verdict` is `needs_rework`, populate one entry per issue with:
+          - `target`: typed route for the rework. Use `{"kind": "task", "task_id": "T6"}` for one finalize task, `{"kind": "bulk", "id": "bulk-1", "task_ids": ["T6", "T7"]}` for bulk-operation findings, or `{"kind": "manifest", "id": "manifest-path-or-ref", "task_ids": ["T6"]}` for manifest-backed findings.
+          - `task_id`: legacy compatibility only. It may mirror the single task target, or be `"REVIEW"` only for review blockers with no runnable finalize target.
+          - `issue`: what is wrong
+          - `expected`: what correct behavior looks like
+          - `actual`: what was observed
+          - `evidence_file`: file path supporting the finding
+          - `flag_id`: critique/review flag ID when applicable, otherwise `null`
+          - `source`: short machine-readable source tag when applicable, otherwise `null`
+          - `deterministic_check` (required for blocking rework): object with `command`, `baseline_status`, and `post_status`
+        - `issues` must still be populated as a flat one-line-per-item summary derived from `rework_items` (for backward compatibility). When approved, blocking `rework_items` should be empty; prose-only concerns may be summarized in `issues`.
+        - When the work needs another execute pass, keep the same shape and change only `review_verdict` to `needs_rework`; make `issues`, `rework_items`, `summary`, and task verdicts specific enough for the executor to act on directly.

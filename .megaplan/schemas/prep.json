@@ -98,7 +98,17 @@
       "type": "string"
     },
     "suggested_approach": {
-      "type": "string"
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
     },
     "open_questions": {
       "type": "array",

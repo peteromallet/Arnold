@@ -345,6 +345,7 @@ describe('ClipPanel transition controls (T11)', () => {
     render(<ClipPanel {...props} />);
 
     const section = getTransitionSection();
+    expect(within(section).getByText('composition/transition-missing-ref')).toBeInTheDocument();
     expect(within(section).getByText(/not available/)).toBeInTheDocument();
   });
 

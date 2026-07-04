@@ -20,6 +20,8 @@ import { shaderMissingMaterializerBlockerMessage } from '@/sdk/video/rendering/c
 import {
   COMPOSITION_DIAGNOSTIC_CODE,
   isBlockingTargetCompositionDiagnosticCode,
+  isBlockingM5CompositionDiagnosticCode,
+  m5CompositionBlockerReason,
 } from '@/tools/video-editor/runtime/composition/diagnostics.ts';
 import {
   projectHostMaterialRuntime,
@@ -353,8 +355,13 @@ function compositionDiagnosticReason(code: string): RenderBlockerReason {
     case COMPOSITION_DIAGNOSTIC_CODE.INACTIVE_RESERVED_REF:
     case COMPOSITION_DIAGNOSTIC_CODE.UNSUPPORTED_RESERVED_TARGET:
       return 'inactive-extension';
-    default:
+    default: {
+      // Delegate M5-specific blocker reasons
+      if (isBlockingM5CompositionDiagnosticCode(code)) {
+        return m5CompositionBlockerReason(code as Parameters<typeof m5CompositionBlockerReason>[0]) as RenderBlockerReason;
+      }
       return 'unknown';
+    }
   }
 }
 
@@ -367,7 +374,7 @@ function graphDiagnosticFindings(
 
   const findings: CapabilityFinding[] = [];
   compositionGraph.diagnostics.forEach((diagnostic, diagnosticIndex) => {
-    const severity = isBlockingTargetCompositionDiagnosticCode(diagnostic.code)
+    const severity = isBlockingTargetCompositionDiagnosticCode(diagnostic.code) || isBlockingM5CompositionDiagnosticCode(diagnostic.code)
       ? 'error'
       : diagnostic.severity === 'info'
         ? 'info'

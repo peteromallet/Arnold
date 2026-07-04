@@ -1,0 +1,379 @@
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+You are an independent reviewer. Critique the plan against the actual repository.
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M5: Effects, Transitions, Live Data, And Agent Mask Material
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Plan:
+        # Implementation Plan: M5 Effects, Transitions, Live Data, And Agent Mask Material
+
+## Overview
+M5 extends the existing composition spine without changing the public graph node model: effects and transitions remain `contribution` nodes, `consumes` remains the edge kind, and transition masks consume existing resolved `MaterialRef` / `RenderMaterialRef` identities through declared material slots. This is aligned with the Epic North Star because graph facts become authoritative for effect, transition, live-binding, and mask-material composition while extensions still do not mutate raw timeline internals.
+
+This is not a scope narrowing. Output-format route conformance, process runtime, sidecars, sandboxing, arbitrary material routing, and `consumes-mask` remain OUT by North Star and local locked decisions. One brief/task tension is material: the brief suggests generic ref diagnostics are reusable, but the task constraints require effect and transition missing/disabled refs not collapse into generic diagnostics. The plan chooses the stricter local requirement: reuse resolver state classification, but emit M5 kind-specific diagnostic codes for effect and transition references.
+
+## Phase 1: Graph Identity And Projection
+
+### Step 1: Preserve render identifiers in the contribution index
+**Complexity: 3**
+
+Add `ContributionIndexEntry.renderId` for bridged effect and transition contributions from `effectId` and `transitionId`. Test runtime assembly keeps both contribution identity and render identity.
+
+### Step 2: Add projector lookup helpers
+**Complexity: 3**
+
+Resolve effect/transition timeline summaries by `(kind, managedBy?, renderId)` and only fall back to contribution ID when unambiguous. Keep graph node IDs keyed by contribution refs.
+
+### Step 3: Project effect consumes edges
+**Complexity: 3**
+
+Iterate `clip.effects`, emit clip-to-effect `consumes` edges with typed detail, and add projector tests for effect contribution targeting.
+
+### Step 4: Project transition and mask-material consumes edges
+**Complexity: 4**
+
+Iterate `clip.transition` and `input.materialSlotBindings` for transition owners. Emit standard `consumes` edges with mask detail including `consumedKind`, `targetSlot`, `materialRefId`, `clipId`, and owner provenance.
+
+## Phase 2: Diagnostics And Export Blocking
+
+### Step 5: Add M5 diagnostic codes and detail fields
+**Complexity: 3**
+
+Add material slot and owner fields, effect/transition ref diagnostic codes, and transition-mask missing / route-incompatible codes.
+
+### Step 6: Emit M5 graph diagnostics
+**Complexity: 4**
+
+Resolve effect/transition refs during graph projection and emit kind-specific diagnostics with resolver state, package state, contribution ref, and target path or material slot.
+
+### Step 7: Add transition mask diagnostics at material attach boundaries
+**Complexity: 4**
+
+Map unresolved, stale, failed, and route-incompatible transition slot material states to M5 diagnostics and repair next actions. Keep `material.attach` as the only write path.
+
+### Step 8: Funnel M5 diagnostics through export guard and planner
+**Complexity: 3**
+
+Promote M5 graph diagnostics to export findings/blockers and planner blockers. Verify export blocks before repair/bake and clears afterward.
+
+## Phase 3: Repair UI
+
+### Step 9: Add a shared blocker/action component
+**Complexity: 2**
+
+Create `BlockerActionCard` for severity, code/message, and one next-action button wired to `onAction`.
+
+### Step 10: Integrate repair affordances into existing surfaces
+**Complexity: 4**
+
+Use the shared component in `MaterialBrowser` and relevant inspector/export/status surfaces. Do not add a new top-level UI surface.
+
+## Phase 4: Composed Examples And Canaries
+
+### Step 11: Update flagship descriptors
+**Complexity: 2**
+
+Add a descriptor-declared `transition-mask` slot to Flagship Wipe and test descriptor projection.
+
+### Step 12: Add EX-02 graph-backed effect/live/bake canary
+**Complexity: 4**
+
+Compose Flagship Glow with an effect-param live binding, assert `consumes` and `binds-live`, assert export blocked before bake, and clear after bake.
+
+### Step 13: Add EX-03 graph-backed transition/mask canary
+**Complexity: 4**
+
+Compose Flagship Wipe with an agent-promoted deterministic mask material attached to `transition-mask`, and assert transition and mask-material graph edges.
+
+### Step 14: Add browser acceptance coverage
+**Complexity: 4**
+
+Cover one happy path and one blocker/repair path each for EX-02 and EX-03 using the existing Testing Library patterns.
+
+### Step 15: Update release example docs
+**Complexity: 2**
+
+Document EX-02 and EX-03 as graph-backed M5 examples, and confirm EX-01 remains M4-owned and non-breaking.
+
+## Execution Order
+1. Add render identity to the contribution index first.
+2. Land projector tests and graph projection next.
+3. Add diagnostics, then export/planner funneling.
+4. Add UI repair affordances after diagnostic payloads stabilize.
+5. Add composed canaries and browser acceptance last.
+6. Run EX-01 clip-local-shader canary as the regression gate.
+
+## Validation Order
+1. Projector unit tests.
+2. Material runtime and patch preview tests.
+3. Export guard and render planner tests.
+4. UI component tests.
+5. EX-01, EX-02, and EX-03 canaries.
+6. Typecheck/lint and broader video-editor tests if shared types changed.
+
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-04T15:34:59Z",
+  "hash": "sha256:de8c0754b74e76669842df49444be6e4272544a9e4ef71e11934953cc9f1e134",
+  "questions": [
+    "Should M5 introduce separate diagnostic codes for every non-resolved effect/transition ref state, or only for missing/disabled while other states use generic reference diagnostics with M5 detail?",
+    "Should browser acceptance live under Testing Library integration tests or Playwright e2e specs?",
+    "Should ticket `01KS384XKZNEWQRSXN2NXQ0DTJ` be proposed as `resolves_on_complete=true`, or is it broader than M5?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Graph projector emits typed effect `consumes` edges without public effect node kinds.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Graph projector emits transition and mask-material `consumes` edges using the existing `consumes` edge kind, never `consumes-mask`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Effect-param live bindings continue to project `binds-live` edges to effect contribution nodes.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Missing/disabled effect and transition refs produce M5-specific diagnostics with resolver and contribution details.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Transition mask missing and route-incompatible states produce diagnostics with `materialSlot`, `materialRefId`, and repair action detail.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Export guard and planner block on M5 graph diagnostics and clear once diagnostics are resolved.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Shared blocker/action UI renders code/message/severity and invokes the next-action callback.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "inspect_runtime_ui",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "EX-02 is graph-backed and proves effect consumes, effect-param live binding, export block, and bake clearance.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "EX-03 is graph-backed and proves transition consumes plus mask-material slot consumption with matching `materialRefId`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "EX-01 clip + shader + keyframes canary remains passing unchanged in graph semantics.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Browser acceptance covers happy and blocker/repair paths for EX-02 and EX-03.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "drive_browser",
+        "inspect_runtime_ui"
+      ]
+    },
+    {
+      "criterion": "Docs identify EX-01/EX-02/EX-03 as graph-backed V1 examples and state legacy planner data is compatibility-only.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    }
+  ],
+  "assumptions": [
+    "No `consumes-mask`, no public effect/transition node kinds, no process runtime, and no arbitrary material routing.",
+    "`ContributionIndexEntry.renderId` should be populated for effect/transition contributions rather than adding new public timeline ref fields first.",
+    "The existing `material.attach` preview operation is the graph-owned write path for transition mask bindings.",
+    "`transition-mask` is a Flagship example/test slot name, not a production constant.",
+    "Testing Library integration tests count as browser acceptance unless the reviewer requires Playwright."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "reason": "Direct graph projector coverage."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/exportGuard.test.ts",
+        "reason": "M5 diagnostic export funnel."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+        "reason": "Planner graph diagnostic behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+        "reason": "Repair UI integration."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx",
+        "reason": "EX-01 regression gate."
+      }
+    ],
+    "changed_surfaces": [
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.test.ts",
+      "src/tools/video-editor/runtime/composition/graphProjector.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+      "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+      "src/tools/video-editor/runtime/exportGuard.ts",
+      "src/tools/video-editor/runtime/exportGuard.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+      "src/tools/video-editor/components/BlockerActionCard.tsx",
+      "src/tools/video-editor/components/BlockerActionCard.test.tsx",
+      "src/tools/video-editor/components/MaterialBrowser.tsx",
+      "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+      "src/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx",
+      "src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx",
+      "src/tools/video-editor/runtime/ExtensionStatusDrawer.tsx",
+      "src/tools/video-editor/runtime/ExtensionStatusDrawer.test.tsx",
+      "src/tools/video-editor/examples/extensions/flagship-local/index.ts",
+      "src/tools/video-editor/examples/extensions/__tests__/flagship-local-transition.test.ts",
+      "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/agent-tools-canary.test.ts",
+      "src/tools/video-editor/examples/extensions/__tests__/live-generated-frame-canary.test.ts",
+      "src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx",
+      "docs/extensions/composition-spine/m0-release-examples.md"
+    ],
+    "always_run": [
+      "pnpm vitest src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "pnpm vitest src/tools/video-editor/runtime/exportGuard.test.ts",
+      "pnpm vitest src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/tools/video-editor/components/BlockerActionCard.test.tsx, src/tools/video-editor/components/BlockerActionCard.tsx, src/tools/video-editor/components/MaterialBrowser.test.tsx, src/tools/video-editor/components/MaterialBrowser.tsx, src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx, src/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx, src/tools/video-editor/examples/extensions/__tests__/agent-tools-canary.test.ts, src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/flagship-local-transition.test.ts, src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/live-generated-frame-canary.test.ts, src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx, src/tools/video-editor/examples/extensions/flagship-local/index.ts, src/tools/video-editor/runtime/ExtensionStatusDrawer.test.tsx, src/tools/video-editor/runtime/ExtensionStatusDrawer.tsx, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/graphProjector.ts, src/tools/video-editor/runtime/composition/materialRuntime.test.ts, src/tools/video-editor/runtime/composition/materialRuntime.ts, src/tools/video-editor/runtime/composition/patchPreview.test.ts, src/tools/video-editor/runtime/composition/patchPreview.ts, src/tools/video-editor/runtime/exportGuard.test.ts, src/tools/video-editor/runtime/exportGuard.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.test.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts, src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts. Ignored documentation-only change(s) for selector derivation: docs/extensions/composition-spine/m0-release-examples.md. Candidate: The work is cross-cutting but localized to video-editor graph projection, diagnostics/export, UI repair, and canary examples. Scoped tests catch the intended blast radius; full-suite fallback is appropriate because shared runtime types are touched. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx"
+    ]
+  },
+  "structure_warnings": [
+    "Each step section should include at least one numbered substep.",
+    "Each step section should reference at least one file in backticks."
+  ]
+}
+
+        Plan structure warnings from validator:
+        [
+  "Each step section should include at least one numbered substep.",
+  "Each step section should reference at least one file in backticks."
+]
+
+        Existing flags:
+        []
+
+
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m5-effects-transitions-live-20260704-1310/critique_check_correctness.json
+Read this file first — it contains 1 check with a question and guidance.
+Investigate only this check, then add your findings to the `findings` array for that check.
+
+Self-monitor for non-convergence before spending more tool calls. This is NOT about duration or difficulty: hard checks that are still making new progress should continue. But if you are spinning — re-reading the same file 3+ times, searching for a file the plan says to CREATE, needing a sibling/external repo or path outside the project root, or making many tool calls without getting closer to a verdict — STOP investigating. Not finding what you need is a finding; emit exactly one non-flagged finding whose detail starts `unverifiable: ` and explains what you could not resolve and exactly why. An unverifiable check is a complete, valid result for this worker; normal code ambiguity that you can inspect should still be flagged per the usual "when in doubt, flag it" rule.
+
+Check ID: correctness
+Question: Are the proposed changes technically correct?
+Guidance: Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases — not just the one reported in the issue.
+
+Each finding needs:
+- "detail": what you specifically checked and what you found (at least a full sentence)
+- "flagged": true if this describes a difference, risk, or tension — even if you think it's justified. false only if purely informational with no possible downside.
+- This check must end with at least one finding. Never leave its `findings` array empty. If you found no issue, add one detailed `flagged: false` finding explaining what you checked and why it appears clear.
+
+When in doubt, flag it — the gate can accept tradeoffs, but it can't act on findings it never sees.
+
+Good: {"detail": "Checked callers of nthroot_mod in solveset.py line 1205 — passes prime moduli only, consistent with the fix.", "flagged": false}
+Good: {"detail": "The fix handles empty tuples but not single-element tuples which need a trailing comma.", "flagged": true}
+Bad: {"detail": "No issue found", "flagged": false}  ← too brief, will be rejected
+Bad: {"detail": "The hints suggest approach X but the plan uses Y. However Y is consistent with X's intent.", "flagged": false}  ← a different approach than the hints IS a flag. You found a divergence — flag it. The gate decides if it's acceptable.
+
+After filling in checks, add any additional concerns to the `flags` array (e.g., security, performance, dependencies).
+Use the standard format (id, concern, category, severity_hint, evidence). This array can be empty.
+
+Workflow: read the file → investigate → read file again → add finding → write file back. Repeat for this check.
+
+        Additional guidelines:
+        - Robustness level: thorough. Use balanced judgment. Flag significant risks, but do not spend flags on minor polish or executor-obvious boilerplate.
+        - Over-engineering: prefer the simplest approach that fully solves the problem.
+        - Reuse existing flag IDs when the same concern is still open.
+        - `verified_flag_ids`: list flag IDs from prior iterations that the revised plan actually resolves (e.g., if the plan was revised to fix FLAG-001, and you confirm the fix is correct, include "FLAG-001"). Only include flags you've verified — don't guess.
+        - Verify that the plan follows the expected structure when validator warnings or the outline suggest drift.
+        - Additional flags may use these categories: correctness, security, completeness, performance, maintainability, other.
+        - Focus on concrete issues, not structural formatting.
+        - Complexity audit: flag (a) missing complexity scores on plan steps, (b) inflated scores that would waste premium models on trivial work, and (c) under-rated work that should not run on cheap models. Use category `completeness`.

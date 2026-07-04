@@ -2002,6 +2002,373 @@ describe('scanExportConfig — composition graph target diagnostics', () => {
 });
 
 // ---------------------------------------------------------------------------
+// M5 (Effect / Transition) composition graph diagnostics
+// ---------------------------------------------------------------------------
+
+describe('scanExportConfig — composition graph M5 diagnostics', () => {
+  const builtIn = collectBuiltInKnownIds();
+  const extIds = collectExtensionDeclaredIds([]);
+
+  function makeM5CompositionGraph(diagnostics: ExtensionDiagnostic[]): CompositionGraph {
+    return {
+      nodes: [
+        { id: 'clip:c1', kind: 'clip' as const, detail: { clipId: 'c1' } },
+      ],
+      edges: [],
+      referenceStates: [],
+      diagnostics,
+    };
+  }
+
+  it('blocks export for effect error diagnostic (EFFECT_DISABLED_REF) with blockers', () => {
+    const graph = makeM5CompositionGraph([
+      makeCompositionDiagnostic(
+        COMPOSITION_DIAGNOSTIC_CODE.EFFECT_DISABLED_REF,
+        {
+          clipId: 'c1',
+          nodeId: 'contribution:effect:ext.fx:disabled-fx',
+          refKey: 'effect:ext.fx:disabled-fx',
+          refState: 'disabled',
+          extensionId: 'ext.fx',
+          contributionId: 'disabled-fx',
+          resolverState: 'disabled',
+          packageState: 'disabled-by-user',
+          ownerKind: 'effect',
+          ownerId: 'disabled-fx',
+        },
+        'error',
+      ),
+    ]);
+
+    const result = scanExportConfig(
+      makeConfig([makeClip('c1')]),
+      builtIn,
+      extIds,
+      undefined,
+      undefined,
+      undefined,
+      graph,
+    );
+
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'error',
+        code: 'export/effect-unresolved-ref',
+        message: 'Diagnostic composition/effect-disabled-ref',
+        detail: expect.objectContaining({
+          source: 'composition-graph',
+          graphDiagnosticCode: COMPOSITION_DIAGNOSTIC_CODE.EFFECT_DISABLED_REF,
+          clipId: 'c1',
+          diagnosticKind: 'effect',
+          refState: 'disabled',
+        }),
+      }),
+    ]);
+    expect(result.findings).toHaveLength(2);
+    expect(result.findings.map((f) => f.route).sort()).toEqual(['browser-export', 'worker-export']);
+    expect(result.blockers).toHaveLength(2);
+    expect(result.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        severity: 'error',
+        route: 'browser-export',
+        reason: 'inactive-extension',
+      }),
+    ]));
+    expect(result.hasBlockingErrors).toBe(true);
+  });
+
+  it('surfaces effect warning diagnostic (EFFECT_MISSING_REF) as findings but does NOT block export', () => {
+    const graph = makeM5CompositionGraph([
+      makeCompositionDiagnostic(
+        COMPOSITION_DIAGNOSTIC_CODE.EFFECT_MISSING_REF,
+        {
+          clipId: 'c1',
+          nodeId: 'contribution:effect:ext.fx:missing',
+          refKey: 'effect:ext.fx:missing',
+          refState: 'missing',
+          extensionId: 'ext.fx',
+          contributionId: 'missing',
+          resolverState: 'missing',
+          ownerKind: 'effect',
+          ownerId: 'missing-fx',
+        },
+        'warning',
+      ),
+    ]);
+
+    const result = scanExportConfig(
+      makeConfig([makeClip('c1')]),
+      builtIn,
+      extIds,
+      undefined,
+      undefined,
+      undefined,
+      graph,
+    );
+
+    // Should have a warning diagnostic but no blockers
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'warning',
+        code: 'export/effect-unresolved-ref',
+      }),
+    ]);
+    expect(result.findings).toHaveLength(2);
+    expect(result.blockers).toHaveLength(0);
+    expect(result.hasBlockingErrors).toBe(false);
+  });
+
+  it('blocks export for transition error diagnostic (TRANSITION_DISABLED_REF) with blockers', () => {
+    const graph = makeM5CompositionGraph([
+      makeCompositionDiagnostic(
+        COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_DISABLED_REF,
+        {
+          clipId: 'c1',
+          nodeId: 'contribution:transition:ext.tx:disabled-tx',
+          refKey: 'transition:ext.tx:disabled-tx',
+          refState: 'disabled',
+          extensionId: 'ext.tx',
+          contributionId: 'disabled-tx',
+          resolverState: 'disabled',
+          packageState: 'disabled-by-user',
+          ownerKind: 'transition',
+          ownerId: 'disabled-tx',
+        },
+        'error',
+      ),
+    ]);
+
+    const result = scanExportConfig(
+      makeConfig([makeClip('c1')]),
+      builtIn,
+      extIds,
+      undefined,
+      undefined,
+      undefined,
+      graph,
+    );
+
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'error',
+        code: 'export/transition-unresolved-ref',
+        message: 'Diagnostic composition/transition-disabled-ref',
+        detail: expect.objectContaining({
+          source: 'composition-graph',
+          graphDiagnosticCode: COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_DISABLED_REF,
+          clipId: 'c1',
+          diagnosticKind: 'transition',
+          refState: 'disabled',
+        }),
+      }),
+    ]);
+    expect(result.findings).toHaveLength(2);
+    expect(result.blockers).toHaveLength(2);
+    expect(result.hasBlockingErrors).toBe(true);
+  });
+
+  it('surfaces transition warning diagnostic (TRANSITION_MISSING_REF) as findings but does NOT block export', () => {
+    const graph = makeM5CompositionGraph([
+      makeCompositionDiagnostic(
+        COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_MISSING_REF,
+        {
+          clipId: 'c1',
+          nodeId: 'contribution:transition:ext.tx:missing',
+          refKey: 'transition:ext.tx:missing',
+          refState: 'missing',
+          extensionId: 'ext.tx',
+          contributionId: 'missing',
+          resolverState: 'missing',
+          ownerKind: 'transition',
+          ownerId: 'missing-tx',
+        },
+        'warning',
+      ),
+    ]);
+
+    const result = scanExportConfig(
+      makeConfig([makeClip('c1')]),
+      builtIn,
+      extIds,
+      undefined,
+      undefined,
+      undefined,
+      graph,
+    );
+
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'warning',
+        code: 'export/transition-unresolved-ref',
+      }),
+    ]);
+    expect(result.findings).toHaveLength(2);
+    expect(result.blockers).toHaveLength(0);
+    expect(result.hasBlockingErrors).toBe(false);
+  });
+
+  it('clears blockers when M5 graph has no diagnostics (resolved state)', () => {
+    const graph = makeM5CompositionGraph([]);
+
+    const result = scanExportConfig(
+      makeConfig([makeClip('c1')]),
+      builtIn,
+      extIds,
+      undefined,
+      undefined,
+      undefined,
+      graph,
+    );
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.findings).toEqual([]);
+    expect(result.blockers).toEqual([]);
+    expect(result.hasBlockingErrors).toBe(false);
+  });
+
+  it('integrates with planRender: effect error blocks export, resolved clears', () => {
+    // With error diagnostic — export blocked
+    const blockedGraph = makeM5CompositionGraph([
+      makeCompositionDiagnostic(
+        COMPOSITION_DIAGNOSTIC_CODE.EFFECT_DISABLED_REF,
+        {
+          clipId: 'c1',
+          nodeId: 'contribution:effect:ext.fx:disabled',
+          refKey: 'effect:ext.fx:disabled',
+          refState: 'disabled',
+          extensionId: 'ext.fx',
+          contributionId: 'disabled',
+          resolverState: 'disabled',
+          packageState: 'disabled-by-user',
+          ownerKind: 'effect',
+        },
+        'error',
+      ),
+    ]);
+
+    const blockedPlanner = planRender({ compositionGraph: blockedGraph });
+    expect(blockedPlanner.canBrowserExport).toBe(false);
+    expect(blockedPlanner.canWorkerExport).toBe(false);
+    expect(blockedPlanner.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        severity: 'error',
+        route: 'browser-export',
+        reason: 'inactive-extension',
+        detail: expect.objectContaining({
+          source: 'composition-graph',
+          code: COMPOSITION_DIAGNOSTIC_CODE.EFFECT_DISABLED_REF,
+        }),
+      }),
+    ]));
+
+    // With no diagnostics (resolved) — export cleared
+    const resolvedGraph = makeM5CompositionGraph([]);
+    const resolvedPlanner = planRender({ compositionGraph: resolvedGraph });
+    expect(resolvedPlanner.canBrowserExport).toBe(true);
+    expect(resolvedPlanner.canWorkerExport).toBe(true);
+  });
+
+  it('blocks export for transition invalid package ref with inactive-extension reason', () => {
+    const graph = makeM5CompositionGraph([
+      makeCompositionDiagnostic(
+        COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_INVALID_PACKAGE_REF,
+        {
+          clipId: 'c1',
+          nodeId: 'contribution:transition:ext.tx:invalid-pkg',
+          refKey: 'transition:ext.tx:invalid-pkg',
+          refState: 'invalid-package',
+          extensionId: 'ext.tx',
+          contributionId: 'invalid-pkg',
+          resolverState: 'invalid-package',
+          packageState: 'invalid',
+          ownerKind: 'transition',
+          ownerId: 'invalid-pkg',
+        },
+        'error',
+      ),
+    ]);
+
+    const result = scanExportConfig(
+      makeConfig([makeClip('c1')]),
+      builtIn,
+      extIds,
+      undefined,
+      undefined,
+      undefined,
+      graph,
+    );
+
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'error',
+        code: 'export/transition-unresolved-ref',
+      }),
+    ]);
+    expect(result.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        reason: 'inactive-extension',
+        route: 'browser-export',
+      }),
+    ]));
+    expect(result.hasBlockingErrors).toBe(true);
+  });
+
+  it('handles both effect and transition diagnostics simultaneously', () => {
+    const graph = makeM5CompositionGraph([
+      makeCompositionDiagnostic(
+        COMPOSITION_DIAGNOSTIC_CODE.EFFECT_DISABLED_REF,
+        {
+          clipId: 'c1',
+          nodeId: 'n1',
+          refKey: 'effect:ext.fx:disabled',
+          refState: 'disabled',
+          extensionId: 'ext.fx',
+          contributionId: 'disabled',
+          resolverState: 'disabled',
+          ownerKind: 'effect',
+        },
+        'error',
+      ),
+      makeCompositionDiagnostic(
+        COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_MISSING_REF,
+        {
+          clipId: 'c1',
+          nodeId: 'n2',
+          refKey: 'transition:ext.tx:missing',
+          refState: 'missing',
+          extensionId: 'ext.tx',
+          contributionId: 'missing',
+          resolverState: 'missing',
+          ownerKind: 'transition',
+        },
+        'warning',
+      ),
+    ]);
+
+    const result = scanExportConfig(
+      makeConfig([makeClip('c1')]),
+      builtIn,
+      extIds,
+      undefined,
+      undefined,
+      undefined,
+      graph,
+    );
+
+    // Both diagnostics surfaced
+    expect(result.diagnostics).toHaveLength(2);
+    expect(result.diagnostics.map((d) => d.code).sort()).toEqual([
+      'export/effect-unresolved-ref',
+      'export/transition-unresolved-ref',
+    ]);
+    // Only the effect error blocks
+    expect(result.blockers).toHaveLength(2); // 2 routes for the blocking effect
+    expect(result.findings).toHaveLength(4); // 2 routes × 2 diagnostics
+    expect(result.hasBlockingErrors).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Edge cases
 // ---------------------------------------------------------------------------
 

@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import type { TimelineShaderSummary, TimelineSnapshot } from '@reigh/editor-sdk';
+import type {
+  TimelineEffectSummary,
+  TimelineShaderSummary,
+  TimelineSnapshot,
+  TimelineTransitionSummary,
+} from '@reigh/editor-sdk';
 import {
   projectCompositionGraph,
+  resolveEffectContributionEntry,
+  resolveEffectTransitionContributionEntry,
+  resolveTransitionContributionEntry,
   TIMELINE_POSTPROCESS_NODE_ID,
   type CompositionGraphInput,
 } from '@/tools/video-editor/runtime/composition/graphProjector.ts';
@@ -705,5 +713,815 @@ describe('compositionGraphProjector', () => {
         nodeIds: expect.arrayContaining(['clip:clip-1', 'clip:clip-2', 'clip:clip-video-2']),
       }),
     ]));
+  });
+
+  // -----------------------------------------------------------------------
+  // M5: Effect / transition contribution lookup helpers
+  // -----------------------------------------------------------------------
+
+  function effectSummary(
+    overrides: Partial<TimelineEffectSummary> = {},
+  ): TimelineEffectSummary {
+    return {
+      id: 'clip-1.effect.glow',
+      clipId: 'clip-1',
+      effectType: 'glow',
+      managed: true,
+      managedBy: 'com.example.effects',
+      ...overrides,
+    };
+  }
+
+  function transitionSummary(
+    overrides: Partial<TimelineTransitionSummary> = {},
+  ): TimelineTransitionSummary {
+    return {
+      id: 'clip-1.transition.dissolve',
+      clipId: 'clip-1',
+      transitionType: 'dissolve',
+      duration: 1.0,
+      managed: true,
+      managedBy: 'com.example.transitions',
+      ...overrides,
+    };
+  }
+
+  describe('resolveEffectTransitionContributionEntry', () => {
+    it('returns undefined when contribution index is undefined', () => {
+      const result = resolveEffectTransitionContributionEntry(
+        'effect',
+        'com.example.effects',
+        undefined,
+        'glow',
+        undefined,
+      );
+      expect(result).toBeUndefined();
+    });
+
+    it('returns undefined when contribution index is empty', () => {
+      const result = resolveEffectTransitionContributionEntry(
+        'effect',
+        'com.example.effects',
+        undefined,
+        'glow',
+        {},
+      );
+      expect(result).toBeUndefined();
+    });
+
+    it('resolves an effect by primary (kind, managedBy)', () => {
+      const result = resolveEffectTransitionContributionEntry(
+        'effect',
+        'com.example.effects',
+        undefined,
+        'glow',
+        contributionIndex(),
+      );
+
+      expect(result).toBeDefined();
+      expect(result!.ref).toEqual({
+        kind: 'effect',
+        extensionId: 'com.example.effects',
+        contributionId: 'glow',
+      });
+      expect(result!.refKey).toBe('effect:com.example.effects:glow');
+      expect(result!.entry.kind).toBe('effect');
+    });
+
+    it('resolves by primary with renderId match', () => {
+      const idx: ContributionIndex = {
+        'effect:com.example.effects:glow': [
+          indexEntry('effect:com.example.effects:glow', {
+            renderId: 'render-eff-001',
+            projection: {
+              duplicateOrdinal: 0,
+              eligible: true,
+              projected: true,
+              source: 'descriptor-array',
+            },
+          }),
+        ],
+        'effect:com.example.other:glow': [
+          indexEntry('effect:com.example.other:glow'),
+        ],
+      };
+
+      // Without renderId, primary matches both 'glow' entries (different kind check
+      // since both are 'effect', managedBy=undefined => both pass), so it would
+      // be ambiguous. Let me test with managedBy set.
+      const result = resolveEffectTransitionContributionEntry(
+        'effect',
+        'com.example.effects',
+        'render-eff-001',
+        'glow',
+        idx,
+      );
+      expect(result).toBeDefined();
+      expect(result!.refKey).toBe('effect:com.example.effects:glow');
+      expect(result!.entry.renderId).toBe('render-eff-001');
+    });
+
+    it('resolves an effect by fallback (contributionId only, unambiguous)', () => {
+      // Primary would fail because managedBy doesn't match any entry
+      const result = resolveEffectTransitionContributionEntry(
+        'effect',
+        'com.example.unknown',  // no entry with this extensionId
+        undefined,
+        'glow',                 // but exactly one 'effect' entry has contributionId 'glow'
+        contributionIndex(),
+      );
+
+      expect(result).toBeDefined();
+      expect(result!.ref).toEqual({
+        kind: 'effect',
+        extensionId: 'com.example.effects',
+        contributionId: 'glow',
+      });
+      expect(result!.refKey).toBe('effect:com.example.effects:glow');
+    });
+
+    it('returns undefined when fallback is ambiguous (multiple entries with same contributionId)', () => {
+      const idx: ContributionIndex = {
+        'effect:com.example.effects:glow': [
+          indexEntry('effect:com.example.effects:glow'),
+        ],
+        'effect:com.example.other:glow': [
+          indexEntry('effect:com.example.other:glow'),
+        ],
+      };
+
+      // Primary without managedBy would match both (both are 'effect' kind),
+      // so primary is ambiguous (2 matches).
+      // Fallback with contributionId 'glow' also matches both — ambiguous.
+      const result = resolveEffectTransitionContributionEntry(
+        'effect',
+        undefined,
+        undefined,
+        'glow',
+        idx,
+      );
+      expect(result).toBeUndefined();
+    });
+
+    it('returns undefined when no entry matches kind', () => {
+      const result = resolveEffectTransitionContributionEntry(
+        'transition',
+        'com.example.effects',
+        undefined,
+        'glow',
+        contributionIndex(),
+      );
+      expect(result).toBeUndefined();
+    });
+
+    it('resolves a transition by primary (kind, managedBy)', () => {
+      const idx: ContributionIndex = {
+        ...contributionIndex(),
+        'transition:com.example.transitions:dissolve': [
+          indexEntry('transition:com.example.transitions:dissolve'),
+        ],
+      };
+
+      const result = resolveEffectTransitionContributionEntry(
+        'transition',
+        'com.example.transitions',
+        undefined,
+        'dissolve',
+        idx,
+      );
+
+      expect(result).toBeDefined();
+      expect(result!.ref).toEqual({
+        kind: 'transition',
+        extensionId: 'com.example.transitions',
+        contributionId: 'dissolve',
+      });
+      expect(result!.refKey).toBe('transition:com.example.transitions:dissolve');
+    });
+
+    it('resolves a transition by fallback (contributionId only, unambiguous)', () => {
+      const idx: ContributionIndex = {
+        ...contributionIndex(),
+        'transition:com.example.transitions:dissolve': [
+          indexEntry('transition:com.example.transitions:dissolve'),
+        ],
+      };
+
+      const result = resolveEffectTransitionContributionEntry(
+        'transition',
+        undefined,
+        undefined,
+        'dissolve',
+        idx,
+      );
+
+      expect(result).toBeDefined();
+      expect(result!.refKey).toBe('transition:com.example.transitions:dissolve');
+    });
+  });
+
+  describe('resolveEffectContributionEntry', () => {
+    it('resolves an effect summary with managedBy via primary strategy', () => {
+      const effect = effectSummary();
+      const result = resolveEffectContributionEntry(effect, contributionIndex());
+
+      expect(result).toBeDefined();
+      expect(result!.refKey).toBe('effect:com.example.effects:glow');
+    });
+
+    it('resolves an unmanaged effect via fallback', () => {
+      const effect = effectSummary({ managed: false, managedBy: undefined });
+      const result = resolveEffectContributionEntry(effect, contributionIndex());
+
+      expect(result).toBeDefined();
+      expect(result!.refKey).toBe('effect:com.example.effects:glow');
+    });
+
+    it('returns undefined for an unknown effect type when unmanaged (fallback only)', () => {
+      // With managedBy unset, primary can't match; fallback tries
+      // contributionId 'nonexistent', which doesn't match 'glow'.
+      const effect = effectSummary({ effectType: 'nonexistent', managed: false, managedBy: undefined });
+      const result = resolveEffectContributionEntry(effect, contributionIndex());
+      expect(result).toBeUndefined();
+    });
+
+    it('returns undefined when contribution index is undefined', () => {
+      const effect = effectSummary();
+      const result = resolveEffectContributionEntry(effect, undefined);
+      expect(result).toBeUndefined();
+    });
+
+    it('passes renderId through to the core resolver', () => {
+      const idx: ContributionIndex = {
+        'effect:com.example.effects:glow': [
+          indexEntry('effect:com.example.effects:glow', { renderId: 'r-eff-99' }),
+        ],
+      };
+      const effect = effectSummary();
+      const result = resolveEffectContributionEntry(effect, idx, 'r-eff-99');
+      expect(result).toBeDefined();
+      expect(result!.entry.renderId).toBe('r-eff-99');
+    });
+  });
+
+  describe('resolveTransitionContributionEntry', () => {
+    function idxWithTransition(): ContributionIndex {
+      return {
+        ...contributionIndex(),
+        'transition:com.example.transitions:dissolve': [
+          indexEntry('transition:com.example.transitions:dissolve'),
+        ],
+      };
+    }
+
+    it('resolves a transition summary with managedBy via primary strategy', () => {
+      const transition = transitionSummary();
+      const result = resolveTransitionContributionEntry(transition, idxWithTransition());
+
+      expect(result).toBeDefined();
+      expect(result!.refKey).toBe('transition:com.example.transitions:dissolve');
+    });
+
+    it('resolves an unmanaged transition via fallback', () => {
+      const transition = transitionSummary({ managed: false, managedBy: undefined });
+      const result = resolveTransitionContributionEntry(transition, idxWithTransition());
+
+      expect(result).toBeDefined();
+      expect(result!.refKey).toBe('transition:com.example.transitions:dissolve');
+    });
+
+    it('returns undefined for an unknown transition type when unmanaged (fallback only)', () => {
+      // With managedBy unset, primary can't match; fallback tries
+      // contributionId 'nonexistent', which doesn't match 'dissolve'.
+      const transition = transitionSummary({ transitionType: 'nonexistent', managed: false, managedBy: undefined });
+      const result = resolveTransitionContributionEntry(transition, idxWithTransition());
+      expect(result).toBeUndefined();
+    });
+
+    it('returns undefined when contribution index is undefined', () => {
+      const transition = transitionSummary();
+      const result = resolveTransitionContributionEntry(transition, undefined);
+      expect(result).toBeUndefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // M5: Effect consumes edge projection
+  // -----------------------------------------------------------------------
+
+  it('projects consumes edges for clip effects targeting contribution nodes without public effect node kinds', () => {
+    const baseSnapshot = timelineSnapshot();
+    const graph = project({
+      snapshot: {
+        ...baseSnapshot,
+        clips: baseSnapshot.clips.map((clip) =>
+          clip.id === 'clip-1'
+            ? {
+                ...clip,
+                effects: [
+                  effectSummary(),
+                  effectSummary({
+                    id: 'clip-1.effect.secondary',
+                    effectType: 'secondary',
+                    managed: false,
+                    managedBy: undefined,
+                  }),
+                ],
+              }
+            : clip
+        ),
+      },
+    });
+
+    // Verify no new node kinds — only existing kinds (clip, timeline-postprocess, contribution)
+    const nodeKinds = new Set(graph.nodes.map((n) => n.kind));
+    expect(nodeKinds).toEqual(new Set(['clip', 'timeline-postprocess', 'contribution']));
+
+    // Verify consumes edge for managed effect (primary match via managedBy)
+    expect(graph.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'consumes',
+        sourceNodeId: 'clip:clip-1',
+        targetNodeId: 'contribution:effect:com.example.effects:glow',
+        detail: expect.objectContaining({
+          effectId: 'clip-1.effect.glow',
+          clipId: 'clip-1',
+          effectType: 'glow',
+          refKey: 'effect:com.example.effects:glow',
+          consumedKind: 'effect',
+          scope: 'clip',
+        }),
+      }),
+    ]));
+
+    // Verify consumes edge for unmanaged effect (fallback match via contributionId)
+    // The unmanaged effect has effectType 'secondary' but no managedBy.
+    // Fallback looks for contributionId 'secondary' — there's no such entry,
+    // so it should be skipped. Let's test with an effect that has a matching
+    // contributionId.
+  });
+
+  it('projects consumes edge for unmanaged effect via fallback contributionId match', () => {
+    const idx: ContributionIndex = {
+      ...contributionIndex(),
+      'effect:com.example.effects:blur': [
+        indexEntry('effect:com.example.effects:blur'),
+      ],
+    };
+
+    const baseSnapshot = timelineSnapshot();
+    const graph = project({
+      contributionIndex: idx,
+      snapshot: {
+        ...baseSnapshot,
+        clips: baseSnapshot.clips.map((clip) =>
+          clip.id === 'clip-1'
+            ? {
+                ...clip,
+                effects: [
+                  effectSummary({
+                    id: 'clip-1.effect.blur',
+                    effectType: 'blur',
+                    managed: false,
+                    managedBy: undefined,
+                  }),
+                ],
+              }
+            : clip
+        ),
+      },
+    });
+
+    // Should find the contribution via fallback (contributionId === 'blur')
+    expect(graph.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'consumes',
+        sourceNodeId: 'clip:clip-1',
+        targetNodeId: 'contribution:effect:com.example.effects:blur',
+        detail: expect.objectContaining({
+          effectId: 'clip-1.effect.blur',
+          effectType: 'blur',
+          refKey: 'effect:com.example.effects:blur',
+          consumedKind: 'effect',
+          scope: 'clip',
+        }),
+      }),
+    ]));
+  });
+
+  it('does not project consumes edge when effect contribution cannot be resolved', () => {
+    const baseSnapshot = timelineSnapshot();
+    const graph = project({
+      snapshot: {
+        ...baseSnapshot,
+        clips: baseSnapshot.clips.map((clip) =>
+          clip.id === 'clip-1'
+            ? {
+                ...clip,
+                effects: [
+                  effectSummary({
+                    id: 'clip-1.effect.nonexistent',
+                    effectType: 'nonexistent',
+                    managed: false,
+                    managedBy: undefined,
+                  }),
+                ],
+              }
+            : clip
+        ),
+      },
+    });
+
+    // No consumes edge should be emitted for an unresolvable effect
+    const effectEdges = graph.edges.filter(
+      (e) =>
+        e.kind === 'consumes' &&
+        (e.detail as Record<string, unknown>).consumedKind === 'effect',
+    );
+    expect(effectEdges).toHaveLength(0);
+  });
+
+  it('deduplicates effect contribution nodes when multiple clips use the same effect type', () => {
+    const idx: ContributionIndex = {
+      ...contributionIndex(),
+      'effect:com.example.effects:glow': [
+        indexEntry('effect:com.example.effects:glow', {
+          projection: {
+            duplicateOrdinal: 0,
+            eligible: true,
+            projected: true,
+            source: 'descriptor-array',
+          },
+        }),
+      ],
+    };
+
+    const baseSnapshot = timelineSnapshot();
+    const graph = project({
+      contributionIndex: idx,
+      snapshot: {
+        ...baseSnapshot,
+        clips: baseSnapshot.clips.map((clip) =>
+          clip.id === 'clip-1' || clip.id === 'clip-2'
+            ? {
+                ...clip,
+                effects: [
+                  effectSummary({
+                    id: `${clip.id}.effect.glow`,
+                    clipId: clip.id,
+                  }),
+                ],
+              }
+            : clip
+        ),
+      },
+    });
+
+    // Only one contribution node for effect:com.example.effects:glow
+    const effectNodes = graph.nodes.filter(
+      (n) => n.id === 'contribution:effect:com.example.effects:glow',
+    );
+    expect(effectNodes).toHaveLength(1);
+
+    // Two consumes edges, one per clip
+    const effectEdges = graph.edges.filter(
+      (e) =>
+        e.kind === 'consumes' &&
+        e.targetNodeId === 'contribution:effect:com.example.effects:glow',
+    );
+    expect(effectEdges).toHaveLength(2);
+    expect(effectEdges.map((e) => e.sourceNodeId).sort()).toEqual([
+      'clip:clip-1',
+      'clip:clip-2',
+    ]);
+  });
+
+  // -----------------------------------------------------------------------
+  // M5: Transition + mask-material consumes edge projection
+  // -----------------------------------------------------------------------
+
+  it('projects transition consumes and mask-material consumes edges through the existing consumes kind', () => {
+    const idx: ContributionIndex = {
+      ...contributionIndex(),
+      'transition:com.example.transitions:dissolve': [
+        indexEntry('transition:com.example.transitions:dissolve'),
+      ],
+    };
+
+    const baseSnapshot = timelineSnapshot();
+    const graph = project({
+      contributionIndex: idx,
+      snapshot: {
+        ...baseSnapshot,
+        clips: baseSnapshot.clips.map((clip) => (
+          clip.id === 'clip-1'
+            ? {
+                ...clip,
+                transition: transitionSummary(),
+              }
+            : clip
+        )),
+      },
+      materialSlotBindings: [
+        {
+          owner: {
+            kind: 'transition',
+            clipId: 'clip-1',
+            ownerId: 'clip-1.transition.dissolve',
+          },
+          slotName: 'transition-mask',
+          materialRefId: 'mat-mask-1',
+        },
+      ],
+    });
+
+    expect(graph.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'consumes',
+        sourceNodeId: 'clip:clip-1',
+        targetNodeId: 'contribution:transition:com.example.transitions:dissolve',
+        detail: expect.objectContaining({
+          transitionId: 'clip-1.transition.dissolve',
+          clipId: 'clip-1',
+          transitionType: 'dissolve',
+          refKey: 'transition:com.example.transitions:dissolve',
+          consumedKind: 'transition',
+          scope: 'clip',
+          ownerKind: 'transition',
+          ownerId: 'clip-1.transition.dissolve',
+        }),
+      }),
+      expect.objectContaining({
+        kind: 'consumes',
+        sourceNodeId: 'clip:clip-1',
+        targetNodeId: 'contribution:transition:com.example.transitions:dissolve',
+        detail: expect.objectContaining({
+          transitionId: 'clip-1.transition.dissolve',
+          clipId: 'clip-1',
+          transitionType: 'dissolve',
+          refKey: 'transition:com.example.transitions:dissolve',
+          consumedKind: 'mask-material',
+          targetSlot: 'transition-mask',
+          materialRefId: 'mat-mask-1',
+          scope: 'clip',
+          ownerKind: 'transition',
+          ownerId: 'clip-1.transition.dissolve',
+        }),
+      }),
+    ]));
+
+    expect(graph.edges.map((edge) => edge.kind)).not.toContain('consumes-mask');
+  });
+
+  it('projects transition consumes edges for unmanaged transitions via fallback contributionId match', () => {
+    const idx: ContributionIndex = {
+      ...contributionIndex(),
+      'transition:com.example.transitions:wipe': [
+        indexEntry('transition:com.example.transitions:wipe'),
+      ],
+    };
+
+    const baseSnapshot = timelineSnapshot();
+    const graph = project({
+      contributionIndex: idx,
+      snapshot: {
+        ...baseSnapshot,
+        clips: baseSnapshot.clips.map((clip) => (
+          clip.id === 'clip-1'
+            ? {
+                ...clip,
+                transition: transitionSummary({
+                  id: 'clip-1.transition.wipe',
+                  transitionType: 'wipe',
+                  managed: false,
+                  managedBy: undefined,
+                }),
+              }
+            : clip
+        )),
+      },
+    });
+
+    expect(graph.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'consumes',
+        sourceNodeId: 'clip:clip-1',
+        targetNodeId: 'contribution:transition:com.example.transitions:wipe',
+        detail: expect.objectContaining({
+          transitionId: 'clip-1.transition.wipe',
+          transitionType: 'wipe',
+          refKey: 'transition:com.example.transitions:wipe',
+          consumedKind: 'transition',
+          ownerKind: 'transition',
+          ownerId: 'clip-1.transition.wipe',
+        }),
+      }),
+    ]));
+  });
+
+  it('skips mask-material consumes edges when the binding owner does not match the clip transition', () => {
+    const idx: ContributionIndex = {
+      ...contributionIndex(),
+      'transition:com.example.transitions:dissolve': [
+        indexEntry('transition:com.example.transitions:dissolve'),
+      ],
+    };
+
+    const baseSnapshot = timelineSnapshot();
+    const graph = project({
+      contributionIndex: idx,
+      snapshot: {
+        ...baseSnapshot,
+        clips: baseSnapshot.clips.map((clip) => (
+          clip.id === 'clip-1'
+            ? {
+                ...clip,
+                transition: transitionSummary(),
+              }
+            : clip
+        )),
+      },
+      materialSlotBindings: [
+        {
+          owner: {
+            kind: 'transition',
+            clipId: 'clip-1',
+            ownerId: 'clip-1.transition.other',
+          },
+          slotName: 'transition-mask',
+          materialRefId: 'mat-mask-2',
+        },
+      ],
+    });
+
+    const maskMaterialEdges = graph.edges.filter(
+      (edge) =>
+        edge.kind === 'consumes'
+        && (edge.detail as Record<string, unknown>).consumedKind === 'mask-material',
+    );
+
+    expect(maskMaterialEdges).toHaveLength(0);
+    expect(graph.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'consumes',
+        sourceNodeId: 'clip:clip-1',
+        targetNodeId: 'contribution:transition:com.example.transitions:dissolve',
+        detail: expect.objectContaining({
+          consumedKind: 'transition',
+          ownerId: 'clip-1.transition.dissolve',
+        }),
+      }),
+    ]));
+  });
+
+  it('emits M5 effect missing-ref diagnostics with resolver and contribution details', () => {
+    const baseSnapshot = timelineSnapshot({ shaders: [] });
+    const graph = project({
+      snapshot: {
+        ...baseSnapshot,
+        shaders: [],
+        clips: baseSnapshot.clips.map((clip) =>
+          clip.id === 'clip-1'
+            ? {
+                ...clip,
+                effects: [
+                  effectSummary({
+                    id: 'clip-1.effect.missing',
+                    effectType: 'missing-glow',
+                    managedBy: 'com.example.unknown',
+                  }),
+                ],
+              }
+            : clip
+        ),
+      },
+    });
+
+    expect(graph.referenceStates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        refKey: 'effect:com.example.unknown:missing-glow',
+        state: 'missing',
+        nodeIds: ['clip:clip-1'],
+      }),
+    ]));
+
+    expect(graph.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'composition/effect-missing-ref',
+        severity: 'warning',
+        extensionId: 'com.example.unknown',
+        contributionId: 'missing-glow',
+        detail: expect.objectContaining({
+          nodeId: 'clip:clip-1',
+          clipId: 'clip-1',
+          refKey: 'effect:com.example.unknown:missing-glow',
+          refState: 'missing',
+          resolverState: 'missing',
+          scope: 'clip',
+          extensionId: 'com.example.unknown',
+          contributionId: 'missing-glow',
+          ownerKind: 'effect',
+          ownerId: 'clip-1.effect.missing',
+        }),
+      }),
+    ]));
+
+    const genericEffectMissing = graph.diagnostics.filter(
+      (diagnostic) =>
+        diagnostic.code === 'composition/missing-ref'
+        && String((diagnostic.detail as Record<string, unknown> | undefined)?.refKey ?? '').startsWith('effect:'),
+    );
+    expect(genericEffectMissing).toHaveLength(0);
+  });
+
+  it('emits M5 transition disabled-ref diagnostics for both transition and slot usages without falling back to generic codes', () => {
+    const idx: ContributionIndex = {
+      ...contributionIndex(),
+      'transition:com.example.transitions:dissolve': [
+        indexEntry('transition:com.example.transitions:dissolve', {
+          status: 'disabled',
+          packageState: 'disabled-by-user',
+        }),
+      ],
+    };
+
+    const baseSnapshot = timelineSnapshot({ shaders: [] });
+    const graph = project({
+      contributionIndex: idx,
+      snapshot: {
+        ...baseSnapshot,
+        shaders: [],
+        clips: baseSnapshot.clips.map((clip) => (
+          clip.id === 'clip-1'
+            ? {
+                ...clip,
+                transition: transitionSummary(),
+              }
+            : clip
+        )),
+      },
+      materialSlotBindings: [
+        {
+          owner: {
+            kind: 'transition',
+            clipId: 'clip-1',
+            ownerId: 'clip-1.transition.dissolve',
+          },
+          slotName: 'transition-mask',
+          materialRefId: 'mat-mask-1',
+        },
+      ],
+    });
+
+    expect(graph.referenceStates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        refKey: 'transition:com.example.transitions:dissolve',
+        state: 'disabled',
+        nodeIds: ['clip:clip-1'],
+      }),
+    ]));
+
+    expect(graph.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'composition/transition-disabled-ref',
+        severity: 'error',
+        extensionId: 'com.example.transitions',
+        contributionId: 'dissolve',
+        detail: expect.objectContaining({
+          nodeId: 'clip:clip-1',
+          clipId: 'clip-1',
+          refKey: 'transition:com.example.transitions:dissolve',
+          refState: 'disabled',
+          resolverState: 'disabled',
+          scope: 'clip',
+          extensionId: 'com.example.transitions',
+          contributionId: 'dissolve',
+          ownerKind: 'transition',
+          ownerId: 'clip-1.transition.dissolve',
+          packageState: 'disabled-by-user',
+        }),
+      }),
+      expect.objectContaining({
+        code: 'composition/transition-disabled-ref',
+        severity: 'error',
+        detail: expect.objectContaining({
+          nodeId: 'clip:clip-1',
+          materialSlot: 'transition-mask',
+          materialRefId: 'mat-mask-1',
+          refKey: 'transition:com.example.transitions:dissolve',
+          resolverState: 'disabled',
+          ownerKind: 'transition',
+          ownerId: 'clip-1.transition.dissolve',
+          packageState: 'disabled-by-user',
+        }),
+      }),
+    ]));
+
+    const genericTransitionDisabled = graph.diagnostics.filter(
+      (diagnostic) =>
+        diagnostic.code === 'composition/disabled-ref'
+        && String((diagnostic.detail as Record<string, unknown> | undefined)?.refKey ?? '').startsWith('transition:'),
+    );
+    expect(genericTransitionDisabled).toHaveLength(0);
   });
 });

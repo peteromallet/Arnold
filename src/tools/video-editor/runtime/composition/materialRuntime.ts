@@ -31,6 +31,7 @@ import {
   type CompositionDiagnosticDetail,
 } from '@/tools/video-editor/runtime/composition/diagnostics.ts';
 import type { ExtensionDiagnostic } from '@reigh/editor-sdk';
+import type { ReferenceState } from '@reigh/editor-sdk';
 import type {
   ContributionIndex,
   ContributionIndexEntry,
@@ -264,6 +265,19 @@ export type ResolveMaterialAttachEntryResult =
       readonly ok: false;
       readonly diagnostic: ExtensionDiagnostic;
     }>;
+
+export interface MaterialAttachDiagnosticContext {
+  readonly clipId?: string;
+  readonly scope?: 'clip' | 'postprocess';
+  readonly ownerKind?: string;
+  readonly ownerId?: string;
+  readonly materialSlot?: string;
+  readonly refKey?: string;
+  readonly extensionId?: string;
+  readonly contributionId?: string;
+  readonly resolverState?: ReferenceState;
+  readonly packageState?: string;
+}
 
 function freezeDetail(
   detail: RenderMaterialStatusDetail | undefined,
@@ -1495,36 +1509,176 @@ export function collectMaterialRuntimeDiagnostics(
   return Object.freeze(diagnostics);
 }
 
-function firstAttachBlockingDiagnostic(
+function attachBoundaryNextAction(
   entry: HostMaterialRuntimeEntry,
-): ExtensionDiagnostic | undefined {
-  const existing = entry.diagnostics[0];
-  if (existing) {
-    return existing;
-  }
+  routeScope?: RenderRoute,
+): Record<string, unknown> | undefined {
+  const nextAction = routeScope
+    ? entry.routeScopes.find((scope) => scope.route === routeScope)?.nextAction ?? entry.nextAction
+    : entry.nextAction;
+  return nextAction ? { ...nextAction } : undefined;
+}
 
-  if (!entry.blocksAuthoritativeExport) {
+function buildAttachBoundaryRepairAction(
+  action: Record<string, unknown> | undefined,
+  materialRefId: string,
+  context: MaterialAttachDiagnosticContext,
+): Record<string, unknown> | undefined {
+  if (!action) {
     return undefined;
   }
 
-  const blockedRoute = entry.routeScopes.find((scope) => scope.fit === 'blocked')?.route;
-  const derived = blockedRoute
-    ? buildMaterialDiagnosticsForEntry(entry, blockedRoute)[0]
-    : buildMaterialDiagnosticsForEntry(entry)[0];
-  if (derived) {
-    return derived;
+  return {
+    ...action,
+    materialRefId,
+    ...(context.clipId ? { clipId: context.clipId } : {}),
+    ...(context.ownerKind ? { ownerKind: context.ownerKind } : {}),
+    ...(context.ownerId ? { ownerId: context.ownerId } : {}),
+    ...(context.materialSlot ? { materialSlot: context.materialSlot } : {}),
+  };
+}
+
+function buildMaterialAttachDiagnosticDetail(
+  materialRefId: string,
+  context: MaterialAttachDiagnosticContext,
+  entry?: HostMaterialRuntimeEntry,
+  routeScope?: RenderRoute,
+  fallbackAction?: Record<string, unknown>,
+): CompositionDiagnosticDetail {
+  const baseDetail = entry
+    ? buildMaterialDiagnosticDetail(entry, routeScope)
+    : { materialRefId } satisfies CompositionDiagnosticDetail;
+  const nextAction = baseDetail.nextAction
+    ? { ...baseDetail.nextAction }
+    : fallbackAction;
+  const repairAction = buildAttachBoundaryRepairAction(nextAction, materialRefId, context);
+
+  return {
+    ...baseDetail,
+    materialRefId,
+    ...(context.clipId ? { clipId: context.clipId } : {}),
+    ...(context.scope ? { scope: context.scope } : {}),
+    ...(context.ownerKind ? { ownerKind: context.ownerKind } : {}),
+    ...(context.ownerId ? { ownerId: context.ownerId } : {}),
+    ...(context.materialSlot ? { materialSlot: context.materialSlot } : {}),
+    ...(context.refKey ? { refKey: context.refKey } : {}),
+    ...(context.resolverState
+      ? {
+          refState: context.resolverState,
+          resolverState: context.resolverState,
+        }
+      : {}),
+    ...(context.extensionId ? { extensionId: context.extensionId } : {}),
+    ...(context.contributionId ? { contributionId: context.contributionId } : {}),
+    ...(context.packageState ? { packageState: context.packageState } : {}),
+    ...(nextAction ? { nextAction } : {}),
+    ...(repairAction ? { repairAction } : {}),
+  };
+}
+
+function selectMaterialAttachDiagnostic(
+  entry: HostMaterialRuntimeEntry,
+): Readonly<{
+  code: CompositionDiagnosticCode;
+  routeScope?: RenderRoute;
+}> | undefined {
+  if (entry.matrix.validity === 'invalid') {
+    return { code: COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_STATUS_INVALID };
   }
 
-  return buildCompositionDiagnostic(
-    COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_STATUS_INVALID,
-    `Material "${entry.materialRef.id}" cannot be attached in the current runtime state.`,
-    buildMaterialDiagnosticDetail(entry, blockedRoute),
-  );
+  if (entry.status.detail?.quality === 'route-incompatible') {
+    return {
+      code: COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_ROUTE_INCOMPATIBLE,
+      routeScope: entry.routeScopes.find((scope) => scope.fit === 'blocked')?.route,
+    };
+  }
+
+  switch (entry.status.state) {
+    case 'missing':
+    case 'pending':
+      return { code: COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_NOT_RESOLVED };
+    case 'stale':
+      return { code: COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_STALE };
+    case 'failed':
+      return { code: COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_FAILED };
+    case 'resolved':
+      return undefined;
+    default: {
+      const _exhaustive: never = entry.status.state;
+      return _exhaustive;
+    }
+  }
+}
+
+function materialAttachDiagnosticMessage(
+  code: CompositionDiagnosticCode,
+  materialRefId: string,
+  context: MaterialAttachDiagnosticContext,
+  entry?: HostMaterialRuntimeEntry,
+  routeScope?: RenderRoute,
+): string {
+  const ownerLabel = context.ownerKind && context.ownerId
+    ? `${context.ownerKind} "${context.ownerId}"`
+    : 'owner';
+  const slotLabel = context.materialSlot
+    ? `slot "${context.materialSlot}" on ${ownerLabel}`
+    : `owner ${ownerLabel}`;
+
+  switch (code) {
+    case COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_NOT_RESOLVED:
+      return entry
+        ? `Material "${materialRefId}" cannot attach to ${slotLabel} while it is ${entry.status.state}.`
+        : `Material "${materialRefId}" could not be resolved for ${slotLabel} attach preview.`;
+    case COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_STALE:
+      return `Material "${materialRefId}" is stale and cannot attach to ${slotLabel} until it is re-materialized.`;
+    case COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_FAILED:
+      return `Material "${materialRefId}" failed materialization and cannot attach to ${slotLabel}.`;
+    case COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_ROUTE_INCOMPATIBLE:
+      return routeScope
+        ? `Material "${materialRefId}" is incompatible with route "${routeScope}" for ${slotLabel}.`
+        : `Material "${materialRefId}" is route-incompatible for ${slotLabel}.`;
+    case COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_STATUS_INVALID:
+      return `Material "${materialRefId}" has an invalid runtime state for ${slotLabel} attach preview.`;
+    default:
+      return `Material "${materialRefId}" cannot attach to ${slotLabel}.`;
+  }
+}
+
+function firstAttachBlockingDiagnostic(
+  entry: HostMaterialRuntimeEntry,
+  context: MaterialAttachDiagnosticContext = {},
+): ExtensionDiagnostic | undefined {
+  const selected = selectMaterialAttachDiagnostic(entry);
+  if (selected) {
+    const fallbackAction = selected.code === COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_NOT_RESOLVED
+      ? { kind: 'materialize' }
+      : undefined;
+    return buildCompositionDiagnostic(
+      selected.code,
+      materialAttachDiagnosticMessage(
+        selected.code,
+        entry.materialRef.id,
+        context,
+        entry,
+        selected.routeScope,
+      ),
+      buildMaterialAttachDiagnosticDetail(
+        entry.materialRef.id,
+        context,
+        entry,
+        selected.routeScope,
+        fallbackAction,
+      ),
+    );
+  }
+
+  return undefined;
 }
 
 export function resolveMaterialAttachEntry(
   projection: HostMaterialRuntimeProjection | undefined,
   materialRefId: string,
+  context: MaterialAttachDiagnosticContext = {},
 ): ResolveMaterialAttachEntryResult {
   const normalizedMaterialRefId = materialRefId.trim();
   const entry = normalizedMaterialRefId.length > 0
@@ -1532,29 +1686,32 @@ export function resolveMaterialAttachEntry(
     : undefined;
 
   if (!entry) {
+    const fallbackAction = { kind: 'materialize' };
     return Object.freeze({
       ok: false,
       diagnostic: buildCompositionDiagnostic(
         COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_NOT_RESOLVED,
-        `Material "${normalizedMaterialRefId}" could not be resolved for attach preview.`,
-        {
-          materialRefId: normalizedMaterialRefId,
-        },
+        materialAttachDiagnosticMessage(
+          COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_NOT_RESOLVED,
+          normalizedMaterialRefId,
+          context,
+        ),
+        buildMaterialAttachDiagnosticDetail(
+          normalizedMaterialRefId,
+          context,
+          undefined,
+          undefined,
+          fallbackAction,
+        ),
       ),
     });
   }
 
-  if (entry.diagnostics.length > 0) {
+  const attachDiagnostic = firstAttachBlockingDiagnostic(entry, context);
+  if (attachDiagnostic) {
     return Object.freeze({
       ok: false,
-      diagnostic: entry.diagnostics[0]!,
-    });
-  }
-
-  if (entry.blocksAuthoritativeExport) {
-    return Object.freeze({
-      ok: false,
-      diagnostic: firstAttachBlockingDiagnostic(entry)!,
+      diagnostic: attachDiagnostic,
     });
   }
 

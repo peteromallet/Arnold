@@ -124,6 +124,64 @@ export const COMPOSITION_DIAGNOSTIC_CODE = {
 
   /** A deterministic capture provenance hash does not match the expected value. */
   DETERMINISTIC_CAPTURE_PROVENANCE_MISMATCH: 'composition/deterministic-capture-provenance-mismatch',
+
+  // ---------------------------------------------------------------------------
+  // Effect / Transition (M5) reference diagnostic codes
+  // ---------------------------------------------------------------------------
+
+  /** An effect ref has no scoped candidates (missing). */
+  EFFECT_MISSING_REF: 'composition/effect-missing-ref',
+
+  /** An effect ref comes from a user-disabled package. */
+  EFFECT_DISABLED_REF: 'composition/effect-disabled-ref',
+
+  /** An effect ref is declared but not yet bridged. */
+  EFFECT_INACTIVE_RESERVED_REF: 'composition/effect-inactive-reserved-ref',
+
+  /** An effect ref comes from an invalid package. */
+  EFFECT_INVALID_PACKAGE_REF: 'composition/effect-invalid-package-ref',
+
+  /** An effect ref has duplicate scoped candidates. */
+  EFFECT_DUPLICATE_REF: 'composition/effect-duplicate-ref',
+
+  /** An effect ref comes from a package with a settings migration error. */
+  EFFECT_SETTINGS_ERROR_REF: 'composition/effect-settings-error-ref',
+
+  /** An effect ref comes from a package that failed runtime activation. */
+  EFFECT_RUNTIME_ERROR_REF: 'composition/effect-runtime-error-ref',
+
+  /** An effect ref comes from a version-incompatible package. */
+  EFFECT_VERSION_INCOMPATIBLE_REF: 'composition/effect-version-incompatible-ref',
+
+  /** An effect ref is in an unrecognised state. */
+  EFFECT_UNKNOWN_REF: 'composition/effect-unknown-ref',
+
+  /** A transition ref has no scoped candidates (missing). */
+  TRANSITION_MISSING_REF: 'composition/transition-missing-ref',
+
+  /** A transition ref comes from a user-disabled package. */
+  TRANSITION_DISABLED_REF: 'composition/transition-disabled-ref',
+
+  /** A transition ref is declared but not yet bridged. */
+  TRANSITION_INACTIVE_RESERVED_REF: 'composition/transition-inactive-reserved-ref',
+
+  /** A transition ref comes from an invalid package. */
+  TRANSITION_INVALID_PACKAGE_REF: 'composition/transition-invalid-package-ref',
+
+  /** A transition ref has duplicate scoped candidates. */
+  TRANSITION_DUPLICATE_REF: 'composition/transition-duplicate-ref',
+
+  /** A transition ref comes from a package with a settings migration error. */
+  TRANSITION_SETTINGS_ERROR_REF: 'composition/transition-settings-error-ref',
+
+  /** A transition ref comes from a package that failed runtime activation. */
+  TRANSITION_RUNTIME_ERROR_REF: 'composition/transition-runtime-error-ref',
+
+  /** A transition ref comes from a version-incompatible package. */
+  TRANSITION_VERSION_INCOMPATIBLE_REF: 'composition/transition-version-incompatible-ref',
+
+  /** A transition ref is in an unrecognised state. */
+  TRANSITION_UNKNOWN_REF: 'composition/transition-unknown-ref',
 } as const;
 
 export type CompositionDiagnosticCode =
@@ -192,6 +250,28 @@ export interface CompositionDiagnosticDetail {
   captureRef?: string;
   /** Provenance hash of the deterministic capture (SHA-256 hex, 64 chars). */
   provenanceHash?: string;
+
+  // ---------------------------------------------------------------------------
+  // M5: Effect / Transition / Material slot detail fields
+  // ---------------------------------------------------------------------------
+
+  /** Material slot name when the diagnostic relates to a material slot binding (e.g. 'transition-mask'). */
+  materialSlot?: string;
+
+  /** Owner kind when the diagnostic is scoped to an owner entity ('effect', 'transition', 'clip'). */
+  ownerKind?: string;
+
+  /** Owner ID when the diagnostic is scoped to an owner entity. */
+  ownerId?: string;
+
+  /** Resolver state classification produced during reference resolution. */
+  resolverState?: string;
+
+  /** Package state from the contribution index entry (e.g. 'loaded', 'disabled-by-user', 'invalid'). */
+  packageState?: string;
+
+  /** Repair action payload surfaced by the planner or material runtime for UI affordances. */
+  repairAction?: Record<string, unknown>;
 }
 
 const BLOCKING_TARGET_COMPOSITION_DIAGNOSTIC_CODES = new Set<CompositionDiagnosticCode>([
@@ -244,6 +324,74 @@ const DETERMINISTIC_CAPTURE_CONVERSION_DIAGNOSTIC_CODES: ReadonlySet<Composition
   COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_VALUE_NORMALIZATION_FAILED,
   COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_TIMING_FAILED,
   COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_PROVENANCE_MISMATCH,
+]);
+
+// ---------------------------------------------------------------------------
+// Effect (M5) diagnostic code sets
+// ---------------------------------------------------------------------------
+
+/** All effect reference diagnostic codes (M5). */
+const EFFECT_DIAGNOSTIC_CODES: ReadonlySet<CompositionDiagnosticCode> = new Set([
+  COMPOSITION_DIAGNOSTIC_CODE.EFFECT_MISSING_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.EFFECT_DISABLED_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.EFFECT_INACTIVE_RESERVED_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.EFFECT_INVALID_PACKAGE_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.EFFECT_DUPLICATE_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.EFFECT_SETTINGS_ERROR_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.EFFECT_RUNTIME_ERROR_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.EFFECT_VERSION_INCOMPATIBLE_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.EFFECT_UNKNOWN_REF,
+]);
+
+/** Effect diagnostic codes that carry warning severity. */
+const EFFECT_WARNING_DIAGNOSTIC_CODES = new Set<CompositionDiagnosticCode>([
+  COMPOSITION_DIAGNOSTIC_CODE.EFFECT_MISSING_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.EFFECT_INACTIVE_RESERVED_REF,
+]);
+
+/** Effect diagnostic codes that carry error severity. */
+const EFFECT_ERROR_DIAGNOSTIC_CODES = new Set<CompositionDiagnosticCode>([
+  COMPOSITION_DIAGNOSTIC_CODE.EFFECT_DISABLED_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.EFFECT_INVALID_PACKAGE_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.EFFECT_DUPLICATE_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.EFFECT_SETTINGS_ERROR_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.EFFECT_RUNTIME_ERROR_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.EFFECT_VERSION_INCOMPATIBLE_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.EFFECT_UNKNOWN_REF,
+]);
+
+// ---------------------------------------------------------------------------
+// Transition (M5) diagnostic code sets
+// ---------------------------------------------------------------------------
+
+/** All transition reference diagnostic codes (M5). */
+const TRANSITION_DIAGNOSTIC_CODES: ReadonlySet<CompositionDiagnosticCode> = new Set([
+  COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_MISSING_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_DISABLED_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_INACTIVE_RESERVED_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_INVALID_PACKAGE_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_DUPLICATE_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_SETTINGS_ERROR_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_RUNTIME_ERROR_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_VERSION_INCOMPATIBLE_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_UNKNOWN_REF,
+]);
+
+/** Transition diagnostic codes that carry warning severity. */
+const TRANSITION_WARNING_DIAGNOSTIC_CODES = new Set<CompositionDiagnosticCode>([
+  COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_MISSING_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_INACTIVE_RESERVED_REF,
+]);
+
+/** Transition diagnostic codes that carry error severity. */
+const TRANSITION_ERROR_DIAGNOSTIC_CODES = new Set<CompositionDiagnosticCode>([
+  COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_DISABLED_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_INVALID_PACKAGE_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_DUPLICATE_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_SETTINGS_ERROR_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_RUNTIME_ERROR_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_VERSION_INCOMPATIBLE_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_UNKNOWN_REF,
 ]);
 
 // ---------------------------------------------------------------------------
@@ -303,8 +451,146 @@ export function referenceStateSeverity(state: ReferenceState): DiagnosticSeverit
   }
 }
 
+/**
+ * Map a {@link ReferenceState} to its M5-specific effect diagnostic code.
+ *
+ * Returns `undefined` for `resolved` (no diagnostic emitted).
+ */
+export function referenceStateToEffectDiagnosticCode(
+  state: ReferenceState,
+): CompositionDiagnosticCode | undefined {
+  switch (state) {
+    case 'resolved':
+      return undefined;
+    case 'missing':
+      return COMPOSITION_DIAGNOSTIC_CODE.EFFECT_MISSING_REF;
+    case 'disabled':
+      return COMPOSITION_DIAGNOSTIC_CODE.EFFECT_DISABLED_REF;
+    case 'inactive-reserved':
+      return COMPOSITION_DIAGNOSTIC_CODE.EFFECT_INACTIVE_RESERVED_REF;
+    case 'invalid-package':
+      return COMPOSITION_DIAGNOSTIC_CODE.EFFECT_INVALID_PACKAGE_REF;
+    case 'duplicate':
+      return COMPOSITION_DIAGNOSTIC_CODE.EFFECT_DUPLICATE_REF;
+    case 'settings-error':
+      return COMPOSITION_DIAGNOSTIC_CODE.EFFECT_SETTINGS_ERROR_REF;
+    case 'runtime-error':
+      return COMPOSITION_DIAGNOSTIC_CODE.EFFECT_RUNTIME_ERROR_REF;
+    case 'version-incompatible':
+      return COMPOSITION_DIAGNOSTIC_CODE.EFFECT_VERSION_INCOMPATIBLE_REF;
+    case 'unknown':
+      return COMPOSITION_DIAGNOSTIC_CODE.EFFECT_UNKNOWN_REF;
+    default: {
+      const _exhaustive: never = state;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * Map a {@link ReferenceState} to its M5-specific transition diagnostic code.
+ *
+ * Returns `undefined` for `resolved` (no diagnostic emitted).
+ */
+export function referenceStateToTransitionDiagnosticCode(
+  state: ReferenceState,
+): CompositionDiagnosticCode | undefined {
+  switch (state) {
+    case 'resolved':
+      return undefined;
+    case 'missing':
+      return COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_MISSING_REF;
+    case 'disabled':
+      return COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_DISABLED_REF;
+    case 'inactive-reserved':
+      return COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_INACTIVE_RESERVED_REF;
+    case 'invalid-package':
+      return COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_INVALID_PACKAGE_REF;
+    case 'duplicate':
+      return COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_DUPLICATE_REF;
+    case 'settings-error':
+      return COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_SETTINGS_ERROR_REF;
+    case 'runtime-error':
+      return COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_RUNTIME_ERROR_REF;
+    case 'version-incompatible':
+      return COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_VERSION_INCOMPATIBLE_REF;
+    case 'unknown':
+      return COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_UNKNOWN_REF;
+    default: {
+      const _exhaustive: never = state;
+      return _exhaustive;
+    }
+  }
+}
+
 export function isBlockingTargetCompositionDiagnosticCode(code: string): code is CompositionDiagnosticCode {
   return BLOCKING_TARGET_COMPOSITION_DIAGNOSTIC_CODES.has(code as CompositionDiagnosticCode);
+}
+
+// ---------------------------------------------------------------------------
+// M5 (Effect / Transition) blocking diagnostic codes
+// ---------------------------------------------------------------------------
+
+/**
+ * M5 composition diagnostic codes that produce error severity and should
+ * block export / render planning until the underlying diagnostic state is
+ * resolved (repaired or baked).
+ *
+ * Warnings (missing-ref, inactive-reserved-ref) are intentionally excluded —
+ * they are surfaced as findings but do not block export.
+ */
+const BLOCKING_M5_COMPOSITION_DIAGNOSTIC_CODES = new Set<CompositionDiagnosticCode>([
+  ...Array.from(EFFECT_ERROR_DIAGNOSTIC_CODES),
+  ...Array.from(TRANSITION_ERROR_DIAGNOSTIC_CODES),
+]);
+
+/**
+ * Type guard: returns `true` when `code` is an M5 (effect or transition)
+ * diagnostic code that should block export until the underlying state is
+ * repaired or baked.
+ */
+export function isBlockingM5CompositionDiagnosticCode(code: string): code is CompositionDiagnosticCode {
+  return BLOCKING_M5_COMPOSITION_DIAGNOSTIC_CODES.has(code as CompositionDiagnosticCode);
+}
+
+/**
+ * Map an M5 composition diagnostic code to its canonical export-guard
+ * blocker reason.
+ */
+export function m5CompositionBlockerReason(code: CompositionDiagnosticCode): string {
+  if (EFFECT_ERROR_DIAGNOSTIC_CODES.has(code)) {
+    switch (code) {
+      case COMPOSITION_DIAGNOSTIC_CODE.EFFECT_DISABLED_REF:
+      case COMPOSITION_DIAGNOSTIC_CODE.EFFECT_INVALID_PACKAGE_REF:
+      case COMPOSITION_DIAGNOSTIC_CODE.EFFECT_SETTINGS_ERROR_REF:
+      case COMPOSITION_DIAGNOSTIC_CODE.EFFECT_RUNTIME_ERROR_REF:
+      case COMPOSITION_DIAGNOSTIC_CODE.EFFECT_VERSION_INCOMPATIBLE_REF:
+        return 'inactive-extension';
+      case COMPOSITION_DIAGNOSTIC_CODE.EFFECT_DUPLICATE_REF:
+        return 'missing-contribution';
+      case COMPOSITION_DIAGNOSTIC_CODE.EFFECT_UNKNOWN_REF:
+      default:
+        return 'unknown';
+    }
+  }
+
+  if (TRANSITION_ERROR_DIAGNOSTIC_CODES.has(code)) {
+    switch (code) {
+      case COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_DISABLED_REF:
+      case COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_INVALID_PACKAGE_REF:
+      case COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_SETTINGS_ERROR_REF:
+      case COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_RUNTIME_ERROR_REF:
+      case COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_VERSION_INCOMPATIBLE_REF:
+        return 'inactive-extension';
+      case COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_DUPLICATE_REF:
+        return 'missing-contribution';
+      case COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_UNKNOWN_REF:
+      default:
+        return 'unknown';
+    }
+  }
+
+  return 'unknown';
 }
 
 /**
@@ -324,6 +610,52 @@ export function isMaterialDiagnosticCode(code: string): code is CompositionDiagn
  */
 export function isDeterministicCaptureConversionDiagnosticCode(code: string): code is CompositionDiagnosticCode {
   return DETERMINISTIC_CAPTURE_CONVERSION_DIAGNOSTIC_CODES.has(code as CompositionDiagnosticCode);
+}
+
+/**
+ * Type guard: returns `true` when `code` is an effect (M5) diagnostic code.
+ */
+export function isEffectDiagnosticCode(code: string): code is CompositionDiagnosticCode {
+  return EFFECT_DIAGNOSTIC_CODES.has(code as CompositionDiagnosticCode);
+}
+
+/**
+ * Type guard: returns `true` when `code` is a transition (M5) diagnostic code.
+ */
+export function isTransitionDiagnosticCode(code: string): code is CompositionDiagnosticCode {
+  return TRANSITION_DIAGNOSTIC_CODES.has(code as CompositionDiagnosticCode);
+}
+
+/**
+ * Severity for effect (M5) diagnostic codes.
+ *
+ * Missing and inactive-reserved produce warnings; all other non-resolved
+ * effect states produce errors.
+ */
+export function effectDiagnosticSeverity(code: CompositionDiagnosticCode): DiagnosticSeverity {
+  if (EFFECT_WARNING_DIAGNOSTIC_CODES.has(code)) {
+    return 'warning';
+  }
+  if (EFFECT_ERROR_DIAGNOSTIC_CODES.has(code)) {
+    return 'error';
+  }
+  return 'error';
+}
+
+/**
+ * Severity for transition (M5) diagnostic codes.
+ *
+ * Missing and inactive-reserved produce warnings; all other non-resolved
+ * transition states produce errors.
+ */
+export function transitionDiagnosticSeverity(code: CompositionDiagnosticCode): DiagnosticSeverity {
+  if (TRANSITION_WARNING_DIAGNOSTIC_CODES.has(code)) {
+    return 'warning';
+  }
+  if (TRANSITION_ERROR_DIAGNOSTIC_CODES.has(code)) {
+    return 'error';
+  }
+  return 'error';
 }
 
 /**
@@ -361,6 +693,10 @@ export function buildCompositionDiagnostic(
   } else if (isDeterministicCaptureConversionDiagnosticCode(code)) {
     // Deterministic capture conversion issues are always blocking errors.
     severity = 'error';
+  } else if (isEffectDiagnosticCode(code)) {
+    severity = effectDiagnosticSeverity(code);
+  } else if (isTransitionDiagnosticCode(code)) {
+    severity = transitionDiagnosticSeverity(code);
   } else if (
     code === COMPOSITION_DIAGNOSTIC_CODE.MISSING_REF
     || code === COMPOSITION_DIAGNOSTIC_CODE.INACTIVE_RESERVED_REF

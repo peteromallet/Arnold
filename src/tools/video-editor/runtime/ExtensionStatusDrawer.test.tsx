@@ -964,7 +964,12 @@ describe('ExtensionStatusDrawer', () => {
       message: 'Planner blocked browser export.',
       extensionId: 'com.example.status',
       contributionId: 'status.effect',
-      detail: { source: 'render-planner' },
+      detail: {
+        source: 'render-planner',
+        nextAction: {
+          kind: 'open-settings',
+        },
+      },
     });
     const ctx = buildRuntimeContext([ext], dc);
     const onClose = vi.fn();
@@ -992,6 +997,9 @@ describe('ExtensionStatusDrawer', () => {
     expect(document.querySelector('[data-video-editor-effect-renderability-summary="supported"]')?.textContent).toContain('1');
     expect(document.querySelector('[data-video-editor-effect-renderability-summary="blocked"]')?.textContent).toContain('1');
     expect(document.querySelector('[data-video-editor-planner-summary="blockers"]')?.textContent).toContain('1');
+    expect(screen.getByText('export/effect-preview-only')).toBeInTheDocument();
+    expect(screen.getByText('planner/browser-export/preview-only')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open Settings' })).toBeNull();
   });
 
   it('does not expose any install/uninstall/enable/disable buttons', () => {

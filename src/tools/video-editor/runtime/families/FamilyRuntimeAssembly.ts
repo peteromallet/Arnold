@@ -83,6 +83,23 @@ const CONTRIBUTION_KIND_LABEL: Partial<Record<string, string>> = {
   process: 'Process',
 };
 
+function contributionRenderId(contribution: ExtensionContribution | undefined): string | undefined {
+  if (!contribution) return undefined;
+  if ('effectId' in contribution && typeof contribution.effectId === 'string') {
+    return contribution.effectId;
+  }
+  if ('transitionId' in contribution && typeof contribution.transitionId === 'string') {
+    return contribution.transitionId;
+  }
+  if ('clipTypeId' in contribution && typeof contribution.clipTypeId === 'string') {
+    return contribution.clipTypeId;
+  }
+  if ('shaderId' in contribution && typeof contribution.shaderId === 'string') {
+    return contribution.shaderId;
+  }
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Package contribution summary
 // ---------------------------------------------------------------------------
@@ -618,6 +635,9 @@ export function assembleExtensionRuntime(
         contributionId: item.contribution.id as string,
         status: 'active',
         packageState: packageStateByExtensionId.get(item.extensionId),
+        ...(contributionRenderId(item.contribution)
+          ? { renderId: contributionRenderId(item.contribution) }
+          : {}),
         diagnostics: diagnosticsForScopedKey,
         duplicateOrdinal: item.duplicateOrdinal,
         projectionEligible: item.projectionEligible,
@@ -647,6 +667,9 @@ export function assembleExtensionRuntime(
         contributionId: item.contributionId,
         status: 'inactive-reserved',
         packageState: packageStateByExtensionId.get(item.extensionId),
+        ...(contributionRenderId(item.contribution)
+          ? { renderId: contributionRenderId(item.contribution) }
+          : {}),
         diagnostics: diagnosticsForScopedKey,
         duplicateOrdinal: item.duplicateOrdinal,
         projectionEligible: item.projectionEligible,
@@ -686,6 +709,9 @@ export function assembleExtensionRuntime(
           contributionId: contrib.id as string,
           status: indexStatus,
           packageState,
+          ...(contributionRenderId(contrib)
+            ? { renderId: contributionRenderId(contrib) }
+            : {}),
           diagnostics: frozenEmptyDiagnostics,
           duplicateOrdinal: 0,
           projectionEligible: false,

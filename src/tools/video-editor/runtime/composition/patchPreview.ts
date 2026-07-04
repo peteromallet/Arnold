@@ -31,9 +31,11 @@ import {
   canonicalizeAutomationParameterPath,
   canonicalizeShaderUniformPath,
   projectCompositionGraph,
+  resolveTransitionContributionEntry,
 } from '@/tools/video-editor/runtime/composition/graphProjector.ts';
 import {
   resolveMaterialAttachEntry,
+  type MaterialAttachDiagnosticContext,
 } from '@/tools/video-editor/runtime/composition/materialRuntime.ts';
 import {
   sameCompositionShaderIdentity,
@@ -878,6 +880,47 @@ function ensureMutableMaterialBindings(
   return next;
 }
 
+function buildMaterialAttachDiagnosticContext(
+  input: MutableGraphPreviewInput,
+  owner: CompositionGraphMaterialSlotOwnerIdentity,
+  slotName: string,
+): MaterialAttachDiagnosticContext {
+  const context: MaterialAttachDiagnosticContext = {
+    clipId: owner.clipId,
+    scope: 'clip',
+    ownerKind: owner.kind,
+    ownerId: owner.ownerId,
+    materialSlot: slotName,
+  };
+
+  if (owner.kind !== 'transition') {
+    return context;
+  }
+
+  const clip = input.snapshot.clips.find((candidate) => candidate.id === owner.clipId);
+  const transition = clip?.transition?.id === owner.ownerId ? clip.transition : undefined;
+  if (!transition) {
+    return context;
+  }
+
+  const lookup = resolveTransitionContributionEntry(transition, input.contributionIndex);
+  return {
+    ...context,
+    ...(lookup
+      ? {
+          refKey: lookup.refKey,
+          extensionId: lookup.ref.extensionId,
+          contributionId: lookup.ref.contributionId,
+          resolverState: 'resolved',
+          packageState: lookup.entry.packageState,
+        }
+      : {
+          extensionId: transition.managedBy,
+          contributionId: transition.transitionType,
+        }),
+  };
+}
+
 function applyMaterialAttach(
   input: MutableGraphPreviewInput,
   op: GraphMaterialAttachOp,
@@ -893,7 +936,12 @@ function applyMaterialAttach(
     return;
   }
 
-  const resolution = resolveMaterialAttachEntry(input.materialRuntime, op.materialRefId);
+  const diagnosticContext = buildMaterialAttachDiagnosticContext(input, op.owner, slotName);
+  const resolution = resolveMaterialAttachEntry(
+    input.materialRuntime,
+    op.materialRefId,
+    diagnosticContext,
+  );
   if (!resolution.ok) {
     diagnostics.push(resolution.diagnostic);
     return;

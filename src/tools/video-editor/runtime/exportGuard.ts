@@ -52,7 +52,11 @@ import {
 import {
   COMPOSITION_DIAGNOSTIC_CODE,
   isBlockingTargetCompositionDiagnosticCode,
+  isBlockingM5CompositionDiagnosticCode,
+  m5CompositionBlockerReason,
   isDeterministicCaptureConversionDiagnosticCode,
+  isEffectDiagnosticCode,
+  isTransitionDiagnosticCode,
 } from '@/tools/video-editor/runtime/composition/diagnostics.ts';
 import { validateShaderComposition } from '@/tools/video-editor/runtime/composition/shaderValidation.ts';
 import type { TransitionRegistryRecord, TransitionRegistrySnapshot } from '@/tools/video-editor/transitions/registry/types.ts';
@@ -311,6 +315,7 @@ export function scanExportConfig(
   if (config && config.clips.length > 0) {
     scanLiveBindingExportBlockers(config, diagnostics, findings, blockers);
     scanCompositionGraphTargetExportBlockers(diagnostics, findings, blockers, compositionGraph);
+    scanCompositionGraphM5ExportBlockers(diagnostics, findings, blockers, compositionGraph);
     scanTimelineShaderExportBlockers(config, diagnostics, findings, blockers, compositionGraph);
     const compatibilityWarning = legacyGraphCompatibilityWarning(config, compositionGraph);
     if (compatibilityWarning) {
@@ -519,6 +524,107 @@ function scanCompositionGraphTargetExportBlockers(
         route,
         reason,
       });
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// M5 (Effect / Transition) composition graph diagnostics → export blockers
+// ---------------------------------------------------------------------------
+
+/**
+ * Map an M5 composition diagnostic code to a canonical export diagnostic code.
+ */
+function m5CompositionExportCode(code: string): string | undefined {
+  if (isEffectDiagnosticCode(code)) {
+    return 'export/effect-unresolved-ref';
+  }
+  if (isTransitionDiagnosticCode(code)) {
+    return 'export/transition-unresolved-ref';
+  }
+  return undefined;
+}
+
+/**
+ * Scan composition graph diagnostics for blocking M5 (effect / transition)
+ * diagnostic codes and funnel them into export diagnostics, findings, and
+ * blockers.
+ *
+ * Non-blocking M5 codes (warnings) are also surfaced as findings but do NOT
+ * produce blockers — they are informational only and do not prevent export.
+ */
+function scanCompositionGraphM5ExportBlockers(
+  diagnostics: ExportDiagnostic[],
+  findings: CapabilityFinding[],
+  blockers: RenderBlocker[],
+  compositionGraph?: CompositionGraph,
+): void {
+  if (!compositionGraph?.diagnostics.length) {
+    return;
+  }
+
+  compositionGraph.diagnostics.forEach((diagnostic, diagnosticIndex) => {
+    const code = diagnostic.code;
+    if (!isEffectDiagnosticCode(code) && !isTransitionDiagnosticCode(code)) {
+      return;
+    }
+
+    const exportCode = m5CompositionExportCode(code);
+    if (!exportCode) {
+      return;
+    }
+
+    const isBlocking = isBlockingM5CompositionDiagnosticCode(code);
+    const severity: 'error' | 'warning' = isBlocking ? 'error' : 'warning';
+    const reason = isBlocking
+      ? (m5CompositionBlockerReason(code as Parameters<typeof m5CompositionBlockerReason>[0]) as RenderBlockerReason)
+      : 'unknown';
+
+    const detail = {
+      source: 'composition-graph',
+      graphDiagnosticCode: code,
+      ...(diagnostic.detail ?? {}),
+      diagnosticKind: isEffectDiagnosticCode(code) ? 'effect' : 'transition',
+    };
+    const extensionId = diagnostic.extensionId
+      ?? (diagnostic.detail?.extensionId as string | undefined);
+    const contributionId = diagnostic.contributionId
+      ?? (diagnostic.detail?.contributionId as string | undefined);
+    const clipId = typeof diagnostic.detail?.clipId === 'string'
+      ? diagnostic.detail.clipId
+      : undefined;
+
+    diagnostics.push({
+      severity,
+      code: exportCode,
+      message: diagnostic.message,
+      extensionId,
+      contributionId,
+      detail: clipId ? { clipId, ...detail } : detail,
+    });
+
+    for (const route of GRAPH_TARGET_BLOCKER_ROUTES) {
+      const finding: CapabilityFinding = {
+        id: `export.compositionGraph.${code}.${diagnosticIndex}.${route}`,
+        severity,
+        route,
+        reason,
+        message: diagnostic.message,
+        ...(clipId ? { clipId } : {}),
+        ...(extensionId ? { extensionId } : {}),
+        ...(contributionId ? { contributionId } : {}),
+        detail,
+      };
+      findings.push(finding);
+
+      if (isBlocking) {
+        blockers.push({
+          ...finding,
+          severity: 'error',
+          route,
+          reason,
+        });
+      }
     }
   });
 }

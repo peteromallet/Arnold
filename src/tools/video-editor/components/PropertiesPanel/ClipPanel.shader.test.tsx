@@ -315,6 +315,7 @@ describe('ClipPanel shader picker', () => {
     expect(screen.getByTestId('clip-panel-shader-diagnostic')).toHaveTextContent(
       'Cannot add shader "shader.clip.edge" to clip "clip-1" because shader "shader.clip.bloom" is already assigned. V1 supports one clip shader per clip. Remove the existing shader before assigning another.',
     );
+    expect(screen.getByText('shader/clip-scope-occupied')).toBeInTheDocument();
   });
 
   it('labels selected preview-only shader entries with a Preview only badge', () => {
@@ -367,5 +368,28 @@ describe('ClipPanel shader picker', () => {
 
     const section = getShaderSection();
     expect(within(section).getByText('No browser export')).toBeInTheDocument();
+  });
+
+  it('renders missing selected shaders through the shared blocker card', () => {
+    useOptionalShaderEffectRegistryContextMock.mockReturnValue({
+      registry: {},
+      snapshot: shaderSnapshot([]),
+    });
+
+    render(<ClipPanel {...defaultProps({
+      clip: clip({
+        app: {
+          shader: {
+            scope: 'clip',
+            extensionId: 'ext.shader',
+            contributionId: 'clip-missing',
+            shaderId: 'shader.clip.missing',
+          },
+        },
+      }),
+    })} />);
+
+    expect(screen.getByText('shader/missing-ref')).toBeInTheDocument();
+    expect(screen.getByText(/Shader "shader\.clip\.missing" is not available/)).toBeInTheDocument();
   });
 });

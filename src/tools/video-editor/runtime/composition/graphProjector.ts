@@ -6,8 +6,10 @@ import type {
   ContributionRef,
   ExtensionDiagnostic,
   ReferenceState,
+  TimelineEffectSummary,
   TimelineShaderSummary,
   TimelineSnapshot,
+  TimelineTransitionSummary,
 } from '@reigh/editor-sdk';
 import { contributionRefKey } from '@reigh/editor-sdk';
 import type {
@@ -19,9 +21,12 @@ import {
   buildCompositionDiagnostic,
   COMPOSITION_DIAGNOSTIC_CODE,
   type CompositionDiagnosticCode,
+  referenceStateToEffectDiagnosticCode,
+  referenceStateToTransitionDiagnosticCode,
 } from '@/tools/video-editor/runtime/composition/diagnostics.ts';
 import {
   resolveCompositionReferences,
+  resolveReferenceStateFromEntries,
   type CompositionReferenceUsage,
 } from '@/tools/video-editor/runtime/composition/referenceResolver.ts';
 import { validateShaderComposition } from '@/tools/video-editor/runtime/composition/shaderValidation.ts';
@@ -54,6 +59,130 @@ export interface CompositionGraphMaterialSlotBinding {
   readonly materialRefId: string;
 }
 
+// ---------------------------------------------------------------------------
+// M5: Effect / transition contribution lookup helpers
+// ---------------------------------------------------------------------------
+
+/** Resolved effect or transition contribution lookup result. */
+export interface EffectTransitionContributionLookup {
+  readonly ref: ContributionRef;
+  readonly refKey: string;
+  readonly entry: ContributionIndexEntry;
+}
+
+/**
+ * Resolve an effect or transition timeline summary against the contribution
+ * index using a tiered lookup strategy.
+ *
+ * Primary: match by `(kind, managedBy?, renderId?)`.
+ *   - Filters index entries where `entry.kind === kind`.
+ *   - If `managedBy` is set, requires `entry.extensionId === managedBy`.
+ *   - If `renderId` is set, requires `entry.renderId === renderId`.
+ *   - Returns the entry when exactly one matches.
+ *
+ * Fallback: match by contribution ID only (unambiguous).
+ *   - Filters index entries where `entry.kind === kind` AND
+ *     `entry.contributionId === contributionId`.
+ *   - Returns the entry only when exactly one matches; ambiguous or
+ *     zero matches return `undefined`.
+ *
+ * Graph node IDs remain keyed by {@link ContributionRef} identity
+ * (`contribution:<refKey>`).
+ */
+export function resolveEffectTransitionContributionEntry(
+  kind: 'effect' | 'transition',
+  managedBy: string | undefined,
+  renderId: string | undefined,
+  contributionId: string | undefined,
+  contributionIndex: ContributionIndex | undefined,
+): EffectTransitionContributionLookup | undefined {
+  if (!contributionIndex) {
+    return undefined;
+  }
+
+  const allEntries: readonly ContributionIndexEntry[] = Object.values(
+    contributionIndex as Record<string, readonly ContributionIndexEntry[]>,
+  ).flat();
+
+  // ---- Primary: (kind, managedBy?, renderId?) -----------------------
+  // Primary only activates when at least one identity-bearing filter
+  // (managedBy or renderId) is supplied.  A bare kind match is too broad
+  // and would incorrectly grab the sole entry of that kind regardless of
+  // whether the contribution ID aligns with the timeline summary.
+  const hasPrimaryCriteria = managedBy !== undefined || renderId !== undefined;
+
+  let primaryMatches: readonly ContributionIndexEntry[] = [];
+  if (hasPrimaryCriteria) {
+    primaryMatches = allEntries.filter((entry) => {
+      if (entry.kind !== kind) return false;
+      if (managedBy !== undefined && entry.extensionId !== managedBy) return false;
+      if (renderId !== undefined && entry.renderId !== renderId) return false;
+      return true;
+    });
+  }
+
+  if (primaryMatches.length === 1) {
+    const entry = primaryMatches[0]!;
+    const ref = createContributionRef(entry);
+    return { ref, refKey: contributionRefKey(ref), entry };
+  }
+
+  // ---- Fallback: contribution ID only (unambiguous) -----------------
+  if (contributionId !== undefined) {
+    const fallbackMatches = allEntries.filter((entry) => {
+      if (entry.kind !== kind) return false;
+      if (entry.contributionId !== contributionId) return false;
+      return true;
+    });
+
+    if (fallbackMatches.length === 1) {
+      const entry = fallbackMatches[0]!;
+      const ref = createContributionRef(entry);
+      return { ref, refKey: contributionRefKey(ref), entry };
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Convenience wrapper that resolves a {@link TimelineEffectSummary}
+ * through {@link resolveEffectTransitionContributionEntry}.
+ */
+export function resolveEffectContributionEntry(
+  effect: TimelineEffectSummary,
+  contributionIndex: ContributionIndex | undefined,
+  renderId?: string,
+): EffectTransitionContributionLookup | undefined {
+  const resolvedRenderId = renderId ?? effect.effectType;
+  return resolveEffectTransitionContributionEntry(
+    'effect',
+    effect.managedBy,
+    resolvedRenderId,
+    effect.effectType,
+    contributionIndex,
+  );
+}
+
+/**
+ * Convenience wrapper that resolves a {@link TimelineTransitionSummary}
+ * through {@link resolveEffectTransitionContributionEntry}.
+ */
+export function resolveTransitionContributionEntry(
+  transition: TimelineTransitionSummary,
+  contributionIndex: ContributionIndex | undefined,
+  renderId?: string,
+): EffectTransitionContributionLookup | undefined {
+  const resolvedRenderId = renderId ?? transition.transitionType;
+  return resolveEffectTransitionContributionEntry(
+    'transition',
+    transition.managedBy,
+    resolvedRenderId,
+    transition.transitionType,
+    contributionIndex,
+  );
+}
+
 export interface CompositionGraphInput {
   readonly snapshot: TimelineSnapshot;
   readonly contributionIndex: ContributionIndex | undefined;
@@ -70,6 +199,28 @@ const EMPTY_EDGES: readonly CompositionGraphEdge[] = Object.freeze([]);
 const EMPTY_DIAGNOSTICS: readonly ExtensionDiagnostic[] = Object.freeze([]);
 const EMPTY_SHADERS: readonly TimelineShaderSummary[] = Object.freeze([]);
 const EMPTY_REFERENCE_STATES: readonly CompositionReferenceStateEntry[] = Object.freeze([]);
+const EMPTY_CONTRIBUTION_INDEX_ENTRIES: readonly ContributionIndexEntry[] = Object.freeze([]);
+
+interface EffectTransitionReferenceUsage {
+  readonly kind: 'effect' | 'transition';
+  readonly nodeId: string;
+  readonly clipId: string;
+  readonly scope: 'clip';
+  readonly contributionId?: string;
+  readonly managedBy?: string;
+  readonly ownerKind: 'effect' | 'transition';
+  readonly ownerId: string;
+  readonly materialSlot?: string;
+  readonly materialRefId?: string;
+  readonly targetPath?: string;
+}
+
+interface ResolvedEffectTransitionReferenceUsage {
+  readonly ref?: ContributionRef;
+  readonly refKey?: string;
+  readonly state: ReferenceState;
+  readonly packageState?: string;
+}
 
 function clipNodeId(clipId: string): string {
   return `clip:${clipId}`;
@@ -87,6 +238,26 @@ function createContributionRef(
     extensionId: entry.extensionId,
     contributionId: entry.contributionId,
   };
+}
+
+function ensureContributionNode(
+  nodes: CompositionGraphNode[],
+  contributionNodeByRefKey: Map<string, CompositionGraphNode>,
+  ref: ContributionRef,
+  refKey: string,
+): CompositionGraphNode {
+  let contributionNode = contributionNodeByRefKey.get(refKey);
+  if (!contributionNode) {
+    contributionNode = Object.freeze({
+      id: contributionNodeId(ref),
+      kind: 'contribution' as const,
+      ref,
+    });
+    contributionNodeByRefKey.set(refKey, contributionNode);
+    nodes.push(contributionNode);
+  }
+
+  return contributionNode;
 }
 
 function buildContributionNodeDetail(
@@ -127,6 +298,253 @@ function buildContributionEntryByContributionId(
   }
 
   return byContributionId;
+}
+
+function packageStateForReferenceState(
+  entries: readonly ContributionIndexEntry[] | undefined,
+  state: ReferenceState,
+): string | undefined {
+  if (!entries?.length) {
+    return undefined;
+  }
+
+  switch (state) {
+    case 'invalid-package':
+      return entries.find((entry) => entry.packageState === 'invalid')?.packageState ?? 'invalid';
+    case 'settings-error':
+      return entries.find((entry) => entry.packageState === 'settings-error')?.packageState ?? 'settings-error';
+    case 'runtime-error':
+      return entries.find((entry) => entry.packageState === 'runtime-error')?.packageState ?? 'runtime-error';
+    case 'version-incompatible':
+      return entries.find((entry) => entry.packageState === 'incompatible')?.packageState ?? 'incompatible';
+    case 'disabled':
+      return entries.find((entry) => entry.packageState === 'disabled-by-user')?.packageState
+        ?? entries.find((entry) => entry.status === 'disabled')?.packageState
+        ?? 'disabled-by-user';
+    case 'duplicate':
+      return entries.find((entry) => entry.packageState === 'duplicate')?.packageState
+        ?? entries.find((entry) => entry.resolutionPolicy?.kind === 'exact-duplicate')?.packageState
+        ?? 'duplicate';
+    case 'inactive-reserved':
+    case 'resolved':
+    case 'unknown':
+    case 'missing':
+      return entries.find((entry) => entry.packageState !== undefined)?.packageState;
+    default: {
+      const _exhaustive: never = state;
+      return _exhaustive;
+    }
+  }
+}
+
+function resolveEffectTransitionReferenceUsage(
+  usage: EffectTransitionReferenceUsage,
+  contributionIndex: ContributionIndex | undefined,
+): ResolvedEffectTransitionReferenceUsage {
+  const contributionId = usage.contributionId?.trim();
+  const managedBy = usage.managedBy?.trim();
+  const allEntries: readonly ContributionIndexEntry[] = contributionIndex
+    ? Object.values(contributionIndex as Record<string, readonly ContributionIndexEntry[]>).flat()
+    : EMPTY_CONTRIBUTION_INDEX_ENTRIES;
+
+  const lookup = resolveEffectTransitionContributionEntry(
+    usage.kind,
+    managedBy,
+    undefined,
+    contributionId,
+    contributionIndex,
+  );
+  if (lookup) {
+    const entries = contributionIndex?.[lookup.refKey];
+    const state = resolveReferenceStateFromEntries(entries);
+    const packageState = packageStateForReferenceState(entries, state);
+    return {
+      ref: lookup.ref,
+      refKey: lookup.refKey,
+      state,
+      ...(packageState ? { packageState } : {}),
+    };
+  }
+
+  let ref: ContributionRef | undefined;
+  let entries: readonly ContributionIndexEntry[] | undefined;
+
+  if (managedBy && contributionId) {
+    ref = {
+      kind: usage.kind,
+      extensionId: managedBy,
+      contributionId,
+    };
+    entries = contributionIndex?.[contributionRefKey(ref)];
+  } else if (contributionId) {
+    const matches = allEntries.filter(
+      (entry) => entry.kind === usage.kind && entry.contributionId === contributionId,
+    );
+    const matchedScopedKeys = new Set(matches.map((entry) => entry.scopedKey));
+
+    if (matchedScopedKeys.size === 1) {
+      const entry = matches[0]!;
+      ref = createContributionRef(entry);
+      entries = contributionIndex?.[contributionRefKey(ref)];
+    } else if (matchedScopedKeys.size > 1) {
+      return {
+        state: 'duplicate',
+        packageState: 'duplicate',
+      };
+    }
+  }
+
+  const state = resolveReferenceStateFromEntries(entries);
+  const packageState = packageStateForReferenceState(entries, state);
+  return {
+    ...(ref ? { ref, refKey: contributionRefKey(ref) } : {}),
+    state,
+    ...(packageState ? { packageState } : {}),
+  };
+}
+
+function effectTransitionDiagnosticMessage(
+  usage: EffectTransitionReferenceUsage,
+  resolved: ResolvedEffectTransitionReferenceUsage,
+): string {
+  const kindLabel = usage.kind === 'effect' ? 'Effect' : 'Transition';
+  const refLabel = resolved.refKey
+    ?? (usage.managedBy && usage.contributionId
+      ? `${usage.kind}:${usage.managedBy}:${usage.contributionId}`
+      : usage.contributionId);
+  const ownerLabel = `${kindLabel.toLowerCase()} "${usage.ownerId}"`;
+
+  switch (resolved.state) {
+    case 'missing':
+      return refLabel
+        ? `${kindLabel} ref "${refLabel}" for ${ownerLabel} has no scoped candidates in the contribution index.`
+        : `${kindLabel} contribution for ${ownerLabel} has no scoped candidates in the contribution index.`;
+    case 'disabled':
+      return refLabel
+        ? `${kindLabel} ref "${refLabel}" for ${ownerLabel} comes from a user-disabled package.`
+        : `${kindLabel} contribution for ${ownerLabel} comes from a user-disabled package.`;
+    case 'inactive-reserved':
+      return refLabel
+        ? `${kindLabel} ref "${refLabel}" for ${ownerLabel} is declared but not yet bridged in this runtime.`
+        : `${kindLabel} contribution for ${ownerLabel} is declared but not yet bridged in this runtime.`;
+    case 'invalid-package':
+      return refLabel
+        ? `${kindLabel} ref "${refLabel}" for ${ownerLabel} comes from an invalid package.`
+        : `${kindLabel} contribution for ${ownerLabel} comes from an invalid package.`;
+    case 'duplicate':
+      return refLabel
+        ? `${kindLabel} ref "${refLabel}" for ${ownerLabel} has duplicate scoped candidates, so graph authority cannot resolve it.`
+        : `${kindLabel} contribution for ${ownerLabel} has duplicate scoped candidates, so graph authority cannot resolve it.`;
+    case 'settings-error':
+      return refLabel
+        ? `${kindLabel} ref "${refLabel}" for ${ownerLabel} comes from a package with a settings migration error.`
+        : `${kindLabel} contribution for ${ownerLabel} comes from a package with a settings migration error.`;
+    case 'runtime-error':
+      return refLabel
+        ? `${kindLabel} ref "${refLabel}" for ${ownerLabel} comes from a package that failed runtime activation.`
+        : `${kindLabel} contribution for ${ownerLabel} comes from a package that failed runtime activation.`;
+    case 'version-incompatible':
+      return refLabel
+        ? `${kindLabel} ref "${refLabel}" for ${ownerLabel} comes from a version-incompatible package.`
+        : `${kindLabel} contribution for ${ownerLabel} comes from a version-incompatible package.`;
+    case 'unknown':
+      return refLabel
+        ? `${kindLabel} ref "${refLabel}" for ${ownerLabel} could not be resolved to a known graph state.`
+        : `${kindLabel} contribution for ${ownerLabel} could not be resolved to a known graph state.`;
+    case 'resolved':
+      return `${kindLabel} ref "${refLabel ?? usage.ownerId}" for ${ownerLabel} resolved successfully.`;
+    default: {
+      const _exhaustive: never = resolved.state;
+      return _exhaustive;
+    }
+  }
+}
+
+function buildEffectTransitionReferenceStatesAndDiagnostics(
+  usages: readonly EffectTransitionReferenceUsage[],
+  contributionIndex: ContributionIndex | undefined,
+): {
+  referenceStates: readonly CompositionReferenceStateEntry[];
+  diagnostics: readonly ExtensionDiagnostic[];
+} {
+  if (usages.length === 0) {
+    return {
+      referenceStates: EMPTY_REFERENCE_STATES,
+      diagnostics: EMPTY_DIAGNOSTICS,
+    };
+  }
+
+  const diagnostics: ExtensionDiagnostic[] = [];
+  const orderedRefKeys: string[] = [];
+  const mutableByRefKey: Record<string, {
+    state: ReferenceState;
+    nodeIds: string[];
+  }> = {};
+
+  for (const usage of usages) {
+    const resolved = resolveEffectTransitionReferenceUsage(usage, contributionIndex);
+    if (resolved.refKey) {
+      const existing = mutableByRefKey[resolved.refKey];
+      if (existing) {
+        if (!existing.nodeIds.includes(usage.nodeId)) {
+          existing.nodeIds.push(usage.nodeId);
+        }
+      } else {
+        mutableByRefKey[resolved.refKey] = {
+          state: resolved.state,
+          nodeIds: [usage.nodeId],
+        };
+        orderedRefKeys.push(resolved.refKey);
+      }
+    }
+
+    const code = usage.kind === 'effect'
+      ? referenceStateToEffectDiagnosticCode(resolved.state)
+      : referenceStateToTransitionDiagnosticCode(resolved.state);
+    if (!code) {
+      continue;
+    }
+
+    const extensionId = resolved.ref?.extensionId ?? usage.managedBy;
+    const contributionId = resolved.ref?.contributionId ?? usage.contributionId;
+    const detail = {
+      nodeId: usage.nodeId,
+      clipId: usage.clipId,
+      ...(resolved.refKey ? { refKey: resolved.refKey } : {}),
+      refState: resolved.state,
+      resolverState: resolved.state,
+      scope: usage.scope,
+      ...(extensionId ? { extensionId } : {}),
+      ...(contributionId ? { contributionId } : {}),
+      ownerKind: usage.ownerKind,
+      ownerId: usage.ownerId,
+      ...(usage.targetPath ? { targetPath: usage.targetPath } : {}),
+      ...(usage.materialSlot ? { materialSlot: usage.materialSlot } : {}),
+      ...(usage.materialRefId ? { materialRefId: usage.materialRefId } : {}),
+      ...(resolved.packageState ? { packageState: resolved.packageState } : {}),
+    } as const;
+
+    diagnostics.push(Object.freeze({
+      ...buildCompositionDiagnostic(
+        code,
+        effectTransitionDiagnosticMessage(usage, resolved),
+        detail,
+      ),
+      ...(extensionId ? { extensionId } : {}),
+      ...(contributionId ? { contributionId } : {}),
+    } satisfies ExtensionDiagnostic));
+  }
+
+  return {
+    referenceStates: orderedRefKeys.length > 0
+      ? Object.freeze(orderedRefKeys.map((refKey) => Object.freeze({
+          refKey,
+          state: mutableByRefKey[refKey]!.state,
+          nodeIds: Object.freeze([...mutableByRefKey[refKey]!.nodeIds]),
+        })))
+      : EMPTY_REFERENCE_STATES,
+    diagnostics: diagnostics.length > 0 ? Object.freeze(diagnostics) : EMPTY_DIAGNOSTICS,
+  };
 }
 
 export function canonicalizeAutomationParameterPath(parameterPath: string): string | undefined {
@@ -480,6 +898,7 @@ export function projectCompositionGraph(input: CompositionGraphInput): Compositi
     ? Object.entries(contributionIndex).sort(([left], [right]) => left.localeCompare(right))
     : [];
   const contributionEntryByContributionId = buildContributionEntryByContributionId(contributionEntries);
+  const effectTransitionRefUsages: EffectTransitionReferenceUsage[] = [];
   for (const [refKey, entries] of contributionEntries) {
     const firstEntry = entries[0];
     if (!firstEntry || contributionNodeByRefKey.has(refKey)) {
@@ -668,6 +1087,162 @@ export function projectCompositionGraph(input: CompositionGraphInput): Compositi
     }
   }
 
+  // ---- effect consumes edges -------------------------------------------------
+  for (const clip of input.snapshot.clips) {
+    const effects = clip.effects;
+    if (!effects?.length) {
+      continue;
+    }
+
+    const sourceNodeId = clipNodeId(clip.id);
+    for (const effect of effects) {
+      effectTransitionRefUsages.push({
+        kind: 'effect',
+        nodeId: sourceNodeId,
+        clipId: clip.id,
+        scope: 'clip',
+        contributionId: effect.effectType,
+        managedBy: effect.managedBy,
+        ownerKind: 'effect',
+        ownerId: effect.id,
+      });
+
+      const lookup = resolveEffectContributionEntry(effect, contributionIndex);
+      if (!lookup) {
+        continue;
+      }
+
+      const contributionNode = ensureContributionNode(
+        nodes,
+        contributionNodeByRefKey,
+        lookup.ref,
+        lookup.refKey,
+      );
+
+      edges.push(Object.freeze({
+        id: `consumes:${sourceNodeId}:${contributionNode.id}:${effect.id}`,
+        kind: 'consumes',
+        sourceNodeId,
+        targetNodeId: contributionNode.id,
+        detail: Object.freeze({
+          effectId: effect.id,
+          clipId: clip.id,
+          effectType: effect.effectType,
+          refKey: lookup.refKey,
+          consumedKind: 'effect',
+          scope: 'clip',
+        }),
+      }));
+    }
+  }
+
+  // ---- transition consumes edges ---------------------------------------------
+  for (const clip of input.snapshot.clips) {
+    const transition = clip.transition;
+    if (!transition) {
+      continue;
+    }
+
+    const sourceNodeId = clipNodeId(clip.id);
+    effectTransitionRefUsages.push({
+      kind: 'transition',
+      nodeId: sourceNodeId,
+      clipId: clip.id,
+      scope: 'clip',
+      contributionId: transition.transitionType,
+      managedBy: transition.managedBy,
+      ownerKind: 'transition',
+      ownerId: transition.id,
+    });
+
+    const lookup = resolveTransitionContributionEntry(transition, contributionIndex);
+    if (!lookup) {
+      continue;
+    }
+
+    const contributionNode = ensureContributionNode(
+      nodes,
+      contributionNodeByRefKey,
+      lookup.ref,
+      lookup.refKey,
+    );
+
+    edges.push(Object.freeze({
+      id: `consumes:${sourceNodeId}:${contributionNode.id}:${transition.id}`,
+      kind: 'consumes',
+      sourceNodeId,
+      targetNodeId: contributionNode.id,
+      detail: Object.freeze({
+        transitionId: transition.id,
+        clipId: clip.id,
+        transitionType: transition.transitionType,
+        refKey: lookup.refKey,
+        consumedKind: 'transition',
+        scope: 'clip',
+        ownerKind: 'transition',
+        ownerId: transition.id,
+      }),
+    }));
+  }
+
+  // ---- transition mask-material consumes edges -------------------------------
+  for (const binding of input.materialSlotBindings ?? []) {
+    if (binding.owner.kind !== 'transition') {
+      continue;
+    }
+
+    const clip = input.snapshot.clips.find((candidate) => candidate.id === binding.owner.clipId);
+    const transition = clip?.transition;
+    if (!clip || !transition || transition.id !== binding.owner.ownerId) {
+      continue;
+    }
+
+    const sourceNodeId = clipNodeId(clip.id);
+    effectTransitionRefUsages.push({
+      kind: 'transition',
+      nodeId: sourceNodeId,
+      clipId: clip.id,
+      scope: 'clip',
+      contributionId: transition.transitionType,
+      managedBy: transition.managedBy,
+      ownerKind: binding.owner.kind,
+      ownerId: binding.owner.ownerId,
+      materialSlot: binding.slotName,
+      materialRefId: binding.materialRefId,
+    });
+
+    const lookup = resolveTransitionContributionEntry(transition, contributionIndex);
+    if (!lookup) {
+      continue;
+    }
+
+    const contributionNode = ensureContributionNode(
+      nodes,
+      contributionNodeByRefKey,
+      lookup.ref,
+      lookup.refKey,
+    );
+
+    edges.push(Object.freeze({
+      id: `consumes:${sourceNodeId}:${contributionNode.id}:${transition.id}:${binding.slotName}:${binding.materialRefId}`,
+      kind: 'consumes',
+      sourceNodeId,
+      targetNodeId: contributionNode.id,
+      detail: Object.freeze({
+        transitionId: transition.id,
+        clipId: clip.id,
+        transitionType: transition.transitionType,
+        refKey: lookup.refKey,
+        consumedKind: 'mask-material',
+        targetSlot: binding.slotName,
+        materialRefId: binding.materialRefId,
+        scope: 'clip',
+        ownerKind: binding.owner.kind,
+        ownerId: binding.owner.ownerId,
+      }),
+    }));
+  }
+
   const shaders = selectShaderSummaries(input);
   const refUsages: CompositionReferenceUsage[] = [];
   for (const shader of shaders) {
@@ -751,10 +1326,16 @@ export function projectCompositionGraph(input: CompositionGraphInput): Compositi
     clipTypeRegistry,
     refKeyToClipTypeId,
   );
+  const effectTransitionResolved = buildEffectTransitionReferenceStatesAndDiagnostics(
+    effectTransitionRefUsages,
+    contributionIndex,
+  );
 
-  // Merge reference states: clip type refs first, then shader refs
+  // Merge reference states: clip type refs first, then effect/transition refs,
+  // then shader refs.
   const mergedReferenceStates = [
     ...clipTypeResolved.referenceStates,
+    ...effectTransitionResolved.referenceStates,
     ...resolvedReferences.referenceStates,
   ];
 
@@ -762,6 +1343,7 @@ export function projectCompositionGraph(input: CompositionGraphInput): Compositi
   const allDiagnostics = [
     ...duplicateScopeDiagnostics,
     ...clipTypeResolved.diagnostics,
+    ...effectTransitionResolved.diagnostics,
     ...resolvedReferences.diagnostics,
   ];
 

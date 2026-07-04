@@ -278,3 +278,145 @@ describe('renderRouter compositionGraph pass-through', () => {
     expect(decision.planner.plannerResult.canBrowserExport).toBe(false);
   });
 });
+
+describe('renderPlanner M5 composition graph diagnostics', () => {
+  function makeM5Graph(diagnostics: ExtensionDiagnostic[]): CompositionGraph {
+    return {
+      nodes: [
+        { id: 'clip:clip-1', kind: 'clip' as const, detail: { clipId: 'clip-1' } },
+      ],
+      edges: [],
+      referenceStates: [],
+      diagnostics,
+    };
+  }
+
+  it('blocks browser and worker export for M5 effect error diagnostic', () => {
+    const graph = makeM5Graph([
+      makeDiagnostic('composition/effect-disabled-ref', 'error', {
+        clipId: 'clip-1',
+        nodeId: 'contribution:effect:ext.fx:disabled',
+        refKey: 'effect:ext.fx:disabled',
+        refState: 'disabled',
+        extensionId: 'ext.fx',
+        contributionId: 'disabled',
+        resolverState: 'disabled',
+        packageState: 'disabled-by-user',
+        ownerKind: 'effect',
+        ownerId: 'disabled-fx',
+      }),
+    ]);
+
+    const result = planRender({ compositionGraph: graph });
+
+    expect(result.canBrowserExport).toBe(false);
+    expect(result.canWorkerExport).toBe(false);
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        severity: 'error',
+        route: 'browser-export',
+        reason: 'inactive-extension',
+        detail: expect.objectContaining({
+          source: 'composition-graph',
+          code: 'composition/effect-disabled-ref',
+        }),
+      }),
+    ]));
+  });
+
+  it('does not block export for M5 effect warning diagnostic (missing ref)', () => {
+    const graph = makeM5Graph([
+      makeDiagnostic('composition/effect-missing-ref', 'warning', {
+        clipId: 'clip-1',
+        nodeId: 'contribution:effect:ext.fx:missing',
+        refKey: 'effect:ext.fx:missing',
+        refState: 'missing',
+        extensionId: 'ext.fx',
+        contributionId: 'missing',
+        resolverState: 'missing',
+        ownerKind: 'effect',
+        ownerId: 'missing-fx',
+      }),
+    ]);
+
+    const result = planRender({ compositionGraph: graph });
+
+    // Warnings surface as findings but don't block export
+    expect(result.canBrowserExport).toBe(true);
+    expect(result.canWorkerExport).toBe(true);
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        severity: 'warning',
+        route: 'browser-export',
+        detail: expect.objectContaining({
+          source: 'composition-graph',
+          code: 'composition/effect-missing-ref',
+        }),
+      }),
+    ]));
+  });
+
+  it('blocks export for M5 transition error diagnostic', () => {
+    const graph = makeM5Graph([
+      makeDiagnostic('composition/transition-disabled-ref', 'error', {
+        clipId: 'clip-1',
+        nodeId: 'contribution:transition:ext.tx:disabled',
+        refKey: 'transition:ext.tx:disabled',
+        refState: 'disabled',
+        extensionId: 'ext.tx',
+        contributionId: 'disabled',
+        resolverState: 'disabled',
+        packageState: 'disabled-by-user',
+        ownerKind: 'transition',
+        ownerId: 'disabled-tx',
+      }),
+    ]);
+
+    const result = planRender({ compositionGraph: graph });
+
+    expect(result.canBrowserExport).toBe(false);
+    expect(result.canWorkerExport).toBe(false);
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        severity: 'error',
+        route: 'browser-export',
+        reason: 'inactive-extension',
+        detail: expect.objectContaining({
+          source: 'composition-graph',
+          code: 'composition/transition-disabled-ref',
+        }),
+      }),
+    ]));
+  });
+
+  it('does not block export for M5 transition warning diagnostic (missing ref)', () => {
+    const graph = makeM5Graph([
+      makeDiagnostic('composition/transition-missing-ref', 'warning', {
+        clipId: 'clip-1',
+        nodeId: 'contribution:transition:ext.tx:missing',
+        refKey: 'transition:ext.tx:missing',
+        refState: 'missing',
+        extensionId: 'ext.tx',
+        contributionId: 'missing',
+        resolverState: 'missing',
+        ownerKind: 'transition',
+        ownerId: 'missing-tx',
+      }),
+    ]);
+
+    const result = planRender({ compositionGraph: graph });
+
+    expect(result.canBrowserExport).toBe(true);
+    expect(result.canWorkerExport).toBe(true);
+  });
+
+  it('clears blockers when M5 diagnostics are resolved (no diagnostics)', () => {
+    const graph = makeM5Graph([]);
+
+    const result = planRender({ compositionGraph: graph });
+
+    expect(result.canBrowserExport).toBe(true);
+    expect(result.canWorkerExport).toBe(true);
+    expect(result.findings).toEqual([]);
+  });
+});

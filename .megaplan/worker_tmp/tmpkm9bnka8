@@ -1,0 +1,505 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `finalize`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m5-effects-transitions-live-20260704-1310`
+Current milestone: `m5-effects-transitions-mask`
+
+### Phase Instruction
+Convert the approved plan into executable tasks while preserving North Star constraints and visible alignment checks.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are DECOMPOSING the approved plan below into an ordered task DAG. The plan has been
+        critiqued, gated, and possibly revised. Do NOT re-evaluate strategy or re-litigate
+        decisions - gate has settled those.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M5: Effects, Transitions, Live Data, And Agent Mask Material
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: M5 Effects, Transitions, Live Data, And Agent Mask Material
+
+## Overview
+M5 extends the existing composition spine without changing the public graph node model: effects and transitions remain `contribution` nodes, `consumes` remains the edge kind, and transition masks consume existing resolved `MaterialRef` / `RenderMaterialRef` identities through declared material slots. This is aligned with the Epic North Star because graph facts become authoritative for effect, transition, live-binding, and mask-material composition while extensions still do not mutate raw timeline internals.
+
+This is not a scope narrowing. Output-format route conformance, process runtime, sidecars, sandboxing, arbitrary material routing, and `consumes-mask` remain OUT by North Star and local locked decisions. One brief/task tension is material: the brief suggests generic ref diagnostics are reusable, but the task constraints require effect and transition missing/disabled refs not collapse into generic diagnostics. The plan chooses the stricter local requirement: reuse resolver state classification, but emit M5 kind-specific diagnostic codes for effect and transition references.
+
+## Phase 1: Graph Identity And Projection
+
+### Step 1: Preserve render identifiers in the contribution index
+**Complexity: 3**
+
+Add `ContributionIndexEntry.renderId` for bridged effect and transition contributions from `effectId` and `transitionId`. Test runtime assembly keeps both contribution identity and render identity.
+
+### Step 2: Add projector lookup helpers
+**Complexity: 3**
+
+Resolve effect/transition timeline summaries by `(kind, managedBy?, renderId)` and only fall back to contribution ID when unambiguous. Keep graph node IDs keyed by contribution refs.
+
+### Step 3: Project effect consumes edges
+**Complexity: 3**
+
+Iterate `clip.effects`, emit clip-to-effect `consumes` edges with typed detail, and add projector tests for effect contribution targeting.
+
+### Step 4: Project transition and mask-material consumes edges
+**Complexity: 4**
+
+Iterate `clip.transition` and `input.materialSlotBindings` for transition owners. Emit standard `consumes` edges with mask detail including `consumedKind`, `targetSlot`, `materialRefId`, `clipId`, and owner provenance.
+
+## Phase 2: Diagnostics And Export Blocking
+
+### Step 5: Add M5 diagnostic codes and detail fields
+**Complexity: 3**
+
+Add material slot and owner fields, effect/transition ref diagnostic codes, and transition-mask missing / route-incompatible codes.
+
+### Step 6: Emit M5 graph diagnostics
+**Complexity: 4**
+
+Resolve effect/transition refs during graph projection and emit kind-specific diagnostics with resolver state, package state, contribution ref, and target path or material slot.
+
+### Step 7: Add transition mask diagnostics at material attach boundaries
+**Complexity: 4**
+
+Map unresolved, stale, failed, and route-incompatible transition slot material states to M5 diagnostics and repair next actions. Keep `material.attach` as the only write path.
+
+### Step 8: Funnel M5 diagnostics through export guard and planner
+**Complexity: 3**
+
+Promote M5 graph diagnostics to export findings/blockers and planner blockers. Verify export blocks before repair/bake and clears afterward.
+
+## Phase 3: Repair UI
+
+### Step 9: Add a shared blocker/action component
+**Complexity: 2**
+
+Create `BlockerActionCard` for severity, code/message, and one next-action button wired to `onAction`.
+
+### Step 10: Integrate repair affordances into existing surfaces
+**Complexity: 4**
+
+Use the shared component in `MaterialBrowser` and relevant inspector/export/status surfaces. Do not add a new top-level UI surface.
+
+## Phase 4: Composed Examples And Canaries
+
+### Step 11: Update flagship descriptors
+**Complexity: 2**
+
+Add a descriptor-declared `transition-mask` slot to Flagship Wipe and test descriptor projection.
+
+### Step 12: Add EX-02 graph-backed effect/live/bake canary
+**Complexity: 4**
+
+Compose Flagship Glow with an effect-param live binding, assert `consumes` and `binds-live`, assert export blocked before bake, and clear after bake.
+
+### Step 13: Add EX-03 graph-backed transition/mask canary
+**Complexity: 4**
+
+Compose Flagship Wipe with an agent-promoted deterministic mask material attached to `transition-mask`, and assert transition and mask-material graph edges.
+
+### Step 14: Add browser acceptance coverage
+**Complexity: 4**
+
+Cover one happy path and one blocker/repair path each for EX-02 and EX-03 using the existing Testing Library patterns.
+
+### Step 15: Update release example docs
+**Complexity: 2**
+
+Document EX-02 and EX-03 as graph-backed M5 examples, and confirm EX-01 remains M4-owned and non-breaking.
+
+## Execution Order
+1. Add render identity to the contribution index first.
+2. Land projector tests and graph projection next.
+3. Add diagnostics, then export/planner funneling.
+4. Add UI repair affordances after diagnostic payloads stabilize.
+5. Add composed canaries and browser acceptance last.
+6. Run EX-01 clip-local-shader canary as the regression gate.
+
+## Validation Order
+1. Projector unit tests.
+2. Material runtime and patch preview tests.
+3. Export guard and render planner tests.
+4. UI component tests.
+5. EX-01, EX-02, and EX-03 canaries.
+6. Typecheck/lint and broader video-editor tests if shared types changed.
+
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-04T15:34:59Z",
+  "hash": "sha256:de8c0754b74e76669842df49444be6e4272544a9e4ef71e11934953cc9f1e134",
+  "questions": [
+    "Should M5 introduce separate diagnostic codes for every non-resolved effect/transition ref state, or only for missing/disabled while other states use generic reference diagnostics with M5 detail?",
+    "Should browser acceptance live under Testing Library integration tests or Playwright e2e specs?",
+    "Should ticket `01KS384XKZNEWQRSXN2NXQ0DTJ` be proposed as `resolves_on_complete=true`, or is it broader than M5?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Graph projector emits typed effect `consumes` edges without public effect node kinds.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Graph projector emits transition and mask-material `consumes` edges using the existing `consumes` edge kind, never `consumes-mask`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Effect-param live bindings continue to project `binds-live` edges to effect contribution nodes.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Missing/disabled effect and transition refs produce M5-specific diagnostics with resolver and contribution details.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Transition mask missing and route-incompatible states produce diagnostics with `materialSlot`, `materialRefId`, and repair action detail.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Export guard and planner block on M5 graph diagnostics and clear once diagnostics are resolved.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Shared blocker/action UI renders code/message/severity and invokes the next-action callback.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "inspect_runtime_ui",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "EX-02 is graph-backed and proves effect consumes, effect-param live binding, export block, and bake clearance.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "EX-03 is graph-backed and proves transition consumes plus mask-material slot consumption with matching `materialRefId`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "EX-01 clip + shader + keyframes canary remains passing unchanged in graph semantics.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Browser acceptance covers happy and blocker/repair paths for EX-02 and EX-03.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "drive_browser",
+        "inspect_runtime_ui"
+      ]
+    },
+    {
+      "criterion": "Docs identify EX-01/EX-02/EX-03 as graph-backed V1 examples and state legacy planner data is compatibility-only.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    }
+  ],
+  "assumptions": [
+    "No `consumes-mask`, no public effect/transition node kinds, no process runtime, and no arbitrary material routing.",
+    "`ContributionIndexEntry.renderId` should be populated for effect/transition contributions rather than adding new public timeline ref fields first.",
+    "The existing `material.attach` preview operation is the graph-owned write path for transition mask bindings.",
+    "`transition-mask` is a Flagship example/test slot name, not a production constant.",
+    "Testing Library integration tests count as browser acceptance unless the reviewer requires Playwright."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "reason": "Direct graph projector coverage."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/exportGuard.test.ts",
+        "reason": "M5 diagnostic export funnel."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+        "reason": "Planner graph diagnostic behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+        "reason": "Repair UI integration."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx",
+        "reason": "EX-01 regression gate."
+      }
+    ],
+    "changed_surfaces": [
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.test.ts",
+      "src/tools/video-editor/runtime/composition/graphProjector.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+      "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+      "src/tools/video-editor/runtime/exportGuard.ts",
+      "src/tools/video-editor/runtime/exportGuard.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+      "src/tools/video-editor/components/BlockerActionCard.tsx",
+      "src/tools/video-editor/components/BlockerActionCard.test.tsx",
+      "src/tools/video-editor/components/MaterialBrowser.tsx",
+      "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+      "src/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx",
+      "src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx",
+      "src/tools/video-editor/runtime/ExtensionStatusDrawer.tsx",
+      "src/tools/video-editor/runtime/ExtensionStatusDrawer.test.tsx",
+      "src/tools/video-editor/examples/extensions/flagship-local/index.ts",
+      "src/tools/video-editor/examples/extensions/__tests__/flagship-local-transition.test.ts",
+      "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/agent-tools-canary.test.ts",
+      "src/tools/video-editor/examples/extensions/__tests__/live-generated-frame-canary.test.ts",
+      "src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx",
+      "docs/extensions/composition-spine/m0-release-examples.md"
+    ],
+    "always_run": [
+      "pnpm vitest src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "pnpm vitest src/tools/video-editor/runtime/exportGuard.test.ts",
+      "pnpm vitest src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/tools/video-editor/components/BlockerActionCard.test.tsx, src/tools/video-editor/components/BlockerActionCard.tsx, src/tools/video-editor/components/MaterialBrowser.test.tsx, src/tools/video-editor/components/MaterialBrowser.tsx, src/tools/video-editor/components/PropertiesPanel/ClipPanel.shader.test.tsx, src/tools/video-editor/components/PropertiesPanel/ClipPanel.tsx, src/tools/video-editor/examples/extensions/__tests__/agent-tools-canary.test.ts, src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/flagship-local-transition.test.ts, src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/live-generated-frame-canary.test.ts, src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx, src/tools/video-editor/examples/extensions/flagship-local/index.ts, src/tools/video-editor/runtime/ExtensionStatusDrawer.test.tsx, src/tools/video-editor/runtime/ExtensionStatusDrawer.tsx, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/graphProjector.ts, src/tools/video-editor/runtime/composition/materialRuntime.test.ts, src/tools/video-editor/runtime/composition/materialRuntime.ts, src/tools/video-editor/runtime/composition/patchPreview.test.ts, src/tools/video-editor/runtime/composition/patchPreview.ts, src/tools/video-editor/runtime/exportGuard.test.ts, src/tools/video-editor/runtime/exportGuard.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.test.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts, src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts. Ignored documentation-only change(s) for selector derivation: docs/extensions/composition-spine/m0-release-examples.md. Candidate: The work is cross-cutting but localized to video-editor graph projection, diagnostics/export, UI repair, and canary examples. Scoped tests catch the intended blast radius; full-suite fallback is appropriate because shared runtime types are touched. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx"
+    ]
+  },
+  "structure_warnings": [
+    "Each step section should include at least one numbered substep.",
+    "Each step section should reference at least one file in backticks."
+  ]
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "PROCEED",
+  "passed": true,
+  "rationale_brief": "No blocking flags exist at iteration 1. The plan aligns with the Epic North Star: effects and transitions remain `contribution` nodes, `consumes` is the sole edge kind (no `consumes-mask`), no public effect/transition node kinds are introduced, and process runtime/sandbox/marketplace stay OUT. The 15-step plan across 4 phases is coherently structured with clear execution and validation ordering.",
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "Effect and transition missing/disabled ref diagnostics use M5-specific codes rather than collapsing into generic reference diagnostics, even though the brief suggested generic ref diagnostics are reusable.",
+      "rationale": "The plan explicitly resolves this tension in favor of the stricter task-level constraint. Resolver state classification is reused internally, but diagnostic emission uses kind-specific codes for effect and transition references."
+    },
+    {
+      "id": "SD2",
+      "decision": "No `consumes-mask` edge kind is introduced; transition mask material consumption projects through the existing `consumes` edge with detail fields `consumedKind: 'mask-material'` and `targetSlot: 'transition-mask'`.",
+      "rationale": "Aligned with the Epic North Star constraint against arbitrary material routing and the locked decision that transition mask slots consume resolved `MaterialRef` identities through declared material slots."
+    },
+    {
+      "id": "SD3",
+      "decision": "Browser acceptance tests live under Testing Library integration tests (`.browser.test.tsx`) rather than Playwright e2e specs.",
+      "rationale": "The plan metadata assumption states Testing Library integration tests count as browser acceptance unless reviewer requires Playwright. The blast radius confirms the test file `m5-composed-examples.browser.test.tsx`."
+    },
+    {
+      "id": "SD4",
+      "decision": "The `transition-mask` slot name is a Flagship example/test convention, not a production constant.",
+      "rationale": "Explicitly noted in plan assumptions. This keeps the slot name descriptive for the composed example without baking it into the SDK surface."
+    }
+  ],
+  "warnings": [
+    "Criterion 6 (export guard and planner block/clear) requires `run_build_output` and `inspect_runtime_ui` verification during execution \u2014 ensure the executor has a strategy for build-output inspection, not just test assertions.",
+    "Two test files in the blast radius (`flagship-local-m5-effect-live-canary.integration.test.tsx`, `flagship-local-m5-transition-mask-canary.integration.test.tsx`) do not yet exist and must be created during execution \u2014 plan assumes they are authored, not pre-existing.",
+    "Plan metadata structure_warnings (missing numbered substeps, missing backticked file references in some step sections) are cosmetic and do not affect executability, but the executor should verify each step has clear file targets before beginning."
+  ],
+  "orchestrator_guidance": "First iteration; follow gate recommendation: PROCEED.",
+  "carried_flags": [],
+  "iteration": 1,
+  "produced_at": "2026-07-04T15:43:49Z"
+}
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m5-effects-transitions-live-20260704-1310/finalize_output.json
+        Read this file first — it contains the expected JSON structure (tasks, user_actions, sense_checks, watch_items, meta_commentary).
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Requirements:
+        - Produce structured JSON only.
+        - For each `## Step N:` in the plan, emit 1-N tasks.
+        - For each task, emit one sense_check.
+        - Default `user_actions` to `[]`. Identify a user_action ONLY when the work is genuinely non-mechanical and the executor literally cannot do it (secrets the human alone holds, identity-bound infra access, legal/license signatories, manual UI smoke tests on production). If a check is mechanical, make it a task — not a user_action. See the detailed guidance below.
+        - Do not invent tasks that don't trace to a plan step.
+        - How batching works at runtime — shape `depends_on` with this in mind, not just literal sequencing. Tasks that share the same `depends_on` set form one batch (capped at 5). Each batch dispatches as a SINGLE LLM conversation to a SINGLE model, picked by the max(complexity) in that batch. So a c=4 audit plus three c=2 tweaks sharing a batch all run in one turn on the c=4 model. Two consequences you control via DAG shape:
+          - Routing: every task in a batch runs on the highest-tier task's model — bundle a c=2 task beside a c=4 sibling and it runs on the pricier model.
+          - Cognitive load: one conversation holds all of the batch's tasks in working context. The more disparate the tasks, the higher the risk the model loses the thread or claims completion without doing the work. Wide, mixed batches are the dominant quality failure mode.
+        - Three principles for shaping batches — judgment, not arithmetic (there is no mechanical split rule):
+          1. Isolate heavyweights. A c=4 or c=5 task usually deserves its own batch. Chain lighter tasks through it via `depends_on` rather than placing them as siblings.
+          2. Bundle context-related light work. Several c=2/c=3 tasks touching the same files or contracts batch well together.
+          3. Never emit more than 5 actionable parallel siblings. If a step legitimately fans out wider, linearize via `depends_on` so the runtime batcher sees at most 5 at a time.
+        - Do not include `validation` or `coverage_complete` fields - the harness computes those.
+        - The FINAL task MUST run tests; harness validation will reject finalize output without it.
+        - `tasks` must be an ordered array of task objects. Every task object must include:
+          - `id`: short stable task ID like `T1`
+          - `description`: concrete work item
+          - `depends_on`: array of earlier task IDs or `[]`
+          - `status`: always `"pending"` at finalize time
+          - `executor_notes`: always `""` at finalize time
+          - `reviewer_verdict`: always `""` at finalize time
+          - `kind`: indicating the type of work. One of:
+            - `code`: writes or modifies source files (executor must produce `files_changed`).
+            - `test`: writes or modifies test files, or runs the test suite (executor must produce `files_changed` in tests/ OR `commands_run` containing pytest/test invocations).
+            - `audit`: read-only investigation — grep, code review, schema inspection (executor evidence is `executor_notes` describing findings; no `files_changed` expected).
+            - `research`: external research or non-code investigation (executor evidence is `executor_notes`).
+            - `docs`: writes documentation files (executor must produce `files_changed`).
+            If unsure, default to `code`.
+          - `complexity`: integer 1–5 complexity score. This score routes the task to a
+            model at execution time, so adjudicate it deliberately — do not guess. Use the rubric:
+            - 1 = trivial, mechanical, single-file change with no logic to reason about
+                  (rename, constant bump, comment, import). A weak model cannot get it wrong.
+            - 2 = simple, localized change plus the obvious test update; one file or two,
+                  logic is linear and the failure mode is obvious.
+            - 3 = multi-file change with non-trivial logic, control flow, or data shape the
+                  executor must hold in its head; correctness is not self-evident from the diff.
+            - 4 = a wrong implementation would be NON-LOCAL and not caught by an obvious test:
+                  the error propagates through a shared contract or invariant that code you did
+                  NOT edit relies on. Touching several files is NOT sufficient on its own — a
+                  mechanical multi-file change whose failure is local and test-evident is tier 2-3.
+            - 5 = fundamental system-invariant change with high regression risk: concurrency that
+                  cascades, a schema/wire-format others build on, a state machine, or a security/
+                  auth boundary. ONLY when a subtle error would pass the full suite and corrupt
+                  state or break a system-wide contract — not merely "important" or central code.
+            Score on the hardest REALISTIC aspect of the task, not a worst-case imagining. When
+            genuinely torn between two tiers, choose the LOWER one UNLESS you can name the specific
+            cascading, test-evading failure that earns the higher tier in the justification.
+            You are not the model that executes this task, and the score neither saves nor
+            costs you anything — so do not lowball to seem efficient and do not highball to
+            play safe. Both distort routing: a too-low score sends a hard task to a model
+            that fails it; a too-high score burns a premium model on trivial work. Score
+            what the task honestly requires, no higher and no lower.
+            FLOOR: a task is NEVER below tier 4 only when it GENUINELY changes the semantics of
+            concurrency, a schema/state-machine, a security/auth boundary, or a contract other
+            code actually depends on — because a subtle error there passes tests but is wrong.
+            This floor does NOT apply to mechanical edits that merely sit near such code, or that
+            add a new interface nothing relies on yet; score those on the rubric (usually 2-3).
+          - `complexity_justification`: REQUIRED. One or two sentences that argue, specifically,
+            why this task sits at exactly that tier — cite the concrete files, interfaces, or
+            risk that places it there (e.g. "touches the auth middleware contract used by 4
+            call sites, so a mistake is non-local → tier 4"). A bare restatement of the rubric
+            ("this is complex") is not acceptable; the justification must be defensible against
+            a reviewer who disagrees.
+        - `watch_items` must be an array of strings covering runtime risks, critique concerns, and assumptions to keep visible during execution.
+        - `sense_checks` must be an array with one verification question per task. Every sense-check object must include:
+          - `id`: short stable ID like `SC1`
+          - `task_id`: the related task ID
+          - `question`: reviewer verification question
+          - `verdict`: always `""` at finalize time
+        - `user_actions` should default to `[]`. Emitting a user_action stalls execution on a human gate — it is a load-bearing escape hatch, not a convenience. Prefer to design every step to be fully mechanical: the executor can read files, run commands, query APIs, fetch URLs, parse JSON, edit code, and run tests. If a check is mechanical, write it as a task — not a user_action.
+- Emit a user_action ONLY when the work is *genuinely non-mechanical* and the executor has no path to do it itself: secrets the human alone holds (a real API key the executor cannot mint), infrastructure access bound to the human's identity (cloud console, VPN), legal/license/security-policy judgments that require a human signatory, or out-of-band manual UI smoke tests on production. If you cannot name a specific reason the executor cannot do it, the task is mechanical — make it a task.
+- Anything that touches code, configuration, fixtures, or local files MUST be a task. Reading docs, grepping, editing, running tests, writing SQL, and producing JSON resolution files are tasks. Negative example: writing the migration SQL is a task, not a user_action; verifying a license URL is reachable is a task, not a user_action.
+- When you do emit a user_action, set `requires_human_only_reason` to a specific sentence naming why the executor literally cannot perform it (not just "it's important").
+- If `user_actions` is non-empty, expect that execution will block until the human resolves each one — only emit them when that block is unavoidable.
+- Positive examples (rare, last-resort): `U1: Set ANTHROPIC_API_KEY in .env (before_execute, requires_human_only_reason: "secret the executor cannot mint")`; `U2: Confirm legal sign-off to commit the third-party JSON corpus (before_execute, requires_human_only_reason: "license judgment with legal liability")`.
+        - `meta_commentary` must be a single string with execution guidance, gotchas, or judgment calls that help the executor succeed.
+        - Preserve information that strong existing artifacts already capture well: execution ordering, watch-outs, reviewer checkpoints, and practical context.
+        - The structured output should be self-contained: an executor reading only `finalize.json` should have everything needed to work.
+        - Keep the task count proportional to the work. A simple 1-2 file fix should be 2 tasks: (1) apply the fix, (2) run tests. Do NOT create separate "inspect" or "read" tasks for simple changes — the executor can read and fix in one step. Only create more tasks when the work has genuinely independent stages.
+        - One task is the unit of ONE worker turn: the executor must IMPLEMENT it, VERIFY it, and emit its result envelope inside a single ~15-minute conversation. A task that cannot realistically finish in one turn is mis-sized and WILL fail — the worker reports `blocked: "turn ended before implementation"` or runs out the clock mid-edit. Size every task to fit one turn; raising `complexity` does NOT buy more turns, it only routes to a stronger model for the SAME single turn. When a step is a large mechanical refactor, SPLIT it across tasks instead of bundling: "add the new abstraction + its unit tests" (T1) → "migrate consumer A" (T2, depends_on T1) → "migrate consumer B + parity tests" (T3, depends_on T2). A single task that says "extract this 2000-line file into modules and write tests" or "consolidate the roots AND migrate three registries AND add parity tests" is a god-task — decompose it into one task per consumer/module, each independently completable and verifiable.
+        - - The harness owns test verification — do NOT author a run-until-pass task. If you include a test-related task, scope it to: introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute suite.
+- For code-mode plans, preserve a scoped test contract. Prefer the plan's machine-readable `test_blast_radius`; when it is missing, ensure at least one finalized task carries a concrete scoped pytest command in `commands_run` (for example `pytest tests/test_relevant.py -q`) or mappable `files_changed` paths. Do not rely on an unscoped `pytest` command unless the plan explicitly opts into `test_selection=full`.

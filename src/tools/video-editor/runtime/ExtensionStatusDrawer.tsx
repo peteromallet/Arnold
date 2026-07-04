@@ -37,6 +37,10 @@ import type {
   Diagnostic,
   ContributionKind,
 } from '@reigh/editor-sdk';
+import {
+  BlockerActionCard,
+  normalizeBlockerActionCardNextAction,
+} from '@/tools/video-editor/components/BlockerActionCard.tsx';
 import type {
   InactiveReservedContribution,
   PackageStateInventoryEntry,
@@ -137,6 +141,8 @@ export interface ExtensionStatusInventory {
   readonly summary: ExtensionStatusSummary;
   /** Export-blocker diagnostics (code starts with 'export/' and severity error). */
   readonly exportBlockers: readonly Diagnostic[];
+  /** Planner blocker diagnostics synced from renderPlanner. */
+  readonly plannerBlockers: readonly Diagnostic[];
   /** Render-blocker diagnostics (render/missing-renderer or render/contribution-error, severity error). */
   readonly renderBlockers: readonly Diagnostic[];
   /** Timestamp when the inventory was derived. */
@@ -175,6 +181,7 @@ const EMPTY_INVENTORY: ExtensionStatusInventory = Object.freeze({
     effectBlockerDetails: Object.freeze([]),
   }),
   exportBlockers: Object.freeze([]),
+  plannerBlockers: Object.freeze([]),
   renderBlockers: Object.freeze([]),
   derivedAt: 0,
 });
@@ -442,6 +449,7 @@ export function useExtensionStatusInventory(): ExtensionStatusInventory {
       extensions: Object.freeze(extensions),
       summary: Object.freeze(summary),
       exportBlockers: Object.freeze(exportBlockers),
+      plannerBlockers: Object.freeze(plannerBlockers),
       renderBlockers: Object.freeze(renderBlockers),
       derivedAt: Date.now(),
     };
@@ -481,6 +489,43 @@ const STATUS_COLOR: Record<ContributionInventoryStatus, string> = {
   inactive: 'text-zinc-500',
   failed: 'text-red-400',
 };
+
+function blockCardDetailValue(diagnostic: Diagnostic, key: 'nextAction' | 'repairAction'): unknown {
+  return diagnostic.detail?.[key];
+}
+
+function BlockerCardSection({
+  title,
+  diagnostics,
+}: {
+  title: string;
+  diagnostics: readonly Diagnostic[];
+}) {
+  if (diagnostics.length === 0) return null;
+
+  return (
+    <div className="border-b border-white/5 px-3 py-2">
+      <div className="mb-2">
+        <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">
+          {title}
+        </span>
+      </div>
+      <div className="space-y-2">
+        {diagnostics.map((diagnostic) => (
+          <BlockerActionCard
+            key={diagnostic.id}
+            severity={diagnostic.severity}
+            code={diagnostic.code}
+            message={diagnostic.message}
+            nextAction={normalizeBlockerActionCardNextAction(
+              blockCardDetailValue(diagnostic, 'repairAction') ?? blockCardDetailValue(diagnostic, 'nextAction'),
+            )}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Component props
@@ -932,6 +977,9 @@ export function ExtensionStatusDrawer({ onClose }: ExtensionStatusDrawerProps) {
 
       {/* ---- Summary bar ---------------------------------------------------- */}
       <SummaryBar inventory={inventory} />
+
+      <BlockerCardSection title="Export Blockers" diagnostics={inventory.exportBlockers} />
+      <BlockerCardSection title="Planner Blockers" diagnostics={inventory.plannerBlockers} />
 
       {/* ---- Extension list ------------------------------------------------- */}
       <div

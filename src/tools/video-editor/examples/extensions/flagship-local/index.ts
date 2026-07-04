@@ -309,6 +309,11 @@ export const flagshipLocalExtension: ReighExtension = defineExtension({
         allowBrowserExport: false,
         allowWorkerExport: false,
         order: 10,
+        // M5: Example/test material slot declaration — not a production SDK
+        // constant.  Descriptor projection tests use this slot to validate
+        // the TransitionMaterialSlotDeclaration → VideoEditorTransitionMaterialSlotDescriptor
+        // normalization path.
+        materialSlots: [{ name: 'transition-mask', label: 'Transition Mask' }],
       } satisfies TransitionContribution,
 
       // ---- Future inactive contribution declarations -----------------------

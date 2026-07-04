@@ -1,0 +1,192 @@
+Execute the approved plan in the repository.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M5: Effects, Transitions, Live Data, And Agent Mask Material
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Batch framing:
+        - Execute batch 4 of 16.
+        - Actionable task IDs for this batch: ['T4']
+        - Already completed task IDs available as dependency context: ['T1', 'T2', 'T3']
+
+        Actionable tasks for this batch:
+        [
+  {
+    "id": "T4",
+    "depends_on": [
+      "T3"
+    ],
+    "status": "pending",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 4: Project transition and transition mask-material consumption by iterating `clip.transition` and transition-owner `input.materialSlotBindings`; emit only standard `consumes` edges with detail fields including `consumedKind`, `targetSlot`, `materialRefId`, `clipId`, and owner provenance.",
+    "complexity_justification": "This changes graph projection for transition ownership and material attachment details that export and diagnostics will later depend on. A subtle wrong owner or edge detail can propagate through multiple consumers while still producing a graph, which warrants tier 4.",
+    "executor_notes": "",
+    "files_changed": [],
+    "commands_run": []
+  }
+]
+
+        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
+        [
+  {
+    "id": "T3",
+    "depends_on": [
+      "T2"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 3: Project effect `consumes` edges by iterating `clip.effects`, targeting effect contribution nodes with typed edge detail, and add projector tests for effect contribution targeting without adding public effect node kinds.",
+    "complexity_justification": "This adds new graph edge emission in `graphProjector.ts` plus focused assertions in `compositionGraphProjector.test.ts`. Correctness depends on existing graph identity conventions, but failures should be visible in projector unit tests.",
+    "executor_notes": "Added effect consumes edge projection block in projectCompositionGraph (graphProjector.ts lines 795-842) that iterates clip.effects, resolves contribution entries via resolveEffectContributionEntry (reusing T2 lookup helpers), and emits consumes edges with typed detail (effectId, clipId, effectType, refKey, consumedKind: 'effect', scope: 'clip'). Effect target nodes are standard 'contribution' nodes \u2014 no public effect node kinds introduced. Added 4 projector tests: (1) managed effect primary match, (2) unmanaged effect fallback contributionId match, (3) unresolvable effect skip, (4) cross-c...",
+    "files_changed": [
+      "src/tools/video-editor/runtime/composition/graphProjector.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/"
+    ]
+  },
+  {
+    "id": "T1",
+    "depends_on": [],
+    "status": "skipped",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "deferred_baseline_unavailable",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "This touches the contribution index contract in `src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts` and its tests. It is multi-file and identity-sensitive, but the new field is additive and should be caught by focused runtime assembly tests.",
+    "executor_notes": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative.",
+    "files_changed": [],
+    "commands_run": [],
+    "evidence_files": []
+  },
+  {
+    "id": "T2",
+    "depends_on": [
+      "T1"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 2: Add graph projector lookup helpers that resolve effect and transition timeline summaries by `(kind, managedBy?, renderId)` and fall back to contribution ID only when unambiguous; keep graph node IDs keyed by contribution refs.",
+    "complexity_justification": "The change is centered in `src/tools/video-editor/runtime/composition/graphProjector.ts` and projector tests, with non-trivial matching rules around `managedBy`, render IDs, and ambiguous fallback. The risk is local to projection lookup semantics rather than a system-wide schema change.",
+    "executor_notes": "Added EffectTransitionContributionLookup type and three exported functions (resolveEffectTransitionContributionEntry, resolveEffectContributionEntry, resolveTransitionContributionEntry) to graphProjector.ts. The core resolver uses a two-tier strategy: primary matches by (kind, managedBy?, renderId?) when at least managedBy or renderId is provided; fallback matches by contributionId only when exactly one entry matches. Convenience wrappers delegate from TimelineEffectSummary/TimelineTransitionSummary. All 63 composition tests pass (28 projector tests including 18 new M5 tests) with zero regr...",
+    "files_changed": [
+      "src/tools/video-editor/runtime/composition/graphProjector.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/"
+    ]
+  }
+]
+
+        Prior batch deviations (address if applicable):
+        [
+  "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/graphProjector.ts",
+  "Advisory audit finding: Executor claimed changed files not present in git status: src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/graphProjector.ts",
+  "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC11 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC12 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC13 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC14 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC15 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC16 is missing an executor acknowledgment.",
+  "Advisory audit finding: Tasks left pending after execute (executor never started them): T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16"
+]
+
+        User action prerequisites:
+        No user_action prerequisites for this batch.
+
+
+        Batch-scoped sense checks:
+        [
+  {
+    "id": "SC4",
+    "task_id": "T4",
+    "verdict": "",
+    "question": "Are transition and mask-material consumptions projected through the existing `consumes` edge kind with the required detail fields and no `consumes-mask` edge kind?"
+  }
+]
+
+
+        ## Execution context (settled - DO NOT re-litigate)
+
+        - SD1: Effect and transition missing/disabled ref diagnostics use M5-specific codes rather than collapsing into generic reference diagnostics, even though the brief suggested generic r... - The plan explicitly resolves this tension in favor of the stricter task-level constraint. Resolver state classification is reused internally, but diagnostic emission uses kind-specific codes for effect and transition...
+- SD2: No `consumes-mask` edge kind is introduced; transition mask material consumption projects through the existing `consumes` edge with detail fields `consumedKind: 'mask-material'`... - Aligned with the Epic North Star constraint against arbitrary material routing and the locked decision that transition mask slots consume resolved `MaterialRef` identities through declared material slots.
+- SD3: Browser acceptance tests live under Testing Library integration tests (`.browser.test.tsx`) rather than Playwright e2e specs. - The plan metadata assumption states Testing Library integration tests count as browser acceptance unless reviewer requires Playwright. The blast radius confirms the test file `m5-composed-examples.browser.test.tsx`.
+
+        ## Plan execution order rationale
+
+        1. Add render identity to the contribution index first.
+2. Land projector tests and graph projection next.
+3. Add diagnostics, then export/planner funneling.
+4. Add UI repair affordances after diagnostic payloads stabilize.
+5. Add composed canaries and browser acceptance last.
+6. Run EX-01 clip-local-shader canary as the regression gate.
+
+        ## Inter-task guidance from finalize
+
+        Execute the tasks in order; the DAG intentionally isolates tier-4 graph, diagnostic, attach-boundary, UI integration, and composed-canary work so each worker turn has one coherent contract. Treat plan and gate decisions as settled: no `consumes-mask`, no public effect/transition node kinds, no process runtime or sandbox work, and no generic material routing. Prefer the files named in each task and the plan blast radius, but let repo structure guide exact placement. Tests should be scoped to the changed surfaces and compared against any recorded baseline; do not spend the final validation task trying to fix unrelated pre-existing failures.
+
+        Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations.
+        Robustness level: thorough.
+
+        Requirements:
+        - Execute only the actionable tasks in this batch.
+        - Treat completed tasks as dependency context, not new work.
+        - Return structured JSON only.
+        - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
+        - Template file already written for reference: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m5-effects-transitions-live-20260704-1310/execute_batch_4_output.json
+        - Only produce `task_updates` for these tasks: [T4]
+        - `task_updates[].status` must be one of `done`, `skipped`, `completed`, or `blocked`; never `pending` or `in_progress`.
+        - Only produce `sense_check_acknowledgments` for these sense checks: [SC4]
+        - Do not include updates for tasks or sense checks outside this batch.
+        - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+        - Keep `executor_notes` verification-focused.
+        - Best-effort progress checkpointing: if `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m5-effects-transitions-live-20260704-1310/execution_batch_4.json` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
+        - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
+        - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
+        - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
+
+        Batch JSON response template:
+        ```json
+        {
+  "output": "",
+  "files_changed": [],
+  "commands_run": [],
+  "deviations": [],
+  "task_updates": [
+    {
+      "task_id": "T4",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC4",
+      "executor_note": ""
+    }
+  ]
+}
+        ```

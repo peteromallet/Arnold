@@ -15,13 +15,21 @@ The graph vocabulary for every example is limited to the public edge names
 frozen in `m0-decisions.md`: `consumes`, `animates`, `binds-live`, and
 `requires`. Deferred names stay out of release assertions.
 
+Legacy planner data (descriptor-level fields that predate the composition
+graph) is **compatibility-only** in V1. EX-01, EX-02, and EX-03 assert their
+release readiness through graph-backed edges projected from the composition
+graph rather than through legacy planner lookups. Any planner field that
+duplicates graph-observable facts (e.g. shader assignment, effect selection,
+transition identity) is treated as a compat shim and must not be the sole
+source of truth for export blocking, diagnostics, or release gating.
+
 ## Ownership Snapshot
 
 | Example | Future deliverable | Owning milestone | Current status | Source material only |
 |---|---|---|---|---|
-| `EX-01` | Clip + shader + shader-uniform keyframes | M4 | Not yet composed as a graph-backed example | `clip-local-shader-canary` |
-| `EX-02` | Effect + live data + bake | M5 | Not yet composed as a graph-backed example | `flagship-local`, `live-webcam-canary`, `live-generated-frame-canary`, `live-data-bridge` |
-| `EX-03` | Transition + agent-produced mask material | M5 | Not yet composed as a graph-backed example | `flagship-local`, `agent-tools-canary`, `live-generated-frame-canary` |
+| `EX-01` | Clip + shader + shader-uniform keyframes | M4 | Graph-backed V1 example | `clip-local-shader-canary` |
+| `EX-02` | Effect + live data + bake | M5 | Graph-backed V1 example | `flagship-local`, `live-webcam-canary`, `live-generated-frame-canary`, `live-data-bridge` |
+| `EX-03` | Transition + agent-produced mask material | M5 | Graph-backed V1 example | `flagship-local`, `agent-tools-canary`, `live-generated-frame-canary` |
 | `EX-04` | Output format + sidecar/process dependency with non-video artifact output | M7b | Not yet composed as a graph-backed example | `metadata-json-output-example`, `process-example`, planner/runtime descriptor tests |
 
 ## EX-01 - Clip + Shader + Shader-Uniform Keyframes
@@ -163,6 +171,32 @@ frozen in `m0-decisions.md`: `consumes`, `animates`, `binds-live`, and
 - The graph-backed composed example must replace the current split source
   material before it can count toward release readiness.
 
+### M5 implementation evidence (V1 graph-backed)
+
+- `src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx`
+  composes Flagship Glow with an `effect-param` live binding on `intensity` and
+  proves the full M5 EX-02 lifecycle:
+  - **Effect `consumes` edge:** `clip:…` → `contribution:effect:…` with
+    `consumedKind: 'effect'`, `refKey`, and `effectType` detail.
+  - **`binds-live` edge:** `clip:…` → `contribution:effect:…` with
+    `targetKind: 'effect-param'`, `targetPath: 'intensity'`, and source
+    provenance (`bindingId`, `sourceId`).
+  - **Export block before bake:** `scanExportConfig` surfaces
+    `export/live-binding-unresolved`; `planRender` rejects `browser-export`
+    with `live-unbaked`.
+  - **Bake and clearance:** after baking a `deterministic-capture` ref
+    (`contentHash`, `provenanceHash`, `routeConstraints: ['preview', 'browser-export']`),
+    both export and planner clear — `hasBlockingErrors: false`,
+    `canBrowserExport: true`.
+- `src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx`
+  provides Testing Library browser acceptance:
+  - **Happy path:** baked config renders `consumes: true`, `binds-live: true`,
+    export unblocked, no blocker card.
+  - **Blocker/repair path:** unbaked config renders
+    `export/live-binding-unresolved` inside a `BlockerActionCard`; clicking
+    "Bake live binding" triggers bake, clears the blocker, and surfaces
+    graph-backed readiness.
+
 ### Source material only
 
 - `src/tools/video-editor/examples/extensions/flagship-local/index.ts:292-301`
@@ -176,8 +210,8 @@ frozen in `m0-decisions.md`: `consumes`, `animates`, `binds-live`, and
 - `src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx:383-596`
   proves current preview delivery, orphaned export blockers, partial bake, full
   bake, and export-guard clearance.
-- Current gap: no existing file composes the effect contribution with the live
-  bake flow as one graph-backed release example.
+- Current gap: the EX-02 graph-backed canary above supersedes the split source
+  material; the source files remain as reference only.
 
 ## EX-03 - Transition + Agent-Produced Mask Material
 
@@ -240,6 +274,36 @@ frozen in `m0-decisions.md`: `consumes`, `animates`, `binds-live`, and
 - The example is not release-ready until the graph-backed transition+mask path
   supersedes the current split canary sources.
 
+### M5 implementation evidence (V1 graph-backed)
+
+- `src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx`
+  composes Flagship Wipe and proves the full M5 EX-03 lifecycle:
+  - **Transition `consumes` edge:** `clip:…` → `contribution:transition:…` with
+    `consumedKind: 'transition'`, `refKey`, `transitionType`, and owner
+    provenance (`ownerKind: 'transition'`, `ownerId`).
+  - **Mask-material `consumes` edge:** `clip:…` → `contribution:transition:…` with
+    `consumedKind: 'mask-material'`, `targetSlot: 'transition-mask'`,
+    `materialRefId` matching the promoted durable ref, and owner provenance.
+  - **Agent-promoted material:** invokes the agent-tool durable-promotion path
+    through `createAgentToolInvocationService` → `invokeTool`, producing a
+    `RenderMaterialRef` with `determinism: 'deterministic'`, durable
+    provenance (`capture: 'agent-mask'`, `model: 'deterministic-masker'`),
+    and `routeConstraints: ['preview', 'browser-export']`.
+  - **Material slot declaration:** Flagship Wipe descriptor declares a
+    `transition-mask` material slot (`name: 'transition-mask'`,
+    `label: 'Transition Mask'`).
+  - **Attach + preview clearance:** `applyGraphPreviewOperations` with
+    `material.attach` targeting the `transition-mask` slot produces zero
+    diagnostics and both `consumes` edges.
+- `src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx`
+  provides Testing Library browser acceptance:
+  - **Happy path:** resolved material state renders `transition-consumes: true`,
+    `mask-consumes: true`, no `composition/material-not-resolved` blocker.
+  - **Blocker/repair path:** missing material state renders
+    `composition/material-not-resolved` inside a `MaterialBrowser` card;
+    clicking "Materialize transition mask" attaches the material and surfaces
+    the mask-material `consumes` edge.
+
 ### Source material only
 
 - `src/tools/video-editor/examples/extensions/flagship-local/index.ts:305-312`
@@ -254,8 +318,8 @@ frozen in `m0-decisions.md`: `consumes`, `animates`, `binds-live`, and
 - `src/tools/video-editor/examples/extensions/live-generated-frame-canary/index.ts:264-319`
   provides steering-lineage and generated-session source material for future
   agent-produced mask provenance.
-- Current gap: no existing file composes the transition contribution with an
-  agent-promoted mask material as one graph-backed release example.
+- Current gap: the EX-03 graph-backed canary above supersedes the split source
+  material; the source files remain as reference only.
 
 ## EX-04 - Output Format + Sidecar/Process Dependency With Non-Video Artifact Output
 

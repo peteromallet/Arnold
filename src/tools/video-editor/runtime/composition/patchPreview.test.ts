@@ -9,6 +9,7 @@ import {
   type GraphShaderAssignOp,
 } from '@/tools/video-editor/runtime/composition/patchPreview.ts';
 import { COMPOSITION_DIAGNOSTIC_CODE } from '@/tools/video-editor/runtime/composition/diagnostics.ts';
+import { projectHostMaterialRuntime } from '@/tools/video-editor/runtime/composition/materialRuntime.ts';
 
 type HostClipSummary = TimelineSnapshot['clips'][number] & {
   keyframes?: Record<string, ClipKeyframe[]>;
@@ -92,6 +93,9 @@ function contributionIndex(): ContributionIndex {
     'effect:com.example.effects:glow': [
       indexEntry('effect:com.example.effects:glow'),
     ],
+    'transition:com.example.transitions:dissolve': [
+      indexEntry('transition:com.example.transitions:dissolve'),
+    ],
   };
 }
 
@@ -109,6 +113,26 @@ function projectedClip(spy: ReturnType<typeof vi.spyOn>): HostClipSummary {
     throw new Error('Expected projectCompositionGraph to receive a cloned clip.');
   }
   return clip;
+}
+
+function transitionClip(overrides: Partial<HostClipSummary> = {}): HostClipSummary {
+  return {
+    id: 'clip-1',
+    track: 'V1',
+    at: 0,
+    clipType: 'video',
+    duration: 24,
+    managed: false,
+    transition: {
+      id: 'clip-1.transition.dissolve',
+      clipId: 'clip-1',
+      transitionType: 'dissolve',
+      duration: 1,
+      managed: true,
+      managedBy: 'com.example.transitions',
+    },
+    ...overrides,
+  };
 }
 
 afterEach(() => {
@@ -451,5 +475,164 @@ describe('patchPreview shader DUPLICATE_SCOPE guard', () => {
     expect(sourceShaders?.[0]?.shaderId).toBe('shader.clipGlow');
     // Confirm it's the same reference (no mutation)
     expect(input.snapshot.shaders).toBe(sourceShaders);
+  });
+});
+
+describe('patchPreview material.attach diagnostics', () => {
+  it('surfaces transition mask missing diagnostics at the attach boundary without writing bindings', () => {
+    const input: CompositionGraphInput = {
+      ...graphInput(transitionClip()),
+      materialSlotDeclarations: [
+        {
+          owner: {
+            kind: 'transition',
+            clipId: 'clip-1',
+            ownerId: 'clip-1.transition.dissolve',
+          },
+          slotName: 'transition-mask',
+        },
+      ],
+      materialRuntime: projectHostMaterialRuntime({
+        materialRefs: [],
+      }),
+    };
+    const sourceClip = input.snapshot.clips[0] as HostClipSummary;
+    const projectorSpy = vi.spyOn(graphProjector, 'projectCompositionGraph');
+
+    const preview = applyGraphPreviewOperations(input, [
+      {
+        kind: 'material.attach',
+        owner: {
+          kind: 'transition',
+          clipId: 'clip-1',
+          ownerId: 'clip-1.transition.dissolve',
+        },
+        slotName: 'transition-mask',
+        materialRefId: 'mat-missing',
+      },
+    ]);
+
+    const clonedInput = projectorSpy.mock.calls[0]?.[0] as CompositionGraphInput | undefined;
+    const clonedClip = projectedClip(projectorSpy);
+
+    expect(preview?.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_NOT_RESOLVED,
+        severity: 'error',
+        detail: expect.objectContaining({
+          clipId: 'clip-1',
+          ownerKind: 'transition',
+          ownerId: 'clip-1.transition.dissolve',
+          materialSlot: 'transition-mask',
+          materialRefId: 'mat-missing',
+          refKey: 'transition:com.example.transitions:dissolve',
+          resolverState: 'resolved',
+          nextAction: expect.objectContaining({
+            kind: 'materialize',
+          }),
+          repairAction: expect.objectContaining({
+            kind: 'materialize',
+            ownerKind: 'transition',
+            ownerId: 'clip-1.transition.dissolve',
+            materialSlot: 'transition-mask',
+            materialRefId: 'mat-missing',
+          }),
+        }),
+      }),
+    ]));
+    expect(clonedInput?.materialSlotBindings).toBeUndefined();
+    expect(clonedClip.transition?.params?.materialSlots).toBeUndefined();
+    expect(sourceClip.transition?.params?.materialSlots).toBeUndefined();
+  });
+
+  it('surfaces transition mask route-incompatible diagnostics at the attach boundary without mutating the source clip', () => {
+    const input: CompositionGraphInput = {
+      ...graphInput(transitionClip()),
+      materialSlotDeclarations: [
+        {
+          owner: {
+            kind: 'transition',
+            clipId: 'clip-1',
+            ownerId: 'clip-1.transition.dissolve',
+          },
+          slotName: 'transition-mask',
+        },
+      ],
+      materialRuntime: projectHostMaterialRuntime({
+        materialRefs: [
+          {
+            id: 'mat-route',
+            mediaKind: 'image',
+            locator: {
+              kind: 'asset-registry',
+              uri: 'asset://mat-route',
+            },
+            determinism: 'deterministic',
+            replacementPolicy: 'materialize-on-export',
+          },
+        ],
+        materialStatuses: [
+          {
+            materialRefId: 'mat-route',
+            state: 'resolved',
+            detail: {
+              quality: 'route-incompatible',
+            },
+          },
+        ],
+        requestedRoutes: ['preview'],
+        canonicalRoutes: ['worker-export'],
+      }),
+    };
+    const sourceClip = input.snapshot.clips[0] as HostClipSummary;
+    const projectorSpy = vi.spyOn(graphProjector, 'projectCompositionGraph');
+
+    const preview = applyGraphPreviewOperations(input, [
+      {
+        kind: 'material.attach',
+        owner: {
+          kind: 'transition',
+          clipId: 'clip-1',
+          ownerId: 'clip-1.transition.dissolve',
+        },
+        slotName: 'transition-mask',
+        materialRefId: 'mat-route',
+      },
+    ]);
+
+    const clonedInput = projectorSpy.mock.calls[0]?.[0] as CompositionGraphInput | undefined;
+    const clonedClip = projectedClip(projectorSpy);
+
+    expect(preview?.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: COMPOSITION_DIAGNOSTIC_CODE.MATERIAL_ROUTE_INCOMPATIBLE,
+        severity: 'error',
+        detail: expect.objectContaining({
+          clipId: 'clip-1',
+          ownerKind: 'transition',
+          ownerId: 'clip-1.transition.dissolve',
+          materialSlot: 'transition-mask',
+          materialRefId: 'mat-route',
+          refKey: 'transition:com.example.transitions:dissolve',
+          resolverState: 'resolved',
+          routeScope: 'worker-export',
+          nextAction: expect.objectContaining({
+            kind: 'select-route',
+            route: 'worker-export',
+          }),
+          repairAction: expect.objectContaining({
+            kind: 'select-route',
+            route: 'worker-export',
+            ownerKind: 'transition',
+            ownerId: 'clip-1.transition.dissolve',
+            materialSlot: 'transition-mask',
+            materialRefId: 'mat-route',
+          }),
+        }),
+      }),
+    ]));
+    expect(clonedInput?.materialSlotBindings).toBeUndefined();
+    expect(clonedClip.transition?.params?.materialSlots).toBeUndefined();
+    expect(sourceClip.transition?.params?.materialSlots).toBeUndefined();
   });
 });

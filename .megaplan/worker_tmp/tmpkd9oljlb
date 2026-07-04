@@ -1,0 +1,315 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `plan`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m5-effects-transitions-live-20260704-1310`
+Current milestone: `m5-effects-transitions-mask`
+
+### Phase Instruction
+Build a plan that advances the local brief while preserving the North Star. If scope is narrowed, state whether the narrowing is a bridge or a contradiction.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are creating an implementation plan for the following idea.
+
+        Engineering brief produced from the codebase and task details:
+
+        ### Task Summary
+        M5 adds effect and transition contribution nodes with `consumes` edges to the composition graph projector, transition mask material slot consumption with typed detail, effect live binding projection through `effect-param` target paths, M5-specific diagnostics, UI repair affordances, browser acceptance, and canary updates — converging the first three V1 composed examples. The graph projector currently handles clips, shaders, automations, and live bindings but has zero effect or transition contribution projection. The `CompositionGraphInput` already accepts `materialSlotDeclarations` and `materialSlotBindings` but they are never consumed. The existing `binds-live` edge projector already supports `effect-param` target paths via `targetEffectId`. EX-01 is M4-owned and needs only non-breaking confirmation; EX-02 and EX-03 are split across canaries with no composed graph-backed example wiring effect-to-live-data or transition-to-agent-mask-material.
+
+        ### Key Evidence
+        - Graph projector has zero effect/transition contribution projection — `clip.effects[]` and `clip.transition` from the timeline snapshot are entirely unprojected. Contribution nodes are created from the index for any `kind` (including 'effect' and 'transition') but no `consumes` edges connect clips to effect/transition contributions. The projector's main loop has dedicated sections for automation (lines 500–551), live binding (553–612), clip type (614–669), and shader (671–745) — but no section for effect or transition `consumes` edges. (source: graphProjector.ts:453–778 (projectCompositionGraph); compositionGraphProjector.test.ts:120–130, 166–174 (effect contribution in test index exists but no consumes edge assertion); relevance: high)
+- Material slot infrastructure (`CompositionGraphMaterialSlotOwnerIdentity`, `CompositionGraphMaterialSlotDeclaration`, `CompositionGraphMaterialSlotBinding`) exists in `graphProjector.ts:40–55` and `CompositionGraphInput` accepts `materialSlotDeclarations`/`materialSlotBindings` at lines 57–66, but `projectCompositionGraph()` never iterates these to produce `consumes` edges. The entire material-slot-to-graph projection is unimplemented dead code. (source: graphProjector.ts:40–66; relevance: high)
+- The `consumes` edge kind is reused (NOT a new `consumes-mask` kind) per locked decisions. Existing `consumes` edges carry detail shapes for clip-type (`{ clipTypeId, clipId, refKey, scope: 'clip' }`) and shader (`{ shaderId, clipId, refKey, scope }`). For M5, the detail must add `consumedKind` (e.g., `'mask-material'`) and `targetSlot` (e.g., `'transition-mask'`) plus provenance fields. One finding from m5-diagnostics-ui-audit incorrectly claims a new edge kind is needed — contradicted by locked decisions and transition-mask-consumes-contract finding 10. (source: graphProjector.ts:649–661 (clip-type consumes), 700–712 (shader consumes); graph.ts:62–66 (COMPOSITION_EDGE_KINDS); locked decisions in task description; relevance: high)
+- The `binds-live` edge projector already handles `effect-param` target paths. `liveBindingTargetKind()` (graphProjector.ts:189–213) returns `'effect-param'` when `targetEffectId` is present, and the binds-live edge creation (lines 592–610) routes to the correct contribution node. No new wiring needed for the projection logic, but EX-02 must still be composed as a graph-backed example proving the full chain: Flagship Glow effect → live data binding → `binds-live` edge → bake. (source: graphProjector.ts:189–213, 553–612; compositionGraphProjector.test.ts:296–310; relevance: high)
+- EX-02 (effect + live data + bake) source material is split across four canaries with zero composition. Flagship-local provides the Glow effect contribution and registration. Live-webcam-canary and live-generated-frame-canary provide preview delivery and bake. Live-data-bridge integration tests prove orphaned export blockers and bake flow. No single graph-backed example wires the Flagship Glow effect to a live data binding with `binds-live` on effect-param. (source: flagship-local/index.ts:292–301, 436–449; live-webcam-canary/index.ts:97–140, 396–409; live-generated-frame-canary/index.ts:83, 173–217; live-data-bridge.integration.test.tsx:383–597; relevance: high)
+- EX-03 (transition + agent mask material) source material is split across three canaries with zero composition. Flagship-local provides the Wipe transition contribution, renderer registration, and parameter schema. Agent-tools-canary provides fake material/artifact refs. Live-webcam-canary and live-generated-frame-canary produce `bakeRenderMaterial → RenderMaterialRef`. No test projects a `consumes` edge with `{ consumedKind: 'mask-material', targetSlot: 'transition-mask' }`. (source: flagship-local/index.ts:305–312, 452–459; agent-tools-canary/index.ts:236–299; flagship-local-transition.test.ts:94–436; relevance: high)
+- Existing generic composition ref diagnostic codes (`MISSING_REF`, `DISABLED_REF`, etc.) are contribution-kind-agnostic and reusable for effect/transition refs. Net-new codes needed for: transition mask missing and transition mask route incompatibility — these require a `materialSlot` discriminator field not present in `CompositionDiagnosticDetail`. Existing material codes (`MATERIAL_NOT_RESOLVED`, `MATERIAL_ROUTE_INCOMPATIBLE`) are close but don't identify the slot. (source: diagnostics.ts:26–127 (COMPOSITION_DIAGNOSTIC_CODE), 144–195 (CompositionDiagnosticDetail), 259–286 (referenceStateDiagnosticCode); relevance: high)
+- No shared blocker/action component exists for UI repair affordances. `MaterialBrowser` accepts `plannerResult` with `nextActions`/`blockers`/`diagnostics` and has `onAction` callback — this pattern is extensible. `PendingMaterialPlaceholder` provides Remotion-composition-based status but is not usable outside Remotion. The task explicitly allows a minimal shared blocker/action component only if needed — and it IS needed because no reusable DOM-based blocker indicator exists for inspector/export surfaces. (source: MaterialBrowser.tsx:20–25; PendingMaterialPlaceholder.tsx; exportGuard.ts; relevance: high)
+- Canary tests for flagship-local, agent-tools-canary, and live-generated-frame-canary do not exist as files. They are net-new required artifacts. M0 release-examples doc confirms EX-01/EX-02/EX-03 are not yet composed as graph-backed examples. (source: m0-release-examples.md; file search for canary test files returned no matches; relevance: high)
+- Area 'projector-effect-transition-gap' returned an error (`worker_structural_audit_failed: type_mismatch`) with empty findings and low confidence. The detailed projection map for effect/transition insertion points was not produced. However, the other three areas provide sufficient detail on projector gaps, edge contract shapes, and diagnostic patterns to proceed. (source: Triage area findings — area 1 error status; relevance: medium)
+
+        ### Relevant Code
+        | File | Functions | Why |
+| --- | --- | --- |
+| src/tools/video-editor/runtime/composition/graphProjector.ts | projectCompositionGraph (453–778), liveBindingTargetKind (189–213), buildContributionEntryByContributionId (105–130) | Primary insertion point for effect/transition `consumes` edges and material slot binding projection. Contains dead-code material slot infrastructure (lines 40–66) that must be wired. Contains existing `consumes` edge patterns (clip-type at 649–661, shader at 700–712) and `binds-live` edge projection (553–612) to reuse. |
+| src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts | effect contribution node assertion (166–174), animates edge targeting contribution:effect (296–310) | Test file for graph projection. Already has effect contribution nodes in test index (lines 120–130, 166–174) and animates edges targeting effect contributions (296–310). Needs new assertions for effect/transition `consumes` edges with typed detail. |
+| src/tools/video-editor/runtime/composition/diagnostics.ts | COMPOSITION_DIAGNOSTIC_CODE (26–127), CompositionDiagnosticDetail (144–195), referenceStateDiagnosticCode (259–286) | Diagnostic code catalog and `CompositionDiagnosticDetail` interface. Needs `materialSlot` field addition and net-new codes for transition-mask-missing and transition-mask-route-incompatible. |
+| src/tools/video-editor/runtime/exportGuard.ts | scanCompositionGraphTargetExportBlockers (446–523), scanLiveBindingExportBlockers (346–360) | Export guard must funnel effect/transition ref diagnostics and transition mask diagnostics into export blockers. `scanCompositionGraphTargetExportBlockers` (446–523) currently only checks `isBlockingTargetCompositionDiagnosticCode` — needs extension for M5 codes. |
+| src/tools/video-editor/runtime/composition/materialRuntime.ts | resolveMaterialAttachEntry (1525–1565) | `resolveMaterialAttachEntry` (1525–1565) resolves material refs and produces diagnostics for transition mask consumption. `HostMaterialRuntimeEntry.determinismPosture` values map directly to mask diagnostics (missing/failed/stale). |
+| src/tools/video-editor/runtime/composition/patchPreview.ts | applyMaterialAttach (881–930) | `applyMaterialAttach` (881–930) handles the full material attach flow (slot validation, resolution, binding tracking). Does NOT need extension — the gap is purely in graph projector consuming `materialSlotBindings`. |
+| src/tools/video-editor/runtime/extensionSurface.ts | ContributionIndexEntry (493–512), VideoEditorTransitionDescriptor (384), VideoEditorPlannerNextActionDescriptor (262–271) | `ContributionIndexEntry` (493–512), `VideoEditorTransitionDescriptor.materialSlots` (384), `VideoEditorTransitionMaterialSlotDescriptor` (359–362), and `VideoEditorPlannerNextActionDescriptor` (262–271) define the types consumed by projection and diagnostics. |
+| src/sdk/video/composition/graph.ts | COMPOSITION_EDGE_KINDS (62–66) | SDK graph types: `COMPOSITION_EDGE_KINDS` (62–66) confirms `consumes` is the reusable edge kind — no new kind needed. |
+| src/sdk/video/rendering/artifacts.ts | RenderMaterialRef (172–181) | `RenderMaterialRef` (172–181) carries `id`, `mediaKind`, `determinism`, `replacementPolicy`, `provenance` — fields available for `consumes` edge detail on transition mask slots. |
+| src/sdk/video/families/transitions.ts | TransitionMaterialSlotDeclaration (31–36), TransitionContribution.materialSlots (73) | `TransitionMaterialSlotDeclaration` (31–36) and `TransitionContribution.materialSlots` (73) define the SDK public contract for transition mask slots. |
+| src/tools/video-editor/components/MaterialBrowser.tsx | MaterialBrowser component | Existing UI surface with `plannerResult` → `nextActions`/`blockers`/`diagnostics` pattern and `onAction` callback. Extensible for effect/transition diagnostic surfacing without net-new UI surface. |
+| src/tools/video-editor/examples/extensions/flagship-local/index.ts | Flagship Glow effect contribution (292–301, 436–449), Flagship Wipe transition contribution (305–312, 452–459) | Source of Flagship Glow effect contribution (292–301, 436–449) and Flagship Wipe transition contribution (305–312, 452–459). Provides parameter schemas for EX-02 (Glow: intensity, color, style, animate) and EX-03 (Wipe: direction, softness). |
+| src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx | webcam preview → orphaned export blocker (383–463), steering → partial bake → full bake → export guard clearance (465–597) | Proves preview delivery, orphaned export blockers, bake flow, and export guard clearance. Reusable patterns for EX-02 browser acceptance testing of effect-param live binding + bake. |
+| docs/extensions/composition-spine/m0-release-examples.md | EX-01/EX-02/EX-03 requirements and ownership | Defines EX-01/EX-02/EX-03 composed example requirements. Confirms none are yet composed as graph-backed examples. Specifies M4 ownership of EX-01 (non-breaking for M5). |
+
+        ### Test Expectations
+        - [fail_to_pass] projector-effect-consumes-edge: Graph projector emits a `consumes` edge from clip node to contribution node for each effect on a clip, with detail including `consumedKind`, `refKey`, `contributionId`, and `ownerId`. Effect contribution node kind is 'effect'.
+- [fail_to_pass] projector-transition-consumes-edge: Graph projector emits a `consumes` edge from clip node to contribution node for the clip's transition, with typed detail `{ consumedKind: 'mask-material', targetSlot: '<slotName>' }` and provenance fields (`materialRefId`, `refKey`, `clipId`, `ownerId`, `ownerKind`).
+- [fail_to_pass] projector-material-slot-binding-iteration: `projectCompositionGraph()` iterates `input.materialSlotBindings` filtered to `owner.kind === 'transition'`, creating contribution nodes and `consumes` edges with mask-material detail. Verifies the dead-code material slot infrastructure is wired.
+- [pass_to_pass] binds-live-effect-param-existing-coverage: Existing `binds-live` edge projection for `effect-param` target paths continues to work. `liveBindingTargetKind()` returns `'effect-param'` when `targetEffectId` is present. Edge routes to correct contribution node.
+- [fail_to_pass] ex-02-composed-graph-backed-example: Flagship Glow effect + live data binding + bake composes as a single graph-backed example. Graph asserts: effect contribution node, `consumes` edge clip→effect, `binds-live` edge on effect-param (e.g., intensity), export blocker on unbaked live binding, bake clears blocker.
+- [fail_to_pass] ex-03-composed-graph-backed-example: Flagship Wipe transition + agent-promoted mask material composes as single graph-backed example. Graph asserts: transition contribution node, `consumes` edge clip→transition with `{ consumedKind: 'mask-material', targetSlot: 'transition-mask' }`, `materialRefId` matches resolved `RenderMaterialRef`.
+- [fail_to_pass] m5-effect-ref-diagnostics: Missing/disabled effect refs produce diagnostics with contribution ref, resolver state, package state, target path, and next action. Reuses existing `referenceStateDiagnosticCode()` mapping but distinct diagnostic codes from transition diagnostics.
+- [fail_to_pass] m5-transition-ref-diagnostics: Missing/disabled transition refs produce diagnostics with contribution ref, resolver state, package state, target slot, and next action. Distinct from effect ref diagnostics.
+- [fail_to_pass] m5-transition-mask-missing-diagnostic: Transition mask missing produces diagnostic code `composition/transition-mask-missing` with `materialSlot: 'transition-mask'`, `materialRefId`, resolver state, and next action (re-promote/invoke-agent).
+- [fail_to_pass] m5-transition-mask-route-incompatible-diagnostic: Transition mask route incompatibility produces diagnostic code `composition/transition-mask-route-incompatible` with `materialSlot: 'transition-mask'`, `routeScope`, `materialRefId`, and next action.
+- [fail_to_pass] export-guard-m5-diagnostic-funnel: `scanCompositionGraphTargetExportBlockers` funnels M5 effect/transition ref diagnostics and transition mask diagnostics into export blockers. `isBlockingTargetCompositionDiagnosticCode` includes new M5 codes.
+- [fail_to_pass] ui-blocker-action-component: Minimal shared blocker/action component renders: diagnostic code, description, next action button (with `onAction` callback), and severity indicator. Used in inspector and export surfaces for transition mask missing and effect-param unbaked live binding blockers.
+- [fail_to_pass] browser-acceptance-happy-path: At least one browser acceptance test per composed example: EX-02 effect param form + live preview + bake button; EX-03 transition mask material slot status + agent re-promote action. Uses existing `screen.getByTestId` patterns from live-data-bridge integration tests.
+- [fail_to_pass] browser-acceptance-blocker-repair-path: At least one browser acceptance test per composed example for blocker/repair path: EX-02 export blocked on unbaked live binding → repair action clears blocker; EX-03 transition mask missing → re-promote agent action resolves.
+- [pass_to_pass] ex-01-non-breaking-confirmation: EX-01 (clip + shader + keyframes) integration tests in clip-local-shader-canary continue to pass. Existing `consumes`, `animates`, `binds-live` edge assertions are unchanged. Graph node kind scoping (clip, timeline-postprocess, contribution) unchanged.
+- [fail_to_pass] canary-tests-net-new: Net-new canary tests for flagship-local, agent-tools-canary, and live-generated-frame-canary assert M5 graph operations (effect/transition `consumes` edges, transition mask slot consumption, effect-param `binds-live`).
+- [fail_to_pass] legacy-planner-non-authority: Legacy planner cannot pass through as sole authority for M5 examples. Graph-backed assertions must be primary; legacy planner fallback must produce warnings (reusing existing pattern from clip-local-shader-canary tests).
+- [fail_to_pass] effect-live-binding-blocks-export-until-baked: Effect param with `binds-live` edge blocks export. After bake produces deterministic `RenderMaterialRef`, export blocker clears. Reuses live-data-bridge integration test pattern (lines 465–597).
+
+        ### Constraints
+        - Do not add process runtime or sidecar behavior
+- Do not introduce arbitrary artifact-to-node routing — transition mask slot consumes a resolved MaterialRef via existing infrastructure
+- Do not claim preview support as export support
+- Do not let missing/disabled effect and transition refs collapse into generic diagnostics — distinct codes required
+- Browser acceptance is required where user-facing UI exists
+- Do not introduce new edge kind `consumes-mask` — reuse existing `consumes` edge kind with differentiated detail fields (`consumedKind`, `targetSlot`)
+- M4-owned EX-01 must remain non-breaking
+- New live-binding writes use native graph-owned operations after M5; legacy live-binding writes are compatibility reads only
+- The first three V1 examples must assert native graph operations, not shim-only projection
+
+        ### Suggested Approach
+        Phase 1 — Projector extension: In `graphProjector.ts`, add a new section (after the shader section at line 745) that iterates `input.materialSlotBindings` filtered to `owner.kind === 'transition'` and emits `consumes` edges from clip nodes to transition contribution nodes with detail `{ consumedKind: 'mask-material', targetSlot: slot.slotName, materialRefId: slot.materialRefId, clipId: owner.clipId, ownerId: owner.ownerId, ownerKind: 'transition' }`. Add a parallel section iterating timeline snapshot clips for effect `consumes` edges: for each clip with `effects[]`, look up the effect contribution in `contributionIndex` and emit a `consumes` edge from clip node to effect contribution node with detail `{ consumedKind: 'effect', effectId, refKey, clipId, ownerId }`. Reuse the existing `clipNodeId()` and `contributionNodeId()` helpers. The `binds-live` edge for `effect-param` already works — confirm with an assertion test, no code change needed.
+
+Phase 2 — Diagnostics: Add `materialSlot` field to `CompositionDiagnosticDetail`. Add two net-new diagnostic codes: `composition/transition-mask-missing` and `composition/transition-mask-route-incompatible`. Reuse existing `referenceStateDiagnosticCode()` for effect/transition ref diagnostics (MISSING_REF, DISABLED_REF, etc.) — they are already contribution-kind-agnostic. In `exportGuard.ts`, extend `scanCompositionGraphTargetExportBlockers` to funnel M5 diagnostic codes. Extend `isBlockingTargetCompositionDiagnosticCode` to include the new codes.
+
+Phase 3 — UI repair: Build a minimal shared `BlockerActionCard` component that renders diagnostic code, description, severity icon, and a next-action button wired to `onAction`. Integrate into existing inspector/export surfaces. Extend `MaterialBrowser` to accept effect/transition diagnostics via the existing `plannerResult` pattern — no new UI surface needed for that path.
+
+Phase 4 — Composed examples and canary tests: Compose EX-02 as a single graph-backed test: load Flagship Glow effect on a clip, bind the `intensity` param to a live webcam frame via `binds-live` edge, assert export blocker, bake to deterministic `RenderMaterialRef`, assert blocker cleared. Compose EX-03 as a single graph-backed test: load Flagship Wipe transition on a clip, attach agent-generated mask material to the `transition-mask` slot via `GraphMaterialAttachOp`, assert `consumes` edge with `{ consumedKind: 'mask-material', targetSlot: 'transition-mask' }`, assert `materialRefId` matches the resolved `RenderMaterialRef`. Confirm EX-01 tests pass unchanged. Add browser acceptance tests using `@testing-library/react` patterns from live-data-bridge integration tests: one happy path and one blocker/repair path per composed example. Create net-new canary test files for flagship-local, agent-tools-canary, and live-generated-frame-canary asserting M5 graph operations.
+
+### Open Questions
+- [assume_and_proceed] Area 'projector-effect-transition-gap' returned a worker error with no findings. The detailed projection map for where exactly effect/transition facts enter the graph could not be produced. Are there any edge cases in the timeline snapshot's `clip.effects[]` and `clip.transition` shapes that would require projection logic beyond the existing clip-type and shader patterns? _(assumption: The timeline snapshot's `clip.effects[]` and `clip.transition` shapes follow the same contribution-ref pattern as shaders: each has an `effectId`/`transitionId` string, a `refKey` for contribution index lookup, and optional `params`. The projection follows the same `consumes` edge emission pattern used for clip-type (lines 649–661) and shader (lines 700–712). The `contributionIndex` already handles any `kind` string — effect and transition entries are already projected as contribution nodes. Only the `consumes` edge emission is missing.)_
+- [assume_and_proceed] Findings from m5-diagnostics-ui-audit (gap 7) claim a new edge kind 'consumes-mask' is needed, directly contradicting locked decisions and transition-mask-consumes-contract finding 10 which confirm NO new edge kind. Which interpretation is authoritative? _(assumption: Locked decisions are authoritative: 'consumes-mask' edge is explicitly OUT. The existing `consumes` edge kind is reused with differentiated detail fields (`consumedKind: 'mask-material'`, `targetSlot: 'transition-mask'`). The m5-diagnostics-ui-audit finding is incorrect on this point. This is confirmed by `COMPOSITION_EDGE_KINDS` (graph.ts:62–66) which already supports `consumes` and by the existing two `consumes` edge variants (clip-type, shader) that already use differentiated detail shapes.)_
+- [assume_and_proceed] The `CompositionGraphInput` accepts `materialSlotDeclarations` and `materialSlotBindings` but no code populates these fields before calling `projectCompositionGraph()`. Where does the population happen — is it in a caller not yet audited, or is it net-new work for M5? _(assumption: Population of `materialSlotDeclarations` and `materialSlotBindings` in the `CompositionGraphInput` is net-new work for M5. The caller of `projectCompositionGraph()` (likely in `renderPlanner.ts` or `renderRouter.ts`) must construct these from the timeline snapshot's transition descriptors and the resolved `materialSlotBindings` produced by `applyMaterialAttach` in `patchPreview.ts`. The types are already defined — only the wiring from the caller to the projector input is missing.)_
+- [assume_and_proceed] The `'transition-mask'` slot name is not hardcoded anywhere in the codebase. Should the projector assume this exact string, or should it dynamically read the slot name from the transition descriptor's `materialSlots` array? _(assumption: The `consumes` edge detail's `targetSlot` field is populated dynamically from the transition descriptor's `materialSlots[].name`. No hardcoded `'transition-mask'` string is used in production code. The slot name flows from `TransitionContribution.materialSlots` → `VideoEditorTransitionDescriptor.materialSlots` → `CompositionGraphMaterialSlotDeclaration.name` → `CompositionGraphMaterialSlotBinding.slotName` → `consumes` edge detail `targetSlot`. Tests may use `'transition-mask'` as a known test value.)_
+
+        The engineering brief above is evidence gathered from the codebase. Treat it as the default working context, challenge its conclusions when the code disagrees, and only do targeted repository lookups when a concrete gap remains. Open questions in the brief are candidate concerns, not mandates — act on ones that materially affect the plan, dismiss immaterial or already-resolved ones with a brief reason, and treat question count as noise.
+
+        Idea:
+# M5: Effects, Transitions, Live Data, And Agent Mask Material
+
+## Outcome
+
+Complete the first three V1 composed examples by adding effect/transition refs, effect live binding, transition mask material consumption, repair UI, and browser acceptance for happy and blocker paths.
+
+## Execution Posture
+
+Converge the V1 composition SDK proof. Every release example must be graph-backed, tested, documented, and unable to pass through legacy-only planner authority.
+
+## Scope
+
+IN:
+- Add effect and transition refs in the contribution index and graph as `contribution` nodes.
+- Add effect/transition param target paths through M2 grammar.
+- Add descriptor-declared transition mask material slot using existing `MaterialRef`.
+- Project transition mask consumption as `consumes` detail `{ consumedKind: 'mask-material', targetSlot: 'transition-mask' }`.
+- Reuse M3c agent material/artifact promotion and attach resolved refs to transition mask slot.
+- Add effect live binding through `effect-param` target path and `binds-live`.
+- Add UI repair affordances in existing inspector/export/status surfaces, with a minimal shared blocker/action component only if needed.
+- Add M5 diagnostics for missing/disabled effect refs, missing/disabled transition refs, transition mask missing, and transition mask route incompatibility.
+- Update canaries for `flagship-local`, `agent-tools-canary`, and `live-generated-frame-canary`.
+
+OUT:
+- Public effect/transition node kinds.
+- `consumes-mask` edge.
+- New material identity types.
+- Process runtime and sidecar execution.
+- Output-format route conformance.
+
+## Locked Decisions
+
+- Effect and transition descriptors project as `contribution` nodes keyed by refs.
+- Transition mask slot consumes a resolved `MaterialRef`; it does not create arbitrary material routing.
+- New live-binding writes use native graph-owned operations after M5.
+- Legacy live-binding writes are compatibility reads only after M5.
+- The first three V1 examples must assert native graph operations, not shim-only projection.
+
+## Constraints
+
+- Do not add process runtime or sidecar behavior.
+- Do not introduce arbitrary artifact-to-node routing.
+- Do not claim preview support as export support.
+- Do not let missing/disabled effect and transition refs collapse into generic diagnostics.
+- Browser acceptance is required where user-facing UI exists.
+
+## Done Criteria
+
+- Transition consumes an agent-generated mask material by storing a resolved `MaterialRef` and projecting a typed `consumes` edge.
+- Effect param binds to live data through target paths, projects `binds-live`, and blocks export until baked.
+- Effect/transition diagnostics include contribution ref, resolver state, package state, target path or material slot, and next action.
+- Clip + shader + keyframes, effect + live data, and transition + agent mask material are executable, graph-backed, tested, and documented.
+- Browser acceptance covers at least one happy path and one blocker/repair path per composed example where UI exists.
+
+## Touchpoints
+
+- `src/sdk/video/composition/graph.ts`
+- `src/sdk/video/composition/references.ts`
+- `src/sdk/video/rendering/artifacts.ts`
+- `src/tools/video-editor/runtime/composition/**`
+- `src/tools/video-editor/components/**`
+- `src/tools/video-editor/lib/renderRouter.ts`
+- `examples/video-editor-extension/**`
+- `tests/e2e/video-editor-*.spec.ts`
+- `docs/extensions/**`
+
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+
+
+
+
+        No prior clarification artifact exists. Identify ambiguities, ask clarifying questions, and state your assumptions inside the plan output.
+
+        Open tickets for this repo:
+
+- 01KS384XKZNEWQRSXN2NXQ0DTJ — Video editor: extensibility plan (preserves variation potential, ships none)  [video-editor, design, refactor, oss]
+- 01KV8XVYW2EYDDDY30V48YX520 — Megaplan plan extraction can pass malformed/escaped-newline payloads to Markdown validator  [megaplan, validator, hermes, json-extraction, plan-phase]
+
+The planner may PROPOSE linking tickets to this plan with `resolves_on_complete=true` in the plan output, but the actual linking is performed via the explicit `megaplan ticket link` CLI after planning — the planner never directly links tickets.
+
+        Requirements:
+        - If the engineering brief suggests an approach, use it as your starting hypothesis — but before committing, consider if there's a simpler or more fundamental fix. The brief is well-researched input, not a final answer.
+        - If the brief is absent, incomplete, or says "skip", inspect the repository yourself before planning.
+        - Stay focused on the requested idea. If repo exploration surfaces unrelated issues or docs, ignore them and return to the task.
+        - Prefer source code, tests, and directly relevant config files. Avoid `.megaplan/`, prior plan artifacts, and unrelated `docs/` or ops/deployment material unless the task explicitly depends on them.
+        - Stop exploring once you have enough evidence to name the concrete touch points and validation path. Do not keep browsing after you can write the plan.
+        - Produce a concrete implementation plan in markdown.
+        - Define observable success criteria as objects with `criterion` (string) and `priority` (`must`, `should`, or `info`):
+          - `must` — hard gate. The reviewer will block on failure. Use for correctness, functional requirements, and verifiable outcomes (e.g., "all existing tests pass", "API returns 200 for valid input"). Every `must` criterion must have a clear yes/no answer.
+          - `should` — quality target. The reviewer flags but does not block. Use for subjective goals, numeric guidelines, and best-effort improvements (e.g., "file under ~300 lines", "no deeply nested conditionals", "each function has a single responsibility").
+          - `info` — documented for humans, reviewer skips. Use for criteria that cannot be verified in this pipeline (e.g., "13 manual smoke tests pass", "stakeholder sign-off obtained").
+        - Each success criterion should include a `requires` field listing the capabilities needed for verification. Valid capability strings: `run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, `run_linter` (container), `drive_browser`, `inspect_runtime_ui`, `observe_runtime_logs`, `subjective_judgment`, `verify_physical_device` (human). `must` criteria MUST have non-empty `requires`. Example: `{"criterion": "All tests pass", "priority": "must", "requires": ["run_tests"]}`.
+        - Use the `questions` field for ambiguities that would materially change implementation.
+        - Use the `assumptions` field for defaults you are making so planning can proceed now.
+        - Prefer cheap validation steps early.
+        - Keep the plan proportional to the task. A 1-line fix needs a 2-step plan (apply fix + run tests), not a 5-step investigation.
+        - Size each step so it can be implemented AND verified in a single worker turn (~15 min, one model conversation). A step that bundles "create the abstraction AND migrate every consumer AND write all the tests" is too large to finish in one turn and will fail (the worker runs out of time before it can implement, leaving the step blocked). For large mechanical refactors, split along the natural seam — one step to add the new abstraction + its unit tests, then one step per consumer to migrate (the last migration step also adds parity tests) — rather than one giant step. Higher complexity does not earn a step more time; it only routes to a stronger model for the same single turn.
+        - If user notes answer earlier questions, incorporate them into the draft plan instead of re-asking them.
+        - Fix the problem fully. Do not limit scope just to avoid breaking existing tests — update the tests too if needed.
+        - Prefer the simplest, most direct fix. No fallbacks, type conversions, or defensive wrappers without concrete evidence they are needed.
+        - If the task or issue hints suggest a specific approach, follow it. Only deviate with concrete counter-evidence.
+        - Assign every plan step a complexity score 1–5 before finalize. Reason about complexity in the plan markdown (e.g. "Complexity: 2" per step), and surface it informally so the reviewer can audit:
+          - 1 = trivial single-file mechanical change
+          - 2 = simple change with tests to update
+          - 3 = multi-file change with non-trivial logic
+          - 4 = cross-cutting change with architecture implications
+          - 5 = fundamental system change with high regression risk
+        - Populate `changed_surfaces` with every concrete file path your plan will change or create. Include both source files and test files. Use repo-relative paths (e.g., `src/prompts.py`, `tests/test_prompts.py`). This list drives the deterministic test-selection blast radius; be complete. If your plan touches a file, list it.
+        - (Optional) Populate `test_blast_radius` with your own scoped test-selection proposal. This complements the deterministic floor the system computes from `changed_surfaces`. Provide `strategy` ("scoped", "full", or "none"), `selectors` (array of `{"kind": "path", "value": "<path>", "reason": "<why>"}` objects), and a `rationale` string. The system merges your proposal with the deterministic floor; you cannot narrow below the floor, but you can widen with additional selectors or escalate to full. If you intend a scoped finalize baseline while keeping the full suite as a hard gate, set `strategy` to "scoped", include concrete `selectors`, and set `full_suite_fallback` to true; the floor's full-suite requirement will be honored by the fallback without forcing the baseline strategy to "full".
+
+        Plan template — simple format (adapt to the actual repo and scope):
+````md
+# Implementation Plan: [Title]
+
+## Overview
+Summarize the goal, current repository shape, and the constraints that matter.
+
+## Main Phase
+
+### Step 1: Audit the current behavior (`src/prompts.py`)
+**Scope:** Small
+1. **Inspect** the current implementation and call out the exact insertion points (`src/prompts.py:29`).
+
+### Step 2: Add the first change (`src/evaluation.py`)
+**Scope:** Medium
+1. **Implement** the smallest viable change with exact file references (`src/evaluation.py:1`).
+2. **Capture** any tricky behavior with a short example.
+   ```python
+   issues = validate_plan_structure(plan_text)
+   ```
+
+### Step 3: Wire downstream behavior (`src/handlers.py`, `src/workers.py`)
+**Scope:** Medium
+1. **Update** the runtime flow in the touched files (`src/handlers.py:400`, `src/workers.py:199`).
+
+### Step 4: Prove the change (`tests/test_validator.py`, `tests/test_integration.py`)
+**Scope:** Small
+1. **Run** the cheapest targeted checks first (`tests/test_validator.py:1`).
+2. **Finish** with broader verification once the wiring is in place (`tests/test_integration.py:1`).
+
+## Execution Order
+1. Update prompts and mocks before enforcing stricter validation.
+2. Land higher-risk wiring after the validator and tests are ready.
+
+## Validation Order
+1. Start with focused unit tests.
+2. Run the broader suite after the flow changes are in place.
+````
+
+For complex plans, use multiple phases:
+````md
+## Phase 1: Foundation — Dependencies, DB, Types
+
+### Step 1: Install dependencies (`package.json`)
+...
+
+### Step 2: Create database migration (`supabase/migrations/`)
+...
+
+## Phase 2: Core Integration
+
+### Step 3: Port the main component (`src/components/`)
+...
+````
+
+Template guidance:
+- Simple plans: use `## Main Phase` with `### Step N:` sections underneath.
+- Complex plans: use multiple `## Phase N:` sections, each containing `### Step N:` steps. Step numbers are global (not per-phase).
+- The flat `## Step N:` format (without phases) also works for backwards compatibility.
+- Key invariants: one H1 title, one `## Overview`, numbered step sections (`### Step N:` or `## Step N:`), and at least one ordering section.

@@ -1,10 +1,17 @@
 import { useMemo, useState } from 'react';
 import type { CapabilityFinding, RenderMaterialRef } from '@reigh/editor-sdk';
+import {
+  BlockerActionCard,
+  normalizeBlockerActionCardNextAction,
+} from '@/tools/video-editor/components/BlockerActionCard.tsx';
 import type {
   RenderPlannerMaterialStatus,
   RenderPlannerResult,
 } from '@/tools/video-editor/runtime/renderPlanner.ts';
-import type { VideoEditorPlannerNextActionDescriptor } from '@/tools/video-editor/runtime/extensionSurface.ts';
+import type {
+  VideoEditorPlannerNextActionDescriptor,
+  VideoEditorPlannerNextActionKind,
+} from '@/tools/video-editor/runtime/extensionSurface.ts';
 
 export interface MaterialBrowserFilters {
   producerExtensionId?: string;
@@ -71,7 +78,9 @@ function actionFor(
 ): VideoEditorPlannerNextActionDescriptor | undefined {
   const isMaterialRepairAction = (action: VideoEditorPlannerNextActionDescriptor) =>
     action.kind === 'materialize'
-    || action.kind === 'bake';
+    || action.kind === 'bake'
+    || action.kind === 'open-settings'
+    || action.kind === 'select-route';
   const materialActions = actions.filter((action) =>
     isMaterialRepairAction(action));
   return materialActions.find((action) => action.message?.includes(material.id) || action.label.includes(material.id))
@@ -88,6 +97,52 @@ function relatedFindings(
     || text(finding.detail).includes(material.id));
 }
 
+function findingCode(finding: CapabilityFinding): string {
+  const detailCode = finding.detail?.code;
+  if (typeof detailCode === 'string' && detailCode.length > 0) {
+    return detailCode;
+  }
+  if (finding.route && finding.reason) {
+    return `planner/${finding.route}/${finding.reason}`;
+  }
+  if (finding.reason) {
+    return `planner/${finding.reason}`;
+  }
+  return 'planner/finding';
+}
+
+function plannerActionFromRecord(
+  value: unknown,
+  fallback?: VideoEditorPlannerNextActionDescriptor,
+): VideoEditorPlannerNextActionDescriptor | undefined {
+  const action = normalizeBlockerActionCardNextAction(value, fallback);
+  if (!action) return fallback;
+
+  const record = value != null && typeof value === 'object'
+    ? value as Record<string, unknown>
+    : undefined;
+  const route = typeof record?.route === 'string' ? record.route : fallback?.route;
+  const allowedKinds: readonly VideoEditorPlannerNextActionKind[] = [
+    'select-route',
+    'materialize',
+    'bake',
+    'invoke-agent',
+    'open-settings',
+    'install-extension',
+    'enable-extension',
+  ];
+  if (!allowedKinds.includes(action.kind as VideoEditorPlannerNextActionKind)) {
+    return fallback;
+  }
+
+  return {
+    kind: action.kind as VideoEditorPlannerNextActionKind,
+    label: action.label,
+    ...(action.message ? { message: action.message } : {}),
+    ...(route ? { route } : {}),
+  };
+}
+
 export function MaterialBrowser({
   materials,
   materialStatuses = [],
@@ -102,6 +157,7 @@ export function MaterialBrowser({
     .filter(({ material, status }) => matches(material, status, filters)), [filters, materialStatuses, materials]);
   const selected = rows.find((row) => row.material.id === selectedId) ?? rows[0];
   const selectedAction = selected ? actionFor(selected.material, plannerResult?.nextActions ?? []) : undefined;
+  const selectedFindings = selected ? relatedFindings(selected.material, findings) : [];
 
   return (
     <section aria-label="Material browser" className="space-y-3">
@@ -139,8 +195,31 @@ export function MaterialBrowser({
                 <dt>Group</dt><dd>{detailValue(selected.material, 'renderGroupId') || 'none'}</dd>
                 <dt>Provenance</dt><dd>{text((selected.material as unknown as Record<string, unknown>).provenance) || 'none'}</dd>
               </dl>
-              {relatedFindings(selected.material, findings).map((finding) => <p key={finding.id}>{finding.message}</p>)}
-              {selectedAction && <button type="button" onClick={() => onAction?.(selectedAction, selected.material)}>{selectedAction.label}</button>}
+              <div className="space-y-2" data-video-editor-material-blockers="true">
+                {selectedFindings.map((finding) => {
+                  const rawAction = finding.detail?.repairAction ?? finding.detail?.nextAction;
+                  const plannerAction = plannerActionFromRecord(rawAction, selectedAction);
+                  return (
+                    <BlockerActionCard
+                      key={finding.id}
+                      severity={finding.severity}
+                      code={findingCode(finding)}
+                      message={finding.message}
+                      nextAction={normalizeBlockerActionCardNextAction(rawAction, plannerAction)}
+                      onAction={plannerAction ? () => onAction?.(plannerAction, selected.material) : undefined}
+                    />
+                  );
+                })}
+                {selectedFindings.length === 0 && selectedAction && (
+                  <BlockerActionCard
+                    severity="warning"
+                    code="planner/material-action"
+                    message={selectedAction.message ?? selectedAction.label}
+                    nextAction={normalizeBlockerActionCardNextAction(selectedAction, selectedAction)}
+                    onAction={() => onAction?.(selectedAction, selected.material)}
+                  />
+                )}
+              </div>
             </article>
           )}
         </div>

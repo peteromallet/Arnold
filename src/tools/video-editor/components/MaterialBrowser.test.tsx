@@ -74,6 +74,10 @@ describe('MaterialBrowser', () => {
             reason: 'missing-material',
             materialRefId: 'mat-a',
             message: 'Material mat-a is missing',
+            detail: {
+              code: 'composition/material-not-resolved',
+              nextAction: { kind: 'materialize' },
+            },
           }],
           diagnostics: [],
         }}
@@ -82,9 +86,14 @@ describe('MaterialBrowser', () => {
     );
 
     expect(screen.getByLabelText('Material detail')).toHaveTextContent('asset-registry: asset://mat-a');
+    expect(screen.getByText('composition/material-not-resolved')).toBeInTheDocument();
     expect(screen.getByText('Material mat-a is missing')).toBeInTheDocument();
     fireEvent.click(screen.getByText('Materialize mat-a'));
-    expect(onAction).toHaveBeenCalledWith(action, expect.objectContaining({ id: 'mat-a' }));
+    expect(onAction).toHaveBeenCalledWith(expect.objectContaining({
+      kind: action.kind,
+      label: action.label,
+      message: action.message,
+    }), expect.objectContaining({ id: 'mat-a' }));
   });
 
   it('recognizes bake actions alongside materialize and displays status detail phase/quality', () => {
@@ -113,6 +122,7 @@ describe('MaterialBrowser', () => {
     );
 
     expect(screen.getByLabelText('Material detail')).toHaveTextContent('pending (active) [route-incompatible]');
+    expect(screen.getByText('planner/material-action')).toBeInTheDocument();
     fireEvent.click(screen.getByText('Bake mat-a'));
     expect(onAction).toHaveBeenCalledWith(bakeAction, expect.objectContaining({ id: 'mat-a' }));
   });
