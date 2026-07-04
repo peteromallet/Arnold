@@ -55,11 +55,7 @@ LIVE_CLI_PATHS: tuple[tuple[str, str], ...] = (
     ("monolithic CLI", "arnold_pipelines.megaplan.cli"),
     ("cli parser", "arnold_pipelines.megaplan.cli.parser"),
     ("cli run handler", "arnold_pipelines.megaplan.cli.run"),
-    # NOTE: __main__ is excluded from the live-import test because importing
-    # it triggers argparse.parse_known_args() which reads sys.argv and
-    # raises SystemExit when pytest args are present.  The __main__
-    # live-path check is performed separately via
-    # test_megaplan_module_entrypoint_file_at_live_path.
+    ("module entrypoint", "arnold_pipelines.megaplan.__main__"),
 )
 
 LIVE_AUTO_PATHS: tuple[tuple[str, str], ...] = (
@@ -176,24 +172,12 @@ STALE_PATHS_WITH_LIVE_EQUIVALENTS: tuple[tuple[str, str, str], ...] = (
 # Non-existent paths from Section 6.2 — these have NO live file at either
 # the stale or live path.  They must not be created unless the import
 # contract forces it.
-#
-# NOTE: _compatibility.py and cli/arnold.py are excluded from this list
-# because they *do* exist as M6 deletion targets (Section 6.4).  They
-# are tested separately as M6-deletion-target paths that must not be
-# depended on.
 NON_EXISTENT_PATHS: tuple[tuple[str, str], ...] = (
     # (label, path_that_must_not_exist)
     ("native_runner.py", "arnold_pipelines.megaplan.native_runner"),
+    ("_compatibility.py (deleted M4 shim)", "arnold_pipelines.megaplan._compatibility"),
+    ("cli/arnold.py (separate CLI)", "arnold_pipelines.megaplan.cli.arnold"),
     ("native_hooks.py", "arnold_pipelines.megaplan.native_hooks"),
-)
-
-# M6 deletion targets from Section 6.4 — these exist in the live tree but
-# are marked for deletion.  Tests must confirm they exist (so the doc is
-# accurate) but must NOT treat them as stable implementation surfaces.
-M6_DELETION_TARGET_PATHS: tuple[tuple[str, str], ...] = (
-    # (label, module_name)
-    ("_compatibility.py (M6 deletion target)", "arnold_pipelines.megaplan._compatibility"),
-    ("cli/arnold.py (M6 deletion target)", "arnold_pipelines.megaplan.cli.arnold"),
 )
 
 
@@ -216,8 +200,8 @@ CLI_ENTRYPOINT_RESOLUTIONS: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "auto driver",
-        "from arnold_pipelines.megaplan.auto import drive; "
-        "print(drive.__module__)",
+        "from arnold_pipelines.megaplan.auto import main as auto_main; "
+        "print(auto_main.__module__)",
         "arnold_pipelines.megaplan.auto",
     ),
     (
@@ -382,33 +366,6 @@ class TestStaleDotPathsDoNotCarryImplementation:
             pass  # Also acceptable
 
 
-class TestM6DeletionTargetsExistButAreMarked:
-    """M6 deletion targets exist in the live tree but must not be treated
-    as stable implementation surfaces.
-
-    These paths are documented in Section 6.4 of the reconciliation doc.
-    They import successfully (confirming the doc is accurate about their
-    existence) but any new dependency on them is a regression.
-    """
-
-    @pytest.mark.parametrize("label,module_name", M6_DELETION_TARGET_PATHS)
-    def test_m6_deletion_target_exists(
-        self, label: str, module_name: str
-    ) -> None:
-        """The M6 deletion target must exist (confirming doc accuracy)
-        and must import without error.
-        """
-        try:
-            importlib.import_module(module_name)
-        except Exception as exc:
-            pytest.fail(
-                f"M6 deletion target '{label}' ({module_name}) unexpectedly "
-                f"missing or broken: {exc}.  If the path was deleted ahead "
-                f"of schedule, update the reconciliation doc and remove "
-                f"this test entry."
-            )
-
-
 class TestLiveUnderscorePackageIsAuthoritative:
     """Confirm the live underscore package is the wheel-shipped package root.
 
@@ -492,36 +449,17 @@ class TestCliAndAutoEntrypointsResolveThroughLivePaths:
             f"dot-path or a non-authoritative module."
         )
 
-    def test_megaplan_module_entrypoint_file_at_live_path(self) -> None:
+    def test_megaplan_module_entrypoint_is_live_underscore(self) -> None:
         """``python -m arnold_pipelines.megaplan`` must use the live
         underscore package __main__.
-
-        We verify by checking the filesystem path of ``__main__.py``
-        rather than importing it (importing __main__ triggers
-        argparse and SystemExit when pytest args are present).
         """
-        import arnold_pipelines.megaplan
-
-        pkg_dir = Path(
-            getattr(arnold_pipelines.megaplan, "__path__", [None])[0]
-            or getattr(arnold_pipelines.megaplan, "__file__", "")
-        ).resolve()
-        main_file = pkg_dir / "__main__.py" if pkg_dir.is_dir() else pkg_dir
-
-        if not main_file.is_file():
-            # Fallback: try to locate __main__.py relative to the package
-            pkg_file = Path(
-                getattr(arnold_pipelines.megaplan, "__file__", "")
-            ).resolve()
-            main_file = pkg_file.parent / "__main__.py"
-
-        assert main_file.is_file(), (
-            f"__main__.py not found at {main_file}.  "
-            f"arnold_pipelines.megaplan must have a __main__.py for "
-            f"`python -m arnold_pipelines.megaplan` to work."
+        megaplan_main = importlib.import_module(
+            "arnold_pipelines.megaplan.__main__"
         )
+        main_file = getattr(megaplan_main, "__file__", None)
+        assert main_file is not None, "__main__ must have __file__"
         assert "arnold_pipelines" in str(main_file), (
-            f"__main__.py must be under arnold_pipelines/, got: {main_file}"
+            f"__main__ must be under arnold_pipelines/, got: {main_file}"
         )
 
 
