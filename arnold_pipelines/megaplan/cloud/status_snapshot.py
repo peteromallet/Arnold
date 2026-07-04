@@ -372,6 +372,16 @@ def _classify_session(
     if chain_health is None and not remote_spec and not _is_plan_kind_marker(workspace):
         return "attention", "no chain-health snapshot and no remote spec"
 
+    # The watchdog report is the authority on runner truth: it reads the
+    # authoritative chain state every tick. The chain-health sidecar can freeze
+    # at the last non-complete snapshot for a finished chain (it stops being
+    # refreshed once the session goes idle), so defer to the watchdog's verdict
+    # when it has already classified the session. Without this the snapshot
+    # reports done chains as stalled attention, disagreeing with the watchdog.
+    wd_status = str(watchdog_item.get("status") or "").lower()
+    if wd_status in {"complete", "completed"}:
+        return "complete", "watchdog reports chain complete"
+
     # Terminal success is the strongest signal and beats stale plan failures.
     if chain_complete:
         return "complete", "chain complete; no runner expected"
