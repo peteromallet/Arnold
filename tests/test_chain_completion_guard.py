@@ -1404,6 +1404,71 @@ def test_latest_execution_batch_all_tasks_done_ignores_stale_pending_finalize_ro
     assert reason == "execution_batch_1.json"
 
 
+def test_latest_execution_batch_all_tasks_done_accepts_explained_noop_finalize_rows(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    head = _commit_semantic_change(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "name": "plan-m1",
+        "current_state": "blocked",
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"execution_baseline": {"head": base}},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state) + "\n", encoding="utf-8")
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "kind": "code",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": head,
+                    },
+                    {
+                        "id": "T9",
+                        "status": "done",
+                        "kind": "test",
+                        "executor_notes": (
+                            "No code change needed. Existing progress-auditor coverage "
+                            "already proves this signal."
+                        ),
+                        "files_changed": [],
+                        "commands_run": [],
+                    },
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
+
+    assert ok is True
+    assert reason == "finalize.json"
+
+
 def test_latest_execution_batch_all_tasks_done_falls_back_to_authoritative_finalize_when_latest_batch_is_stale(
     tmp_path: Path,
 ) -> None:

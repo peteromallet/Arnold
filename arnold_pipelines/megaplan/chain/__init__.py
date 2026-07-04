@@ -77,6 +77,7 @@ from arnold_pipelines.megaplan._core import (
 )
 from arnold_pipelines.megaplan._core.user_config import VALID_VENDORS
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
+    _is_explained_noop_completion,
     AuthorityDecision,
     effective_execute_completed_task_ids,
     load_evidence_nucleus,
@@ -2664,6 +2665,8 @@ def _finalize_records_missing_authority_fields(
             and notes.strip()
             and not is_rubber_stamp(notes, strict=True)
         ):
+            continue
+        if _is_explained_noop_completion(task):
             continue
         if reviewer_verdict == "deferred_baseline_unavailable":
             continue
