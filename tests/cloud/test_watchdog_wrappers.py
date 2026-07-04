@@ -8088,6 +8088,41 @@ def test_chain_health_no_advance_ignores_active_plan_step() -> None:
         assert result["CHAIN_HEALTH_STATUS"] == "ok"
 
 
+def test_chain_health_no_advance_ignores_projected_blocked_plan() -> None:
+    tmp = Path(tempfile.mkdtemp())
+    ws = tmp / "ws"
+    marker = tmp / "markers"
+    repair_dir = tmp / "repair-data"
+    plan_name = "demo-plan"
+    _write_plan(
+        ws / ".megaplan" / "plans" / plan_name,
+        {"current_state": "blocked", "iteration": 1},
+        events_body=json.dumps({"kind": "phase_started", "phase": "execute"}) + "\n",
+    )
+    _write_chain_state(
+        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        {
+            "current_milestone_index": 2,
+            "current_plan_name": plan_name,
+            "last_state": "blocked",
+            "pr_state": "open",
+            "completed": [{"label": "m1"}],
+        },
+    )
+
+    env = {"CLOUD_WATCHDOG_CHAIN_NO_ADVANCE_TICKS": "2"}
+    assert _run_chain_health(ws, marker, repair_dir, env_overrides=env)["CHAIN_HEALTH_STATUS"] == "ok"
+    events_path = ws / ".megaplan" / "plans" / plan_name / "events.ndjson"
+    for i in range(3):
+        events_path.write_text(
+            events_path.read_text(encoding="utf-8") + json.dumps({"kind": "stderr", "i": i}) + "\n",
+            encoding="utf-8",
+        )
+        result = _run_chain_health(ws, marker, repair_dir, env_overrides=env)
+        assert result["CHAIN_HEALTH_STATUS"] == "ok"
+        assert result["CHAIN_HEALTH_ARTIFACT_PATH"] == ""
+
+
 def test_plan_progress_stall_status_is_wired_into_launch_chain_tick() -> None:
     text = _wrapper("arnold-watchdog")
 
