@@ -3386,8 +3386,16 @@ classification, _ = evaluate_meta_repair_triggers(
     discord_delivery_failed=discord_delivery_failed,
     discord_escalation_is_true_blocker=discord_escalation_is_true_blocker,
     repair_budget_exhausted=repair_outcome in {"repair_timeout", "repair_exhausted"},
+    current_target_observation=resolver_record,
     load_evidence=True,
 )
+
+if (
+    current_health == "alive"
+    and classification.trigger_label == "persistent_recurring_retry"
+):
+    print("NO_TRIGGER")
+    raise SystemExit(0)
 
 if classification.should_dispatch and classification.trigger_label:
     print(f"TRIGGER:{classification.trigger_label}")

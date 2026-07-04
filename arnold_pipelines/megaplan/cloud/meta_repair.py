@@ -378,6 +378,7 @@ def classify_repair_system_failure(
     session: str,
     *,
     evidence: Mapping[str, Any] | None = None,
+    current_target_observation: Mapping[str, Any] | None = None,
     repair_data_dir: str | Path | None = None,
     repair_outcome: str = "",
     attempt_outcomes: Sequence[str] = (),
@@ -435,6 +436,20 @@ def classify_repair_system_failure(
         now = datetime.now(timezone.utc)
 
     rationale: list[str] = []
+
+    stale_repair_reason = _repair_evidence_superseded_by_current_target(
+        evidence=evidence,
+        current_target_observation=current_target_observation,
+    )
+    if stale_repair_reason:
+        rationale.append(stale_repair_reason)
+        return MetaRepairClassification(
+            session=session,
+            trigger=None,
+            rationale=tuple(rationale),
+            evidence=deepcopy(dict(evidence)) if evidence else {},
+            attempted_at=now.isoformat(),
+        )
 
     # --- 1. Discord delivery failure (TRUE_BLOCKER gate) --------------------
     if discord_delivery_failed and discord_escalation_is_true_blocker:
@@ -586,6 +601,93 @@ def _is_persistent_recurring_retry(
         return False
 
     return True
+
+
+def _repair_evidence_superseded_by_current_target(
+    *,
+    evidence: Mapping[str, Any] | None,
+    current_target_observation: Mapping[str, Any] | None,
+) -> str:
+    """Return a rationale when current-target proof supersedes stale repair state."""
+
+    if not isinstance(evidence, Mapping) or not isinstance(current_target_observation, Mapping):
+        return ""
+
+    repair_data = evidence.get("repair_data")
+    if not isinstance(repair_data, Mapping):
+        return ""
+
+    authoritative_source = _meta_safe_text(
+        current_target_observation.get("authoritative_source")
+    )
+    if not authoritative_source or authoritative_source == "resolver_observe_disabled":
+        return ""
+
+    active_step = current_target_observation.get("active_step_heartbeat")
+    if isinstance(active_step, Mapping) and bool(active_step.get("active")):
+        return ""
+
+    plan_state = current_target_observation.get("plan_state")
+    chain_state = current_target_observation.get("chain_state")
+    chain_log = current_target_observation.get("chain_log")
+    has_proof = any(
+        isinstance(record, Mapping) and bool(record.get("present"))
+        for record in (plan_state, chain_state, chain_log)
+    )
+    if not has_proof:
+        return ""
+
+    current_refs = current_target_observation.get("current_refs")
+    if not isinstance(current_refs, Mapping):
+        current_refs = {}
+
+    current_plan_name = _meta_safe_text(
+        current_refs.get("current_plan_name")
+    ) or _meta_safe_text(current_refs.get("chain_current_plan_name"))
+    current_plan_state = _meta_safe_text(current_refs.get("plan_current_state")).lower()
+    current_chain_state = _meta_safe_text(current_refs.get("chain_last_state")).lower()
+
+    current_signature = repair_data.get("current_signature")
+    if not isinstance(current_signature, Mapping):
+        current_signature = {}
+    advancement = repair_data.get("current_advancement_snapshot")
+    if not isinstance(advancement, Mapping):
+        advancement = {}
+
+    repair_plan_name = _meta_safe_text(
+        current_signature.get("milestone_or_plan")
+    ) or _meta_safe_text(advancement.get("milestone_or_plan"))
+    repair_state = _meta_safe_text(
+        current_signature.get("current_state")
+    ) or _meta_safe_text(advancement.get("current_state"))
+    repair_state = repair_state.lower()
+
+    if repair_plan_name and current_plan_name and repair_plan_name != current_plan_name:
+        return (
+            "current-target observation supersedes stale recurring repair evidence: "
+            f"repair-data tracked {repair_plan_name}, live state is now {current_plan_name}"
+        )
+
+    stale_states = {"blocked", "authority_divergence", "failed", "manual_review", "awaiting_human"}
+    recovered_plan_states = {"finalized", "done", "complete", "completed"}
+    recovered_chain_states = {"finalized", "awaiting_pr_merge", "done", "complete", "completed"}
+    if repair_state in stale_states:
+        if current_plan_state in recovered_plan_states:
+            return (
+                "current-target observation supersedes stale recurring repair evidence: "
+                f"repair-data state={repair_state} but live plan state is {current_plan_state}"
+            )
+        if current_chain_state in recovered_chain_states:
+            return (
+                "current-target observation supersedes stale recurring repair evidence: "
+                f"repair-data state={repair_state} but live chain state is {current_chain_state}"
+            )
+
+    return ""
+
+
+def _meta_safe_text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
 
 
 def _truncate_prompt_text(text: str, *, max_chars: int) -> str:
@@ -1179,6 +1281,7 @@ def evaluate_meta_repair_triggers(
     discord_delivery_failed: bool = False,
     discord_escalation_is_true_blocker: bool = False,
     repair_budget_exhausted: bool = False,
+    current_target_observation: Mapping[str, Any] | None = None,
     load_evidence: bool = False,
     secret_names: Sequence[str] = (),
     extra_context: Mapping[str, Any] | None = None,
@@ -1210,6 +1313,7 @@ def evaluate_meta_repair_triggers(
     classification = classify_repair_system_failure(
         session,
         evidence=evidence,
+        current_target_observation=current_target_observation,
         repair_data_dir=repair_data_dir,
         repair_outcome=repair_outcome,
         attempt_outcomes=attempt_outcomes,

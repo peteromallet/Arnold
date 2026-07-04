@@ -760,6 +760,19 @@ text = json.dumps(marker_payload, sort_keys=True)
 if "workspace_drift:" in text or "sandbox_refused_outside_project_root" in text:
     print("workspace_drift")
     raise SystemExit(0)
+current_signature = repair_payload.get("current_signature")
+if not isinstance(current_signature, dict):
+    current_signature = {}
+advancement_snapshot = repair_payload.get("current_advancement_snapshot")
+if not isinstance(advancement_snapshot, dict):
+    advancement_snapshot = {}
+current_state = str(
+    current_signature.get("current_state")
+    or advancement_snapshot.get("current_state")
+    or ""
+).strip()
+if current_state in {"finalized", "awaiting_pr_merge", "done", "complete", "completed"}:
+    raise SystemExit(1)
 failure_context = repair_payload.get("current_failure_context")
 if isinstance(failure_context, dict):
     latest_failure = failure_context.get("plan_latest_failure")
