@@ -3586,6 +3586,52 @@ ps() {{
     assert result.stdout.strip() == "alive"
 
 
+def test_watchdog_terminal_status_accepts_label_only_completed_chain(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True)
+    spec_path = workspace / ".megaplan" / "briefs" / "python-shaped-workflow-authoring" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text(
+        "\n".join(
+            [
+                "merge_policy: review",
+                "milestones:",
+                "  - label: m1",
+                "  - label: m2",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_chain_state(
+        chain_dir / "chain-demo.json",
+        {
+            "last_state": "done",
+            "current_milestone_index": 2,
+            "current_plan_name": "",
+            "completed": [{"label": "m1"}, {"label": "m2"}],
+            "pr_number": 128,
+            "pr_state": "merged",
+        },
+    )
+    repair_dir = tmp_path / "repair-data"
+    repair_dir.mkdir()
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("session_terminal_status"),
+            f"MARKER_DIR={str(tmp_path / 'markers')!r}",
+            f"REPAIR_DATA_DIR={str(repair_dir)!r}",
+            f"session_terminal_status demo-session {str(workspace)!r} {str(spec_path)!r} chain",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "complete\tchain complete"
+
+
 def test_watchdog_auto_merge_policy_attempts_pr_merge_before_waiting(
     tmp_path: Path,
 ) -> None:
