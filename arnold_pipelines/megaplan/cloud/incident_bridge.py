@@ -39,6 +39,7 @@ from arnold_pipelines.megaplan.incident.ledger import IncidentLedger
 _EVENT_PREFIXES = {
     "watchdog_detection": "wd",
     "watchdog_dispatch": "wdd",
+    "immediate_repair_attempt": "ira",
     "meta_repair_classification": "mrc",
     "meta_repair_attempt": "mra",
     "six_hour_auditor_diagnosis": "sha",
@@ -195,6 +196,59 @@ def append_watchdog_dispatch(
         event["problem_id"] = problem_id
     if decision is not None:
         event["decision"] = decision
+    return _append(root, event)
+
+
+# ---------------------------------------------------------------------------
+# Immediate-repair helper
+# ---------------------------------------------------------------------------
+
+
+def append_immediate_repair_attempt(
+    *,
+    incident_id: str,
+    summary: str,
+    attempt_id: str,
+    outcome: str = "attempted",
+    evidence: list[Any] | None = None,
+    session_id: str | None = None,
+    problem_id: str | None = None,
+    parent_event_ids: list[str] | None = None,
+    trigger_event_id: str | None = None,
+    deadline_ts: str | None = None,
+    decision: dict[str, Any] | None = None,
+    actions: list[dict[str, Any]] | None = None,
+    links: dict[str, Any] | None = None,
+    root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Append an immediate-repair *attempt* event."""
+    event: dict[str, Any] = {
+        "schema_version": 1,
+        "event_id": _new_event_id(_EVENT_PREFIXES["immediate_repair_attempt"]),
+        "ts": _utc_now_iso(),
+        "type": "repair_attempt",
+        "actor": "immediate_repair",
+        "scope": "repair_system",
+        "outcome": outcome,
+        "summary": summary,
+        "evidence": evidence if evidence is not None else [],
+        "parent_event_ids": parent_event_ids if parent_event_ids is not None else [],
+        "trigger_event_id": trigger_event_id,
+        "next_expected_event": "repair_attempt.verification",
+        "deadline_ts": deadline_ts,
+        "incident_id": incident_id,
+        "attempt_id": attempt_id,
+    }
+    if session_id:
+        event["session_id"] = session_id
+    if problem_id:
+        event["problem_id"] = problem_id
+    if decision is not None:
+        event["decision"] = decision
+    if actions is not None:
+        event["actions"] = actions
+    if links is not None:
+        event["links"] = links
     return _append(root, event)
 
 
@@ -802,6 +856,7 @@ __all__ = [
     "append_dispatch_expired",
     "append_github_issue_publish_failed",
     "append_github_issue_published",
+    "append_immediate_repair_attempt",
     "append_install_sync_applied",
     "append_install_sync_failed",
     "append_meta_repair_attempt",

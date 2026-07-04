@@ -1614,7 +1614,7 @@ def _emit_incident_bridge_event(
     *,
     root: Path | str | None = None,
 ) -> None:
-    """Map the repair-data outcome to an incident-bridge event and append it.
+    """Map repair-data transitions to incident-bridge events.
 
     This is intentionally a best-effort side effect: if the bridge or
     ledger is unavailable the repair-data save still succeeds.
@@ -1648,12 +1648,12 @@ def _emit_incident_bridge_event(
 
     try:
         from arnold_pipelines.megaplan.cloud.incident_bridge import (
-            append_meta_repair_attempt,
+            append_immediate_repair_attempt,
             append_verified_recovered,
         )
 
         if outcome == REPAIRING:
-            append_meta_repair_attempt(
+            append_immediate_repair_attempt(
                 incident_id=incident_id,
                 summary=summary,
                 attempt_id=f"{session_id or 'unknown'}-{outcome}",
@@ -1673,7 +1673,7 @@ def _emit_incident_bridge_event(
         else:
             # Terminal non-success outcomes (repair_timeout, repair_exhausted,
             # needs_human, partial_liveness, discord_escalated, etc.)
-            append_meta_repair_attempt(
+            append_immediate_repair_attempt(
                 incident_id=incident_id,
                 summary=summary,
                 attempt_id=f"{session_id or 'unknown'}-{outcome}",
