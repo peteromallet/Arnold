@@ -388,12 +388,6 @@ class NativeInstruction:
     For ``parallel_map`` ops: the :class:`ParallelMapInstruction` metadata block.
     Excluded from equality/hash; ignored for other ops."""
 
-    input_mapping: dict[str, str] = field(default_factory=dict)
-    """For ``subpipeline`` ops: maps child input names to parent bindings."""
-
-    output_mapping: dict[str, str] = field(default_factory=dict)
-    """For ``subpipeline`` ops: maps child output names to parent bindings."""
-
     parallel_index: int | None = None
     """For ``parallel`` ops: index into :attr:`NativeProgram.parallel_blocks`."""
 

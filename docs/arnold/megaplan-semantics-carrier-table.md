@@ -1,631 +1,218 @@
-# Megaplan Semantics Carrier Table
+# Megaplan Semantics Carrier Table — M1 Launch Gate
 
-**Milestone:** M1 — Megaplan Compositional Workflow Migration  
-**Status:** Phase 1 launch-gate artifact — handler inventory and carrier classification  
-**Date:** 2026-07-02  
-**Doctrine Reference:** `docs/arnold/megaplan-composition-doctrine-proof.md`  
-**Path Reference:** `docs/arnold/megaplan-source-path-reconciliation.md`  
+**Milestone:** M1 — Megaplan Compositional Migration
+**Status:** Launch-gate artifact (pre-implementation classification)
+**Date:** 2026-07-03
 
 ---
 
 ## 1. Purpose
 
-This document is the **semantics carrier table** for M1. It inventories every
-exported Megaplan handler, maps each handler to the report-owned semantics it
-currently carries, and classifies every semantic into exactly one carrier
-category:
+This document is the **M1 semantics carrier table**. It covers all 11 Megaplan
+handler refs defined in `arnold_pipelines/megaplan/workflows/components.py`,
+classifying each as either a **retained pure phase body** (computes outputs
+without owning routing) or a **report-semantic owner** (handler body owns or
+participates in routing, loop-exit, fanout, retry, suspension, override dispatch,
+or implicit transition decisions).
 
-| Carrier | Meaning |
-|---------|---------|
-| `canonical_source` | Semantics visible in compositional Python source or declared policy in the live `arnold_pipelines/megaplan/` package. |
-| `declared_policy` | Semantics owned by explicit policy declarations (stable IDs, decision vocabulary, schemas, merge rules), authored in source. |
-| `audited_pure_phase_body` | Semantics that naturally belong in a handler body because the handler performs pure computation without owning routing, state transitions, fanout, or override dispatch. |
-| `pending` | Semantics currently hidden inside handler bodies that must be decomposed into visible compositional structure before they can claim `canonical_source` or `declared_policy` status. A `pending` classification is a **handler-ref false-pass guard** — it prevents any test or alignment row from claiming implementation when the semantic carrier is still an opaque handler. |
+This table is the launch-gate authority for the SD3 doctrine: *"Handler routing
+ownership must be split into pure signal outputs plus explicit workflow
+decisions."* Any handler classified as a report-semantic owner below carries
+routing semantics that must be migrated into visible workflow structure or
+declared policy before the M1 composition milestone can claim source-ownership
+conformance.
 
-**MUST:** No alignment-plan row may be marked `implemented` if its semantic
-carrier is `pending`. Pending rows are bridge debt, not migration completion.
-
-**MUST:** The carrier classification in this table is binding for all M1
-conformance claims. Any implementation that asserts a semantic is source-owned
-when this table classifies it as `pending` is non-conformant per
-`megaplan-composition-doctrine-proof.md` §5.3.
+Tests in `tests/arnold_pipelines/megaplan/test_semantics_carrier.py`
+mechanically enforce the classifications in this table.
 
 ---
 
-## 2. Exported Handler Inventory
+## 2. Handler Classification Table
 
-The live handler export surface is defined in
-`arnold_pipelines/megaplan/handlers/__init__.py` (lines 75–90).
+Each handler ref is identified by its canonical `module:function` qualifier
+as used in `StepComponent.metadata.handler_ref` entries in
+`arnold_pipelines/megaplan/workflows/components.py`.
 
-| # | Handler | Source File | Lines | Signature |
-|---|---------|-------------|-------|-----------|
-| 1 | `handle_init` | `handlers/init.py` | 630 | `(root: Path, args: Namespace) -> StepResponse` |
-| 2 | `handle_plan` | `handlers/plan.py` | 325 | `(root: Path, args: Namespace) -> StepResponse` |
-| 3 | `handle_prep` | `handlers/plan.py` | 325 | `(root: Path, args: Namespace) -> StepResponse` |
-| 4 | `handle_critique` | `handlers/critique.py` | 1295 | `(root: Path, args: Namespace) -> StepResponse` |
-| 5 | `handle_revise` | `handlers/critique.py` | 1295 | `(root: Path, args: Namespace) -> StepResponse` |
-| 6 | `handle_gate` | `handlers/gate.py` | 1047 | `(root: Path, args: Namespace) -> StepResponse` |
-| 7 | `handle_finalize` | `handlers/finalize.py` | 1747 | `(root: Path, args: Namespace) -> StepResponse` |
-| 8 | `handle_execute` | `handlers/execute.py` | 369 | `(root: Path, args: Namespace) -> StepResponse` |
-| 9 | `handle_review` | `handlers/review.py` | 1538 | `(root: Path, args: Namespace) -> StepResponse` |
-| 10 | `handle_override` | `handlers/override.py` | 1852 | `(root: Path, args: Namespace) -> StepResponse` |
-| 11 | `handle_audit_verifiability` | `handlers/verifiability.py` | 337 | `(root: Path, args: Namespace) -> StepResponse` |
-| 12 | `handle_verify_human` | `handlers/verifiability.py` | 337 | `(root: Path, args: Namespace) -> StepResponse` |
-| 13 | `handle_tiebreaker_run` | `handlers/_tiebreaker_impl.py` | ~120 | `(root: Path, args: Namespace) -> StepResponse` |
-| 14 | `handle_tiebreaker_decide` | `handlers/_tiebreaker_impl.py` | ~120 | `(root: Path, args: Namespace) -> StepResponse` |
+### 2.1 Report-Semantic Owners
 
-**Total: 14 exported handlers across 8 source modules.**
+These handlers own routing, transition, or closed-loop decisions. The routing
+semantics they carry must ultimately live in visible workflow structure or
+declared policy, not buried inside handler bodies.
 
----
+| # | Handler Ref | Module | Routing Ownership | Notes |
+|---|------------|--------|-------------------|-------|
+| 1 | `arnold_pipelines.megaplan.handlers:handle_prep` | `handlers/plan.py` | **Yes** — `_apply_prep_clarify_gate` branches between `STATE_AWAITING_HUMAN` (human clarification needed) and `STATE_PREPPED` (proceed to plan). Owns the prep→plan vs prep→await-human routing decision. | The prep research payload is a pure output, but the clarify-gate branch embeds routing inside the handler body. |
+| 2 | `arnold_pipelines.megaplan.handlers:handle_critique` | `handlers/critique.py` | **Yes** — Owns tiebreaker routing (reject-on-disabled, reject-on-budget, reject-on-blocklist, reject-on-no-signal, reject-on-missing-fields), gate outcome synthesis with branching to `STATE_GATED` / `STATE_CRITIQUED` / `STATE_TIEBREAKER_PENDING`. | The critique payload is a pure output, but the tiebreaker routing and gate-outcome synthesis embed routing decisions in the handler body. |
+| 3 | `arnold_pipelines.megaplan.handlers:handle_gate` | `handlers/gate.py` | **Yes** — `_apply_gate_outcome` determines proceed / iterate / tiebreaker / escalate / abort / suspend / force_proceed / blocked_preflight. `_next_progress_step` synthesizes the next step. Owns the full gate routing decision tree. | Gate signals artifact is a pure output, but the routing decision logic in `_apply_gate_outcome` and `_next_progress_step` makes this a report-semantic owner. |
+| 4 | `arnold_pipelines.megaplan.handlers:handle_revise` | `handlers/critique.py` | **Yes** — `_resolve_revise_transition` calls `workflow_transition(state, "revise")` and the result determines `state["current_state"]`. Owns the revise→next transition. | The revised plan payload is a pure output, but the transition logic calls `workflow_transition` inside the handler. |
+| 5 | `arnold_pipelines.megaplan.handlers:handle_tiebreaker_decide` | `handlers/tiebreaker.py` (via `_tiebreaker_impl.py`) | **Yes** — Owns pick / escalate / replan routing. Calls `workflow_transition` and directly sets `state["current_state"]` for escalate and replan paths. | The tiebreaker decision record is a pure output, but the handler body owns the transition to critique, finalize, or override based on the decision action. |
+| 6 | `arnold_pipelines.megaplan.handlers:handle_finalize` | `handlers/finalize.py` | **Yes** (conditional) — `_route_finalize_baseline_selection_failure_to_revise` synthesizes gate feedback recommending ITERATE and routes back to revise when baseline test selection fails. Also assigns `state["current_state"]` to `STATE_FINALIZED` on the happy path. | The happy path is pure computation, but the baseline-selection failure path embeds a routing decision inside the handler. |
+| 7 | `arnold_pipelines.megaplan.handlers:handle_execute` | `handlers/execute.py` | **Yes** — Assigns `state["current_state"]` to `next_state` (variable from execute result) which can be `STATE_EXECUTED`, `STATE_BLOCKED`, `STATE_FAILED`, or `STATE_DONE`. Owns the execute outcome routing. | The execute payload is a pure output, but the outcome-to-state mapping embeds routing in the handler body. |
+| 8 | `arnold_pipelines.megaplan.handlers:handle_review` | `handlers/review.py` | **Yes** — `_resolve_review_outcome` determines pass → done vs rework → back to execute, caps rework cycles, and force-proceeds on exhaustion. Owns the review routing decision tree. | The review verdict is a pure output, but routing (next_state, next_step selection) and rework-cycle capping are embedded in the handler body via `_resolve_review_outcome`. |
+| 9 | `arnold_pipelines.megaplan.handlers:handle_override` | `handlers/override.py` | **Yes** — Owns abort (`_override_abort`), force_proceed (`_override_force_proceed`), replan (`_override_replan`), set-robustness (`_override_set_robustness`), and add-note (`_override_add_note`) routing decisions. Calls `workflow_transition` and directly mutates state to control transitions. | Override is the escalation dispatch point; every branch determines a distinct next workflow step. |
 
-## 3. Handler Semantics Classification
+### 2.2 Retained Pure Phase Bodies
 
-### 3.1 handle_init
+These handlers compute outputs (payloads, artifacts, reports) without owning
+routing, loop-exit, fanout, retry, suspension, override dispatch, or implicit
+transition decisions beyond a mechanical single-state advancement. They are
+**retained** in the compositional migration: their bodies remain as subworkflow
+contents, but they never decide what happens next.
 
-**Phase:** Initialization — creates runtime layout, seeds plan state, routes
-deprecated `--mode` flags to pipeline names.
-
-| Semantic | Current Carrier | Classification | Reason |
-|----------|----------------|----------------|--------|
-| Runtime layout creation | Handler body | `audited_pure_phase_body` | Pure filesystem setup; no routing, no state-machine transitions visible to composition. |
-| Mode-to-pipeline routing | Handler body (`_PIPELINE_ROUTING`) | `declared_policy` | The mapping table (`doc→doc`, `metaplan→doc`, `creative→creative`, `joke→creative`) is explicit, stable, and could be declared as policy. Currently inlined but trivially extractable. |
-| State initialization (`STATE_INITIALIZED`) | Handler body | `audited_pure_phase_body` | Single deterministic state seed; no branching. |
-| Anchor document validation | Handler body → `anchors.validate_anchor_source` | `audited_pure_phase_body` | Pure validation with no routing decisions. |
-| Deprecated mode deprecation warning | Handler body | `audited_pure_phase_body` | Informational side effect; no product semantics. |
-
-**Overall classification:** `declared_policy` (mode routing is the only product
-semantic, and it is already explicit). The rest is pure phase body.
-
-**False-pass guard:** None — `handle_init` does not own hidden routing or state
-transitions that would trigger a false pass if wrapped in a native node.
+| # | Handler Ref | Module | Pure Outputs | Notes |
+|---|------------|--------|-------------|-------|
+| 10 | `arnold_pipelines.megaplan.handlers:handle_plan` | `handlers/plan.py` | Plan payload, plan version artifacts | Pure computation. Assigns `state["current_state"] = STATE_PLANNED` (mechanical constant, not a branching decision). No routing calls. |
+| 11 | `arnold_pipelines.megaplan.handlers:handle_tiebreaker_run` | `handlers/tiebreaker.py` (via `_tiebreaker_impl.py`) | Tiebreaker researcher/challenger outputs, tiebreaker analysis | Pure computation. Calls `workflow_transition(state, "tiebreaker-run")` which is a single deterministic step (run→decide), not a branched routing decision. |
 
 ---
 
-### 3.2 handle_plan
-
-**Phase:** Planning — invokes planner worker, writes plan artifacts, merges
-imported decision criteria.
-
-| Semantic | Current Carrier | Classification | Reason |
-|----------|----------------|----------------|--------|
-| Planner worker invocation | Handler body → `_run_worker` | `pending` | Worker dispatch is handler-owned; composition should declare the plan step with explicit input/output contracts. |
-| Plan artifact writing | Handler body → `_write_plan_version`, `_write_json_artifact` | `audited_pure_phase_body` | Pure artifact persistence; no routing decisions. |
-| Imported decision criteria merge | Handler body → `_merge_imported_decision_criteria` | `pending` | Criteria merge affects downstream gate/critique semantics; should be declared at the workflow boundary. |
-| Next-step transition | Handler body → `_finish_step` | `pending` | Transition to `STATE_PLANNED` is handler-owned; should be a visible workflow transition. |
-
-**Mapped traceability rows:** `plan-artifact-version-metadata`
-
-**Overall classification:** `pending` — The planner invocation, criteria merge,
-and state transition are handler-owned and must be decomposed before claiming
-source conformance.
-
-**False-pass guard:** A test that passes because `handle_plan` emits artifacts
-without verifying that input/output contracts and the planner invocation are
-visible at the composition boundary is a false pass.
-
----
-
-### 3.3 handle_prep
-
-**Phase:** Preparation — runs prep worker, applies clarification gate,
-builds verifiability flags.
-
-| Semantic | Current Carrier | Classification | Reason |
-|----------|----------------|----------------|--------|
-| Prep worker invocation | Handler body → `_run_worker` | `pending` | Worker dispatch is handler-owned. |
-| Clarification gate (`_apply_prep_clarify_gate`) | Handler body — mutates `state['clarification']`, returns `STATE_AWAITING_HUMAN` | `pending` | The branch decision (suspend vs proceed) is handler-owned; should be a visible workflow branch. |
-| Verifiability flag building (`_build_verifiability_flags`) | Handler body | `pending` | Flag construction affects downstream gate behavior; should be declared policy or visible composition. |
-| Next-step transition | Handler body → `_finish_step` | `pending` | Transition to `STATE_PREPPED` is handler-owned. |
-
-**Mapped traceability rows:** `prep-clarification-gate`, `human-decision-suspension`
-
-**Overall classification:** `pending` — The clarification gate is the canonical
-example of handler-owned routing that must become a visible suspension branch.
-`_apply_prep_clarify_gate` mutates state and returns a routing decision from
-inside the handler body.
-
-**False-pass guard:** A test that passes because the handler sets a waiting
-state while topology still shows a single prep node is a false pass (per
-`megaplan-composition-doctrine-proof.md` §4.2).
-
----
-
-### 3.4 handle_critique
-
-**Phase:** Critique — runs parallel critique lenses, adaptive evaluator retry,
-robustness skip, fallback behavior.
-
-| Semantic | Current Carrier | Classification | Reason |
-|----------|----------------|----------------|--------|
-| Robustness skip (bare mode) | Handler body — `configured_robustness` check | `pending` | The skip decision is handler-owned; should be visible workflow policy or branch. |
-| Adaptive evaluator retry loop | Handler body — retry logic in `_recover_evaluator_payload_from_raw` and retry helpers | `pending` | Retry is invisible to topology/policy inspection. |
-| Parallel critique lens dispatch | Handler body → `run_parallel_critique` | `pending` | Fanout over selected checks is handler-owned; should be visible `parallel_map`. |
-| Fan-in / reducer | Handler body — aggregating parallel results | `pending` | Reducer is handler-owned; should be visible composition. |
-| Fallback to sequential critique | Handler body | `pending` | Fallback behavior is handler-owned. |
-| Unverifiable check annotation | Handler body → `annotate_unverifiable_checks` | `audited_pure_phase_body` | Pure annotation; no routing. |
-| Tiebreaker validation (`_validate_tiebreaker`) | Handler body | `pending` | Validation affects downstream routing. |
-| Next-step transition | Handler body → `_finish_step` | `pending` | Transition to `STATE_CRITIQUED` / `STATE_GATED` is handler-owned. |
-
-**Mapped traceability rows:** `critique-bare-skip`, `critique-evaluator-retry`,
-`critique-parallel-lenses`, `dynamic-parallel-map`
-
-**Overall classification:** `pending` — `handle_critique` is the most
-handler-owned phase. It contains a retry loop, parallel dispatch, robustness
-skip, and fallback that are all invisible to the composition compiler. Per
-`megaplan-composition-doctrine-proof.md` §4.2, this is the primary
-decomposition target.
-
-**False-pass guard:** A single native node calling `handle_critique` is a
-wrapper graph false pass. Native trace listing child calls is insufficient —
-the source must show visible parallel map, retry policy, and robustness branch.
-
----
-
-### 3.5 handle_revise
-
-**Phase:** Revise — bounded critique/gate/revise loop iteration.
-
-| Semantic | Current Carrier | Classification | Reason |
-|----------|----------------|----------------|--------|
-| Revise worker invocation | Handler body → `_run_worker` | `pending` | Worker dispatch is handler-owned. |
-| Loop termination decision | Handler body — state inspection, flag resolution | `pending` | Loop exit conditions (cap, no-progress, severity termination) are handler-owned. |
-| Typed outcome emission | Handler body — implicit via state transitions | `pending` | Outcomes (proceed, iterate, blocked, escalate) are not declared at the workflow level. |
-| Next-step transition | Handler body → `_finish_step` | `pending` | Transition back to critique or forward to gate is handler-owned. |
-
-**Mapped traceability rows:** `critique-gate-revise-loop`, `typed-loop-outcomes`
-
-**Overall classification:** `pending` — The revise loop is partly expressed as
-graph policy but termination decisions and typed outcomes are hidden in the
-handler. Per `megaplan-composition-doctrine-proof.md` §4.2, the bounded loop
-must be visible with declared outcome enum.
-
-**False-pass guard:** A state field jumping back to critique without visible
-typed outcomes is a false pass.
-
----
-
-### 3.6 handle_gate
-
-**Phase:** Gate — builds signals, runs gate checks, resolves flags, handles
-reprompt, records debt, applies gate outcomes.
-
-| Semantic | Current Carrier | Classification | Reason |
-|----------|----------------|----------------|--------|
-| Signal building (`_build_gate_signals_artifact`) | Handler body → `build_gate_signals` | `pending` | Signal construction is handler-owned but affects routing. |
-| Gate checks (`run_gate_checks`) | Handler body | `pending` | Check execution and result interpretation are handler-owned. |
-| Preflight / payload normalization | Handler body — malformed payload recovery | `pending` | Recovery logic is handler-owned; should be declared preflight policy. |
-| Agent availability check | Handler body → `only_agent_availability_preflight_failed` | `pending` | Availability decision is handler-owned. |
-| Flag resolution | Handler body — `_remaining_significant_flags`, `_resolve_revise_transition` | `pending` | Flag-based routing is handler-owned. |
-| Reprompt routing | Handler body — `_build_gate_prompt_override` | `pending` | Reprompt decision is handler-owned. |
-| Debt recording (`_record_gate_debt_entries`) | Handler body | `pending` | Debt recording is a product semantic; should be a declared effect. |
-| High-complexity downgrade | Handler body | `pending` | Downgrade route is handler-owned. |
-| Rubber-stamp fast path | Handler body → `is_rubber_stamp` | `pending` | Fast-path decision is handler-owned. |
-| Gate carry / outcome application | Handler body → `_write_gate_carry`, `_apply_gate_outcome` | `pending` | Outcome application mutates state; should be visible. |
-| Next-step transition | Handler body → `_finish_step`, `workflow_transition` | `pending` | Transition to revise/tiebreaker/finalize is handler-owned. |
-
-**Mapped traceability rows:** `gate-preflight-normalization`,
-`gate-signal-reprompt`, `gate-flag-debt-fallback`,
-`critique-gate-revise-loop`
-
-**Overall classification:** `pending` — `handle_gate` owns extensive routing:
-preflight, reprompt, flag resolution, debt, downgrade, rubber-stamp, and
-next-step transition. Per `megaplan-composition-doctrine-proof.md` §4.2, all
-of these must be decomposed into visible gate decision vocabulary.
-
-**False-pass guard:** Gate looking native while reprompt/downgrade lives in
-handler is a false pass. Debt flag written without an explicit product route
-is a false pass.
-
----
-
-### 3.7 handle_finalize
-
-**Phase:** Finalize — generates tasks, selects baseline tests, captures
-uncommitted baseline, writes artifacts, applies calibration.
-
-| Semantic | Current Carrier | Classification | Reason |
-|----------|----------------|----------------|--------|
-| Task generation | Handler body — `render_final_md`, task extraction | `pending` | Task generation logic is handler-owned. |
-| Baseline test selection (`compute_test_blast_radius`, `resolve_baseline_test_selection`) | Handler body | `pending` | Test selection policy is handler-owned; should be declared policy. |
-| Scoped baseline fallback | Handler body | `pending` | Fallback route when scoped baseline is missing is handler-owned. |
-| Uncommitted baseline capture (`capture_uncommitted_baseline`) | Handler body | `audited_pure_phase_body` | Pure git/filesystem snapshot; no routing. |
-| Calibration claim writing | Handler body → `write_capability_claim` | `audited_pure_phase_body` | Pure evidence recording. |
-| Artifact writing | Handler body → `_write_finalize_artifacts` | `audited_pure_phase_body` | Pure artifact persistence. |
-| Validation (`_validate_finalize_payload`) | Handler body | `audited_pure_phase_body` | Pure validation. |
-| Verification task creation (`_ensure_verification_task`) | Handler body | `pending` | Verification task creation affects downstream routing. |
-| Next-step transition | Handler body → `_finish_step` | `pending` | Transition to execute/review is handler-owned. |
-| Failure/finalize_error routing | Handler body — swallowed into artifacts | `pending` | Failure routes are not visible in topology. |
-
-**Mapped traceability rows:** `finalize-fallback-routes`,
-`plan-artifact-version-metadata`, `golden-trace-regeneration`
-
-**Overall classification:** `pending` — Task generation, baseline selection,
-and fallback routing are handler-owned. Per
-`megaplan-composition-doctrine-proof.md` §4.2, finalize failures must not be
-swallowed into artifact flags; failure routes must be visible.
-
-**False-pass guard:** Finalize errors swallowed into artifact flags without
-visible topology routes is a false pass.
-
----
-
-### 3.8 handle_execute
-
-**Phase:** Execute — DAG batching, approval gates, task execution, rework
-re-execution detection.
-
-| Semantic | Current Carrier | Classification | Reason |
-|----------|----------------|----------------|--------|
-| DAG batching (`handle_execute_auto_loop`, `handle_execute_one_batch`) | Handler body → `execute/batch.py` | `pending` | Batching and dependency ordering are handler-owned; should be visible subworkflow or DAG primitive. |
-| Approval gate routing | Handler body — `user_approved`, `confirm_destructive` checks | `pending` | Approval decisions are handler-owned; should be declared gates. |
-| No-review fast path | Handler body — `_is_rework_reexecution` check | `pending` | No-review decision is handler-owned. |
-| Deferred human verify routing | Handler body | `pending` | Human suspension routing is handler-owned. |
-| Task execution dispatch | Handler body → `worker_module` | `pending` | Worker dispatch is handler-owned. |
-| Partial failure / resume | Handler body — `BlockedTask`, `Deviation` handling | `pending` | Resume coordinates are handler-owned. |
-| Model routing by task complexity | Handler body → `apply_profile_expansion`, `audit_step_payload` | `pending` | Model selection policy is handler-owned. |
-| Phase preflight | Handler body → `preflight_mutating_phase` | `audited_pure_phase_body` | Pure environment setup. |
-| Next-step transition | Handler body — `save_state_merge_meta`, `set_active_step` | `pending` | Transition to review/done is handler-owned. |
-
-**Mapped traceability rows:** `execute-dependency-batches`,
-`execute-approval-gates`, `model-routing-policy`, `path-addressed-checkpoints`
-
-**Overall classification:** `pending` — `handle_execute` delegates to
-`execute/batch.py` for DAG logic but the composition boundary is still a single
-handler-backed stage. Per `megaplan-composition-doctrine-proof.md` §4.2,
-execute must not remain one opaque handler.
-
-**False-pass guard:** Execute remaining one node with richer internal logging
-is a false pass. Approval working through side effects without visible topology
-is a false pass.
-
----
-
-### 3.9 handle_review
-
-**Phase:** Review — parallel check dispatch, verdict merge, rework loop,
-infrastructure retry, cap outcomes.
-
-| Semantic | Current Carrier | Classification | Reason |
-|----------|----------------|----------------|--------|
-| Parallel review check dispatch | Handler body → `run_parallel_review`, `review/parallel.py` | `pending` | Fanout over checks is handler-owned; should be visible parallel map. |
-| Reviewer verdict merge (`_merge_review_verdicts`) | Handler body | `pending` | Reducer is handler-owned. |
-| Review outcome resolution (`_resolve_review_outcome`) | Handler body | `pending` | Outcome classification (approve/rework/block/force-proceed/escalate) is handler-owned. |
-| Rework loop routing | Handler body — mutates `next_step` to execute | `pending` | Rework route is handler-owned state mutation. |
-| Infrastructure retry | Handler body | `pending` | Retry logic is handler-owned. |
-| Repeated failure cap | Handler body | `pending` | Cap threshold is handler-owned; no visible branch. |
-| Blocked message building | Handler body → `_build_review_blocked_message` | `audited_pure_phase_body` | Pure message construction. |
-| Prompt override building | Handler body → `_build_review_prompt_override` | `pending` | Prompt override affects worker behavior; should be declared policy. |
-| Rework item synthesis (`_synthesize_review_rework_items`) | Handler body | `pending` | Rework item generation is handler-owned. |
-| Done task evidence check | Handler body → `_check_done_task_evidence` | `audited_pure_phase_body` | Pure evidence verification. |
-| Rubber-stamp detection | Handler body → `is_rubber_stamp` | `pending` | Fast-path decision is handler-owned. |
-| Merge validation (`_validate_and_merge_batch`) | Handler body | `audited_pure_phase_body` | Pure merge/validation. |
-| Transition policy writing | Handler body → `TransitionWriter` | `pending` | Transition decision is handler-owned. |
-| Next-step transition | Handler body | `pending` | Transition to execute/done/blocked is handler-owned. |
-
-**Mapped traceability rows:** `execute-review-rework-loop`,
-`review-parallel-fanin`, `review-retry-cap-outcomes`
-
-**Overall classification:** `pending` — `handle_review` has the most extensive
-handler-owned routing of any single handler: parallel dispatch, verdict merge,
-outcome resolution, rework loop, retry, and cap. Per
-`megaplan-composition-doctrine-proof.md` §4.2, all must be decomposed.
-
-**False-pass guard:** Review handler mutating `next_step` to execute (hiding
-rework route) must fail conformance. Parallel checks running inside handler
-with topology showing one review node is a false pass.
-
----
-
-### 3.10 handle_override
-
-**Phase:** Override — action route matrix: abort, replan, force-proceed,
-add-note, resume-clarify, recover-blocked, set-robustness, set-profile,
-set-model, set-vendor.
-
-| Semantic | Current Carrier | Classification | Reason |
-|----------|----------------|----------------|--------|
-| Action route matrix | Handler body — `_override_abort`, `_override_force_proceed`, `_override_replan`, `_override_set_robustness`, `_override_add_note` | `pending` | Each action is a handler-owned branch with product semantics. |
-| State mutation per action | Handler body — each `_override_*` mutates `state` | `pending` | State transitions are handler-owned. |
-| Profile/model/vendor changes | Handler body → `_override_set_robustness` + profile helpers | `pending` | Policy changes are handler-owned. |
-| Resume-clarify routing | Handler body | `pending` | Resume routing is handler-owned. |
-| Recover-blocked routing | Handler body | `pending` | Recovery routing is handler-owned. |
-| Control interface routing | Handler body → `control_interface_routing_on` | `pending` | Feature-flag-gated routing is handler-owned. |
-| Premium vendor resolution | Handler body → `effective_premium_vendor`, `resolve_premium_placeholder_spec` | `pending` | Vendor routing is handler-owned; should be declared policy. |
-| Next-step transition | Handler body — `workflow_next`, `infer_next_steps` | `pending` | Transition is handler-owned. |
-
-**Mapped traceability rows:** `override-action-surface`,
-`human-decision-suspension`, `model-routing-policy`
-
-**Overall classification:** `pending` — `handle_override` is the canonical
-example of handler-owned routing that must become declared decision vocabulary.
-The full action surface (abort, replan, force-proceed, add-note,
-resume-clarify, recover-blocked, set-robustness/profile/model/vendor) is
-dispatched inside one handler body. Per
-`megaplan-composition-doctrine-proof.md` §4.2, this is a primary decomposition
-target.
-
-**False-pass guard:** Only abort/replan being visible while other actions
-mutate config/state through handler-internal branches is a false pass. No
-generic Megaplan literal scan plus action-by-action route tests are required
-to close this row.
-
----
-
-### 3.11 handle_audit_verifiability
-
-**Phase:** Audit — classifies success criteria against worker capabilities,
-identifies human-deferred criteria.
-
-| Semantic | Current Carrier | Classification | Reason |
-|----------|----------------|----------------|--------|
-| Criteria classification (`classify_criteria`) | Handler body → `orchestration/verifiability.py` | `audited_pure_phase_body` | Pure classification; no routing decisions. Output is informational. |
-| Deferred-must identification | Handler body | `audited_pure_phase_body` | Pure set computation. |
-| State transition (`STATE_DONE`) | Handler body | `audited_pure_phase_body` | Single deterministic transition. |
-
-**Mapped traceability rows:** None directly — this is an audit/observability
-handler, not a product-semantic owner.
-
-**Overall classification:** `audited_pure_phase_body` — `handle_audit_verifiability`
-performs pure classification with no routing, fanout, state-machine decisions,
-or product semantics. It is the least problematic handler from a composition
-standpoint.
-
-**False-pass guard:** None — this handler does not own hidden routing.
-
----
-
-### 3.12 handle_verify_human
-
-**Phase:** Human verification — loads verification records, applies
-latest-verdict semantics, marks criteria as verified.
-
-| Semantic | Current Carrier | Classification | Reason |
-|----------|----------------|----------------|--------|
-| Verification record loading | Handler body → `get_human_verification_status` | `audited_pure_phase_body` | Pure data loading. |
-| Latest-verdict semantics | Handler body | `audited_pure_phase_body` | Pure deterministic algorithm; no routing. |
-| Verification status update | Handler body | `audited_pure_phase_body` | Pure state recording. |
-| State transition (`STATE_DONE`) | Handler body | `audited_pure_phase_body` | Single deterministic transition. |
-
-**Mapped traceability rows:** `human-decision-suspension` (indirectly — this
-handler resolves the suspension, but the suspension decision itself is in
-`handle_prep` and `handle_override`)
-
-**Overall classification:** `audited_pure_phase_body` — `handle_verify_human`
-performs pure verification with deterministic latest-verdict semantics. It
-does not own routing, fanout, or product-level decisions. The suspension
-semantics it resolves are owned by `handle_prep` and `handle_override`.
-
-**False-pass guard:** None — this handler does not own hidden routing, but
-tests must verify that the suspension coordinate it resolves was created by
-a visible workflow branch, not a handler-internal state mutation.
-
----
-
-### 3.13 handle_tiebreaker_run
-
-**Phase:** Tiebreaker (research) — invokes researcher worker, collects
-proposals.
-
-| Semantic | Current Carrier | Classification | Reason |
-|----------|----------------|----------------|--------|
-| Researcher worker invocation | Handler body → `_run_worker` | `pending` | Worker dispatch is handler-owned. |
-| Researcher prompt construction | Handler body → `_build_tiebreaker_reprompt` | `pending` | Prompt policy is handler-owned. |
-| Proposal collection | Handler body | `pending` | Proposal aggregation is handler-owned. |
-
-**Mapped traceability rows:** `tiebreaker-subworkflow`
-
-**Overall classification:** `pending` — `handle_tiebreaker_run` and
-`handle_tiebreaker_decide` together form a researcher/challenger subworkflow
-that is currently split across two handler-backed stages. Per
-`megaplan-composition-doctrine-proof.md` §4.2, tiebreaker must be a visible
-subworkflow with researcher, challenger, decision, and parent promotion.
-
-**False-pass guard:** One native node calling the old tiebreaker handler
-(pair) is a false pass. Structural conformance must fail for single
-handler-backed tiebreaker stages.
-
----
-
-### 3.14 handle_tiebreaker_decide
-
-**Phase:** Tiebreaker (decision) — invokes challenger/decider worker, selects
-winning proposal, promotes to parent.
-
-| Semantic | Current Carrier | Classification | Reason |
-|----------|----------------|----------------|--------|
-| Challenger worker invocation | Handler body → `_run_worker` | `pending` | Worker dispatch is handler-owned. |
-| Decision / winner selection | Handler body | `pending` | Winner selection is handler-owned. |
-| Escalation routing | Handler body | `pending` | Escalation to human is handler-owned. |
-| Replan routing | Handler body | `pending` | Replan decision is handler-owned. |
-| Parent promotion | Handler body | `pending` | Promotion logic is handler-owned. |
-| Next-step transition | Handler body | `pending` | Transition to finalize/blocked/human is handler-owned. |
-
-**Mapped traceability rows:** `tiebreaker-subworkflow`,
-`human-decision-suspension`, `path-addressed-checkpoints`
-
-**Overall classification:** `pending` — See §3.13. The run/decide pair must
-become a single visible subworkflow with declared decision vocabulary.
-
-**False-pass guard:** Same as §3.13.
-
----
-
-## 4. Carrier Summary
-
-| Handler | Classification | Decomposition Priority | Primary Traceability Rows |
-|---------|---------------|----------------------|---------------------------|
-| `handle_init` | `declared_policy` / `audited_pure_phase_body` | Low — mode routing already explicit | — |
-| `handle_plan` | `pending` | Medium — planner invocation, criteria merge | `plan-artifact-version-metadata` |
-| `handle_prep` | `pending` | **High** — clarification gate is canonical suspension | `prep-clarification-gate`, `human-decision-suspension` |
-| `handle_critique` | `pending` | **Highest** — retry, parallel, skip, fallback | `critique-bare-skip`, `critique-evaluator-retry`, `critique-parallel-lenses`, `dynamic-parallel-map` |
-| `handle_revise` | `pending` | High — loop termination, typed outcomes | `critique-gate-revise-loop`, `typed-loop-outcomes` |
-| `handle_gate` | `pending` | **Highest** — preflight, reprompt, flag, debt, downgrade | `gate-preflight-normalization`, `gate-signal-reprompt`, `gate-flag-debt-fallback` |
-| `handle_finalize` | `pending` | Medium — task gen, baseline selection, fallback routes | `finalize-fallback-routes`, `golden-trace-regeneration` |
-| `handle_execute` | `pending` | **High** — DAG, approval, model routing, partial resume | `execute-dependency-batches`, `execute-approval-gates`, `model-routing-policy` |
-| `handle_review` | `pending` | **Highest** — parallel, merge, rework, retry, cap | `execute-review-rework-loop`, `review-parallel-fanin`, `review-retry-cap-outcomes` |
-| `handle_override` | `pending` | **Highest** — full action matrix, 10+ product routes | `override-action-surface`, `human-decision-suspension` |
-| `handle_audit_verifiability` | `audited_pure_phase_body` | None — no decomposition needed | — |
-| `handle_verify_human` | `audited_pure_phase_body` | None — no decomposition needed | — |
-| `handle_tiebreaker_run` | `pending` | **High** — subworkflow split | `tiebreaker-subworkflow`, `path-addressed-checkpoints` |
-| `handle_tiebreaker_decide` | `pending` | **High** — subworkflow split, decision vocabulary | `tiebreaker-subworkflow`, `human-decision-suspension` |
-
-### 4.1 Classification Counts
+## 3. Purity Inventory
+
+### 3.1 What "Pure Phase Body" Means
+
+A handler is a **pure phase body** if and only if:
+
+1. **No routing:** The handler does not decide which step comes next. It may
+   produce outputs that influence a routing decision, but the decision itself
+   is owned by workflow structure or declared policy.
+2. **No loop-exit:** The handler does not break out of or terminate a loop.
+3. **No fanout:** The handler does not spawn or orchestrate parallel work.
+4. **No retry:** The handler does not implement retry logic that changes the
+   workflow path.
+5. **No suspension:** The handler does not suspend the workflow or await human
+   intervention.
+6. **No override dispatch:** The handler does not dispatch to escalation or
+   override paths.
+7. **No implicit transitions:** The handler does not set `next_step`,
+   `current_state`, or equivalent transition fields except through a mechanical
+   one-step advance (e.g., run → decide with a single fixed successor).
+
+### 3.2 Purity Counts
 
 | Classification | Count | Handlers |
 |---------------|-------|----------|
-| `canonical_source` | 0 | None — Phase 3 migration not yet executed |
-| `declared_policy` | 1 | `handle_init` (mode routing) |
-| `audited_pure_phase_body` | 2 | `handle_audit_verifiability`, `handle_verify_human` |
-| `pending` | 11 | `handle_plan`, `handle_prep`, `handle_critique`, `handle_revise`, `handle_gate`, `handle_finalize`, `handle_execute`, `handle_review`, `handle_override`, `handle_tiebreaker_run`, `handle_tiebreaker_decide` |
+| Report-semantic owners | 9 | prep, critique, gate, revise, tiebreaker_decide, finalize, execute, review, override |
+| Pure phase bodies | 2 | plan, tiebreaker_run |
+| **Total** | **11** | |
 
-### 4.2 Traceability Row Coverage
+### 3.3 What the Migration Requires
 
-Every traceability matrix row is owned by at least one `pending` handler,
-confirming that no row can claim `implemented` before Phase 3 decomposition.
+For the M1 composition milestone to claim source-ownership conformance:
 
-| Row ID | Owning Handler(s) | Carrier Status |
-|--------|-------------------|----------------|
-| `prep-clarification-gate` | `handle_prep` | `pending` |
-| `plan-artifact-version-metadata` | `handle_plan`, `handle_finalize` | `pending` |
-| `critique-bare-skip` | `handle_critique` | `pending` |
-| `critique-evaluator-retry` | `handle_critique` | `pending` |
-| `critique-parallel-lenses` | `handle_critique` | `pending` |
-| `critique-gate-revise-loop` | `handle_revise`, `handle_gate` | `pending` |
-| `gate-preflight-normalization` | `handle_gate` | `pending` |
-| `gate-signal-reprompt` | `handle_gate` | `pending` |
-| `gate-flag-debt-fallback` | `handle_gate` | `pending` |
-| `tiebreaker-subworkflow` | `handle_tiebreaker_run`, `handle_tiebreaker_decide` | `pending` |
-| `human-decision-suspension` | `handle_prep`, `handle_override`, `handle_tiebreaker_decide` | `pending` |
-| `finalize-fallback-routes` | `handle_finalize` | `pending` |
-| `execute-dependency-batches` | `handle_execute` | `pending` |
-| `execute-approval-gates` | `handle_execute` | `pending` |
-| `execute-review-rework-loop` | `handle_review` | `pending` |
-| `review-parallel-fanin` | `handle_review` | `pending` |
-| `review-retry-cap-outcomes` | `handle_review` | `pending` |
-| `override-action-surface` | `handle_override` | `pending` |
-| `timeout-deadline-policy` | (distributed — runtime helpers, not a single handler) | `pending` |
-| `model-routing-policy` | `handle_execute`, `handle_override` | `pending` |
-| `runtime-list-iteration` | (compiler — not handler-owned) | `pending` (compiler) |
-| `dynamic-parallel-map` | `handle_critique`, `handle_review`, `handle_execute` | `pending` |
-| `typed-loop-outcomes` | `handle_revise` | `pending` |
-| `autodrive-event-liveness` | (distributed — control transitions, not a single handler) | `pending` |
-| `path-addressed-checkpoints` | `handle_execute`, `handle_tiebreaker_run`, `handle_tiebreaker_decide` | `pending` |
-| `shadow-topology` | (not handler-owned — planning artifact) | `pending` |
-| `handler-purity-audit` | (meta — this table is the inventory) | `pending` |
-| `golden-trace-regeneration` | `handle_finalize` | `pending` |
-| `source-path-reconciliation` | (docs task — completed in T1) | `declared_policy` |
-| `behavior-parity` | (cross-cutting — all handlers) | `pending` |
-| `source-readability` | (cross-cutting — all handlers) | `pending` |
+- **Report-semantic owners** (prep, critique, gate, revise, tiebreaker_decide,
+  finalize, execute, review, override — 9 handlers) must have their routing
+  semantics represented in visible workflow structure (branches, loops,
+  suspension points, escalation edges) or declared policy (control transitions,
+  suspension routes, rework-cycle caps). The handler bodies may remain as
+  subworkflow contents, but the routing decisions must be visible without
+  reading handler bodies.
+
+- **Pure phase bodies** (plan, tiebreaker_run — 2 handlers) are retained.
+  Their bodies remain as subworkflow contents. The migration wraps them as
+  invoked subworkflows but does not need to decompose their internal
+  computation.
 
 ---
 
-## 5. Handler-Ref False-Pass Guards
+## 4. No-Hidden-Routing Claims
 
-The following patterns appear across multiple handlers and constitute
-**handler-ref false passes** if any test or alignment row claims them as
-conformance evidence:
+The following claims are mechanically enforceable and are verified by
+`tests/arnold_pipelines/megaplan/test_semantics_carrier.py`:
 
-### 5.1 State Mutation Routing
+### 4.1 Pure-Handler Invariants
 
-Handlers that mutate `state['next_step']`, `state['current_step']`, or call
-`workflow_transition()` / `workflow_next()` / `infer_next_steps()` are
-performing **handler-owned routing**. Affected handlers:
+For every handler classified as a **pure phase body** (§2.2), the following
+must hold (tested by AST scan of the handler function body):
 
-- `handle_prep` — `_apply_prep_clarify_gate` mutates state for suspension
-- `handle_gate` — `workflow_transition`, `_resolve_revise_transition`
-- `handle_review` — mutates `next_step` to execute for rework
-- `handle_override` — `workflow_next`, `infer_next_steps`
-- `handle_tiebreaker_decide` — escalation/replan routing
+| # | Invariant | Enforcement |
+|---|-----------|-------------|
+| P1 | The handler function body does not contain calls to routing functions (`workflow_transition`, `workflow_next`, `_next_progress_step`, `_apply_gate_outcome`, `_resolve_revise_transition`, `_apply_prep_clarify_gate`, `_resolve_review_outcome`, `_route_*`, `_override_*`). | AST call-site scan for routing call markers |
+| P2 | Exception: `handle_tiebreaker_run` may call `workflow_transition` for its single deterministic step (run→decide). | Allowed via `MECHANICAL_TRANSITION_HANDLERS` allowlist |
 
-### 5.2 Worker Dispatch
+### 4.2 Report-Semantic-Owner Invariants
 
-Handlers that call `_run_worker()` or `worker_module` to invoke AI workers
-are performing **handler-owned dispatch**. Affected handlers:
+For every handler classified as a **report-semantic owner** (§2.1), the
+following must hold:
 
-- `handle_plan`, `handle_prep`, `handle_critique`, `handle_revise`,
-  `handle_gate`, `handle_execute`, `handle_review`, `handle_tiebreaker_run`,
-  `handle_tiebreaker_decide`
+| # | Invariant | Enforcement |
+|---|-----------|-------------|
+| R1 | Any handler whose function body contains routing call markers must be classified as a report-semantic owner. | AST call-site scan cross-referenced against `REPORT_SEMANTIC_OWNERS` |
+| R2 | The classification is reviewed manually for correctness: a handler that contains branching routing logic but delegates it to helpers must still be listed here. The test cannot detect routing hidden in called helpers, so manual review of the classification table is the authoritative check. | Manual review of §2.1 table entries |
 
-### 5.3 Parallel Dispatch
+### 4.3 Handler Ref Completeness
 
-Handlers that call `run_parallel_critique()`, `run_parallel_review()`, or
-equivalent fanout primitives are performing **handler-owned fanout**.
-Affected handlers:
-
-- `handle_critique` — `run_parallel_critique`
-- `handle_review` — `run_parallel_review`
-
-### 5.4 Loop / Retry
-
-Handlers that contain retry loops or loop termination logic are performing
-**handler-owned iteration**. Affected handlers:
-
-- `handle_critique` — adaptive evaluator retry
-- `handle_revise` — bounded critique/gate/revise loop
-- `handle_review` — infrastructure retry, rework loop
-
-### 5.5 Override Action Dispatch
-
-Handlers that contain a matrix of action routes (`_override_abort`,
-`_override_force_proceed`, etc.) are performing **handler-owned product
-decision routing**. Affected handlers:
-
-- `handle_override` — 10+ action routes in one handler
+| # | Invariant | Enforcement |
+|---|-----------|-------------|
+| C1 | Every `handler_ref` string in `ALL_STEP_COMPONENTS` from `arnold_pipelines.megaplan.workflows.components` must appear in this table. | Import-time scan of `ALL_STEP_COMPONENTS` |
+| C2 | Every handler in this table must have a matching `handler_ref` in `ALL_STEP_COMPONENTS`. | Cross-reference validation |
+| C3 | No handler_ref in `ALL_STEP_COMPONENTS` may be `None` or empty (HALT and SUSPEND are terminal steps with no handler and are excluded from the handler count). | Import-time validation |
 
 ---
 
-## 6. Phase-Dependent Carrier Status
+## 5. Handler Ref Index
 
-### 6.1 Phase 1 (Current — This Document)
+Complete index of all 11 handler refs with file locations:
 
-All 11 `pending` handlers remain `pending`. No carrier reclassification occurs
-in Phase 1. This table is a **launch-gate inventory**, not a migration claim.
+| # | Handler Ref | File | Line | Classification |
+|---|------------|------|------|---------------|
+| 1 | `HANDLER_MODULE:handle_prep` | `handlers/plan.py` | 209 | Report-semantic owner |
+| 2 | `HANDLER_MODULE:handle_plan` | `handlers/plan.py` | 140 | Pure phase body |
+| 3 | `HANDLER_MODULE:handle_critique` | `handlers/critique.py` | 279 | Report-semantic owner |
+| 4 | `HANDLER_MODULE:handle_gate` | `handlers/gate.py` | 791 | Report-semantic owner |
+| 5 | `HANDLER_MODULE:handle_revise` | `handlers/critique.py` | 1055 | Report-semantic owner |
+| 6 | `HANDLER_MODULE:handle_tiebreaker_run` | `handlers/tiebreaker.py` (→ `_tiebreaker_impl.py`) | 37 | Pure phase body |
+| 7 | `HANDLER_MODULE:handle_tiebreaker_decide` | `handlers/tiebreaker.py` (→ `_tiebreaker_impl.py`) | 76 | Report-semantic owner |
+| 8 | `HANDLER_MODULE:handle_finalize` | `handlers/finalize.py` | 1677 | Report-semantic owner |
+| 9 | `HANDLER_MODULE:handle_execute` | `handlers/execute.py` | 134 | Report-semantic owner |
+| 10 | `HANDLER_MODULE:handle_review` | `handlers/review.py` | ~900 | Report-semantic owner |
+| 11 | `HANDLER_MODULE:handle_override` | `handlers/override.py` | ~1837 | Report-semantic owner |
 
-### 6.2 Phase 2
-
-Neutral native child-workflow compiler/runtime support is additive. No handler
-semantics change. Carrier classifications remain unchanged.
-
-### 6.3 Phase 3 (Blocked — Gated on M7)
-
-When the M7 prerequisite is satisfied or waived, Phase 3 decomposes each
-`pending` handler. After decomposition:
-
-- `handle_critique` → `canonical_source` (visible parallel map + retry policy + robustness branch)
-- `handle_gate` → `canonical_source` (visible decision vocabulary + preflight policy)
-- `handle_review` → `canonical_source` (visible parallel map + rework loop + cap outcomes)
-- `handle_override` → `canonical_source` (visible action route matrix)
-- `handle_execute` → `canonical_source` (visible DAG subworkflow + approval gates)
-- `handle_tiebreaker_run` + `handle_tiebreaker_decide` → `canonical_source` (visible subworkflow)
-- `handle_prep` → `canonical_source` (visible suspension branch)
-- `handle_revise` → `canonical_source` (visible bounded loop with typed outcomes)
-- `handle_finalize` → `canonical_source` (visible task gen + baseline policy + failure routes)
-- `handle_plan` → `canonical_source` (visible planner invocation + declared artifact contracts)
-
-After decomposition, retained handler bodies (if any) would be reclassified as
-`audited_pure_phase_body` — pure computation with no routing, state transitions,
-fanout, or product decisions.
+Where `HANDLER_MODULE = "arnold_pipelines.megaplan.handlers"` (defined in
+`arnold_pipelines/megaplan/workflows/components.py` line 19).
 
 ---
 
-## 7. Acceptance
+## 6. Relationship to Other Artifacts
 
-This carrier table conforms to the requirements of
-`megaplan-composition-doctrine-proof.md` and the H6 Semantics Carrier Review
-wave in `megaplan-native-representation-alignment-plan.md`:
+| Artifact | Relationship |
+|----------|-------------|
+| `docs/arnold/megaplan-composition-handoff.md` | This table is the handler classification referenced by the handoff's source-authority doctrine (§2.1). |
+| `docs/arnold/megaplan-source-path-reconciliation.md` | Live path inventory — this table's handler refs correspond to StepComponent entries in `workflows/components.py` (entry W3). |
+| `docs/arnold/native-composition-contract.md` | M0 bridge contract — this table enforces the SD3 doctrine. |
+| `arnold_pipelines/megaplan/workflows/components.py` | Source of truth for `ALL_STEP_COMPONENTS` handler_ref entries. |
+| `tests/arnold_pipelines/megaplan/test_semantics_carrier.py` | Mechanical enforcement tests for this table. |
 
-1. ✅ Every exported handler (14) is inventoried with source file and line counts.
-2. ✅ Every report-owned semantic is classified as `canonical_source`,
-   `declared_policy`, `audited_pure_phase_body`, or `pending`.
-3. ✅ No handler-ref false pass: zero handlers are classified as
-   `canonical_source` before Phase 3 decomposition.
-4. ✅ Every traceability matrix row is mapped to its owning handler(s).
-5. ✅ Handler-owned routing patterns (state mutation, worker dispatch, parallel
-   dispatch, loop/retry, override action dispatch) are explicitly enumerated
-   as false-pass guards.
-6. ✅ Phase-dependent carrier status clearly gates all `pending` → `canonical_source`
-   transitions on Phase 3 + M7 completion.
-7. ✅ Two handlers (`handle_audit_verifiability`, `handle_verify_human`) are
-   audited and confirmed as pure phase bodies with no hidden routing.
-8. ✅ One handler (`handle_init`) is confirmed as having explicit, extractable
-   `declared_policy` for mode routing, with the remainder as pure phase body.
+---
+
+## 7. Classification Methodology
+
+Each handler was classified by:
+
+1. **AST inspection** of the handler function body for routing markers:
+   - `workflow_transition(` calls
+   - `workflow_next(` calls
+   - `_next_progress_step(` calls
+   - `state["current_state"]` direct assignments
+   - `_route_*` function calls
+   - `_resolve_review_outcome(` calls
+
+2. **Semantic analysis** of any routing marker found:
+   - Is it a mechanical one-step advance (run → decide) or a branched decision?
+   - Does the handler choose between multiple distinct next steps?
+   - Does the handler set `next_step` to a value that depends on handler-internal
+     logic rather than a fixed successor?
+
+3. **Cross-reference** with the SD3 doctrine: if the routing decision would need
+   to be visible in workflow structure to satisfy source-authority requirements,
+   the handler is a report-semantic owner.
+
+---
+
+## 8. Gate Marker
+
+**M1 semantics carrier gate label:** SEMANTICS-CARRIER AUTHORITY.
+
+This document is the pre-implementation handler classification required by the
+M1 launch gate (T3). No Megaplan workflow edit shall land before the handler
+purity inventory is acknowledged and mechanically enforced by
+`test_semantics_carrier.py`.
