@@ -370,15 +370,7 @@ def effective_execute_completed_task_ids(
         for task in tasks
         if isinstance(task, Mapping)
         and isinstance(task_id := _task_id(task), str)
-        and _optional_str(task.get("status")) == "skipped"
-        and (
-            _optional_str(task.get("reviewer_verdict")) == "deferred_baseline_unavailable"
-            or (
-                isinstance(task.get("executor_notes"), str)
-                and task["executor_notes"].strip()
-                and not is_rubber_stamp(task["executor_notes"], strict=True)
-            )
-        )
+        and _is_explained_skip(task)
     }
     completed |= explained_skips
 
@@ -409,6 +401,17 @@ def effective_execute_completed_task_ids(
                     },
                 )
     return completed
+
+
+def _is_explained_skip(task: Mapping[str, Any]) -> bool:
+    return _optional_str(task.get("status")) == "skipped" and (
+        _optional_str(task.get("reviewer_verdict")) == "deferred_baseline_unavailable"
+        or (
+            isinstance(task.get("executor_notes"), str)
+            and task["executor_notes"].strip()
+            and not is_rubber_stamp(task["executor_notes"], strict=True)
+        )
+    )
 
 
 def _execution_baseline_head(state: Mapping[str, Any] | None) -> str | None:
@@ -799,7 +802,11 @@ def _authority_divergence_payload(
     decision: AuthorityDecision,
 ) -> dict[str, Any] | None:
     raw_status = _optional_str(task.get("status"))
-    if raw_status not in _TERMINAL_AUTHORITY_CLAIMS or decision.authoritative:
+    if (
+        raw_status not in _TERMINAL_AUTHORITY_CLAIMS
+        or decision.authoritative
+        or _is_explained_skip(task)
+    ):
         return None
     reasons = tuple(
         str(reason)
