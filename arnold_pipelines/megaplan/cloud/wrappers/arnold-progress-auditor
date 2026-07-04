@@ -2341,6 +2341,25 @@ def _reconciler_reasons(incident_audit):
         )
     return reasons
 
+def _meta_repair_gap_is_primary(incident_brief, incident_projection, incident_audit):
+    findings = incident_audit.get("findings") if isinstance(incident_audit, dict) else []
+    for finding in findings if isinstance(findings, list) else []:
+        if not isinstance(finding, dict):
+            continue
+        if str(finding.get("layer") or "").strip() != "meta_repair":
+            continue
+        if str(finding.get("status") or "").strip() != "ok":
+            return True
+
+    for expected in (
+        incident_audit.get("next_expected_event") if isinstance(incident_audit, dict) else "",
+        incident_brief.get("next_expected_event") if isinstance(incident_brief, dict) else "",
+        incident_projection.get("next_expected_event") if isinstance(incident_projection, dict) else "",
+    ):
+        if str(expected or "").strip() == "meta_repair.repair_attempt":
+            return True
+    return False
+
 def _plan_evidence(entry):
     workspace = entry["workspace"]
     plan = entry["plan"]
@@ -2610,9 +2629,11 @@ for entry in plans:
         continue
     stage_metric_entries.append(ev)
     incident_brief = ev.get("incident_brief") if isinstance(ev.get("incident_brief"), dict) else {}
+    incident_projection = ev.get("incident_projection") if isinstance(ev.get("incident_projection"), dict) else {}
     incident_audit = ev.get("incident_audit") if isinstance(ev.get("incident_audit"), dict) else {}
     reasons = _reconciler_reasons(incident_audit) if incident_brief.get("found") else []
     corroboration = []
+    soft_corroboration = []
     v_sizes = list(ev["plan_v_sizes"].values())
     if ev["plan_v_count"] >= 4 and len(set(v_sizes)) >= 3:
         corroboration.append(f"plan_v refreshed {ev['plan_v_count']}x in {int(window)}h ({min(v_sizes)}->{max(v_sizes)} bytes)")
@@ -2665,7 +2686,11 @@ for entry in plans:
         corroboration.append(f"repair data repeats same failure signature {repeated_failures[0].get('count')}x")
     meta_summary = ev.get("meta_repair_summary") or {}
     if meta_summary.get("missing_meta_run_evidence"):
-        reasons.append(f"meta-repair trigger {meta_summary.get('trigger')} has no meta record or run log")
+        meta_gap_reason = f"meta-repair trigger {meta_summary.get('trigger')} has no meta record or run log"
+        if _meta_repair_gap_is_primary(incident_brief, incident_projection, incident_audit):
+            reasons.append(meta_gap_reason)
+        else:
+            soft_corroboration.append(meta_gap_reason)
     if meta_summary.get("failed_meta_run_evidence"):
         reasons.append(
             f"meta-repair trigger {meta_summary.get('trigger')} has only failed launch/no-output evidence "
@@ -2677,8 +2702,9 @@ for entry in plans:
         corroboration.append(f"unresolved user actions: {ids}")
     if not reasons:
         reasons = corroboration
-    elif corroboration:
-        ev["corroboration"] = corroboration
+    combined_corroboration = corroboration + soft_corroboration
+    if combined_corroboration:
+        ev["corroboration"] = combined_corroboration
     if not reasons:
         green_checks.append({
             "plan": ev["plan"],
