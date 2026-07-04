@@ -224,6 +224,14 @@ _MIN_RECURRING_ATTEMPTS = 3
 # Minimum number of partial-liveness ticks before we trigger.
 _MIN_PARTIAL_LIVENESS_TICKS = 2
 
+# Meta-repair prompts must stay well under Codex's input limit even when
+# repair-data snapshots contain large embedded logs or prompts.
+_PROMPT_EVIDENCE_CHAR_BUDGET = 180_000
+_PROMPT_MAX_STRING_CHARS = 4_000
+_PROMPT_MAX_LIST_ITEMS = 12
+_PROMPT_MAX_DICT_ITEMS = 64
+_PROMPT_MAX_DEPTH = 6
+
 
 def classify_repair_system_failure(
     session: str,
@@ -439,6 +447,135 @@ def _is_persistent_recurring_retry(
     return True
 
 
+def _truncate_prompt_text(text: str, *, max_chars: int) -> str:
+    """Clip oversized prompt text while preserving both ends."""
+    if len(text) <= max_chars:
+        return text
+    marker = f"\n... [truncated {len(text) - max_chars} chars] ...\n"
+    head_budget = max(32, (max_chars - len(marker)) // 2)
+    tail_budget = max(32, max_chars - len(marker) - head_budget)
+    return f"{text[:head_budget]}{marker}{text[-tail_budget:]}"
+
+
+def _compact_prompt_value(
+    value: Any,
+    *,
+    max_depth: int,
+    max_string_chars: int,
+    max_list_items: int,
+    max_dict_items: int,
+) -> Any:
+    """Reduce oversized JSON-like evidence to a bounded prompt view."""
+    if max_depth <= 0:
+        if isinstance(value, str):
+            return _truncate_prompt_text(value, max_chars=min(max_string_chars, 256))
+        if isinstance(value, Mapping):
+            return {"__truncated__": "mapping"}
+        if isinstance(value, (list, tuple)):
+            return ["__truncated_sequence__"]
+        return value
+
+    if isinstance(value, str):
+        return _truncate_prompt_text(value, max_chars=max_string_chars)
+
+    if isinstance(value, Mapping):
+        items = list(value.items())
+        compact: dict[str, Any] = {}
+        for key, item in items[:max_dict_items]:
+            compact[str(key)] = _compact_prompt_value(
+                item,
+                max_depth=max_depth - 1,
+                max_string_chars=max_string_chars,
+                max_list_items=max_list_items,
+                max_dict_items=max_dict_items,
+            )
+        if len(items) > max_dict_items:
+            compact["__truncated_keys__"] = len(items) - max_dict_items
+        return compact
+
+    if isinstance(value, (list, tuple)):
+        seq = list(value)
+        if len(seq) <= max_list_items:
+            return [
+                _compact_prompt_value(
+                    item,
+                    max_depth=max_depth - 1,
+                    max_string_chars=max_string_chars,
+                    max_list_items=max_list_items,
+                    max_dict_items=max_dict_items,
+                )
+                for item in seq
+            ]
+        head_count = max(1, max_list_items // 2)
+        tail_count = max(1, max_list_items - head_count)
+        head = seq[:head_count]
+        tail = seq[-tail_count:]
+        compact_list = [
+            _compact_prompt_value(
+                item,
+                max_depth=max_depth - 1,
+                max_string_chars=max_string_chars,
+                max_list_items=max_list_items,
+                max_dict_items=max_dict_items,
+            )
+            for item in head
+        ]
+        compact_list.append({"__truncated_items__": len(seq) - len(head) - len(tail)})
+        compact_list.extend(
+            _compact_prompt_value(
+                item,
+                max_depth=max_depth - 1,
+                max_string_chars=max_string_chars,
+                max_list_items=max_list_items,
+                max_dict_items=max_dict_items,
+            )
+            for item in tail
+        )
+        return compact_list
+
+    return value
+
+
+def _prepare_prompt_json(payload: Mapping[str, Any], *, secret_names: Sequence[str]) -> str:
+    """Serialize evidence for prompts within a fixed character budget."""
+    import json as _json
+
+    redacted = redact_payload(payload, secret_names=list(secret_names))
+    serialized = _json.dumps(redacted, indent=2, default=str, ensure_ascii=False)
+    if len(serialized) <= _PROMPT_EVIDENCE_CHAR_BUDGET:
+        return serialized
+
+    compact = _compact_prompt_value(
+        redacted,
+        max_depth=_PROMPT_MAX_DEPTH,
+        max_string_chars=_PROMPT_MAX_STRING_CHARS,
+        max_list_items=_PROMPT_MAX_LIST_ITEMS,
+        max_dict_items=_PROMPT_MAX_DICT_ITEMS,
+    )
+    serialized = _json.dumps(compact, indent=2, default=str, ensure_ascii=False)
+    if len(serialized) <= _PROMPT_EVIDENCE_CHAR_BUDGET:
+        return serialized
+
+    emergency = {
+        "prompt_truncated": True,
+        "available_top_level_keys": sorted(str(key) for key in redacted.keys()),
+        "session": redacted.get("session", ""),
+        "repair_data_path": redacted.get("repair_data_path", ""),
+        "attempt_dir": redacted.get("attempt_dir", ""),
+        "index_path": redacted.get("index_path", ""),
+        "repair_data": _compact_prompt_value(
+            redacted.get("repair_data", {}),
+            max_depth=4,
+            max_string_chars=800,
+            max_list_items=6,
+            max_dict_items=24,
+        ),
+        "recent_attempt_count": len(redacted.get("recent_attempts", []) or []),
+        "partial_liveness_count": len(redacted.get("partial_liveness_history", []) or []),
+    }
+    return _json.dumps(emergency, indent=2, default=str, ensure_ascii=False)
+
+
 # ---------------------------------------------------------------------------
 # Prompt assembly
 # ---------------------------------------------------------------------------
@@ -469,8 +606,6 @@ def build_meta_repair_prompt(
     Returns:
         A redacted prompt string suitable for sending to Codex/DeepSeek.
     """
-    import json as _json
-
     parts: list[str] = []
 
     # Header
@@ -498,26 +633,24 @@ def build_meta_repair_prompt(
     # Evidence
     if classification.evidence:
         parts.append("### Redacted Evidence\n")
-        evidence_redacted = redact_payload(
-            classification.evidence,
-            secret_names=list(secret_names),
-        )
         parts.append("```json\n")
         parts.append(
-            _json.dumps(evidence_redacted, indent=2, default=str, ensure_ascii=False)
+            _prepare_prompt_json(
+                classification.evidence,
+                secret_names=secret_names,
+            )
         )
         parts.append("\n```\n\n")
 
     # Extra context
     if extra_context:
         parts.append("### Additional Context\n")
-        ctx_redacted = redact_payload(
-            dict(extra_context),
-            secret_names=list(secret_names),
-        )
         parts.append("```json\n")
         parts.append(
-            _json.dumps(ctx_redacted, indent=2, default=str, ensure_ascii=False)
+            _prepare_prompt_json(
+                dict(extra_context),
+                secret_names=secret_names,
+            )
         )
         parts.append("\n```\n\n")
 
