@@ -1,9 +1,9 @@
 import type { CommandRegistry } from '@/tools/video-editor/runtime/commandRegistry.ts';
 import type { VideoEditorProcessDescriptor } from '@/tools/video-editor/runtime/extensionSurface.ts';
-import type { ProcessRoundtripRequest, ProcessStatus } from '@reigh/editor-sdk';
+import type { ProcessRoundtripRequest, ProcessRoundtripResult, ProcessStatus } from '@reigh/editor-sdk';
 
 export interface ProcessCommandServices {
-  invokeProcess: (request: ProcessRoundtripRequest) => Promise<unknown>;
+  invokeProcess: (request: ProcessRoundtripRequest) => Promise<ProcessRoundtripResult>;
 }
 
 export interface RegisterProcessCommandsOptions {
@@ -53,7 +53,7 @@ export function registerProcessOperationCommands({
         const currentUnavailable = statusBlocks(statuses.get(process.processId));
         if (currentUnavailable) throw new Error(currentUnavailable);
         validateParams(operation.inputSchema as { required?: readonly string[] } | undefined, undefined);
-        await services.invokeProcess({
+        return services.invokeProcess({
           id: `${process.processId}:${operation.id}`,
           processId: process.processId,
           operationId: operation.id,

@@ -100,6 +100,7 @@ describe('VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY', () => {
       'inspectorSection',
       'timelineOverlay',
       'metadataFacet',
+      'process',
       'command',
       'contextMenuItem',
       'keybinding',
@@ -119,7 +120,6 @@ describe('VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY', () => {
   it('placeholder adapters carry delegation metadata', () => {
     const placeholderKinds = [
       'outputFormat',
-      'process',
       'searchProvider',
       'assetDetailSection',
       'parser',

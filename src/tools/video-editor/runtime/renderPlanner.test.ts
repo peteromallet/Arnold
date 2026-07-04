@@ -11,6 +11,7 @@ import type {
   ProcessStatus,
   RenderBlocker,
   RenderMaterialRef,
+  RenderRoute,
   TimelineSnapshot,
 } from '@reigh/editor-sdk';
 import type {
@@ -126,7 +127,27 @@ function requirement(input: Partial<CapabilityRequirement> & Pick<CapabilityRequ
   };
 }
 
-function renderDependentOutput(): VideoEditorOutputFormatDescriptor {
+interface RenderDependentOutputOptions {
+  readonly availableRoutes?: readonly RenderRoute[];
+  readonly routeRequirementRoutes?: readonly RenderRoute[];
+  readonly requiredCapabilities?: readonly string[];
+  readonly processRequirementCapabilities?: readonly string[];
+  readonly processId?: string;
+  readonly operationId?: string;
+  readonly unavailableMessage?: string;
+  readonly determinism?: 'deterministic' | 'preview-only' | 'live-unbaked' | 'process-dependent' | 'unknown';
+}
+
+function renderDependentOutput(options: RenderDependentOutputOptions = {}): VideoEditorOutputFormatDescriptor {
+  const availableRoutes = options.availableRoutes ?? ['sidecar-export'];
+  const routeRequirementRoutes = options.routeRequirementRoutes ?? availableRoutes;
+  const processId = options.processId ?? 'dataset-process';
+  const operationId = options.operationId ?? 'exportDataset';
+  const requiredCapabilities = options.requiredCapabilities ?? ['sidecar-export', 'json-rpc'];
+  const processRequirementCapabilities = options.processRequirementCapabilities ?? ['json-rpc'];
+  const unavailableMessage = options.unavailableMessage ?? 'Start the dataset process before exporting the bundle.';
+  const determinism = options.determinism ?? 'process-dependent';
+
   return {
     id: 'dataset.zip',
     extensionId: 'ext.dataset',
@@ -136,91 +157,96 @@ function renderDependentOutput(): VideoEditorOutputFormatDescriptor {
     outputExtension: '.zip',
     outputMimeType: 'application/zip',
     disabled: false,
-    availableRoutes: ['sidecar-export'],
+    availableRoutes,
     routeRequirements: [
       {
-        routes: ['sidecar-export'],
-        requiredCapabilities: ['sidecar-export', 'json-rpc'],
-        processId: 'dataset-process',
-        operationId: 'exportDataset',
-        determinism: 'process-dependent',
-        unavailableMessage: 'Start the dataset process before exporting the bundle.',
+        routes: routeRequirementRoutes,
+        requiredCapabilities,
+        processId,
+        operationId,
+        determinism,
+        unavailableMessage,
       },
     ],
     processRequirements: [
       {
-        processId: 'dataset-process',
-        operationId: 'exportDataset',
-        requiredCapabilities: ['json-rpc'],
+        processId,
+        operationId,
+        requiredCapabilities: processRequirementCapabilities,
       },
     ],
     blockers: [],
-    nextActions: [
-      {
-        kind: 'select-route',
-        label: 'Plan sidecar-export',
-        route: 'sidecar-export',
-        processId: 'dataset-process',
-        operationId: 'exportDataset',
-      },
-    ],
+    nextActions: availableRoutes.map((route) => ({
+      kind: 'select-route' as const,
+      label: `Plan ${route}`,
+      route,
+      processId,
+      operationId,
+    })),
     capabilities: {
       extensionId: 'ext.dataset',
       contributionId: 'dataset.zip',
-      routes: ['sidecar-export'],
-      determinism: 'process-dependent',
+      routes: availableRoutes,
+      determinism,
       fullySupported: true,
       anyBlocked: false,
       sourceRefs: [
         { source: 'extension', extensionId: 'ext.dataset', contributionId: 'dataset.zip' },
       ],
-      capabilityRequirements: [
-        {
-          id: 'ext.dataset.dataset.zip.sidecar-export',
+      capabilityRequirements: availableRoutes.map((route) => ({
+          id: `ext.dataset.dataset.zip.${route}`,
           sourceRef: { source: 'extension', extensionId: 'ext.dataset', contributionId: 'dataset.zip' },
-          route: 'sidecar-export',
-          requiredCapabilities: ['sidecar-export'],
-          determinism: 'process-dependent',
-          routeFit: { route: 'sidecar-export', fit: 'supported' },
+          route,
+          requiredCapabilities: [route],
+          determinism,
+          routeFit: { route, fit: 'supported' as const },
           blocking: false,
-        },
-      ],
+        })),
     },
     sidecars: [],
   };
 }
 
-function processDescriptor(): VideoEditorProcessDescriptor {
+interface ProcessDescriptorOptions {
+  readonly processId?: string;
+  readonly operationId?: string;
+  readonly routes?: readonly RenderRoute[];
+  readonly requiredCapabilities?: readonly string[];
+  readonly outputKinds?: readonly ('artifact' | 'material' | 'sidecar' | 'diagnostic' | 'planner-result' | 'tool-result')[];
+}
+
+function processDescriptor(options: ProcessDescriptorOptions = {}): VideoEditorProcessDescriptor {
+  const processId = options.processId ?? 'dataset-process';
+  const operationId = options.operationId ?? 'exportDataset';
+  const routes = options.routes ?? ['sidecar-export'];
+  const requiredCapabilities = options.requiredCapabilities;
+  const outputKinds = options.outputKinds;
+  const operation = {
+    id: operationId,
+    label: 'Export dataset',
+    routes,
+    ...(requiredCapabilities ? { requiredCapabilities } : {}),
+    ...(outputKinds ? { outputKinds } : {}),
+  };
+
   return {
     id: 'process-contribution',
     extensionId: 'ext.dataset',
-    processId: 'dataset-process',
+    processId,
     label: 'Dataset process',
     spec: {
-      id: 'dataset-process',
+      id: processId,
       label: 'Dataset process',
       protocol: 'stdio-jsonrpc',
       spawn: {
         command: 'node',
         args: ['dataset-process.js'],
       },
-      operations: [
-        {
-          id: 'exportDataset',
-          label: 'Export dataset',
-          routes: ['sidecar-export'],
-        },
-      ],
+      operations: [operation],
     },
     protocol: 'stdio-jsonrpc',
-    operations: [
-      {
-        id: 'exportDataset',
-        label: 'Export dataset',
-        routes: ['sidecar-export'],
-      },
-    ],
-    availableRoutes: ['sidecar-export'],
+    operations: [operation],
+    availableRoutes: routes,
     requiredBy: [
       { source: 'extension', extensionId: 'ext.dataset', contributionId: 'dataset.zip' },
     ],
@@ -861,11 +887,15 @@ describe('planRender', () => {
         id: 'planner.outputFormat.ext.dataset.dataset.zip.sidecar-export.dataset-process.exportDataset.process-dependent',
         route: 'sidecar-export',
         reason: 'process-dependent',
+        processId: 'dataset-process',
+        operationId: 'exportDataset',
       }),
       expect.objectContaining({
-        id: 'planner.outputFormat.ext.dataset.dataset.zip.sidecar-export.dataset-process.route-process-dependent',
+        id: 'planner.outputFormat.ext.dataset.dataset.zip.sidecar-export.dataset-process.exportDataset.route.process-dependent',
         route: 'sidecar-export',
         reason: 'process-dependent',
+        processId: 'dataset-process',
+        operationId: 'exportDataset',
       }),
     ]);
   });
@@ -1134,22 +1164,171 @@ describe('planRender', () => {
       blockerCount: 0,
       findingCount: 2,
     });
-    expect(degraded.findings).toEqual([
+    expect(degraded.findings).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: 'planner.outputFormat.ext.dataset.dataset.zip.sidecar-export.dataset-process.exportDataset.process-dependent.degraded',
+        id: 'planner.outputFormat.ext.dataset.dataset.zip.sidecar-export.dataset-process.exportDataset.process-degraded',
         severity: 'warning',
         route: 'sidecar-export',
-        reason: 'process-dependent',
+        reason: 'process-degraded',
         message: 'Dataset process is running with a fallback encoder.',
+        processId: 'dataset-process',
+        operationId: 'exportDataset',
+        detail: expect.objectContaining({
+          healthCheck: 'encoder',
+          processState: 'degraded',
+        }),
       }),
       expect.objectContaining({
-        id: 'planner.outputFormat.ext.dataset.dataset.zip.sidecar-export.dataset-process.route-process-dependent.degraded',
+        id: 'planner.outputFormat.ext.dataset.dataset.zip.sidecar-export.dataset-process.exportDataset.route.process-degraded',
         severity: 'warning',
         route: 'sidecar-export',
-        reason: 'process-dependent',
+        reason: 'process-degraded',
         message: 'Dataset process is running with a fallback encoder.',
+        processId: 'dataset-process',
+        operationId: 'exportDataset',
       }),
-    ]);
+    ]));
+  });
+
+  it('maps missing, not-installed, stopped, busy, and failed process states to route-scoped blockers', () => {
+    const scenarios: Array<{
+      name: string;
+      processes: readonly VideoEditorProcessDescriptor[];
+      processStatuses?: readonly ProcessStatus[];
+      expectedReason: string;
+    }> = [
+      {
+        name: 'missing',
+        processes: [],
+        expectedReason: 'missing-contribution',
+      },
+      {
+        name: 'not-installed',
+        processes: [processDescriptor()],
+        processStatuses: [{ processId: 'dataset-process', state: 'not-installed', installHint: 'Install the dataset bridge.' }],
+        expectedReason: 'process-not-installed',
+      },
+      {
+        name: 'stopped',
+        processes: [processDescriptor()],
+        processStatuses: [{ processId: 'dataset-process', state: 'stopped' }],
+        expectedReason: 'process-dependent',
+      },
+      {
+        name: 'busy',
+        processes: [processDescriptor()],
+        processStatuses: [{ processId: 'dataset-process', state: 'busy', operationId: 'exportDataset' }],
+        expectedReason: 'process-dependent',
+      },
+      {
+        name: 'failed',
+        processes: [processDescriptor()],
+        processStatuses: [{ processId: 'dataset-process', state: 'failed', errorCode: 'PROC_EXIT' }],
+        expectedReason: 'process-failed',
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      const result = planRender({
+        outputFormats: [
+          renderDependentOutput({
+            availableRoutes: ['browser-export', 'sidecar-export'],
+            routeRequirementRoutes: ['sidecar-export'],
+          }),
+        ],
+        processes: scenario.processes,
+        processStatuses: scenario.processStatuses,
+        request: { outputFormatId: 'dataset.zip' },
+      });
+
+      expect(result.routePlans.find((routePlan) => routePlan.route === 'browser-export')).toMatchObject({
+        blocked: false,
+        blockerCount: 0,
+      });
+      expect(result.routePlans.find((routePlan) => routePlan.route === 'sidecar-export')).toMatchObject({
+        blocked: true,
+        blockerCount: 2,
+      });
+      expect(result.findings).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          route: 'sidecar-export',
+          reason: scenario.expectedReason,
+          processId: 'dataset-process',
+          operationId: 'exportDataset',
+        }),
+      ]));
+    }
+  });
+
+  it('blocks degraded process routes only when the declared operation explicitly requires non-degraded health', () => {
+    const degradedStatus: ProcessStatus = {
+      processId: 'dataset-process',
+      state: 'degraded',
+      message: 'Dataset process is running with a fallback encoder.',
+      healthCheck: 'encoder',
+    };
+
+    const result = planRender({
+      outputFormats: [renderDependentOutput()],
+      processes: [processDescriptor({ requiredCapabilities: ['process-health:non-degraded'] })],
+      processStatuses: [degradedStatus],
+      request: { outputFormatId: 'dataset.zip' },
+    });
+
+    expect(result.routePlans.find((routePlan) => routePlan.route === 'sidecar-export')).toMatchObject({
+      blocked: true,
+      blockerCount: 2,
+    });
+    expect(result.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        route: 'sidecar-export',
+        reason: 'process-degraded',
+        processId: 'dataset-process',
+        operationId: 'exportDataset',
+        detail: expect.objectContaining({
+          requireNonDegradedHealth: true,
+          healthCheck: 'encoder',
+          processState: 'degraded',
+        }),
+      }),
+    ]));
+  });
+
+  it('emits process-configuration-error only on routes declared by the output, not unrelated routes', () => {
+    const result = planRender({
+      outputFormats: [
+        renderDependentOutput({
+          availableRoutes: ['browser-export', 'sidecar-export'],
+          routeRequirementRoutes: ['sidecar-export'],
+        }),
+      ],
+      processes: [processDescriptor({ routes: ['browser-export'] })],
+      processStatuses: [{ processId: 'dataset-process', state: 'ready' }],
+      request: { outputFormatId: 'dataset.zip' },
+    });
+
+    expect(result.routePlans.find((routePlan) => routePlan.route === 'browser-export')).toMatchObject({
+      blocked: false,
+      blockerCount: 0,
+    });
+    expect(result.routePlans.find((routePlan) => routePlan.route === 'sidecar-export')).toMatchObject({
+      blocked: true,
+      blockerCount: 1,
+    });
+    expect(result.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        route: 'sidecar-export',
+        reason: 'process-configuration-error',
+        processId: 'dataset-process',
+        operationId: 'exportDataset',
+      }),
+    ]));
+    expect(result.blockers).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        route: 'browser-export',
+        reason: 'process-configuration-error',
+      }),
+    ]));
   });
 
   it('blocks required missing and stale render-group passes and ignores resolved or optional passes', () => {

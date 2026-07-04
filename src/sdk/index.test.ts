@@ -102,6 +102,8 @@ import type {
   SamplingConfig,
   SamplingResult,
   TimelineRenderPassSummary,
+  ProcessOutputKind,
+  ProcessLiveSourceDeclaration,
   ProcessSpec,
   ProcessContribution,
   ProcessStatus,
@@ -4134,6 +4136,18 @@ describe('Migration declaration types (index)', () => {
 
 describe('ProcessManifestEntry accepts structured operations and env fields', () => {
   it('constructs a full ProcessManifestEntry with env field spec', () => {
+    const liveOutputKinds: ProcessOutputKind[] = [
+      'material',
+      'live-source-structured',
+      'diagnostic',
+    ];
+    const liveSources: readonly ProcessLiveSourceDeclaration[] = [
+      {
+        sourceId: 'roundtrip-preview',
+        valueShape: 'structured',
+        sourceKind: 'generated',
+      },
+    ];
     const entry: ProcessManifestEntry = {
       id: 'full-mcp',
       label: 'Full MCP',
@@ -4162,10 +4176,11 @@ describe('ProcessManifestEntry accepts structured operations and env fields', ()
           id: 'roundtrip',
           label: 'Roundtrip',
           description: 'Execute a roundtrip operation',
-          outputKinds: ['material', 'sidecar', 'diagnostic'],
+          outputKinds: liveOutputKinds,
           requiredCapabilities: ['sidecar-export'],
         },
       ],
+      liveSources,
       capabilities: {
         routes: ['browser-export', 'sidecar-export'] as any,
         determinism: 'process-dependent' as any,
@@ -4181,6 +4196,8 @@ describe('ProcessManifestEntry accepts structured operations and env fields', ()
     expect(entry.env![0].secret).toBe(true);
     expect(entry.operations).toHaveLength(1);
     expect(entry.operations![0].id).toBe('roundtrip');
+    expect(entry.operations![0].outputKinds).toEqual(liveOutputKinds);
+    expect(entry.liveSources).toEqual(liveSources);
     expect(entry.capabilities?.routes).toHaveLength(2);
   });
 });

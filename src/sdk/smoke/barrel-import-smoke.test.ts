@@ -122,6 +122,15 @@ import type {
   SamplingConfig,
   SamplingResultItem,
   SamplingResult,
+  ProcessOutputKind,
+  ProcessLiveSourceValueShape,
+  ProcessLiveSourceDeclaration,
+  ProcessLiveSourceBinding,
+  ProcessContribution,
+  ProcessSpawnConfig,
+  ProcessSpec,
+  ProcessLifecycleState,
+  ProcessStatus,
   ProcessRoundtripRequest,
   ProcessRoundtripAction,
   ProcessRoundtripResult,
@@ -414,6 +423,10 @@ import type {
 import type {
   ProcessContribution as ProcessContribution_Direct,
   ProcessSpawnConfig as ProcessSpawnConfig_Direct,
+  ProcessOutputKind as ProcessOutputKind_Direct,
+  ProcessLiveSourceValueShape as ProcessLiveSourceValueShape_Direct,
+  ProcessLiveSourceDeclaration as ProcessLiveSourceDeclaration_Direct,
+  ProcessLiveSourceBinding as ProcessLiveSourceBinding_Direct,
   ProcessSpec as ProcessSpec_Direct,
   ProcessLifecycleState as ProcessLifecycleState_Direct,
   ProcessStatus as ProcessStatus_Direct,
@@ -1932,16 +1945,32 @@ describe('M2b barrel-import smoke — process family', () => {
   });
 
   it('ProcessSpec is importable from the public barrel', () => {
+    const outputKinds: ProcessOutputKind[] = ['live-source-scalar'];
+    const valueShape: ProcessLiveSourceValueShape = 'scalar';
+    const liveSource: ProcessLiveSourceDeclaration = {
+      sourceId: 'preview-scalar',
+      valueShape,
+      sourceKind: 'generated',
+    };
     const spec: ProcessSpec = {
       id: 'my-process',
       label: 'My Process',
       spawn: { command: 'node' },
       protocol: 'stdio-jsonrpc',
       restartPolicy: 'on-failure',
+      operations: [
+        {
+          id: 'stream-preview',
+          label: 'Stream Preview',
+          outputKinds,
+        },
+      ],
+      liveSources: [liveSource],
     };
     expect(spec.id).toBe('my-process');
     expect(spec.protocol).toBe('stdio-jsonrpc');
     expect(spec.restartPolicy).toBe('on-failure');
+    expect(spec.liveSources?.[0]).toEqual(liveSource);
   });
 
   it('ProcessLifecycleState is importable from the public barrel', () => {
@@ -1959,6 +1988,13 @@ describe('M2b barrel-import smoke — process family', () => {
     };
     expect(status.processId).toBe('proc-1');
     expect(status.state).toBe('ready');
+  });
+
+  it('ProcessLiveSourceBinding is importable from the public barrel', () => {
+    const binding: ProcessLiveSourceBinding = {
+      processId: 'my-process',
+    };
+    expect(binding.processId).toBe('my-process');
   });
 
   // ── direct import coverage ──────────────────────────────────────────────────
@@ -1989,6 +2025,22 @@ describe('M2b barrel-import smoke — process family', () => {
   it('ProcessLifecycleState is importable from canonical direct path', () => {
     const state: ProcessLifecycleState_Direct = 'stopped';
     expect(state).toBe('stopped');
+  });
+
+  it('process live-source declaration types are importable from canonical direct path', () => {
+    const outputKinds: ProcessOutputKind_Direct[] = ['live-source-structured'];
+    const valueShape: ProcessLiveSourceValueShape_Direct = 'structured';
+    const liveSource: ProcessLiveSourceDeclaration_Direct = {
+      sourceId: 'direct-preview',
+      valueShape,
+    };
+    const binding: ProcessLiveSourceBinding_Direct = {
+      processId: 'direct-process',
+    };
+
+    expect(outputKinds).toEqual(['live-source-structured']);
+    expect(liveSource.valueShape).toBe('structured');
+    expect(binding.processId).toBe('direct-process');
   });
 });
 

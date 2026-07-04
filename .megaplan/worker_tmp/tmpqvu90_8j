@@ -1,0 +1,464 @@
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+You are an independent reviewer. Critique the plan against the actual repository.
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M6a: Process Runtime Core
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Plan:
+        # Implementation Plan: M6a Process Runtime Core
+
+## Overview
+M6a adds a host-owned trusted process runtime outside the V1 composition SDK. The current repo already has the process SDK type surface and planner status consumption path, but `src/tools/video-editor/runtime/families/processAdapter.ts` is still a delegated M12 placeholder and there is no process manager, stdio JSON-RPC transport, or `process.result.attach` implementation.
+
+This plan preserves the North Star: processes stay host-owned, declared, trusted, local, and namespaced under process-family contracts. Process outputs enter the graph through material/artifact/result-attach contracts; processes never mutate raw timeline internals or gain public `TimelinePatch` rights. The stage narrows output-format sidecar integration and UI/dashboard work out of scope; that is a bridge, not a contradiction, because the runtime core still records sidecars/artifacts and leaves output-format sidecar orchestration for a later milestone.
+
+## Phase 1: Runtime Foundation
+
+### Step 1: Add lifecycle and JSON-RPC transport primitives (`src/tools/video-editor/runtime/processes/`)
+**Scope:** Medium  
+**Complexity: 3**
+1. Create `src/tools/video-editor/runtime/processes/lifecycle.ts` with the 8-state lifecycle contract, transition validation, blocker classification helpers, and terminal/late-message helpers.
+2. Create `src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.ts` for newline-delimited UTF-8 JSON-RPC 2.0 stdio framing, request/response correlation, progress/log notifications, cancellation notification/request support, protocol-error conversion, and process-exit detection.
+3. Create `src/tools/video-editor/runtime/processes/types.ts` and `src/tools/video-editor/runtime/processes/index.ts` for host-internal runtime types without leaking process execution into the SDK.
+4. Add focused tests for framing, malformed JSON, missing `jsonrpc`, unknown method, timeout, process exit, correlation fields, and notification handling.
+
+### Step 2: Implement the trusted ProcessManager (`src/tools/video-editor/runtime/processes/ProcessManager.ts`)
+**Scope:** Large  
+**Complexity: 4**
+1. Add `ProcessManager` that only spawns declared `ProcessSpec` descriptors with `protocol: 'stdio-jsonrpc'` using `child_process.spawn` and `stdio: 'pipe'`.
+2. Implement start, health, execute, cancel, shutdown, graceful teardown, timeout, restart-policy hooks, current `ProcessStatus` projection, and late result/progress/log diagnostics.
+3. Enforce task/process/operation correlation on every task-scoped message before accepting responses or notifications.
+4. Keep status state namespaced under process contracts and do not map lifecycle states to material statuses.
+5. Add manager tests using a lightweight in-test fake transport first, leaving fixture-spawn integration for later steps.
+
+### Step 3: Add payload limit handling (`src/tools/video-editor/runtime/processes/payloadLimits.ts`)
+**Scope:** Medium  
+**Complexity: 3**
+1. Add a small host-side result normalizer that rejects oversized inline blobs in `ProcessRoundtripResult` and requires artifact locator references for payloads over the implementation limit.
+2. Keep the limit explicit and testable; avoid fallback encoding or silent truncation.
+3. Add tests proving oversized returned materials/artifacts become failed diagnostics unless an artifact locator is present.
+
+## Phase 2: Host Wiring and Planner Projection
+
+### Step 4: Replace the delegated process adapter with runtime-bridged projection (`src/tools/video-editor/runtime/families/processAdapter.ts`)
+**Scope:** Medium  
+**Complexity: 3**
+1. Replace the placeholder adapter metadata with a real runtime-bridged adapter that normalizes process descriptors and projects live `ProcessStatus` overlays supplied by the host runtime.
+2. Keep the existing `buildProcessDescriptors()` path for descriptor identity and ordering.
+3. Update adapter registry tests so process is no longer classified as delegated M12 placeholder.
+
+### Step 5: Update family sequence and assembly routing (`FamilyContributionSequence.ts`, `FamilyRuntimeAssembly.ts`)
+**Scope:** Medium  
+**Complexity: 3**
+1. Keep the reserved process collection pathway for compatibility, but stop emitting the M12 inactive-reserved diagnostic when process adapter maturity is runtime-bridged.
+2. Ensure process contributions still flow through the existing `reservedProcess` dispatch into `processDescriptors` to avoid cascading assembly changes.
+3. Add process-specific sequence/assembly tests proving active process descriptors appear in runtime config and existing output-format/search-provider reserved behavior is unchanged.
+
+### Step 6: Back process commands with real invocation (`processCommandRegistration.ts`)
+**Scope:** Medium  
+**Complexity: 3**
+1. Create `src/tools/video-editor/runtime/processes/processCommandServices.ts` implementing `ProcessCommandServices.invokeProcess` through `ProcessManager.execute()`.
+2. Return `ProcessRoundtripResult` instead of `unknown` from the service contract.
+3. Preserve current command gating semantics where `ready`, `busy`, and `degraded` are invokable, while other lifecycle states block.
+4. Extend process command tests for successful roundtrip, failed roundtrip, cancellation, and unavailable status.
+
+### Step 7: Extend blocker and diagnostic vocabulary (`renderability.ts`, `diagnostics.ts`, `renderPlanner.ts`)
+**Scope:** Medium  
+**Complexity: 3**
+1. Add process-specific `RenderBlockerReason` values: `process-not-installed`, `process-failed`, `process-degraded`, and `process-configuration-error`, preserving existing reasons.
+2. Add `processId`, `operationId`, and `taskId` fields to `CompositionDiagnosticDetail`.
+3. Update `renderPlanner.ts` process blocker emission so route-scoped blockers only apply to routes declared in `ProcessOperationSpec.routes` and never block unrelated routes.
+4. Keep `ready` unblocked and `degraded` warning-only for planner execution, unless a route explicitly requires non-degraded health.
+5. Add planner tests for missing, not-installed, stopped, busy, failed, degraded warning, configuration-error, and route scoping.
+
+## Phase 3: Result Attachment Contract
+
+### Step 8: Implement host-internal `process.result.attach` (`src/tools/video-editor/runtime/composition/processResultAttach.ts`)
+**Scope:** Large  
+**Complexity: 4**
+1. Add a host-internal attach record contract with `kind: 'process.result.attach'` plus compatibility alias `process.attach-result`.
+2. Record `processRef`, `processId`, `operationId`, `taskId`, returned material refs, artifact refs, sidecars, diagnostics, logs, progress, available actions, metadata, and provenance.
+3. Validate that attach records reference declared process descriptors and matching operation IDs.
+4. Reject any direct timeline placement mutation in this contract.
+
+### Step 9: Bridge attached results into material/artifact contracts (`patchPreview.ts`, material runtime)
+**Scope:** Large  
+**Complexity: 4**
+1. Follow the existing `GraphMaterialAttachOp` precedent in `patchPreview.ts` so result attachment is internal graph/runtime plumbing, not a public `TimelinePatchOpFamily` member.
+2. Map successful returned material outputs to existing M3a `resolved` material status; map failed executions to `failed` for pending materials owned by that process.
+3. Record returned artifacts and sidecars through existing M3c artifact contracts without creating a new material status vocabulary.
+4. Add tests proving timeline-facing patches consume only material/artifact refs after attachment and that direct process mutation is not accepted.
+
+## Phase 4: Process-Backed Live Sources
+
+### Step 10: Extend process live-source declaration types (`processes.ts`, `references.ts`)
+**Scope:** Medium  
+**Complexity: 3**
+1. Extend `ProcessOperationSpec.outputKinds` with `live-source-scalar`, `live-source-vector`, and `live-source-structured`.
+2. Add an optional data-only live-source declaration field to `ProcessSpec` for advertised process-backed source IDs and value shape.
+3. Extend or supplement `LiveSourceRef` with an optional process binding that remains data-only and does not import host runtime.
+4. Add type-level/runtime conformance tests for the extended SDK surface.
+
+### Step 11: Gate process-backed live source resolution on health (`liveDataRegistry.ts`, reference resolution)
+**Scope:** Medium  
+**Complexity: 3**
+1. Add a host resolver that binds `LiveSourceRef` to process-backed live sources only when the owning process status is `ready`.
+2. Ensure V1/M2 target-path consumers can read process-backed scalar/vector/structured live data only through `LiveSourceRef`.
+3. Emit process-correlated diagnostics when the process is absent, unhealthy, or advertises no matching live source.
+4. Add tests for ready, not-installed, failed, degraded, and unknown-source cases.
+
+## Phase 5: Fixture Process and Integration Coverage
+
+### Step 12: Add repo-controlled JSON-RPC fixture process (`tests/fixtures/video-editor/process-fixture.ts`)
+**Scope:** Large  
+**Complexity: 4**
+1. Create a standalone Node/TypeScript fixture implementing the frozen V0 newline-delimited stdio JSON-RPC protocol.
+2. Support `health`, `execute`, `cancel`, and `shutdown` methods; progress/log notifications; cancellation as request and notification; all four error classes; all eight lifecycle states; and configurable late-result/late-notification scenarios.
+3. Add `tests/fixtures/video-editor/process-fixture-descriptor.ts` mirroring the canonical `ProcessSpec` shape from `src/examples/process-example.ts`.
+4. Keep the fixture deterministic and repo-controlled; no shell escape or arbitrary command execution.
+
+### Step 13: Add process manager integration tests with the fixture
+**Scope:** Large  
+**Complexity: 4**
+1. Add lifecycle tests proving fixture transitions through `not-installed`, `stopped`, `starting`, `ready`, `busy`, `degraded`, `failed`, and `stopping` with correct health responses.
+2. Add method tests for `health`, `execute`, `cancel`, and `shutdown` roundtrips.
+3. Add correlation tests for request/response/notification/error task/process/operation fields.
+4. Add error tests for `protocol-error`, `timeout`, `process-exited`, and `invalid-request` JSON-RPC error shapes.
+5. Add late-result tests proving terminal-state results/progress/logs are ignored and recorded as recoverable protocol race diagnostics.
+
+### Step 14: Add end-to-end runtime/planner/attach tests
+**Scope:** Large  
+**Complexity: 4**
+1. Add integration coverage proving `ProcessManager` spawns the fixture, establishes health, invokes through `ProcessCommandServices`, projects `ProcessStatus` into planner input, and shuts down gracefully.
+2. Add `process.result.attach` end-to-end coverage for returned materials, artifacts, sidecars, diagnostics, and provenance.
+3. Add route-blocker tests proving blockers do not fire on routes that do not require the process.
+4. Add adapter-bridging tests proving no regressions in placeholder-dependent output-format/search-provider behavior.
+
+## Execution Order
+1. Land lifecycle and transport primitives first because all higher-level runtime work depends on their contracts.
+2. Add `ProcessManager` and payload limits before changing adapters or command services, so host wiring has a real backend.
+3. Bridge the process adapter and family assembly only after statuses can be projected from a manager.
+4. Add blocker/diagnostic vocabulary before result attachment tests, so failures carry process correlation.
+5. Implement `process.result.attach` before live-source integration, because both need stable process provenance and diagnostics.
+6. Build the fixture after the manager contract stabilizes, then use it to replace fake-transport confidence with stdio integration confidence.
+
+## Validation Order
+1. Run focused unit tests for lifecycle and transport first: `vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes/lifecycle.test.ts src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.test.ts`.
+2. Run process manager and command tests: `vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes/ProcessManager.test.ts src/tools/video-editor/runtime/processCommandRegistration.test.ts`.
+3. Run composition attach and live-source tests: `vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/processResultAttach.test.ts src/tools/video-editor/runtime/processes/liveSourceBinding.test.ts`.
+4. Run planner/family integration tests: `vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts src/tools/video-editor/runtime/families/FamilyContributionSequence.process.test.ts src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.process.test.ts`.
+5. Run fixture integration tests: `vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes/processFixture.integration.test.ts`.
+6. Finish with `npm run lint` and `npm test` after scoped tests pass.
+
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-04T19:01:53Z",
+  "hash": "sha256:e8db84e5365a6762841c16607ecca863a4546546b537f19e18aad5f3a6c63e60",
+  "questions": [
+    "Should `ProcessManager` eagerly start health checks for all declared trusted process descriptors when runtime assembly completes, or lazily spawn only when a command/route first requires the process?",
+    "What exact inline payload size limit should M6a enforce before requiring artifact locators?",
+    "Should `degraded` remain globally non-blocking with warning-only planner behavior, or can individual process operations declare that degraded health blocks specific routes?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "A host-owned ProcessManager can spawn only declared trusted `protocol: 'stdio-jsonrpc'` process descriptors, perform health/execute/cancel/shutdown over newline-delimited stdio JSON-RPC, and expose current `ProcessStatus` for all eight lifecycle states.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "observe_runtime_logs"
+      ]
+    },
+    {
+      "criterion": "Every accepted task-scoped JSON-RPC request, response, notification, and error carries task/process/operation correlation, and missing or mismatched correlation is rejected with a diagnostic or protocol error.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Late results, progress, or logs after a terminal operation state are ignored for state mutation and recorded as recoverable protocol race diagnostics.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "observe_runtime_logs"
+      ]
+    },
+    {
+      "criterion": "Process execution results over the implementation payload limit return artifact locator references instead of inline blobs, with tests covering rejected oversized inline payloads.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The process adapter is runtime-bridged rather than delegated M12 placeholder, and process descriptors/statuses flow into runtime assembly and planner input without regressing output-format/search-provider reserved behavior.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Route-scoped process blockers fire only for routes that require the process and cover missing, not-installed, stopped, busy, failed, degraded warning, and configuration-error cases.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`process.result.attach` and `process.attach-result` are host-internal attach contracts, are not added to public `TimelinePatchOpFamily`, and record process ref, operation id, task id, returned refs, diagnostics, and provenance.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Returned process materials and artifacts enter existing M3a/M3c material/artifact contracts without adding or changing the locked material status vocabulary `missing|pending|resolved|stale|failed`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Process-backed scalar/vector/structured live sources are advertised by trusted descriptors and can be consumed through `LiveSourceRef` only when process health is established as ready.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The repo-controlled fixture process exercises all V0 protocol methods, lifecycle states, error classes, cancellation modes, progress/log notifications, and late-result behavior through integration tests.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "observe_runtime_logs"
+      ]
+    },
+    {
+      "criterion": "Existing process command tests still pass, and command invocation returns typed `ProcessRoundtripResult` through real process services rather than an `unknown` stub.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The implementation remains local/trusted only and does not add sandbox, marketplace, remote execution, arbitrary shell access, dashboard UI, or output-format sidecar orchestration claims.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "New runtime modules keep process protocol, lifecycle, manager, payload limit, and live-source responsibilities separated enough for focused unit tests.",
+      "priority": "should",
+      "requires": [
+        "subjective_judgment",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Fixture tests are deterministic and do not depend on wall-clock sleeps beyond bounded timeout assertions.",
+      "priority": "should",
+      "requires": [
+        "run_tests",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Full `npm test` and `npm run lint` pass before handoff.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "run_linter",
+        "read_build_output"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Keep the existing reserved process projection source in `FamilyRuntimeAssembly.ts`, but remove the inactive M12 diagnostic path once the adapter is runtime-bridged.",
+    "Material outputs map to existing `resolved` material status on successful process completion; failed process execution maps pending materials for that process to existing `failed`; sidecar, diagnostic, planner-result, and tool-result outputs are recorded as result/provenance data rather than material statuses.",
+    "Place the fixture at `tests/fixtures/video-editor/process-fixture.ts` with a co-located descriptor at `tests/fixtures/video-editor/process-fixture-descriptor.ts`.",
+    "Default ProcessManager startup should be lazy unless the user answers otherwise, because it minimizes host process churn while still supporting route-required health checks when planner/runtime asks for status.",
+    "Use a small explicit test payload limit for unit coverage and a larger production default constant; both must go through the same normalizer.",
+    "Do not link open tickets automatically. Ticket `01KS384XKZNEWQRSXN2NXQ0DTJ` can be proposed as related but not `resolves_on_complete`; ticket `01KV8XVYW2EYDDDY30V48YX520` appears unrelated to this implementation."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/processCommandRegistration.test.ts",
+        "reason": "Command service invocation contract changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+        "reason": "Internal attach flow changes adjacent to material attach."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/referenceResolver.test.ts",
+        "reason": "Process-backed LiveSourceRef resolution."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "reason": "Process status blocker and route scoping behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+        "reason": "Planner graph integration with process statuses and materials."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts",
+        "reason": "Process adapter maturity changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/video/families/familyDefinitions.test.ts",
+        "reason": "SDK process output kind/live-source contract updates."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/video/families/processes.ts",
+      "src/sdk/video/composition/references.ts",
+      "src/sdk/video/rendering/renderability.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.ts",
+      "src/tools/video-editor/runtime/composition/processResultAttach.ts",
+      "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+      "src/tools/video-editor/runtime/composition/referenceResolver.ts",
+      "src/tools/video-editor/runtime/processes/types.ts",
+      "src/tools/video-editor/runtime/processes/lifecycle.ts",
+      "src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.ts",
+      "src/tools/video-editor/runtime/processes/payloadLimits.ts",
+      "src/tools/video-editor/runtime/processes/ProcessManager.ts",
+      "src/tools/video-editor/runtime/processes/processCommandServices.ts",
+      "src/tools/video-editor/runtime/processes/liveSourceBinding.ts",
+      "src/tools/video-editor/runtime/processes/index.ts",
+      "src/tools/video-editor/runtime/families/processAdapter.ts",
+      "src/tools/video-editor/runtime/families/familyAdapterRegistry.ts",
+      "src/tools/video-editor/runtime/families/FamilyContributionSequence.ts",
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+      "src/tools/video-editor/runtime/extensionSurface.ts",
+      "src/tools/video-editor/runtime/processCommandRegistration.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/liveDataRegistry.ts",
+      "tests/fixtures/video-editor/process-fixture.ts",
+      "tests/fixtures/video-editor/process-fixture-descriptor.ts",
+      "src/tools/video-editor/runtime/processes/lifecycle.test.ts",
+      "src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.test.ts",
+      "src/tools/video-editor/runtime/processes/payloadLimits.test.ts",
+      "src/tools/video-editor/runtime/processes/ProcessManager.test.ts",
+      "src/tools/video-editor/runtime/processes/processFixture.integration.test.ts",
+      "src/tools/video-editor/runtime/processes/liveSourceBinding.test.ts",
+      "src/tools/video-editor/runtime/composition/processResultAttach.test.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+      "src/tools/video-editor/runtime/composition/referenceResolver.test.ts",
+      "src/tools/video-editor/runtime/processCommandRegistration.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+      "src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts",
+      "src/tools/video-editor/runtime/families/FamilyContributionSequence.process.test.ts",
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.process.test.ts",
+      "src/sdk/video/families/familyDefinitions.test.ts"
+    ],
+    "always_run": [
+      "npm run lint",
+      "npm test"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/sdk/video/composition/references.ts, src/sdk/video/families/familyDefinitions.test.ts, src/sdk/video/families/processes.ts, src/sdk/video/rendering/renderability.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/materialRuntime.ts, src/tools/video-editor/runtime/composition/patchPreview.test.ts, src/tools/video-editor/runtime/composition/patchPreview.ts, src/tools/video-editor/runtime/composition/processResultAttach.test.ts, src/tools/video-editor/runtime/composition/processResultAttach.ts, src/tools/video-editor/runtime/composition/referenceResolver.test.ts, src/tools/video-editor/runtime/composition/referenceResolver.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/families/FamilyContributionSequence.process.test.ts, src/tools/video-editor/runtime/families/FamilyContributionSequence.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.process.test.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts, src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts, src/tools/video-editor/runtime/families/familyAdapterRegistry.ts, src/tools/video-editor/runtime/families/processAdapter.ts, src/tools/video-editor/runtime/liveDataRegistry.ts, src/tools/video-editor/runtime/processCommandRegistration.test.ts, src/tools/video-editor/runtime/processCommandRegistration.ts, src/tools/video-editor/runtime/processes/ProcessManager.test.ts, src/tools/video-editor/runtime/processes/ProcessManager.ts, src/tools/video-editor/runtime/processes/index.ts, src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.test.ts, src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.ts, src/tools/video-editor/runtime/processes/lifecycle.test.ts, src/tools/video-editor/runtime/processes/lifecycle.ts, src/tools/video-editor/runtime/processes/liveSourceBinding.test.ts, src/tools/video-editor/runtime/processes/liveSourceBinding.ts, src/tools/video-editor/runtime/processes/payloadLimits.test.ts, src/tools/video-editor/runtime/processes/payloadLimits.ts, src/tools/video-editor/runtime/processes/processCommandServices.ts, src/tools/video-editor/runtime/processes/processFixture.integration.test.ts, src/tools/video-editor/runtime/processes/types.ts, src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/renderPlanner.ts, tests/fixtures/video-editor/process-fixture-descriptor.ts, tests/fixtures/video-editor/process-fixture.ts. Candidate: The change is cross-cutting across SDK contracts, runtime process execution, planner blockers, composition attachment, and tests. Scoped Vitest selectors give fast feedback, but the public SDK/runtime surface impact warrants full lint and test fallback before completion. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/tools/video-editor/runtime/processes/lifecycle.test.ts, src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.test.ts, src/tools/video-editor/runtime/processes/payloadLimits.test.ts, src/tools/video-editor/runtime/processes/ProcessManager.test.ts, src/tools/video-editor/runtime/processes/processFixture.integration.test.ts, src/tools/video-editor/runtime/composition/processResultAttach.test.ts, src/tools/video-editor/runtime/processes/liveSourceBinding.test.ts, src/tools/video-editor/runtime/families/FamilyContributionSequence.process.test.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.process.test.ts.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/tools/video-editor/runtime/processes/lifecycle.test.ts",
+      "src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.test.ts",
+      "src/tools/video-editor/runtime/processes/payloadLimits.test.ts",
+      "src/tools/video-editor/runtime/processes/ProcessManager.test.ts",
+      "src/tools/video-editor/runtime/processes/processFixture.integration.test.ts",
+      "src/tools/video-editor/runtime/composition/processResultAttach.test.ts",
+      "src/tools/video-editor/runtime/processes/liveSourceBinding.test.ts",
+      "src/tools/video-editor/runtime/families/FamilyContributionSequence.process.test.ts",
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.process.test.ts"
+    ]
+  },
+  "structure_warnings": []
+}
+
+        Plan structure warnings from validator:
+        []
+
+        Existing flags:
+        []
+
+
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m6a-process-runtime-core-20260704-1849/critique_check_correctness.json
+Read this file first — it contains 1 check with a question and guidance.
+Investigate only this check, then add your findings to the `findings` array for that check.
+
+Self-monitor for non-convergence before spending more tool calls. This is NOT about duration or difficulty: hard checks that are still making new progress should continue. But if you are spinning — re-reading the same file 3+ times, searching for a file the plan says to CREATE, needing a sibling/external repo or path outside the project root, or making many tool calls without getting closer to a verdict — STOP investigating. Not finding what you need is a finding; emit exactly one non-flagged finding whose detail starts `unverifiable: ` and explains what you could not resolve and exactly why. An unverifiable check is a complete, valid result for this worker; normal code ambiguity that you can inspect should still be flagged per the usual "when in doubt, flag it" rule.
+
+Check ID: correctness
+Question: Are the proposed changes technically correct?
+Guidance: Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases — not just the one reported in the issue.
+
+Each finding needs:
+- "detail": what you specifically checked and what you found (at least a full sentence)
+- "flagged": true if this describes a difference, risk, or tension — even if you think it's justified. false only if purely informational with no possible downside.
+- This check must end with at least one finding. Never leave its `findings` array empty. If you found no issue, add one detailed `flagged: false` finding explaining what you checked and why it appears clear.
+
+When in doubt, flag it — the gate can accept tradeoffs, but it can't act on findings it never sees.
+
+Good: {"detail": "Checked callers of nthroot_mod in solveset.py line 1205 — passes prime moduli only, consistent with the fix.", "flagged": false}
+Good: {"detail": "The fix handles empty tuples but not single-element tuples which need a trailing comma.", "flagged": true}
+Bad: {"detail": "No issue found", "flagged": false}  ← too brief, will be rejected
+Bad: {"detail": "The hints suggest approach X but the plan uses Y. However Y is consistent with X's intent.", "flagged": false}  ← a different approach than the hints IS a flag. You found a divergence — flag it. The gate decides if it's acceptable.
+
+After filling in checks, add any additional concerns to the `flags` array (e.g., security, performance, dependencies).
+Use the standard format (id, concern, category, severity_hint, evidence). This array can be empty.
+
+Workflow: read the file → investigate → read file again → add finding → write file back. Repeat for this check.
+
+        Additional guidelines:
+        - Robustness level: thorough. Use balanced judgment. Flag significant risks, but do not spend flags on minor polish or executor-obvious boilerplate.
+        - Over-engineering: prefer the simplest approach that fully solves the problem.
+        - Reuse existing flag IDs when the same concern is still open.
+        - `verified_flag_ids`: list flag IDs from prior iterations that the revised plan actually resolves (e.g., if the plan was revised to fix FLAG-001, and you confirm the fix is correct, include "FLAG-001"). Only include flags you've verified — don't guess.
+        - Verify that the plan follows the expected structure when validator warnings or the outline suggest drift.
+        - Additional flags may use these categories: correctness, security, completeness, performance, maintainability, other.
+        - Focus on concrete issues, not structural formatting.
+        - Complexity audit: flag (a) missing complexity scores on plan steps, (b) inflated scores that would waste premium models on trivial work, and (c) under-rated work that should not run on cheap models. Use category `completeness`.

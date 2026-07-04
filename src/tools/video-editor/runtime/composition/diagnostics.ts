@@ -10,7 +10,7 @@
  *
  * Structured detail fields are standardised across all composition
  * diagnostics: `nodeId`, `refKey`, `refState`, `scope`, `extensionId`,
- * `contributionId`, and `shaderId`.
+ * `contributionId`, `shaderId`, `processId`, `operationId`, and `taskId`.
  *
  * @module composition/diagnostics
  * @hostOwned — NOT exported through public SDK contracts.
@@ -224,6 +224,12 @@ export interface CompositionDiagnosticDetail {
   contributionId?: string;
   /** Shader ID when the diagnostic relates to a shader assignment. */
   shaderId?: string;
+  /** Process ID when the diagnostic relates to a trusted local process. */
+  processId?: string;
+  /** Process operation ID when the diagnostic relates to a trusted local process task. */
+  operationId?: string;
+  /** Task/request ID when the diagnostic relates to a correlated process task. */
+  taskId?: string;
   /** Expected value type for target capability validation. */
   expectedValueType?: string;
   /** Actual value type that failed validation. */

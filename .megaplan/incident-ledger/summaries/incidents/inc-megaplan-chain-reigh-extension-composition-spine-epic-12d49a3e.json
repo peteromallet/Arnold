@@ -1,7 +1,81 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 3,
+  "evidence_ref_count": 26,
   "evidence_refs": [
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260703T192656Z-audit.json",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+    },
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260703T192656Z-audit.json",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+    },
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260704T012657Z-audit.json",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+    },
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260704T012657Z-audit.json",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+    },
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260704T072657Z-audit.json",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+    },
+    {
+      "kind": "audit_report_path",
+      "path": "/workspace/audit-reports/20260704T072657Z-audit.json",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
+      "status": "2026-07-04T10:52:33.349321+00:00"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
+      "status": "2026-07-04T10:52:33.349321+00:00"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e.json",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e.json",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+    },
+    {
+      "kind": "meta_record_path",
+      "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/fa112169-7b6f-4ac6-aac5-841086ddb4be.json",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+    },
+    {
+      "kind": "meta_record_path",
+      "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/fa112169-7b6f-4ac6-aac5-841086ddb4be.json",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/incident-ledger/summaries/problems/problem-71f954a05546.json",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/incident-ledger/summaries/problems/problem-71f954a05546.json",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
     {
       "kind": "watchdog_observation",
       "status": "dispatched"
@@ -12,14 +86,52 @@
     },
     {
       "kind": "watchdog_observation",
+      "status": "progress_stall"
+    },
+    {
+      "kind": "watchdog_observation",
       "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260704T104857Z.json",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260704T104857Z.json",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260704T105322Z.json",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260704T105322Z.json",
+      "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
     }
   ],
-  "generated_at": "2026-07-04T11:05:18.054919+00:00",
+  "generated_at": "2026-07-04T19:30:40.052901+00:00",
   "incident_id": "inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
   "kind": "incident_summary",
   "latest_actor": "watchdog",
-  "next_expected_event": "immediate_repair.repair_attempt",
+  "next_expected_event": "meta_repair.repair_attempt",
   "outcome": "dispatched",
   "placeholders": {
     "install_freshness": "unknown",
@@ -33,10 +145,10 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:1394ceb613778ee090f924dd795932b9f075c7e13d7f4cc255467fdfa20d740d",
-    "last_seq": 2,
+    "digest": "sha256:bd0888167523154db74c22a38aba6da50a577cee6b52f771b6101a9bda2ee152",
+    "last_seq": 7,
     "projection": "incidents"
   },
   "state": "dispatch",
-  "summary_text": "inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e: repair loop background-dispatched"
+  "summary_text": "inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e: meta-repair background-dispatched"
 }

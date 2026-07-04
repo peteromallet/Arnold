@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createCommandRegistry } from './commandRegistry';
 import { registerProcessOperationCommands } from './processCommandRegistration';
 import type { VideoEditorProcessDescriptor } from './extensionSurface';
+import type { ProcessRoundtripResult } from '@reigh/editor-sdk';
 
 function process(): VideoEditorProcessDescriptor {
   return {
@@ -31,6 +32,17 @@ function process(): VideoEditorProcessDescriptor {
   };
 }
 
+function completedResult(overrides: Partial<ProcessRoundtripResult> = {}): ProcessRoundtripResult {
+  return {
+    requestId: 'req-1',
+    processId: 'ffmpeg-local',
+    operationId: 'probe',
+    status: 'completed',
+    returnedMaterials: [],
+    ...overrides,
+  };
+}
+
 describe('registerProcessOperationCommands', () => {
   it('discovers process operations through the command registry with unavailable metadata', async () => {
     const registry = createCommandRegistry();
@@ -38,7 +50,7 @@ describe('registerProcessOperationCommands', () => {
       commandRegistry: registry,
       processes: [process()],
       processStatuses: [{ processId: 'ffmpeg-local', state: 'not-installed', installHint: 'Install ffmpeg' }],
-      services: { invokeProcess: vi.fn() },
+      services: { invokeProcess: vi.fn().mockResolvedValue(completedResult()) },
     });
 
     const snapshot = registry.getSnapshot();
@@ -52,7 +64,7 @@ describe('registerProcessOperationCommands', () => {
 
   it('reports schema validation failures and dispatches successful operations through invokeProcess', async () => {
     const registry = createCommandRegistry();
-    const invokeProcess = vi.fn().mockResolvedValue({ status: 'completed' });
+    const invokeProcess = vi.fn().mockResolvedValue(completedResult());
     registerProcessOperationCommands({
       commandRegistry: registry,
       processes: [process()],

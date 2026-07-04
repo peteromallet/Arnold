@@ -1,0 +1,304 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `plan`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m6a-process-runtime-core-20260704-1849`
+Current milestone: `m6a-process-runtime-core`
+
+### Phase Instruction
+Build a plan that advances the local brief while preserving the North Star. If scope is narrowed, state whether the narrowing is a bridge or a contradiction.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are creating an implementation plan for the following idea.
+
+        Engineering brief produced from the codebase and task details:
+
+        ### Task Summary
+        M6a introduces the trusted process runtime core: a host-owned process manager with JSON-RPC 2.0 stdio protocol, lifecycle state machine (8 states), route-scoped blockers, process.result.attach host-internal contract, and a repo-controlled fixture process for protocol validation. The SDK type surface (ProcessSpec, ProcessStatus, ProcessLifecycleState, ProcessRoundtripRequest/Result) and the planner's processStatuses consumption path are already in place. The gap is entirely on the host runtime side — the process adapter is a delegated M12 placeholder, no process manager exists, no stdio transport is implemented, and process.result.attach has no code. The fixture process must be produced as a concrete artifact exercising the frozen V0 JSON-RPC protocol.
+
+        ### Key Evidence
+        - No process manager, stdio transport, or process.result.attach implementation exists anywhere in the codebase. The processAdapter is a delegated placeholder expiring at M12 with the explicit comment 'Process execution is reserved for M12; only declarations are surfaced for planning.' The ProcessInvocationAdapter stub always returns a pending diagnostic. (source: processAdapter.ts:12-23, agentToolInvocationAdapters.ts:305-333, familyAdapterRegistry.ts:50; relevance: high)
+- The SDK type surface is fully defined and matches the frozen V0 protocol document: ProcessLifecycleState with all 8 states, ProcessStatus as discriminated union, ProcessSpec with protocol:'stdio-jsonrpc' discriminator and spawn/shutdown/restartPolicy fields, ProcessRoundtripRequest/Result correlation model, ProcessOperationSpec with outputKinds, and progress/log payload shapes. (source: processes.ts:31-129, capabilities.ts:36-49/242-276; relevance: high)
+- The render planner already consumes processStatuses via RenderPlannerInput and uses createProcessStatusMap() to gate execution. processStatusBlocks() returns true for everything except 'ready' and 'degraded'. The planner emits process-dependent blockers, route-scoped blockers for missing/failed processes, and degraded warnings. No planner changes are needed for the status projection path. (source: renderPlanner.ts:69/871-878/1006-1008/1311-1448; relevance: high)
+- The process.result.attach contract must be a host-internal record contract, not a public TimelinePatch operation family, because the locked decision 'processes never gain timeline mutation rights' precludes adding it to the public TimelinePatchOpFamily vocabulary. The existing internal GraphMaterialAttachOp (kind:'material.attach') provides the structural precedent: a host-owned attach operation that bridges external data into the composition graph without being a public TimelinePatch op. (source: m0-decisions.md:128, patchPreview.ts:77-86/924-928, patch.ts:18-39; relevance: high)
+- The ProcessRoundtripResult structure already defines the complete data shape process.result.attach must record: requestId, processId, operationId, status, returnedMaterials, artifacts, sidecars, diagnostics, logs, progress, availableActions, and metadata. This maps to M3a material statuses (missing/pending/resolved/stale/failed — locked vocabulary) and M3c artifact contracts through the returned materials/artifacts fields. (source: capabilities.ts:263-276, artifacts.ts:35-40/192-198, processes.ts:61; relevance: high)
+- The frozen V0 JSON-RPC 2.0 protocol document fully specifies the newline-delimited stdio wire contract: stdin/stdout transport, \n framing, UTF-8, four methods (health/execute/cancel/shutdown), all eight lifecycle states, four error classes (protocol-error/timeout/process-exited/invalid-request), progress/log notification payloads, task/process/operation correlation on every message, cancellation as both notification and request, and late-result handling (result after terminal state → recorded as recoverable protocol race diagnostic). (source: json-rpc-protocol-v0.md:43-183/260-274/306-379/425-438; relevance: high)
+- The process adapter bridging pathway from delegated M12 placeholder to active runtime is established through the placeholderAdapterFactory pattern: change classification from 'placeholder' to a real classification, change maturity from 'delegated' to 'runtime-bridged', and implement normalize() returning real runtime descriptors. The adapter registry and FamilyContributionSequence gating on delegated maturity must be updated to recognize the real adapter. (source: placeholderAdapterFactory.ts, FamilyProjectionPolicy.ts:119-185, FamilyContributionSequence.ts:197-200/305-314; relevance: medium)
+- LiveSourceRef (references.ts:50-56) has no process binding — it is a simple {sourceId, sourceKind?} struct. ProcessOperationSpec.outputKinds lacks live-source scalar/vector/structured output kinds. The task scope explicitly requires trusted process descriptors to advertise live-source capability, which means extending outputKinds and establishing the LiveSourceRef→process binding. (source: references.ts:50-56, processes.ts:61; relevance: medium)
+- Three cross-cutting vocabulary extensions are required to support the process runtime: RenderBlockerReason needs process-lifecycle-specific blockers (not-installed/failed/degraded/configuration-error) beyond the existing generic 'process-dependent'; CompositionDiagnosticDetail needs processId/operationId/taskId correlation fields; and the process.command registration statusBlocks() already correctly gates on ready/busy/degraded. (source: renderability.ts:40-50, diagnostics.ts:202-275, processCommandRegistration.ts:26-29; relevance: medium)
+
+        ### Relevant Code
+        | File | Functions | Why |
+| --- | --- | --- |
+| src/sdk/video/families/processes.ts | ProcessLifecycleState, ProcessStatus, ProcessSpec, ProcessOperationSpec, ProcessContribution | Canonical SDK type definitions: ProcessLifecycleState (8 states), ProcessStatus discriminated union, ProcessSpec with protocol discriminator and spawn config, ProcessOperationSpec with outputKinds, ProcessContribution manifest interface. All runtime types derive from here. |
+| src/sdk/capabilities.ts | ProcessRoundtripRequest, ProcessRoundtripResult, ProcessProgressEvent, ProcessLogSummary | ProcessRoundtripRequest/Result correlation model, ProcessProgressEvent and ProcessLogSummary shapes. The data shape that process.result.attach records is already defined here. |
+| src/tools/video-editor/runtime/families/processAdapter.ts | createPlaceholderAdapter, buildProcessDescriptors | Current delegated M12 placeholder adapter. Must be replaced with real runtime-bridged adapter implementing normalize() that returns live ProcessStatus. The placeholder pattern shows the exact integration surface to implement. |
+| src/tools/video-editor/runtime/renderPlanner.ts | processStatusBlocks, processStatusDegraded, createProcessStatusMap, collectProcess, collectOutputFormat | Already consumes processStatuses and emits blockers. processStatusBlocks(), processStatusDegraded(), createProcessStatusMap(), and the collectProcess/collectOutputFormat/collectShaderMaterializerRequirement paths are the integration targets for real process status projection. No planner changes needed. |
+| src/tools/video-editor/runtime/processCommandRegistration.ts | ProcessCommandServices, registerProcessOperationCommands, statusBlocks | ProcessCommandServices interface (invokeProcess stub) and registerProcessOperationCommands — the command-layer integration surface for gating process operations on readiness. Must be backed by real ProcessCommandServices implementation. |
+| src/tools/video-editor/runtime/composition/patchPreview.ts | GraphMaterialAttachOp, applyMaterialAttach | GraphMaterialAttachOp (kind:'material.attach') is the structural precedent for process.result.attach: an internal host-owned 'attach' contract that binds references into the composition graph without being a public TimelinePatch op family. process.result.attach should follow this pattern. |
+| src/sdk/video/rendering/artifacts.ts | RenderMaterialStatusState, ArtifactBoundary, RenderMaterial | RenderMaterialStatusState locked vocabulary (missing/pending/resolved/stale/failed), ArtifactBoundary with 'sidecar-process' source/target, and RenderMaterial carrying optional processId/processVersion — the integration surface where process.result.attach delivers results into M3a material statuses. |
+| src/sdk/video/rendering/renderability.ts | RenderBlockerReason | RenderBlockerReason vocabulary must be extended with process-lifecycle-specific reasons (process-not-installed, process-failed, process-degraded, process-configuration-error). Currently only has generic 'process-dependent'. |
+| src/sdk/video/composition/references.ts | LiveSourceRef | LiveSourceRef is a simple {sourceId, sourceKind?} struct with no process binding. Must be extended or supplemented to bind process-backed live sources for scalar/vector/structured values. |
+| src/tools/video-editor/runtime/composition/diagnostics.ts | CompositionDiagnosticDetail | CompositionDiagnosticDetail must gain processId/operationId/taskId fields to carry process correlation through diagnostics produced when process.result.attach results are consumed downstream. |
+| src/tools/video-editor/runtime/families/FamilyContributionSequence.ts | historicallyReserved check, m12ReservedProcesses routing | Gating logic at lines 197-200 and 305-314 routes processes through historicallyReserved → m12ReservedProcesses. The gating check on delegated maturity must be updated to recognize the real runtime-bridged process adapter. |
+| src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts | ADAPTER_DISPATCH, getReservedProjectionCandidates, processDescriptors initialization | ADAPTER_DISPATCH entry (line 227) and getReservedProjectionCandidates('process') (lines 367-383) define how process descriptors flow from contributions through adapters into the runtime assembly. The processDescriptors field (line 321) receives real status after bridging. |
+| docs/extensions/composition-spine/json-rpc-protocol-v0.md | health, execute, cancel, shutdown, protocol-error, timeout, process-exited, invalid-request | Frozen V0 protocol document (517 lines) — the authoritative specification for the JSON-RPC 2.0 stdio wire contract that the process manager transport and fixture process must implement. Covers all four methods, error classes, correlation, framing, and lifecycle. |
+| src/examples/process-example.ts | canonicalProcessSpec | Canonical ProcessSpec declaration (lines 94-113) with protocol:'stdio-jsonrpc', healthCheck, restartPolicy, version, env, and operations with inputSchema/outputKinds — the shape the fixture process descriptor must mirror. |
+
+        ### Test Expectations
+        - [fail_to_pass] m6a-fixture-lifecycle: Fixture process transitions through all 8 lifecycle states (not-installed→stopped→starting→ready→busy→degraded→failed→stopping) with correct JSON-RPC health responses at each state, and planner statusBlocks() returns correct blocking behavior for each state.
+- [fail_to_pass] m6a-fixture-methods: Fixture process correctly handles all four JSON-RPC methods: health returns state-appropriate response, execute produces ProcessRoundtripResult with returnedMaterials/artifacts/diagnostics, cancel (as notification and request) transitions to appropriate terminal state, shutdown triggers stopping→stopped sequence.
+- [fail_to_pass] m6a-fixture-correlation: Every JSON-RPC message (requests, responses, notifications, errors) carries task/process/operation correlation fields. execute rejections when process is not ready/busy return appropriate error class. Progress and log notifications carry correct correlation.
+- [fail_to_pass] m6a-fixture-errors: All four error classes exercised: protocol-error (malformed JSON, missing jsonrpc field), timeout (operation duration exceeded), process-exited (process terminated during operation), invalid-request (unknown method, missing required params). Error objects conform to JSON-RPC 2.0 error shape.
+- [fail_to_pass] m6a-fixture-cancellation-late-result: Cancel during in-flight execute: process responds with cancellation acknowledgement, subsequent result for cancelled operation is ignored (terminal state), recorded as recoverable protocol race diagnostic. Late progress/log notifications after terminal state are ignored with diagnostic.
+- [fail_to_pass] m6a-process-manager-integration: Process manager spawns fixture process via stdio, establishes health via health method, processes execute through ProcessCommandServices.invokeProcess with real ProcessRoundtripRequest/Result roundtrip, projects ProcessStatus into planner's processStatuses input, and handles graceful shutdown.
+- [fail_to_pass] m6a-process-result-attach: process.result.attach host-internal contract records processRef, operationId, taskId, returned refs, diagnostics, and provenance. Results flow into M3a material statuses and M3c artifact contracts through returned materials/artifacts. Timeline-facing patches consume results through material/artifact contracts, not through direct process mutation. Compatibility alias process.attach-result recognized.
+- [fail_to_pass] m6a-route-blockers: Route-scoped process/sidecar blockers fire for missing, not-installed, stopped, busy, failed, degraded, and configuration-error states. Blockers do not fire for routes that do not require the process. Ready and degraded states do not block (degraded emits warning).
+- [fail_to_pass] m6a-adapter-bridging: Process adapter transitions from delegated M12 placeholder to runtime-bridged. FamilyContributionSequence recognizes real adapter, process contributions flow through assembly, and process statuses appear in planner input. No regressions in existing placeholder-dependent tests.
+- [fail_to_pass] m6a-live-source-binding: Trusted process descriptors advertise live-source capability for scalar/vector/structured values. LiveSourceRef resolves against process-backed live sources only after process health is established. V1/M2 target paths consume process-backed live data through LiveSourceRef only when process is ready.
+- [fail_to_pass] m6a-payload-limits: Process execution results exceeding implementation payload limits return artifact locators (not inline blobs) in ProcessRoundtripResult. Consumer retrieves full payload through artifact locator reference.
+
+        ### Constraints
+        - Do not alter V1 material status vocabulary (missing/pending/resolved/stale/failed). Process task results map into existing statuses only through returned artifacts/materials.
+- Do not add process.result.attach to the public TimelinePatchOpFamily vocabulary. It must be a host-internal record contract following the material.attach precedent — processes never gain timeline mutation rights.
+- Do not expose arbitrary shell execution. Process spawning is restricted to declared trusted process descriptors with protocol:'stdio-jsonrpc'.
+- Route-scoped blockers cannot block routes that do not require the process. Blockers are scoped to routes declared in ProcessOperationSpec.routes.
+- No untrusted, remote, or sandbox claims. All process execution is local and trusted.
+- Late progress/results after terminal state are ignored unless recorded as a recoverable protocol race diagnostic.
+- Payloads exceeding implementation limits return artifact locators, not inline blobs.
+- Every task-scoped message includes task/process/operation correlation.
+- Process lifecycle is not a material status and not a V1 composition target.
+- Process descriptors are the sole source of process identity; no ad-hoc process spawning outside declared descriptors.
+- Live-source data from processes is only consumable after process health (ready state) is established.
+
+        ### Suggested Approach
+        Phase 1 — Process Manager Core: Implement ProcessManager as a host-owned singleton in src/tools/video-editor/runtime/processes/. It owns spawn (child_process.spawn with stdio:'pipe'), lifecycle state machine (validating all 8 transitions per the V0 protocol), JSON-RPC 2.0 framing (newline-delimited stdin/stdout parse/serialize), and health/monitor loops. Replace the delegated processAdapter with a runtime-bridged adapter that projects live ProcessStatus into the planner. Implement ProcessCommandServices with real invokeProcess backed by the ProcessManager. Update FamilyContributionSequence gating to recognize runtime-bridged maturity. Extend RenderBlockerReason with process-lifecycle-specific blockers and CompositionDiagnosticDetail with process correlation fields. Phase 2 — process.result.attach Contract: Implement the host-internal process.result.attach record contract following the GraphMaterialAttachOp pattern in patchPreview.ts. It records processRef/operationId/taskId/returnedRefs/diagnostics/provenance and bridges ProcessRoundtripResult.returnedMaterials into M3a material statuses and .artifacts into M3c artifact contracts. Add process.attach-result compatibility alias. Timeline-facing patches consume results through material/artifact contract resolution, never through direct process mutation. Phase 3 — LiveSource Capability: Extend ProcessOperationSpec.outputKinds with 'live-source-scalar'/'live-source-vector'/'live-source-structured'. Add optional liveSource field to ProcessSpec advertising available live-source IDs. Extend LiveSourceRef resolution to query process status before allowing consumption — gate on ready state. Phase 4 — Fixture Process: Produce a standalone Node.js script (tests/fixtures/process-fixture.ts) implementing the full V0 JSON-RPC 2.0 protocol: all 8 lifecycle transitions, all 4 methods, all 4 error classes, progress/log notifications, cancellation (notification and request), late-result handling with protocol race diagnostics, and newline-delimited framing. The fixture descriptor mirrors the canonical ProcessSpec from process-example.ts. Write integration tests validating the fixture against ProcessManager, planner projection, command registration, and process.result.attach end-to-end flow.
+
+### Open Questions
+- [assume_and_proceed] The FamilyContributionSequence gating logic (lines 305-314) routes processes through m12ReservedProcesses with a hardcoded 'M12' milestone diagnostic. Should the bridging change the routing pathway entirely (processes flow through standard contribution lanes), or should it keep the m12ReservedProcesses collection but remove the milestone diagnostic when the adapter is runtime-bridged? _(assumption: Keep the m12ReservedProcesses collection pathway but remove the M12 milestone diagnostic and the historicallyReserved gating when the adapter maturity is runtime-bridged. This minimizes routing changes while unlocking real process execution. The ADAPTER_DISPATCH entry at FamilyRuntimeAssembly.ts:227 already maps process→{field:'processes',source:'reservedProcess'}, so keeping the source name avoids cascading changes.)_
+- [assume_and_proceed] The process.result.attach contract must bridge ProcessRoundtripResult into M3a material statuses, but the mapping from process outputKinds ('artifact','material','sidecar','diagnostic','planner-result','tool-result') to material status states (missing/pending/resolved/stale/failed) is not specified. How should each output kind map? _(assumption: Material outputs map to 'resolved' when the process returns successfully; artifact outputs produce 'resolved' RenderArtifact entries through the artifact contract; sidecar/diagnostic/planner-result/tool-result outputs are recorded in process.result.attach diagnostics/provenance but do not directly set material statuses. Failed process execution maps all pending materials for that process to 'failed'. Stale detection follows existing M3a staleness rules based on dependency version changes.)_
+- [assume_and_proceed] The fixture process location: should it live in tests/fixtures/, src/tools/video-editor/runtime/processes/__fixtures__/, or alongside the process manager implementation as a test-only artifact? _(assumption: Place the fixture process at tests/fixtures/video-editor/process-fixture.ts. This follows existing test fixture conventions in the repo (tests/ directory), keeps the fixture clearly separated from production runtime code, and makes it accessible to both unit tests and integration tests. The fixture descriptor (ProcessSpec) can be co-located or imported from the canonical process-example.ts location.)_
+
+        The engineering brief above is evidence gathered from the codebase. Treat it as the default working context, challenge its conclusions when the code disagrees, and only do targeted repository lookups when a concrete gap remains. Open questions in the brief are candidate concerns, not mandates — act on ones that materially affect the plan, dismiss immaterial or already-resolved ones with a brief reason, and treat question count as noise.
+
+        Idea:
+# M6a: Process Runtime Core
+
+## Outcome
+
+Introduce the trusted process runtime core outside the V1 composition SDK: process manager, JSON-RPC stdio protocol, lifecycle contracts, runtime overlays, route-scoped blockers, and result attachment.
+
+## Execution Posture
+
+Keep process state namespaced under process-family contracts. Processes return data-only refs and provenance; they never gain timeline mutation rights.
+
+## Scope
+
+IN:
+- Add host-owned trusted process manager.
+- Implement newline-delimited JSON-RPC 2.0 over stdio for declared trusted process descriptors.
+- Add process lifecycle states `not-installed`, `stopped`, `starting`, `ready`, `busy`, `degraded`, `failed`, and `stopping`.
+- Keep process task result vocabulary distinct from material statuses and lifecycle states.
+- Add process invocation service returning materials, artifacts, deterministic captures, proposals, diagnostics, and provenance.
+- Let trusted process descriptors advertise live-source capability for scalar, vector, or structured values consumed by `LiveSourceRef`.
+- Project process status into graph/planner runtime overlays.
+- Add route-scoped process/sidecar blockers for missing, not-installed, stopped, busy, failed, degraded, and configuration-error states.
+- Implement health, execute, cancel, and shutdown operations.
+- Add `process.result.attach` patch contract and validation, with `process.attach-result` as compatibility alias if needed.
+- Add repo-controlled fixture process for protocol/core tests.
+
+OUT:
+- Process dashboard.
+- Browser acceptance for process UI.
+- Output-format sidecar integration.
+- `start-process` repair action mapping.
+- Marketplace, sandbox, remote process execution, arbitrary shell access, or untrusted execution.
+
+## Locked Decisions
+
+- Process lifecycle is not a material status and not a V1 composition target.
+- Process task results map into M3a material statuses only through returned artifacts/materials.
+- Every task-scoped message includes task/process/operation correlation.
+- Payloads exceeding implementation limits return artifact locators, not inline blobs.
+- Late progress/results after terminal state are ignored unless recorded as a recoverable protocol race diagnostic.
+
+## Constraints
+
+- Do not alter V1 material status vocabulary.
+- Do not expose arbitrary shell execution.
+- Do not let process results mutate timeline placement directly.
+- Route-scoped blockers cannot block routes that do not require the process.
+- No untrusted, remote, or sandbox claims.
+
+## Done Criteria
+
+- Lifecycle states are namespaced under process contracts.
+- Returned refs enter the graph through M3a/M3c material/artifact contracts and patch flow.
+- `process.result.attach` records process ref, operation id, task id, returned refs, diagnostics, and provenance before timeline-facing patches consume results.
+- JSON-RPC framing, task correlation, cancellation, progress/log payloads, error classes, and late-result handling are covered by fixture-process tests.
+- V1/M2 target paths can consume process-backed live data only after process health is established.
+
+## Touchpoints
+
+- `src/tools/video-editor/runtime/composition/**`
+- `src/tools/video-editor/runtime/processes/**`
+- `src/tools/video-editor/runtime/extensionManifest.ts`
+- `src/tools/video-editor/commands/**`
+- `src/sdk/video/composition/references.ts`
+- `src/sdk/video/rendering/artifacts.ts`
+- `examples/video-editor-extension/**`
+- `tests/**/video-editor/**`
+- `docs/extensions/**`
+
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+
+
+
+
+        No prior clarification artifact exists. Identify ambiguities, ask clarifying questions, and state your assumptions inside the plan output.
+
+        Open tickets for this repo:
+
+- 01KS384XKZNEWQRSXN2NXQ0DTJ — Video editor: extensibility plan (preserves variation potential, ships none)  [video-editor, design, refactor, oss]
+- 01KV8XVYW2EYDDDY30V48YX520 — Megaplan plan extraction can pass malformed/escaped-newline payloads to Markdown validator  [megaplan, validator, hermes, json-extraction, plan-phase]
+
+The planner may PROPOSE linking tickets to this plan with `resolves_on_complete=true` in the plan output, but the actual linking is performed via the explicit `megaplan ticket link` CLI after planning — the planner never directly links tickets.
+
+        Requirements:
+        - If the engineering brief suggests an approach, use it as your starting hypothesis — but before committing, consider if there's a simpler or more fundamental fix. The brief is well-researched input, not a final answer.
+        - If the brief is absent, incomplete, or says "skip", inspect the repository yourself before planning.
+        - Stay focused on the requested idea. If repo exploration surfaces unrelated issues or docs, ignore them and return to the task.
+        - Prefer source code, tests, and directly relevant config files. Avoid `.megaplan/`, prior plan artifacts, and unrelated `docs/` or ops/deployment material unless the task explicitly depends on them.
+        - Stop exploring once you have enough evidence to name the concrete touch points and validation path. Do not keep browsing after you can write the plan.
+        - Produce a concrete implementation plan in markdown.
+        - Define observable success criteria as objects with `criterion` (string) and `priority` (`must`, `should`, or `info`):
+          - `must` — hard gate. The reviewer will block on failure. Use for correctness, functional requirements, and verifiable outcomes (e.g., "all existing tests pass", "API returns 200 for valid input"). Every `must` criterion must have a clear yes/no answer.
+          - `should` — quality target. The reviewer flags but does not block. Use for subjective goals, numeric guidelines, and best-effort improvements (e.g., "file under ~300 lines", "no deeply nested conditionals", "each function has a single responsibility").
+          - `info` — documented for humans, reviewer skips. Use for criteria that cannot be verified in this pipeline (e.g., "13 manual smoke tests pass", "stakeholder sign-off obtained").
+        - Each success criterion should include a `requires` field listing the capabilities needed for verification. Valid capability strings: `run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, `run_linter` (container), `drive_browser`, `inspect_runtime_ui`, `observe_runtime_logs`, `subjective_judgment`, `verify_physical_device` (human). `must` criteria MUST have non-empty `requires`. Example: `{"criterion": "All tests pass", "priority": "must", "requires": ["run_tests"]}`.
+        - Use the `questions` field for ambiguities that would materially change implementation.
+        - Use the `assumptions` field for defaults you are making so planning can proceed now.
+        - Prefer cheap validation steps early.
+        - Keep the plan proportional to the task. A 1-line fix needs a 2-step plan (apply fix + run tests), not a 5-step investigation.
+        - Size each step so it can be implemented AND verified in a single worker turn (~15 min, one model conversation). A step that bundles "create the abstraction AND migrate every consumer AND write all the tests" is too large to finish in one turn and will fail (the worker runs out of time before it can implement, leaving the step blocked). For large mechanical refactors, split along the natural seam — one step to add the new abstraction + its unit tests, then one step per consumer to migrate (the last migration step also adds parity tests) — rather than one giant step. Higher complexity does not earn a step more time; it only routes to a stronger model for the same single turn.
+        - If user notes answer earlier questions, incorporate them into the draft plan instead of re-asking them.
+        - Fix the problem fully. Do not limit scope just to avoid breaking existing tests — update the tests too if needed.
+        - Prefer the simplest, most direct fix. No fallbacks, type conversions, or defensive wrappers without concrete evidence they are needed.
+        - If the task or issue hints suggest a specific approach, follow it. Only deviate with concrete counter-evidence.
+        - Assign every plan step a complexity score 1–5 before finalize. Reason about complexity in the plan markdown (e.g. "Complexity: 2" per step), and surface it informally so the reviewer can audit:
+          - 1 = trivial single-file mechanical change
+          - 2 = simple change with tests to update
+          - 3 = multi-file change with non-trivial logic
+          - 4 = cross-cutting change with architecture implications
+          - 5 = fundamental system change with high regression risk
+        - Populate `changed_surfaces` with every concrete file path your plan will change or create. Include both source files and test files. Use repo-relative paths (e.g., `src/prompts.py`, `tests/test_prompts.py`). This list drives the deterministic test-selection blast radius; be complete. If your plan touches a file, list it.
+        - (Optional) Populate `test_blast_radius` with your own scoped test-selection proposal. This complements the deterministic floor the system computes from `changed_surfaces`. Provide `strategy` ("scoped", "full", or "none"), `selectors` (array of `{"kind": "path", "value": "<path>", "reason": "<why>"}` objects), and a `rationale` string. The system merges your proposal with the deterministic floor; you cannot narrow below the floor, but you can widen with additional selectors or escalate to full. If you intend a scoped finalize baseline while keeping the full suite as a hard gate, set `strategy` to "scoped", include concrete `selectors`, and set `full_suite_fallback` to true; the floor's full-suite requirement will be honored by the fallback without forcing the baseline strategy to "full".
+
+        Plan template — simple format (adapt to the actual repo and scope):
+````md
+# Implementation Plan: [Title]
+
+## Overview
+Summarize the goal, current repository shape, and the constraints that matter.
+
+## Main Phase
+
+### Step 1: Audit the current behavior (`src/prompts.py`)
+**Scope:** Small
+1. **Inspect** the current implementation and call out the exact insertion points (`src/prompts.py:29`).
+
+### Step 2: Add the first change (`src/evaluation.py`)
+**Scope:** Medium
+1. **Implement** the smallest viable change with exact file references (`src/evaluation.py:1`).
+2. **Capture** any tricky behavior with a short example.
+   ```python
+   issues = validate_plan_structure(plan_text)
+   ```
+
+### Step 3: Wire downstream behavior (`src/handlers.py`, `src/workers.py`)
+**Scope:** Medium
+1. **Update** the runtime flow in the touched files (`src/handlers.py:400`, `src/workers.py:199`).
+
+### Step 4: Prove the change (`tests/test_validator.py`, `tests/test_integration.py`)
+**Scope:** Small
+1. **Run** the cheapest targeted checks first (`tests/test_validator.py:1`).
+2. **Finish** with broader verification once the wiring is in place (`tests/test_integration.py:1`).
+
+## Execution Order
+1. Update prompts and mocks before enforcing stricter validation.
+2. Land higher-risk wiring after the validator and tests are ready.
+
+## Validation Order
+1. Start with focused unit tests.
+2. Run the broader suite after the flow changes are in place.
+````
+
+For complex plans, use multiple phases:
+````md
+## Phase 1: Foundation — Dependencies, DB, Types
+
+### Step 1: Install dependencies (`package.json`)
+...
+
+### Step 2: Create database migration (`supabase/migrations/`)
+...
+
+## Phase 2: Core Integration
+
+### Step 3: Port the main component (`src/components/`)
+...
+````
+
+Template guidance:
+- Simple plans: use `## Main Phase` with `### Step N:` sections underneath.
+- Complex plans: use multiple `## Phase N:` sections, each containing `### Step N:` steps. Step numbers are global (not per-phase).
+- The flat `## Step N:` format (without phases) also works for backwards compatibility.
+- Key invariants: one H1 title, one `## Overview`, numbered step sections (`### Step N:` or `## Step N:`), and at least one ordering section.

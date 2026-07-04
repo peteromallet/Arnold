@@ -228,6 +228,10 @@ import type {
   SamplingConfig,
   SamplingResult,
   TimelineRenderPassSummary,
+  ProcessOutputKind,
+  ProcessLiveSourceValueShape,
+  ProcessLiveSourceDeclaration,
+  ProcessLiveSourceBinding,
   ProcessSpec,
   ProcessContribution,
   ProcessStatus,
@@ -3151,6 +3155,38 @@ describe('M12: process type interfaces are importable from @reigh/editor-sdk', (
     expect(op.id).toBe('export-show-control');
     expect(op.outputKinds).toEqual(['material', 'sidecar', 'diagnostic']);
   });
+
+  it('process live-source declaration types are constructable as data-only SDK contracts', () => {
+    const outputKinds: ProcessOutputKind[] = [
+      'live-source-scalar',
+      'live-source-vector',
+      'live-source-structured',
+    ];
+    const valueShape: ProcessLiveSourceValueShape = 'structured';
+    const liveSource: ProcessLiveSourceDeclaration = {
+      sourceId: 'pose-tracking',
+      valueShape,
+      label: 'Pose Tracking',
+      sourceKind: 'generated',
+    };
+    const spec: ProcessSpec = {
+      id: 'pose-process',
+      label: 'Pose Process',
+      spawn: { command: 'node', args: ['pose-process.js'] },
+      protocol: 'stdio-jsonrpc',
+      operations: [
+        {
+          id: 'track-pose',
+          label: 'Track Pose',
+          outputKinds,
+        },
+      ],
+      liveSources: [liveSource],
+    };
+
+    expect(spec.operations?.[0].outputKinds).toEqual(outputKinds);
+    expect(spec.liveSources?.[0]).toEqual(liveSource);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -4630,21 +4666,27 @@ describe('M1a: Composition reference types are data-only and importable from @re
     expect(Object.keys(ref).sort()).toEqual(['contributionId', 'extensionId', 'kind']);
   });
 
-  it('LiveSourceRef is constructable with only sourceId and also accepts sourceKind when supplied', () => {
+  it('LiveSourceRef is constructable with only sourceId and also accepts sourceKind/processBinding when supplied', () => {
     // Constructable with only sourceId (sourceKind is optional)
     const refMinimal: LiveSourceRef = { sourceId: 'webcam-1' };
     expect(refMinimal.sourceId).toBe('webcam-1');
     expect(refMinimal.sourceKind).toBeUndefined();
     expect(Object.keys(refMinimal).sort()).toEqual(['sourceId']);
 
-    // Also accepts sourceKind when supplied
+    const processBinding: ProcessLiveSourceBinding = {
+      processId: 'pose-process',
+    };
+
+    // Also accepts sourceKind and processBinding when supplied
     const refFull: LiveSourceRef = {
       sourceId: 'webcam-2',
       sourceKind: 'webcam',
+      processBinding,
     };
     expect(refFull.sourceId).toBe('webcam-2');
     expect(refFull.sourceKind).toBe('webcam');
-    expect(Object.keys(refFull).sort()).toEqual(['sourceId', 'sourceKind']);
+    expect(refFull.processBinding).toEqual(processBinding);
+    expect(Object.keys(refFull).sort()).toEqual(['processBinding', 'sourceId', 'sourceKind']);
   });
 
   it('MaterialRef is a transparent alias of RenderMaterialRef', () => {

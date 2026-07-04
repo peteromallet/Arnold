@@ -120,6 +120,10 @@ describe('shared renderability contracts', () => {
       'preview-only',
       'live-unbaked',
       'process-dependent',
+      'process-not-installed',
+      'process-failed',
+      'process-degraded',
+      'process-configuration-error',
       'missing-material',
       'materialization-failed',
       'materialization-error',
@@ -155,6 +159,9 @@ describe('shared renderability contracts', () => {
       route: 'preview',
       reason: 'preview-only',
       message: 'Preview route is available, export route is blocked.',
+      processId: 'proc.preview',
+      operationId: 'preview',
+      taskId: 'task-preview',
       detail: { effectId: 'glow' },
     };
 
@@ -171,7 +178,12 @@ describe('shared renderability contracts', () => {
       capabilities: [{ route: 'browser-export', status: 'blocked' }],
       blockers: [{ severity: 'error', route: 'browser-export', reason: 'preview-only' }],
     });
-    expect(contractFinding.detail).toEqual({ effectId: 'glow' });
+    expect(contractFinding).toMatchObject({
+      processId: 'proc.preview',
+      operationId: 'preview',
+      taskId: 'task-preview',
+      detail: { effectId: 'glow' },
+    });
   });
 
   it('separates render materials from final artifacts and bake contracts', () => {

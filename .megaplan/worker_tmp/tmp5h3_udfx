@@ -1,0 +1,1856 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+Review the implementation against the success criteria.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M6a: Process Runtime Core
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: M6a Process Runtime Core
+
+## Overview
+M6a adds a host-owned trusted process runtime outside the V1 composition SDK. The current repo already has the process SDK type surface and planner status consumption path, but `src/tools/video-editor/runtime/families/processAdapter.ts` is still a delegated M12 placeholder and there is no process manager, stdio JSON-RPC transport, or `process.result.attach` implementation.
+
+This plan preserves the North Star: processes stay host-owned, declared, trusted, local, and namespaced under process-family contracts. Process outputs enter the graph through material/artifact/result-attach contracts; processes never mutate raw timeline internals or gain public `TimelinePatch` rights. The stage narrows output-format sidecar integration and UI/dashboard work out of scope; that is a bridge, not a contradiction, because the runtime core still records sidecars/artifacts and leaves output-format sidecar orchestration for a later milestone.
+
+## Phase 1: Runtime Foundation
+
+### Step 1: Add lifecycle and JSON-RPC transport primitives (`src/tools/video-editor/runtime/processes/`)
+**Scope:** Medium  
+**Complexity: 3**
+1. Create `src/tools/video-editor/runtime/processes/lifecycle.ts` with the 8-state lifecycle contract, transition validation, blocker classification helpers, and terminal/late-message helpers.
+2. Create `src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.ts` for newline-delimited UTF-8 JSON-RPC 2.0 stdio framing, request/response correlation, progress/log notifications, cancellation notification/request support, protocol-error conversion, and process-exit detection.
+3. Create `src/tools/video-editor/runtime/processes/types.ts` and `src/tools/video-editor/runtime/processes/index.ts` for host-internal runtime types without leaking process execution into the SDK.
+4. Add focused tests for framing, malformed JSON, missing `jsonrpc`, unknown method, timeout, process exit, correlation fields, and notification handling.
+
+### Step 2: Implement the trusted ProcessManager (`src/tools/video-editor/runtime/processes/ProcessManager.ts`)
+**Scope:** Large  
+**Complexity: 4**
+1. Add `ProcessManager` that only spawns declared `ProcessSpec` descriptors with `protocol: 'stdio-jsonrpc'` using `child_process.spawn` and `stdio: 'pipe'`.
+2. Implement start, health, execute, cancel, shutdown, graceful teardown, timeout, restart-policy hooks, current `ProcessStatus` projection, and late result/progress/log diagnostics.
+3. Enforce task/process/operation correlation on every task-scoped message before accepting responses or notifications.
+4. Keep status state namespaced under process contracts and do not map lifecycle states to material statuses.
+5. Add manager tests using a lightweight in-test fake transport first, leaving fixture-spawn integration for later steps.
+
+### Step 3: Add payload limit handling (`src/tools/video-editor/runtime/processes/payloadLimits.ts`)
+**Scope:** Medium  
+**Complexity: 3**
+1. Add a small host-side result normalizer that rejects oversized inline blobs in `ProcessRoundtripResult` and requires artifact locator references for payloads over the implementation limit.
+2. Keep the limit explicit and testable; avoid fallback encoding or silent truncation.
+3. Add tests proving oversized returned materials/artifacts become failed diagnostics unless an artifact locator is present.
+
+## Phase 2: Host Wiring and Planner Projection
+
+### Step 4: Replace the delegated process adapter with runtime-bridged projection (`src/tools/video-editor/runtime/families/processAdapter.ts`)
+**Scope:** Medium  
+**Complexity: 3**
+1. Replace the placeholder adapter metadata with a real runtime-bridged adapter that normalizes process descriptors and projects live `ProcessStatus` overlays supplied by the host runtime.
+2. Keep the existing `buildProcessDescriptors()` path for descriptor identity and ordering.
+3. Update adapter registry tests so process is no longer classified as delegated M12 placeholder.
+
+### Step 5: Update family sequence and assembly routing (`FamilyContributionSequence.ts`, `FamilyRuntimeAssembly.ts`)
+**Scope:** Medium  
+**Complexity: 3**
+1. Keep the reserved process collection pathway for compatibility, but stop emitting the M12 inactive-reserved diagnostic when process adapter maturity is runtime-bridged.
+2. Ensure process contributions still flow through the existing `reservedProcess` dispatch into `processDescriptors` to avoid cascading assembly changes.
+3. Add process-specific sequence/assembly tests proving active process descriptors appear in runtime config and existing output-format/search-provider reserved behavior is unchanged.
+
+### Step 6: Back process commands with real invocation (`processCommandRegistration.ts`)
+**Scope:** Medium  
+**Complexity: 3**
+1. Create `src/tools/video-editor/runtime/processes/processCommandServices.ts` implementing `ProcessCommandServices.invokeProcess` through `ProcessManager.execute()`.
+2. Return `ProcessRoundtripResult` instead of `unknown` from the service contract.
+3. Preserve current command gating semantics where `ready`, `busy`, and `degraded` are invokable, while other lifecycle states block.
+4. Extend process command tests for successful roundtrip, failed roundtrip, cancellation, and unavailable status.
+
+### Step 7: Extend blocker and diagnostic vocabulary (`renderability.ts`, `diagnostics.ts`, `renderPlanner.ts`)
+**Scope:** Medium  
+**Complexity: 3**
+1. Add process-specific `RenderBlockerReason` values: `process-not-installed`, `process-failed`, `process-degraded`, and `process-configuration-error`, preserving existing reasons.
+2. Add `processId`, `operationId`, and `taskId` fields to `CompositionDiagnosticDetail`.
+3. Update `renderPlanner.ts` process blocker emission so route-scoped blockers only apply to routes declared in `ProcessOperationSpec.routes` and never block unrelated routes.
+4. Keep `ready` unblocked and `degraded` warning-only for planner execution, unless a route explicitly requires non-degraded health.
+5. Add planner tests for missing, not-installed, stopped, busy, failed, degraded warning, configuration-error, and route scoping.
+
+## Phase 3: Result Attachment Contract
+
+### Step 8: Implement host-internal `process.result.attach` (`src/tools/video-editor/runtime/composition/processResultAttach.ts`)
+**Scope:** Large  
+**Complexity: 4**
+1. Add a host-internal attach record contract with `kind: 'process.result.attach'` plus compatibility alias `process.attach-result`.
+2. Record `processRef`, `processId`, `operationId`, `taskId`, returned material refs, artifact refs, sidecars, diagnostics, logs, progress, available actions, metadata, and provenance.
+3. Validate that attach records reference declared process descriptors and matching operation IDs.
+4. Reject any direct timeline placement mutation in this contract.
+
+### Step 9: Bridge attached results into material/artifact contracts (`patchPreview.ts`, material runtime)
+**Scope:** Large  
+**Complexity: 4**
+1. Follow the existing `GraphMaterialAttachOp` precedent in `patchPreview.ts` so result attachment is internal graph/runtime plumbing, not a public `TimelinePatchOpFamily` member.
+2. Map successful returned material outputs to existing M3a `resolved` material status; map failed executions to `failed` for pending materials owned by that process.
+3. Record returned artifacts and sidecars through existing M3c artifact contracts without creating a new material status vocabulary.
+4. Add tests proving timeline-facing patches consume only material/artifact refs after attachment and that direct process mutation is not accepted.
+
+## Phase 4: Process-Backed Live Sources
+
+### Step 10: Extend process live-source declaration types (`processes.ts`, `references.ts`)
+**Scope:** Medium  
+**Complexity: 3**
+1. Extend `ProcessOperationSpec.outputKinds` with `live-source-scalar`, `live-source-vector`, and `live-source-structured`.
+2. Add an optional data-only live-source declaration field to `ProcessSpec` for advertised process-backed source IDs and value shape.
+3. Extend or supplement `LiveSourceRef` with an optional process binding that remains data-only and does not import host runtime.
+4. Add type-level/runtime conformance tests for the extended SDK surface.
+
+### Step 11: Gate process-backed live source resolution on health (`liveDataRegistry.ts`, reference resolution)
+**Scope:** Medium  
+**Complexity: 3**
+1. Add a host resolver that binds `LiveSourceRef` to process-backed live sources only when the owning process status is `ready`.
+2. Ensure V1/M2 target-path consumers can read process-backed scalar/vector/structured live data only through `LiveSourceRef`.
+3. Emit process-correlated diagnostics when the process is absent, unhealthy, or advertises no matching live source.
+4. Add tests for ready, not-installed, failed, degraded, and unknown-source cases.
+
+## Phase 5: Fixture Process and Integration Coverage
+
+### Step 12: Add repo-controlled JSON-RPC fixture process (`tests/fixtures/video-editor/process-fixture.ts`)
+**Scope:** Large  
+**Complexity: 4**
+1. Create a standalone Node/TypeScript fixture implementing the frozen V0 newline-delimited stdio JSON-RPC protocol.
+2. Support `health`, `execute`, `cancel`, and `shutdown` methods; progress/log notifications; cancellation as request and notification; all four error classes; all eight lifecycle states; and configurable late-result/late-notification scenarios.
+3. Add `tests/fixtures/video-editor/process-fixture-descriptor.ts` mirroring the canonical `ProcessSpec` shape from `src/examples/process-example.ts`.
+4. Keep the fixture deterministic and repo-controlled; no shell escape or arbitrary command execution.
+
+### Step 13: Add process manager integration tests with the fixture
+**Scope:** Large  
+**Complexity: 4**
+1. Add lifecycle tests proving fixture transitions through `not-installed`, `stopped`, `starting`, `ready`, `busy`, `degraded`, `failed`, and `stopping` with correct health responses.
+2. Add method tests for `health`, `execute`, `cancel`, and `shutdown` roundtrips.
+3. Add correlation tests for request/response/notification/error task/process/operation fields.
+4. Add error tests for `protocol-error`, `timeout`, `process-exited`, and `invalid-request` JSON-RPC error shapes.
+5. Add late-result tests proving terminal-state results/progress/logs are ignored and recorded as recoverable protocol race diagnostics.
+
+### Step 14: Add end-to-end runtime/planner/attach tests
+**Scope:** Large  
+**Complexity: 4**
+1. Add integration coverage proving `ProcessManager` spawns the fixture, establishes health, invokes through `ProcessCommandServices`, projects `ProcessStatus` into planner input, and shuts down gracefully.
+2. Add `process.result.attach` end-to-end coverage for returned materials, artifacts, sidecars, diagnostics, and provenance.
+3. Add route-blocker tests proving blockers do not fire on routes that do not require the process.
+4. Add adapter-bridging tests proving no regressions in placeholder-dependent output-format/search-provider behavior.
+
+## Execution Order
+1. Land lifecycle and transport primitives first because all higher-level runtime work depends on their contracts.
+2. Add `ProcessManager` and payload limits before changing adapters or command services, so host wiring has a real backend.
+3. Bridge the process adapter and family assembly only after statuses can be projected from a manager.
+4. Add blocker/diagnostic vocabulary before result attachment tests, so failures carry process correlation.
+5. Implement `process.result.attach` before live-source integration, because both need stable process provenance and diagnostics.
+6. Build the fixture after the manager contract stabilizes, then use it to replace fake-transport confidence with stdio integration confidence.
+
+## Validation Order
+1. Run focused unit tests for lifecycle and transport first: `vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes/lifecycle.test.ts src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.test.ts`.
+2. Run process manager and command tests: `vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes/ProcessManager.test.ts src/tools/video-editor/runtime/processCommandRegistration.test.ts`.
+3. Run composition attach and live-source tests: `vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/processResultAttach.test.ts src/tools/video-editor/runtime/processes/liveSourceBinding.test.ts`.
+4. Run planner/family integration tests: `vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts src/tools/video-editor/runtime/families/FamilyContributionSequence.process.test.ts src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.process.test.ts`.
+5. Run fixture integration tests: `vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes/processFixture.integration.test.ts`.
+6. Finish with `npm run lint` and `npm test` after scoped tests pass.
+
+
+        Review execution context (`finalize.json` + `execution.json`, prompt projection only):
+        {
+  "tasks": [
+    {
+      "id": "T1",
+      "depends_on": [],
+      "status": "skipped",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "deferred_baseline_unavailable",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This establishes the process lifecycle state machine used by ProcessManager, planner blockers, and command gating. A subtle transition or terminal-state mistake would be non-local because later runtime and planner code will depend on these lifecycle semantics.",
+      "executor_notes": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative.",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": []
+    },
+    {
+      "id": "T2",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 1: Implement `jsonRpcStdioTransport.ts` for newline-delimited UTF-8 JSON-RPC 2.0 stdio framing, request/response correlation, progress/log notifications, cancellation support, protocol-error conversion, process-exit detection, and transport unit tests for malformed JSON, missing `jsonrpc`, unknown methods, timeout, exit, correlation fields, and notifications.",
+      "complexity_justification": "This defines a host-internal wire protocol boundary that ProcessManager and the fixture integration will rely on. Correlation and error framing bugs can propagate across every process invocation and are not just local syntax failures.",
+      "executor_notes": "Added a host-side stdio JSON-RPC transport that frames one UTF-8 message per newline, validates incoming JSON-RPC envelopes and correlation fields, surfaces progress/log/cancel notifications, and normalizes timeout/process-exit/protocol failures into transport errors. Verified with the full scoped transport test file covering malformed JSON, missing jsonrpc, unknown methods, timeout, process exit, correlation failures, and notifications.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.ts",
+        "src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.test.ts"
+      ]
+    },
+    {
+      "id": "T3",
+      "depends_on": [
+        "T2"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 2: Add the first ProcessManager slice: declared trusted `ProcessSpec` registry, lazy spawn support for `protocol: 'stdio-jsonrpc'` descriptors only, status projection for all lifecycle states, health checks, graceful startup/shutdown bookkeeping, and fake-transport tests for lifecycle/status behavior.",
+      "complexity_justification": "This introduces the shared runtime manager boundary and controls which declared local processes can be spawned. Mistakes in descriptor validation or status projection affect command services, planner inputs, and later fixture integration.",
+      "executor_notes": "Added a host-owned ProcessManager that registers declared ProcessSpec entries, keeps startup lazy until start/health is requested, spawns only stdio-jsonrpc descriptors, projects lifecycle status across stopped/starting/ready/busy/degraded/failed/not-installed/stopping, and records graceful shutdown back to stopped. The scoped process-runtime module tests now pass after verifying the shutdown path exposes stopping synchronously before the final stopped transition.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/processes/ProcessManager.ts",
+        "src/tools/video-editor/runtime/processes/ProcessManager.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes"
+      ]
+    },
+    {
+      "id": "T4",
+      "depends_on": [
+        "T3"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 2: Complete ProcessManager task execution behavior: execute, cancel, timeout, restart-policy hooks, late result/progress/log diagnostics, shutdown teardown, task/process/operation correlation enforcement, and fake-transport tests for success, failure, cancellation, mismatched correlation, and late-message races.",
+      "complexity_justification": "This is cross-cutting runtime orchestration around cancellation, timeout, and correlation invariants. A wrong implementation can accept stale or mismatched process results and corrupt downstream planner or attachment state while appearing to pass simple roundtrips.",
+      "executor_notes": "Implemented ProcessManager execute/cancel behavior over correlated stdio JSON-RPC requests, added timeout/restart-policy hooks plus shutdown teardown for in-flight work, and recorded protocol-race late result/progress/log diagnostics without reviving terminal operations. Verified with the full scoped process-runtime test module covering success, failure, cancellation, correlation mismatch, late notifications, shutdown teardown, and restart-hook behavior.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/processes/ProcessManager.ts",
+        "src/tools/video-editor/runtime/processes/ProcessManager.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes"
+      ]
+    },
+    {
+      "id": "T5",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 3: Add `payloadLimits.ts` with an explicit host-side ProcessRoundtripResult normalizer that rejects oversized inline material/artifact blobs unless an artifact locator is present, plus tests for accepted locator-backed payloads and failed oversized inline payload diagnostics.",
+      "complexity_justification": "The logic is localized but validates a shared result shape consumed by ProcessManager and attachment code. The key risk is silent truncation or accidental acceptance of oversized inline outputs, which focused tests should catch.",
+      "executor_notes": "Added payloadLimits.ts with checkPayloadLimits() and assertPayloadLimits() functions. checkPayloadLimits inspects raw execute-response payloads for oversized inline material/artifact/sidecar blobs lacking a non-inline artifact locator, using DEFAULT_MAX_INLINE_BLOB_BYTES (64 KiB) as an explicit configurable limit. assertPayloadLimits wraps it into a JsonRpcTransportError for direct ProcessManager integration. The module never truncates, mutates, or fallback-encodes payloads \u2014 oversized inline without a locator is a hard protocol-level rejection. Tests cover: empty/missing payloads, inline r...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/processes/payloadLimits.ts",
+        "src/tools/video-editor/runtime/processes/payloadLimits.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes/payloadLimits.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes"
+      ]
+    },
+    {
+      "id": "T6",
+      "depends_on": [
+        "T5"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This is a multi-file adapter and test change with non-trivial descriptor/status shape handling. The failure modes are visible through adapter registry tests and runtime assembly consumers, so it does not rise to a lifecycle or wire-contract tier.",
+      "executor_notes": "Converted processAdapter from delegated M12 placeholder (createPlaceholderAdapter) to a real runtime-bridged HostFamilyAdapter with classification 'real' and maturity 'runtime-bridged'. The adapter preserves descriptor identity/order from buildProcessDescriptors() and consumes host-supplied ProcessStatus overlays via the extended ProcessNormalizeInput interface. When processStatuses are provided, non-ready/non-stopped states produce 'process-dependent' blockers on the descriptors. Updated familyAdapterRegistry.ts to register process under Real adapters (not Delegated placeholder adapters)....",
+      "files_changed": [
+        "src/tools/video-editor/runtime/families/processAdapter.ts",
+        "src/tools/video-editor/runtime/families/familyAdapterRegistry.ts",
+        "src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes"
+      ]
+    },
+    {
+      "id": "T7",
+      "depends_on": [
+        "T6"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This touches assembly routing and compatibility diagnostics across a few files, but it preserves the existing dispatch shape instead of redefining it. Regressions should be directly observable in sequence/assembly and reserved-family tests.",
+      "executor_notes": "Verification-only task: confirmed no new test failures across all scoped suites. familyAdapterRegistry (15 pass), families module (40 pass across 3 files), processes module (41 pass across 3 files), extensionSurface (151 pass), familyDefinitions (71 pass), FamilyProjectionPolicy (9 pass). The reservedProcess dispatch pathway is intact: ADAPTER_DISPATCH maps process \u2192 source='reservedProcess', getReservedProjectionCandidates returns m12ReservedProcesses, descriptors flow through processAdapter.normalize() into runtime config. Output-format and search-provider reserved diagnostics (runtime/co...",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/video/families/familyDefinitions.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families/FamilyProjectionPolicy.test.ts"
+      ]
+    },
+    {
+      "id": "T8",
+      "depends_on": [
+        "T7"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "The command service changes span source and tests and must preserve existing gating behavior while replacing an unknown stub. The call path is important but bounded by the ProcessManager contract from earlier tasks.",
+      "executor_notes": "Changed ProcessCommandServices.invokeProcess return type from Promise<unknown> to Promise<ProcessRoundtripResult> in processCommandRegistration.ts, replacing the unknown stub with a typed contract. Updated the handler to return services.invokeProcess() (was await without return). Updated test mocks to use a completedResult() helper producing a well-formed ProcessRoundtripResult with requestId, processId, operationId, status='completed', and returnedMaterials=[]. Both pre-existing tests continue to pass, verifying that gating behavior (not-installed blocks execution) and successful dispatch...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/processCommandRegistration.ts",
+        "src/tools/video-editor/runtime/processCommandRegistration.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processCommandRegistration.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts src/tools/video-editor/runtime/families",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/sdk/video/families/familyDefinitions.test.ts"
+      ]
+    },
+    {
+      "id": "T9",
+      "depends_on": [
+        "T8"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 7: Extend `renderability.ts`, `diagnostics.ts`, and `renderPlanner.ts` with process-specific blocker reasons and diagnostic correlation fields, then update process blocker emission so blockers apply only to declared operation routes, ready remains unblocked, degraded is warning-only unless an operation route explicitly requires non-degraded health, and planner tests cover missing, not-installed, stopped, busy, failed, degraded, configuration-error, and route scoping.",
+      "complexity_justification": "This changes planner-facing blocker semantics and diagnostic contracts used by downstream renderability decisions. A route-scoping bug can incorrectly block unrelated graph routes, which is a non-local behavioral regression.",
+      "executor_notes": "Extended the shared blocker vocabulary with process-not-installed, process-failed, process-degraded, and process-configuration-error, added process/operation/task correlation fields to shared diagnostic contracts, and rewired planner process findings to validate declared process operations/routes before emitting route-scoped blockers. Verified scoped behavior with renderPlanner/renderability suites: missing process references stay on declared routes, not-installed/stopped/busy/failed block with correlated process metadata, degraded is warning-only unless the operation requires non-degraded...",
+      "files_changed": [
+        "src/sdk/video/rendering/renderability.ts",
+        "src/tools/video-editor/runtime/agentToolInvocationService.ts",
+        "src/tools/video-editor/runtime/composition/diagnostics.ts",
+        "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "src/tools/video-editor/runtime/renderPlanner.ts",
+        "src/tools/video-editor/runtime/renderability.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/renderability.test.ts"
+      ]
+    },
+    {
+      "id": "T10",
+      "depends_on": [
+        "T9"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 8: Implement `runtime/composition/processResultAttach.ts` as a host-internal attach record contract supporting `process.result.attach` and compatibility alias `process.attach-result`, recording process refs, processId, operationId, taskId, returned material/artifact refs, sidecars, diagnostics, logs, progress, actions, metadata, provenance, and validation that descriptors/operation IDs match while rejecting direct timeline placement mutation.",
+      "complexity_justification": "This creates a host-internal graph/runtime attachment contract that must not leak into public TimelinePatchOpFamily or permit direct timeline mutation. Mistakes can break the North Star invariant that processes only contribute through refs and artifacts.",
+      "executor_notes": "Added `processResultAttach.ts` as a host-internal canonicalizer for `process.result.attach` with `process.attach-result` alias support. The record now validates descriptor/process/operation/task correlation against `VideoEditorProcessDescriptor`, records returned material and artifact refs plus sidecars/diagnostics/logs/progress/actions/metadata/provenance, and rejects direct timeline placement fields instead of extending public TimelinePatch families. Verified with the full `processResultAttach.test.ts` file (5 passing tests) covering canonical creation, alias normalization, descriptor-ope...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/processResultAttach.ts",
+        "src/tools/video-editor/runtime/composition/processResultAttach.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/processResultAttach.test.ts"
+      ]
+    },
+    {
+      "id": "T11",
+      "depends_on": [
+        "T10"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This bridges process outputs into existing material/artifact semantics without expanding the locked material status vocabulary. A subtle mapping error can alter graph-authoritative material state or expose process mutations through timeline patch paths.",
+      "executor_notes": "Added a host-internal projection from process.result.attach records into existing M3a/M3c contracts: returned material refs normalize onto resolved material statuses, failed pending process-owned refs can map to failed without adding new status vocabulary, and returned artifacts gain existing manifest/sidecar contracts with process provenance. Verified with the full processResultAttach test file, including material.attach consumption through existing graph preview material refs. baseline_test_failures is null, so regression classification is by observed pass/fail only; the scoped file passe...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/processResultAttach.ts",
+        "src/tools/video-editor/runtime/composition/processResultAttach.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/processResultAttach.test.ts"
+      ]
+    },
+    {
+      "id": "T12",
+      "depends_on": [
+        "T11"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This changes SDK-facing type contracts that extension authors and runtime reference resolution depend on. The change is intentionally data-only, but a contract mistake can leak host runtime concepts into the V1 SDK or break existing references.",
+      "executor_notes": "Added data-only SDK extensions for process-backed live sources: ProcessOperationSpec.outputKinds now admits live-source-scalar/vector/structured, ProcessSpec can advertise liveSources with sourceId/valueShape metadata, and LiveSourceRef can carry an optional processBinding without importing host runtime modules. Exported the new process live-source types from the public barrel and extended SDK boundary/index/smoke coverage. baseline_test_failures is null, so regression classification is by observed pass/fail only; the scoped SDK suites passed 870/870.",
+      "files_changed": [
+        "src/sdk/video/families/processes.ts",
+        "src/sdk/video/composition/references.ts",
+        "src/sdk/index.ts",
+        "src/sdk/__tests__/sdk-boundary.test.ts",
+        "src/sdk/index.test.ts",
+        "src/sdk/smoke/barrel-import-smoke.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/__tests__/sdk-boundary.test.ts src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts"
+      ]
+    },
+    {
+      "id": "T13",
+      "depends_on": [
+        "T12"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 11: Add process-backed live-source binding in `liveDataRegistry.ts` and/or reference resolution so LiveSourceRef values bind only when the owning process status is ready, consumers access values solely through LiveSourceRef, process-correlated diagnostics are emitted for absent/unhealthy/unknown sources, and tests cover ready, not-installed, failed, degraded, and unknown-source cases.",
+      "complexity_justification": "This is a host resolver and diagnostic change built on the prior SDK shape. It requires careful health gating, but it is bounded to live-source resolution and has direct scenario tests.",
+      "executor_notes": "Added process-backed live-source reference resolution to liveDataRegistry.ts. Introduced ProcessStatusProvider config option, LiveSourceRefResolution type, and resolveLiveSourceRef() method. The method gates process-backed LiveSourceRef values on the owning process being 'ready'. Non-ready states emit process-correlated diagnostics with codes process-live/process-not-installed, process-live/process-failed, process-live/process-degraded, process-live/process-absent, process-live/no-provider, and process-live/source-unknown. Consumers access values solely through resolveLiveSourceRef(). Tests...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/liveDataRegistry.ts",
+        "src/tools/video-editor/runtime/liveDataRegistry.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveDataRegistry.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderability.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/processCommandRegistration.test.ts src/tools/video-editor/runtime/composition/processResultAttach.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveDataRegistry.test.ts src/tools/video-editor/runtime/families src/tools/video-editor/runtime/processes src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/processCommandRegistration.test.ts src/tools/video-editor/runtime/composition/processResultAttach.test.ts"
+      ]
+    },
+    {
+      "id": "T14",
+      "depends_on": [
+        "T13"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 12: Add repo-controlled fixtures at `tests/fixtures/video-editor/process-fixture.ts` and `process-fixture-descriptor.ts` implementing the frozen V0 newline-delimited stdio JSON-RPC protocol with health, execute, cancel, shutdown, progress/log notifications, cancellation as request and notification, all four error classes, all eight lifecycle states, configurable late-result/late-notification scenarios, and no shell escape or arbitrary command execution.",
+      "complexity_justification": "The fixture embodies the same wire protocol and lifecycle assumptions that integration tests will enforce. A fixture bug can create false confidence across ProcessManager integration while still appearing deterministic.",
+      "executor_notes": "Added a deterministic, repo-controlled fixture process and descriptor for the frozen V0 newline-delimited stdio JSON-RPC contract. The fixture handles health, execute, cancel, and shutdown; accepts cancel as both notification and request; emits progress/log/cancel notifications; supports protocol-error, timeout, invalid-request, and process-exited scenarios; and allows configurable late-result and late-notification flows without spawning arbitrary commands. Verified with the full scoped fixture protocol test file (3 passing tests).",
+      "files_changed": [
+        "tests/fixtures/video-editor/process-fixture.ts",
+        "tests/fixtures/video-editor/process-fixture-descriptor.ts",
+        "src/tools/video-editor/runtime/processes/processFixture.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes/processFixture.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes/processFixture.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes/processFixture.test.ts"
+      ]
+    },
+    {
+      "id": "T15",
+      "depends_on": [
+        "T14"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 13: Add ProcessManager integration tests against the fixture for all lifecycle states, health/execute/cancel/shutdown roundtrips, correlation on request/response/notification/error messages, protocol-error/timeout/process-exited/invalid-request JSON-RPC error shapes, and late-result/progress/log behavior being ignored for state mutation while recorded as recoverable diagnostics.",
+      "complexity_justification": "These tests exercise real stdio process orchestration and race handling across transport and ProcessManager. Flaky or incomplete coverage could miss correlation and terminal-state invariants that unit tests with fake transports cannot prove.",
+      "executor_notes": "Added fixture-backed ProcessManager integration tests covering stopped/not-installed/starting/ready/busy/degraded/failed/stopping, health/execute/cancel/shutdown roundtrips, request/response/notification/error correlation, protocol-error/timeout/invalid-request/process-exited shapes, and late-result/progress/log diagnostics that stay recoverable without mutating terminal state. Verified with `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes` (47/47 passing).",
+      "files_changed": [
+        "src/tools/video-editor/runtime/processes/ProcessManager.integration.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes"
+      ]
+    },
+    {
+      "id": "T16",
+      "depends_on": [
+        "T15"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This is cross-surface integration coverage across process execution, command services, planner projection, and attachment. The task is test-only, but it must validate several shared contracts without masking regressions in reserved-family behavior.",
+      "executor_notes": "Ran one broad foreground Vitest verification spanning process runtime, command invocation, planner projection, result attachment, live-source resolution, extension surface, families, and reserved-family SDK definitions. The first pass surfaced a flaky ProcessManager fixture start path under the broader batch load: two integration assertions degraded on the helper's 250 ms real-stdio health timeout. Raised the integration helper defaults to 1000 ms in ProcessManager.integration.test.ts, reran the same scoped command once, and the verification passed cleanly: 16 files, 461 tests, 0 failures....",
+      "files_changed": [
+        "src/tools/video-editor/runtime/processes/ProcessManager.integration.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes src/tools/video-editor/runtime/processCommandRegistration.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/composition/processResultAttach.test.ts src/tools/video-editor/runtime/liveDataRegistry.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/families src/sdk/video/families/familyDefinitions.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes src/tools/video-editor/runtime/processCommandRegistration.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/composition/processResultAttach.test.ts src/tools/video-editor/runtime/liveDataRegistry.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/families src/sdk/video/families/familyDefinitions.test.ts"
+      ]
+    },
+    {
+      "id": "T17",
+      "depends_on": [
+        "T16"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This is a mechanical validation task that runs the plan's scoped and full-suite commands and classifies failures. It does not require implementation judgment beyond separating newly introduced failures from known baseline issues.",
+      "executor_notes": "Verification complete. Scoped Vitest suites across all M6a-changed surfaces: 21 files, 1346 tests, 0 failures. Covers processes (jsonRpcStdioTransport, payloadLimits, ProcessManager unit + integration, processFixture), processCommandRegistration, renderPlanner + compositionGraph, renderability, processResultAttach, patchPreview, referenceResolver, liveDataRegistry, extensionSurface, families (adapterRegistry, projectionPolicy, transitionProjector), familyDefinitions, SDK boundary/index/smoke. Lint: 25 errors total \u2014 24 pre-existing in untouched files, 1 regression in our jsonRpcStdioTranspo...",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes src/tools/video-editor/runtime/processCommandRegistration.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/composition/processResultAttach.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/referenceResolver.test.ts src/tools/video-editor/runtime/liveDataRegistry.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/families src/sdk/video/families/familyDefinitions.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts",
+        "npm run lint",
+        "npm run check:no-smoke-tests",
+        "npx vitest run --config config/testing/vitest.config.ts (full suite, hung at 949s)"
+      ]
+    }
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "verdict": "",
+      "question": "Do lifecycle tests prove all eight process states, allowed/blocked transitions, terminal-state handling, and blocker classifications without mapping process states to material statuses?",
+      "executor_note": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative."
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "verdict": "",
+      "question": "Does the stdio JSON-RPC transport preserve newline-delimited UTF-8 framing, reject malformed protocol messages, enforce correlation fields, surface process exits/timeouts, and handle progress/log/cancel notifications?",
+      "executor_note": "Yes. The transport writes newline-delimited UTF-8 JSON-RPC messages, rejects malformed or non-conformant incoming messages via protocol errors, enforces response/notification correlation fields, rejects pending work on timeout or process exit, and emits validated progress/log/cancel notifications under unit coverage."
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "verdict": "",
+      "question": "Can ProcessManager spawn only declared trusted `protocol: 'stdio-jsonrpc'` descriptors, project current status for all lifecycle states, and avoid eager startup unless explicitly required?",
+      "executor_note": "Yes. ProcessManager now serves only the declared trusted ProcessSpec registry, rejects undeclared or unsupported descriptors, delays spawning until start/health is requested, and the fake-transport tests verify status projection across the lifecycle states plus graceful shutdown bookkeeping."
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "verdict": "",
+      "question": "Are execute/cancel/shutdown operations correlated by task/process/operation, and are late results/progress/logs recorded as recoverable diagnostics without mutating terminal state?",
+      "executor_note": "Yes. Execute and cancel now enforce task/process/operation correlation, shutdown carries active-operation correlation when tearing down in-flight work, and late result/progress/log traffic is downgraded into recoverable diagnostics on process status without mutating the terminal lifecycle state."
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "verdict": "",
+      "question": "Does payload normalization use an explicit testable limit, reject oversized inline blobs, require artifact locators over the limit, and avoid truncation or fallback encoding?",
+      "executor_note": "CONFIRMED. Payload normalization uses DEFAULT_MAX_INLINE_BLOB_BYTES (64 KiB) as an explicit testable limit, configurable via PayloadLimitsConfig.maxInlineBlobBytes. Oversized inline blobs are rejected via InlineBlobDiagnostic records (checkPayloadLimits) or JsonRpcTransportError throws (assertPayloadLimits). Non-inline artifact locators (artifact-store, url, local-file) on sidecar entries allow oversized data to pass. There is no truncation, silent acceptance, or fallback encoding \u2014 the input payload is never mutated (verified by JSON-snapshot test)."
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "verdict": "",
+      "question": "Is the process adapter now runtime-bridged while preserving descriptor identity/order from `buildProcessDescriptors()` and consuming host-supplied ProcessStatus overlays?",
+      "executor_note": "CONFIRMED. The process adapter is now runtime-bridged (classification: 'real', maturity: 'runtime-bridged'). Descriptor identity and order from buildProcessDescriptors() are preserved \u2014 the normalize() method delegates directly to buildProcessDescriptors() for the base descriptors. Host-supplied ProcessStatus overlays are consumed via the optional ProcessNormalizeInput.processStatuses field: when provided, a lookup map is built and non-ready/non-stopped states append 'process-dependent' blockers to the descriptor's blockers array without mutating the originals. Ready and stopped states are..."
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "verdict": "",
+      "question": "Do active process descriptors still flow through `reservedProcess` into runtime config, and do output-format/search-provider reserved diagnostics remain unchanged?",
+      "executor_note": "CONFIRMED. Active process descriptors flow through reservedProcess into runtime config: ADAPTER_DISPATCH maps process to { field: 'processes', source: 'reservedProcess' } (FamilyRuntimeAssembly.ts:227). In the assembly loop (lines 733-788), the reservedProcess source triggers getReservedProjectionCandidates('process') which returns m12ReservedProcesses \u2014 the same reserved list populated by FamilyContributionSequence.ts:305-314. The contributions are then normalized by processAdapter.normalize() and the resulting descriptors are pushed into processDescriptors (target field 'processes'), whic..."
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "verdict": "",
+      "question": "Do process commands return typed ProcessRoundtripResult through ProcessManager.execute(), preserve ready/busy/degraded invokability, and block unavailable lifecycle states?",
+      "executor_note": "Process commands return typed ProcessRoundtripResult through ProcessCommandServices.invokeProcess (now Promise<ProcessRoundtripResult> instead of Promise<unknown>). Gating preserves ready/busy/degraded invokability (statusBlocks returns null for these states, allowing execution) and blocks unavailable lifecycle states (not-installed, stopped, starting, failed, stopping all produce blocking messages). The handler returns the typed result from services.invokeProcess so callers receive the full ProcessRoundtripResult shape."
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "verdict": "",
+      "question": "Do process blockers include the new reason vocabulary, carry process/operation/task diagnostic details, and apply only to routes declared by ProcessOperationSpec.routes?",
+      "executor_note": "Process planner blockers now use the expanded process reason vocabulary, carry correlated processId/operationId/taskId contract fields, and only emit on routes declared by the referenced ProcessOperationSpec; degraded remains warning-only unless the operation explicitly requires non-degraded health."
+    },
+    {
+      "id": "SC10",
+      "task_id": "T10",
+      "verdict": "",
+      "question": "Is `process.result.attach` host-internal with alias support, descriptor/operation validation, complete provenance fields, and no accepted direct timeline placement mutation?",
+      "executor_note": "Yes. The new contract stays host-internal, accepts `process.attach-result` as a compatibility alias while canonicalizing to `process.result.attach`, validates descriptor/process/operation/task identity, records full result/provenance fields, and throws on direct timeline placement mutation fields such as `timelinePatch` or `timelinePlacement`."
+    },
+    {
+      "id": "SC11",
+      "task_id": "T11",
+      "verdict": "",
+      "question": "Do returned materials and artifacts enter only existing M3a/M3c contracts, preserving the locked `missing|pending|resolved|stale|failed` material status vocabulary and public TimelinePatchOpFamily boundaries?",
+      "executor_note": "Yes. Attached results now project only into existing RenderMaterialRef/RenderMaterialStatus and RenderArtifact/RenderArtifactManifest contracts; the material status vocabulary remains missing|pending|resolved|stale|failed, process.result.attach stays outside public TimelinePatchOpFamily, and timeline-facing consumption is still through internal material.attach with material refs."
+    },
+    {
+      "id": "SC12",
+      "task_id": "T12",
+      "verdict": "",
+      "question": "Are process-backed live-source declarations data-only SDK extensions that advertise scalar/vector/structured outputs without importing host runtime concepts?",
+      "executor_note": "Yes. The new process-backed live-source surface is SDK-only data: process declarations advertise sourceId plus scalar/vector/structured valueShape, operations use new live-source-* outputKinds, and LiveSourceRef adds only an optional processBinding with processId. The change stays within sdk process/reference modules and does not import host runtime concepts."
+    },
+    {
+      "id": "SC13",
+      "task_id": "T13",
+      "verdict": "",
+      "question": "Does live-source resolution bind process-backed sources only when the owning process is ready, and emit process-correlated diagnostics for absent, unhealthy, degraded, or unknown sources?",
+      "executor_note": "Yes. resolveLiveSourceRef() binds process-backed sources only when the owning process status is 'ready'. Non-ready states emit process-correlated diagnostics: process-live/process-not-installed (error), process-live/process-failed (error), process-live/process-degraded (warning), process-live/process-absent (error) for unknown process IDs, process-live/no-provider (warning) when no provider is configured, and process-live/source-unknown (warning) when the source isn't in the registry. Transient states (stopped/starting/busy/stopping) emit info-level diagnostics. Tests explicitly cover ready..."
+    },
+    {
+      "id": "SC14",
+      "task_id": "T14",
+      "verdict": "",
+      "question": "Is the fixture deterministic, repo-controlled, protocol-complete for V0, and free of shell escape or arbitrary command execution paths?",
+      "executor_note": "Yes. The fixture is repo-controlled and deterministic, uses a fixed node-plus-tsx spawn path with a hardcoded missing-binary helper for not-installed coverage, never shells out or dispatches arbitrary commands, and exercises the V0 health/execute/cancel/shutdown wire contract plus notifications, error classes, lifecycle-state sequencing, and late-message scenarios under scoped protocol tests."
+    },
+    {
+      "id": "SC15",
+      "task_id": "T15",
+      "verdict": "",
+      "question": "Do fixture integration tests cover lifecycle, methods, correlation, error shapes, cancellation modes, process exit, timeout, and late-message diagnostics without relying on unbounded sleeps?",
+      "executor_note": "Yes. The new fixture-backed ProcessManager integration file covers lifecycle transitions, health/execute/cancel/shutdown, correlated request-response-notification-error paths, protocol-error/timeout/invalid-request/process-exited failures, and bounded late-message diagnostics via a deadline-based wait helper rather than unbounded sleeps."
+    },
+    {
+      "id": "SC16",
+      "task_id": "T16",
+      "verdict": "",
+      "question": "Does end-to-end coverage prove fixture spawning through ProcessManager, command invocation, planner status projection, result attachment, route-scoped blockers, graceful shutdown, and no regressions in reserved placeholder families?",
+      "executor_note": "The final scoped verification covers fixture spawning through ProcessManager, health/execute/cancel/shutdown roundtrips in the processes module, command invocation in processCommandRegistration, planner status projection and route-scoped blockers in renderPlanner/renderability, result attachment in processResultAttach, live-source readiness gating in liveDataRegistry, extension-surface wiring, and reserved placeholder-family expectations in the families and familyDefinitions suites. After stabilizing the fixture timeout helper, the combined run passed 461/461 with no reserved-family regress..."
+    },
+    {
+      "id": "SC17",
+      "task_id": "T17",
+      "verdict": "",
+      "question": "Did the scoped Vitest suites, lint, and full test suite run, with any failures classified as newly introduced versus existing baseline failures?",
+      "executor_note": "Scoped Vitest suites: YES \u2014 21 files (1346 tests) across all M6a-changed surfaces, all passing with 0 failures. Lint: YES \u2014 25 errors found; 24 are pre-existing in files untouched by this plan (timeline-domain.ts:1191, graphProjector.ts:751-759, materialRuntime.ts:1512, patchPreview.ts:1115, extensionSurface.ts:648); 1 is newly introduced in our T2 code at jsonRpcStdioTransport.ts:557 (no-async-promise-executor). Full test suite: PARTIAL \u2014 check:no-smoke-tests passed, but vitest run on all 1096 test files hung at 949s on src/pages/shots/hooks/useShotSelect (unrelated React component test, p..."
+    }
+  ],
+  "task_updates": [
+    {
+      "task_id": "T2",
+      "status": "done",
+      "executor_notes": "Added a host-side stdio JSON-RPC transport that frames one UTF-8 message per newline, validates incoming JSON-RPC envelopes and correlation fields, surfaces progress/log/cancel notifications, and normalizes timeout/process-exit/protocol failures into transport errors. Verified with the full scoped transport test file covering malformed JSON, missing jsonrpc, unknown methods, timeout, process exit, correlation failures, and notifications.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.ts",
+        "src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.test.ts"
+      ]
+    },
+    {
+      "task_id": "T3",
+      "status": "done",
+      "executor_notes": "Added a host-owned ProcessManager that registers declared ProcessSpec entries, keeps startup lazy until start/health is requested, spawns only stdio-jsonrpc descriptors, projects lifecycle status across stopped/starting/ready/busy/degraded/failed/not-installed/stopping, and records graceful shutdown back to stopped. The scoped process-runtime module tests now pass after verifying the shutdown path exposes stopping synchronously before the final stopped transition.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/processes/ProcessManager.ts",
+        "src/tools/video-editor/runtime/processes/ProcessManager.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes"
+      ]
+    },
+    {
+      "task_id": "T4",
+      "status": "done",
+      "executor_notes": "Implemented ProcessManager execute/cancel behavior over correlated stdio JSON-RPC requests, added timeout/restart-policy hooks plus shutdown teardown for in-flight work, and recorded protocol-race late result/progress/log diagnostics without reviving terminal operations. Verified with the full scoped process-runtime test module covering success, failure, cancellation, correlation mismatch, late notifications, shutdown teardown, and restart-hook behavior.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/processes/ProcessManager.ts",
+        "src/tools/video-editor/runtime/processes/ProcessManager.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes"
+      ]
+    },
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "Added payloadLimits.ts with checkPayloadLimits() and assertPayloadLimits() functions. checkPayloadLimits inspects raw execute-response payloads for oversized inline material/artifact/sidecar blobs lacking a non-inline artifact locator, using DEFAULT_MAX_INLINE_BLOB_BYTES (64 KiB) as an explicit configurable limit. assertPayloadLimits wraps it into a JsonRpcTransportError for direct ProcessManager integration. The module never truncates, mutates, or fallback-encodes payloads \u2014 oversized inline without a locator is a hard protocol-level rejection. Tests cover: empty/missing payloads, inline r...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/processes/payloadLimits.ts",
+        "src/tools/video-editor/runtime/processes/payloadLimits.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes/payloadLimits.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "Converted processAdapter from delegated M12 placeholder (createPlaceholderAdapter) to a real runtime-bridged HostFamilyAdapter with classification 'real' and maturity 'runtime-bridged'. The adapter preserves descriptor identity/order from buildProcessDescriptors() and consumes host-supplied ProcessStatus overlays via the extended ProcessNormalizeInput interface. When processStatuses are provided, non-ready/non-stopped states produce 'process-dependent' blockers on the descriptors. Updated familyAdapterRegistry.ts to register process under Real adapters (not Delegated placeholder adapters)....",
+      "files_changed": [
+        "src/tools/video-editor/runtime/families/processAdapter.ts",
+        "src/tools/video-editor/runtime/families/familyAdapterRegistry.ts",
+        "src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes"
+      ]
+    },
+    {
+      "task_id": "T7",
+      "status": "done",
+      "executor_notes": "Verification-only task: confirmed no new test failures across all scoped suites. familyAdapterRegistry (15 pass), families module (40 pass across 3 files), processes module (41 pass across 3 files), extensionSurface (151 pass), familyDefinitions (71 pass), FamilyProjectionPolicy (9 pass). The reservedProcess dispatch pathway is intact: ADAPTER_DISPATCH maps process \u2192 source='reservedProcess', getReservedProjectionCandidates returns m12ReservedProcesses, descriptors flow through processAdapter.normalize() into runtime config. Output-format and search-provider reserved diagnostics (runtime/co...",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/video/families/familyDefinitions.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families/FamilyProjectionPolicy.test.ts"
+      ]
+    },
+    {
+      "task_id": "T8",
+      "status": "done",
+      "executor_notes": "Changed ProcessCommandServices.invokeProcess return type from Promise<unknown> to Promise<ProcessRoundtripResult> in processCommandRegistration.ts, replacing the unknown stub with a typed contract. Updated the handler to return services.invokeProcess() (was await without return). Updated test mocks to use a completedResult() helper producing a well-formed ProcessRoundtripResult with requestId, processId, operationId, status='completed', and returnedMaterials=[]. Both pre-existing tests continue to pass, verifying that gating behavior (not-installed blocks execution) and successful dispatch...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/processCommandRegistration.ts",
+        "src/tools/video-editor/runtime/processCommandRegistration.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processCommandRegistration.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts src/tools/video-editor/runtime/families",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/sdk/video/families/familyDefinitions.test.ts"
+      ]
+    },
+    {
+      "task_id": "T9",
+      "status": "done",
+      "executor_notes": "Extended the shared blocker vocabulary with process-not-installed, process-failed, process-degraded, and process-configuration-error, added process/operation/task correlation fields to shared diagnostic contracts, and rewired planner process findings to validate declared process operations/routes before emitting route-scoped blockers. Verified scoped behavior with renderPlanner/renderability suites: missing process references stay on declared routes, not-installed/stopped/busy/failed block with correlated process metadata, degraded is warning-only unless the operation requires non-degraded...",
+      "files_changed": [
+        "src/sdk/video/rendering/renderability.ts",
+        "src/tools/video-editor/runtime/agentToolInvocationService.ts",
+        "src/tools/video-editor/runtime/composition/diagnostics.ts",
+        "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "src/tools/video-editor/runtime/renderPlanner.ts",
+        "src/tools/video-editor/runtime/renderability.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/renderability.test.ts"
+      ]
+    },
+    {
+      "task_id": "T10",
+      "status": "done",
+      "executor_notes": "Added `processResultAttach.ts` as a host-internal canonicalizer for `process.result.attach` with `process.attach-result` alias support. The record now validates descriptor/process/operation/task correlation against `VideoEditorProcessDescriptor`, records returned material and artifact refs plus sidecars/diagnostics/logs/progress/actions/metadata/provenance, and rejects direct timeline placement fields instead of extending public TimelinePatch families. Verified with the full `processResultAttach.test.ts` file (5 passing tests) covering canonical creation, alias normalization, descriptor-ope...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/processResultAttach.ts",
+        "src/tools/video-editor/runtime/composition/processResultAttach.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/processResultAttach.test.ts"
+      ]
+    },
+    {
+      "task_id": "T11",
+      "status": "done",
+      "executor_notes": "Added a host-internal projection from process.result.attach records into existing M3a/M3c contracts: returned material refs normalize onto resolved material statuses, failed pending process-owned refs can map to failed without adding new status vocabulary, and returned artifacts gain existing manifest/sidecar contracts with process provenance. Verified with the full processResultAttach test file, including material.attach consumption through existing graph preview material refs. baseline_test_failures is null, so regression classification is by observed pass/fail only; the scoped file passe...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/processResultAttach.ts",
+        "src/tools/video-editor/runtime/composition/processResultAttach.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/processResultAttach.test.ts"
+      ]
+    },
+    {
+      "task_id": "T12",
+      "status": "done",
+      "executor_notes": "Added data-only SDK extensions for process-backed live sources: ProcessOperationSpec.outputKinds now admits live-source-scalar/vector/structured, ProcessSpec can advertise liveSources with sourceId/valueShape metadata, and LiveSourceRef can carry an optional processBinding without importing host runtime modules. Exported the new process live-source types from the public barrel and extended SDK boundary/index/smoke coverage. baseline_test_failures is null, so regression classification is by observed pass/fail only; the scoped SDK suites passed 870/870.",
+      "files_changed": [
+        "src/sdk/video/families/processes.ts",
+        "src/sdk/video/composition/references.ts",
+        "src/sdk/index.ts",
+        "src/sdk/__tests__/sdk-boundary.test.ts",
+        "src/sdk/index.test.ts",
+        "src/sdk/smoke/barrel-import-smoke.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/__tests__/sdk-boundary.test.ts src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts"
+      ]
+    },
+    {
+      "task_id": "T13",
+      "status": "done",
+      "executor_notes": "Added process-backed live-source reference resolution to liveDataRegistry.ts. Introduced ProcessStatusProvider config option, LiveSourceRefResolution type, and resolveLiveSourceRef() method. The method gates process-backed LiveSourceRef values on the owning process being 'ready'. Non-ready states emit process-correlated diagnostics with codes process-live/process-not-installed, process-live/process-failed, process-live/process-degraded, process-live/process-absent, process-live/no-provider, and process-live/source-unknown. Consumers access values solely through resolveLiveSourceRef(). Tests...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/liveDataRegistry.ts",
+        "src/tools/video-editor/runtime/liveDataRegistry.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveDataRegistry.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderability.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/processCommandRegistration.test.ts src/tools/video-editor/runtime/composition/processResultAttach.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveDataRegistry.test.ts src/tools/video-editor/runtime/families src/tools/video-editor/runtime/processes src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/processCommandRegistration.test.ts src/tools/video-editor/runtime/composition/processResultAttach.test.ts"
+      ]
+    },
+    {
+      "task_id": "T14",
+      "status": "done",
+      "executor_notes": "Added a deterministic, repo-controlled fixture process and descriptor for the frozen V0 newline-delimited stdio JSON-RPC contract. The fixture handles health, execute, cancel, and shutdown; accepts cancel as both notification and request; emits progress/log/cancel notifications; supports protocol-error, timeout, invalid-request, and process-exited scenarios; and allows configurable late-result and late-notification flows without spawning arbitrary commands. Verified with the full scoped fixture protocol test file (3 passing tests).",
+      "files_changed": [
+        "tests/fixtures/video-editor/process-fixture.ts",
+        "tests/fixtures/video-editor/process-fixture-descriptor.ts",
+        "src/tools/video-editor/runtime/processes/processFixture.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes/processFixture.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes/processFixture.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes/processFixture.test.ts"
+      ]
+    },
+    {
+      "task_id": "T15",
+      "status": "done",
+      "executor_notes": "Added fixture-backed ProcessManager integration tests covering stopped/not-installed/starting/ready/busy/degraded/failed/stopping, health/execute/cancel/shutdown roundtrips, request/response/notification/error correlation, protocol-error/timeout/invalid-request/process-exited shapes, and late-result/progress/log diagnostics that stay recoverable without mutating terminal state. Verified with `npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes` (47/47 passing).",
+      "files_changed": [
+        "src/tools/video-editor/runtime/processes/ProcessManager.integration.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes"
+      ]
+    },
+    {
+      "task_id": "T16",
+      "status": "done",
+      "executor_notes": "Ran one broad foreground Vitest verification spanning process runtime, command invocation, planner projection, result attachment, live-source resolution, extension surface, families, and reserved-family SDK definitions. The first pass surfaced a flaky ProcessManager fixture start path under the broader batch load: two integration assertions degraded on the helper's 250 ms real-stdio health timeout. Raised the integration helper defaults to 1000 ms in ProcessManager.integration.test.ts, reran the same scoped command once, and the verification passed cleanly: 16 files, 461 tests, 0 failures....",
+      "files_changed": [
+        "src/tools/video-editor/runtime/processes/ProcessManager.integration.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes src/tools/video-editor/runtime/processCommandRegistration.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/composition/processResultAttach.test.ts src/tools/video-editor/runtime/liveDataRegistry.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/families src/sdk/video/families/familyDefinitions.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes src/tools/video-editor/runtime/processCommandRegistration.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/composition/processResultAttach.test.ts src/tools/video-editor/runtime/liveDataRegistry.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/families src/sdk/video/families/familyDefinitions.test.ts"
+      ]
+    },
+    {
+      "task_id": "T17",
+      "status": "done",
+      "executor_notes": "Verification complete. Scoped Vitest suites across all M6a-changed surfaces: 21 files, 1346 tests, 0 failures. Covers processes (jsonRpcStdioTransport, payloadLimits, ProcessManager unit + integration, processFixture), processCommandRegistration, renderPlanner + compositionGraph, renderability, processResultAttach, patchPreview, referenceResolver, liveDataRegistry, extensionSurface, families (adapterRegistry, projectionPolicy, transitionProjector), familyDefinitions, SDK boundary/index/smoke. Lint: 25 errors total \u2014 24 pre-existing in untouched files, 1 regression in our jsonRpcStdioTranspo...",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes src/tools/video-editor/runtime/processCommandRegistration.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/composition/processResultAttach.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/referenceResolver.test.ts src/tools/video-editor/runtime/liveDataRegistry.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/families src/sdk/video/families/familyDefinitions.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts",
+        "npm run lint",
+        "npm run check:no-smoke-tests",
+        "npx vitest run --config config/testing/vitest.config.ts (full suite, hung at 949s)"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC2",
+      "executor_note": "Yes. The transport writes newline-delimited UTF-8 JSON-RPC messages, rejects malformed or non-conformant incoming messages via protocol errors, enforces response/notification correlation fields, rejects pending work on timeout or process exit, and emits validated progress/log/cancel notifications under unit coverage."
+    },
+    {
+      "sense_check_id": "SC3",
+      "executor_note": "Yes. ProcessManager now serves only the declared trusted ProcessSpec registry, rejects undeclared or unsupported descriptors, delays spawning until start/health is requested, and the fake-transport tests verify status projection across the lifecycle states plus graceful shutdown bookkeeping."
+    },
+    {
+      "sense_check_id": "SC4",
+      "executor_note": "Yes. Execute and cancel now enforce task/process/operation correlation, shutdown carries active-operation correlation when tearing down in-flight work, and late result/progress/log traffic is downgraded into recoverable diagnostics on process status without mutating the terminal lifecycle state."
+    },
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "CONFIRMED. Payload normalization uses DEFAULT_MAX_INLINE_BLOB_BYTES (64 KiB) as an explicit testable limit, configurable via PayloadLimitsConfig.maxInlineBlobBytes. Oversized inline blobs are rejected via InlineBlobDiagnostic records (checkPayloadLimits) or JsonRpcTransportError throws (assertPayloadLimits). Non-inline artifact locators (artifact-store, url, local-file) on sidecar entries allow oversized data to pass. There is no truncation, silent acceptance, or fallback encoding \u2014 the input payload is never mutated (verified by JSON-snapshot test)."
+    },
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "CONFIRMED. The process adapter is now runtime-bridged (classification: 'real', maturity: 'runtime-bridged'). Descriptor identity and order from buildProcessDescriptors() are preserved \u2014 the normalize() method delegates directly to buildProcessDescriptors() for the base descriptors. Host-supplied ProcessStatus overlays are consumed via the optional ProcessNormalizeInput.processStatuses field: when provided, a lookup map is built and non-ready/non-stopped states append 'process-dependent' blockers to the descriptor's blockers array without mutating the originals. Ready and stopped states are..."
+    },
+    {
+      "sense_check_id": "SC7",
+      "executor_note": "CONFIRMED. Active process descriptors flow through reservedProcess into runtime config: ADAPTER_DISPATCH maps process to { field: 'processes', source: 'reservedProcess' } (FamilyRuntimeAssembly.ts:227). In the assembly loop (lines 733-788), the reservedProcess source triggers getReservedProjectionCandidates('process') which returns m12ReservedProcesses \u2014 the same reserved list populated by FamilyContributionSequence.ts:305-314. The contributions are then normalized by processAdapter.normalize() and the resulting descriptors are pushed into processDescriptors (target field 'processes'), whic..."
+    },
+    {
+      "sense_check_id": "SC8",
+      "executor_note": "Process commands return typed ProcessRoundtripResult through ProcessCommandServices.invokeProcess (now Promise<ProcessRoundtripResult> instead of Promise<unknown>). Gating preserves ready/busy/degraded invokability (statusBlocks returns null for these states, allowing execution) and blocks unavailable lifecycle states (not-installed, stopped, starting, failed, stopping all produce blocking messages). The handler returns the typed result from services.invokeProcess so callers receive the full ProcessRoundtripResult shape."
+    },
+    {
+      "sense_check_id": "SC9",
+      "executor_note": "Process planner blockers now use the expanded process reason vocabulary, carry correlated processId/operationId/taskId contract fields, and only emit on routes declared by the referenced ProcessOperationSpec; degraded remains warning-only unless the operation explicitly requires non-degraded health."
+    },
+    {
+      "sense_check_id": "SC10",
+      "executor_note": "Yes. The new contract stays host-internal, accepts `process.attach-result` as a compatibility alias while canonicalizing to `process.result.attach`, validates descriptor/process/operation/task identity, records full result/provenance fields, and throws on direct timeline placement mutation fields such as `timelinePatch` or `timelinePlacement`."
+    },
+    {
+      "sense_check_id": "SC11",
+      "executor_note": "Yes. Attached results now project only into existing RenderMaterialRef/RenderMaterialStatus and RenderArtifact/RenderArtifactManifest contracts; the material status vocabulary remains missing|pending|resolved|stale|failed, process.result.attach stays outside public TimelinePatchOpFamily, and timeline-facing consumption is still through internal material.attach with material refs."
+    },
+    {
+      "sense_check_id": "SC12",
+      "executor_note": "Yes. The new process-backed live-source surface is SDK-only data: process declarations advertise sourceId plus scalar/vector/structured valueShape, operations use new live-source-* outputKinds, and LiveSourceRef adds only an optional processBinding with processId. The change stays within sdk process/reference modules and does not import host runtime concepts."
+    },
+    {
+      "sense_check_id": "SC13",
+      "executor_note": "Yes. resolveLiveSourceRef() binds process-backed sources only when the owning process status is 'ready'. Non-ready states emit process-correlated diagnostics: process-live/process-not-installed (error), process-live/process-failed (error), process-live/process-degraded (warning), process-live/process-absent (error) for unknown process IDs, process-live/no-provider (warning) when no provider is configured, and process-live/source-unknown (warning) when the source isn't in the registry. Transient states (stopped/starting/busy/stopping) emit info-level diagnostics. Tests explicitly cover ready..."
+    },
+    {
+      "sense_check_id": "SC14",
+      "executor_note": "Yes. The fixture is repo-controlled and deterministic, uses a fixed node-plus-tsx spawn path with a hardcoded missing-binary helper for not-installed coverage, never shells out or dispatches arbitrary commands, and exercises the V0 health/execute/cancel/shutdown wire contract plus notifications, error classes, lifecycle-state sequencing, and late-message scenarios under scoped protocol tests."
+    },
+    {
+      "sense_check_id": "SC15",
+      "executor_note": "Yes. The new fixture-backed ProcessManager integration file covers lifecycle transitions, health/execute/cancel/shutdown, correlated request-response-notification-error paths, protocol-error/timeout/invalid-request/process-exited failures, and bounded late-message diagnostics via a deadline-based wait helper rather than unbounded sleeps."
+    },
+    {
+      "sense_check_id": "SC16",
+      "executor_note": "The final scoped verification covers fixture spawning through ProcessManager, health/execute/cancel/shutdown roundtrips in the processes module, command invocation in processCommandRegistration, planner status projection and route-scoped blockers in renderPlanner/renderability, result attachment in processResultAttach, live-source readiness gating in liveDataRegistry, extension-surface wiring, and reserved placeholder-family expectations in the families and familyDefinitions suites. After stabilizing the fixture timeout helper, the combined run passed 461/461 with no reserved-family regress..."
+    },
+    {
+      "sense_check_id": "SC17",
+      "executor_note": "Scoped Vitest suites: YES \u2014 21 files (1346 tests) across all M6a-changed surfaces, all passing with 0 failures. Lint: YES \u2014 25 errors found; 24 are pre-existing in files untouched by this plan (timeline-domain.ts:1191, graphProjector.ts:751-759, materialRuntime.ts:1512, patchPreview.ts:1115, extensionSurface.ts:648); 1 is newly introduced in our T2 code at jsonRpcStdioTransport.ts:557 (no-async-promise-executor). Full test suite: PARTIAL \u2014 check:no-smoke-tests passed, but vitest run on all 1096 test files hung at 949s on src/pages/shots/hooks/useShotSelect (unrelated React component test, p..."
+    },
+    {
+      "sense_check_id": "SC1",
+      "executor_note": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative."
+    }
+  ],
+  "output": "Aggregated execute batches: completed 16/16. Batch 1: Implemented the stdio JSON-RPC transport with newline-delimited UTF-8 framing, response correlation enforcement, progress/log/cancel notification handling, timeout/process-exit normalization, and focused unit coverage for malformed protocol traffic and correlation failures. Batch 2: Implemented the first ProcessManager slice with a declared ProcessSpec registry, lazy stdio-jsonrpc spawning, lifecycle/status projection, health checks, graceful shutdown bookkeeping, and fake-transport lifecycle tests. Batch 3: Completed ProcessManager task execution orchestration with correlated execute/cancel handling, timeout and restart-policy hooks, late-message diagnostics, shutdown teardown, and expanded fake-transport coverage. Batch 4: Batch 5: T6: Converted processAdapter from delegated M12 placeholder to real runtime-bridged HostFamilyAdapter with classification 'real', maturity 'runtime-bridged', and ProcessStatus overlay support. Updated registry and tests. All 40 families, 41 processes, 183 SDK boundary, 329 sdk-boundary, and 71 family definitions tests pass with no regressions. Batch 6: T7 verification complete. All scoped test suites pass with no regressions. The reservedProcess dispatch pathway in FamilyRuntimeAssembly.ts remains intact: ADAPTER_DISPATCH still maps process to source='reservedProcess', getReservedProjectionCandidates('process') returns m12ReservedProcesses, and descriptors flow into runtime config via proce...",
+  "deviations": [
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.test.ts, src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.ts",
+    "Advisory audit finding: Sense check SC3 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC11 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC12 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC13 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC14 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC15 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC16 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC17 is missing an executor acknowledgment.",
+    "Advisory audit finding: Tasks left pending after execute (executor never started them): T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17",
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: src/tools/video-editor/runtime/processes/ProcessManager.test.ts, src/tools/video-editor/runtime/processes/ProcessManager.ts",
+    "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+    {
+      "omitted_count": 150,
+      "reason": "prompt projection"
+    }
+  ],
+  "files_changed": [
+    "src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.ts",
+    "src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.test.ts",
+    "src/tools/video-editor/runtime/processes/ProcessManager.ts",
+    "src/tools/video-editor/runtime/processes/ProcessManager.test.ts",
+    "src/tools/video-editor/runtime/processes/payloadLimits.ts",
+    "src/tools/video-editor/runtime/processes/payloadLimits.test.ts",
+    "src/tools/video-editor/runtime/families/processAdapter.ts",
+    "src/tools/video-editor/runtime/families/familyAdapterRegistry.ts",
+    "src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts",
+    "src/tools/video-editor/runtime/processCommandRegistration.ts",
+    "src/tools/video-editor/runtime/processCommandRegistration.test.ts",
+    "src/sdk/video/rendering/renderability.ts",
+    "src/tools/video-editor/runtime/agentToolInvocationService.ts",
+    "src/tools/video-editor/runtime/composition/diagnostics.ts",
+    "src/tools/video-editor/runtime/renderPlanner.test.ts",
+    "src/tools/video-editor/runtime/renderPlanner.ts",
+    "src/tools/video-editor/runtime/renderability.test.ts",
+    "src/tools/video-editor/runtime/composition/processResultAttach.ts",
+    "src/tools/video-editor/runtime/composition/processResultAttach.test.ts",
+    "src/sdk/video/families/processes.ts"
+  ],
+  "commands_run": [
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes/payloadLimits.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/sdk/video/families/familyDefinitions.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families/FamilyProjectionPolicy.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processCommandRegistration.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts src/tools/video-editor/runtime/families",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/sdk/video/families/familyDefinitions.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/renderability.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/processResultAttach.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/sdk/__tests__/sdk-boundary.test.ts src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveDataRegistry.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderability.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/processCommandRegistration.test.ts src/tools/video-editor/runtime/composition/processResultAttach.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveDataRegistry.test.ts src/tools/video-editor/runtime/families src/tools/video-editor/runtime/processes src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/renderPlanner.tes...",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes/processFixture.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/processes src/tools/video-editor/runtime/processCommandRegistration.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/v...",
+    {
+      "omitted_count": 4,
+      "reason": "prompt projection"
+    }
+  ],
+  "watch_items": [
+    "Preserve the Epic North Star: processes are host-owned, trusted, local, and namespaced outside the V1 composition SDK.",
+    "Processes and process results must never mutate raw timeline internals directly or gain public TimelinePatch rights.",
+    "`process.result.attach` and `process.attach-result` are host-internal attachment contracts, not public TimelinePatchOpFamily members.",
+    "Keep lifecycle states namespaced under process contracts; never map them to material statuses.",
+    "Do not change the locked material status vocabulary: `missing|pending|resolved|stale|failed`.",
+    "Live or nondeterministic process outputs must bake or promote to durable materials, artifacts, captures, or attach records before authoritative export.",
+    "Process blockers must be route-scoped to `ProcessOperationSpec.routes`; do not let one unhealthy process block unrelated routes.",
+    "`degraded` is warning-only globally unless a specific operation route explicitly requires non-degraded health.",
+    "Every accepted task-scoped JSON-RPC response, notification, and error must carry matching task/process/operation correlation.",
+    "Late result/progress/log messages after terminal operation state are diagnostics only and must not mutate state.",
+    "Payload limits must be explicit and testable; oversized inline data must fail unless represented by artifact locators.",
+    "Use the settled assumption of lazy ProcessManager startup unless the codebase already contains a stronger established pattern.",
+    "The fixture must remain deterministic and repo-controlled, with no arbitrary shell execution.",
+    "Do not add sandbox, marketplace, remote execution, dashboard UI, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, generic texture routing, or output-format sidecar orchestration in this milestone.",
+    "The executor should inspect runtime logs and use reviewer judgment for lifecycle/status behavior and module separation rather than treating every success criterion as purely syntactic."
+  ],
+  "user_actions": [],
+  "meta_commentary": "Execute the DAG mostly linearly because the runtime protocol, manager, adapter wiring, planner blockers, attachment contract, live-source binding, and fixture tests build on one another. The plan's open questions are covered by approved assumptions: lazy startup, explicit payload-limit constants, and degraded health warning-only except where a route explicitly requires non-degraded status. Keep each task scoped to its step, add focused tests alongside the change, and avoid broad refactors or any feature claim outside the trusted local process runtime core."
+}
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-04T19:01:53Z",
+  "hash": "sha256:e8db84e5365a6762841c16607ecca863a4546546b537f19e18aad5f3a6c63e60",
+  "questions": [
+    "Should `ProcessManager` eagerly start health checks for all declared trusted process descriptors when runtime assembly completes, or lazily spawn only when a command/route first requires the process?",
+    "What exact inline payload size limit should M6a enforce before requiring artifact locators?",
+    "Should `degraded` remain globally non-blocking with warning-only planner behavior, or can individual process operations declare that degraded health blocks specific routes?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "A host-owned ProcessManager can spawn only declared trusted `protocol: 'stdio-jsonrpc'` process descriptors, perform health/execute/cancel/shutdown over newline-delimited stdio JSON-RPC, and expose current `ProcessStatus` for all eight lifecycle states.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "observe_runtime_logs"
+      ]
+    },
+    {
+      "criterion": "Every accepted task-scoped JSON-RPC request, response, notification, and error carries task/process/operation correlation, and missing or mismatched correlation is rejected with a diagnostic or protocol error.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Late results, progress, or logs after a terminal operation state are ignored for state mutation and recorded as recoverable protocol race diagnostics.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "observe_runtime_logs"
+      ]
+    },
+    {
+      "criterion": "Process execution results over the implementation payload limit return artifact locator references instead of inline blobs, with tests covering rejected oversized inline payloads.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The process adapter is runtime-bridged rather than delegated M12 placeholder, and process descriptors/statuses flow into runtime assembly and planner input without regressing output-format/search-provider reserved behavior.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Route-scoped process blockers fire only for routes that require the process and cover missing, not-installed, stopped, busy, failed, degraded warning, and configuration-error cases.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`process.result.attach` and `process.attach-result` are host-internal attach contracts, are not added to public `TimelinePatchOpFamily`, and record process ref, operation id, task id, returned refs, diagnostics, and provenance.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Returned process materials and artifacts enter existing M3a/M3c material/artifact contracts without adding or changing the locked material status vocabulary `missing|pending|resolved|stale|failed`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Process-backed scalar/vector/structured live sources are advertised by trusted descriptors and can be consumed through `LiveSourceRef` only when process health is established as ready.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The repo-controlled fixture process exercises all V0 protocol methods, lifecycle states, error classes, cancellation modes, progress/log notifications, and late-result behavior through integration tests.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "observe_runtime_logs"
+      ]
+    },
+    {
+      "criterion": "Existing process command tests still pass, and command invocation returns typed `ProcessRoundtripResult` through real process services rather than an `unknown` stub.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The implementation remains local/trusted only and does not add sandbox, marketplace, remote execution, arbitrary shell access, dashboard UI, or output-format sidecar orchestration claims.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "New runtime modules keep process protocol, lifecycle, manager, payload limit, and live-source responsibilities separated enough for focused unit tests.",
+      "priority": "should",
+      "requires": [
+        "subjective_judgment",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Fixture tests are deterministic and do not depend on wall-clock sleeps beyond bounded timeout assertions.",
+      "priority": "should",
+      "requires": [
+        "run_tests",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Full `npm test` and `npm run lint` pass before handoff.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "run_linter",
+        "read_build_output"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Keep the existing reserved process projection source in `FamilyRuntimeAssembly.ts`, but remove the inactive M12 diagnostic path once the adapter is runtime-bridged.",
+    "Material outputs map to existing `resolved` material status on successful process completion; failed process execution maps pending materials for that process to existing `failed`; sidecar, diagnostic, planner-result, and tool-result outputs are recorded as result/provenance data rather than material statuses.",
+    "Place the fixture at `tests/fixtures/video-editor/process-fixture.ts` with a co-located descriptor at `tests/fixtures/video-editor/process-fixture-descriptor.ts`.",
+    "Default ProcessManager startup should be lazy unless the user answers otherwise, because it minimizes host process churn while still supporting route-required health checks when planner/runtime asks for status.",
+    "Use a small explicit test payload limit for unit coverage and a larger production default constant; both must go through the same normalizer.",
+    "Do not link open tickets automatically. Ticket `01KS384XKZNEWQRSXN2NXQ0DTJ` can be proposed as related but not `resolves_on_complete`; ticket `01KV8XVYW2EYDDDY30V48YX520` appears unrelated to this implementation."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/processCommandRegistration.test.ts",
+        "reason": "Command service invocation contract changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+        "reason": "Internal attach flow changes adjacent to material attach."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/referenceResolver.test.ts",
+        "reason": "Process-backed LiveSourceRef resolution."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "reason": "Process status blocker and route scoping behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+        "reason": "Planner graph integration with process statuses and materials."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts",
+        "reason": "Process adapter maturity changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/video/families/familyDefinitions.test.ts",
+        "reason": "SDK process output kind/live-source contract updates."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/video/families/processes.ts",
+      "src/sdk/video/composition/references.ts",
+      "src/sdk/video/rendering/renderability.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.ts",
+      "src/tools/video-editor/runtime/composition/processResultAttach.ts",
+      "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+      "src/tools/video-editor/runtime/composition/referenceResolver.ts",
+      "src/tools/video-editor/runtime/processes/types.ts",
+      "src/tools/video-editor/runtime/processes/lifecycle.ts",
+      "src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.ts",
+      "src/tools/video-editor/runtime/processes/payloadLimits.ts",
+      "src/tools/video-editor/runtime/processes/ProcessManager.ts",
+      "src/tools/video-editor/runtime/processes/processCommandServices.ts",
+      "src/tools/video-editor/runtime/processes/liveSourceBinding.ts",
+      "src/tools/video-editor/runtime/processes/index.ts",
+      "src/tools/video-editor/runtime/families/processAdapter.ts",
+      "src/tools/video-editor/runtime/families/familyAdapterRegistry.ts",
+      "src/tools/video-editor/runtime/families/FamilyContributionSequence.ts",
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+      "src/tools/video-editor/runtime/extensionSurface.ts",
+      "src/tools/video-editor/runtime/processCommandRegistration.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/liveDataRegistry.ts",
+      "tests/fixtures/video-editor/process-fixture.ts",
+      "tests/fixtures/video-editor/process-fixture-descriptor.ts",
+      "src/tools/video-editor/runtime/processes/lifecycle.test.ts",
+      "src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.test.ts",
+      "src/tools/video-editor/runtime/processes/payloadLimits.test.ts",
+      "src/tools/video-editor/runtime/processes/ProcessManager.test.ts",
+      "src/tools/video-editor/runtime/processes/processFixture.integration.test.ts",
+      "src/tools/video-editor/runtime/processes/liveSourceBinding.test.ts",
+      "src/tools/video-editor/runtime/composition/processResultAttach.test.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+      "src/tools/video-editor/runtime/composition/referenceResolver.test.ts",
+      "src/tools/video-editor/runtime/processCommandRegistration.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+      "src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts",
+      "src/tools/video-editor/runtime/families/FamilyContributionSequence.process.test.ts",
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.process.test.ts",
+      "src/sdk/video/families/familyDefinitions.test.ts"
+    ],
+    "always_run": [
+      "npm run lint",
+      "npm test"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/sdk/video/composition/references.ts, src/sdk/video/families/familyDefinitions.test.ts, src/sdk/video/families/processes.ts, src/sdk/video/rendering/renderability.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/materialRuntime.ts, src/tools/video-editor/runtime/composition/patchPreview.test.ts, src/tools/video-editor/runtime/composition/patchPreview.ts, src/tools/video-editor/runtime/composition/processResultAttach.test.ts, src/tools/video-editor/runtime/composition/processResultAttach.ts, src/tools/video-editor/runtime/composition/referenceResolver.test.ts, src/tools/video-editor/runtime/composition/referenceResolver.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/families/FamilyContributionSequence.process.test.ts, src/tools/video-editor/runtime/families/FamilyContributionSequence.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.process.test.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts, src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts, src/tools/video-editor/runtime/families/familyAdapterRegistry.ts, src/tools/video-editor/runtime/families/processAdapter.ts, src/tools/video-editor/runtime/liveDataRegistry.ts, src/tools/video-editor/runtime/processCommandRegistration.test.ts, src/tools/video-editor/runtime/processCommandRegistration.ts, src/tools/video-editor/runtime/processes/ProcessManager.test.ts, src/tools/video-editor/runtime/processes/ProcessManager.ts, src/tools/video-editor/runtime/processes/index.ts, src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.test.ts, src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.ts, src/tools/video-editor/runtime/processes/lifecycle.test.ts, src/tools/video-editor/runtime/processes/lifecycle.ts, src/tools/video-editor/runtime/processes/liveSourceBinding.test.ts, src/tools/video-editor/runtime/processes/liveSourceBinding.ts, src/tools/video-editor/runtime/processes/payloadLimits.test.ts, src/tools/video-editor/runtime/processes/payloadLimits.ts, src/tools/video-editor/runtime/processes/processCommandServices.ts, src/tools/video-editor/runtime/processes/processFixture.integration.test.ts, src/tools/video-editor/runtime/processes/types.ts, src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/renderPlanner.ts, tests/fixtures/video-editor/process-fixture-descriptor.ts, tests/fixtures/video-editor/process-fixture.ts. Candidate: The change is cross-cutting across SDK contracts, runtime process execution, planner blockers, composition attachment, and tests. Scoped Vitest selectors give fast feedback, but the public SDK/runtime surface impact warrants full lint and test fallback before completion. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/tools/video-editor/runtime/processes/lifecycle.test.ts, src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.test.ts, src/tools/video-editor/runtime/processes/payloadLimits.test.ts, src/tools/video-editor/runtime/processes/ProcessManager.test.ts, src/tools/video-editor/runtime/processes/processFixture.integration.test.ts, src/tools/video-editor/runtime/composition/processResultAttach.test.ts, src/tools/video-editor/runtime/processes/liveSourceBinding.test.ts, src/tools/video-editor/runtime/families/FamilyContributionSequence.process.test.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.process.test.ts.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/tools/video-editor/runtime/processes/lifecycle.test.ts",
+      "src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.test.ts",
+      "src/tools/video-editor/runtime/processes/payloadLimits.test.ts",
+      "src/tools/video-editor/runtime/processes/ProcessManager.test.ts",
+      "src/tools/video-editor/runtime/processes/processFixture.integration.test.ts",
+      "src/tools/video-editor/runtime/composition/processResultAttach.test.ts",
+      "src/tools/video-editor/runtime/processes/liveSourceBinding.test.ts",
+      "src/tools/video-editor/runtime/families/FamilyContributionSequence.process.test.ts",
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.process.test.ts"
+    ]
+  },
+  "structure_warnings": []
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "PROCEED",
+  "passed": true,
+  "rationale_brief": "First-iteration plan with zero blocking flags, zero addressed-but-unverified flags, and zero recurring critiques. All preflight checks pass (project dir exists, writable, success criteria present). Critique check is clear across all dimensions: correctness, scope, verification, prerequisite ordering, and North Star anchor alignment.",
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "Process lifecycle states (not-installed, stopped, starting, ready, busy, degraded, failed, stopping) are namespaced under process contracts and never mapped to material statuses.",
+      "rationale": "Preserves the locked material status vocabulary (missing|pending|resolved|stale|failed) and respects the North Star constraint that processes stay outside the V1 composition SDK."
+    },
+    {
+      "id": "SD2",
+      "decision": "Output-format sidecar orchestration and process dashboard/UI are out of scope for M6a.",
+      "rationale": "Plan explicitly narrows these out and explains they are bridges to later milestones, not contradictions. The runtime core still records sidecars/artifacts; full orchestration belongs to a future stage."
+    },
+    {
+      "id": "SD3",
+      "decision": "Process execution is trusted and local only; no sandbox, marketplace, remote execution, or arbitrary shell access.",
+      "rationale": "Directly aligned with North Star immutable constraint: 'No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.'"
+    },
+    {
+      "id": "SD4",
+      "decision": "Route-scoped process blockers fire only for routes declared in ProcessOperationSpec.routes and never block unrelated routes. Ready is unblocked; degraded is warning-only unless a route explicitly requires non-degraded health.",
+      "rationale": "Prevents process health from cascade-blocking the entire graph while still enforcing dependencies where declared. Aligned with North Star constraint that the graph is the authority."
+    },
+    {
+      "id": "SD5",
+      "decision": "Process task results map into M3a material statuses only through returned artifacts/materials via process.result.attach; process.result.attach is a host-internal contract, not added to public TimelinePatchOpFamily.",
+      "rationale": "Preserves timeline mutation integrity \u2014 processes never gain direct TimelinePatch rights. Returned refs enter the graph through existing M3a/M3c material/artifact contracts."
+    }
+  ],
+  "warnings": [
+    "Criterion 0 (ProcessManager lifecycle states) and Criterion 13 (module separation) require human verification during execution \u2014 ensure the reviewer actually inspects runtime logs and exercises subjective judgment rather than treating these as automatable.",
+    "The plan delegates three open questions (lazy vs eager process startup, exact payload limit, degraded blocking per-route) to a Q&A round. These should be settled before Phase 3 execution to avoid rework."
+  ],
+  "orchestrator_guidance": "First iteration; follow gate recommendation: PROCEED.",
+  "carried_flags": [],
+  "iteration": 1,
+  "produced_at": "2026-07-04T19:09:42Z"
+}
+
+        Settled decisions (verify the executor implemented these correctly):
+- SD1: Process lifecycle states (not-installed, stopped, starting, ready, busy, degraded, failed, stopping) are namespaced under process contracts and never mapped to material statuses. (Preserves the locked material status vocabulary (missing|pending|resolved|stale|failed) and respects the North Star constraint that processes stay outside the V1 composition SDK.)
+- SD2: Output-format sidecar orchestration and process dashboard/UI are out of scope for M6a. (Plan explicitly narrows these out and explains they are bridges to later milestones, not contradictions. The runtime core still records sidecars/artifacts; full orchestration belongs to a future stage.)
+- SD3: Process execution is trusted and local only; no sandbox, marketplace, remote execution, or arbitrary shell access. (Directly aligned with North Star immutable constraint: 'No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.')
+- SD4: Route-scoped process blockers fire only for routes declared in ProcessOperationSpec.routes and never block unrelated routes. Ready is unblocked; degraded is warning-only unless a route explicitly requires non-degraded health. (Prevents process health from cascade-blocking the entire graph while still enforcing dependencies where declared. Aligned with North Star constraint that the graph is the authority.)
+- SD5: Process task results map into M3a material statuses only through returned artifacts/materials via process.result.attach; process.result.attach is a host-internal contract, not added to public TimelinePatchOpFamily. (Preserves timeline mutation integrity — processes never gain direct TimelinePatch rights. Returned refs enter the graph through existing M3a/M3c material/artifact contracts.)
+
+
+Critique flags to re-verify against the final diff:
+            [
+  {
+    "id": "verifiability-0",
+    "concern": "Criterion 0: requires human verification (observe_runtime_logs).",
+    "severity": "minor",
+    "status": "verified"
+  },
+  {
+    "id": "verifiability-1",
+    "concern": "Criterion 2: requires human verification (observe_runtime_logs).",
+    "severity": "minor",
+    "status": "verified"
+  },
+  {
+    "id": "verifiability-2",
+    "concern": "Criterion 9: requires human verification (observe_runtime_logs).",
+    "severity": "minor",
+    "status": "verified"
+  },
+  {
+    "id": "verifiability-3",
+    "concern": "Criterion 12: requires human verification (subjective_judgment).",
+    "severity": "minor",
+    "status": "disputed"
+  },
+  {
+    "id": "verifiability-4",
+    "concern": "Criterion 13: requires human verification (subjective_judgment).",
+    "severity": "minor",
+    "status": "verified"
+  }
+]
+
+            For each flag above that was raised during critique, verify whether the final diff actually addresses the concern.
+            A flag is resolved only if the final diff contains code that directly addresses the concern.
+            Do not trust pre-execute promises or plan claims; check the diff itself.
+            Add resolved flag IDs to `verified_flag_ids`.
+            Add flag IDs that are unresolved only by prose judgment, without a deterministic pre/post failing check, to `disputed_flag_ids`.
+            For any unresolved flag that is backed by a deterministic pre/post failing check, add a `rework_items` entry with a typed `target`, `issue`, `expected`, `actual`, `evidence_file`, `flag_id`, `source: "review_flag_reverify"`, and `deterministic_check`. Use `target.kind: "task"` with `task_id` for a single finalize task, `target.kind: "bulk"` with `task_ids` for a bulk operation that maps to multiple finalize tasks, or `target.kind: "manifest"` with `task_ids` for manifest-backed routes. Only use legacy `task_id: "REVIEW"` when the finding is a review blocker with no routable finalize target; execute treats that as telemetry/blocker compatibility, not runnable rework.
+
+Advisory mechanical pre-check flags:
+            [
+  {
+    "id": "PRECHECK-DIFF_SIZE_SANITY",
+    "check": "diff_size_sanity",
+    "detail": "Diff size looks larger than expected: changed_lines=8249, expected\u2248510, ratio=16.17, files=31, hunks=69.",
+    "severity": "minor",
+    "evidence_file": "src/sdk/__tests__/sdk-boundary.test.ts"
+  }
+]
+
+            Copy this list verbatim into the output `pre_check_flags` field.
+
+        Historical execution audit context (`execution_audit.json`, prompt projection only):
+        {
+  "skipped": false,
+  "reason": "",
+  "findings": [
+    "Executor claimed changed files not present in git status: src/sdk/__tests__/sdk-boundary.test.ts, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/smoke/barrel-import-smoke.test.ts, src/sdk/video/composition/references.ts, src/sdk/video/families/processes.ts, src/sdk/video/rendering/renderability.ts, src/tools/video-editor/runtime/agentToolInvocationService.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/processResultAttach.test.ts, src/tools/video-editor/runtime/composition/processResultAttach.ts, src/tools/video-editor/runtime/fami..."
+  ],
+  "files_in_diff": [
+    "src/sdk/__tests__/sdk-boundary.test.ts",
+    "src/sdk/index.test.ts",
+    "src/sdk/index.ts",
+    "src/sdk/smoke/barrel-import-smoke.test.ts",
+    "src/sdk/video/composition/references.ts",
+    "src/sdk/video/families/processes.ts",
+    "src/sdk/video/rendering/renderability.ts",
+    "src/tools/video-editor/runtime/agentToolInvocationService.ts",
+    "src/tools/video-editor/runtime/composition/diagnostics.ts",
+    "src/tools/video-editor/runtime/composition/processResultAttach.test.ts",
+    "src/tools/video-editor/runtime/composition/processResultAttach.ts",
+    "src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts",
+    "src/tools/video-editor/runtime/families/familyAdapterRegistry.ts",
+    "src/tools/video-editor/runtime/families/processAdapter.ts",
+    "src/tools/video-editor/runtime/liveDataRegistry.test.ts",
+    "src/tools/video-editor/runtime/liveDataRegistry.ts",
+    "src/tools/video-editor/runtime/processCommandRegistration.test.ts",
+    "src/tools/video-editor/runtime/processCommandRegistration.ts",
+    "src/tools/video-editor/runtime/processes/",
+    "src/tools/video-editor/runtime/renderPlanner.test.ts",
+    "src/tools/video-editor/runtime/renderPlanner.ts",
+    "src/tools/video-editor/runtime/renderability.test.ts",
+    "tests/fixtures/"
+  ],
+  "files_claimed": [
+    "src/sdk/__tests__/sdk-boundary.test.ts",
+    "src/sdk/index.test.ts",
+    "src/sdk/index.ts",
+    "src/sdk/smoke/barrel-import-smoke.test.ts",
+    "src/sdk/video/composition/references.ts",
+    "src/sdk/video/families/processes.ts",
+    "src/sdk/video/rendering/renderability.ts",
+    "src/tools/video-editor/runtime/agentToolInvocationService.ts",
+    "src/tools/video-editor/runtime/composition/diagnostics.ts",
+    "src/tools/video-editor/runtime/composition/processResultAttach.test.ts",
+    "src/tools/video-editor/runtime/composition/processResultAttach.ts",
+    "src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts",
+    "src/tools/video-editor/runtime/families/familyAdapterRegistry.ts",
+    "src/tools/video-editor/runtime/families/processAdapter.ts",
+    "src/tools/video-editor/runtime/liveDataRegistry.test.ts",
+    "src/tools/video-editor/runtime/liveDataRegistry.ts",
+    "src/tools/video-editor/runtime/processCommandRegistration.test.ts",
+    "src/tools/video-editor/runtime/processCommandRegistration.ts",
+    "src/tools/video-editor/runtime/processes/ProcessManager.integration.test.ts",
+    "src/tools/video-editor/runtime/processes/ProcessManager.test.ts",
+    "src/tools/video-editor/runtime/processes/ProcessManager.ts",
+    "src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.test.ts",
+    "src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.ts",
+    "src/tools/video-editor/runtime/processes/payloadLimits.test.ts",
+    "src/tools/video-editor/runtime/processes/payloadLimits.ts",
+    "src/tools/video-editor/runtime/processes/processFixture.test.ts",
+    "src/tools/video-editor/runtime/renderPlanner.test.ts",
+    "src/tools/video-editor/runtime/renderPlanner.ts",
+    "src/tools/video-editor/runtime/renderability.test.ts",
+    "tests/fixtures/video-editor/process-fixture-descriptor.ts",
+    "tests/fixtures/video-editor/process-fixture.ts"
+  ]
+}
+
+        Fresh review-time evidence (`review_evidence.json`):
+        {
+  "projection": "bounded_prompt_summary",
+  "full_artifact": "review_evidence.json",
+  "schema": "megaplan.review_evidence",
+  "schema_version": 1,
+  "evidence_contract_version": 1,
+  "mode": "shadow",
+  "subject": {
+    "kind": "plan",
+    "name": "plan",
+    "to_state": "done",
+    "from_state": "executed",
+    "phase": "review",
+    "plan_name": "plan",
+    "milestone_label": null
+  },
+  "accepted": false,
+  "would_block": false,
+  "failures": [
+    "green_suite: verification suite ran but delta is not computable (collection parse failure in baseline or verification)"
+  ],
+  "providers_used": [
+    "phase_coverage",
+    "landed_diff",
+    "worker_did_work",
+    "green_suite",
+    "execution_acceptance_contract",
+    "review_disposition",
+    "declared_noop"
+  ],
+  "legacy_evidence_count": 0,
+  "unknown_evidence_count": 1,
+  "would_block_reasons": [
+    "green_suite: verification suite ran but delta is not computable (collection parse failure in baseline or verification)"
+  ],
+  "artifact": "review_evidence.json",
+  "generated_at": "2026-07-04T22:31:30Z",
+  "phase": "review",
+  "iteration": 1,
+  "base_sha": "3049bf0a2be302acb2eb32a57800f529ef6edfbc",
+  "head_sha": "0b3b763c4e06ea33da4db6414860a3c81e688bdb",
+  "invocation_id": "0cea201c8627472e",
+  "provider_diagnostics": {
+    "phase_coverage": {
+      "ok": true
+    },
+    "landed_diff": {
+      "ok": true
+    },
+    "worker_did_work": {
+      "ok": true
+    },
+    "green_suite": {
+      "ok": true
+    },
+    "execution_acceptance_contract": {
+      "ok": true
+    },
+    "review_disposition": {
+      "ok": true
+    },
+    "declared_noop": {
+      "ok": true
+    }
+  },
+  "diagnostics": {
+    "base_sha": {
+      "ok": true,
+      "source": "state.meta.chain_policy.milestone_base_sha"
+    },
+    "head_sha": {
+      "ok": true,
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "source": "git_rev_parse_head"
+    },
+    "invocation_id": {
+      "ok": true,
+      "source": "state.meta.current_invocation_id"
+    }
+  },
+  "evidence": [
+    {
+      "kind": "phase_coverage",
+      "status": "satisfied",
+      "summary": "all batch tasks done",
+      "trust_class": "judgment",
+      "provider": "PhaseCoverageProvider",
+      "provider_version": "1",
+      "source": "phase_result.json",
+      "subject": "plan",
+      "artifact": {
+        "path": "phase_result.json",
+        "sha256": "sha256:88d2372f3df04f0ea6aea34d85fde295595fe3730d2fca6964130a6634400fd7",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "phase": "review",
+        "exit_kind": "success",
+        "reason": "finalize.json",
+        "evidence_id": "sha256:5435b34463906d70c5ee5372a5861c8878a72679c2ba9cf546c6df13270486d2"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "landed_diff",
+      "status": "satisfied",
+      "summary": "diff present and claim-consistent",
+      "trust_class": "judgment",
+      "provider": "LandedDiffProvider",
+      "provider_version": "1",
+      "source": "execution_evidence.validate_execution_evidence",
+      "subject": "plan",
+      "artifact": {
+        "path": "finalize.json",
+        "sha256": "sha256:b892917fbbb594d9fefea50dd635877354121fb8fda55c81bd2718dc24795a8e",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "preview": "{\n  \"findings\": [],\n  \"files_in_diff\": [\n    \"src/sdk/__tests__/sdk-boundary.test.ts\",\n    \"src/sdk/index.test.ts\",\n    \"src/sdk/index.ts\",\n    \"src/sdk/smoke/barrel-import-smoke.test.ts\",\n    \"src/sdk/video/composition/references.ts\",\n    \"src/sdk/video/families/processes.ts\",\n    \"src/sdk/video/rendering/renderability.ts\",\n    \"src/tools/video-editor/runtime/agentToolInvocationService.ts\",\n    \"src/tools/video-editor/runtime/composition/diagnostics.ts\",\n    \"src/tools/video-editor/runtime/composition/processResultAttach.test.ts\",\n    \"src/tools/video-editor/runtime/composition/processResultAttach.ts\",\n    \"src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts\",\n    \"src/tools/video-editor/runtime/families/familyAdapterRegistry.ts\",\n    \"src/tools/video-editor/runtime/families/processAdapter.ts\",\n    \"src/tools/video-editor/runtime/liveDataRegistry.test.ts\",\n    \"src/tools/video-editor/runtime/liveDataRegistry.ts\",\n    \"src/tools/video-editor/runtime/processCommandRegistration.test.ts\",\n    \"src/tools/video-editor/runtime/processCommandRegistration.ts\",\n    \"src/tools/video-editor/runtime/processes/ProcessManager.integration.test.ts\",\n    \"src/tools/video-editor/ru\n\n[truncated 3,098 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "worker_did_work",
+      "status": "satisfied",
+      "summary": "worker activity present",
+      "trust_class": "evidence",
+      "provider": "WorkerDidWorkProvider",
+      "provider_version": "1",
+      "source": "execution_batch_*.json",
+      "subject": "plan",
+      "artifacts": [
+        {
+          "path": "execution_batch_10.json",
+          "sha256": "sha256:08eb2b5123223b4904dce74801f72d424d97daa486c4b320d7f4f216e083c804",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_11.json",
+          "sha256": "sha256:f00060515644899402dfd12fd68ea4cb556ba0107b6ede5e825cf12b0dc93bdd",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_12.json",
+          "sha256": "sha256:bde316331cac6e9bf757607326bff4fc12f9ae1e600e4e1a2bcf852c0a64a72a",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_13.json",
+          "sha256": "sha256:73f46b5f3e556a64ff2dff4bf50635ab570488fde0546d6712f82f6e96a86335",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_14.json",
+          "sha256": "sha256:561bf18d78d115220fb8bd78f2d084faeca694f826fc46bb6c1b54ff946fc465",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_15.json",
+          "sha256": "sha256:9f089a0b84e6512b633575508007310b6e3b2fee51c36376ebf7de09468f9910",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_16.json",
+          "sha256": "sha256:aa1bceae99c952cf383063b98a6387c06aabc63a7c47b701d5ecf01cda41e5c5",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_17.json",
+          "sha256": "sha256:84871026c33dde98acaa5dd588ab9e7f1f4cd4fb84c746e8048cb33f9e0b3268",
+          "artifact_type": "application/json"
+        }
+      ],
+      "artifacts_omitted": 8,
+      "details_preview": {
+        "files_changed": 72,
+        "commands_run": 78,
+        "sections_written": 0,
+        "batches": 16,
+        "batch_artifacts": [
+          "execution_batch_10.json",
+          "execution_batch_11.json",
+          "execution_batch_12.json",
+          "execution_batch_13.json",
+          "execution_batch_14.json",
+          "execution_batch_15.json",
+          "execution_batch_16.json",
+          "execution_batch_17.json",
+          "execution_batch_2.json",
+          "execution_batch_3.json",
+          "execution_batch_4.json",
+          "execution_batch_5.json",
+          "execution_batch_6.json",
+          "execution_batch_7.json",
+          "execution_batch_8.json",
+          "execution_batch_9.json"
+        ],
+        "activity_source": "execution_batch_records",
+        "evidence_id": "sha256:5731a6d84fc34e7825678cab4d4df9bd255422e925206bb0e81cfd9127f9e42b"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "green_suite",
+      "status": "unsatisfied",
+      "summary": "verification suite ran but delta is not computable (collection parse failure in baseline or verification)",
+      "trust_class": "evidence",
+      "provider": "GreenSuiteProvider",
+      "provider_version": "1",
+      "source": "verification:ee7e75a83567",
+      "subject": "plan:plan",
+      "observed_at": "1783204290.2976623",
+      "code_hash": "sha256:022061f39e3590b8e0d5a35495e58cc50c068f8b9cb628f5bb8e3688960e0f7a",
+      "artifact": {
+        "path": "verification/raw_ee7e75a83567.log",
+        "sha256": "sha256:553feca12778e314ff5f7d8d7365271b25781010955fd580e9cc279173bea84f",
+        "artifact_type": "text/plain"
+      },
+      "artifacts": [
+        {
+          "path": "verification/raw_ee7e75a83567.log",
+          "sha256": "sha256:553feca12778e314ff5f7d8d7365271b25781010955fd580e9cc279173bea84f",
+          "artifact_type": "text/plain"
+        },
+        {
+          "path": "verification/suite_runs.ndjson",
+          "sha256": "sha256:3a2e3812a44205aa60798d4eaf1c04f792487d4fea8d03df2ec5fac5366a9e22",
+          "artifact_type": "application/x-ndjson"
+        }
+      ],
+      "details_preview": {
+        "preview": "{\n  \"run_id\": \"ee7e75a83567\",\n  \"phase\": \"verification\",\n  \"command\": \"/root/.pyenv/versions/3.11.11/bin/python -m pytest src/tools/video-editor/runtime/processCommandRegistration.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/referenceResolver.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts src/sdk/video/families/familyDefinitions.test.ts --tb=no -q --no-header -rA\",\n  \"duration\": 0.31529266701545566,\n  \"collected\": 0,\n  \"collected_ids\": [],\n  \"failure_count\": 0,\n  \"failures\": [\n    \"runner_error\"\n  ],\n  \"pass_count\": 0,\n  \"status\": \"runner_error\",\n  \"exit_code\": 4,\n  \"code_hash\": \"sha256:022061f39e3590b8e0d5a35495e58cc50c068f8b9cb628f5bb8e3688960e0f7a\",\n  \"collections_parse_ok\": false,\n  \"collection_errors\": [],\n  \"raw_log_path\": \"/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m6a-process-runtime-core-20260704-1849/verification/raw_ee7e75a83567.log\",\n  \"freshness_cache_hit\": false,\n  \"baseline_test_command\": null,\n  \"baseline\n\n[truncated 1,228 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "execution_acceptance_contract",
+      "status": "unknown",
+      "summary": "execute acceptance contract could not be verified because suite evidence is runner_error",
+      "trust_class": "evidence",
+      "provider": "ExecuteAcceptanceContractProvider",
+      "provider_version": "1",
+      "source": "gate.json|gate_signals_v*.json + verification/suite_runs.ndjson",
+      "subject": "plan",
+      "details_preview": {
+        "preview": "{\n  \"contract\": {\n    \"scope\": \"execute\",\n    \"verification_mode\": \"verification_suite\",\n    \"required_checks\": [\n      {\n        \"id\": \"correctness\",\n        \"question\": \"Are the proposed changes technically correct?\",\n        \"reason\": \"`src/tools/video-editor/components/RoundtripResultsPanel.tsx` still builds `clip.add`/`clip.update` payloads from full `RenderMaterial` objects and uses `project-data.write` namespace `process-roundtrip-attachments`; the plan's changed surfaces and steps do not include this bridge.\",\n        \"complexity\": 4,\n        \"attention\": \"high_complexity_unverifiable\"\n      },\n      {\n        \"id\": \"scope\",\n        \"question\": \"Search for related code that handles the same concept. Is the reported issue a symptom of something broader \\u2014 and is any single step sized to fit one worker turn?\",\n        \"reason\": \"Step 5 modifies two core assembly pipeline files (sequencing and dispatch) plus adds FamilyContributionSequence.process.test.ts and FamilyRuntimeAssembly.process.test.ts. The step also requires verifying no regressions in output-format/search-provider reserved behavior.\",\n        \"complexity\": 3\n      },\n      {\n        \"id\": \"verification\",\n     \n\n[truncated 1,975 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "review_disposition",
+      "status": "satisfied",
+      "summary": "review reported success",
+      "trust_class": "judgment",
+      "provider": "ReviewDispositionProvider",
+      "provider_version": "1",
+      "source": "review.json",
+      "subject": "plan",
+      "artifact": {
+        "path": "review.json",
+        "sha256": "sha256:2d43e4c099c77f3a88d7a2eea990fd498b601ea6ce1f28b5db6ddbc3231d2a40",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "review_verdict": "needs_rework",
+        "issue_count": 5,
+        "force_proceeded": false,
+        "evidence_id": "sha256:cc20fdb1a139f3561fd5725ea691516ee55d63cf9fb28c26a1b9691f80638008"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "declared_noop",
+      "status": "not_applicable",
+      "summary": "no declared no-op/waiver artifact (absence is not a failure)",
+      "trust_class": "claim",
+      "provider": "DeclaredNoopProvider",
+      "provider_version": "1",
+      "source": "completion/noop.json|completion_noop.json",
+      "subject": "plan",
+      "details_preview": {
+        "evidence_id": "sha256:c5a9ab90387234220c35d0514efb5fab48bd80d5d3066b982919aa7d976625c8"
+      },
+      "details_full_location": "review_evidence.json"
+    }
+  ],
+  "evidence_count": 7,
+  "green_suite": {
+    "delta": {
+      "computable": false,
+      "newly_failing": 0,
+      "newly_passing": 0,
+      "still_red": 0,
+      "still_green": 0,
+      "deleted_tests": 0,
+      "added_tests": 0,
+      "flakes": 0,
+      "tests_collected": 0,
+      "duration": 0.31529266701545566,
+      "flake_retry_skipped": false,
+      "flake_retry_reason": ""
+    }
+  }
+}
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m6a-process-runtime-core-20260704-1849/review_output.json
+        Read this file first — it contains the expected JSON structure with pre-populated `task_verdicts`, `sense_check_verdicts`, and `criteria`.
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Git diff summary:
+        ?? .megaplan/epics/m6a-process-runtime-core-20260704-1849/
+
+        Requirements:
+        - Verify each success criterion explicitly.
+        - Fresh repository inspection and `review_evidence.json` outrank stale execution-time claims from `execution_audit.json`, `finalize.json`, and executor notes.
+        - Use repository tools to inspect relevant files and run focused verification commands when behavior or tests are part of a criterion; include concrete repository-backed evidence for every criterion verdict.
+        - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
+          - `must` criteria are hard gates only when backed by a deterministic runnable check that failed on the pre-execute baseline and still fails after execution. Ungrounded prose concerns are advisory.
+          - `should` criteria are quality targets. If the spirit is met but the letter is not, mark `pass` with evidence explaining the gap. Only mark `fail` if the intent was clearly missed. A `should` failure alone does NOT require `needs_rework`.
+          - `info` criteria are for human reference. Mark them `waived` with a note — do not evaluate them.
+          - If a criterion has `requires` capabilities that are not satisfiable by container workers (e.g., `drive_browser`, `subjective_judgment`), mark it `deferred_human` — NOT `fail` or `waived`. Deferred-human criteria do NOT count toward `needs_rework`.
+          - If a criterion (any priority) cannot be verified in this context (e.g., requires manual testing or runtime observation), mark it `waived` with an explanation.
+        - Set `review_verdict` to `needs_rework` only for a rework item with `deterministic_check: {"command": "...", "baseline_status": "failed", "post_status": "failed"}`. Use `approved` for prose-only concerns; record those as advisory issues instead.
+        - Set `review_completion_status` to `"incomplete"` when you could not inspect the repository or run verification commands; otherwise set it to `"complete"`.
+        - The decisions listed above were settled at the gate stage. Verify that the executor implemented each settled decision correctly. Flag deviations from these decisions, but do not question the decisions themselves.
+        - baseline_test_failures in finalize.json lists tests that were already failing before execution. Do not flag these as rework items unless the executor introduced new failures in those same tests.
+        - Cross-reference each task's `files_changed` and `commands_run` against the git diff and any audit findings.
+        - Review every `sense_check` explicitly and treat perfunctory acknowledgments as a reason to dig deeper.
+        - Follow this JSON shape exactly:
+        ```json
+        {
+          "review_verdict": "approved",
+          "review_completion_status": "complete",
+          "criteria": [
+            {
+              "name": "All existing tests pass",
+              "priority": "must",
+              "pass": "pass",
+              "evidence": "Test suite ran green — 42 passed, 0 failed."
+            },
+            {
+              "name": "File under ~300 lines",
+              "priority": "should",
+              "pass": "pass",
+              "evidence": "File is 375 lines — above the target but reasonable given the component's responsibilities. Spirit met."
+            },
+            {
+              "name": "Manual smoke tests pass",
+              "priority": "info",
+              "pass": "waived",
+              "evidence": "Cannot be verified in automated review. Noted for manual QA."
+            }
+          ],
+          "issues": [],
+          "rework_items": [],
+          "summary": "Approved. All must criteria pass. The should criterion on line count is close enough given the component scope.",
+          "task_verdicts": [
+            {
+              "task_id": "T6",
+              "reviewer_verdict": "Pass. Claimed handler changes and command evidence match the repo state.",
+              "evidence_files": ["megaplan/handlers.py", "megaplan/evaluation.py"]
+            }
+          ],
+          "sense_check_verdicts": [
+            {
+              "sense_check_id": "SC6",
+              "verdict": "Confirmed. The execute blocker only fires when both evidence arrays are empty."
+            }
+          ]
+        }
+        ```
+        - `rework_items` must be an array of structured rework directives. When `review_verdict` is `needs_rework`, populate one entry per issue with:
+          - `target`: typed route for the rework. Use `{"kind": "task", "task_id": "T6"}` for one finalize task, `{"kind": "bulk", "id": "bulk-1", "task_ids": ["T6", "T7"]}` for bulk-operation findings, or `{"kind": "manifest", "id": "manifest-path-or-ref", "task_ids": ["T6"]}` for manifest-backed findings.
+          - `task_id`: legacy compatibility only. It may mirror the single task target, or be `"REVIEW"` only for review blockers with no runnable finalize target.
+          - `issue`: what is wrong
+          - `expected`: what correct behavior looks like
+          - `actual`: what was observed
+          - `evidence_file`: file path supporting the finding
+          - `flag_id`: critique/review flag ID when applicable, otherwise `null`
+          - `source`: short machine-readable source tag when applicable, otherwise `null`
+          - `deterministic_check` (required for blocking rework): object with `command`, `baseline_status`, and `post_status`
+        - `issues` must still be populated as a flat one-line-per-item summary derived from `rework_items` (for backward compatibility). When approved, blocking `rework_items` should be empty; prose-only concerns may be summarized in `issues`.
+        - When the work needs another execute pass, keep the same shape and change only `review_verdict` to `needs_rework`; make `issues`, `rework_items`, `summary`, and task verdicts specific enough for the executor to act on directly.

@@ -44,10 +44,10 @@ registry.register({ adapter: dialogAdapter });
 registry.register({ adapter: panelAdapter });
 registry.register({ adapter: inspectorSectionAdapter });
 registry.register({ adapter: timelineOverlayAdapter });
+registry.register({ adapter: processAdapter });
 
 // Delegated placeholder adapters
 registry.register({ adapter: outputFormatAdapter });
-registry.register({ adapter: processAdapter });
 registry.register({ adapter: searchProviderAdapter });
 registry.register({ adapter: assetDetailSectionAdapter });
 registry.register({ adapter: parserAdapter });

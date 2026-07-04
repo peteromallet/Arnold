@@ -43,6 +43,10 @@ export type RenderBlockerReason =
   | 'preview-only'
   | 'live-unbaked'
   | 'process-dependent'
+  | 'process-not-installed'
+  | 'process-failed'
+  | 'process-degraded'
+  | 'process-configuration-error'
   | 'missing-material'
   | 'materialization-failed'
   | 'materialization-error'
@@ -56,6 +60,10 @@ export const RENDER_BLOCKER_REASONS = [
   'preview-only',
   'live-unbaked',
   'process-dependent',
+  'process-not-installed',
+  'process-failed',
+  'process-degraded',
+  'process-configuration-error',
   'missing-material',
   'materialization-failed',
   'materialization-error',
@@ -96,6 +104,9 @@ export interface CapabilityFinding {
   readonly contributionId?: string;
   readonly clipId?: string;
   readonly materialRefId?: string;
+  readonly processId?: string;
+  readonly operationId?: string;
+  readonly taskId?: string;
   readonly detail?: Record<string, unknown>;
 }
 

@@ -134,6 +134,19 @@ interface ShaderCompositionDiagnosis {
   readonly findings: CapabilityFinding[];
 }
 
+type ProcessOperationDescriptor = VideoEditorProcessDescriptor['operations'][number];
+
+interface OutputFormatProcessDependencyDescriptor {
+  readonly scope: 'process-requirement' | 'route-requirement';
+  readonly outputFormat: VideoEditorOutputFormatDescriptor;
+  readonly route: RenderRoute;
+  readonly processId: string;
+  readonly operationId?: string;
+  readonly requiredCapabilities: readonly string[];
+  readonly determinism?: DeterminismStatus;
+  readonly unavailableMessage?: string;
+}
+
 const EMPTY_IDS = Object.freeze({
   effectIds: Object.freeze(new Set<string>()),
   transitionIds: Object.freeze(new Set<string>()),
@@ -146,6 +159,11 @@ const GRAPH_PLANNER_ROUTES = [
 ] as const satisfies readonly RenderRoute[];
 
 const LEGACY_GRAPH_COMPATIBILITY_WARNING_ID = 'planner.compositionGraph.legacy-shader-ref-compatibility';
+
+const PROCESS_NON_DEGRADED_CAPABILITY_IDS = new Set([
+  'process-health/non-degraded',
+  'process-health:non-degraded',
+]);
 
 const DETERMINISM_RANK: Record<DeterminismStatus, number> = {
   deterministic: 0,
@@ -799,62 +817,223 @@ function collectDescriptorBlocker(
   if (blocker.nextAction) acc.nextActions.push(blocker.nextAction);
 }
 
-function processRequirementBlocker(
-  outputFormat: VideoEditorOutputFormatDescriptor,
+function findProcessOperation(
+  process: VideoEditorProcessDescriptor | undefined,
+  operationId: string | undefined,
+): ProcessOperationDescriptor | undefined {
+  if (!process || !operationId) {
+    return undefined;
+  }
+  return process.operations.find((operation) => operation.id === operationId);
+}
+
+function matchingProcessOperations(
+  process: VideoEditorProcessDescriptor | undefined,
+  operationId: string | undefined,
   route: RenderRoute,
-  requirement: VideoEditorProcessRequirementDescriptor,
-  status?: ProcessStatus,
-): RenderBlocker {
-  const operationSuffix = requirement.operationId ? `.${requirement.operationId}` : '';
+): readonly ProcessOperationDescriptor[] {
+  if (!process) {
+    return [];
+  }
+  if (operationId) {
+    const operation = findProcessOperation(process, operationId);
+    return operation ? [operation] : [];
+  }
+  return process.operations.filter((operation) => operation.routes?.includes(route));
+}
+
+function hasNonDegradedHealthRequirement(requiredCapabilities: readonly string[] | undefined): boolean {
+  return Boolean(requiredCapabilities?.some((capability) => PROCESS_NON_DEGRADED_CAPABILITY_IDS.has(capability)));
+}
+
+function processRequiresNonDegradedHealth(
+  dependency: OutputFormatProcessDependencyDescriptor,
+  operations: readonly ProcessOperationDescriptor[],
+): boolean {
+  return hasNonDegradedHealthRequirement(dependency.requiredCapabilities)
+    || operations.some((operation) => hasNonDegradedHealthRequirement(operation.requiredCapabilities));
+}
+
+function processDependencyBaseId(dependency: OutputFormatProcessDependencyDescriptor): string {
+  const operationSuffix = dependency.operationId ? `.${dependency.operationId}` : '';
+  const scopeSuffix = dependency.scope === 'route-requirement' ? '.route' : '';
+  return `planner.outputFormat.${dependency.outputFormat.extensionId}.${dependency.outputFormat.id}.${dependency.route}.${dependency.processId}${operationSuffix}${scopeSuffix}`;
+}
+
+function processStatusReason(
+  status: ProcessStatus | undefined,
+  requireNonDegradedHealth: boolean,
+): RenderBlockerReason {
+  switch (status?.state) {
+    case 'not-installed':
+      return 'process-not-installed';
+    case 'failed':
+      return 'process-failed';
+    case 'degraded':
+      return 'process-degraded';
+    case 'ready':
+      return requireNonDegradedHealth ? 'process-degraded' : 'process-dependent';
+    default:
+      return 'process-dependent';
+  }
+}
+
+function processStatusBlocks(
+  status: ProcessStatus | undefined,
+  requireNonDegradedHealth: boolean,
+): boolean {
+  if (!status) return true;
+  if (status.state === 'ready') return false;
+  if (status.state === 'degraded') return requireNonDegradedHealth;
+  return true;
+}
+
+function processStatusWarns(
+  status: ProcessStatus | undefined,
+  requireNonDegradedHealth: boolean,
+): boolean {
+  return status?.state === 'degraded' && !requireNonDegradedHealth;
+}
+
+function processStatusDetail(status: ProcessStatus | undefined): Record<string, unknown> {
   return {
-    id: `planner.outputFormat.${outputFormat.extensionId}.${outputFormat.id}.${route}.${requirement.processId}${operationSuffix}.process-dependent`,
-    severity: 'error',
-    route,
-    reason: 'process-dependent',
-    message: processStatusMessage(outputFormat.label, requirement.processId, route, status),
-    extensionId: outputFormat.extensionId,
-    contributionId: outputFormat.id,
+    processState: status?.state ?? 'unknown',
+    ...(status?.blockingOperations?.length
+      ? { blockingOperations: [...status.blockingOperations] }
+      : {}),
+    ...(status?.diagnostics?.length
+      ? { diagnostics: status.diagnostics }
+      : {}),
+    ...(status?.state === 'busy' && status.operationId
+      ? { activeOperationId: status.operationId }
+      : {}),
+    ...(status?.state === 'degraded' && status.healthCheck
+      ? { healthCheck: status.healthCheck }
+      : {}),
+    ...(status?.state === 'failed'
+      ? {
+          ...(status.errorCode ? { errorCode: status.errorCode } : {}),
+          ...(status.recoverable !== undefined ? { recoverable: status.recoverable } : {}),
+        }
+      : {}),
+    ...(status?.state === 'not-installed' && status.installHint
+      ? { installHint: status.installHint }
+      : {}),
+  };
+}
+
+function buildProcessDependencyFinding(
+  dependency: OutputFormatProcessDependencyDescriptor,
+  reason: RenderBlockerReason,
+  severity: CapabilityFinding['severity'],
+  message: string,
+  requireNonDegradedHealth: boolean,
+  status?: ProcessStatus,
+): CapabilityFinding {
+  return {
+    id: `${processDependencyBaseId(dependency)}.${reason}`,
+    severity,
+    route: dependency.route,
+    reason,
+    message,
+    extensionId: dependency.outputFormat.extensionId,
+    contributionId: dependency.outputFormat.id,
+    processId: dependency.processId,
+    operationId: dependency.operationId,
     detail: {
       source: 'output-format',
-      outputFormatId: outputFormat.id,
-      outputLabel: outputFormat.label,
-      processId: requirement.processId,
-      operationId: requirement.operationId,
-      requiredCapabilities: [...requirement.requiredCapabilities].sort(),
-      processState: status?.state ?? 'unknown',
+      outputFormatId: dependency.outputFormat.id,
+      outputLabel: dependency.outputFormat.label,
+      processId: dependency.processId,
+      operationId: dependency.operationId,
+      requiredCapabilities: [...dependency.requiredCapabilities].sort(),
+      ...(dependency.determinism ? { determinism: dependency.determinism } : {}),
+      requireNonDegradedHealth,
+      ...processStatusDetail(status),
     },
   };
 }
 
-function routeRequirementBlocker(
+function processMissingMessage(
   outputFormat: VideoEditorOutputFormatDescriptor,
-  routeRequirement: VideoEditorRouteRequirementDescriptor,
+  processId: string,
   route: RenderRoute,
-  status?: ProcessStatus,
-): RenderBlocker | undefined {
-  if (!routeRequirement.processId && routeRequirement.requiredCapabilities.length === 0) return undefined;
-  if (!routeRequirement.processId) return undefined;
+): string {
+  return `Output format "${outputFormat.label}" requires process "${processId}" for ${route}, ` +
+    'but no registered process descriptor declares it.';
+}
 
-  return {
-    id: `planner.outputFormat.${outputFormat.extensionId}.${outputFormat.id}.${route}.${routeRequirement.processId}.route-process-dependent`,
-    severity: 'error',
-    route,
-    reason: 'process-dependent',
-    message: routeRequirement.unavailableMessage
-      ?? processStatusMessage(outputFormat.label, routeRequirement.processId, route, status),
-    extensionId: outputFormat.extensionId,
-    contributionId: outputFormat.id,
-    detail: {
-      source: 'output-format',
-      outputFormatId: outputFormat.id,
-      outputLabel: outputFormat.label,
-      processId: routeRequirement.processId,
-      operationId: routeRequirement.operationId,
-      requiredCapabilities: [...routeRequirement.requiredCapabilities].sort(),
-      determinism: routeRequirement.determinism,
-      processState: status?.state ?? 'unknown',
-    },
-  };
+function processConfigurationMessage(
+  outputFormat: VideoEditorOutputFormatDescriptor,
+  process: VideoEditorProcessDescriptor,
+  processId: string,
+  operationId: string | undefined,
+  route: RenderRoute,
+): string {
+  if (operationId) {
+    const operation = findProcessOperation(process, operationId);
+    if (!operation) {
+      return `Output format "${outputFormat.label}" requires operation "${operationId}" on process "${processId}" for ${route}, ` +
+        'but that operation is not declared.';
+    }
+    return `Output format "${outputFormat.label}" requires operation "${operationId}" on ${route}, ` +
+      `but process "${processId}" does not declare that route for the operation.`;
+  }
+  return `Output format "${outputFormat.label}" requires process "${processId}" on ${route}, ` +
+    'but the process does not declare that route.';
+}
+
+function processDependencyConfigurationFinding(
+  dependency: OutputFormatProcessDependencyDescriptor,
+  process: VideoEditorProcessDescriptor | undefined,
+): CapabilityFinding | undefined {
+  if (!process) {
+    return buildProcessDependencyFinding(
+      dependency,
+      'missing-contribution',
+      'error',
+      processMissingMessage(dependency.outputFormat, dependency.processId, dependency.route),
+      false,
+    );
+  }
+
+  if (dependency.operationId) {
+    const operation = findProcessOperation(process, dependency.operationId);
+    if (!operation || !operation.routes?.includes(dependency.route)) {
+      return buildProcessDependencyFinding(
+        dependency,
+        'process-configuration-error',
+        'error',
+        processConfigurationMessage(
+          dependency.outputFormat,
+          process,
+          dependency.processId,
+          dependency.operationId,
+          dependency.route,
+        ),
+        false,
+      );
+    }
+    return undefined;
+  }
+
+  if (!process.availableRoutes.includes(dependency.route)) {
+    return buildProcessDependencyFinding(
+      dependency,
+      'process-configuration-error',
+      'error',
+      processConfigurationMessage(
+        dependency.outputFormat,
+        process,
+        dependency.processId,
+        undefined,
+        dependency.route,
+      ),
+      false,
+    );
+  }
+
+  return undefined;
 }
 
 function processStatusMessage(
@@ -865,37 +1044,136 @@ function processStatusMessage(
 ): string {
   if (!status) return `Output format "${outputLabel}" requires process "${processId}" before ${route} can run.`;
   if (status.message) return status.message;
-  return `Process "${processId}" is ${status.state} for ${route}.`;
+  switch (status.state) {
+    case 'not-installed':
+      return `Process "${processId}" is not installed for ${route}.${status.installHint ? ` Hint: ${status.installHint}` : ''}`;
+    case 'busy':
+      return `Process "${processId}" is busy for ${route}${status.operationId ? ` (operation "${status.operationId}")` : ''}.`;
+    case 'failed':
+      return `Process "${processId}" has failed for ${route}.${status.errorCode ? ` Error: ${status.errorCode}.` : ''}`;
+    case 'degraded':
+      return `Process "${processId}" is degraded for ${route}.${status.healthCheck ? ` Health: ${status.healthCheck}.` : ''}`;
+    default:
+      return `Process "${processId}" is ${status.state} for ${route}.`;
+  }
 }
 
-function processStatusBlocks(status: ProcessStatus | undefined): boolean {
-  if (!status) return true;
-  return status.state !== 'ready' && status.state !== 'degraded';
-}
+function buildProcessDependencyStatusFinding(
+  dependency: OutputFormatProcessDependencyDescriptor,
+  process: VideoEditorProcessDescriptor | undefined,
+  status: ProcessStatus | undefined,
+): CapabilityFinding | undefined {
+  const configurationFinding = processDependencyConfigurationFinding(dependency, process);
+  if (configurationFinding) {
+    return configurationFinding;
+  }
 
-function processStatusDegraded(status: ProcessStatus | undefined): boolean {
-  return status?.state === 'degraded';
-}
-
-function processStatusWarning(
-  blocker: RenderBlocker,
-  status: ProcessStatus,
-): CapabilityFinding {
-  return {
-    ...blocker,
-    id: `${blocker.id}.degraded`,
-    severity: 'warning',
-    message: processStatusMessage(
-      String(blocker.detail?.outputLabel ?? blocker.contributionId ?? 'output'),
-      status.processId,
-      blocker.route,
+  const operations = matchingProcessOperations(process, dependency.operationId, dependency.route);
+  const requireNonDegradedHealth = processRequiresNonDegradedHealth(dependency, operations);
+  if (processStatusWarns(status, requireNonDegradedHealth)) {
+    return buildProcessDependencyFinding(
+      dependency,
+      processStatusReason(status, requireNonDegradedHealth),
+      'warning',
+      processStatusMessage(
+        dependency.outputFormat.label,
+        dependency.processId,
+        dependency.route,
+        status,
+      ),
+      requireNonDegradedHealth,
       status,
-    ),
-    detail: {
-      ...blocker.detail,
-      processState: status.state,
-      diagnostics: status.diagnostics,
-    },
+    );
+  }
+  if (!processStatusBlocks(status, requireNonDegradedHealth)) {
+    return undefined;
+  }
+
+  return buildProcessDependencyFinding(
+    dependency,
+    processStatusReason(status, requireNonDegradedHealth),
+    'error',
+    status
+      ? processStatusMessage(
+          dependency.outputFormat.label,
+          dependency.processId,
+          dependency.route,
+          status,
+        )
+      : (dependency.unavailableMessage
+        ?? processStatusMessage(
+          dependency.outputFormat.label,
+          dependency.processId,
+          dependency.route,
+          status,
+        )),
+    requireNonDegradedHealth,
+    status,
+  );
+}
+
+function routeRequirementDependency(
+  outputFormat: VideoEditorOutputFormatDescriptor,
+  routeRequirement: VideoEditorRouteRequirementDescriptor,
+  route: RenderRoute,
+): OutputFormatProcessDependencyDescriptor | undefined {
+  if (!routeRequirement.processId && routeRequirement.requiredCapabilities.length === 0) return undefined;
+  if (!routeRequirement.processId) return undefined;
+
+  return {
+    scope: 'route-requirement',
+    outputFormat,
+    route,
+    processId: routeRequirement.processId,
+    operationId: routeRequirement.operationId,
+    requiredCapabilities: routeRequirement.requiredCapabilities,
+    determinism: routeRequirement.determinism,
+    unavailableMessage: routeRequirement.unavailableMessage,
+  };
+}
+
+function processRequirementRoutes(
+  outputFormat: VideoEditorOutputFormatDescriptor,
+  requirement: VideoEditorProcessRequirementDescriptor,
+  process: VideoEditorProcessDescriptor | undefined,
+): readonly RenderRoute[] {
+  if (process) {
+    if (requirement.operationId) {
+      const operation = findProcessOperation(process, requirement.operationId);
+      if (operation?.routes?.length) {
+        return sortedRoutes(operation.routes);
+      }
+    } else if (process.availableRoutes.length > 0) {
+      return process.availableRoutes;
+    }
+  }
+
+  const fallbackRoutes = outputFormat.routeRequirements
+    .filter((routeRequirement) =>
+      routeRequirement.processId === requirement.processId
+      && routeRequirement.operationId === requirement.operationId)
+    .flatMap((routeRequirement) => routeRequirement.routes);
+  if (fallbackRoutes.length > 0) {
+    return sortedRoutes(fallbackRoutes);
+  }
+
+  return outputFormat.availableRoutes.length > 0
+    ? outputFormat.availableRoutes
+    : RENDER_ROUTES;
+}
+
+function processRequirementDependency(
+  outputFormat: VideoEditorOutputFormatDescriptor,
+  requirement: VideoEditorProcessRequirementDescriptor,
+  route: RenderRoute,
+): OutputFormatProcessDependencyDescriptor {
+  return {
+    scope: 'process-requirement',
+    outputFormat,
+    route,
+    processId: requirement.processId,
+    operationId: requirement.operationId,
+    requiredCapabilities: requirement.requiredCapabilities,
   };
 }
 
@@ -903,6 +1181,7 @@ function collectOutputFormat(
   acc: PlanAccumulator,
   outputFormat: VideoEditorOutputFormatDescriptor,
   processStatusById: ReadonlyMap<string, ProcessStatus>,
+  processById: ReadonlyMap<string, VideoEditorProcessDescriptor>,
 ): void {
   const availableRoutes = outputFormat.availableRoutes.length > 0
     ? outputFormat.availableRoutes
@@ -922,28 +1201,38 @@ function collectOutputFormat(
       for (const capability of routeRequirement.requiredCapabilities) {
         addRouteSetValue(acc.routeCapabilities, route, capability);
       }
+      const dependency = routeRequirementDependency(outputFormat, routeRequirement, route);
       const status = routeRequirement.processId ? processStatusById.get(routeRequirement.processId) : undefined;
-      const routeBlocker = routeRequirementBlocker(outputFormat, routeRequirement, route, status);
-      if (routeBlocker && processStatusBlocks(status)) {
-        acc.findings.push(routeBlocker);
-        acc.blockers.push(routeBlocker);
-      } else if (routeBlocker && status && processStatusDegraded(status)) {
-        acc.findings.push(processStatusWarning(routeBlocker, status));
+      const finding = dependency
+        ? buildProcessDependencyStatusFinding(
+            dependency,
+            processById.get(dependency.processId),
+            status,
+          )
+        : undefined;
+      if (finding) {
+        acc.findings.push(finding);
+        const blocker = blockerForFinding(finding);
+        if (blocker) acc.blockers.push(blocker);
       }
     }
   }
 
   for (const requirement of outputFormat.processRequirements) {
-    const routes = availableRoutes.length > 0 ? availableRoutes : RENDER_ROUTES;
+    const process = processById.get(requirement.processId);
+    const routes = processRequirementRoutes(outputFormat, requirement, process);
     for (const route of routes) {
       addRouteValue(acc.routeProcessRequirements, route, requirement);
       const status = processStatusById.get(requirement.processId);
-      const blocker = processRequirementBlocker(outputFormat, route, requirement, status);
-      if (processStatusBlocks(status)) {
-        acc.findings.push(blocker);
-        acc.blockers.push(blocker);
-      } else if (status && processStatusDegraded(status)) {
-        acc.findings.push(processStatusWarning(blocker, status));
+      const finding = buildProcessDependencyStatusFinding(
+        processRequirementDependency(outputFormat, requirement, route),
+        process,
+        status,
+      );
+      if (finding) {
+        acc.findings.push(finding);
+        const blocker = blockerForFinding(finding);
+        if (blocker) acc.blockers.push(blocker);
       }
     }
   }
@@ -1368,7 +1657,7 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
   collectRequestCapabilities(acc, input.request);
   for (const outputFormat of outputFormats) {
     if (input.request?.outputFormatId && input.request.outputFormatId !== outputFormat.id) continue;
-    collectOutputFormat(acc, outputFormat, processStatusById);
+    collectOutputFormat(acc, outputFormat, processStatusById, processById);
   }
   collectRequestedOutputRouteSupport(acc, requestedOutputFormat, input.request);
   for (const process of processes) {

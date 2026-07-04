@@ -11,6 +11,7 @@
  */
 
 import type { RenderMaterialRef } from '../../video/rendering/artifacts';
+import type { ProcessLiveSourceBinding } from '../families/processes';
 
 // ---------------------------------------------------------------------------
 // ContributionRef
@@ -53,6 +54,9 @@ export interface LiveSourceRef {
 
   /** The kind of live data the source produces. */
   readonly sourceKind?: string;
+
+  /** Optional process binding for process-backed live sources. */
+  readonly processBinding?: ProcessLiveSourceBinding;
 }
 
 // ---------------------------------------------------------------------------

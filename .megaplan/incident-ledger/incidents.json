@@ -23,9 +23,213 @@
             "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
           },
           "seq": 2
+        },
+        {
+          "decision": {
+            "corroboration": [
+              "plan_v refreshed 23x in 6h (8323->13318 bytes)",
+              "chain log repeats status_stopped 45x L443..L31964"
+            ],
+            "hypothesis": "",
+            "reconciler_findings": [
+              {
+                "code": "project_progress_observed",
+                "layer": "project_progress",
+                "message": "Projection state is bounded and ready for reconciliation.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "watchdog_observed",
+                "layer": "watchdog",
+                "message": "Watchdog evidence is fresh enough for this audit cycle.",
+                "recommendation": "immediate_repair.repair_attempt",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "immediate_repair_missing_evidence",
+                "layer": "immediate_repair",
+                "message": "The projection expects immediate_repair activity but the live snapshot has no corroborating process.",
+                "recommendation": "immediate_repair.repair_attempt",
+                "severity": "error",
+                "status": "error"
+              },
+              {
+                "code": "meta_repair_observed",
+                "layer": "meta_repair",
+                "message": "meta_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "immediate_repair.repair_attempt",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "install_sync_observed",
+                "layer": "install_sync",
+                "message": "Install-sync placeholders do not indicate a blocking mismatch.",
+                "recommendation": "immediate_repair.repair_attempt",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "github_sync_observed",
+                "layer": "github_sync",
+                "message": "GitHub sync is not currently the blocking layer.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "live_process_observed",
+                "layer": "live_process",
+                "message": "Live-process corroboration is present or not required for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "claims_current",
+                "layer": "stale_claim",
+                "message": "Claim deadlines are not currently stale.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "evidence_present",
+                "layer": "missing_evidence",
+                "message": "No missing evidence references were detected in the bounded brief.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "recurrence_clear",
+                "layer": "recurrence",
+                "message": "No recurrence signal is currently projected for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              }
+            ],
+            "reconciler_next_expected_event": "immediate_repair.repair_attempt"
+          },
+          "seq": 3
+        },
+        {
+          "decision": {
+            "corroboration": [
+              "plan_v refreshed 23x in 6h (8323->13318 bytes)",
+              "chain log repeats status_stopped 45x L443..L31964"
+            ],
+            "hypothesis": "",
+            "reconciler_findings": [
+              {
+                "code": "project_progress_observed",
+                "layer": "project_progress",
+                "message": "Projection state is bounded and ready for reconciliation.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "watchdog_observed",
+                "layer": "watchdog",
+                "message": "Watchdog evidence is fresh enough for this audit cycle.",
+                "recommendation": "immediate_repair.repair_attempt",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "immediate_repair_missing_evidence",
+                "layer": "immediate_repair",
+                "message": "The projection expects immediate_repair activity but the live snapshot has no corroborating process.",
+                "recommendation": "immediate_repair.repair_attempt",
+                "severity": "error",
+                "status": "error"
+              },
+              {
+                "code": "meta_repair_observed",
+                "layer": "meta_repair",
+                "message": "meta_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "immediate_repair.repair_attempt",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "install_sync_observed",
+                "layer": "install_sync",
+                "message": "Install-sync placeholders do not indicate a blocking mismatch.",
+                "recommendation": "immediate_repair.repair_attempt",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "github_sync_observed",
+                "layer": "github_sync",
+                "message": "GitHub sync is not currently the blocking layer.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "live_process_observed",
+                "layer": "live_process",
+                "message": "Live-process corroboration is present or not required for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "claims_current",
+                "layer": "stale_claim",
+                "message": "Claim deadlines are not currently stale.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "evidence_present",
+                "layer": "missing_evidence",
+                "message": "No missing evidence references were detected in the bounded brief.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "recurrence_clear",
+                "layer": "recurrence",
+                "message": "No recurrence signal is currently projected for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              }
+            ],
+            "reconciler_next_expected_event": "immediate_repair.repair_attempt"
+          },
+          "seq": 4
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+          },
+          "seq": 6
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+            "repair_actor": "meta_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+          },
+          "seq": 7
         }
       ],
-      "event_count": 3,
+      "event_count": 8,
       "events": [
         {
           "actor": "watchdog",
@@ -116,9 +320,496 @@
           "timestamp": "2026-07-04T10:52:33.349321+00:00",
           "trigger": null,
           "type": "dispatch"
+        },
+        {
+          "actor": "six_hour_auditor",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "corroboration": [
+              "plan_v refreshed 23x in 6h (8323->13318 bytes)",
+              "chain log repeats status_stopped 45x L443..L31964"
+            ],
+            "hypothesis": "",
+            "reconciler_findings": [
+              {
+                "code": "project_progress_observed",
+                "layer": "project_progress",
+                "message": "Projection state is bounded and ready for reconciliation.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "watchdog_observed",
+                "layer": "watchdog",
+                "message": "Watchdog evidence is fresh enough for this audit cycle.",
+                "recommendation": "immediate_repair.repair_attempt",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "immediate_repair_missing_evidence",
+                "layer": "immediate_repair",
+                "message": "The projection expects immediate_repair activity but the live snapshot has no corroborating process.",
+                "recommendation": "immediate_repair.repair_attempt",
+                "severity": "error",
+                "status": "error"
+              },
+              {
+                "code": "meta_repair_observed",
+                "layer": "meta_repair",
+                "message": "meta_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "immediate_repair.repair_attempt",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "install_sync_observed",
+                "layer": "install_sync",
+                "message": "Install-sync placeholders do not indicate a blocking mismatch.",
+                "recommendation": "immediate_repair.repair_attempt",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "github_sync_observed",
+                "layer": "github_sync",
+                "message": "GitHub sync is not currently the blocking layer.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "live_process_observed",
+                "layer": "live_process",
+                "message": "Live-process corroboration is present or not required for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "claims_current",
+                "layer": "stale_claim",
+                "message": "Claim deadlines are not currently stale.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "evidence_present",
+                "layer": "missing_evidence",
+                "message": "No missing evidence references were detected in the bounded brief.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "recurrence_clear",
+                "layer": "recurrence",
+                "message": "No recurrence signal is currently projected for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              }
+            ],
+            "reconciler_next_expected_event": "immediate_repair.repair_attempt"
+          },
+          "event_id": "sha-65c04fe8d2cd",
+          "evidence": [
+            {
+              "kind": "incident_summary",
+              "path": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e.json",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+            },
+            {
+              "kind": "problem_summary",
+              "path": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/incident-ledger/summaries/problems/problem-71f954a05546.json",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260704T072657Z-audit.json",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260704T012657Z-audit.json",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260703T192656Z-audit.json",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-report.json",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-reports/20260704T105322Z.json",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-reports/20260704T104857Z.json",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+            },
+            {
+              "kind": "meta_record_path",
+              "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/fa112169-7b6f-4ac6-aac5-841086ddb4be.json",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+            },
+            {
+              "kind": "incident_brief",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
+              "status": "2026-07-04T10:52:33.349321+00:00"
+            }
+          ],
+          "kind": "incident.six_hour_auditor.diagnosis",
+          "next_expected_event": "six_hour_auditor.audit_complete",
+          "outcome": "diagnosed",
+          "parent": [],
+          "problem_id": "problem-71f954a05546",
+          "seq": 3,
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
+          "summary": "Audit found 1 blocking layer(s) for inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e: immediate_repair:immediate_repair_missing_evidence.",
+          "timestamp": "2026-07-04T11:05:27.768511+00:00",
+          "trigger": null,
+          "type": "six_hour_auditor.diagnosis"
+        },
+        {
+          "actor": "six_hour_auditor",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "corroboration": [
+              "plan_v refreshed 23x in 6h (8323->13318 bytes)",
+              "chain log repeats status_stopped 45x L443..L31964"
+            ],
+            "hypothesis": "",
+            "reconciler_findings": [
+              {
+                "code": "project_progress_observed",
+                "layer": "project_progress",
+                "message": "Projection state is bounded and ready for reconciliation.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "watchdog_observed",
+                "layer": "watchdog",
+                "message": "Watchdog evidence is fresh enough for this audit cycle.",
+                "recommendation": "immediate_repair.repair_attempt",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "immediate_repair_missing_evidence",
+                "layer": "immediate_repair",
+                "message": "The projection expects immediate_repair activity but the live snapshot has no corroborating process.",
+                "recommendation": "immediate_repair.repair_attempt",
+                "severity": "error",
+                "status": "error"
+              },
+              {
+                "code": "meta_repair_observed",
+                "layer": "meta_repair",
+                "message": "meta_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "immediate_repair.repair_attempt",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "install_sync_observed",
+                "layer": "install_sync",
+                "message": "Install-sync placeholders do not indicate a blocking mismatch.",
+                "recommendation": "immediate_repair.repair_attempt",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "github_sync_observed",
+                "layer": "github_sync",
+                "message": "GitHub sync is not currently the blocking layer.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "live_process_observed",
+                "layer": "live_process",
+                "message": "Live-process corroboration is present or not required for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "claims_current",
+                "layer": "stale_claim",
+                "message": "Claim deadlines are not currently stale.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "evidence_present",
+                "layer": "missing_evidence",
+                "message": "No missing evidence references were detected in the bounded brief.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "recurrence_clear",
+                "layer": "recurrence",
+                "message": "No recurrence signal is currently projected for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              }
+            ],
+            "reconciler_next_expected_event": "immediate_repair.repair_attempt"
+          },
+          "event_id": "shc-6a7141db8c10",
+          "evidence": [
+            {
+              "kind": "incident_summary",
+              "path": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e.json",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+            },
+            {
+              "kind": "problem_summary",
+              "path": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/incident-ledger/summaries/problems/problem-71f954a05546.json",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260704T072657Z-audit.json",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260704T012657Z-audit.json",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260703T192656Z-audit.json",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-report.json",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-reports/20260704T105322Z.json",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-reports/20260704T104857Z.json",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+            },
+            {
+              "kind": "meta_record_path",
+              "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/fa112169-7b6f-4ac6-aac5-841086ddb4be.json",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+            },
+            {
+              "kind": "incident_brief",
+              "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
+              "status": "2026-07-04T10:52:33.349321+00:00"
+            }
+          ],
+          "kind": "incident.six_hour_auditor.audit_complete",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "escalated",
+          "parent": [
+            "sha-65c04fe8d2cd"
+          ],
+          "problem_id": "problem-71f954a05546",
+          "seq": 4,
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
+          "summary": "Audit found 1 blocking layer(s) for inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e: immediate_repair:immediate_repair_missing_evidence.",
+          "timestamp": "2026-07-04T11:05:27.772990+00:00",
+          "trigger": null,
+          "type": "six_hour_auditor.audit_complete"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-e831523c3934",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "progress_stall",
+              "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "progress_stall",
+          "parent": [],
+          "problem_id": null,
+          "seq": 5,
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
+          "summary": "progress_stall:m4-clip-type-shader-and-20260704-0427:iteration=1:attempt=0:plan_v_count=1:events_stale=12m",
+          "timestamp": "2026-07-04T11:14:55.902034+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+          },
+          "event_id": "wdd-e38adaf99ab8",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 6,
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-04T11:14:58.335583+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+            "repair_actor": "meta_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+          },
+          "event_id": "wdd-6f7f1c4261d2",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+              "repair_actor": "meta_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "meta_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 7,
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
+          "summary": "meta-repair background-dispatched",
+          "timestamp": "2026-07-04T12:17:20.290525+00:00",
+          "trigger": null,
+          "type": "dispatch"
         }
       ],
       "evidence_refs": [
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260703T192656Z-audit.json",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260703T192656Z-audit.json",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260704T012657Z-audit.json",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260704T012657Z-audit.json",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260704T072657Z-audit.json",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260704T072657Z-audit.json",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+        },
+        {
+          "kind": "incident_brief",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
+          "status": "2026-07-04T10:52:33.349321+00:00"
+        },
+        {
+          "kind": "incident_brief",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
+          "status": "2026-07-04T10:52:33.349321+00:00"
+        },
+        {
+          "kind": "incident_summary",
+          "path": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e.json",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+        },
+        {
+          "kind": "incident_summary",
+          "path": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e.json",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+        },
+        {
+          "kind": "meta_record_path",
+          "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/fa112169-7b6f-4ac6-aac5-841086ddb4be.json",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+        },
+        {
+          "kind": "meta_record_path",
+          "path": "/workspace/.megaplan/cloud-sessions/repair-data/meta/fa112169-7b6f-4ac6-aac5-841086ddb4be.json",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+        },
+        {
+          "kind": "problem_summary",
+          "path": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/incident-ledger/summaries/problems/problem-71f954a05546.json",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+        },
+        {
+          "kind": "problem_summary",
+          "path": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/incident-ledger/summaries/problems/problem-71f954a05546.json",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+        },
         {
           "kind": "watchdog_observation",
           "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
@@ -136,19 +827,63 @@
         {
           "kind": "watchdog_observation",
           "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "progress_stall",
+          "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
           "repair_actor": "meta_repair",
           "status": "dispatched",
           "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
+          "repair_actor": "meta_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-report.json",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-report.json",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-reports/20260704T104857Z.json",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-reports/20260704T104857Z.json",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-reports/20260704T105322Z.json",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-reports/20260704T105322Z.json",
+          "session_id": "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
         }
       ],
       "first_seq": 0,
       "first_timestamp": "2026-07-04T10:48:03.021046+00:00",
       "incident_id": "inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e",
-      "last_seq": 2,
-      "last_timestamp": "2026-07-04T10:52:33.349321+00:00",
+      "last_seq": 7,
+      "last_timestamp": "2026-07-04T12:17:20.290525+00:00",
       "latest_actor": "watchdog",
       "latest_kind": "incident.dispatch",
-      "next_expected_event": "immediate_repair.repair_attempt",
+      "next_expected_event": "meta_repair.repair_attempt",
       "outcome": "dispatched",
       "placeholders": {
         "install_freshness": "unknown",
@@ -164,17 +899,17 @@
         "megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
       ],
       "state": "dispatch",
-      "summary": "repair loop background-dispatched"
+      "summary": "meta-repair background-dispatched"
     }
   ],
   "integrity": [],
   "projection": "incidents",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:1394ceb613778ee090f924dd795932b9f075c7e13d7f4cc255467fdfa20d740d",
-    "event_count": 3,
-    "journal_line_count": 3,
-    "last_seq": 2,
+    "digest": "sha256:bd0888167523154db74c22a38aba6da50a577cee6b52f771b6101a9bda2ee152",
+    "event_count": 8,
+    "journal_line_count": 8,
+    "last_seq": 7,
     "malformed_line_count": 0
   }
 }

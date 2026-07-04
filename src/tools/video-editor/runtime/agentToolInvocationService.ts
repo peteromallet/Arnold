@@ -42,6 +42,10 @@ import type {
   RenderRoute,
 } from '@/sdk/video/rendering/renderability';
 import {
+  assertFinalArtifactHasManifest,
+  createRenderArtifactManifest,
+} from '@/tools/video-editor/runtime/renderability.ts';
+import {
   isTimelineEditableResult,
   toolResultToTimelineProposalInputs,
 } from '@/tools/video-editor/runtime/agentToolContracts';
@@ -561,9 +565,8 @@ function createDurableArtifactRecord(params: {
     determinism: params.determinism,
     boundary: params.boundary,
     findings: params.diagnostics,
-    manifest: {
+    manifest: createRenderArtifactManifest({
       id: `manifest.${params.sourceRef}`,
-      schemaVersion: 1,
       artifactId: params.sourceRef,
       route: params.route,
       determinism: params.determinism,
@@ -578,8 +581,9 @@ function createDurableArtifactRecord(params: {
       inputHashes: params.inputHashes,
       createdAt: params.producedAt,
       metadata: params.metadata,
-    },
+    }),
   };
+  assertFinalArtifactHasManifest(artifact, 'createDurableArtifactRecord');
 
   return {
     durableKind: 'artifact',

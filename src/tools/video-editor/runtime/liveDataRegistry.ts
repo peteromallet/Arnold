@@ -44,6 +44,10 @@ import type {
   LiveBindingResolution,
   LiveBindingMetadata,
   LiveSessionsService,
+  LiveSourceRef,
+  ProcessStatus,
+  ProcessLifecycleState,
+  ProcessLiveSourceBinding,
 } from '@reigh/editor-sdk';
 import { bakeLiveSource } from './liveBake';
 import {
@@ -60,7 +64,24 @@ export interface LiveDataRegistryConfig {
   readonly maxSamplesPerChannel?: number;
   /** Whether to emit diagnostic events on lifecycle transitions (default: true). */
   readonly emitLifecycleDiagnostics?: boolean;
+  /**
+   * Optional provider that resolves a process status by ID.
+   *
+   * When supplied, {@link LiveDataRegistry.resolveLiveSourceRef} gates
+   * process-backed {@link LiveSourceRef} values on the owning process
+   * being `ready`. Any other state emits a process-correlated diagnostic
+   * and the resolution will not be marked resolved.
+   */
+  readonly processStatusProvider?: ProcessStatusProvider;
 }
+
+/**
+ * A function that resolves a process status by process ID.
+ *
+ * The host supplies this to {@link LiveDataRegistry} so that
+ * process-backed live-source resolution can gate on process health.
+ */
+export type ProcessStatusProvider = (processId: string) => ProcessStatus | undefined;
 
 const DEFAULT_MAX_SAMPLES_PER_CHANNEL = 300;
 
@@ -236,6 +257,60 @@ export interface LiveDataRegistry extends LiveSessionsService {
 
   /** Count retained samples in a channel's ring buffer synchronously. */
   getSampleCount(channelId: LiveChannelDescriptor): number;
+
+  /**
+   * Resolve a {@link LiveSourceRef} through the live-data registry.
+   *
+   * When the ref carries a {@link ProcessLiveSourceBinding}, the owning
+   * process must be `ready` for the returned resolution to be marked
+   * `resolved`. Non-ready process states yield process-correlated
+   * diagnostics keyed by diagnostic codes such as
+   * `process-live/process-not-installed`, `process-live/process-failed`,
+   * `process-live/process-degraded`, `process-live/process-absent`, or
+   * `process-live/source-unknown`.
+   *
+   * Consumers access live-source values solely through this method, never
+   * by inspecting raw process or registry state directly.
+   */
+  resolveLiveSourceRef(ref: LiveSourceRef): LiveSourceRefResolution;
+}
+
+// ---------------------------------------------------------------------------
+// Process-backed live-source reference resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolution of a {@link LiveSourceRef} through the live-data registry.
+ *
+ * When the ref carries a {@link ProcessLiveSourceBinding}, the owning
+ * process must be `ready` for the resolution to be marked `resolved`.
+ * Any other process state yields a process-correlated diagnostic.
+ */
+export interface LiveSourceRefResolution {
+  /** The source ID from the original ref. */
+  readonly sourceId: string;
+
+  /** Whether the live source is accessible for consumption. */
+  readonly resolved: boolean;
+
+  /**
+   * The process ID when the ref carries a process binding,
+   * or `undefined` for non-process-backed sources.
+   */
+  readonly processId?: string;
+
+  /**
+   * The owning process lifecycle state when a process binding is present.
+   * `undefined` when the ref has no process binding or the provider
+   * cannot supply a status.
+   */
+  readonly processState?: ProcessLifecycleState;
+
+  /** The registered live source, if present in the registry. */
+  readonly source?: LiveSource;
+
+  /** Process-correlated diagnostics for non-ready states. */
+  readonly diagnostics: readonly LiveSourceDiagnostic[];
 }
 
 /** Frozen snapshot for synchronous reads in render paths. */
@@ -254,6 +329,7 @@ export interface LiveDataRegistrySnapshot {
 export function createLiveDataRegistry(config: LiveDataRegistryConfig = {}): LiveDataRegistry {
   const maxSamplesPerChannel = config.maxSamplesPerChannel ?? DEFAULT_MAX_SAMPLES_PER_CHANNEL;
   const emitLifecycleDiagnostics = config.emitLifecycleDiagnostics ?? true;
+  const processStatusProvider = config.processStatusProvider;
 
   // sourceId → InternalSource
   const sources = new Map<string, InternalSource>();
@@ -1106,6 +1182,169 @@ export function createLiveDataRegistry(config: LiveDataRegistryConfig = {}): Liv
     return Object.freeze(result);
   }
 
+  // ---- Process-backed live-source reference resolution -----------------------
+
+  /**
+   * Map a ProcessLifecycleState to a diagnostic code for process-live resolution.
+   */
+  function processStateDiagnosticCode(state: ProcessLifecycleState): string {
+    switch (state) {
+      case 'not-installed': return 'process-live/process-not-installed';
+      case 'stopped': return 'process-live/process-stopped';
+      case 'starting': return 'process-live/process-starting';
+      case 'busy': return 'process-live/process-busy';
+      case 'degraded': return 'process-live/process-degraded';
+      case 'failed': return 'process-live/process-failed';
+      case 'stopping': return 'process-live/process-stopping';
+      default: return 'process-live/process-not-ready';
+    }
+  }
+
+  /**
+   * Produce a human-readable diagnostic message for a non-ready process state.
+   */
+  function processStateDiagnosticMessage(
+    state: ProcessLifecycleState,
+    processId: string,
+    sourceId: string,
+  ): string {
+    switch (state) {
+      case 'not-installed':
+        return `Process "${processId}" (owning live source "${sourceId}") is not installed.`;
+      case 'stopped':
+        return `Process "${processId}" (owning live source "${sourceId}") is stopped.`;
+      case 'starting':
+        return `Process "${processId}" (owning live source "${sourceId}") is still starting.`;
+      case 'busy':
+        return `Process "${processId}" (owning live source "${sourceId}") is busy executing an operation.`;
+      case 'degraded':
+        return `Process "${processId}" (owning live source "${sourceId}") is degraded.`;
+      case 'failed':
+        return `Process "${processId}" (owning live source "${sourceId}") has failed.`;
+      case 'stopping':
+        return `Process "${processId}" (owning live source "${sourceId}") is stopping.`;
+      default:
+        return `Process "${processId}" (owning live source "${sourceId}") is not ready (${state}).`;
+    }
+  }
+
+  /**
+   * Choose an appropriate diagnostic severity for a non-ready process state.
+   *
+   * `degraded` is warning-only; `failed` and `not-installed` are errors;
+   * transient states (`starting`, `busy`, `stopping`, `stopped`) are info-only
+   * because they may self-resolve.
+   */
+  function diagnosticSeverityForState(state: ProcessLifecycleState): DiagnosticSeverity {
+    switch (state) {
+      case 'not-installed':
+      case 'failed':
+        return 'error';
+      case 'degraded':
+        return 'warning';
+      case 'starting':
+      case 'busy':
+      case 'stopping':
+      case 'stopped':
+      default:
+        return 'info';
+    }
+  }
+
+  function resolveLiveSourceRef(ref: LiveSourceRef): LiveSourceRefResolution {
+    const { sourceId, processBinding } = ref;
+
+    const source = sources.get(sourceId);
+    const liveSource: LiveSource | undefined = source ? toLiveSource(source) : undefined;
+
+    // No process binding — resolve purely on registry presence.
+    if (!processBinding) {
+      return {
+        sourceId,
+        resolved: source !== undefined && source.status === 'active',
+        source: liveSource,
+        diagnostics: source
+          ? []
+          : [{
+              severity: 'warning',
+              code: 'process-live/source-unknown',
+              message: `Live source "${sourceId}" is not registered in the live-data registry.`,
+              sourceId,
+            }],
+      };
+    }
+
+    const processId = processBinding.processId;
+    const processStatus = processStatusProvider ? processStatusProvider(processId) : undefined;
+
+    // Process status absent from provider.
+    if (!processStatus) {
+      return {
+        sourceId,
+        resolved: false,
+        processId,
+        processState: undefined,
+        source: liveSource,
+        diagnostics: processStatusProvider
+          ? [{
+              severity: 'error',
+              code: 'process-live/process-absent',
+              message: `Process "${processId}" (owning live source "${sourceId}") is not known to the process manager.`,
+              sourceId,
+              detail: { processId },
+            }]
+          : [{
+              severity: 'warning',
+              code: 'process-live/no-provider',
+              message: `No process status provider configured — cannot resolve process-backed live source "${sourceId}".`,
+              sourceId,
+              detail: { processId },
+            }],
+      };
+    }
+
+    const processState = processStatus.state;
+
+    // Process is ready — resolve.
+    if (processState === 'ready') {
+      return {
+        sourceId,
+        resolved: source !== undefined && source.status === 'active',
+        processId,
+        processState,
+        source: liveSource,
+        diagnostics: source
+          ? []
+          : [{
+              severity: 'warning',
+              code: 'process-live/source-unknown',
+              message: `Process "${processId}" is ready but live source "${sourceId}" is not registered in the live-data registry.`,
+              sourceId,
+              detail: { processId },
+            }],
+      };
+    }
+
+    // Process is in a non-ready state — emit appropriate diagnostic.
+    const diagnosticCode = processStateDiagnosticCode(processState);
+    const diagnosticMessage = processStateDiagnosticMessage(processState, processId, sourceId);
+
+    return {
+      sourceId,
+      resolved: false,
+      processId,
+      processState,
+      source: liveSource,
+      diagnostics: [{
+        severity: diagnosticSeverityForState(processState),
+        code: diagnosticCode,
+        message: diagnosticMessage,
+        sourceId,
+        detail: { processId, processState },
+      }],
+    };
+  }
+
   // ---- Internal binding management (for use by scanner in T5) --------------
 
   function _addBinding(binding: InternalBinding): void {
@@ -1174,6 +1413,9 @@ export function createLiveDataRegistry(config: LiveDataRegistryConfig = {}): Liv
     getSampleAt,
     getSamples,
     getSampleCount,
+
+    // Process-backed live-source reference resolution
+    resolveLiveSourceRef,
 
     // Full dispose
     dispose: registryDispose,

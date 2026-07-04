@@ -1318,3 +1318,213 @@ describe('LiveDataRegistry: edge cases and error handling', () => {
     expect(samples[3].frame.format).toBe('binary');
   });
 });
+
+// ---------------------------------------------------------------------------
+// M6a T13: Process-backed live-source reference resolution
+// ---------------------------------------------------------------------------
+
+describe('LiveDataRegistry: process-backed LiveSourceRef resolution', () => {
+  it('resolves a non-process-backed live source when active', () => {
+    const registry = createLiveDataRegistry();
+    registry.registerSource({ id: 'src-1', kind: 'generated' });
+    const ch = registry.openChannel('src-1', 'data');
+    registry.pushSample(ch, makeFrame(0)); // Auto-activates
+
+    const resolution = registry.resolveLiveSourceRef({ sourceId: 'src-1' });
+    expect(resolution.resolved).toBe(true);
+    expect(resolution.sourceId).toBe('src-1');
+    expect(resolution.processId).toBeUndefined();
+    expect(resolution.processState).toBeUndefined();
+    expect(resolution.diagnostics).toHaveLength(0);
+    expect(resolution.source).toBeDefined();
+    expect(resolution.source!.status).toBe('active');
+  });
+
+  it('returns source-unknown diagnostic for non-process-backed source not in registry', () => {
+    const registry = createLiveDataRegistry();
+
+    const resolution = registry.resolveLiveSourceRef({ sourceId: 'unknown-src' });
+    expect(resolution.resolved).toBe(false);
+    expect(resolution.source).toBeUndefined();
+    expect(resolution.diagnostics).toHaveLength(1);
+    expect(resolution.diagnostics[0].code).toBe('process-live/source-unknown');
+    expect(resolution.diagnostics[0].severity).toBe('warning');
+  });
+
+  it('resolves a process-backed source when process is ready', () => {
+    const statusProvider = vi.fn((processId: string) => ({
+      processId,
+      state: 'ready' as const,
+      label: 'Test Process',
+    }));
+
+    const registry = createLiveDataRegistry({ processStatusProvider: statusProvider });
+    registry.registerSource({ id: 'src-1', kind: 'generated' });
+    const ch = registry.openChannel('src-1', 'data');
+    registry.pushSample(ch, makeFrame(0)); // Auto-activates
+
+    const resolution = registry.resolveLiveSourceRef({
+      sourceId: 'src-1',
+      processBinding: { processId: 'proc-1' },
+    });
+
+    expect(resolution.resolved).toBe(true);
+    expect(resolution.processId).toBe('proc-1');
+    expect(resolution.processState).toBe('ready');
+    expect(resolution.source).toBeDefined();
+    expect(resolution.diagnostics).toHaveLength(0);
+    expect(statusProvider).toHaveBeenCalledWith('proc-1');
+  });
+
+  it('rejects process-backed source when process is not-installed', () => {
+    const statusProvider = vi.fn((processId: string) => ({
+      processId,
+      state: 'not-installed' as const,
+    }));
+
+    const registry = createLiveDataRegistry({ processStatusProvider: statusProvider });
+    registry.registerSource({ id: 'src-1', kind: 'generated' });
+
+    const resolution = registry.resolveLiveSourceRef({
+      sourceId: 'src-1',
+      processBinding: { processId: 'proc-1' },
+    });
+
+    expect(resolution.resolved).toBe(false);
+    expect(resolution.processId).toBe('proc-1');
+    expect(resolution.processState).toBe('not-installed');
+    expect(resolution.diagnostics).toHaveLength(1);
+    expect(resolution.diagnostics[0].code).toBe('process-live/process-not-installed');
+    expect(resolution.diagnostics[0].severity).toBe('error');
+    expect(resolution.diagnostics[0].detail).toEqual({ processId: 'proc-1', processState: 'not-installed' });
+  });
+
+  it('rejects process-backed source when process has failed', () => {
+    const statusProvider = vi.fn((processId: string) => ({
+      processId,
+      state: 'failed' as const,
+      errorCode: 'E_CRASH',
+      recoverable: false,
+    }));
+
+    const registry = createLiveDataRegistry({ processStatusProvider: statusProvider });
+    registry.registerSource({ id: 'src-1', kind: 'generated' });
+
+    const resolution = registry.resolveLiveSourceRef({
+      sourceId: 'src-1',
+      processBinding: { processId: 'proc-1' },
+    });
+
+    expect(resolution.resolved).toBe(false);
+    expect(resolution.processState).toBe('failed');
+    expect(resolution.diagnostics).toHaveLength(1);
+    expect(resolution.diagnostics[0].code).toBe('process-live/process-failed');
+    expect(resolution.diagnostics[0].severity).toBe('error');
+  });
+
+  it('rejects process-backed source when process is degraded (warning-only)', () => {
+    const statusProvider = vi.fn((processId: string) => ({
+      processId,
+      state: 'degraded' as const,
+      healthCheck: 'health-check-failed',
+    }));
+
+    const registry = createLiveDataRegistry({ processStatusProvider: statusProvider });
+    registry.registerSource({ id: 'src-1', kind: 'generated' });
+
+    const resolution = registry.resolveLiveSourceRef({
+      sourceId: 'src-1',
+      processBinding: { processId: 'proc-1' },
+    });
+
+    expect(resolution.resolved).toBe(false);
+    expect(resolution.processState).toBe('degraded');
+    expect(resolution.diagnostics).toHaveLength(1);
+    expect(resolution.diagnostics[0].code).toBe('process-live/process-degraded');
+    expect(resolution.diagnostics[0].severity).toBe('warning');
+  });
+
+  it('rejects process-backed source when process is absent from provider', () => {
+    const statusProvider = vi.fn(() => undefined);
+
+    const registry = createLiveDataRegistry({ processStatusProvider: statusProvider });
+    registry.registerSource({ id: 'src-1', kind: 'generated' });
+
+    const resolution = registry.resolveLiveSourceRef({
+      sourceId: 'src-1',
+      processBinding: { processId: 'proc-missing' },
+    });
+
+    expect(resolution.resolved).toBe(false);
+    expect(resolution.processId).toBe('proc-missing');
+    expect(resolution.processState).toBeUndefined();
+    expect(resolution.diagnostics).toHaveLength(1);
+    expect(resolution.diagnostics[0].code).toBe('process-live/process-absent');
+    expect(resolution.diagnostics[0].severity).toBe('error');
+    expect(resolution.diagnostics[0].detail).toEqual({ processId: 'proc-missing' });
+  });
+
+  it('emits no-provider diagnostic when process-backed ref is resolved without a provider', () => {
+    const registry = createLiveDataRegistry(); // No provider
+    registry.registerSource({ id: 'src-1', kind: 'generated' });
+
+    const resolution = registry.resolveLiveSourceRef({
+      sourceId: 'src-1',
+      processBinding: { processId: 'proc-1' },
+    });
+
+    expect(resolution.resolved).toBe(false);
+    expect(resolution.processId).toBe('proc-1');
+    expect(resolution.processState).toBeUndefined();
+    expect(resolution.diagnostics).toHaveLength(1);
+    expect(resolution.diagnostics[0].code).toBe('process-live/no-provider');
+    expect(resolution.diagnostics[0].severity).toBe('warning');
+  });
+
+  it('reports process-ready with source-unknown when source is not registered', () => {
+    const statusProvider = vi.fn((processId: string) => ({
+      processId,
+      state: 'ready' as const,
+    }));
+
+    const registry = createLiveDataRegistry({ processStatusProvider: statusProvider });
+
+    const resolution = registry.resolveLiveSourceRef({
+      sourceId: 'src-not-registered',
+      processBinding: { processId: 'proc-1' },
+    });
+
+    expect(resolution.resolved).toBe(false);
+    expect(resolution.processState).toBe('ready');
+    expect(resolution.source).toBeUndefined();
+    expect(resolution.diagnostics).toHaveLength(1);
+    expect(resolution.diagnostics[0].code).toBe('process-live/source-unknown');
+    expect(resolution.diagnostics[0].severity).toBe('warning');
+  });
+
+  it('covers all non-ready states with appropriate diagnostics', () => {
+    const nonReadyStates = ['stopped', 'starting', 'busy', 'stopping'] as const;
+
+    for (const state of nonReadyStates) {
+      const statusProvider = vi.fn((processId: string) => ({
+        processId,
+        state,
+      }));
+
+      const registry = createLiveDataRegistry({ processStatusProvider: statusProvider });
+      registry.registerSource({ id: 'src-1', kind: 'generated' });
+
+      const resolution = registry.resolveLiveSourceRef({
+        sourceId: 'src-1',
+        processBinding: { processId: 'proc-1' },
+      });
+
+      expect(resolution.resolved).toBe(false);
+      expect(resolution.processState).toBe(state);
+      expect(resolution.diagnostics).toHaveLength(1);
+      // Transient states should be info severity
+      expect(resolution.diagnostics[0].severity).toBe('info');
+      expect(resolution.diagnostics[0].detail).toEqual({ processId: 'proc-1', processState: state });
+    }
+  });
+});

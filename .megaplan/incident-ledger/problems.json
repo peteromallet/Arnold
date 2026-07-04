@@ -5,14 +5,14 @@
       "first_seen_seq": 1,
       "first_seen_ts": "2026-07-04T10:52:30.738550+00:00",
       "fix_commits": [],
-      "last_seen_seq": 1,
-      "last_seen_ts": "2026-07-04T10:52:30.738550+00:00",
+      "last_seen_seq": 5,
+      "last_seen_ts": "2026-07-04T11:14:55.902034+00:00",
       "linked_incident_ids": [
         "inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
       ],
       "next_review_ts": null,
       "normalized_signature": "progress stall m clip type shader and iteration attempt plan v count events stale m",
-      "occurrence_count": 1,
+      "occurrence_count": 4,
       "owner_actor": "watchdog",
       "problem_id": "problem-71f954a05546",
       "recurred_after_fix": false,
@@ -24,14 +24,14 @@
       "first_seen_seq": 2,
       "first_seen_ts": "2026-07-04T10:52:33.349321+00:00",
       "fix_commits": [],
-      "last_seen_seq": 2,
-      "last_seen_ts": "2026-07-04T10:52:33.349321+00:00",
+      "last_seen_seq": 6,
+      "last_seen_ts": "2026-07-04T11:14:58.335583+00:00",
       "linked_incident_ids": [
         "inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair loop background dispatched",
-      "occurrence_count": 1,
+      "occurrence_count": 2,
       "owner_actor": "watchdog",
       "problem_id": "problem-e20c45ae0eb0",
       "recurred_after_fix": false,
@@ -43,14 +43,14 @@
       "first_seen_seq": 0,
       "first_seen_ts": "2026-07-04T10:48:03.021046+00:00",
       "fix_commits": [],
-      "last_seen_seq": 0,
-      "last_seen_ts": "2026-07-04T10:48:03.021046+00:00",
+      "last_seen_seq": 7,
+      "last_seen_ts": "2026-07-04T12:17:20.290525+00:00",
       "linked_incident_ids": [
         "inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
       ],
       "next_review_ts": null,
       "normalized_signature": "meta repair background dispatched",
-      "occurrence_count": 1,
+      "occurrence_count": 2,
       "owner_actor": "watchdog",
       "problem_id": "problem-fc037a661409",
       "recurred_after_fix": false,
@@ -62,10 +62,10 @@
   "projection": "problems",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:1394ceb613778ee090f924dd795932b9f075c7e13d7f4cc255467fdfa20d740d",
-    "event_count": 3,
-    "journal_line_count": 3,
-    "last_seq": 2,
+    "digest": "sha256:bd0888167523154db74c22a38aba6da50a577cee6b52f771b6101a9bda2ee152",
+    "event_count": 8,
+    "journal_line_count": 8,
+    "last_seq": 7,
     "malformed_line_count": 0
   }
 }

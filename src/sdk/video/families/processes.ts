@@ -52,13 +52,42 @@ export interface ProcessEnvFieldSpec {
   readonly platformDefaults?: Partial<Record<'darwin' | 'linux' | 'win32', string>>;
 }
 
+/** Data-only output kinds a trusted local process operation may advertise. */
+export type ProcessOutputKind =
+  | 'artifact'
+  | 'material'
+  | 'sidecar'
+  | 'diagnostic'
+  | 'planner-result'
+  | 'tool-result'
+  | 'live-source-scalar'
+  | 'live-source-vector'
+  | 'live-source-structured';
+
+/** Value-shape metadata for process-backed live data exposed through LiveSourceRef. */
+export type ProcessLiveSourceValueShape = 'scalar' | 'vector' | 'structured';
+
+/** Declarative, data-only live source advertised by a trusted local process. */
+export interface ProcessLiveSourceDeclaration {
+  readonly sourceId: string;
+  readonly valueShape: ProcessLiveSourceValueShape;
+  readonly label?: string;
+  readonly description?: string;
+  readonly sourceKind?: string;
+}
+
+/** Optional data-only process binding carried by a LiveSourceRef. */
+export interface ProcessLiveSourceBinding {
+  readonly processId: string;
+}
+
 /** M12: Operation a trusted local process exposes to tools, render routes, or export formats. */
 export interface ProcessOperationSpec {
   readonly id: string;
   readonly label: string;
   readonly description?: string;
   readonly inputSchema?: AgentToolInputSchema;
-  readonly outputKinds?: readonly ('artifact' | 'material' | 'sidecar' | 'diagnostic' | 'planner-result' | 'tool-result')[];
+  readonly outputKinds?: readonly ProcessOutputKind[];
   readonly requiredCapabilities?: readonly string[];
   readonly routes?: readonly RenderRoute[];
   readonly determinism?: DeterminismStatus;
@@ -77,6 +106,7 @@ export interface ProcessSpec {
   version?: CapabilityVersion;
   env?: readonly ProcessEnvFieldSpec[];
   operations?: readonly ProcessOperationSpec[];
+  liveSources?: readonly ProcessLiveSourceDeclaration[];
   capabilities?: IntegrationCapabilities;
   requiredBy?: readonly CapabilitySourceRef[];
 }
