@@ -994,6 +994,16 @@ def test_cloud_chains_command_lists_marker_only_live_process_sessions() -> None:
     assert "return \"running\"" in script
 
 
+def test_cloud_chains_command_prefers_live_runner_over_stale_done_plan_pointer() -> None:
+    script = _cloud_chains_command()
+
+    status_fn = script[script.index("def _effective_session_status(payload):") :]
+    live_runner_check = 'payload.get("tmux_status") == "alive" or payload.get("process_status") == "alive"'
+    stale_done_check = 'if current_state == "done":'
+
+    assert status_fn.index(live_runner_check) < status_fn.index(stale_done_check)
+
+
 def test_cloud_chains_command_lists_all_canonical_markers_not_only_default_prefix() -> None:
     script = _cloud_chains_command()
 

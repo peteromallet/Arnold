@@ -5500,6 +5500,30 @@ PY
     if [[ -n "${PLAN_STATUS_PUSHED_COMMITS:-}" ]]; then
       human_summary="$human_summary; commits=${PLAN_STATUS_PUSHED_COMMITS}"
     fi
+    if [[ "${PLAN_STATUS_FAILURE_KIND:-}" == "blocked_recovery_not_resolved" ]]; then
+      repair_busy="$(repair_loop_busy_state "$session")"
+      if [[ "$repair_busy" == "same_session" ]]; then
+        log "session manual_review has unresolved quality blockers; repair already running session=$session summary=$human_summary"
+        report_item "$report_items" "$session" "repair" "repair_running" "blocked_recovery manual_review repair already running" "$workspace" "$remote_spec"
+        return 0
+      fi
+      if [[ "$repair_busy" == "other_session" ]]; then
+        log "session manual_review has unresolved quality blockers; another repair loop already running so waiting turn session=$session summary=$human_summary"
+        report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
+        return 0
+      fi
+      if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+        if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
+          log "session manual_review has unresolved quality blockers; another repair loop already running so waiting turn session=$session summary=$human_summary"
+          report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
+        else
+          log "session manual_review has unresolved quality blockers; background-dispatched repair loop before needs_human session=$session summary=$human_summary"
+          report_item "$report_items" "$session" "repair" "repair_dispatched" "blocked_recovery manual_review repair loop dispatched before needs_human" "$workspace" "$remote_spec"
+        fi
+        return 0
+      fi
+      log "session manual_review has unresolved quality blockers but repair loop is unavailable; needs human session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
+    fi
     if [[ "$manual_review_origin" == "auto_stall" || "$manual_review_origin" == "auto_stall_legacy" ]]; then
       if [[ -f "$(repair_needs_human_path "$session")" ]]; then
         local stale_marker_plans
