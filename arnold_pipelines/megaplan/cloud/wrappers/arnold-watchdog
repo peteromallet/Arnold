@@ -3092,6 +3092,79 @@ default_plan_relaunch_command() {
     "$workspace" "$SRC_DIR" "$plan_name" "$workspace" "$log_path"
 }
 
+stale_marker_relaunch_command() {
+  local relaunch_command="${1:-}"
+  [[ "$relaunch_command" == *"[megaplan-refresh] refusing editable install refresh: tracked changes"* ]] \
+    && [[ "$relaunch_command" != *"MEGAPLAN_RUNTIME_SRC"* ]]
+}
+
+default_chain_relaunch_command() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local log_relative repo runtime_src
+  if [[ "$session" == "megaplan-chain" ]]; then
+    log_relative=".megaplan/cloud-chain.log"
+  else
+    log_relative=".megaplan/cloud-chain-${session}.log"
+  fi
+  repo="$(git -C "$SRC_DIR" remote get-url origin 2>/dev/null || true)"
+  case "$repo" in
+    https://*@github.com/*) repo="https://github.com/${repo#*@github.com/}" ;;
+  esac
+  runtime_src="$workspace/.megaplan/runtime/editable-engine"
+  printf '{ set -e
+echo "[megaplan-refresh] $(date -Iseconds) starting"
+SRC=%q
+REPO=%q
+REF=%q
+RUNTIME_SRC=%q
+if [ -n "$REPO" ] && [ ! -d "$SRC/.git" ]; then
+  mkdir -p "$(dirname "$SRC")"
+  CLONE_URL="$REPO"
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    case "$CLONE_URL" in
+      https://github.com/*) CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${CLONE_URL#https://github.com/}" ;;
+    esac
+  fi
+  git clone --branch "$REF" "$CLONE_URL" "$SRC"
+fi
+if [ -d "$SRC/.git" ]; then
+  git -C "$SRC" fetch origin "$REF"
+  BRANCH="$(git -C "$SRC" branch --show-current)"
+  if [ "$BRANCH" != "$REF" ]; then git -C "$SRC" checkout "$REF"; fi
+  if [ -n "$(git -C "$SRC" status --porcelain --untracked-files=no)" ]; then
+    echo "[megaplan-refresh] source checkout dirty; using clean runtime mirror at $RUNTIME_SRC"
+    rm -rf "$RUNTIME_SRC"
+    mkdir -p "$(dirname "$RUNTIME_SRC")"
+    git clone --shared --no-checkout "$SRC" "$RUNTIME_SRC"
+    git -C "$RUNTIME_SRC" fetch origin "$REF"
+    git -C "$RUNTIME_SRC" checkout --detach "origin/$REF"
+    export MEGAPLAN_RUNTIME_SRC="$RUNTIME_SRC"
+  else
+    if ! git -C "$SRC" merge-base --is-ancestor HEAD "origin/$REF"; then
+      echo "[megaplan-refresh] refusing editable install refresh: $SRC has local commits not contained in origin/$REF"
+      git -C "$SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true
+      exit 20
+    fi
+    git -C "$SRC" pull --ff-only origin "$REF"
+    export MEGAPLAN_RUNTIME_SRC="$SRC"
+  fi
+  if ! git -C "$MEGAPLAN_RUNTIME_SRC" merge-base --is-ancestor HEAD "origin/$REF"; then
+    echo "[megaplan-refresh] refusing editable install refresh: $MEGAPLAN_RUNTIME_SRC has local commits not contained in origin/$REF"
+    git -C "$MEGAPLAN_RUNTIME_SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true
+    exit 20
+  fi
+  pip install -e "$MEGAPLAN_RUNTIME_SRC"
+else
+  echo "[megaplan-refresh] source clone missing at $SRC; skipping editable install"
+  export MEGAPLAN_RUNTIME_SRC="$SRC"
+fi
+echo "[megaplan-refresh] done"
+true; } >> %q 2>&1 && if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}" MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
+    "$SRC_DIR" "$repo" "$SYNC_BRANCH" "$runtime_src" "$workspace/$log_relative" "$workspace" "$remote_spec" "$workspace" "$workspace/$log_relative"
+}
+
 resolve_relaunch_command() {
   local session="$1"
   local workspace="$2"
@@ -3100,7 +3173,7 @@ resolve_relaunch_command() {
   local plan_name="${5:-}"
   local relaunch_command="${6:-}"
 
-  if [[ -n "$relaunch_command" ]]; then
+  if [[ -n "$relaunch_command" ]] && ! stale_marker_relaunch_command "$relaunch_command"; then
     printf '%s' "$relaunch_command"
     return 0
   fi
@@ -3110,14 +3183,7 @@ resolve_relaunch_command() {
     return 0
   fi
 
-  local log_relative
-  if [[ "$session" == "megaplan-chain" ]]; then
-    log_relative=".megaplan/cloud-chain.log"
-  else
-    log_relative=".megaplan/cloud-chain-${session}.log"
-  fi
-  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
-    "$workspace" "$SRC_DIR" "$remote_spec" "$workspace" "$workspace/$log_relative"
+  default_chain_relaunch_command "$session" "$workspace" "$remote_spec"
 }
 
 kimi_dispatch_marker_set() {

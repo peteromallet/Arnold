@@ -4038,8 +4038,11 @@ def test_watchdog_plan_markers_relaunch_with_auto_not_chain_start(tmp_path: Path
     script = "\n\n".join(
         [
             _extract_wrapper_function("default_plan_relaunch_command"),
+            _extract_wrapper_function("stale_marker_relaunch_command"),
+            _extract_wrapper_function("default_chain_relaunch_command"),
             _extract_wrapper_function("resolve_relaunch_command"),
             f"SRC_DIR={str(REPO_ROOT)!r}",
+            "SYNC_BRANCH=editible-install",
             "resolve_relaunch_command demo-session /tmp/workspace /tmp/not-a-chain.yaml plan demo-plan ''",
         ]
     )
@@ -4047,6 +4050,95 @@ def test_watchdog_plan_markers_relaunch_with_auto_not_chain_start(tmp_path: Path
     assert result.returncode == 0, result.stderr
     assert "python3 -P -m arnold_pipelines.megaplan auto --plan demo-plan" in result.stdout
     assert "chain start" not in result.stdout
+
+
+def test_watchdog_stale_marker_relaunch_command_regenerates_clean_runtime_chain_command() -> None:
+    stale_command = (
+        "{ set -e\n"
+        "if [ -n \"$(git -C \"$SRC\" status --porcelain --untracked-files=no)\" ]; then\n"
+        "  echo \"[megaplan-refresh] refusing editable install refresh: tracked changes in source checkout at $SRC\"\n"
+        "  exit 19\n"
+        "fi\n"
+        "} >> .megaplan/cloud-chain-progress-auditor-stage-metrics.log 2>&1 && "
+        "cd /workspace/progress-auditor-stage-metrics/Arnold && "
+        "PYTHONPATH=/workspace/arnold:${PYTHONPATH:-} python -P -m arnold_pipelines.megaplan chain start"
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("default_plan_relaunch_command"),
+            _extract_wrapper_function("stale_marker_relaunch_command"),
+            _extract_wrapper_function("default_chain_relaunch_command"),
+            _extract_wrapper_function("resolve_relaunch_command"),
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            "SYNC_BRANCH=editible-install",
+            (
+                "resolve_relaunch_command progress-auditor-stage-metrics "
+                "/workspace/progress-auditor-stage-metrics/Arnold "
+                "/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/initiatives/progress-auditor-stage-metrics/chain.yaml "
+                f"chain '' {shlex.quote(stale_command)}"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "source checkout dirty; using clean runtime mirror at $RUNTIME_SRC" in result.stdout
+    assert "MEGAPLAN_RUNTIME_SRC" in result.stdout
+    assert "/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/runtime/editable-engine" in result.stdout
+    assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
+    assert "refusing editable install refresh: tracked changes in source checkout" not in result.stdout
+
+
+def test_watchdog_nonstale_marker_relaunch_command_is_preserved() -> None:
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("default_plan_relaunch_command"),
+            _extract_wrapper_function("stale_marker_relaunch_command"),
+            _extract_wrapper_function("default_chain_relaunch_command"),
+            _extract_wrapper_function("resolve_relaunch_command"),
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            "SYNC_BRANCH=editible-install",
+            "resolve_relaunch_command demo-session /tmp/workspace /tmp/chain.yaml chain '' 'echo marker-command'",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "echo marker-command"
+
+
+def test_repair_loop_stale_marker_relaunch_command_regenerates_clean_runtime_chain_command() -> None:
+    stale_command = (
+        "{ set -e\n"
+        "if [ -n \"$(git -C \"$SRC\" status --porcelain --untracked-files=no)\" ]; then\n"
+        "  echo \"[megaplan-refresh] refusing editable install refresh: tracked changes in source checkout at $SRC\"\n"
+        "  exit 19\n"
+        "fi\n"
+        "} >> .megaplan/cloud-chain-progress-auditor-stage-metrics.log 2>&1 && "
+        "cd /workspace/progress-auditor-stage-metrics/Arnold && "
+        "PYTHONPATH=/workspace/arnold:${PYTHONPATH:-} python -P -m arnold_pipelines.megaplan chain start"
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("default_plan_relaunch_command"),
+            _extract_repair_function("stale_marker_relaunch_command"),
+            _extract_repair_function("default_chain_relaunch_command"),
+            _extract_repair_function("resolve_relaunch_command"),
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            "SYNC_BRANCH=editible-install",
+            (
+                "resolve_relaunch_command progress-auditor-stage-metrics "
+                "/workspace/progress-auditor-stage-metrics/Arnold "
+                "/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/initiatives/progress-auditor-stage-metrics/chain.yaml "
+                f"chain '' {shlex.quote(stale_command)}"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "source checkout dirty; using clean runtime mirror at $RUNTIME_SRC" in result.stdout
+    assert "MEGAPLAN_RUNTIME_SRC" in result.stdout
+    assert "/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/runtime/editable-engine" in result.stdout
+    assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
+    assert "refusing editable install refresh: tracked changes in source checkout" not in result.stdout
 
 
 def test_watchdog_done_plan_reports_complete_without_repair_or_relaunch(tmp_path: Path) -> None:
