@@ -1,4 +1,9 @@
-"""State machine — workflow transitions, robustness levels, step validation.
+"""Megaplan runtime state machine, not authored workflow source.
+
+Do not run ``arnold workflow check`` / ``compile`` against this file. The
+canonical authored workflow source lives at
+``arnold_pipelines/megaplan/workflows/workflow.py``; this module carries the
+runtime transition table, resume helpers, and robustness policy overlays.
 
 Sprint 3: the raw state-machine data (the ``WORKFLOW`` dict + the
 ``_ROBUSTNESS_OVERRIDES`` dict + the ``_ROBUSTNESS_WORKFLOW_LEVELS``
