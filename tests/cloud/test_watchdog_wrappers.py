@@ -7554,6 +7554,101 @@ def test_compute_meta_repair_trigger_skips_stale_timeout_when_alive_has_heartbea
     assert result.stdout.strip() == "NO_TRIGGER"
 
 
+def test_compute_meta_repair_trigger_skips_stale_recurring_retry_after_plan_recovered(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "outcome": "running",
+                "current_signature": {
+                    "milestone_or_plan": "demo-plan",
+                    "current_state": "blocked",
+                },
+                "attempts": [
+                    {"failure_classification": "execution_blocked", "outcome": "running"},
+                    {"failure_classification": "execution_blocked", "outcome": "running"},
+                    {"failure_classification": "execution_blocked", "outcome": "running"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    observation = json.dumps(
+        {
+            "authoritative_source": "chain_state",
+            "active_step_heartbeat": {"active": False},
+            "current_refs": {
+                "current_plan_name": "demo-plan",
+                "chain_current_plan_name": "demo-plan",
+                "plan_current_state": "finalized",
+                "chain_last_state": "finalized",
+            },
+            "plan_state": {"present": True},
+            "chain_state": {"present": True},
+        }
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            (
+                f"compute_meta_repair_trigger demo-session "
+                f"{shlex.quote(observation)} stopped"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "NO_TRIGGER"
+
+
+def test_marker_requires_repair_despite_alive_ignores_stale_failure_after_finalized_recovery(
+    tmp_path: Path,
+) -> None:
+    marker_path = tmp_path / "demo-session.json"
+    data_path = tmp_path / "demo-session.repair-data.json"
+    marker_path.write_text(json.dumps({"session": "demo-session"}), encoding="utf-8")
+    data_path.write_text(
+        json.dumps(
+            {
+                "current_signature": {
+                    "milestone_or_plan": "demo-plan",
+                    "current_state": "finalized",
+                },
+                "current_advancement_snapshot": {
+                    "milestone_or_plan": "demo-plan",
+                    "current_state": "finalized",
+                },
+                "current_failure_context": {
+                    "plan_latest_failure": {
+                        "kind": "execution_blocked",
+                        "current_state": "blocked",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("marker_requires_repair_despite_alive"),
+            f"MARKER_PATH={str(marker_path)!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            "marker_requires_repair_despite_alive || true",
+        ]
+    )
+    result = _run_watchdog_shell(script, path_prefix=None)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == ""
+
+
 def test_launch_chain_tick_dispatches_meta_repair_on_true_blocker_discord_failure(tmp_path: Path) -> None:
     paths = _prepare_meta_repair_launch_chain_tick_fixture(
         tmp_path,

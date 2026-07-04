@@ -39,6 +39,7 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _status_should_use_chain,
     _tmux_chain_launch_command,
     _validate_chain_spec_location,
+    build_cloud_parser,
     cloud_chain_status_payload,
 )
 from arnold_pipelines.megaplan.cloud.spec import (
@@ -66,6 +67,26 @@ def _cloud_spec() -> CloudSpec:
         secrets=[],
         ssh=SshSpec(host="testhost"),
     )
+
+
+def _cloud_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    build_cloud_parser(subparsers)
+    return parser
+
+
+def test_cloud_status_and_chains_accept_compact_since_flags() -> None:
+    status_args = _cloud_parser().parse_args(["cloud", "status", "--all", "--compact", "--since", "12h"])
+    chains_args = _cloud_parser().parse_args(["cloud", "chains", "--compact", "--since", "12h"])
+
+    assert status_args.cloud_action == "status"
+    assert status_args.all is True
+    assert status_args.compact is True
+    assert status_args.since == "12h"
+    assert chains_args.cloud_action == "chains"
+    assert chains_args.compact is True
+    assert chains_args.since == "12h"
 
 
 def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
