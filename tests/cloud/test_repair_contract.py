@@ -10,6 +10,7 @@ import pytest
 
 from arnold_pipelines.megaplan.cloud import repair_contract
 from arnold_pipelines.megaplan.cloud.redact import REDACTION, redact_text
+from arnold_pipelines.megaplan.incident import IncidentLedger
 
 
 def _legacy_payload() -> dict[str, object]:
@@ -31,6 +32,20 @@ def _legacy_payload() -> dict[str, object]:
         "current_advancement_snapshot": {"current_state": "blocked"},
         "outcome": "repairing",
     }
+
+
+def _read_ledger_events(root: Path) -> list[dict[str, object]]:
+    ledger = IncidentLedger(root)
+    if not ledger.events_path.exists():
+        return []
+
+    records: list[dict[str, object]] = []
+    for line in ledger.events_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        records.append(json.loads(stripped))
+    return records
 
 
 def test_repair_contract_round_trips_legacy_payload_without_shape_changes(tmp_path: Path) -> None:
@@ -632,6 +647,53 @@ def test_save_repair_data_updates_session_index(tmp_path: Path) -> None:
         "path": str(path),
         "recorded_at": "2026-07-02T20:00:00+00:00",
     }
+
+
+def test_save_repair_data_emits_immediate_repair_attempt_for_repairing(tmp_path: Path) -> None:
+    repair_dir = tmp_path / "repair-data"
+    repair_dir.mkdir()
+    path = repair_dir / "demo-session.repair-data.json"
+    payload = repair_contract.merge_additive_fields(
+        _legacy_payload(),
+        incident_id="incident-42",
+        attempt_ids=["attempt-demo-0001"],
+        verification={"recorded_at": "2026-07-02T20:00:00+00:00"},
+    )
+
+    repair_contract.save_repair_data(path, payload, root=tmp_path)
+
+    events = _read_ledger_events(tmp_path)
+    assert len(events) == 1
+    ledger_payload = events[0]["payload"]
+    assert ledger_payload["type"] == "repair_attempt"
+    assert ledger_payload["actor"] == "immediate_repair"
+    assert ledger_payload["outcome"] == "attempted"
+    assert ledger_payload["incident_id"] == "incident-42"
+    assert ledger_payload["session_id"] == "demo-session"
+
+
+def test_save_repair_data_emits_immediate_repair_attempt_for_terminal_non_success(tmp_path: Path) -> None:
+    repair_dir = tmp_path / "repair-data"
+    repair_dir.mkdir()
+    path = repair_dir / "demo-session.repair-data.json"
+    payload = repair_contract.merge_additive_fields(
+        {
+            **_legacy_payload(),
+            "outcome": repair_contract.REPAIR_TIMEOUT,
+        },
+        incident_id="incident-42",
+        attempt_ids=["attempt-demo-0001"],
+        verification={"recorded_at": "2026-07-02T20:00:00+00:00"},
+    )
+
+    repair_contract.save_repair_data(path, payload, root=tmp_path)
+
+    events = _read_ledger_events(tmp_path)
+    assert len(events) == 1
+    ledger_payload = events[0]["payload"]
+    assert ledger_payload["type"] == "repair_attempt"
+    assert ledger_payload["actor"] == "immediate_repair"
+    assert ledger_payload["outcome"] == repair_contract.REPAIR_TIMEOUT
 
 
 def test_retention_cleanup_preserves_protected_artifacts_and_records_cleanup_event(
