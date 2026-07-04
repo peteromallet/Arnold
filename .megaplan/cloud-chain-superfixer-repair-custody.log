@@ -215,3 +215,4 @@ Tool read_file returned error (0.81s): {"content": "", "total_lines": 0, "file_s
   [tool] (｡◕‿◕｡) ✍️ /workspace/superfixer-repai...
   [done] ┊ ✍️  write     ...e-20260704-0059/gate_output.json  1.6s (1.6s)
 [hermes-worker] Read JSON from template file: /workspace/superfixer-repair-custody/Arnold/.megaplan/plans/repair-custody-core-outcome-20260704-0059/gate_output.json
+Captured execution baseline: 0 pre-existing uncommitted paths. Unchanged paths will be excluded from ownership audits.
