@@ -691,7 +691,7 @@ def _override_add_note(
     )
     # Merge so a phase that saves between our load and write doesn't clobber
     # this note (and so we don't clobber any concurrent-override appends).
-    save_state_merge_meta(plan_dir, state)
+    save_state_merge_meta(plan_dir, state, preserve_disk_non_meta=True)
     next_steps = infer_next_steps(state)
     # Emit observability events
     try:

@@ -37,7 +37,11 @@ if [[ ! -d /workspace/arnold ]]; then
     echo "arnold-progress-auditor: container_missing container=$CONTAINER" >&2
     exit 1
   fi
-  exec docker exec "$CONTAINER" bash -lc '/usr/local/bin/arnold-progress-auditor "$@"' _ "$@"
+  exec docker exec \
+    -e ARNOLD_AUDIT_AUTOFIX_ENABLED="${ARNOLD_AUDIT_AUTOFIX_ENABLED:-}" \
+    -e ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED="${ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED:-}" \
+    -e MEGAPLAN_AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-}" \
+    "$CONTAINER" bash -lc '/usr/local/bin/arnold-progress-auditor "$@"' _ "$@"
 fi
 
 # ---- in-container audit -----------------------------------------------------
@@ -893,16 +897,24 @@ def _collect_watchdog_report_refs(session, plan, workspace):
         payload = _load_json(path)
         if not isinstance(payload, dict):
             continue
+        matched_items = []
+        items = payload.get("items") if isinstance(payload.get("items"), list) else []
+        issues = payload.get("issues") if isinstance(payload.get("issues"), list) else []
+        for item in items + issues:
+            if isinstance(item, dict) and _artifact_matches(item, tokens):
+                matched_items.append(item)
         if not _artifact_matches(payload, tokens):
-            items = payload.get("items") if isinstance(payload.get("items"), list) else []
-            issues = payload.get("issues") if isinstance(payload.get("issues"), list) else []
-            if not any(_artifact_matches(item, tokens) for item in items + issues if isinstance(item, dict)):
+            if not matched_items:
                 continue
+        matched = matched_items[-1] if matched_items else {}
         refs.append(
             {
                 "report_id": _redact_scalar(path.stem),
                 "path": _redact_scalar(path),
                 "timestamp_utc": _redact_scalar(payload.get("timestamp_utc") or ""),
+                "matched_status": _redact_scalar(matched.get("status") or matched.get("health") or ""),
+                "matched_action": _redact_scalar(matched.get("action") or ""),
+                "matched_message": _redact_scalar(matched.get("message") or matched.get("summary") or ""),
             }
         )
     return _bounded_refs(refs, key_fields=("report_id", "path"))
@@ -1186,6 +1198,7 @@ def _chain_state_summary(workspace, plan):
             "current_plan_name": data.get("current_plan_name") or "",
             "current_state": data.get("current_state") or "",
             "last_state": data.get("last_state") or "",
+            "chain_complete": data.get("chain_complete"),
             "pr_number": data.get("pr_number"),
             "pr_state": data.get("pr_state"),
             "reason": data.get("reason") or data.get("error") or "",
@@ -1373,6 +1386,9 @@ def _repair_data_summary(session):
         "exists": True,
         "mtime_age_min": int((now.timestamp() - _mtime(path)) // 60) if _mtime(path) else None,
         "outcome": payload.get("outcome") if isinstance(payload, dict) else "",
+        "current_attempt_id": payload.get("current_attempt_id") if isinstance(payload, dict) else "",
+        "attempt_ids": payload.get("attempt_ids") if isinstance(payload, dict) and isinstance(payload.get("attempt_ids"), list) else [],
+        "repair_run_count": payload.get("repair_run_count") if isinstance(payload, dict) else None,
         "iteration_count": len(iterations),
         "iterations": summarized_iterations,
         "repeated_failure_signatures": repeated[:6],
@@ -1699,6 +1715,149 @@ def _reconciler_reasons(incident_audit):
         )
     return reasons
 
+def _chain_state_looks_terminal(chain_current):
+    if not isinstance(chain_current, dict) or not chain_current:
+        return False
+    last_state = str(chain_current.get("last_state") or "").strip().lower()
+    pr_state = str(chain_current.get("pr_state") or "").strip().lower()
+    chain_complete = chain_current.get("chain_complete")
+    if chain_complete is True:
+        return True
+    if last_state in {"done", "complete", "completed"} and pr_state in {"", "merged", "closed"}:
+        total = chain_current.get("total_milestones")
+        completed = chain_current.get("completed_count")
+        if total in (None, "", 0) or completed in (None, ""):
+            return True
+        try:
+            return int(completed) >= int(total)
+        except (TypeError, ValueError):
+            return True
+    return False
+
+def _chain_state_looks_nonterminal(chain_current):
+    if not isinstance(chain_current, dict) or not chain_current:
+        return False
+    if _chain_state_looks_terminal(chain_current):
+        return False
+    if chain_current.get("chain_complete") is False:
+        return True
+    last_state = str(chain_current.get("last_state") or "").strip().lower()
+    pr_state = str(chain_current.get("pr_state") or "").strip().lower()
+    if pr_state in {"open", "draft"}:
+        return True
+    if last_state and last_state not in {"done", "complete", "completed"}:
+        return True
+    total = chain_current.get("total_milestones")
+    completed = chain_current.get("completed_count")
+    try:
+        return total not in (None, "", 0) and int(completed or 0) < int(total)
+    except (TypeError, ValueError):
+        return False
+
+def _watchdog_chain_health_disagreement_reason(ev):
+    refs = ev.get("prior_watchdog_report_refs") if isinstance(ev, dict) else []
+    refs = refs if isinstance(refs, list) else []
+    latest = next((item for item in refs if isinstance(item, dict) and item.get("matched_status")), {})
+    if not latest:
+        return ""
+    watchdog_status = str(latest.get("matched_status") or "").strip().lower()
+    chain_current = (ev.get("chain_state_summary") or {}).get("current") if isinstance(ev.get("chain_state_summary"), dict) else {}
+    if watchdog_status == "complete" and _chain_state_looks_nonterminal(chain_current):
+        return (
+            "watchdog_chain_health_disagreement: watchdog reports complete but "
+            f"chain state is last_state={chain_current.get('last_state') or 'unknown'} "
+            f"chain_complete={chain_current.get('chain_complete')} "
+            f"pr_state={chain_current.get('pr_state') or 'unknown'} "
+            f"completed={chain_current.get('completed_count')}/{chain_current.get('total_milestones') or '?'}"
+        )
+    if watchdog_status == "awaiting_pr_merge" and _chain_state_looks_terminal(chain_current):
+        return (
+            "watchdog_chain_health_disagreement: watchdog reports awaiting_pr_merge but "
+            f"chain state is terminal last_state={chain_current.get('last_state') or 'unknown'} "
+            f"chain_complete={chain_current.get('chain_complete')} "
+            f"pr_state={chain_current.get('pr_state') or 'unknown'}"
+        )
+    return ""
+
+def _repair_data_ghost_running_reason(ev):
+    repair = ev.get("repair_data_summary") if isinstance(ev, dict) else {}
+    if not isinstance(repair, dict) or not repair.get("exists"):
+        return ""
+    outcome = str(repair.get("outcome") or "").strip().lower()
+    if outcome not in {"running", "repairing", "in_progress", "active"}:
+        return ""
+    has_attempt = bool(repair.get("current_attempt_id") or repair.get("attempt_ids"))
+    iteration_count = int(repair.get("iteration_count") or 0)
+    chain_current = (ev.get("chain_state_summary") or {}).get("current") if isinstance(ev.get("chain_state_summary"), dict) else {}
+    if not has_attempt and iteration_count == 0 and (_chain_state_looks_terminal(chain_current) or _chain_state_looks_nonterminal(chain_current)):
+        return (
+            "repair_data_ghost_running: repair-data outcome is running with no current attempt "
+            f"and zero iterations while chain state is last_state={chain_current.get('last_state') or 'unknown'} "
+            f"chain_complete={chain_current.get('chain_complete')}"
+        )
+    return ""
+
+def _green_with_recent_repair_churn_reason(ev):
+    repair = ev.get("repair_data_summary") if isinstance(ev, dict) else {}
+    if not isinstance(repair, dict) or not repair.get("exists"):
+        return ""
+    recent_repair = repair.get("mtime_age_min") is not None and int(repair.get("mtime_age_min") or 0) <= int(window) * 60
+    has_churn = int(repair.get("iteration_count") or 0) > 0 or bool(ev.get("meta_repair_refs")) or bool(ev.get("attempt_refs"))
+    chain_current = (ev.get("chain_state_summary") or {}).get("current") if isinstance(ev.get("chain_state_summary"), dict) else {}
+    chain_last_state = str(chain_current.get("last_state") or "").strip().lower()
+    human_gate_states = {"awaiting_human", "awaiting_human_verify", "human_prerequisite"}
+    if recent_repair and has_churn and chain_last_state not in human_gate_states and _chain_state_looks_nonterminal(chain_current):
+        return (
+            "green_with_recent_repair_churn: recent repair/meta-repair artifacts exist "
+            f"while chain state is non-terminal last_state={chain_current.get('last_state') or 'unknown'}"
+        )
+    return ""
+
+def _active_step_liveness(active):
+    if not isinstance(active, dict) or not active:
+        return {"present": False}
+    raw_pid = active.get("worker_pid")
+    result = {
+        "present": bool(active.get("phase") or raw_pid),
+        "phase": active.get("phase") or active.get("step") or "",
+        "attempt": active.get("attempt"),
+        "worker_pid": str(raw_pid) if raw_pid not in (None, "") else "",
+        "worker_pid_alive": None,
+    }
+    if raw_pid in (None, ""):
+        return result
+    try:
+        pid = int(raw_pid)
+    except (TypeError, ValueError):
+        result["worker_pid_alive"] = False
+        return result
+    if pid <= 0:
+        result["worker_pid_alive"] = False
+        return result
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        result["worker_pid_alive"] = False
+    except PermissionError:
+        result["worker_pid_alive"] = True
+    except OSError:
+        result["worker_pid_alive"] = False
+    else:
+        result["worker_pid_alive"] = True
+    return result
+
+def _active_step_ghost_worker_reason(ev):
+    liveness = ev.get("active_step_liveness") if isinstance(ev, dict) else {}
+    if not isinstance(liveness, dict) or not liveness.get("present"):
+        return ""
+    pid = liveness.get("worker_pid") or ""
+    if not pid or liveness.get("worker_pid_alive") is not False:
+        return ""
+    return (
+        "plan_active_step_ghost_worker: "
+        f"phase={liveness.get('phase') or 'unknown'} worker_pid={pid} is not live"
+    )
+
 def _plan_evidence(entry):
     workspace = entry["workspace"]
     plan = entry["plan"]
@@ -1793,6 +1952,7 @@ def _plan_evidence(entry):
     plan_deltas = meta.get("plan_deltas") or []
     counts = meta.get("significant_counts") or []
     active = state.get("active_step") or {}
+    active_liveness = _active_step_liveness(active)
 
     history = state.get("history") or []
     recent_history = []
@@ -1870,6 +2030,7 @@ def _plan_evidence(entry):
         "iteration": state.get("iteration"),
         "active_step_phase": active.get("phase"),
         "active_step_attempt": active.get("attempt"),
+        "active_step_liveness": active_liveness,
         "plan_v_count": len(plan_v_files),
         "plan_v_sizes": sizes,
         "events_size": events_size,
@@ -1987,6 +2148,14 @@ for entry in plans:
             f"meta-repair trigger {meta_summary.get('trigger')} has only failed launch/no-output evidence "
             f"(bad_records={meta_summary.get('failed_meta_record_count')} bad_run_logs={meta_summary.get('failed_meta_run_count')})"
         )
+    for deterministic_reason in (
+        _watchdog_chain_health_disagreement_reason(ev),
+        _repair_data_ghost_running_reason(ev),
+        _active_step_ghost_worker_reason(ev),
+        _green_with_recent_repair_churn_reason(ev),
+    ):
+        if deterministic_reason:
+            reasons.append(deterministic_reason)
     unresolved_actions = (ev.get("user_action_context") or {}).get("unresolved_user_actions") or []
     if (run_kind == "plan" or chain_last_state == "awaiting_human") and unresolved_actions:
         ids = ",".join(str(item.get("id")) for item in unresolved_actions[:5])
@@ -2171,9 +2340,10 @@ dispatch_one() {
     cat "$gather_file"
     echo '```'
     echo
-    cat <<EOF
-You are reconciling a cloud megaplan SESSION, not just one plan. Reconciler
-findings: $reasons. Run kind: $kind.
+    echo "You are reconciling a cloud megaplan SESSION, not just one plan. Reconciler"
+    echo "findings: $reasons. Run kind: $kind."
+    echo
+    cat <<'EOF'
 
 Evidence JSON is above. Treat incident_brief, incident_projection,
 problem_projection, incident_audit, and incident-ledger summary paths as the
@@ -2301,10 +2471,14 @@ If you identify a source bug in the Arnold repair system: root-cause it from
 the evidence + workspace, operate only in $ARNOLD_SRC, and never touch the
 running run's project tree.
 
-$(autofix_policy_markdown "$AUDIT_AUTOFIX_ENABLED_FLAG" "$AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG")
+EOF
+    autofix_policy_markdown "$AUDIT_AUTOFIX_ENABLED_FLAG" "$AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG"
+    cat <<'EOF'
 
 Allowed autofix targets:
-$(autofix_allowed_targets_markdown)
+EOF
+    autofix_allowed_targets_markdown
+    cat <<'EOF'
 
 No-secrets rule:
 - Redact token-, key-, password-, cookie-, bearer-, webhook-, and private-key-shaped material from reasoning, commands, diffs, responses, and report text.
@@ -2548,9 +2722,13 @@ print(len(data.get("findings", [])))
 PY
 N_FINDINGS="$FINDING_COUNT"
 
-for ((i=0; i<N_FINDINGS; i++)); do
-  dispatch_one "$GATHER_DIR/finding-$i.json"
-done
+if [[ "$AUDIT_AUTOFIX_ENABLED_FLAG" == "1" ]]; then
+  for ((i=0; i<N_FINDINGS; i++)); do
+    dispatch_one "$GATHER_DIR/finding-$i.json"
+  done
+else
+  log "autofix disabled; skipping Codex dispatch for findings=$N_FINDINGS"
+fi
 
 record_incident_audits "$GATHER_DIR/findings.json"
 

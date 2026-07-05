@@ -43,6 +43,8 @@ def test_megaplan_resident_tool_catalog_exposes_initiatives_policy(tmp_path: Pat
     assert ".megaplan/initiatives/<slug>/" in prompt
     assert "Never create planning docs directly under .megaplan/briefs" in prompt
     assert "search initiatives by rough slug/title/description first" in prompt
+    assert "plan_activity_summary" in prompt
+    assert "active/working plans" in prompt
 
 
 def test_megaplan_resident_write_initiative_doc_creates_canonical_folder(tmp_path: Path) -> None:
@@ -238,3 +240,7 @@ def test_megaplan_resident_hot_context_includes_local_epic_chain_state(
     assert local_state["epic_chains"][0]["current_epic_id"] == "native-python"
     assert local_state["active_chains"][0]["current_plan_name"] == "m1-demo"
     assert local_state["active_chains"][0]["plan_state"]["current_state"] == "initialized"
+    activity = context["plan_activity_summary"]
+    assert activity["counts"]["visible_chains"] == 1
+    assert activity["should_be_working_but_needs_attention"][0]["current_plan_name"] == "m1-demo"
+    assert activity["recently_completed"] == []

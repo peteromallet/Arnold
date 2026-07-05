@@ -3801,7 +3801,8 @@ payload["current_recurrence"] = {
 payload["run_recurrence_detected"] = bool(payload.get("run_recurrence_detected")) or bool(recurrence.get("detected"))
 repair_recurrence.atomic_write_json(data_path, payload)
 repair_recurrence.atomic_write_json(progress_path, session_snapshot)
-print(f"{attempt_id}\t{1 if recurrence.get('detected') else 0}")
+breaker = 1 if recurrence.get("deterministic_failure_breaker") else 0
+print(f"{attempt_id}\t{1 if recurrence.get('detected') else 0}\t{breaker}")
 PY
   rc=$?
   rm -f "$failure_context_file"
@@ -4227,7 +4228,10 @@ write_needs_human_marker() {
   require_repair_lock_held
   ensure_repair_budget_available "needs-human-marker"
   local discord_status="$1"
+  local escalation_label="${2:-}"
+  export REPAIR_ESCALATION_LABEL="$escalation_label"
   PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$NEEDS_HUMAN_FILE" "$discord_status" <<'PY'
+import os
 import pathlib
 import sys
 
@@ -4236,11 +4240,13 @@ from arnold_pipelines.megaplan.cloud.repair_contract import validate_repair_data
 
 data_path, out_path, discord_status = sys.argv[1:]
 payload = validate_repair_data(pathlib.Path(data_path))
+escalation_label = os.environ.get("REPAIR_ESCALATION_LABEL", "").strip()
 write_needs_human_marker_payload(
     out_path,
     payload,
     repair_data_path=data_path,
     discord_status=discord_status,
+    escalation_label=escalation_label or None,
 )
 PY
 }
@@ -4549,6 +4555,7 @@ for iteration in 1 2 3; do
   if (( iteration > REPAIR_ITERATION_MAX )); then
     break
   fi
+  BREAKER_TRIPPED="${BREAKER_TRIPPED:-0}"
   exit_if_repair_target_complete "iteration-$iteration-start"
   case "$iteration" in
     1)
@@ -4576,10 +4583,17 @@ for iteration in 1 2 3; do
       ;;
   esac
 
-  if ! IFS=$'\t' read -r CURRENT_ATTEMPT_ID CURRENT_RECURRING <<< "$(repair_recurrence_prepare_attempt "$iteration" "$DEV_REQUESTED_MODEL" "$DEV_DISPATCH_MODEL")"; then
+  if ! IFS=$'\t' read -r CURRENT_ATTEMPT_ID CURRENT_RECURRING CURRENT_DETERMINISTIC_BREAKER <<< "$(repair_recurrence_prepare_attempt "$iteration" "$DEV_REQUESTED_MODEL" "$DEV_DISPATCH_MODEL")"; then
     log "failed to prepare recurrence context; continuing in shallow mode iteration=$iteration"
     CURRENT_ATTEMPT_ID="0"
     CURRENT_RECURRING="0"
+    CURRENT_DETERMINISTIC_BREAKER="0"
+  fi
+  if [[ "${CURRENT_DETERMINISTIC_BREAKER:-0}" == "1" && "${CLOUD_WATCHDOG_DETERMINISTIC_BREAKER:-1}" == "1" ]]; then
+    repair_data_set_outcome "deterministic_failure"
+    BREAKER_TRIPPED="1"
+    log "deterministic-failure breaker tripped before iteration=$iteration dev-fix; problem signature unchanged from prior iteration session=$SESSION"
+    break
   fi
   run_dev_fix_turn "$iteration" "$CURRENT_ATTEMPT_ID" "${CURRENT_RECURRING:-0}" "$DEV_REQUESTED_MODEL" "$DEV_DISPATCH_MODEL" "$DEV_DISPATCH_KIND" "$DEV_FALLBACK_REASON"
   exit_if_repair_target_complete "iteration-$iteration-post-dev-fix"
@@ -4612,6 +4626,15 @@ for iteration in 1 2 3; do
 done
 
 exit_if_repair_target_complete "post-iterations"
+
+if [[ "${BREAKER_TRIPPED:-0}" == "1" ]]; then
+  discord_status="$(send_discord_escalation)"
+  if [[ "$discord_status" == "delivered" ]]; then
+    write_needs_human_marker "$discord_status" "deterministic_failure — mechanical re-drive cannot help (same error signature across iterations)"
+  fi
+  log "deterministic-failure breaker session=$SESSION discord=$discord_status data=$DATA_FILE"
+  exit 1
+fi
 
 if [[ "$(repair_exhausted_should_retry_without_human)" == "1" ]]; then
   repair_data_set_outcome "recurring_retry_pending"

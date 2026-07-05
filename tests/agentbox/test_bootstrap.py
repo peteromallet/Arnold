@@ -26,7 +26,11 @@ def test_bootstrap_creates_expected_directories_and_units(config: AgentBoxConfig
 
     systemd_dir = config.workspace_root / "systemd"
     assert (systemd_dir / "arnold-guardian.service").exists()
-    assert (systemd_dir / "agentbox-discord-resident.service").exists()
+    resident_unit = systemd_dir / "agentbox-discord-resident.service"
+    assert resident_unit.exists()
+    resident_text = resident_unit.read_text(encoding="utf-8")
+    assert "Environment=MEGAPLAN_RESIDENT_MODEL_PROVIDER=codex" in resident_text
+    assert "Environment=MEGAPLAN_RESIDENT_MODEL=gpt-5.5" in resident_text
 
 
 def test_bootstrap_is_idempotent(config: AgentBoxConfig) -> None:

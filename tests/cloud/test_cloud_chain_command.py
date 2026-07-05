@@ -19,6 +19,7 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _chain_project_root,
     _chain_start_command,
     _cloud_chains_command,
+    _cloud_session_plan_state,
     _derive_chain_launch_context,
     _durable_megaplan_uploads,
     _derive_bootstrap_session_name,
@@ -1089,8 +1090,19 @@ def test_cloud_chains_command_emits_latest_plan_state_evidence() -> None:
 
     assert "def _latest_plan_state_evidence(workspace):" in script
     assert '"latest_plan_state"' in script
+    assert '"active_phase"' in script
     assert '".megaplan" / "plans"' in script
     assert 'plans_dir.glob("*/state.json")' in script
+
+
+def test_cloud_chains_command_emits_event_activity_evidence() -> None:
+    script = _cloud_chains_command()
+
+    assert "def _event_activity_evidence(workspace, plan_name):" in script
+    assert '"event_activity_evidence"' in script
+    assert '"event_activity_status"' in script
+    assert 'plans" / plan_name / "events.ndjson"' in script
+    assert 'plan_name = latest_plan_state.get("plan")' in script
 
 
 def test_cloud_chains_command_emits_separate_evidence_fields() -> None:
@@ -1162,6 +1174,78 @@ def test_cloud_status_since_filter_uses_real_plan_state_not_watchdog_mtime() -> 
     assert payload["summary"] == {"complete": 1}
 
 
+def test_cloud_status_since_filter_prefers_event_activity_over_stale_state() -> None:
+    payload = {
+        "sessions": [
+            {
+                "session": "active-prep",
+                "status": "running",
+                "watchdog_repairing": False,
+                "should_be_running": True,
+                "latest_plan_state": {
+                    "status": "present",
+                    "updated_at": "2026-07-03T08:00:00Z",
+                    "plan": "active-plan",
+                    "state": "initialized",
+                },
+                "event_activity_evidence": {
+                    "status": "present",
+                    "updated_at": "2026-07-04T04:00:00Z",
+                    "phase": "prep-research",
+                    "kind": "llm_token_heartbeat",
+                },
+                "operator_status": {"status": "running_phase"},
+            }
+        ]
+    }
+    since = _parse_cloud_status_since("2026-07-04T00:00:00Z")
+
+    _filter_cloud_sessions_since(payload, since)
+
+    assert [item["session"] for item in payload["sessions"]] == ["active-prep"]
+    assert payload["sessions"][0]["real_activity_at"] == "2026-07-04T04:00:00Z"
+
+
+def test_cloud_session_plan_state_prefers_event_phase_over_initialized_state() -> None:
+    assert (
+        _cloud_session_plan_state(
+            {
+                "latest_plan_state": {"status": "present", "state": "initialized"},
+                "event_activity_evidence": {
+                    "status": "present",
+                    "phase": "prep-research",
+                    "kind": "llm_token_heartbeat",
+                },
+            }
+        )
+        == "prep-research"
+    )
+
+
+def test_cloud_session_plan_state_uses_latest_state_active_phase_fallback() -> None:
+    assert (
+        _cloud_session_plan_state(
+            {
+                "latest_plan_state": {
+                    "status": "present",
+                    "state": "initialized",
+                    "active_phase": "prep-distill",
+                },
+                "event_activity_evidence": {"status": "missing"},
+                "active_step_evidence": {"status": "missing"},
+            }
+        )
+        == "prep-distill"
+    )
+
+
+def test_cloud_chains_command_treats_initialized_as_known_nonterminal_state() -> None:
+    script = _cloud_chains_command()
+
+    assert '{"initialized", "prepped", "planned", "gated", "finalized", "executed", "reviewed", "stopped"}' in script
+    assert '"initialized",\n            "prepped",' in script
+
+
 class _CloudChainsProvider:
     def __init__(self, payload: dict) -> None:
         self.payload = payload
@@ -1203,6 +1287,12 @@ def test_cloud_status_all_compact_since_filters_payload_and_stderr(capsys: pytes
                     "plan": "active-plan",
                     "state": "initialized",
                 },
+                "event_activity_evidence": {
+                    "status": "present",
+                    "updated_at": "2026-07-04T04:05:00Z",
+                    "phase": "prep-research",
+                    "kind": "llm_token_heartbeat",
+                },
                 "operator_status": {"status": "running_repairing"},
             },
         ],
@@ -1225,6 +1315,7 @@ def test_cloud_status_all_compact_since_filters_payload_and_stderr(capsys: pytes
     captured = capsys.readouterr()
     assert "cloud sessions: 1 since=2026-07-04T00:00:00Z filtered_from=2" in captured.err
     assert "session=running" in captured.err
+    assert "activity_state=prep-research" in captured.err
     assert "session=old" not in captured.err
     emitted = json.loads(captured.out)
     assert [item["session"] for item in emitted["sessions"]] == ["running"]

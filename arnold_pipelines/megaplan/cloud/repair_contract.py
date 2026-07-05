@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -370,6 +371,7 @@ def blocker_fingerprint_from_evidence(
             _as_text(latest_failure.get("task_id")),
             _as_text(latest_failure_meta.get("blocked_task_id")),
             _as_text(latest_failure_meta.get("task_id")),
+            _blocked_task_id_from_failure(latest_failure, latest_failure_meta),
             _as_text(signature.get("blocked_task_id")),
         ),
         "target_fingerprint": _first_non_empty(
@@ -379,6 +381,29 @@ def blocker_fingerprint_from_evidence(
         ),
     }
     return normalize_blocker_fingerprint_v1(payload)
+
+
+def _blocked_task_id_from_failure(
+    latest_failure: Mapping[str, Any],
+    latest_failure_meta: Mapping[str, Any],
+) -> str:
+    for key in ("blocked_task_ids", "task_ids"):
+        values = _as_list(latest_failure_meta.get(key))
+        for value in values:
+            task_id = _as_scalar_text(value)
+            if task_id:
+                return task_id
+
+    candidate_texts = [
+        _as_text(latest_failure.get("message")),
+        _as_text(latest_failure_meta.get("blocking_reason")),
+    ]
+    candidate_texts.extend(_as_text(value) for value in _as_list(latest_failure_meta.get("blocking_reasons")))
+    for text in candidate_texts:
+        match = re.search(r"\btask\s+([A-Z]+[0-9]+)\b", text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
+    return ""
 
 
 def project_repair_custody(
@@ -412,9 +437,17 @@ def project_repair_custody(
 
     fingerprint = blocker_fingerprint_from_evidence(plan_state=plan_payload, current_target=target_payload)
     blocker_id = blocker_id_for_fingerprint(fingerprint)
+    target_session = _first_non_empty(
+        _as_text(target_payload.get("target_session")),
+        _as_text(_as_mapping(target_payload.get("marker")).get("session")),
+        _as_text(target_payload.get("session")),
+    )
 
     requests: list[RepairCustodyRequestRecord] = []
     for record in queue_requests:
+        request_session = _as_text(record.get("session"))
+        if target_session and request_session and request_session != target_session:
+            continue
         problem_signature = _stable_mapping(_as_mapping(record.get("problem_signature")))
         request_fingerprint = blocker_fingerprint_from_evidence(
             plan_state=plan_payload,
@@ -456,6 +489,7 @@ def project_repair_custody(
         sidecar_dir=sidecar_dir,
         blocker_id=blocker_id or "",
         fingerprint=fingerprint,
+        target_session=target_session,
     )
 
     active_request_ids = sorted(
@@ -517,8 +551,8 @@ def classify_repair_dispatch(
     """Classify one repair dispatch decision from shared custody evidence.
 
     Conservative defaults apply: unknown or ambiguous blocker shapes never
-    auto-dispatch. The only currently whitelisted L1 dispatch shape is the
-    known blocked/manual_review/blocked_recovery_not_resolved custody path.
+    auto-dispatch. L1 dispatch is reserved for blocked/manual_review states
+    whose failure kind is known to be implementation-repairable.
     """
 
     plan_payload = _as_mapping(plan_state)
@@ -1919,6 +1953,7 @@ def _collect_custody_attempts(
     sidecar_dir: str | Path | None,
     blocker_id: str,
     fingerprint: BlockerFingerprintV1 | None,
+    target_session: str = "",
 ) -> list[RepairCustodyAttemptRecord]:
     attempts: list[RepairCustodyAttemptRecord] = []
     snapshot_request_ids = _collect_snapshot_request_ids(repair_data_dir)
@@ -1926,6 +1961,8 @@ def _collect_custody_attempts(
         for path in sorted(Path(repair_data_dir).glob("*.repair-data.json")):
             payload = load_json(path, default={})
             if not isinstance(payload, Mapping):
+                continue
+            if target_session and _record_session_id(payload, path) != target_session:
                 continue
             attempts.extend(
                 _attempts_from_snapshot(
@@ -1942,6 +1979,7 @@ def _collect_custody_attempts(
                 blocker_id=blocker_id,
                 fingerprint=fingerprint,
                 snapshot_request_ids=snapshot_request_ids,
+                target_session=target_session,
             )
         )
     attempts.sort(key=lambda item: (item["recorded_at"], item["attempt_id"], item["path"]))
@@ -1982,6 +2020,8 @@ def _attempts_from_snapshot(
         attempt_id = _as_scalar_text(record.get("attempt_id"))
         if not attempt_id:
             continue
+        if not _problem_signature_matches_fingerprint(record.get("problem_signature"), fingerprint):
+            continue
         attempts.append(
             _build_attempt_record(
                 attempt_id=attempt_id,
@@ -2001,6 +2041,17 @@ def _attempts_from_snapshot(
         return attempts
     current_attempt_id = _as_scalar_text(payload.get("current_attempt_id"))
     if current_attempt_id:
+        snapshot_signature = (
+            payload.get("problem_signature")
+            or payload.get("current_signature")
+            or (
+                _as_mapping(payload.get("current_recurrence")).get("problem_signature")
+                if isinstance(payload.get("current_recurrence"), Mapping)
+                else None
+            )
+        )
+        if not _problem_signature_matches_fingerprint(snapshot_signature, fingerprint):
+            return attempts
         payload_request_id = _as_scalar_text(
             payload.get("request_id")
         ) or _as_scalar_text(
@@ -2032,6 +2083,7 @@ def _attempts_from_sidecar(
     blocker_id: str,
     fingerprint: BlockerFingerprintV1 | None,
     snapshot_request_ids: set[tuple[str, str]],
+    target_session: str = "",
 ) -> list[RepairCustodyAttemptRecord]:
     path = _sidecar_jsonl_path(sidecar_dir, "attempts")
     records = read_jsonl_records(path, skip_parse_errors=True)
@@ -2040,6 +2092,10 @@ def _attempts_from_sidecar(
         session = _as_scalar_text(record.get("session_id"))
         attempt_id = _as_scalar_text(record.get("attempt_id"))
         if not session or not attempt_id or (session, attempt_id) in snapshot_request_ids:
+            continue
+        if target_session and session != target_session:
+            continue
+        if not _problem_signature_matches_fingerprint(record.get("problem_signature"), fingerprint):
             continue
         attempts.append(
             _build_attempt_record(
@@ -2088,6 +2144,31 @@ def _build_attempt_record(
         "recorded_at": recorded_at,
         "raw": dict(raw),
     }
+
+
+def _problem_signature_matches_fingerprint(
+    problem_signature: Any,
+    fingerprint: Mapping[str, Any] | None,
+) -> bool:
+    signature = _as_mapping(problem_signature)
+    if not signature:
+        return True
+    current = _as_mapping(fingerprint)
+    if not current:
+        return False
+    comparable = (
+        ("current_state", "current_state"),
+        ("failure_kind", "failure_kind"),
+        ("phase_or_step", "phase_or_step"),
+        ("milestone_or_plan", "milestone_or_plan"),
+        ("blocked_task_id", "blocked_task_id"),
+    )
+    for sig_key, current_key in comparable:
+        sig_value = _as_text(signature.get(sig_key))
+        current_value = _as_text(current.get(current_key))
+        if sig_value and current_value and sig_value != current_value:
+            return False
+    return True
 
 
 def _attempt_state_from_snapshot(
@@ -2227,7 +2308,7 @@ def _is_known_repairable_shape(
         return False
     if retry_strategy != "manual_review":
         return False
-    if failure_kind != "blocked_recovery_not_resolved":
+    if failure_kind not in {"blocked_recovery_not_resolved", "execution_blocked"}:
         return False
     return _has_current_target_evidence(current_target)
 

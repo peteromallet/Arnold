@@ -230,6 +230,7 @@ def test_agentbox_operator_profile_selected_by_config_and_discord_cli(
     assert dry_run["profile"] == "agentbox_operator"
     assert isinstance(selected, AgentBoxOperatorProfile)
     assert ResidentConfig().profile == "megaplan"
+    assert ResidentConfig().model_provider == "codex"
     assert env_config.profile == "agentbox_operator"
 
 

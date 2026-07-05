@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.human_blockers import (
@@ -17,6 +18,8 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     DISPATCH_INTENT_HUMAN_REQUIRED,
     DISPATCH_INTENT_L1,
     RepairDispatchDecision,
+    blocker_fingerprint_from_evidence,
+    blocker_id_for_fingerprint,
     classify_repair_dispatch,
     project_repair_custody,
 )
@@ -112,6 +115,116 @@ def test_classifier_dispatches_exact_manual_review_repairable_shape(tmp_path: Pa
         retry_strategy="manual_review",
         failure_kind="blocked_recovery_not_resolved",
     )
+
+
+def test_projection_ignores_stale_cross_session_custody_for_execution_blocked(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    enqueue_repair_request(
+        marker_dir=marker_dir,
+        session="other-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "chain_plan_done_not_advanced",
+            "current_state": "plan_done_chain_blocked",
+            "phase_or_step": "chain_bookkeeping_reconciliation",
+            "milestone_or_plan": "other-plan",
+            "blocked_task_id": "T2",
+        },
+        root_cause_hint="unrelated blocker",
+    )
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "outcome": "live_with_fresh_activity",
+                "attempts": [
+                    {
+                        "attempt_id": 1,
+                        "problem_signature": {
+                            "current_state": "initialized",
+                            "failure_kind": "unknown_failure_mode",
+                            "phase_or_step": "init",
+                            "milestone_or_plan": "agentic-replay-viewer",
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    state = _plan_state(
+        latest_failure={
+            "kind": "execution_blocked",
+            "phase": "execute",
+            "metadata": {"blocked_task_id": "T1"},
+        }
+    )
+    target = _current_target(
+        target_session="demo-session",
+        marker={"session": "demo-session"},
+    )
+    queued = enqueue_repair_request(
+        marker_dir=marker_dir,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "execution_blocked",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "blocked_task_id": "T1",
+        },
+        root_cause_hint="repairable blocker",
+    )
+
+    projection = project_repair_custody(
+        plan_state=state,
+        current_target=target,
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+    decision = classify_repair_dispatch(
+        plan_state=state,
+        current_target=target,
+        custody_projection=projection,
+    )
+
+    assert projection["active_request_ids"] == [queued["request"]["request_id"]]
+    assert projection["terminal_outcomes"] == []
+    assert projection["attempts"] == []
+    assert decision.decision == DISPATCH_DECISION_L1
+
+
+def test_execution_blocked_fingerprint_extracts_blocked_task_from_reason() -> None:
+    fingerprint = blocker_fingerprint_from_evidence(
+        plan_state=_plan_state(
+            name="progress-auditor-stage-20260704-1400",
+            latest_failure={
+                "kind": "execution_blocked",
+                "phase": "execute",
+                "metadata": {
+                    "blocking_reasons": [
+                        "task T4 reported status=blocked by executor: fixture could not verify handoff_gaps",
+                    ],
+                },
+            },
+        ),
+        current_target=_current_target(
+            current_refs={
+                "current_plan_name": "progress-auditor-stage-20260704-1400",
+                "plan_current_state": "blocked",
+            },
+        ),
+    )
+
+    assert fingerprint is not None
+    assert fingerprint["blocked_task_id"] == "T4"
+    assert blocker_id_for_fingerprint(fingerprint)
 
 
 def test_classifier_gates_true_or_ambiguous_human_blockers(tmp_path: Path) -> None:

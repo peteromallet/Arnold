@@ -73,6 +73,7 @@ def test_problem_signature_is_stable_across_message_drift() -> None:
         "m7-final-gate",
         "ITERATE",
         "m7-13-full-suite-final-gate",
+        "",  # event_signature: empty when no events_path in the failure context
     )
 
 
@@ -162,6 +163,64 @@ def test_recurrence_verdict_handles_layer1_layer2_and_false_cases() -> None:
     assert false_case["detected"] is False
     assert false_case["layer1"]["detected"] is False
     assert false_case["layer2"]["detected"] is False
+
+
+def test_problem_signature_includes_event_signature_field(tmp_path: Path) -> None:
+    events_path = tmp_path / "events.ndjson"
+    events_path.write_text(
+        json.dumps({"seq": 0, "ts_utc": "2026-07-05T00:00:00+00:00", "kind": "authority_divergence", "payload": {"reason": "head_mismatch"}}) + "\n",
+        encoding="utf-8",
+    )
+    ctx = _failure_context()
+    ctx["plan_latest_failure"]["events_path"] = str(events_path)
+    signature = repair_recurrence.build_problem_signature(ctx)
+    assert "event_signature" in signature
+    assert signature["event_signature"] == "authority_divergence/head_mismatch"
+
+
+def test_problem_signature_event_signature_empty_when_no_events() -> None:
+    signature = repair_recurrence.build_problem_signature(_failure_context())
+    assert signature["event_signature"] == ""
+
+
+def test_layer3_breaker_trips_on_consecutive_same_signature() -> None:
+    signature = repair_recurrence.build_problem_signature(_failure_context())
+    attempts = [{"attempt_id": 1, "problem_signature": signature}]
+    result = repair_recurrence.evaluate_recurrence(signature, attempts, {})
+    assert result["deterministic_failure_breaker"] is True
+    assert result["layer3"]["detected"] is True
+    assert result["layer3"]["breaker_signature"] == result["problem_signature"]
+
+
+def test_layer3_breaker_does_not_trip_when_signature_changed() -> None:
+    prior_sig = repair_recurrence.build_problem_signature(_failure_context(blocked_task_id="task-a"))
+    attempts = [{"attempt_id": 1, "problem_signature": prior_sig}]
+    current_sig = repair_recurrence.build_problem_signature(_failure_context(blocked_task_id="task-b"))
+    result = repair_recurrence.evaluate_recurrence(current_sig, attempts, {})
+    assert result["deterministic_failure_breaker"] is False
+
+
+def test_layer3_breaker_does_not_trip_on_empty_signature() -> None:
+    empty_sig = {field: "" for field in repair_recurrence.PROBLEM_SIGNATURE_FIELDS}
+    attempts = [{"attempt_id": 1, "problem_signature": empty_sig}]
+    result = repair_recurrence.evaluate_recurrence(empty_sig, attempts, {})
+    assert result["deterministic_failure_breaker"] is False
+
+
+def test_layer3_breaker_does_not_trip_when_no_prior_attempts() -> None:
+    signature = repair_recurrence.build_problem_signature(_failure_context())
+    result = repair_recurrence.evaluate_recurrence(signature, [], {})
+    assert result["deterministic_failure_breaker"] is False
+
+
+def test_detected_rollup_unaffected_by_layer3_breaker() -> None:
+    signature = repair_recurrence.build_problem_signature(_failure_context())
+    attempts = [{"attempt_id": 1, "problem_signature": signature}]
+    result = repair_recurrence.evaluate_recurrence(signature, attempts, {})
+    # breaker trips but `detected` rolls up only layer1/layer2 (breaker is a
+    # separate escalation channel, not a recurrence signal).
+    assert result["deterministic_failure_breaker"] is True
+    assert result["detected"] == (result["layer1"]["detected"] or result["layer2"]["detected"])
 
 
 def test_live_merged_pr_overrides_stale_state_file_and_resets_no_advance(

@@ -48,6 +48,7 @@ dependencies = [
     "edge-tts",
     "faster-whisper>=1.0.0",
     "PyJWT[crypto]",
+    "discord.py>=2.6,<3",
 ]
 
 [project.scripts]

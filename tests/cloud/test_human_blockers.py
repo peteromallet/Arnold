@@ -735,6 +735,67 @@ def test_write_needs_human_marker_payload_redacts_summary_strings(tmp_path: Path
     assert marker["summary"].endswith(f"why=Authorization: Bearer {REDACTION}")
 
 
+def _write_events_file(path: Path, events: list[dict]) -> Path:
+    with open(path, "w", encoding="utf-8") as fh:
+        for event in events:
+            fh.write(json.dumps(event) + "\n")
+    return path
+
+
+def test_build_needs_human_marker_inlines_event_signatures_in_summary_and_field(
+    tmp_path: Path,
+) -> None:
+    events_path = _write_events_file(
+        tmp_path / "events.ndjson",
+        [
+            {"seq": 0, "ts_utc": "2026-07-05T00:21:37+00:00", "kind": "authority_divergence", "payload": {"reason": "stale_evidence:head_mismatch"}},
+            {"seq": 1, "ts_utc": "2026-07-05T00:21:38+00:00", "kind": "authority_divergence", "payload": {"reason": "stale_evidence:head_mismatch"}},
+        ],
+    )
+    repair_payload = {
+        "session": "demo",
+        "iterations": [{"i": 1, "dev_model": "gpt-5.4", "why": "rebase conflict", "plan_events_path": str(events_path)}],
+    }
+    marker = build_needs_human_marker(repair_payload, repair_data_path=tmp_path / "rd.json", discord_status="delivered")
+    assert marker["summary"].startswith("signatures: authority_divergence/stale_evidence:head_mismatch x2")
+    assert marker["event_signatures"][0]["kind"] == "authority_divergence"
+    assert marker["event_signatures"][0]["count"] == 2
+    assert marker["event_signatures_path"] == str(events_path)
+
+
+def test_build_needs_human_marker_signatures_redacted(tmp_path: Path) -> None:
+    events_path = _write_events_file(
+        tmp_path / "events.ndjson",
+        [{"seq": 0, "ts_utc": "2026-07-05T00:00:00+00:00", "kind": "llm_call_error", "payload": {"reason": "Authorization: Bearer bearer-secret-token-value"}}],
+    )
+    repair_payload = {
+        "session": "demo",
+        "iterations": [{"i": 1, "why": "x", "plan_events_path": str(events_path)}],
+    }
+    marker = build_needs_human_marker(repair_payload, repair_data_path=tmp_path / "rd.json", discord_status="delivered")
+    assert "bearer-secret-token-value" not in marker["summary"]
+    assert "bearer-secret-token-value" not in json.dumps(marker["event_signatures"])
+
+
+def test_build_needs_human_marker_no_events_path_yields_empty_signatures(tmp_path: Path) -> None:
+    repair_payload = {"session": "demo", "iterations": [{"i": 1, "why": "x"}]}
+    marker = build_needs_human_marker(repair_payload, repair_data_path=tmp_path / "rd.json", discord_status="delivered")
+    assert marker["event_signatures"] == []
+    assert "signatures:" not in marker["summary"]
+
+
+def test_build_needs_human_marker_escalation_label_prepended(tmp_path: Path) -> None:
+    repair_payload = {"session": "demo", "iterations": [{"i": 1, "why": "x"}]}
+    marker = build_needs_human_marker(
+        repair_payload,
+        repair_data_path=tmp_path / "rd.json",
+        discord_status="delivered",
+        escalation_label="deterministic_failure — cannot help",
+    )
+    assert marker["summary"].startswith("[deterministic_failure")
+    assert marker["escalation_label"] == "deterministic_failure — cannot help"
+
+
 def test_build_needs_human_marker_includes_discord_status_as_metadata(
     tmp_path: Path,
 ) -> None:

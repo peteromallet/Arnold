@@ -20,6 +20,7 @@ PROBLEM_SIGNATURE_FIELDS = (
     "milestone_or_plan",
     "gate_recommendation",
     "blocked_task_id",
+    "event_signature",
 )
 
 
@@ -311,7 +312,36 @@ def build_problem_signature(failure_context: Mapping[str, Any]) -> dict[str, str
         ),
         "gate_recommendation": _as_text(last_gate.get("recommendation")),
         "blocked_task_id": _first_blocked_task_id(execute_attempt),
+        # Real error signature from events.ndjson so the deterministic-failure
+        # breaker keys on the actual error, not just the coarse failure_kind.
+        # Appended LAST so stored 6-field attempts yield "" here and never match
+        # new 7-tuples (breaker stays conservative on first deploy).
+        "event_signature": _event_signature_field(context, plan_failure),
     }
+
+
+def _event_signature_field(context: Mapping[str, Any], plan_failure: Mapping[str, Any]) -> str:
+    events_path = _as_text(
+        plan_failure.get("events_path")
+        or plan_failure.get("plan_events_path")
+        or context.get("plan_events_path")
+    )
+    if not events_path:
+        return ""
+    try:
+        from arnold_pipelines.megaplan.observability.events import event_signature_summary
+    except ImportError:
+        return ""
+    try:
+        top = event_signature_summary(events_path=events_path, top_n=1)
+    except Exception:
+        return ""
+    if not top:
+        return ""
+    first = top[0]
+    kind = _as_text(first.get("kind"))
+    reason = _as_text(first.get("reason"))
+    return f"{kind}/{reason}" if kind else ""
 
 
 def signature_tuple(signature: Mapping[str, Any]) -> tuple[str, ...]:
@@ -500,8 +530,30 @@ def evaluate_recurrence(
     layer1_detected = bool(matching_attempt_ids)
     layer2_detected = no_advance_count >= min_dispatches > 0
     attempt_number = max(len(matching_attempt_ids) + 1, no_advance_count or 1)
+
+    # Layer 3: deterministic-failure breaker. Trips when the immediately-prior
+    # attempt recorded the SAME signature as the current one (iteration N ==
+    # iteration N-1). A repeat means another mechanical re-drive with the same
+    # inputs cannot help — the loop should stop early and escalate. Only fires
+    # on a non-empty signature so the breaker never trips on bootstrap/garbage.
+    prior_by_id = sorted(
+        (
+            attempt
+            for attempt in prior_attempts
+            if isinstance(attempt, Mapping)
+            and _as_int(attempt.get("attempt_id")) is not None
+        ),
+        key=lambda a: _as_int(a["attempt_id"]),  # type: ignore[index]
+    )
+    layer3_detected = False
+    if prior_by_id and any(current_key):
+        last_signature = _as_dict(prior_by_id[-1].get("problem_signature"))
+        if last_signature and signature_tuple(last_signature) == current_key:
+            layer3_detected = True
+
     return {
         "detected": layer1_detected or layer2_detected,
+        "deterministic_failure_breaker": layer3_detected,
         "attempt_number": attempt_number,
         "problem_signature": normalized_signature,
         "layer1": {
@@ -514,5 +566,10 @@ def evaluate_recurrence(
             "no_advance_dispatch_count": no_advance_count,
             "min_dispatches": min_dispatches,
             "window_seconds": _as_int(snapshot.get("window_seconds")) or 0,
+        },
+        "layer3": {
+            "detected": layer3_detected,
+            "consecutive_same_signature": layer3_detected,
+            "breaker_signature": normalized_signature if layer3_detected else {},
         },
     }

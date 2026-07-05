@@ -429,6 +429,11 @@ class MegaplanResidentProfile:
             "`add_todo_item` (optionally a `when` condition, e.g. 'once epic <id> is done'); use "
             "`read_todo_list` to show what's queued. In conversation you add and read items — a "
             "scheduled sweep picks up pending items and executes them with `launch_subagent`."
+            " When the user asks a broad status question like 'How's it going now?', "
+            "'what's active?', or why the bot did not reply, first summarize "
+            "`plan_activity_summary`: active/working plans, plans that should be "
+            "working but need attention, and recently completed plans. Include the "
+            "most concrete plan names, states, and next action visible in context."
         )
 
     async def load_hot_context(self, conversation_id: str) -> dict[str, Any]:
@@ -457,6 +462,7 @@ class MegaplanResidentProfile:
             },
             "configured_cloud_yaml": str(self.config.cloud_yaml_path),
             "epic_chain_visibility": _summarize_epic_chain_visibility(local_epic_chain_state, live_cloud_chain),
+            "plan_activity_summary": _summarize_plan_activity(local_epic_chain_state, live_cloud_chain),
             "local_epic_chain_state": local_epic_chain_state,
             "live_cloud_chain": live_cloud_chain,
         }
@@ -2115,6 +2121,44 @@ def _summarize_epic_chain_visibility(
     }
 
 
+def _summarize_plan_activity(
+    local_state: dict[str, Any],
+    live_cloud_chain: dict[str, Any] | None,
+) -> dict[str, Any]:
+    chains = local_state.get("chains") if isinstance(local_state, dict) else []
+    chains = chains if isinstance(chains, list) else []
+    active: list[dict[str, Any]] = []
+    needs_attention: list[dict[str, Any]] = []
+    completed: list[dict[str, Any]] = []
+    for row in chains:
+        if not isinstance(row, dict):
+            continue
+        item = _plan_activity_item(row)
+        if _chain_needs_attention(row):
+            needs_attention.append(item)
+        elif _chain_recently_completed(row):
+            completed.append(item)
+        elif _is_active_chain_state(row):
+            active.append(item)
+    live_classification = live_cloud_chain.get("classification") if isinstance(live_cloud_chain, dict) else None
+    live_summary = live_cloud_chain.get("summary") if isinstance(live_cloud_chain, dict) else None
+    return {
+        "active_working": active[:5],
+        "should_be_working_but_needs_attention": needs_attention[:5],
+        "recently_completed": completed[:5],
+        "live_cloud": {
+            "classification": live_classification,
+            "summary": live_summary,
+        },
+        "counts": {
+            "active_working": len(active),
+            "should_be_working_but_needs_attention": len(needs_attention),
+            "recently_completed": len(completed),
+            "visible_chains": len(chains),
+        },
+    }
+
+
 def _summarize_epic_chain_state(path: Path) -> dict[str, Any]:
     data = _read_json_object(path)
     return {
@@ -2191,6 +2235,46 @@ def _is_active_chain_state(row: dict[str, Any]) -> bool:
         if plan_current_state in {"done", "completed", "failed", "aborted"}:
             return False
     return True
+
+
+def _chain_needs_attention(row: dict[str, Any]) -> bool:
+    state = str(row.get("last_state") or "").lower().replace("-", "_")
+    if any(token in state for token in ("awaiting_human", "blocked", "gate_needed", "needs_human", "stalled")):
+        return True
+    plan_state = row.get("plan_state")
+    if isinstance(plan_state, dict):
+        plan_current_state = str(plan_state.get("current_state") or "").lower().replace("-", "_")
+        if any(token in plan_current_state for token in ("awaiting_human", "blocked", "paused", "stalled")):
+            return True
+        active_step = plan_state.get("active_step")
+        if plan_current_state in {"initialized", "prepped", "planned", "gated", "finalized"} and active_step is None:
+            return True
+    return False
+
+
+def _chain_recently_completed(row: dict[str, Any]) -> bool:
+    state = str(row.get("last_state") or "").lower()
+    if state in {"done", "completed", "finalized"}:
+        return True
+    plan_state = row.get("plan_state")
+    if isinstance(plan_state, dict):
+        plan_current_state = str(plan_state.get("current_state") or "").lower()
+        return plan_current_state in {"done", "completed", "reviewed"}
+    return False
+
+
+def _plan_activity_item(row: dict[str, Any]) -> dict[str, Any]:
+    plan_state = row.get("plan_state") if isinstance(row.get("plan_state"), dict) else {}
+    active_step = plan_state.get("active_step") if isinstance(plan_state, dict) else None
+    return {
+        "current_plan_name": row.get("current_plan_name"),
+        "last_state": row.get("last_state"),
+        "plan_current_state": plan_state.get("current_state") if isinstance(plan_state, dict) else None,
+        "active_step": active_step,
+        "chain_spec_path": row.get("chain_spec_path"),
+        "work_dir": row.get("work_dir"),
+        "mtime": row.get("mtime"),
+    }
 
 
 def _summarize_active_step(value: Any) -> dict[str, Any] | None:

@@ -8,7 +8,14 @@ from typing import Any
 from arnold_pipelines.megaplan import handlers as _pkg
 from arnold_pipelines.megaplan.types import CliError, MOCK_ENV_VAR, StepResponse
 from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_HUMAN, STATE_INITIALIZED, STATE_PLANNED, STATE_PREPPED
-from arnold_pipelines.megaplan._core import load_plan_locked, read_json, require_state
+from arnold_pipelines.megaplan._core import (
+    clear_active_step,
+    load_plan_locked,
+    read_json,
+    require_state,
+    save_state_merge_meta,
+    set_active_step,
+)
 
 from .shared import (
     _finish_step,
@@ -264,7 +271,14 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
                 run_prep_orchestration,
             )
 
-            orchestration = run_prep_orchestration(state, plan_dir, root=root)
+            run_id = set_active_step(state, step="prep", agent="prep-orchestration", mode="orchestrated")
+            save_state_merge_meta(plan_dir, state)
+            try:
+                orchestration = run_prep_orchestration(state, plan_dir, root=root)
+            except Exception:
+                clear_active_step(state, run_id=run_id)
+                save_state_merge_meta(plan_dir, state)
+                raise
             worker = orchestration.worker
             artifact_hash = _write_json_artifact(plan_dir, prep_filename, worker.payload)
             if state["config"].get("mode") == "joke" and not state["config"].get("primary_criterion"):
@@ -298,6 +312,7 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
                     "prep_metrics_hash": orchestration.prep_metrics_hash,
                     "prep_signal": prep_signal,
                 },
+                run_id=run_id,
             )
 
 def _build_verifiability_flags(

@@ -814,6 +814,7 @@ def write_plan_state(
     project_dir: str | None = None,
     mutation: PlanStateMutation | None = None,
     validate_current_state: bool = True,
+    preserve_disk_non_meta: bool = False,
 ) -> dict[str, Any]:
     """Read, modify, validate, and atomically replace a plan ``state.json``.
 
@@ -915,10 +916,16 @@ def write_plan_state(
                     raise TypeError("state is required for merge-meta-list mode")
                 # Meta-list appends are often issued by short-lived override
                 # commands while another override or phase transition is also
-                # saving state. Preserve the current on-disk state as authority
-                # for non-meta fields so a stale add-note snapshot cannot roll
-                # back a just-applied transition such as resume-clarify.
-                next_state = dict(existing) if state_path.exists() else dict(state)
+                # saving state. Normal phase saves must keep the in-memory state
+                # transition as authority; otherwise a successful phase can
+                # preserve an older on-disk lifecycle state forever. Meta-only
+                # writers can opt into preserving disk non-meta fields so a
+                # stale note snapshot cannot roll back a just-applied transition.
+                next_state = (
+                    dict(existing)
+                    if preserve_disk_non_meta and state_path.exists()
+                    else dict(state)
+                )
                 disk_meta = existing.get("meta") if isinstance(existing.get("meta"), dict) else {}
                 memory_meta = state.get("meta") if isinstance(state.get("meta"), dict) else {}
                 base_meta = next_state.get("meta") if isinstance(next_state.get("meta"), dict) else {}
@@ -1176,6 +1183,7 @@ def save_state_merge_meta(
     state: PlanState,
     *,
     merge_fields: Iterable[str] = _DEFAULT_MERGE_FIELDS,
+    preserve_disk_non_meta: bool = False,
 ) -> None:
     """Save ``state`` to ``state.json``, merging append-only meta fields with
     whatever is currently on disk.
@@ -1191,6 +1199,7 @@ def save_state_merge_meta(
         mode="merge-meta-list",
         state=state,
         merge_fields=merge_fields,
+        preserve_disk_non_meta=preserve_disk_non_meta,
     )
     state.clear()
     state.update(merged)

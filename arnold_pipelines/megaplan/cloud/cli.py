@@ -3816,13 +3816,77 @@ def _latest_plan_state_evidence(workspace):
             "error": str(exc),
         }}
     current_state = state.get("current_state") or state.get("state") or ""
+    active_step = state.get("active_step") if isinstance(state.get("active_step"), dict) else {{}}
+    active_phase = active_step.get("phase") or active_step.get("step") or ""
     return {{
         "status": "present",
         "path": str(path),
         "plan": path.parent.name,
         "state": current_state,
+        "active_phase": active_phase,
         "mtime": mtime,
         "updated_at": datetime.fromtimestamp(mtime, timezone.utc).isoformat().replace("+00:00", "Z"),
+    }}
+
+def _event_activity_evidence(workspace, plan_name):
+    payload = {{"status": "missing", "path": "", "mtime": 0.0, "updated_at": ""}}
+    if not workspace or not plan_name:
+        return payload
+    path = pathlib.Path(workspace) / ".megaplan" / "plans" / plan_name / "events.ndjson"
+    payload["path"] = str(path)
+    if not path.exists():
+        return payload
+    try:
+        mtime = path.stat().st_mtime
+        lines = path.read_text(errors="replace").splitlines()[-300:]
+    except Exception as exc:
+        return {{"status": "invalid", "path": str(path), "error": str(exc)}}
+    latest_valid = None
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(event, dict):
+            continue
+        latest_valid = event
+        phase = event.get("phase")
+        payload_obj = event.get("payload") if isinstance(event.get("payload"), dict) else {{}}
+        if not phase:
+            phase = payload_obj.get("phase")
+        if phase:
+            return {{
+                "status": "present",
+                "path": str(path),
+                "plan": plan_name,
+                "phase": str(phase),
+                "kind": str(event.get("kind") or ""),
+                "seq": event.get("seq"),
+                "ts_utc": str(event.get("ts_utc") or ""),
+                "mtime": mtime,
+                "updated_at": str(event.get("ts_utc") or datetime.fromtimestamp(mtime, timezone.utc).isoformat().replace("+00:00", "Z")),
+            }}
+    if latest_valid is None:
+        return {{
+            "status": "empty",
+            "path": str(path),
+            "plan": plan_name,
+            "mtime": mtime,
+            "updated_at": datetime.fromtimestamp(mtime, timezone.utc).isoformat().replace("+00:00", "Z"),
+        }}
+    return {{
+        "status": "present",
+        "path": str(path),
+        "plan": plan_name,
+        "phase": "",
+        "kind": str(latest_valid.get("kind") or ""),
+        "seq": latest_valid.get("seq"),
+        "ts_utc": str(latest_valid.get("ts_utc") or ""),
+        "mtime": mtime,
+        "updated_at": str(latest_valid.get("ts_utc") or datetime.fromtimestamp(mtime, timezone.utc).isoformat().replace("+00:00", "Z")),
     }}
 
 def _policy_evidence(remote_spec):
@@ -3944,8 +4008,12 @@ def _payload_for(name):
     plan_name = payload.get("plan_name")
     if not plan_name and isinstance(health_payload, dict):
         plan_name = health_payload.get("current_plan_name")
-    payload["active_step_evidence"] = _active_step_evidence(payload.get("workspace"), plan_name)
     payload["latest_plan_state"] = _latest_plan_state_evidence(payload.get("workspace"))
+    latest_plan_state = payload["latest_plan_state"] if isinstance(payload["latest_plan_state"], dict) else {{}}
+    if not plan_name and latest_plan_state.get("status") == "present":
+        plan_name = latest_plan_state.get("plan")
+    payload["active_step_evidence"] = _active_step_evidence(payload.get("workspace"), plan_name)
+    payload["event_activity_evidence"] = _event_activity_evidence(payload.get("workspace"), plan_name)
     payload["policy_evidence"] = _policy_evidence(payload.get("remote_spec") or "")
     payload["display_name"] = _display_name(payload)
     payload["marker_status"] = payload["marker_evidence"]["status"]
@@ -3953,6 +4021,7 @@ def _payload_for(name):
     payload["process_status"] = payload["process_evidence"]["status"]
     payload["chain_health_status"] = payload["chain_health_evidence"]["status"]
     payload["active_step_status"] = payload["active_step_evidence"]["status"]
+    payload["event_activity_status"] = payload["event_activity_evidence"]["status"]
     payload["watchdog_evidence"] = watchdog_by_session.get(
         name,
         {{"status": "missing", "path": "/workspace/watchdog-report.json"}},
@@ -3998,7 +4067,7 @@ def _should_be_running(payload):
     watchdog_status = payload.get("watchdog_status")
     if watchdog_status in {{"needs_human", "awaiting_pr_merge"}}:
         return False
-    if status in {{"prepped", "planned", "gated", "finalized", "executed", "reviewed", "stopped"}}:
+    if status in {{"initialized", "prepped", "planned", "gated", "finalized", "executed", "reviewed", "stopped"}}:
         return True
     return False
 
@@ -4019,6 +4088,7 @@ def _effective_session_status(payload):
             "awaiting_pr_merge",
             "blocked",
             "failed",
+            "initialized",
             "prepped",
             "planned",
             "gated",
@@ -4151,6 +4221,13 @@ def _cloud_session_real_activity_at(item: Mapping[str, Any]) -> datetime | None:
     intentionally prefers plan ``state.json`` evidence and launch markers over
     watchdog mtimes.
     """
+    event_activity = item.get("event_activity_evidence")
+    if isinstance(event_activity, Mapping) and event_activity.get("status") in {"present", "empty", "invalid"}:
+        timestamp = _parse_cloud_status_timestamp(event_activity.get("updated_at")) or _parse_cloud_status_timestamp(
+            event_activity.get("mtime")
+        )
+        if timestamp is not None:
+            return timestamp
     latest_state = item.get("latest_plan_state")
     if isinstance(latest_state, Mapping) and latest_state.get("status") in {"present", "invalid"}:
         timestamp = _parse_cloud_status_timestamp(latest_state.get("updated_at")) or _parse_cloud_status_timestamp(
@@ -4167,10 +4244,17 @@ def _cloud_session_real_activity_at(item: Mapping[str, Any]) -> datetime | None:
 
 
 def _cloud_session_plan_state(item: Mapping[str, Any]) -> str:
+    event_activity = item.get("event_activity_evidence")
+    if isinstance(event_activity, Mapping) and event_activity.get("phase"):
+        return str(event_activity.get("phase"))
+    active = item.get("active_step_evidence")
+    if isinstance(active, Mapping) and active.get("phase"):
+        return str(active.get("phase"))
     latest_state = item.get("latest_plan_state")
+    if isinstance(latest_state, Mapping) and latest_state.get("active_phase"):
+        return str(latest_state.get("active_phase"))
     if isinstance(latest_state, Mapping) and latest_state.get("state"):
         return str(latest_state.get("state"))
-    active = item.get("active_step_evidence")
     if isinstance(active, Mapping) and active.get("current_state"):
         return str(active.get("current_state"))
     health = item.get("health")
@@ -4226,10 +4310,11 @@ def _filter_cloud_sessions_since(payload: dict[str, Any], since: datetime | None
 def _cloud_compact_line(item: Mapping[str, Any]) -> str:
     operator = item.get("operator_status") if isinstance(item.get("operator_status"), Mapping) else {}
     latest_state = item.get("latest_plan_state") if isinstance(item.get("latest_plan_state"), Mapping) else {}
+    event_activity = item.get("event_activity_evidence") if isinstance(item.get("event_activity_evidence"), Mapping) else {}
     health = item.get("health") if isinstance(item.get("health"), Mapping) else {}
     current_plan = item.get("plan_name") or health.get("current_plan_name") or ""
     activity_plan = latest_state.get("plan") or current_plan
-    activity = item.get("real_activity_at") or latest_state.get("updated_at") or item.get("started_at") or ""
+    activity = item.get("real_activity_at") or event_activity.get("updated_at") or latest_state.get("updated_at") or item.get("started_at") or ""
     return (
         f"- {item.get('display_name') or item.get('session')} "
         f"session={item.get('session')} status={item.get('status')} "
@@ -4269,6 +4354,7 @@ def _emit_cloud_sessions_human(payload: dict[str, Any], *, compact: bool) -> Non
         policy = item.get("policy_evidence") if isinstance(item.get("policy_evidence"), dict) else {}
         operator = item.get("operator_status") if isinstance(item.get("operator_status"), dict) else {}
         latest_state = item.get("latest_plan_state") if isinstance(item.get("latest_plan_state"), dict) else {}
+        event_activity = item.get("event_activity_evidence") if isinstance(item.get("event_activity_evidence"), dict) else {}
         display_state = active.get("current_state") or (health.get("last_state") if health else "")
         detail = ""
         if health:
@@ -4283,10 +4369,16 @@ def _emit_cloud_sessions_human(payload: dict[str, Any], *, compact: bool) -> Non
             )
         elif display_state:
             detail = f" state={display_state}"
+        if event_activity.get("status") == "present" and event_activity.get("phase"):
+            detail += (
+                f" active_phase={event_activity.get('phase') or ''}"
+                f" active_event={event_activity.get('kind') or ''}"
+                f" active_activity={event_activity.get('updated_at') or ''}"
+            )
         if latest_state.get("status") == "present":
             detail += (
                 f" latest_plan={latest_state.get('plan') or ''}"
-                f" latest_state={latest_state.get('state') or ''}"
+                f" lifecycle_state={latest_state.get('state') or ''}"
                 f" latest_activity={latest_state.get('updated_at') or ''}"
             )
         watchdog_detail = ""
