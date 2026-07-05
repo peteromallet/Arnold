@@ -1116,6 +1116,7 @@ plan_path = resolve_plan_state(workspace, preferred_plan_name)
 plan_state = load_json(plan_path)
 plan_complete, plan_reason = is_terminal_plan(plan_state)
 chain_reason = chain_completion_reason(chain_state) if run_kind == "chain" else ""
+chain_last_state = str(chain_state.get("last_state") or "").strip().lower()
 
 if run_kind == "chain" and chain_reason:
     print(
@@ -1124,6 +1125,25 @@ if run_kind == "chain" and chain_reason:
                 "1",
                 "chain",
                 chain_reason,
+                str(chain_path or ""),
+                str(plan_path or ""),
+                str(plan_state.get("current_state") or plan_state.get("state") or ""),
+            ]
+        )
+    )
+elif (
+    run_kind == "chain"
+    and plan_complete
+    and chain_path is not None
+    and chain_path.exists()
+    and chain_last_state not in {"done", "complete"}
+):
+    print(
+        "\t".join(
+            [
+                "1",
+                "chain",
+                "terminal plan state supersedes stale chain state",
                 str(chain_path or ""),
                 str(plan_path or ""),
                 str(plan_state.get("current_state") or plan_state.get("state") or ""),

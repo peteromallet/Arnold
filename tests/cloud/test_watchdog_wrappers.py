@@ -2299,6 +2299,9 @@ def test_repair_loop_exits_immediately_for_completed_chain(tmp_path: Path) -> No
     )
 
     env = dict(os.environ)
+    env.pop("CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE", None)
+    env.pop("CLOUD_WATCHDOG_REPAIR_LOOP_SESSION", None)
+    env.pop("CLOUD_WATCHDOG_REPAIR_LOOP_PID", None)
     env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
     env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
@@ -2314,6 +2317,84 @@ def test_repair_loop_exits_immediately_for_completed_chain(tmp_path: Path) -> No
     assert result.returncode == 0, result.stderr
     combined = f"{result.stdout}\n{result.stderr}"
     assert "chain already complete; no repair needed" in combined
+    assert not calls_log.exists() or not calls_log.read_text(encoding="utf-8").strip()
+    assert not (marker_dir / "demo-session.repair-loop.pid").exists()
+
+
+def test_repair_loop_exits_for_terminal_plan_with_stale_chain_state(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_root = tmp_path / "repair-root"
+    workspace = tmp_path / "ws"
+    bin_dir = tmp_path / "bin"
+    marker_dir.mkdir()
+    repair_root.mkdir()
+    workspace.mkdir()
+    bin_dir.mkdir()
+
+    calls_log = tmp_path / "calls.log"
+    for name in ("tmux", "codex"):
+        path = bin_dir / name
+        path.write_text(
+            "#!/usr/bin/env bash\n"
+            f"printf '%s\\n' {name!r} >> {str(calls_log)!r}\n"
+            "exit 97\n",
+            encoding="utf-8",
+        )
+        path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    timeout_path = bin_dir / "timeout"
+    timeout_path.write_text(
+        "#!/usr/bin/env bash\n"
+        "shift\n"
+        "exec \"$@\"\n",
+        encoding="utf-8",
+    )
+    timeout_path.chmod(timeout_path.stat().st_mode | stat.S_IXUSR)
+
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones:\n  - label: m1\n", encoding="utf-8")
+    marker_path = marker_dir / "demo-session.json"
+    marker_path.write_text(json.dumps({"run_kind": "chain"}), encoding="utf-8")
+    _write_chain_state(
+        workspace / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        {
+            "current_plan_name": "demo-plan",
+            "current_milestone_index": 0,
+            "last_state": "validation_failed",
+            "completed": [],
+            "milestones": [{"label": "m1"}],
+        },
+    )
+    _write_plan(
+        workspace / ".megaplan" / "plans" / "demo-plan",
+        {
+            "name": "demo-plan",
+            "current_state": "done",
+            "iteration": 1,
+            "latest_failure": None,
+        },
+    )
+
+    env = dict(os.environ)
+    env.pop("CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE", None)
+    env.pop("CLOUD_WATCHDOG_REPAIR_LOOP_SESSION", None)
+    env.pop("CLOUD_WATCHDOG_REPAIR_LOOP_PID", None)
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+    env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
+    env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
+    env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
+    result = subprocess.run(
+        ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), str(spec_path)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    combined = f"{result.stdout}\n{result.stderr}"
+    assert "chain already complete; no repair needed" in combined
+    assert "terminal plan state supersedes stale chain state" in combined
     assert not calls_log.exists() or not calls_log.read_text(encoding="utf-8").strip()
     assert not (marker_dir / "demo-session.repair-loop.pid").exists()
 
