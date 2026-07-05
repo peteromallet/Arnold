@@ -5916,12 +5916,6 @@ PY
     log "current-target observe session=$session evidence=$current_target_observation"
   fi
 
-  local observed_current_plan
-  observed_current_plan="$(current_target_plan_name_from_observation "$current_target_observation" 2>>"${LOG:-/dev/null}" || true)"
-  if emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${observed_current_plan:-$plan_name}"; then
-    return 0
-  fi
-
   local terminal_status terminal_observe terminal_summary
   terminal_status="$(session_terminal_status "$session" "$workspace" "$remote_spec" "$run_kind" "$current_target_observation" "$MARKER_DIR" 2>>"${LOG:-/dev/null}" || true)"
   if [[ "$terminal_status" == complete$'\t'* ]]; then
@@ -5929,6 +5923,12 @@ PY
     terminal_summary="${terminal_status#*$'\t'}"
     log "terminal chain state observed; skipping repair/relaunch session=$session summary=$terminal_summary"
     report_item "$report_items" "$session" "observe" "$terminal_observe" "$terminal_summary" "$workspace" "$remote_spec"
+    return 0
+  fi
+
+  local observed_current_plan
+  observed_current_plan="$(current_target_plan_name_from_observation "$current_target_observation" 2>>"${LOG:-/dev/null}" || true)"
+  if emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${observed_current_plan:-$plan_name}"; then
     return 0
   fi
 
@@ -6125,6 +6125,11 @@ PY
   if [[ -n "$plan_status_env" ]]; then
     eval "$plan_status_env"
   fi
+  if [[ "$run_kind" == "chain" && -z "${PLAN_STATUS_PLAN_NAME:-}" && "${PLAN_STATUS_CURRENT_STATE:-}" == "done" && "${PLAN_STATUS_CHAIN_COMPLETE:-0}" == "1" ]]; then
+    log "chain complete; skipping repair/relaunch session=$session state=done"
+    report_item "$report_items" "$session" "observe" "complete" "chain complete" "$workspace" "$remote_spec"
+    return 0
+  fi
   if emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${PLAN_STATUS_PLAN_NAME:-$plan_name}"; then
     return 0
   fi
@@ -6217,11 +6222,6 @@ PY
     fi
     log "session awaits human action but repair loop is unavailable; needs human session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
     notify_needs_human "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$human_summary"
-    return 0
-  fi
-  if [[ "$run_kind" == "chain" && -z "${PLAN_STATUS_PLAN_NAME:-}" && "${PLAN_STATUS_CURRENT_STATE:-}" == "done" && "${PLAN_STATUS_CHAIN_COMPLETE:-0}" == "1" ]]; then
-    log "chain complete; skipping repair/relaunch session=$session state=done"
-    report_item "$report_items" "$session" "observe" "complete" "chain complete" "$workspace" "$remote_spec"
     return 0
   fi
   if [[ "${PLAN_STATUS_MANUAL_REVIEW:-0}" == "1" ]]; then
