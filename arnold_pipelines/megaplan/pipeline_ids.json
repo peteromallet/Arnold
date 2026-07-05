@@ -2,7 +2,7 @@
   "pipelines": [
     {
       "m6_disposition": "keep",
-      "manifest_hash": "sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba",
+      "manifest_hash": "sha256:450be0a9526590ed43f3f11ab75c3125d049d2210409d923636afff9ab035add",
       "name": "megaplan",
       "seam_ids": [],
       "stable_id": "megaplan.core",
@@ -10,7 +10,7 @@
     },
     {
       "m6_disposition": "keep",
-      "manifest_hash": "sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba",
+      "manifest_hash": "sha256:450be0a9526590ed43f3f11ab75c3125d049d2210409d923636afff9ab035add",
       "name": "planning",
       "seam_ids": [],
       "stable_id": "megaplan.planning",
