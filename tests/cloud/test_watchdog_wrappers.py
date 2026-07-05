@@ -7095,6 +7095,61 @@ def test_write_needs_human_marker_redacts_persisted_summary(tmp_path: Path) -> N
     assert marker["summary"].endswith(f"why=Authorization: Bearer {REDACTION}")
 
 
+
+
+
+
+def test_watchdog_checks_current_needs_human_before_terminal_status() -> None:
+    text = _wrapper("arnold-watchdog")
+    launch_start = text.index("launch_chain_tick() {")
+    sidecar_check = text.index("emit_current_needs_human_sidecar", launch_start)
+    terminal_check = text.index("session_terminal_status", launch_start)
+
+    assert sidecar_check < terminal_check
+
+
+def test_watchdog_current_needs_human_sidecar_reports_every_tick_without_renotify(tmp_path: Path) -> None:
+    report_path = tmp_path / "items.jsonl"
+    repair_data_dir = tmp_path / "repair-data"
+    repair_data_dir.mkdir()
+    marker_path = repair_data_dir / "demo-session.needs-human.json"
+    marker_path.write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "summary": "repair loop exhausted",
+                "current_plan_name": "m6-current-plan",
+                "discord_status": "delivered",
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            "LOG=/dev/null",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            "log() { :; }",
+            "compare_needs_human_to_resolver() { :; }",
+            _extract_wrapper_function_until("report_item", "plan_attention_status_env"),
+            _extract_wrapper_function("repair_needs_human_path"),
+            _extract_wrapper_function("repair_needs_human_summary"),
+            _extract_wrapper_function("repair_needs_human_matches_current_plan"),
+            _extract_wrapper_function("emit_current_needs_human_sidecar"),
+            f"emit_current_needs_human_sidecar {str(report_path)!r} demo-session /tmp/ws /tmp/spec m6-current-plan",
+            f"emit_current_needs_human_sidecar {str(report_path)!r} demo-session /tmp/ws /tmp/spec m6-current-plan",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    lines = [json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()]
+    assert [item["status"] for item in lines] == ["needs_human", "needs_human"]
+    assert all(item["action"] == "observe" for item in lines)
+    assert all("repair loop exhausted" in item["message"] for item in lines)
+    assert all(item["status"] not in {"discord_dm_sent", "webhook_sent"} for item in lines)
+
+
 def test_watchdog_report_item_redacts_persisted_lines(tmp_path: Path) -> None:
     items_path = tmp_path / "items.jsonl"
     script = "\n\n".join(

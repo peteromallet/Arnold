@@ -247,6 +247,35 @@ def test_blocked_session_when_needs_human_marker_present(fx):
     assert "merge the PR" in entry["operator_next"]
 
 
+
+
+def test_needs_human_marker_beats_watchdog_complete_verdict(fx):
+    fx.add_session("false_done", plan_name="planFalseDone")
+    fx.add_chain_health(
+        "false_done",
+        current_plan_name="planFalseDone",
+        last_state="validation_failed",
+        updated_at=NOW - timedelta(hours=1),
+    )
+    fx.add_needs_human("false_done", summary="repair loop exhausted after validation failure")
+    fx.add_watchdog_report(
+        items=[
+            {
+                "session": "false_done",
+                "status": "complete",
+                "action": "observe",
+                "message": "watchdog reports chain complete",
+            }
+        ]
+    )
+
+    snap = fx.build(watchdog_report_path=fx.root / "watchdog-report.json")
+    entry = _by_session(snap, "false_done")
+
+    assert entry["status"] == "blocked"
+    assert "repair loop exhausted" in entry["operator_next"]
+
+
 def test_stale_parent_needs_human_is_superseded_by_completed_child(fx):
     workspace = fx.root / "shared-workspace"
     fx.add_session(
