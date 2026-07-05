@@ -71,6 +71,7 @@ from arnold.agent.model_tools import get_tool_definitions, handle_function_call,
 from arnold.agent.tools.terminal_tool import cleanup_vm
 from arnold.agent.tools.interrupt import set_interrupt as _set_interrupt
 from arnold.agent.tools.browser_tool import cleanup_browser
+from arnold.supervisor.capacity_context import current_capacity_context, gate_capacity
 
 import requests
 
@@ -961,6 +962,7 @@ class AIAgent:
         stream_delta_callback: callable = None,
         tool_gen_callback: callable = None,
         status_callback: callable = None,
+        token_progress_callback: callable = None,
         max_tokens: int = None,
         reasoning_config: Dict[str, Any] = None,
         prefill_messages: List[Dict[str, Any]] = None,
@@ -1101,6 +1103,7 @@ class AIAgent:
         self.stream_delta_callback = stream_delta_callback
         self.status_callback = status_callback
         self.tool_gen_callback = tool_gen_callback
+        self.token_progress_callback = token_progress_callback
         self._last_reported_tool = None  # Track for "new tool" mode
         
         # Tool execution state — allows _vprint during tool execution
@@ -4097,21 +4100,23 @@ class AIAgent:
         """
         result = {"response": None, "error": None}
         request_client_holder = {"client": None}
+        capacity_context = current_capacity_context()
 
         def _call():
             try:
-                if self.api_mode == "codex_responses":
-                    request_client_holder["client"] = self._create_request_openai_client(reason="codex_stream_request")
-                    result["response"] = self._run_codex_stream(
-                        api_kwargs,
-                        client=request_client_holder["client"],
-                        on_first_delta=getattr(self, "_codex_on_first_delta", None),
-                    )
-                elif self.api_mode == "anthropic_messages":
-                    result["response"] = self._anthropic_messages_create(api_kwargs)
-                else:
-                    request_client_holder["client"] = self._create_request_openai_client(reason="chat_completion_request")
-                    result["response"] = request_client_holder["client"].chat.completions.create(**api_kwargs)
+                with gate_capacity("provider_call", capacity_context):
+                    if self.api_mode == "codex_responses":
+                        request_client_holder["client"] = self._create_request_openai_client(reason="codex_stream_request")
+                        result["response"] = self._run_codex_stream(
+                            api_kwargs,
+                            client=request_client_holder["client"],
+                            on_first_delta=getattr(self, "_codex_on_first_delta", None),
+                        )
+                    elif self.api_mode == "anthropic_messages":
+                        result["response"] = self._anthropic_messages_create(api_kwargs)
+                    else:
+                        request_client_holder["client"] = self._create_request_openai_client(reason="chat_completion_request")
+                        result["response"] = request_client_holder["client"].chat.completions.create(**api_kwargs)
             except Exception as e:
                 result["error"] = e
             finally:
@@ -4139,6 +4144,23 @@ class AIAgent:
         if result["error"] is not None:
             raise result["error"]
         return result["response"]
+
+    # ── Token progress emission ────────────────────────────────────────────
+
+    def _emit_token_progress(self, canonical_usage, cost_result) -> None:
+        """Emit opportunistic token/cost progress to the registered callback.
+
+        Degrades cleanly when no callback is set or the callback itself raises.
+        The callback receives deltas (not cumulative session totals) so that
+        consumers can track per-turn as well as aggregate progress.
+        """
+        cb = self.token_progress_callback
+        if cb is None:
+            return
+        try:
+            cb(canonical_usage, cost_result, model=self.model)
+        except Exception:
+            pass  # never block the agent loop on progress emission
 
     # ── Unified streaming API call ─────────────────────────────────────────
 
@@ -4231,6 +4253,7 @@ class AIAgent:
         request_client_holder = {"client": None}
         first_delta_fired = {"done": False}
         deltas_were_sent = {"yes": False}  # Track if any deltas were fired (for fallback)
+        capacity_context = current_capacity_context()
 
         def _fire_first_delta():
             if not first_delta_fired["done"] and on_first_delta:
@@ -4243,10 +4266,11 @@ class AIAgent:
         def _call_chat_completions():
             """Stream a chat completions response."""
             stream_kwargs = {**api_kwargs, "stream": True, "stream_options": {"include_usage": True}}
-            request_client_holder["client"] = self._create_request_openai_client(
-                reason="chat_completion_stream_request"
-            )
-            stream = request_client_holder["client"].chat.completions.create(**stream_kwargs)
+            with gate_capacity("provider_stream", capacity_context):
+                request_client_holder["client"] = self._create_request_openai_client(
+                    reason="chat_completion_stream_request"
+                )
+                stream = request_client_holder["client"].chat.completions.create(**stream_kwargs)
 
             content_parts: list = []
             tool_calls_acc: dict = {}
@@ -7329,6 +7353,12 @@ class AIAgent:
                             hit_pct = (cached / prompt * 100) if prompt > 0 else 0
                             if not self.quiet_mode:
                                 self._vprint(f"{self.log_prefix}   💾 Cache: {cached:,}/{prompt:,} tokens ({hit_pct:.0f}% hit, {written:,} written)")
+
+                        # Emit opportunistic token/cost progress to any registered consumer
+                        # (e.g. the native trace journal so progress queries can surface
+                        # token deltas and estimated cost).  Degrades cleanly when the
+                        # callback is None or raises.
+                        self._emit_token_progress(canonical_usage, cost_result)
                     
                     break  # Success, exit retry loop
 

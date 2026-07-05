@@ -300,6 +300,15 @@ class NullNativeRuntimeHooks:
     ) -> None:
         pass
 
+    def record_cancellation(
+        self,
+        cancellation: dict[str, Any],
+        *,
+        state: dict[str, Any] | None = None,
+    ) -> None:
+        del cancellation, state
+        return None
+
 
 class EffectLedgerHooks:
     """Hook wrapper that tracks side-effect lifecycle in an EffectLedger."""
@@ -477,3 +486,13 @@ class EffectLedgerHooks:
         state: dict[str, Any],
     ) -> None:
         self._inner.on_checkpoint(cursor, state)
+
+    def record_cancellation(
+        self,
+        cancellation: dict[str, Any],
+        *,
+        state: dict[str, Any] | None = None,
+    ) -> None:
+        callback = getattr(self._inner, "record_cancellation", None)
+        if callable(callback):
+            callback(cancellation, state=state)

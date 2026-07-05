@@ -67,6 +67,11 @@ from arnold.pipeline.native.reconcile import (
     reconcile_git_worktree,
 )
 from arnold.pipeline.native.trace import NativeTraceHooks
+from arnold.supervisor.cancellation import (
+    CancellationRequested,
+    cancellation_result_payload,
+    cancelled_contract_result,
+)
 
 _MAX_SUBPIPELINE_DEPTH = PACK_CLOSURE_MAX_DEPTH
 _DEFAULT_PHASE_MAX_ATTEMPTS = 1
@@ -221,17 +226,18 @@ def _check_cancellation_boundary(
     step_path: str | None = None,
     call_site_path: tuple[str, ...] = (),
 ) -> None:
-    """Observe a future cancellation boundary without changing control flow."""
+    """Raise when cancellation is requested at an existing runtime boundary."""
 
-    _ = (
-        boundary,
-        instr.op if instr is not None else None,
-        instr.name if instr is not None else None,
-        run_path,
-        step_path,
-        call_site_path,
-        bool(state),
-        _cancellation_requested(envelope),
+    del state
+    if not _cancellation_requested(envelope):
+        return
+    raise CancellationRequested(
+        boundary=boundary,
+        run_path=run_path,
+        step_path=step_path,
+        call_site_path=tuple(call_site_path),
+        instruction_op=instr.op if instr is not None else None,
+        instruction_name=instr.name if instr is not None else None,
     )
 
 
@@ -756,6 +762,11 @@ def run_native_pipeline(
     pack_lockfile: PackLockfile | None = None,
     pack_registry: PackRegistry | None = None,
     persistence_backend: NativePersistenceBackend | None = None,
+    project_lease_store: Any | None = None,
+    project_lease_project_id: str | None = None,
+    project_lease_worktree_id: str | None = None,
+    project_lease_token: str | None = None,
+    project_lease_seconds: int = 60,
     _subpipeline_depth: int = 0,
     _active_subpipelines: tuple[str, ...] = (),
     _parent_run_path: str | None = None,
@@ -1387,6 +1398,18 @@ def run_native_pipeline(
                 if instr.func is None:
                     # No callable — can't route; halt
                     break
+
+                current_call_site_path = _call_site_path_for_run_path(current_run_path)
+                current_step_path = _step_path_for_instr(current_run_path, instr)
+                _check_cancellation_boundary(
+                    boundary="step_enter",
+                    instr=instr,
+                    state=state,
+                    envelope=envelope,
+                    run_path=current_run_path,
+                    step_path=current_step_path,
+                    call_site_path=current_call_site_path,
+                )
     
                 # ── Human-gate detection ──────────────────────────────
                 # Inspect the decision callable's dunder attributes (set by
@@ -2139,6 +2162,11 @@ def run_native_pipeline(
                             run_path=item_run_path,
                             phase_max_attempts=phase_max_attempts,
                             persistence_backend=_child_persistence_backend,
+                            project_lease_store=project_lease_store,
+                            project_lease_project_id=project_lease_project_id,
+                            project_lease_worktree_id=project_lease_worktree_id,
+                            project_lease_token=project_lease_token,
+                            project_lease_seconds=project_lease_seconds,
                             _subpipeline_depth=_subpipeline_depth + 1,
                             _active_subpipelines=(
                                 *_active_subpipelines,
@@ -2358,6 +2386,11 @@ def run_native_pipeline(
                         run_path=child_run_path,
                         phase_max_attempts=phase_max_attempts,
                         persistence_backend=_child_persistence_backend,
+                        project_lease_store=project_lease_store,
+                        project_lease_project_id=project_lease_project_id,
+                        project_lease_worktree_id=project_lease_worktree_id,
+                        project_lease_token=project_lease_token,
+                        project_lease_seconds=project_lease_seconds,
                         _subpipeline_depth=_subpipeline_depth + 1,
                         _active_subpipelines=(*_active_subpipelines, child_identity),
                         _parent_run_path=current_run_path,
@@ -2476,6 +2509,107 @@ def run_native_pipeline(
 
         trace_status = "completed"
         return NativeExecutionResult(state=state, stages=stages, pc=pc, envelope=envelope)
+    except CancellationRequested as exc:
+        payload = cancellation_result_payload(exc)
+        state["__cancelled__"] = payload
+        published = state.get("__contract_results__")
+        if not isinstance(published, dict):
+            published = {}
+            state["__contract_results__"] = published
+        published["__runtime_cancelled__"] = cancelled_contract_result(exc)
+
+        try:
+            if (
+                project_lease_store is not None
+                and project_lease_project_id
+                and project_lease_worktree_id
+                and project_lease_token
+            ):
+                project_lease_store.heartbeat_project_lease(
+                    project_lease_project_id,
+                    project_lease_worktree_id,
+                    project_lease_token,
+                    lease_seconds=project_lease_seconds,
+                    progress=True,
+                )
+                project_lease_store.cancel_project_lease(
+                    project_lease_project_id,
+                    project_lease_worktree_id,
+                    lease_token=project_lease_token,
+                    result={"cancellation": dict(payload)},
+                )
+        except Exception:
+            payload["lease_release_error"] = True
+
+        cancel_stage = stages[-1] if stages else f"{_safe_name(program.name)}__cancelled__pc{pc}"
+        cancel_path_metadata = _cursor_path_metadata(
+            program=program,
+            pc=pc,
+            run_path=current_run_path,
+            path_stack=path_stack,
+        )
+        cancel_path_metadata.update(
+            {
+                "suspension_kind": "cancelled",
+                "cancellation": dict(payload),
+            }
+        )
+        _persist_suspension(
+            artifact_root=artifact_root,
+            persistence_backend=_persistence_backend,
+            persistence_scope=_persistence_scope,
+            program=program,
+            stage=cancel_stage,
+            pc=pc,
+            reentry_stage=_reentry_stage_for_pc(program, pc),
+            stages=stages,
+            loops=loops,
+            frames=frames,
+            state=state,
+            envelope=envelope,
+            cursor_id=_cursor_id,
+            path_metadata=cancel_path_metadata,
+            effect=_hook_checkpoint_effect_metadata(_hooks),
+            pack_provenance=pack_provenance,
+        )
+        cancel_cursor = _build_cursor_dict(
+            stage=cancel_stage,
+            pc=pc,
+            reentry_stage=_reentry_stage_for_pc(program, pc),
+            stages=list(stages),
+            loops=dict(loops),
+            frames=dict(frames),
+            state=state,
+            envelope=envelope,
+            cursor_id=_cursor_id,
+            effect=_hook_checkpoint_effect_metadata(_hooks),
+            native_extra=_native_extra_with_pack_provenance(
+                {"suspension_kind": "cancelled"},
+                pack_provenance,
+            ),
+            extra=cancel_path_metadata,
+        )
+        record_cancellation = getattr(_hooks, "record_cancellation", None)
+        if callable(record_cancellation):
+            record_cancellation(payload, state=dict(state))
+        _hooks.on_checkpoint(cancel_cursor, dict(state))
+        if isinstance(_hooks, NativeTraceHooks):
+            _hooks.emit_pipeline_cancelled(payload)
+            _hooks.emit_pipeline_suspended(
+                reason="cancelled",
+                run_path=current_run_path,
+                step_path=payload.get("step_path"),
+                call_site_path=payload.get("call_site_path") or (),
+            )
+        trace_status = "cancelled"
+        return NativeExecutionResult(
+            state=dict(state),
+            stages=list(stages),
+            pc=pc,
+            suspended=True,
+            cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
+            envelope=envelope,
+        )
     finally:
         if isinstance(_hooks, NativeTraceHooks):
             _hooks.on_run_exit(program, run_path=trace_run_path, status=trace_status)

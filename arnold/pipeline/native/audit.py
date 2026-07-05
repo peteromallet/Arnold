@@ -19,7 +19,8 @@ Each audit record captures:
 * ``input_keys`` — sorted list of input context dict keys
 * ``output_keys`` — sorted list of output/result dict keys (success only)
 * ``started_at`` / ``ended_at`` — ISO-8601 timestamps
-* ``status`` — ``"success"`` or ``"failure"``
+* ``status`` — ``"success"``, ``"failure"``, or ``"cancelled"``
+* ``reason`` / ``boundary`` — cancellation details (cancelled only)
 * ``error_type`` / ``error_message`` — exception details (failure only)
 
 The audit file is written separately from ``resume_cursor.json`` and
@@ -199,6 +200,8 @@ class AuditRecord:
         "started_at",
         "ended_at",
         "status",
+        "reason",
+        "boundary",
         "error_type",
         "error_message",
         "operation",
@@ -251,6 +254,8 @@ class AuditRecord:
         self.started_at: str = _utcnow_iso()
         self.ended_at: str | None = None
         self.status: str = "started"
+        self.reason: str | None = None
+        self.boundary: str | None = None
         self.error_type: str | None = None
         self.error_message: str | None = None
         self.operation = operation
@@ -279,6 +284,14 @@ class AuditRecord:
         self.error_type = type(exc).__name__
         self.error_message = str(exc)
 
+    def mark_cancelled(self, payload: Mapping[str, Any]) -> None:
+        """Finalize the record with a cancellation outcome."""
+        self.ended_at = _utcnow_iso()
+        self.status = "cancelled"
+        self.reason = str(payload.get("reason") or "cancellation_requested")
+        boundary = payload.get("boundary")
+        self.boundary = str(boundary) if boundary is not None else None
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a dictionary for NDJSON writing."""
         return {
@@ -294,6 +307,8 @@ class AuditRecord:
             "started_at": self.started_at,
             "ended_at": self.ended_at,
             "status": self.status,
+            "reason": self.reason,
+            "boundary": self.boundary,
             "error_type": self.error_type,
             "error_message": self.error_message,
             "operation": self.operation,
@@ -616,3 +631,43 @@ class AuditHooks:
         state: dict[str, Any],
     ) -> None:
         return self._inner.on_checkpoint(cursor, state)
+
+    def record_cancellation(
+        self,
+        cancellation: Mapping[str, Any],
+        *,
+        state: dict[str, Any] | None = None,
+    ) -> None:
+        callback = getattr(self._inner, "record_cancellation", None)
+        if callable(callback):
+            callback(cancellation, state=state)
+        if self._audit_backend is None:
+            return
+        self._flush_active()
+        payload = dict(cancellation)
+        run_path = str(payload.get("run_path") or "root")
+        step_path = payload.get("step_path")
+        if not isinstance(step_path, str) or not step_path:
+            step_path = run_path
+        parent_run_path = payload.get("parent_run_path")
+        if not isinstance(parent_run_path, str) or not parent_run_path:
+            parent_run_path = self._parent_path(run_path)
+        raw_call_site_path = payload.get("call_site_path")
+        call_site_path = (
+            [str(segment) for segment in raw_call_site_path]
+            if isinstance(raw_call_site_path, (list, tuple))
+            else []
+        )
+        record = AuditRecord(
+            attempt_id=uuid4().hex,
+            run_id=self._run_id,
+            step_path=step_path,
+            run_path=run_path,
+            parent_run_path=parent_run_path,
+            call_site_path=call_site_path,
+            attempt=1,
+        )
+        record.mark_cancelled(payload)
+        record.effect_lifecycle_state = "cancelled"
+        self._join_broker_audit(record)
+        self._append_record(record.to_dict())

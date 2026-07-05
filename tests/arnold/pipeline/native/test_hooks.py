@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from arnold.kernel.effect_ledger import EffectRecordState
 from arnold.pipeline.native import compile_pipeline, phase, pipeline, run_native_pipeline, workflow
+from arnold.pipeline.native.audit import AuditHooks
 from arnold.pipeline.native.hooks import (
     EffectLedgerHooks,
     NativeRuntimeHooks,
     NullNativeRuntimeHooks,
 )
 from arnold.pipeline.native.checkpoint import read_native_cursor
+from arnold.pipeline.native.trace import NativeTraceHooks
+from arnold.runtime.envelope import RunEnvelope
 
 
 class _StepResult:
@@ -217,6 +222,59 @@ def test_effect_ledger_hooks_duplicate_fulfilled_policy_is_configurable() -> Non
     effect = hooks.checkpoint_effect_metadata()
     assert effect is not None
     assert effect["duplicate_action"] == "fail"
+
+
+def test_cancellation_propagates_through_wrapped_hook_chain_without_failure(
+    tmp_path: Path,
+) -> None:
+    effect_hooks = EffectLedgerHooks()
+    audit_dir = tmp_path / "audit"
+    trace_dir = tmp_path / "trace"
+    hooks = NativeTraceHooks(
+        inner=AuditHooks(inner=effect_hooks, audit_dir=audit_dir),
+        trace_dir=trace_dir,
+        artifact_root=tmp_path / "artifacts",
+    )
+
+    @phase(operation="file_write", target="out/report.json", effect_class="filesystem_mutation")
+    def write_report(ctx: dict) -> dict:
+        raise AssertionError("phase body should not run after cancellation")
+
+    @pipeline
+    def my_pipe(ctx: dict) -> dict:
+        state = yield write_report(ctx)
+        return state
+
+    result = run_native_pipeline(
+        compile_pipeline(my_pipe),
+        artifact_root=tmp_path / "artifacts",
+        hooks=hooks,
+        initial_envelope=RunEnvelope(cancellation=True),
+    )
+
+    assert result.suspended is True
+    assert effect_hooks.checkpoint_effect_metadata() is None
+
+    records = [
+        json.loads(line)
+        for line in (audit_dir / "audit.ndjson").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    step_records = [record for record in records if "attempt_id" in record]
+    assert len(step_records) == 1
+    assert step_records[0]["status"] == "cancelled"
+    assert step_records[0]["step_path"] == "root/write_report"
+    assert step_records[0]["error_type"] is None
+
+    events = [
+        json.loads(line)
+        for line in (trace_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    cancelled_events = [event for event in events if event["kind"] == "pipeline_cancelled"]
+    assert len(cancelled_events) == 1
+    assert cancelled_events[0]["payload"]["status"] == "cancelled"
+    assert cancelled_events[0]["payload"]["trace"]["path"] == "root/write_report"
 
 
 def test_effect_metadata_is_persisted_into_checkpoint(tmp_path) -> None:

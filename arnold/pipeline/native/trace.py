@@ -218,10 +218,12 @@ class NativeTraceHooks:
         """Write *state* as ``state.json`` in the trace directory."""
         if self._persistence_backend is None or self._persistence_scope is None:
             return
+        from arnold.pipeline.native.runtime import _jsonable_value
+
         self._persistence_backend.write_trace_artifact(
             self._persistence_scope,
             name="state.json",
-            payload=state,
+            payload=_jsonable_value(state),
         )
 
     def _write_stages_json(self) -> None:
@@ -263,13 +265,15 @@ class NativeTraceHooks:
         """Write the final checkpoint notification as ``checkpoint.json``."""
         if self._persistence_backend is None or self._persistence_scope is None:
             return
+        native_payload = cursor.get("native")
+        cancellation = cursor.get("cancellation")
         payload: dict[str, Any] = {
             "final": final,
             "stage_sequence": list(self._stage_seq),
             "cursor_stage": cursor.get("stage", ""),
             "cursor_pc": (
-                cursor.get("native", {}).get("pc")
-                if isinstance(cursor.get("native"), dict)
+                native_payload.get("pc")
+                if isinstance(native_payload, dict)
                 else None
             ),
             "run_path": cursor.get("run_path"),
@@ -277,7 +281,14 @@ class NativeTraceHooks:
             "call_site_path": cursor.get("call_site_path"),
             "tree_file": "tree.json",
             "tree_node_count": len(self._tree_nodes),
+            "status": (
+                "cancelled"
+                if isinstance(cancellation, Mapping)
+                else ("completed" if final else "suspended")
+            ),
         }
+        if isinstance(cancellation, Mapping):
+            payload["cancellation"] = dict(cancellation)
         self._persistence_backend.write_trace_artifact(
             self._persistence_scope,
             name="checkpoint.json",
@@ -761,6 +772,16 @@ class NativeTraceHooks:
                 },
             )
 
+    def record_cancellation(
+        self,
+        cancellation: Mapping[str, Any],
+        *,
+        state: dict[str, Any] | None = None,
+    ) -> None:
+        callback = getattr(self._inner, "record_cancellation", None)
+        if callable(callback):
+            callback(cancellation, state=state)
+
     def emit_pipeline_suspended(
         self,
         *,
@@ -779,6 +800,53 @@ class NativeTraceHooks:
             self._journal.emit(
                 "pipeline_suspended",
                 payload={"reason": reason, "trace": trace},
+            )
+
+    def emit_pipeline_cancelled(
+        self,
+        cancellation: Mapping[str, Any],
+    ) -> None:
+        trace = self._trace_context(
+            path=cancellation.get("step_path") or cancellation.get("run_path") or ROOT_PATH,
+            run_path=cancellation.get("run_path"),
+            step_path=cancellation.get("step_path"),
+            call_site_path=cancellation.get("call_site_path"),
+        )
+        metadata = {
+            "status": "cancelled",
+            "reason": cancellation.get("reason"),
+            "boundary": cancellation.get("boundary"),
+        }
+        self._ensure_tree_node(
+            path=trace["path"],
+            kind=trace["kind"],
+            name=str(cancellation.get("instruction_name") or trace["path"].split(PATH_DELIMITER)[-1]),
+            run_path=trace["run_path"],
+            step_path=trace["step_path"],
+            parent_path=trace["parent_path"],
+            parent_run_path=trace["parent_run_path"],
+            call_site_path=trace["call_site_path"],
+            metadata=metadata,
+        )
+        self._ensure_tree_node(
+            path=trace["run_path"],
+            kind=self._tree_nodes.get(trace["run_path"], {}).get("kind", "pipeline"),
+            name=self._tree_nodes.get(trace["run_path"], {}).get("name", trace["run_path"].split(PATH_DELIMITER)[-1]),
+            run_path=trace["run_path"],
+            parent_path=_parent_trace_path(trace["run_path"]),
+            parent_run_path=trace["parent_run_path"],
+            call_site_path=trace["call_site_path"],
+            metadata=metadata,
+        )
+        if self._journal is not None:
+            self._journal.emit(
+                "pipeline_cancelled",
+                payload={
+                    "status": "cancelled",
+                    "reason": cancellation.get("reason"),
+                    "boundary": cancellation.get("boundary"),
+                    "trace": trace,
+                },
             )
 
     def emit_pipeline_resumed(
@@ -800,3 +868,47 @@ class NativeTraceHooks:
                 "pipeline_resumed",
                 payload={"reason": reason, "trace": trace},
             )
+
+    def emit_token_progress(
+        self,
+        *,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
+        reasoning_tokens: int = 0,
+        estimated_cost_usd: float | None = None,
+        cost_status: str | None = None,
+        cost_source: str | None = None,
+        model: str | None = None,
+        run_path: Any = None,
+        step_path: Any = None,
+        call_site_path: Any = None,
+    ) -> None:
+        """Emit a ``token_progress`` event with per-turn token/cost deltas.
+
+        Called opportunistically from provider call sites.  When no journal is
+        configured the call is a no-op so that missing metadata degrades
+        cleanly without breaking the agent loop.
+        """
+        if self._journal is None:
+            return
+        trace = self._trace_context(
+            path=step_path or run_path or ROOT_PATH,
+            run_path=run_path,
+            step_path=step_path,
+            call_site_path=call_site_path,
+        )
+        payload: dict[str, Any] = {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cache_read_tokens": cache_read_tokens,
+            "cache_write_tokens": cache_write_tokens,
+            "reasoning_tokens": reasoning_tokens,
+            "estimated_cost_usd": estimated_cost_usd,
+            "cost_status": cost_status,
+            "cost_source": cost_source,
+            "model": model,
+            "trace": trace,
+        }
+        self._journal.emit("token_progress", payload=payload)
