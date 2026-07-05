@@ -103,8 +103,24 @@ Treat the Markdown report as an index, not proof. The JSON is the useful object.
 Important fields:
 
 - `reasons[]`: the deterministic signal that got this plan into `findings`.
+- `stage_metrics`: top-level gather block keyed by the 14 lifecycle stages
+  (`prep`, `plan`, `critique`, `gate`, `revise`, `finalize`, `execute`,
+  `review`, `feedback`, `chain`, `repair`, `meta_repair`, `human_pr_ci`,
+  `deployment_runtime`). Each stage always includes the same counters
+  (`stalls`, `retries`, `repair_attempts`, `meta_repair_attempts`,
+  `human_waits`, `ci_waits`, `handoff_gaps`, `no_op_loops`, `dead_workers`,
+  `duration_seconds`, `unknowns`, `missing_evidence`) plus matching
+  `*_evidence` arrays. Unmapped phases are never guessed; they land in
+  `unknown_phase_count` and `unknown_phase_evidence`.
 - `chain_state_summary.current`: the current chain state. This usually beats
   plan-local failure state.
+- `active_step_stage`: conservative stage mapping derived from
+  `active_step_phase`. Useful when the plan state has a recognizable phase name
+  but no event-derived phase accounting yet.
+- `active_event_phase`, `active_event_phase_stage`, `active_event_phase_kind`,
+  `active_event_phase_ts`: recent event telemetry from `events.ndjson`. Treat
+  these as the operator-facing live phase when `current_state=initialized` or
+  another coarse lifecycle token hides active work.
 - `chain_log.repetition_summary`: repeated stop/blocked signatures with line
   ranges.
 - `stale_state_evidence`: whether the failure predates later success.
@@ -196,6 +212,23 @@ As of this playbook, the gather code explicitly reasons about:
 
 If your issue is not represented here, the fix is probably gather code plus a
 test, not prose.
+
+## Report-only safety contract
+
+Gather/report changes are allowed to add evidence, accounting blocks, and new
+`reasons[]`, but they do **not** silently change repair dispatch policy.
+
+- `stage_metrics` is accounting for operators and downstream dashboards, not a
+  hidden dispatch gate.
+- Conservative mapping is mandatory: unknown or missing evidence stays visible
+  as `unknown*` / `missing_evidence*`, never inferred from prose.
+- When the auditor runs with autofix disabled, the brief must stay report-only:
+  no file edits, no patches, no commits, and no changes to the audited
+  workspace.
+- If you add a new deterministic signal such as repair-data ghost-running or
+  watchdog/chain disagreement, document it as a report reason first. Expanding
+  dispatch behavior is a separate change and needs its own tests and operator
+  review.
 
 ## Signals the gather should surface
 
