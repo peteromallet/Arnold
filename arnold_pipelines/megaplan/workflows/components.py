@@ -59,6 +59,45 @@ RUNTIME_BRANCH_VOCABULARY = MappingProxyType(
 )
 
 
+def check_outcome_vocabulary_parity() -> list[str]:
+    """Verify that Megaplan outcome StrEnums match RUNTIME_BRANCH_VOCABULARY.
+
+    Returns a list of human-readable mismatch descriptions (empty = all good).
+    This is a vocabulary-integrity hook for the outcome enums defined in
+    ``arnold_pipelines.megaplan.outcomes``.
+    """
+    from arnold_pipelines.megaplan.outcomes import (
+        OUTCOME_CLASS_BY_VOCABULARY_KEY,
+    )
+
+    mismatches: list[str] = []
+
+    for key, enum_cls in OUTCOME_CLASS_BY_VOCABULARY_KEY.items():
+        expected = tuple(enum_cls.__members__.values())
+        actual = RUNTIME_BRANCH_VOCABULARY.get(key)
+        if actual is None:
+            mismatches.append(
+                f"Outcome key '{key}' has enum {enum_cls.__name__} "
+                f"but is missing from RUNTIME_BRANCH_VOCABULARY"
+            )
+            continue
+        if expected != actual:
+            mismatches.append(
+                f"Vocabulary mismatch for '{key}': "
+                f"enum values {expected!r} != RUNTIME_BRANCH_VOCABULARY {actual!r}"
+            )
+
+    # Also check that every RUNTIME_BRANCH_VOCABULARY key is covered
+    covered = set(OUTCOME_CLASS_BY_VOCABULARY_KEY)
+    actual_keys = set(RUNTIME_BRANCH_VOCABULARY)
+    for uncovered in sorted(actual_keys - covered):
+        mismatches.append(
+            f"RUNTIME_BRANCH_VOCABULARY key '{uncovered}' has no outcome enum"
+        )
+
+    return mismatches
+
+
 def _provenance(export_name: str) -> ComponentProvenance:
     return ComponentProvenance(
         module=__name__,
@@ -1891,6 +1930,7 @@ __all__ = [
     "REVISE_PROMPT",
     "ROBUSTNESS_POLICY",
     "RUNTIME_BRANCH_VOCABULARY",
+    "check_outcome_vocabulary_parity",
     "SCHEMA_COMPONENTS",
     "STEP_COMPONENTS_BY_ID",
     "SUSPEND",
