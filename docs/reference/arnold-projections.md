@@ -63,12 +63,12 @@ This page is generated from the ``arnold.workflow`` manifest contract, the shipp
 | stable_id | alias | manifest_hash | package_path | m6_disposition |
 | --- | --- | --- | --- | --- |
 | evidence_pack.verifier | evidence_pack_verifier | native:evidence_pack | arnold_pipelines/evidence_pack | keep|
-| megaplan.core | megaplan | sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba | arnold_pipelines/megaplan | keep|
+| megaplan.core | megaplan | sha256:450be0a9526590ed43f3f11ab75c3125d049d2210409d923636afff9ab035add | arnold_pipelines/megaplan | keep|
 | megaplan.creative | creative | native:creative | arnold_pipelines/megaplan/pipelines/creative | keep|
 | megaplan.doc | doc | native:doc | arnold_pipelines/megaplan/pipelines/doc | keep|
 | megaplan.jokes | jokes | native:jokes | arnold_pipelines/megaplan/pipelines/jokes | keep|
 | megaplan.live_supervisor | live-supervisor | native:live-supervisor | arnold_pipelines/megaplan/pipelines/live_supervisor | keep|
-| megaplan.planning | megaplan | sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba | arnold_pipelines/megaplan/pipelines/planning | keep|
+| megaplan.planning | megaplan | sha256:450be0a9526590ed43f3f11ab75c3125d049d2210409d923636afff9ab035add | arnold_pipelines/megaplan/pipelines/planning | keep|
 | megaplan.select_tournament | select-tournament | native:select-tournament | arnold_pipelines/megaplan/pipelines/select_tournament | keep|
 | megaplan.writing_panel_strict | writing-panel-strict | native:writing-panel-strict | arnold_pipelines/megaplan/pipelines/writing_panel_strict | keep|
 

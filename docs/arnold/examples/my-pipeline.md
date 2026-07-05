@@ -64,11 +64,11 @@ def build_pipeline() -> Pipeline:
 ## Native builder report
 
 ```yaml
-entry: draft
+entry: draft_outline
 id: my-pipeline
-instruction_count: 3
+instruction_count: 9
 native_program: my-pipeline
-stage_count: 2
+stage_count: 7
 ```
 
 ## Package Skill

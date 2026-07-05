@@ -5,7 +5,7 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 Provenance:
 - generator: scripts/generate_arnold_docs.py
 - source_package: arnold_pipelines/megaplan/pipelines/planning
-- manifest_hash: sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba
+- manifest_hash: sha256:450be0a9526590ed43f3f11ab75c3125d049d2210409d923636afff9ab035add
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
 - policy: regenerate from compiled surviving registries; fail on stale examples.
@@ -25,7 +25,7 @@ Provenance:
 | Validation | `arnold workflow check --module arnold_pipelines.megaplan.pipelines.planning:build_pipeline`|
 | Contract | workflow|
 | Load state | workflow|
-| Identity | sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba|
+| Identity | sha256:450be0a9526590ed43f3f11ab75c3125d049d2210409d923636afff9ab035add|
 
 ## Builder Surface
 
@@ -92,7 +92,7 @@ class TiebreakerStep(StepMixinProperty):
 ```yaml
 edge_count: 23
 id: megaplan
-manifest_hash: sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba
+manifest_hash: sha256:450be0a9526590ed43f3f11ab75c3125d049d2210409d923636afff9ab035add
 node_count: 12
 possible_routes:
 - condition_ref: null
@@ -187,7 +187,7 @@ possible_routes:
   label: default
   source: tiebreaker_run
   target: tiebreaker_decide
-suspension_point_count: 4
+suspension_point_count: 10
 topology_summary:
   edge_count: 23
   entry_nodes:
