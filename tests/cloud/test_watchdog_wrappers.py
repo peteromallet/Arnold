@@ -3888,6 +3888,54 @@ def test_watchdog_terminal_status_accepts_label_only_completed_chain(tmp_path: P
     assert result.stdout.strip() == "complete\tchain complete"
 
 
+def test_watchdog_terminal_status_reads_spec_local_chain_state(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    spec_path = workspace / ".megaplan" / "briefs" / "god-file-splits" / "chain.yaml"
+    chain_dir = spec_path.parent / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True)
+    spec_path.write_text(
+        "\n".join(
+            [
+                "milestones:",
+                "  - label: split-comfy-nodes-agent-edit",
+                "  - label: split-porting-emitter-py-god",
+                "  - label: split-porting-edit-apply-py",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_chain_state(
+        chain_dir / "chain-demo.json",
+        {
+            "last_state": "done",
+            "current_milestone_index": 3,
+            "current_plan_name": "",
+            "completed": [
+                {"label": "split-comfy-nodes-agent-edit"},
+                {"label": "split-porting-emitter-py-god"},
+                {"label": "split-porting-edit-apply-py"},
+            ],
+            "events": [{"msg": "all milestones complete"}],
+        },
+    )
+    repair_dir = tmp_path / "repair-data"
+    repair_dir.mkdir()
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("session_terminal_status"),
+            f"MARKER_DIR={str(tmp_path / 'markers')!r}",
+            f"REPAIR_DATA_DIR={str(repair_dir)!r}",
+            f"session_terminal_status demo-session {str(workspace)!r} {str(spec_path)!r} chain",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "complete\tchain complete"
+
+
 def test_watchdog_auto_merge_policy_attempts_pr_merge_before_waiting(
     tmp_path: Path,
 ) -> None:

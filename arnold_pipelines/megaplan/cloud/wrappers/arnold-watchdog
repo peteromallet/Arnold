@@ -5767,9 +5767,15 @@ def is_complete_state(payload: object) -> bool:
 
 
 def iter_chain_states() -> list[pathlib.Path]:
-    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
     paths: list[pathlib.Path] = []
-    if chain_dir.exists():
+    chain_dirs: list[pathlib.Path] = []
+    for base in (workspace, remote_spec.parent):
+        chain_dir = base / ".megaplan" / "plans" / ".chains"
+        if chain_dir not in chain_dirs:
+            chain_dirs.append(chain_dir)
+    for chain_dir in chain_dirs:
+        if not chain_dir.exists():
+            continue
         digest = hashlib.sha1(str(remote_spec.resolve()).encode("utf-8")).hexdigest()[:12]
         expected_paths = [
             chain_dir / f"{remote_spec.stem}-{digest}.json",
