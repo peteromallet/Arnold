@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLayoutEffect } from 'react';
 import { useEffects } from '@/tools/video-editor/hooks/useEffects.ts';
 import { createTimelineReader } from '@/tools/video-editor/lib/timeline-reader.ts';
@@ -77,6 +77,9 @@ import {
   syncLiveDiagnosticsToCollection,
 } from '@/tools/video-editor/runtime/diagnosticCollectionSync.ts';
 import { createLiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
+import { createProcessManager, type ProcessManager } from '@/tools/video-editor/runtime/processes/ProcessManager.ts';
+import type { ProcessStatus } from '@reigh/editor-sdk';
+import type { ProcessResultAttachRecord } from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
 import type { LiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
 import { createLivePermissionService } from '@/tools/video-editor/runtime/livePermissions.ts';
 import type { LivePermissionService } from '@/tools/video-editor/runtime/livePermissions.ts';
@@ -115,6 +118,10 @@ export interface EditorRuntimeProviderProps {
   extensionStateRepository?: ExtensionStateRepository | null;
   /** M5: Trigger extension re-resolution after persistence writes. */
   triggerExtensionRefresh?: () => void;
+  /** M6b: Host-provided process manager override. When absent, a default
+   *  ProcessManager is created from the extension runtime's declared process
+   *  specs. */
+  processManager?: ProcessManager;
   children: ReactNode;
 }
 
@@ -761,6 +768,7 @@ export function EditorRuntimeProvider({
   packageStateEntries,
   extensionStateRepository,
   triggerExtensionRefresh,
+  processManager: hostProcessManager,
   children,
 }: EditorRuntimeProviderProps) {
   // ---- extension normalization & lifecycle --------------------------------
@@ -821,6 +829,45 @@ export function EditorRuntimeProvider({
   if (!settingsNotificationRegistryRef.current) {
     settingsNotificationRegistryRef.current = createExtensionSettingsNotificationRegistry();
   }
+
+  // ---- M6b: Process manager (host override or default from declared process specs) ----
+  const processManagerRef = useRef<ProcessManager | null>(null);
+  if (hostProcessManager) {
+    processManagerRef.current = hostProcessManager;
+  } else if (!processManagerRef.current) {
+    const declaredProcessSpecs = extensionRuntime.processes.map((d) => d.spec);
+    processManagerRef.current = declaredProcessSpecs.length > 0
+      ? createProcessManager({ processes: declaredProcessSpecs })
+      : null;
+  }
+
+  // ---- M6b: Host-session scoped process result attach records (memory only) -----
+  const [processResultAttachRecords, setProcessResultAttachRecords] = useState<
+    readonly ProcessResultAttachRecord[]
+  >([]);
+  const recordProcessResultAttach = useCallback(
+    (record: ProcessResultAttachRecord) => {
+      setProcessResultAttachRecords((prev) => [...prev, record]);
+    },
+    [],
+  );
+
+  // ---- M6b: Derived process statuses snapshot (reactive) ----
+  const processStatuses = useMemo<readonly ProcessStatus[] | undefined>(() => {
+    const manager = processManagerRef.current;
+    if (!manager) return undefined;
+    return manager.listStatuses();
+    // Recompute when attach records change to pick up status changes after execute.
+  }, [processResultAttachRecords, processManagerRef.current]);
+
+  // Dispose process manager on unmount (only when provider-owned)
+  useEffect(() => {
+    const manager = processManagerRef.current;
+    if (!manager || hostProcessManager) return;
+    return () => {
+      void manager.dispose();
+    };
+  }, [hostProcessManager]);
 
   // ---- T9: Pre-load settings snapshots from repository for context factory ----
   const [settingsSnapshots, setSettingsSnapshots] = useState<
@@ -1037,6 +1084,12 @@ export function EditorRuntimeProvider({
       lifecycleHostRef.current?.getRecoveryKey(extensionId) ?? "0",
     incrementRecoveryKey: (extensionId: string) =>
       lifecycleHostRef.current?.incrementRecoveryKey(extensionId) ?? "0",
+    processManager: processManagerRef.current ?? undefined,
+    processStatuses,
+    processResultAttachRecords: processResultAttachRecords.length > 0
+      ? processResultAttachRecords
+      : undefined,
+    recordProcessResultAttach,
   }), [
     dataProvider,
     runtime?.assetResolver,
@@ -1055,6 +1108,9 @@ export function EditorRuntimeProvider({
     extensionRuntime,
     extensionStateRepository,
     triggerExtensionRefresh,
+    processResultAttachRecords,
+    processStatuses,
+    recordProcessResultAttach,
   ]);
 
   return (

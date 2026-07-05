@@ -6,6 +6,7 @@ import {
   scanExportConfig,
 } from '@/tools/video-editor/runtime/exportGuard.ts';
 import { COMPOSITION_DIAGNOSTIC_CODE } from '@/tools/video-editor/runtime/composition/diagnostics.ts';
+import { createProcessResultAttachRecord } from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
 import { planRender } from '@/tools/video-editor/runtime/renderPlanner.ts';
 import {
   getVideoFamilyDefinition,
@@ -26,6 +27,7 @@ import type {
   ClipTypeRegistryRecord,
   ClipTypeRegistrySnapshot,
 } from '@/tools/video-editor/clip-types/ClipTypeRegistry.ts';
+import type { VideoEditorProcessDescriptor } from '@/tools/video-editor/runtime/extensionSurface.ts';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types/index.ts';
 
 // ---------------------------------------------------------------------------
@@ -54,6 +56,86 @@ function makeConfig(
     clips,
     registry: {},
   };
+}
+
+function makeProcessDescriptor(): VideoEditorProcessDescriptor {
+  return {
+    id: 'proc.descriptor',
+    extensionId: 'ext.process',
+    processId: 'dataset-process',
+    label: 'Dataset Process',
+    description: 'Produces attached refs for export readiness.',
+    protocol: 'stdio-jsonrpc',
+    availableRoutes: ['browser-export'],
+    operations: [
+      {
+        id: 'exportDataset',
+        label: 'Export Dataset',
+        routes: ['browser-export'],
+        outputKinds: ['material', 'artifact'],
+        requiredCapabilities: ['browser-export'],
+        determinism: 'process-dependent',
+      },
+    ],
+    requiredBy: [{ source: 'extension', extensionId: 'ext.process', contributionId: 'proc.descriptor' }],
+    capabilities: {
+      defaultRoute: 'browser-export',
+      determinism: 'process-dependent',
+      capabilityRequirements: [],
+    },
+    blockers: [],
+    nextActions: [],
+    spec: {
+      id: 'dataset-process',
+      label: 'Dataset Process',
+      version: { semver: '1.0.0', declaredBy: 'ext.process', contributionId: 'proc.descriptor' },
+    },
+  } as any;
+}
+
+function makeProcessAttachRecord(options?: {
+  readonly status?: 'completed' | 'failed';
+  readonly includeMaterial?: boolean;
+  readonly includeArtifact?: boolean;
+}) {
+  return createProcessResultAttachRecord({
+    processDescriptor: makeProcessDescriptor(),
+    attachedAt: '2026-07-04T22:30:00.000Z',
+    result: {
+      requestId: 'request-1',
+      processId: 'dataset-process',
+      operationId: 'exportDataset',
+      status: options?.status ?? 'completed',
+      returnedMaterials: options?.includeMaterial === false
+        ? []
+        : [{
+            id: 'mat-attached',
+            mediaKind: 'video',
+            locator: { kind: 'provider', uri: 'provider://materials/mat-attached' },
+            determinism: 'process-dependent',
+            replacementPolicy: 'materialize-on-export',
+            producerExtensionId: 'ext.shader',
+            provenance: {
+              contributionId: 'ext.shader.clip',
+              shaderId: 'shader.preview.clip',
+            },
+          }],
+      artifacts: options?.includeArtifact === false
+        ? []
+        : [{
+            id: 'artifact-1',
+            route: 'browser-export',
+            determinism: 'process-dependent',
+            mediaKind: 'video',
+            locator: { kind: 'provider', uri: 'provider://artifacts/artifact-1' },
+            consumedMaterialRefs: [],
+            findings: [],
+          }],
+      diagnostics: [],
+      logs: [],
+      availableActions: [],
+    } as any,
+  });
 }
 
 const RegistryEffect: FC<EffectComponentProps> = ({ children }) => children;
@@ -1673,6 +1755,72 @@ describe('scanExportConfig — clip-type registry snapshot', () => {
     expect(planRender({ diagnostics: result.findings }).canBrowserExport).toBe(false);
   });
 
+  it('suppresses shader materializer blockers when a completed process attach already returned the matching material', () => {
+    const clip = makeClip('c1', {
+      app: {
+        shader: {
+          scope: 'clip',
+          extensionId: 'ext.shader',
+          contributionId: 'ext.shader.clip',
+          shaderId: 'shader.preview.clip',
+        },
+      },
+    });
+
+    const result = scanExportConfig(
+      makeConfig([clip]),
+      builtIn,
+      extIds,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [makeProcessAttachRecord()],
+    );
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.blockers).toEqual([]);
+    expect(result.hasBlockingErrors).toBe(false);
+  });
+
+  it('keeps shader materializer blockers when the process attach did not return the material', () => {
+    const clip = makeClip('c1', {
+      app: {
+        shader: {
+          scope: 'clip',
+          extensionId: 'ext.shader',
+          contributionId: 'ext.shader.clip',
+          shaderId: 'shader.preview.clip',
+        },
+      },
+    });
+
+    const result = scanExportConfig(
+      makeConfig([clip]),
+      builtIn,
+      extIds,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [makeProcessAttachRecord({ status: 'failed', includeMaterial: false })],
+    );
+
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'export/unrenderable-shader',
+        contributionId: 'ext.shader.clip',
+      }),
+    ]));
+    expect(result.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        route: 'browser-export',
+        reason: 'missing-material',
+      }),
+    ]));
+    expect(result.hasBlockingErrors).toBe(true);
+  });
+
   it('registry snapshot clip type with missing browser-export capability emits blocker', () => {
     const clip = makeClip('c1', { clipType: 'worker-only-clip' });
     const snapshot = clipTypeSnapshotWith([
@@ -1948,6 +2096,37 @@ describe('scanExportConfig — composition graph target diagnostics', () => {
       ]));
     },
   );
+
+  it('suppresses graph target blockers when a completed process attach already returned the referenced artifact', () => {
+    const graph = makeCompositionGraph({
+      diagnostics: [
+        makeCompositionDiagnostic(COMPOSITION_DIAGNOSTIC_CODE.DETERMINISTIC_CAPTURE_TARGET_PATH_UNRESOLVABLE, {
+          clipId: 'c1',
+          nodeId: 'clip:c1',
+          targetKind: 'capture-target',
+          targetPath: 'params.dataset',
+          captureRef: 'artifact-1',
+          provenanceHash: 'a'.repeat(64),
+        }),
+      ],
+    });
+
+    const result = scanExportConfig(
+      makeConfig([makeClip('c1')]),
+      builtIn,
+      extIds,
+      undefined,
+      undefined,
+      undefined,
+      graph,
+      [makeProcessAttachRecord()],
+    );
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.findings).toEqual([]);
+    expect(result.blockers).toEqual([]);
+    expect(result.hasBlockingErrors).toBe(false);
+  });
 
   it('keeps graph shader materializer blockers unchanged when target blockers are also present', () => {
     const graph = makeCompositionGraph({

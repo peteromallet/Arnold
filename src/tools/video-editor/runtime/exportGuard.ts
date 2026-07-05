@@ -58,6 +58,10 @@ import {
   isEffectDiagnosticCode,
   isTransitionDiagnosticCode,
 } from '@/tools/video-editor/runtime/composition/diagnostics.ts';
+import {
+  projectProcessResultContracts,
+  type ProcessResultAttachRecord,
+} from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
 import { validateShaderComposition } from '@/tools/video-editor/runtime/composition/shaderValidation.ts';
 import type { TransitionRegistryRecord, TransitionRegistrySnapshot } from '@/tools/video-editor/transitions/registry/types.ts';
 import type {
@@ -134,8 +138,62 @@ export interface ExportGuardResult {
   readonly hasBlockingErrors: boolean;
 }
 
+interface ProcessAttachEvidenceIndex {
+  readonly attachedMaterialRefIds: ReadonlySet<string>;
+  readonly attachedArtifactIds: ReadonlySet<string>;
+  readonly attachedShaderContributionKeys: ReadonlySet<string>;
+}
+
 const LEGACY_EXPORT_GRAPH_COMPATIBILITY_WARNING_ID = 'exportGuard.compositionGraph.legacy-shader-ref-compatibility';
 const GRAPH_TARGET_BLOCKER_ROUTES: readonly RenderRoute[] = ['browser-export', 'worker-export'];
+
+function shaderContributionKey(
+  extensionId: string | undefined,
+  contributionId: string | undefined,
+): string | undefined {
+  if (!extensionId || !contributionId) {
+    return undefined;
+  }
+  return `${extensionId}:${contributionId}`;
+}
+
+function createProcessAttachEvidenceIndex(
+  records: readonly ProcessResultAttachRecord[] | undefined,
+): ProcessAttachEvidenceIndex {
+  const attachedMaterialRefIds = new Set<string>();
+  const attachedArtifactIds = new Set<string>();
+  const attachedShaderContributionKeys = new Set<string>();
+
+  for (const record of records ?? []) {
+    if (record.status !== 'completed') {
+      continue;
+    }
+
+    const projection = projectProcessResultContracts(record);
+    for (const materialRef of projection.materialRefs) {
+      attachedMaterialRefIds.add(materialRef.id);
+      const key = shaderContributionKey(
+        materialRef.producerExtensionId,
+        typeof materialRef.provenance?.contributionId === 'string'
+          ? materialRef.provenance.contributionId
+          : undefined,
+      );
+      if (key) {
+        attachedShaderContributionKeys.add(key);
+      }
+    }
+
+    for (const artifact of projection.artifacts) {
+      attachedArtifactIds.add(artifact.id);
+    }
+  }
+
+  return Object.freeze({
+    attachedMaterialRefIds: Object.freeze(attachedMaterialRefIds),
+    attachedArtifactIds: Object.freeze(attachedArtifactIds),
+    attachedShaderContributionKeys: Object.freeze(attachedShaderContributionKeys),
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Built-in ID collection
@@ -304,6 +362,7 @@ export function scanExportConfig(
   transitionRegistrySnapshot?: TransitionRegistrySnapshot,
   clipTypeRegistrySnapshot?: ClipTypeRegistrySnapshot,
   compositionGraph?: CompositionGraph,
+  processResultAttachRecords?: readonly ProcessResultAttachRecord[],
 ): ExportGuardResult {
   const diagnostics: ExportDiagnostic[] = [];
   const findings: CapabilityFinding[] = [];
@@ -311,12 +370,26 @@ export function scanExportConfig(
   const unknownClipTypes = new Set<string>();
   const unknownEffects = new Set<string>();
   const unknownTransitions = new Set<string>();
+  const processAttachEvidence = createProcessAttachEvidenceIndex(processResultAttachRecords);
 
   if (config && config.clips.length > 0) {
     scanLiveBindingExportBlockers(config, diagnostics, findings, blockers);
-    scanCompositionGraphTargetExportBlockers(diagnostics, findings, blockers, compositionGraph);
+    scanCompositionGraphTargetExportBlockers(
+      diagnostics,
+      findings,
+      blockers,
+      compositionGraph,
+      processAttachEvidence,
+    );
     scanCompositionGraphM5ExportBlockers(diagnostics, findings, blockers, compositionGraph);
-    scanTimelineShaderExportBlockers(config, diagnostics, findings, blockers, compositionGraph);
+    scanTimelineShaderExportBlockers(
+      config,
+      diagnostics,
+      findings,
+      blockers,
+      compositionGraph,
+      processAttachEvidence,
+    );
     const compatibilityWarning = legacyGraphCompatibilityWarning(config, compositionGraph);
     if (compatibilityWarning) {
       findings.push(compatibilityWarning);
@@ -453,6 +526,7 @@ function scanCompositionGraphTargetExportBlockers(
   findings: CapabilityFinding[],
   blockers: RenderBlocker[],
   compositionGraph?: CompositionGraph,
+  processAttachEvidence?: ProcessAttachEvidenceIndex,
 ): void {
   if (!compositionGraph?.diagnostics.length) {
     return;
@@ -465,6 +539,19 @@ function scanCompositionGraphTargetExportBlockers(
 
     const exportCode = targetCompositionExportCode(diagnostic.code);
     if (!exportCode) {
+      return;
+    }
+
+    if (
+      (
+        typeof diagnostic.detail?.materialRefId === 'string'
+        && processAttachEvidence?.attachedMaterialRefIds.has(diagnostic.detail.materialRefId)
+      )
+      || (
+        typeof diagnostic.detail?.captureRef === 'string'
+        && processAttachEvidence?.attachedArtifactIds.has(diagnostic.detail.captureRef)
+      )
+    ) {
       return;
     }
 
@@ -656,10 +743,16 @@ function scanTimelineShaderExportBlockers(
   findings: CapabilityFinding[],
   blockers: RenderBlocker[],
   compositionGraph?: CompositionGraph,
+  processAttachEvidence?: ProcessAttachEvidenceIndex,
 ): void {
   if (compositionGraph) {
     for (const shader of graphShaderSummaries(compositionGraph) ?? []) {
       if (shader.enabled === false) continue;
+      if (processAttachEvidence?.attachedShaderContributionKeys.has(
+        shaderContributionKey(shader.extensionId, shader.contributionId) ?? '',
+      )) {
+        continue;
+      }
       pushShaderMaterializerFindingAndBlocker(diagnostics, findings, blockers, {
         shaderId: shader.shaderId,
         extensionId: shader.extensionId,
@@ -675,6 +768,11 @@ function scanTimelineShaderExportBlockers(
   for (const clip of config.clips) {
     const shader = isTimelineShaderMetadata(clip.app?.shader, 'clip') ? clip.app.shader : undefined;
     if (!shader || shader.enabled === false) continue;
+    if (processAttachEvidence?.attachedShaderContributionKeys.has(
+      shaderContributionKey(shader.extensionId, shader.contributionId) ?? '',
+    )) {
+      continue;
+    }
     pushShaderMaterializerFindingAndBlocker(diagnostics, findings, blockers, {
       shaderId: shader.shaderId,
       extensionId: shader.extensionId,
@@ -689,6 +787,11 @@ function scanTimelineShaderExportBlockers(
     ? config.app.shaderPostprocess
     : undefined;
   if (postprocessShader && postprocessShader.enabled !== false) {
+    if (processAttachEvidence?.attachedShaderContributionKeys.has(
+      shaderContributionKey(postprocessShader.extensionId, postprocessShader.contributionId) ?? '',
+    )) {
+      return;
+    }
     pushShaderMaterializerFindingAndBlocker(diagnostics, findings, blockers, {
       shaderId: postprocessShader.shaderId,
       extensionId: postprocessShader.extensionId,

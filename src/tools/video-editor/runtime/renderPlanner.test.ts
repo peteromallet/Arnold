@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { planRender } from '@/tools/video-editor/runtime/renderPlanner.ts';
 import { projectHostMaterialRuntime } from '@/tools/video-editor/runtime/composition/materialRuntime.ts';
+import { createProcessResultAttachRecord } from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
 import {
   blockerToRouteFitMetadata,
   findingToRouteFitMetadata,
@@ -8,8 +9,10 @@ import {
 import type {
   CapabilityFinding,
   CapabilityRequirement,
+  ProcessRoundtripResult,
   ProcessStatus,
   RenderBlocker,
+  RenderMaterial,
   RenderMaterialRef,
   RenderRoute,
   TimelineSnapshot,
@@ -211,6 +214,7 @@ interface ProcessDescriptorOptions {
   readonly processId?: string;
   readonly operationId?: string;
   readonly routes?: readonly RenderRoute[];
+  readonly protocol?: string;
   readonly requiredCapabilities?: readonly string[];
   readonly outputKinds?: readonly ('artifact' | 'material' | 'sidecar' | 'diagnostic' | 'planner-result' | 'tool-result')[];
 }
@@ -219,6 +223,7 @@ function processDescriptor(options: ProcessDescriptorOptions = {}): VideoEditorP
   const processId = options.processId ?? 'dataset-process';
   const operationId = options.operationId ?? 'exportDataset';
   const routes = options.routes ?? ['sidecar-export'];
+  const protocol = options.protocol ?? 'stdio-jsonrpc';
   const requiredCapabilities = options.requiredCapabilities;
   const outputKinds = options.outputKinds;
   const operation = {
@@ -237,14 +242,14 @@ function processDescriptor(options: ProcessDescriptorOptions = {}): VideoEditorP
     spec: {
       id: processId,
       label: 'Dataset process',
-      protocol: 'stdio-jsonrpc',
+      protocol: protocol as VideoEditorProcessDescriptor['protocol'],
       spawn: {
         command: 'node',
         args: ['dataset-process.js'],
       },
       operations: [operation],
     },
-    protocol: 'stdio-jsonrpc',
+    protocol: protocol as VideoEditorProcessDescriptor['protocol'],
     operations: [operation],
     availableRoutes: routes,
     requiredBy: [
@@ -359,6 +364,41 @@ function materialRef(
     determinism: 'process-dependent',
     replacementPolicy: 'materialize-on-export',
     producerExtensionId: 'ext.materials',
+    ...overrides,
+  };
+}
+
+function attachedMaterial(
+  id: string,
+  overrides: Partial<RenderMaterial> = {},
+): RenderMaterial {
+  return {
+    id,
+    mediaKind: 'video',
+    locator: { kind: 'provider', uri: `provider://materials/${id}` },
+    determinism: 'process-dependent',
+    replacementPolicy: 'materialize-on-export',
+    provenance: {
+      origin: 'process',
+    },
+    ...overrides,
+  };
+}
+
+function attachResult(
+  overrides: Partial<ProcessRoundtripResult> = {},
+): ProcessRoundtripResult {
+  return {
+    requestId: 'attach-request-1',
+    processId: 'dataset-process',
+    operationId: 'exportDataset',
+    status: 'completed',
+    returnedMaterials: [attachedMaterial('mat-attached')],
+    artifacts: [],
+    sidecars: [],
+    diagnostics: [],
+    logs: [],
+    availableActions: [],
     ...overrides,
   };
 }
@@ -1120,6 +1160,52 @@ describe('planRender', () => {
     ]);
   });
 
+  it('projects process.result.attach evidence before material runtime planning while preserving legacy material status fallbacks', () => {
+    const attachRecord = createProcessResultAttachRecord({
+      processDescriptor: processDescriptor(),
+      attachedAt: '2026-07-04T22:20:00.000Z',
+      result: attachResult(),
+    });
+
+    const result = planRender({
+      processes: [processDescriptor()],
+      processStatuses: [{ processId: 'dataset-process', state: 'ready' }],
+      materialRefs: [
+        materialRef('mat-attached', { producerExtensionId: undefined }),
+        materialRef('mat-legacy'),
+      ],
+      materialStatuses: [
+        {
+          materialRefId: 'mat-attached',
+          state: 'pending',
+          detail: { phase: 'active' },
+          message: 'Legacy status should be superseded by attach evidence.',
+        },
+        {
+          materialRefId: 'mat-legacy',
+          state: 'failed',
+          message: 'Legacy failed status should still block without attach evidence.',
+        },
+      ],
+      processResultAttachRecords: [attachRecord],
+    });
+
+    expect(result.blockers.some((blocker) => blocker.materialRefId === 'mat-attached')).toBe(false);
+    expect(result.blockers).toEqual([
+      expect.objectContaining({
+        id: 'planner.material.mat-legacy.browser-export.materialization-error',
+        materialRefId: 'mat-legacy',
+        reason: 'materialization-error',
+      }),
+    ]);
+    expect(result.nextActions).toEqual([
+      expect.objectContaining({
+        kind: 'open-settings',
+        label: 'Open settings for mat-legacy',
+      }),
+    ]);
+  });
+
   it('treats ready processes as resolved and degraded processes as warnings without subprocess work', () => {
     const readyStatus: ProcessStatus = {
       processId: 'dataset-process',
@@ -1190,6 +1276,94 @@ describe('planRender', () => {
     ]));
   });
 
+  it('emits route-scoped start-process dependency actions only for stopped trusted-local processes', () => {
+    const stopped = planRender({
+      outputFormats: [renderDependentOutput()],
+      processes: [processDescriptor()],
+      processStatuses: [{ processId: 'dataset-process', state: 'stopped', message: 'Dataset process is stopped.' }],
+      request: { outputFormatId: 'dataset.zip' },
+    });
+
+    expect(stopped.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'planner.outputFormat.ext.dataset.dataset.zip.sidecar-export.dataset-process.exportDataset.process-dependent',
+        route: 'sidecar-export',
+        reason: 'process-dependent',
+        processId: 'dataset-process',
+        operationId: 'exportDataset',
+        detail: expect.objectContaining({
+          routeScope: 'sidecar-export',
+          lifecycleState: 'stopped',
+          processProtocol: 'stdio-jsonrpc',
+          nextAction: expect.objectContaining({
+            kind: 'start-process',
+            route: 'sidecar-export',
+            processId: 'dataset-process',
+            operationId: 'exportDataset',
+            detail: expect.objectContaining({
+              specificKind: 'start-process',
+            }),
+          }),
+        }),
+      }),
+    ]));
+    expect(stopped.nextActions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'start-process',
+        route: 'sidecar-export',
+        processId: 'dataset-process',
+        operationId: 'exportDataset',
+        detail: expect.objectContaining({
+          specificKind: 'start-process',
+        }),
+      }),
+    ]));
+    expect(stopped.routePlans.find((routePlan) => routePlan.route === 'sidecar-export')?.nextActions)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'start-process',
+          route: 'sidecar-export',
+          processId: 'dataset-process',
+          operationId: 'exportDataset',
+        }),
+      ]));
+    expect(stopped.routePlans.find((routePlan) => routePlan.route === 'browser-export')).toMatchObject({
+      blocked: false,
+      nextActions: [],
+    });
+
+    const nonStoppedStates: readonly ProcessStatus[] = [
+      { processId: 'dataset-process', state: 'not-installed' },
+      { processId: 'dataset-process', state: 'starting' },
+      { processId: 'dataset-process', state: 'ready' },
+      { processId: 'dataset-process', state: 'busy', operationId: 'exportDataset' },
+      { processId: 'dataset-process', state: 'degraded' },
+      { processId: 'dataset-process', state: 'failed' },
+      { processId: 'dataset-process', state: 'stopping' },
+    ];
+
+    for (const status of nonStoppedStates) {
+      const result = planRender({
+        outputFormats: [renderDependentOutput()],
+        processes: [processDescriptor()],
+        processStatuses: [status],
+        request: { outputFormatId: 'dataset.zip' },
+      });
+
+      expect(result.nextActions.some((action) => action.kind === 'start-process')).toBe(false);
+      expect(result.findings.some((finding) => finding.detail?.nextAction && finding.route === 'sidecar-export')).toBe(false);
+    }
+
+    const untrustedProtocol = planRender({
+      outputFormats: [renderDependentOutput()],
+      processes: [processDescriptor({ protocol: 'mock-rpc' })],
+      processStatuses: [{ processId: 'dataset-process', state: 'stopped' }],
+      request: { outputFormatId: 'dataset.zip' },
+    });
+
+    expect(untrustedProtocol.nextActions.some((action) => action.kind === 'start-process')).toBe(false);
+  });
+
   it('maps missing, not-installed, stopped, busy, and failed process states to route-scoped blockers', () => {
     const scenarios: Array<{
       name: string;
@@ -1258,6 +1432,56 @@ describe('planRender', () => {
         }),
       ]));
     }
+  });
+
+  it('collects stopped trusted-local processes as route-scoped repair findings without blocking unrelated routes', () => {
+    const result = planRender({
+      processes: [processDescriptor({ routes: ['sidecar-export'] })],
+      processStatuses: [{ processId: 'dataset-process', state: 'stopped', message: 'Dataset process is stopped.' }],
+    });
+
+    expect(result.blockers).toEqual([]);
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'planner.process.ext.dataset.process-contribution.sidecar-export.exportDataset.stopped',
+        severity: 'info',
+        route: 'sidecar-export',
+        reason: 'process-dependent',
+        processId: 'dataset-process',
+        operationId: 'exportDataset',
+        detail: expect.objectContaining({
+          routeScope: 'sidecar-export',
+          lifecycleState: 'stopped',
+          processProtocol: 'stdio-jsonrpc',
+          nextAction: expect.objectContaining({
+            kind: 'start-process',
+            route: 'sidecar-export',
+            processId: 'dataset-process',
+            operationId: 'exportDataset',
+            detail: expect.objectContaining({
+              specificKind: 'start-process',
+            }),
+          }),
+        }),
+      }),
+    ]));
+    expect(result.routePlans.find((routePlan) => routePlan.route === 'browser-export')).toMatchObject({
+      blocked: false,
+      blockerCount: 0,
+      nextActions: [],
+    });
+    expect(result.routePlans.find((routePlan) => routePlan.route === 'sidecar-export')).toMatchObject({
+      blocked: false,
+      blockerCount: 0,
+      nextActions: [
+        expect.objectContaining({
+          kind: 'start-process',
+          route: 'sidecar-export',
+          processId: 'dataset-process',
+          operationId: 'exportDataset',
+        }),
+      ],
+    });
   });
 
   it('blocks degraded process routes only when the declared operation explicitly requires non-degraded health', () => {

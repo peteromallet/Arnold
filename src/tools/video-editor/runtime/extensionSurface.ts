@@ -253,10 +253,11 @@ export type VideoEditorPlannerNextActionKind =
   | 'invoke-agent'
   | 'open-settings'
   | 'install-extension'
-  | 'enable-extension';
+  | 'enable-extension'
+  | 'start-process';
 
 export interface VideoEditorPlannerNextActionDetail {
-  specificKind?: 'resolve-blocker';
+  specificKind?: 'resolve-blocker' | 'start-process';
 }
 
 /** Planner next-action metadata for resolving route/process/material blockers. */

@@ -25,6 +25,9 @@ import type { LiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegi
 import type { LivePermissionService } from '@/tools/video-editor/runtime/livePermissions.ts';
 import type { ExtensionStateRepository } from '@/tools/video-editor/runtime/extensionStateRepository';
 import type { ExtensionSettingsNotificationRegistry } from '@/tools/video-editor/runtime/extensionSettingsNotification';
+import type { ProcessManager } from '@/tools/video-editor/runtime/processes/ProcessManager.ts';
+import type { ProcessStatus } from '@reigh/editor-sdk';
+import type { ProcessResultAttachRecord } from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
 
 export interface VideoEditorRuntimeContextValue {
   provider: DataProvider;
@@ -67,6 +70,16 @@ export interface VideoEditorRuntimeContextValue {
    *  This is the programmatic retry signal for ContributionErrorBoundary.
    *  No-op for unknown/disposed extension IDs (returns "0"). */
   incrementRecoveryKey?: (extensionId: string) => string;
+  /** M6b: Provider-scoped process manager for trusted local processes.
+   *  Created by default from declared process specs; hosts may override. */
+  processManager?: ProcessManager;
+  /** M6b: Read-only snapshot of all process statuses from the process manager. */
+  processStatuses?: readonly ProcessStatus[];
+  /** M6b: Host-session scoped attach records for process result provenance.
+   *  Memory only — not persisted into project data or timeline internals. */
+  processResultAttachRecords?: readonly ProcessResultAttachRecord[];
+  /** M6b: Record a process result attach record for the current editor session. */
+  recordProcessResultAttach?: (record: ProcessResultAttachRecord) => void;
 }
 
 export const DataProviderContext = createContext<VideoEditorRuntimeContextValue | null>(null);

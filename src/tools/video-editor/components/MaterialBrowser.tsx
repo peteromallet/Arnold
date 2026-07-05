@@ -130,6 +130,7 @@ function plannerActionFromRecord(
     'open-settings',
     'install-extension',
     'enable-extension',
+    'start-process',
   ];
   if (!allowedKinds.includes(action.kind as VideoEditorPlannerNextActionKind)) {
     return fallback;

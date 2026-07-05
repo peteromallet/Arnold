@@ -1,0 +1,375 @@
+Execute the approved plan in the repository.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M6b: Process UX And Canary
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Batch framing:
+        - Execute batch 11 of 13.
+        - Actionable task IDs for this batch: ['T13']
+        - Already completed task IDs available as dependency context: ['T1', 'T10', 'T11', 'T12', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8', 'T9']
+
+        Actionable tasks for this batch:
+        [
+  {
+    "id": "T13",
+    "depends_on": [
+      "T12"
+    ],
+    "status": "pending",
+    "kind": "test",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "The canary exercises provider state, ProcessManager lifecycle, command execution, planner re-evaluation, and UI-visible diagnostics together. A mistake can span several subsystems, which places it at tier 4.",
+    "executor_notes": ""
+  }
+]
+
+        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
+        [
+  {
+    "id": "T1",
+    "depends_on": [],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 1: Add provider-owned process runtime fields in `DataProviderContext.tsx`, `EditorRuntimeProvider.tsx`, and `VideoEditorProvider.tsx`: expose optional `processManager`, `processStatuses`, `processResultAttachRecords`, and `recordProcessResultAttach(record)`, create a provider-scoped `ProcessManager` from declared process specs by default, allow host override, and keep attach records in memory only for the current editor session.",
+    "complexity_justification": "This changes multiple provider/context files and a shared runtime context value used by many editor surfaces. The state is additive and session-scoped rather than a persisted schema or lifecycle state machine, so tier 3 is sufficient.",
+    "executor_notes": "Added optional processManager, processStatuses, processResultAttachRecords, and recordProcessResultAttach to VideoEditorRuntimeContextValue in DataProviderContext.tsx. In EditorRuntimeProvider.tsx, created a provider-scoped ProcessManager from extensionRuntime.processes specs (when no host override provided), maintained attach records in useState (memory only), computed processStatuses reactively via useMemo, and exposed all fields in contextValue. In VideoEditorProvider.tsx, mirrored the same pattern. Added useCallback import to EditorRuntimeProvider.tsx. TypeScript compiles cleanly, and a...",
+    "files_changed": [
+      "src/tools/video-editor/contexts/DataProviderContext.tsx",
+      "src/tools/video-editor/contexts/EditorRuntimeProvider.tsx",
+      "src/tools/video-editor/contexts/VideoEditorProvider.tsx"
+    ],
+    "commands_run": [
+      "npx tsc --noEmit --pretty",
+      "npx vitest run src/tools/video-editor/contexts/EditorRuntimeProvider.test.tsx",
+      "npx vitest run src/tools/video-editor/contexts/VideoEditorProvider.test.tsx"
+    ]
+  },
+  {
+    "id": "T6",
+    "depends_on": [
+      "T5"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Step 6: Add `start-process` to shared planner action contracts in `extensionSurface.ts`, `BlockerActionCard.tsx`, and `MaterialBrowser.tsx`: extend `VideoEditorPlannerNextActionKind`, allow `detail.specificKind: 'start-process'`, add the default Start Process label, include it in MaterialBrowser action allowlist, and preserve existing `resolve-blocker` behavior unchanged.",
+    "complexity_justification": "The contract addition touches several files but is a small additive union/label/allowlist change. Mistakes should surface as TypeScript or focused UI-test failures rather than hidden runtime drift.",
+    "executor_notes": "Added 'start-process' to VideoEditorPlannerNextActionKind union in extensionSurface.ts (line 257). Extended VideoEditorPlannerNextActionDetail.specificKind to 'resolve-blocker' | 'start-process' (line 260). Added case 'start-process' returning 'Start Process' in BlockerActionCard.tsx defaultActionLabel switch (lines 68-69). Added 'start-process' to MaterialBrowser.tsx allowedKinds array (line 133). All 22 existing tests pass (BlockerActionCard: 16, MaterialBrowser: 6). Existing resolve-blocker behavior preserved \u2014 only changed in the specificKind union is adding the new literal, not removin...",
+    "files_changed": [
+      "src/tools/video-editor/runtime/extensionSurface.ts",
+      "src/tools/video-editor/components/BlockerActionCard.tsx",
+      "src/tools/video-editor/components/MaterialBrowser.tsx"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/components/BlockerActionCard.test.tsx src/tools/video-editor/components/MaterialBrowser.test.tsx"
+    ]
+  },
+  {
+    "id": "T7",
+    "depends_on": [
+      "T6"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 7: Emit guarded route-scoped `start-process` actions in `renderPlanner.ts`: update process collection to use status/spec data, emit findings/nextActions with process id, operation id when available, lifecycle state, route scope, and `detail.specificKind: 'start-process'` only when status is `stopped` and protocol is `stdio-jsonrpc`; ensure all other lifecycle states do not emit start actions and unrelated routes remain unblocked.",
+    "complexity_justification": "This changes planner semantics consumed by blocker UI, material browsing, and route readiness. An incorrect guard or route scope can create non-local false blockers or repairs that component tests may not catch.",
+    "executor_notes": "Updated renderPlanner to derive route-scoped `start-process` actions from process status/spec data, attach `routeScope`/`lifecycleState`/`processProtocol` metadata plus `nextAction` details to process dependency findings, and emit non-blocking stopped-process findings only for trusted-local `stdio-jsonrpc` descriptors. Verified with the full renderPlanner test file: 37/37 tests passed, including new coverage for stopped-only `start-process` emission, non-stopped suppression, untrusted-protocol suppression, and unrelated-route non-blocking behavior.",
+    "files_changed": [
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/renderPlanner.test.ts"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/runtime/renderPlanner.test.ts"
+    ]
+  },
+  {
+    "id": "T2",
+    "depends_on": [
+      "T1"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 2: Route process execution through host attachment capture in `processCommandRegistration.ts` and provider call sites: wrap `ProcessManager.execute()` so each success or failure roundtrip is paired with its `VideoEditorProcessDescriptor`, converted with `createProcessResultAttachRecord()`, and recorded before proposal or insertion callbacks can consume returned refs; preserve unavailable-status and schema-validation behavior.",
+    "complexity_justification": "This threads evidence through command execution and callback ordering across runtime registration and providers. The risk is real sequencing drift, but it remains localized to the process command path and should be testable directly.",
+    "executor_notes": "Modified processCommandRegistration.ts: added ProcessManager type import, ProcessResultAttachRecord type import, and createProcessResultAttachRecord value import. Extended RegisterProcessCommandsOptions with optional processManager, recordProcessResultAttach, and made services optional. Built descriptorByProcessId map for O(1) lookup. In the command handler, when processManager+recordProcessResultAttach are available, executes through ProcessManager, creates attach record via createProcessResultAttachRecord() with the matched descriptor, records it BEFORE returning the result (ensuring no r...",
+    "files_changed": [
+      "src/tools/video-editor/runtime/processCommandRegistration.ts"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/runtime/processCommandRegistration.test.ts",
+      "npx vitest run src/tools/video-editor/runtime/processCommandRegistration.test.ts src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.test.tsx"
+    ]
+  },
+  {
+    "id": "T10",
+    "depends_on": [
+      "T9"
+    ],
+    "status": "done",
+    "kind": "test",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "The tests span provider state and execution callback ordering, so they require understanding two connected runtime surfaces. They remain targeted and should not require broad fixture setup.",
+    "executor_notes": "Ran the scoped Vitest suite across all 17 test files from the plan's blast radius: 387 tests, all passed, 0 failures. TypeScript compilation (tsc --noEmit --pretty) is clean with 0 errors. Baseline test failures are null (baseline capture failed at exit code 4), so there is no recorded baseline to compare against. No new failures detected \u2014 all verifiable checks passed. The harness-owned authoritative post-execute verification remains the final arbiter.",
+    "files_changed": [],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.test.tsx src/tools/video-editor/components/BlockerActionCard.test.tsx src/tools/video-editor/components/MaterialBrowser.test.tsx src/tools/video-editor/components/RoundtripResultsPanel.test.tsx src/tools/video-editor/components/ProcessDashboard/ProcessDashboard.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/runtime/processCommandRegistration.test.ts src/tools/video-editor/contexts/EditorRuntimeProvider.test.tsx src/tools/video-editor/contexts/VideoEditorProvider.test.tsx src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/lib/renderRouter.test.ts src/tools/video-editor/lib/renderRouter.attach.test.ts src/tools/video-editor/runtime/processes/ProcessManager.test.ts src/tools/video-editor/runtime/processes/ProcessManager.integration.test.ts src/tools/video-editor/runtime/processes/processFixture.test.ts",
+      "npx tsc --noEmit --pretty"
+    ]
+  },
+  {
+    "id": "T5",
+    "depends_on": [
+      "T2"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 5: Enrich `RoundtripResultsPanel.tsx` with an optional `processResultAttachRecord` prop and render process.result.attach provenance near returned materials, artifacts, sidecars, logs, and diagnostics before insertion actions run; preserve existing rendering when no attach record is supplied.",
+    "complexity_justification": "This is an additive component API change with non-trivial rendering around returned refs and diagnostics. Compatibility is local to RoundtripResultsPanel callers and tests, so it does not need tier 4.",
+    "executor_notes": "Added an optional processResultAttachRecord prop to RoundtripResultsPanel and conditionally render process.result.attach provenance ahead of mutation-facing actions, including descriptor/operation/task/timestamp summary plus attached material/artifact/sidecar/log/diagnostic counts. Existing rendering stays unchanged when the prop is omitted, and the focused panel tests now cover both the provenance-present path and the legacy no-provenance path.",
+    "files_changed": [
+      "src/tools/video-editor/components/RoundtripResultsPanel.tsx",
+      "src/tools/video-editor/components/RoundtripResultsPanel.test.tsx"
+    ],
+    "commands_run": [
+      "npx tsc --noEmit --pretty false",
+      "npx vitest run src/tools/video-editor/components/ProcessDashboard/ProcessDashboard.test.tsx src/tools/video-editor/components/RoundtripResultsPanel.test.tsx src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.test.tsx",
+      "npx vitest run src/tools/video-editor/components/ProcessDashboard/ProcessDashboard.test.tsx src/tools/video-editor/components/RoundtripResultsPanel.test.tsx src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.test.tsx"
+    ]
+  },
+  {
+    "id": "T8",
+    "depends_on": [
+      "T7"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 8: Feed process.result.attach evidence into planner/material projection in `renderPlanner.ts` and `composition/materialRuntime.ts`: add `processResultAttachRecords` to `RenderPlannerInput`, project records with `projectProcessResultContracts()` before `buildMaterialRuntimeProjection()`, merge projected material refs/statuses with caller-provided data, and enrich `HostMaterialRuntimeProcessFact` with attach provenance for matching process/operation/material refs while preserving legacy re...",
+    "complexity_justification": "This alters the shared planner-to-material-runtime contract and material readiness derivation. A subtle merge/provenance bug can propagate to inspector, planner, and export consumers outside the edited files.",
+    "executor_notes": "Added processResultAttachRecords to RenderPlannerInput, projected attach records through projectProcessResultContracts() before buildMaterialRuntimeProjection(), merged attach-derived material refs/statuses so evidence wins for matching ids while legacy caller data remains for untouched ids, and extended HostMaterialRuntimeProcessFact with attachProvenance derived from matching process/operation/material evidence. Verified with npx tsc --noEmit --pretty false and npx vitest run src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/composition/materialRuntime.te...",
+    "files_changed": [
+      "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+      "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+      "src/tools/video-editor/runtime/renderPlanner.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts"
+    ],
+    "commands_run": [
+      "npx tsc --noEmit --pretty false",
+      "npx vitest run src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts"
+    ]
+  },
+  {
+    "id": "T11",
+    "depends_on": [
+      "T10"
+    ],
+    "status": "done",
+    "kind": "test",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 10: Add focused component tests for process UX and shared actions: create/update `ProcessDashboard.test.tsx`, `PropertiesPanel.test.tsx`, `RoundtripResultsPanel.test.tsx`, `BlockerActionCard.test.tsx`, and `MaterialBrowser.test.tsx` to verify lifecycle cards, Start/Cancel/Shutdown/Retry/Inspect eligibility and calls, the processes tab, provenance rendering, `start-process` labels/allowlist, and unchanged `resolve-blocker` compatibility.",
+    "complexity_justification": "This is broad component coverage across related UI surfaces. Each assertion is user-visible and tied to local props/context rather than a hidden shared invariant, keeping it at tier 3.",
+    "executor_notes": "Added focused component tests across three test files: (1) BlockerActionCard.test.tsx \u2014 added 'start-process' label test verifying the button renders with 'Start Process' label and correct data attribute, plus 'resolve-blockers' compatibility test verifying the legacy kind still renders unchanged. (2) MaterialBrowser.test.tsx \u2014 added 'start-process' allowlist test verifying a 'start-process' planner action passes through the allowedKinds filter, renders in the blocker card, and dispatches onAction correctly. (3) PropertiesPanel.test.tsx \u2014 added processes tab describe block with two tests ve...",
+    "files_changed": [
+      "src/tools/video-editor/components/BlockerActionCard.test.tsx",
+      "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+      "src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.test.tsx"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/components/ProcessDashboard/ProcessDashboard.test.tsx src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.test.tsx src/tools/video-editor/components/RoundtripResultsPanel.test.tsx src/tools/video-editor/components/BlockerActionCard.test.tsx src/tools/video-editor/components/MaterialBrowser.test.tsx",
+      "npx tsc --noEmit --pretty"
+    ]
+  },
+  {
+    "id": "T3",
+    "depends_on": [
+      "T1"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Step 3: Add the PropertiesPanel process entry point in `PropertiesPanel.tsx`: extend the active tab union, add a `processes` trigger/content, render the new `ProcessDashboard`, and keep inspector/extensions tabs compatible.",
+    "complexity_justification": "This is a localized UI tab addition in a known component. The failure modes are direct DOM/type regressions in PropertiesPanel rather than non-local runtime behavior.",
+    "executor_notes": "Created ProcessDashboard.tsx stub component at src/tools/video-editor/components/ProcessDashboard/ProcessDashboard.tsx. It reads from useOptionalVideoEditorRuntime() to access extensionRuntime.processes, processStatuses, and processResultAttachRecords. Renders a compact card per declared process with label, processId, protocol, status badge, operation chips, description, and attach record count. Shows 'no processes declared' and 'no runtime' empty states. In PropertiesPanel.tsx: extended activePanelTab state type to include 'processes', updated Tabs onValueChange cast, changed TabsList to g...",
+    "files_changed": [
+      "src/tools/video-editor/components/ProcessDashboard/ProcessDashboard.tsx",
+      "src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.tsx"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.test.tsx",
+      "npx vitest run src/tools/video-editor/contexts/EditorRuntimeProvider.test.tsx src/tools/video-editor/contexts/VideoEditorProvider.test.tsx"
+    ]
+  },
+  {
+    "id": "T4",
+    "depends_on": [
+      "T3"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 4: Build `ProcessDashboard.tsx` and its state derivation helpers: render every declared process from `extensionRuntime.config.processes`/`extensionRuntime.processes`, show lifecycle badges, protocol/trusted-local label, config/settings status, operations, route support, material output support, blockers, diagnostics, logs, progress, running tasks, and returned-ref provenance; add guarded Start/Cancel/Shutdown/Retry/Inspect controls, refresh statuses after actions, and poll only while sta...",
+    "complexity_justification": "The dashboard combines lifecycle/action eligibility, polling, ProcessManager calls, extension descriptors, and attach provenance. A subtle eligibility or polling mistake can mislead several UI paths beyond a single component assertion, which earns tier 4.",
+    "executor_notes": "Replaced the ProcessDashboard stub with exported state-derivation helpers plus a compact dashboard that unions declared processes from extensionRuntime.config.processes and extensionRuntime.processes, renders lifecycle/config/settings/routes/operations/material-output/running-task/progress/blocker/diagnostic/log/provenance summaries, supports guarded Start/Cancel/Shutdown/Retry/Inspect controls, refreshes manager statuses before and after actions, and polls only while any process is in starting/busy/stopping. Added focused jsdom coverage for config/runtime declaration merging, guarded actio...",
+    "files_changed": [
+      "src/tools/video-editor/components/ProcessDashboard/ProcessDashboard.tsx",
+      "src/tools/video-editor/components/ProcessDashboard/ProcessDashboard.test.tsx"
+    ],
+    "commands_run": [
+      "npx tsc --noEmit --pretty false",
+      "npx vitest run src/tools/video-editor/components/ProcessDashboard/ProcessDashboard.test.tsx src/tools/video-editor/components/RoundtripResultsPanel.test.tsx src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.test.tsx",
+      "npx vitest run src/tools/video-editor/components/ProcessDashboard/ProcessDashboard.test.tsx src/tools/video-editor/components/RoundtripResultsPanel.test.tsx src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.test.tsx"
+    ]
+  },
+  {
+    "id": "T9",
+    "depends_on": [
+      "T8"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 9: Pass attach evidence through export/render consumers in `useRenderState.ts`, `renderRouter.ts`, and `exportGuard.ts`: provide provider-held attach records to `planRender()` call sites, recognize process-result-attached material/artifact refs before export blockers are evaluated, and avoid output-format sidecar planning.",
+    "complexity_justification": "This threads the new evidence contract through render and export readiness paths. A missing call site or over-broad sidecar interpretation can create non-local readiness/export regressions, so tier 4 is warranted.",
+    "executor_notes": "Forwarded provider-held processResultAttachRecords/processStatuses into the guard planner path in useRenderState, the renderRouter embedded planner inputs, and the compile-only export planner call. exportGuard now recognizes completed process.result.attach material/artifact evidence before emitting shader and deterministic-capture target blockers, while failed/no-material records still block readiness. Verified with npx tsc --noEmit --pretty false and npx vitest run src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor...",
+    "files_changed": [
+      "src/tools/video-editor/hooks/useRenderState.ts",
+      "src/tools/video-editor/lib/renderRouter.ts",
+      "src/tools/video-editor/runtime/exportGuard.ts",
+      "src/tools/video-editor/hooks/useRenderState.test.tsx",
+      "src/tools/video-editor/lib/renderRouter.attach.test.ts",
+      "src/tools/video-editor/runtime/exportGuard.test.ts"
+    ],
+    "commands_run": [
+      "npx tsc --noEmit --pretty false",
+      "npx vitest run src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/lib/renderRouter.attach.test.ts"
+    ]
+  },
+  {
+    "id": "T12",
+    "depends_on": [
+      "T11"
+    ],
+    "status": "done",
+    "kind": "test",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "These tests cover a shared planner/material/export contract. Subtle projection or scope errors can pass isolated component tests while breaking downstream readiness behavior, so tier 4 is appropriate.",
+    "executor_notes": "Ran the scoped planner/material/export contract suite once across renderPlanner, materialRuntime, exportGuard, useRenderState, renderRouter, and renderRouter.attach. Vitest passed: 6 files, 240 tests, 0 failures. TypeScript compilation (`npx tsc --noEmit --pretty false`) also passed. `baseline_test_failures` in `finalize.json` is `null`, so there is no recorded failing baseline to exempt; no new failures were observed. The passing modules cover guarded route-scoped `start-process` actions, attach projection into material refs/statuses, attach provenance facts, export readiness from attached...",
+    "files_changed": [],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/lib/renderRouter.test.ts src/tools/video-editor/lib/renderRouter.attach.test.ts",
+      "npx tsc --noEmit --pretty false"
+    ]
+  }
+]
+
+        Prior batch deviations (address if applicable):
+        [
+  "Advisory audit finding: Executor claimed changed files not present in git status: src/tools/video-editor/components/BlockerActionCard.test.tsx, src/tools/video-editor/components/BlockerActionCard.tsx, src/tools/video-editor/components/MaterialBrowser.test.tsx, src/tools/video-editor/components/MaterialBrowser.tsx, src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.test.tsx, src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.tsx, src/tools/video-editor/components/RoundtripResultsPanel.test.tsx, src/tools/video-editor/components/RoundtripResultsPanel.tsx, src/tools/video-editor/contexts/DataProviderContext.tsx, src/tools/video-editor/contexts/EditorRuntimeProvider.tsx, src/tools/video-editor/contexts/VideoEditorProvider.tsx, src/tools/video-editor/hooks/useRenderState.test.tsx, src/tools/video-editor/hooks/useRenderState.ts, src/tools/video-editor/lib/renderRouter.attach.test.ts, src/tools/video-editor/lib/renderRouter.ts, src/tools/video-editor/runtime/composition/materialRuntime.test.ts, src/tools/video-editor/runtime/composition/materialRuntime.ts, src/tools/video-editor/runtime/exportGuard.test.ts, src/tools/video-editor/runtime/exportGuard.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/processCommandRegistration.ts, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/renderPlanner.ts",
+  "Advisory audit finding: Sense check SC13 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC14 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC15 is missing an executor acknowledgment.",
+  "Advisory audit finding: Tasks left pending after execute (executor never started them): T13, T14, T15"
+]
+
+        User action prerequisites:
+        No user_action prerequisites for this batch.
+
+
+        Batch-scoped sense checks:
+        [
+  {
+    "id": "SC13",
+    "task_id": "T13",
+    "verdict": "",
+    "question": "Does the jsdom canary exercise fixture process start/execute/attach/projection, stopped-process repair, and degraded/recoverable failed diagnostics with Retry visibility?"
+  }
+]
+
+
+        ## Execution context (settled - DO NOT re-litigate)
+
+        - SD1: ProcessManager is provider-owned by default with host-provided override support when trusted local spawning is available. - Documented as an assumption in plan metadata. Allows the extension harness and editor to share the same manager lifecycle while letting hosts inject prebuilt managers.
+- SD2: Process result attach records are host-session scoped and not persisted into project data or timeline internals in M6b. - Explicitly scoped out in plan assumptions. Keeps M6b focused on observability and provenance before ref consumption without introducing a persistence surface that would need its own migration and durability story.
+- SD3: 'start-process' actions use detail.specificKind: 'start-process' alongside the existing 'resolve-blocker' value; both coexist in the VideoEditorPlannerNextActionDetail.specificK... - Preserves backward compatibility with existing blocker UI that checks for 'resolve-blocker' while giving process-specific actions their own identity for dashboard filtering and label derivation.
+
+        ## Plan execution order rationale
+
+        1. Add provider/runtime fields first so UI, planner, and tests have a single source for process manager/status/evidence.
+2. Build dashboard read-only rendering before wiring actions; then add controls with ProcessManager calls.
+3. Add shared `start-process` action contracts before planner emits them.
+4. Wire attach evidence into planner/material/export before adding canary assertions that depend on returned refs being resolved.
+5. Land broad browser acceptance last, after targeted unit and component tests are stable.
+
+        ## Inter-task guidance from finalize
+
+        Execute in dependency order and keep the heavy contract tasks isolated: planner/material/export changes are the riskiest because they alter shared readiness semantics, while UI action contracts are mostly additive. Do not re-litigate the approved strategy. Preserve the epic boundary throughout: trusted local process UX and host-session attach evidence are in scope; process timeline mutation, persistence of attach records, SDK sidecar expansion, sandbox/marketplace/remote-safety claims, arbitrary shell access, and output-format sidecar planning are out of scope. The final verification task should report exact commands and distinguish new regressions from any recorded baseline failures.
+
+        Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations.
+        Robustness level: thorough.
+
+        Requirements:
+        - Execute only the actionable tasks in this batch.
+        - Treat completed tasks as dependency context, not new work.
+        - Return structured JSON only.
+        - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
+        - Template file already written for reference: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m6b-process-ux-and-canary-20260704-2239/execute_batch_11_output.json
+        - Only produce `task_updates` for these tasks: [T13]
+        - `task_updates[].status` must be one of `done`, `skipped`, `completed`, or `blocked`; never `pending` or `in_progress`.
+        - Only produce `sense_check_acknowledgments` for these sense checks: [SC13]
+        - Do not include updates for tasks or sense checks outside this batch.
+        - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+        - Keep `executor_notes` verification-focused.
+        - Best-effort progress checkpointing: if `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m6b-process-ux-and-canary-20260704-2239/execution_batch_11.json` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
+        - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
+        - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
+        - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
+
+        Batch JSON response template:
+        ```json
+        {
+  "output": "",
+  "files_changed": [],
+  "commands_run": [],
+  "deviations": [],
+  "task_updates": [
+    {
+      "task_id": "T13",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC13",
+      "executor_note": ""
+    }
+  ]
+}
+        ```

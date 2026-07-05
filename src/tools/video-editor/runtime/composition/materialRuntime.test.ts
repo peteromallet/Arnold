@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createProcessResultAttachRecord,
+  projectProcessResultContracts,
+} from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
+import {
   getMaterialRuntimeMatrixRow,
   MATERIAL_RUNTIME_DIAGNOSTIC_CODE,
   MATERIAL_RUNTIME_LEGACY_MIGRATIONS,
@@ -11,7 +15,9 @@ import {
 } from '@/tools/video-editor/runtime/composition/materialRuntime.ts';
 import type {
   ExtensionDiagnostic,
+  ProcessRoundtripResult,
   ProcessStatus,
+  RenderMaterial,
   RenderMaterialRef,
   RenderMaterialStatus,
 } from '@reigh/editor-sdk';
@@ -131,6 +137,44 @@ function makeProcessDescriptor(): VideoEditorProcessDescriptor {
     blockers: Object.freeze([]),
     nextActions: Object.freeze([]),
   }) as VideoEditorProcessDescriptor;
+}
+
+function makeReturnedMaterial(
+  id: string,
+  overrides: Partial<RenderMaterial> = {},
+): RenderMaterial {
+  return {
+    id,
+    mediaKind: 'image',
+    locator: {
+      kind: 'artifact-store',
+      uri: `artifact://${id}`,
+    },
+    determinism: 'process-dependent',
+    replacementPolicy: 'materialize-on-export',
+    provenance: {
+      origin: 'process',
+    },
+    ...overrides,
+  };
+}
+
+function makeProcessResult(
+  overrides: Partial<ProcessRoundtripResult> = {},
+): ProcessRoundtripResult {
+  return {
+    requestId: 'request-1',
+    processId: 'shader-proc',
+    operationId: 'bake-material',
+    status: 'completed',
+    returnedMaterials: [makeReturnedMaterial('mat-attached')],
+    artifacts: [],
+    sidecars: [],
+    diagnostics: [],
+    logs: [],
+    availableActions: [],
+    ...overrides,
+  };
 }
 
 describe('materialRuntime matrix', () => {
@@ -554,6 +598,53 @@ describe('projectHostMaterialRuntime', () => {
       diagnostics: [],
     });
     expect(result.diagnostics).toEqual([]);
+  });
+
+  it('enriches attached materials with process attach provenance when the record matches material and operation ids', () => {
+    const process = makeProcessDescriptor();
+    const attachRecord = createProcessResultAttachRecord({
+      processDescriptor: process,
+      attachedAt: '2026-07-04T22:10:00.000Z',
+      result: makeProcessResult(),
+    });
+    const projection = projectProcessResultContracts(attachRecord);
+
+    const result = projectHostMaterialRuntime({
+      materialRefs: projection.materialRefs,
+      materialStatuses: projection.materialStatuses,
+      processes: [process],
+      processStatuses: [makeProcessStatus({ processId: 'shader-proc', state: 'ready' })],
+      processResultAttachRecords: [attachRecord],
+      canonicalRoutes: ['worker-export'],
+    });
+
+    expect(result.byMaterialRefId.get('mat-attached')).toMatchObject({
+      descriptorFacts: {
+        process: {
+          processId: 'shader-proc',
+          operationId: 'bake-material',
+          state: 'ready',
+          supportsMaterialOutput: true,
+          declarative: true,
+          availableRoutes: ['worker-export'],
+          attachProvenance: {
+            kind: 'process.result.attach',
+            inputKind: 'process.result.attach',
+            materialRefId: 'mat-attached',
+            processRef: 'proc.descriptor',
+            descriptorId: 'proc.descriptor',
+            extensionId: 'ext.shader',
+            processId: 'shader-proc',
+            operationId: 'bake-material',
+            operationLabel: 'Bake Material',
+            taskId: 'request-1',
+            status: 'completed',
+            attachedAt: '2026-07-04T22:10:00.000Z',
+            attachedBy: 'host-runtime',
+          },
+        },
+      },
+    });
   });
 
   it('emits invalid-row diagnostics and marks authoritative export as blocked', () => {

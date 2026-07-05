@@ -226,6 +226,53 @@ describe('BlockerActionCard', () => {
   });
 
   // -----------------------------------------------------------------------
+  // start-process label and resolve-blocker compatibility
+  // -----------------------------------------------------------------------
+
+  it('renders "Start Process" label for start-process action kind', () => {
+    const onAction = vi.fn();
+    render(
+      <BlockerActionCard
+        {...defaultProps()}
+        nextAction={sampleAction({
+          kind: 'start-process',
+          label: 'Start Process',
+          message: 'Start the process to unblock.',
+        })}
+        onAction={onAction}
+      />,
+    );
+
+    const btn = screen.getByRole('button', { name: 'Start Process' });
+    expect(btn).toBeDefined();
+    expect(btn.getAttribute('data-video-editor-blocker-action-kind')).toBe(
+      'start-process',
+    );
+    expect(btn.getAttribute('title')).toBe('Start the process to unblock.');
+  });
+
+  it('preserves resolve-blocker label compatibility unchanged', () => {
+    const onAction = vi.fn();
+    render(
+      <BlockerActionCard
+        {...defaultProps()}
+        nextAction={sampleAction({
+          kind: 'resolve-blockers',
+          label: 'Resolve Blockers',
+          message: 'Resolve blocker issues.',
+        })}
+        onAction={onAction}
+      />,
+    );
+
+    const btn = screen.getByRole('button', { name: 'Resolve Blockers' });
+    expect(btn).toBeDefined();
+    expect(btn.getAttribute('data-video-editor-blocker-action-kind')).toBe(
+      'resolve-blockers',
+    );
+  });
+
+  // -----------------------------------------------------------------------
   // Severity variants
   // -----------------------------------------------------------------------
 

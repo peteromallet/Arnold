@@ -2,6 +2,7 @@ import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import { useRenderState } from '@/tools/video-editor/hooks/useRenderState';
+import { createProcessResultAttachRecord } from '@/tools/video-editor/runtime/composition/processResultAttach';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types';
 import type { ExtensionRuntime } from '@/tools/video-editor/runtime/extensionSurface';
 import {
@@ -23,12 +24,8 @@ const mocks = vi.hoisted(() => ({
   startClientRender: vi.fn(),
 }));
 
-vi.mock('@/tools/video-editor/hooks/useClientRender', () => ({
-  useClientRender: () => mocks.startClientRender,
-}));
-
-vi.mock('@/tools/video-editor/lib/renderRouter', () => ({
-  decideRenderRoute: (timeline: ResolvedTimelineConfig | null | undefined) => {
+const renderRouterMocks = vi.hoisted(() => ({
+  decideRenderRoute: vi.fn((timeline: ResolvedTimelineConfig | null | undefined) => {
     const clip = timeline?.clips?.[0];
     if (clip?.generation?.sequence_lane === 'remotion_module' && !clip?.generation?.artifact_id) {
       return {
@@ -54,7 +51,15 @@ vi.mock('@/tools/video-editor/lib/renderRouter', () => ({
       hasMediaClip: true,
       reason: 'pure_native_clips',
     };
-  },
+  }),
+}));
+
+vi.mock('@/tools/video-editor/hooks/useClientRender', () => ({
+  useClientRender: () => mocks.startClientRender,
+}));
+
+vi.mock('@/tools/video-editor/lib/renderRouter', () => ({
+  decideRenderRoute: renderRouterMocks.decideRenderRoute,
 }));
 
 const guardMocks = vi.hoisted(() => ({
@@ -81,6 +86,70 @@ const buildConfig = (clip: ResolvedTimelineConfig['clips'][number]): ResolvedTim
   clips: [clip],
   registry: {},
 });
+
+function makeProcessAttachRecord() {
+  return createProcessResultAttachRecord({
+    processDescriptor: {
+      id: 'proc.descriptor',
+      extensionId: 'ext.process',
+      processId: 'dataset-process',
+      label: 'Dataset Process',
+      description: 'Produces attached refs.',
+      protocol: 'stdio-jsonrpc',
+      availableRoutes: ['browser-export'],
+      operations: [
+        {
+          id: 'exportDataset',
+          label: 'Export Dataset',
+          routes: ['browser-export'],
+          outputKinds: ['material', 'artifact'],
+          requiredCapabilities: ['browser-export'],
+          determinism: 'process-dependent',
+        },
+      ],
+      requiredBy: [{ source: 'extension', extensionId: 'ext.process', contributionId: 'proc.descriptor' }],
+      capabilities: { defaultRoute: 'browser-export', determinism: 'process-dependent', capabilityRequirements: [] },
+      blockers: [],
+      nextActions: [],
+      spec: {
+        id: 'dataset-process',
+        label: 'Dataset Process',
+        version: { semver: '1.0.0', declaredBy: 'ext.process', contributionId: 'proc.descriptor' },
+      },
+    } as any,
+    attachedAt: '2026-07-04T22:30:00.000Z',
+    result: {
+      requestId: 'request-1',
+      processId: 'dataset-process',
+      operationId: 'exportDataset',
+      status: 'completed',
+      returnedMaterials: [{
+        id: 'mat-attached',
+        mediaKind: 'video',
+        locator: { kind: 'provider', uri: 'provider://materials/mat-attached' },
+        determinism: 'process-dependent',
+        replacementPolicy: 'materialize-on-export',
+        producerExtensionId: 'ext.shader',
+        provenance: {
+          contributionId: 'ext.shader.clip',
+          shaderId: 'shader.preview.clip',
+        },
+      }],
+      artifacts: [{
+        id: 'artifact-1',
+        route: 'browser-export',
+        determinism: 'process-dependent',
+        mediaKind: 'video',
+        locator: { kind: 'provider', uri: 'provider://artifacts/artifact-1' },
+        consumedMaterialRefs: [],
+        findings: [],
+      }],
+      diagnostics: [],
+      logs: [],
+      availableActions: [],
+    } as any,
+  });
+}
 
 function emptyExtensionRuntime(): ExtensionRuntime {
   const config = {
@@ -2542,10 +2611,81 @@ describe('useRenderState export guard — clip-type registry snapshot', () => {
 
     expect(guardMocks.scanExportConfig).toHaveBeenCalledTimes(1);
     const callArgs = guardMocks.scanExportConfig.mock.calls[0];
-    // 6th argument should be the clipTypeRegistrySnapshot
-    expect(callArgs).toHaveLength(6);
-    // The clipTypeRegistrySnapshot is the 6th argument (index 5)
+    expect(callArgs).toHaveLength(8);
     expect(callArgs[5]).toBeDefined();
+    expect(callArgs[7]).toBeUndefined();
+  });
+
+  it('passes provider-held process attach evidence into export and router planning call sites', async () => {
+    const extRuntime = makeExtensionRuntime({
+      extensions: [
+        {
+          manifest: {
+            id: 'test-ext' as any,
+            version: '1.0.0',
+            contributions: [],
+          },
+        } as any,
+      ],
+      processes: [
+        {
+          id: 'proc.descriptor',
+          extensionId: 'ext.process',
+          processId: 'dataset-process',
+          label: 'Dataset Process',
+          protocol: 'stdio-jsonrpc',
+          availableRoutes: ['browser-export'],
+          operations: [],
+          requiredBy: [],
+          blockers: [],
+          nextActions: [],
+          capabilities: { defaultRoute: 'browser-export', determinism: 'process-dependent', capabilityRequirements: [] },
+          spec: { id: 'dataset-process', label: 'Dataset Process' },
+        },
+      ] as any,
+    });
+    const attachRecord = makeProcessAttachRecord();
+    const runtimeValue = {
+      processStatuses: [{ processId: 'dataset-process', state: 'ready' }],
+      processResultAttachRecords: [attachRecord],
+    } as unknown as VideoEditorRuntimeContextValue;
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <DataProviderContext.Provider value={runtimeValue}>
+        {children}
+      </DataProviderContext.Provider>
+    );
+
+    guardMocks.scanExportConfig.mockReturnValue({
+      ...cleanGuardResult(),
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({
+        id: 'c1',
+        clipType: 'generated-module',
+        track: 'V1',
+        at: 0,
+        hold: 1,
+      }),
+      null,
+      null,
+      extRuntime,
+    ), { wrapper });
+
+    await act(async () => {
+      await result.current.startRender();
+    });
+
+    expect(guardMocks.scanExportConfig).toHaveBeenCalledTimes(1);
+    expect(guardMocks.scanExportConfig.mock.calls[0]?.[7]).toEqual([attachRecord]);
+
+    expect(renderRouterMocks.decideRenderRoute).toHaveBeenCalledTimes(1);
+    expect(renderRouterMocks.decideRenderRoute.mock.calls[0]?.[2]).toMatchObject({
+      compositionGraph: extRuntime.compositionGraph,
+      processes: extRuntime.processes,
+      processStatuses: runtimeValue.processStatuses,
+      processResultAttachRecords: [attachRecord],
+    });
   });
 
   it('includes clipType details in render log for blocking clip-type errors', async () => {

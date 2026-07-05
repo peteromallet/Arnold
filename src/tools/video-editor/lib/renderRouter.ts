@@ -35,15 +35,20 @@ import {
 import { materializeSequenceConfig } from '@/tools/video-editor/sequences/materialize.ts';
 import {
   planRender,
+  type RenderPlannerMaterialStatus,
   type RenderPlannerInput,
   type RenderPlannerResult,
 } from '@/tools/video-editor/runtime/renderPlanner.ts';
+import type { ProcessResultAttachRecord } from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
 import type {
   CapabilityRequirement,
   CompositionGraph,
+  ProcessStatus,
+  RenderMaterialRef,
   RenderBlockerReason,
 } from '@reigh/editor-sdk';
 import type { ContributionRenderability } from '@/tools/video-editor/runtime/renderability.ts';
+import type { VideoEditorProcessDescriptor } from '@/tools/video-editor/runtime/extensionSurface.ts';
 
 /** Minimal clip shape we need from the resolved timeline. */
 export interface RouterClipShape extends GeneratedLaneClipShape {
@@ -125,6 +130,11 @@ interface PlannerRouteDecisionContext {
 
 export interface RenderRouterPlannerInput {
   readonly compositionGraph?: CompositionGraph;
+  readonly processes?: readonly VideoEditorProcessDescriptor[];
+  readonly processStatuses?: readonly ProcessStatus[];
+  readonly processResultAttachRecords?: readonly ProcessResultAttachRecord[];
+  readonly materialRefs?: readonly RenderMaterialRef[];
+  readonly materialStatuses?: readonly RenderPlannerMaterialStatus[];
 }
 
 export interface PlannerBackedRenderRouteDecision extends RenderRouteDecision {
@@ -324,6 +334,11 @@ export function decideRenderRoute(
       planner: selectPlannerRoute(planRender({
         requirements: [],
         compositionGraph: plannerInput?.compositionGraph,
+        processes: plannerInput?.processes,
+        processStatuses: plannerInput?.processStatuses,
+        processResultAttachRecords: plannerInput?.processResultAttachRecords,
+        materialRefs: plannerInput?.materialRefs,
+        materialStatuses: plannerInput?.materialStatuses,
       } satisfies RenderPlannerInput)),
     };
   }
@@ -434,6 +449,11 @@ export function decideRenderRoute(
   const planner = selectPlannerRoute(planRender({
     requirements,
     compositionGraph: plannerInput?.compositionGraph,
+    processes: plannerInput?.processes,
+    processStatuses: plannerInput?.processStatuses,
+    processResultAttachRecords: plannerInput?.processResultAttachRecords,
+    materialRefs: plannerInput?.materialRefs,
+    materialStatuses: plannerInput?.materialStatuses,
   } satisfies RenderPlannerInput));
 
   if (blockedReason) {
@@ -465,6 +485,11 @@ export function decideRenderRoute(
           ),
         ],
         compositionGraph: plannerInput?.compositionGraph,
+        processes: plannerInput?.processes,
+        processStatuses: plannerInput?.processStatuses,
+        processResultAttachRecords: plannerInput?.processResultAttachRecords,
+        materialRefs: plannerInput?.materialRefs,
+        materialStatuses: plannerInput?.materialStatuses,
       } satisfies RenderPlannerInput));
       return {
         route: 'preview-only',

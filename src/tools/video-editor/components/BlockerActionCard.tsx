@@ -65,6 +65,8 @@ function defaultActionLabel(kind: string, route?: string): string {
       return 'Enable Extension';
     case 'resolve-blockers':
       return 'Resolve Blockers';
+    case 'start-process':
+      return 'Start Process';
     default:
       return titleCase(kind);
   }

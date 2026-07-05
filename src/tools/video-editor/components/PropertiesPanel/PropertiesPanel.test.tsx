@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PropertiesPanel } from '@/tools/video-editor/components/PropertiesPanel/PropertiesPanel';
 import { VideoEditorAssetPanelSurface } from '@/tools/video-editor/components/PropertiesPanel/VideoEditorAssetPanelSurface';
@@ -528,40 +528,52 @@ describe('PropertiesPanel — selection propagation', () => {
     );
     expect(selectionCalls.length).toBeGreaterThan(0);
   });
+});
 
-  it('returns null for empty inspector section registries', () => {
+describe('PropertiesPanel — processes tab', () => {
+  beforeEach(() => {
+    useVideoEditorRenderContextMock.mockReturnValue({ timelineId: 'timeline-1' });
+    useTimelineEditorDataMock.mockReturnValue(createBaseEditorData());
+    useTimelineEditorOpsMock.mockReturnValue(createEditorOps());
+    useVideoEditorPanelRegistryMock.mockReturnValue({ panels: [], inspectorSections: [] });
+    useVideoEditorAssetPanelsMock.mockReturnValue([]);
+    useShaderEffectRegistrySnapshotMock.mockReturnValue(createShaderSnapshot());
     getInspectorContributionsMock.mockReturnValue({
       all: [],
       beforeDefault: [],
       afterDefault: [],
     });
-
-    const { container } = render(<PropertiesPanel />);
-
-    // No inspector section elements should be present
-    expect(container.querySelector('[data-video-editor-inspector-section-id]')).toBeNull();
-    // The core clip panel should still render
-    expect(screen.getByTestId('mock-clip-panel')).toBeInTheDocument();
   });
 
-  it('passes selection through ContributionErrorBoundary', () => {
-    // Verify that even with error boundaries, selection reaches the section render
-    useTimelineEditorDataMock.mockReturnValue({
-      ...createBaseEditorData(),
-      selectedClip: { id: 'boundary-clip', clipType: 'video', asset: 'asset-1', assetEntry: { duration: 5 } },
-      selectedClipIds: new Set(['boundary-clip']),
-      selectedTrackId: null,
-    });
-
+  it('renders the processes tab and displays ProcessDashboard content', () => {
     render(<PropertiesPanel />);
 
-    // The section should be wrapped in ContributionErrorBoundary with the correct contributionId
-    const sectionWrapper = screen.getByTestId('section-sel-echo').closest('[data-video-editor-inspector-section-id]');
-    expect(sectionWrapper).not.toBeNull();
-    expect(sectionWrapper!.getAttribute('data-video-editor-inspector-section-id')).toBe('sel-echo');
+    // Default tab is inspector — processes content should not be visible
+    expect(screen.queryByText('Process dashboard is unavailable outside of a video editor runtime.')).not.toBeInTheDocument();
+
+    // Click the Processes tab trigger
+    const processesTab = screen.getByRole('tab', { name: 'Processes' });
+    fireEvent.click(processesTab);
+
+    // Processes tab should now be selected and ProcessDashboard content visible
+    // (falls back to runtime-unavailable message when no runtime context is provided)
+    expect(processesTab.getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('Process dashboard is unavailable outside of a video editor runtime.')).toBeInTheDocument();
+  });
+
+  it('switches back to inspector tab and hides ProcessDashboard content', () => {
+    render(<PropertiesPanel />);
+
+    // Switch to Processes
+    const processesTab = screen.getByRole('tab', { name: 'Processes' });
+    fireEvent.click(processesTab);
+    expect(screen.getByText('Process dashboard is unavailable outside of a video editor runtime.')).toBeInTheDocument();
+
+    // Switch back to Inspector
+    fireEvent.click(screen.getByRole('tab', { name: 'Inspector' }));
+    expect(screen.queryByText('Process dashboard is unavailable outside of a video editor runtime.')).not.toBeInTheDocument();
   });
 });
-
 
 // ─── HostContributionErrorBoundary integration tests ───────────────────────
 

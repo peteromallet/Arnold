@@ -23,7 +23,10 @@ import {
   planRender,
   type RenderPlannerResult,
 } from '@/tools/video-editor/runtime/renderPlanner.ts';
-import { DataProviderContext } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
+import {
+  DataProviderContext,
+  type VideoEditorRuntimeContextValue,
+} from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import { syncPlannerDiagnosticsToCollection } from '@/tools/video-editor/runtime/diagnosticCollectionSync.ts';
 import type {
   CapabilityFinding,
@@ -225,13 +228,24 @@ function exportDiagnosticToPlannerFinding(diagnostic: ExportDiagnostic, index: n
 
 function planFromExportGuardResult(
   guardResult: ReturnType<typeof scanExportConfig>,
+  options?: {
+    readonly extensionRuntime?: ExtensionRuntime;
+    readonly processStatuses?: VideoEditorRuntimeContextValue['processStatuses'];
+    readonly processResultAttachRecords?: VideoEditorRuntimeContextValue['processResultAttachRecords'];
+  },
 ): RenderPlannerResult {
   const diagnostics: CapabilityFinding[] = [
     ...(guardResult.findings ?? []),
     ...(guardResult.blockers ?? []),
     ...guardResult.diagnostics.map(exportDiagnosticToPlannerFinding),
   ];
-  return planRender({ diagnostics });
+  return planRender({
+    diagnostics,
+    extensionRuntime: options?.extensionRuntime,
+    outputFormats: outputFormatsForPlanning(options?.extensionRuntime),
+    processStatuses: options?.processStatuses,
+    processResultAttachRecords: options?.processResultAttachRecords,
+  });
 }
 
 function outputFormatsForPlanning(extensionRuntime: ExtensionRuntime | undefined): readonly VideoEditorOutputFormatDescriptor[] {
@@ -312,7 +326,10 @@ export function useRenderState(
     const outputFormats = outputFormatsForPlanning(extensionRuntime);
     return categorizeExportFormats(outputFormats);
   }, [extensionRuntime]);
-  const diagnosticCollection = useContext(DataProviderContext)?.diagnosticCollection;
+  const runtimeContext = useContext(DataProviderContext);
+  const diagnosticCollection = runtimeContext?.diagnosticCollection;
+  const processStatuses = runtimeContext?.processStatuses;
+  const processResultAttachRecords = runtimeContext?.processResultAttachRecords;
 
   useEffect(() => {
     return () => {
@@ -375,8 +392,21 @@ export function useRenderState(
     const builtIn = collectBuiltInKnownIds();
     const allContributions = extensionRuntime ? buildExtensionContributions(extensionRuntime) : [];
     const extIds = collectExtensionDeclaredIds(allContributions);
-    const guardResult = scanExportConfig(resolvedConfig, builtIn, extIds, effectRegistrySnapshot, transitionRegistrySnapshot, clipTypeRegistrySnapshot, compositionGraph);
-    const plannerResult = planFromExportGuardResult(guardResult);
+    const guardResult = scanExportConfig(
+      resolvedConfig,
+      builtIn,
+      extIds,
+      effectRegistrySnapshot,
+      transitionRegistrySnapshot,
+      clipTypeRegistrySnapshot,
+      compositionGraph,
+      processResultAttachRecords,
+    );
+    const plannerResult = planFromExportGuardResult(guardResult, {
+      extensionRuntime,
+      processStatuses,
+      processResultAttachRecords,
+    });
 
     guardResult.diagnostics.forEach((diagnostic, index) => {
       diagnosticCollection?.publish(toCollectionDiagnostic(diagnostic, index));
@@ -397,7 +427,16 @@ export function useRenderState(
 
     // Extension-declared warnings only — preserve native routing
     return true; // no blocker
-  }, [diagnosticCollection, effectRegistrySnapshot, transitionRegistrySnapshot, clipTypeRegistrySnapshot, extensionRuntime, resolvedConfig]);
+  }, [
+    diagnosticCollection,
+    effectRegistrySnapshot,
+    transitionRegistrySnapshot,
+    clipTypeRegistrySnapshot,
+    extensionRuntime,
+    processResultAttachRecords,
+    processStatuses,
+    resolvedConfig,
+  ]);
 
   const startRender = useCallback(async () => {
     // ---- export guard: scan for unknown IDs before routing ------------------
@@ -413,7 +452,16 @@ export function useRenderState(
       };
       try {
         const renderRouter = await import('@/tools/video-editor/lib/renderRouter');
-        importedDecision = renderRouter.decideRenderRoute(resolvedConfig);
+        importedDecision = renderRouter.decideRenderRoute(
+          resolvedConfig,
+          undefined,
+          {
+            compositionGraph: extensionRuntime?.compositionGraph,
+            processes: extensionRuntime?.processes,
+            processStatuses,
+            processResultAttachRecords,
+          },
+        );
       } catch (error) {
         setRenderStatus('error');
         setRenderProgress(null);
@@ -500,7 +548,17 @@ export function useRenderState(
     }
 
     await startClientRender();
-  }, [exporter, renderMetadata?.durationInFrames, resolvedConfig, startClientRender, runExportGuard]);
+  }, [
+    exporter,
+    extensionRuntime?.compositionGraph,
+    extensionRuntime?.processes,
+    processResultAttachRecords,
+    processStatuses,
+    renderMetadata?.durationInFrames,
+    resolvedConfig,
+    startClientRender,
+    runExportGuard,
+  ]);
 
   // ---- M6: compile-only export ------------------------------------------------
   const startExport = useCallback(async (
@@ -515,8 +573,12 @@ export function useRenderState(
 
     const plannerOutputFormats = outputFormatsForPlanning(extensionRuntime);
     const outputPlan = planRender({
+      extensionRuntime,
       outputFormats: plannerOutputFormats,
       processes: extensionRuntime?.processes ?? [],
+      processStatuses,
+      processResultAttachRecords,
+      shaders: extensionRuntime?.shaders ?? [],
       compositionGraph: extensionRuntime?.compositionGraph,
       request: {
         outputFormatId: formatId,
@@ -637,7 +699,13 @@ export function useRenderState(
       setExportStatus('error');
       setExportLogState(`Export failed: ${message}`);
     }
-  }, [resolvedConfig, extensionRuntime, runExportGuard]);
+  }, [
+    resolvedConfig,
+    extensionRuntime,
+    processResultAttachRecords,
+    processStatuses,
+    runExportGuard,
+  ]);
 
   return {
     renderStatus,

@@ -1,0 +1,781 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `critique_evaluator`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m6b-process-ux-and-canary-20260704-2239`
+Current milestone: `m6b-process-ux-canary`
+
+### Phase Instruction
+Select critique checks that can catch North Star violations, scope substitution, or unsupported claims of alignment.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are the Critique Evaluator. Your job is to decide which critique
+        lenses to fire and to rate each selected lens's difficulty on a 1–5
+        complexity scale. The profile will map your complexity scores to
+        models — you do NOT name models or vendors.
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M6b: Process UX And Canary
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Finished plan:
+        # Implementation Plan: M6b Process UX And Canary
+
+## Overview
+Wire trusted-local process runtime state into the video editor host surfaces without giving processes timeline mutation rights. The codebase already has most of the runtime contracts: `ProcessManager`, process descriptors, planner blockers, `process.result.attach` creation/projection, and existing jsdom/browser canary patterns. The missing work is host ownership and visibility: expose a provider-scoped `processManager`, add the PropertiesPanel process dashboard, add guarded `start-process` planner actions, and pass `ProcessResultAttachRecord` evidence into planner/material/export paths before returned refs are consumed.
+
+This scope is a bridge, not a contradiction, against the North Star: it advances trusted process observability, route-scoped repair, and durable returned-ref provenance while explicitly keeping process runtime and output-format sidecars outside the V1 composition SDK and preserving the no-direct-timeline-mutation constraint. No anchor conflict identified.
+
+No open ticket should be marked resolved by this plan as-is. Ticket `01KS384XKZNEWQRSXN2NXQ0DTJ` is related background but broader than M6b; ticket `01KV8XVYW2EYDDDY30V48YX520` is unrelated.
+
+## Phase 1: Runtime Context And Process State
+
+### Step 1: Add provider-owned process runtime fields (`src/tools/video-editor/contexts/DataProviderContext.tsx`, `src/tools/video-editor/contexts/EditorRuntimeProvider.tsx`, `src/tools/video-editor/contexts/VideoEditorProvider.tsx`)
+**Complexity:** 3
+1. Extend `VideoEditorRuntimeContextValue` with optional `processManager`, `processStatuses`, `processResultAttachRecords`, and a host callback such as `recordProcessResultAttach(record)`.
+2. Instantiate or pass through a provider-scoped `ProcessManager` from `extensionRuntime.processes.map((p) => p.spec)`, keeping it optional where a host cannot spawn trusted local processes.
+3. Keep result attach records in provider state for the current editor session; do not persist them to timeline/project data in this milestone.
+4. Update provider tests so existing contexts without process runtime still render.
+
+### Step 2: Route process execution through host attachment capture (`src/tools/video-editor/runtime/processCommandRegistration.ts`, providers)
+**Complexity:** 3
+1. Wrap `ProcessManager.execute()` calls so a successful or failed roundtrip result is paired with the matching `VideoEditorProcessDescriptor` and passed to `createProcessResultAttachRecord()`.
+2. Append attach records before any proposal/insertion callback can consume returned materials.
+3. Preserve command registration behavior for unavailable statuses and schema validation.
+
+## Phase 2: Process Dashboard UI
+
+### Step 3: Add the PropertiesPanel process entry point (`src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.tsx`)
+**Complexity:** 2
+1. Add a third `TabsTrigger`/`TabsContent` value `processes` and update the active tab union.
+2. Render a new `ProcessDashboard` component in that tab.
+3. Update PropertiesPanel tests to verify the new tab exists and remains compatible with the existing inspector/extensions tabs.
+
+### Step 4: Build the process dashboard (`src/tools/video-editor/components/ProcessDashboard.tsx`)
+**Complexity:** 4
+1. Render all declared processes from `extensionRuntime.config.processes` / `extensionRuntime.processes`, not only blocked ones.
+2. Show lifecycle badge, protocol/trusted-local label, config/settings status, operations, route support, material output support, blockers, diagnostics, logs, progress, running tasks, and returned refs/provenance.
+3. Reuse ExtensionManager visual patterns: compact summary counts, expandable cards, lifecycle state badges, and settings/diagnostic sections. Do not imply sandboxing, remote safety, or permission enforcement.
+4. Add controls with state guards: Start only for `state === 'stopped'` and `protocol === 'stdio-jsonrpc'`; Cancel for `starting`/`busy`; Shutdown for `ready`/`busy`/`degraded`; Retry only for failed recoverable statuses; Inspect refs/provenance when attach records exist.
+5. Refresh local status after each ProcessManager action and poll only while states are transient (`starting`, `busy`, `stopping`).
+
+### Step 5: Enrich process result inspection (`src/tools/video-editor/components/RoundtripResultsPanel.tsx`)
+**Complexity:** 3
+1. Add an optional `processResultAttachRecord` prop and render process.result.attach provenance near returned materials/artifacts/sidecars/logs/diagnostics.
+2. Make returned-ref provenance visible before `createRoundtripProposalInput()` insertion actions run.
+3. Keep existing ProcessRoundtripResult rendering and tests compatible when no attach record is supplied.
+
+## Phase 3: Planner Actions And Compatibility
+
+### Step 6: Add `start-process` to shared action contracts (`src/tools/video-editor/runtime/extensionSurface.ts`, `src/tools/video-editor/components/BlockerActionCard.tsx`, `src/tools/video-editor/components/MaterialBrowser.tsx`)
+**Complexity:** 2
+1. Add `start-process` to `VideoEditorPlannerNextActionKind`.
+2. Expand `VideoEditorPlannerNextActionDetail.specificKind` to `'resolve-blocker' | 'start-process'`.
+3. Add a `Start Process` default label in `BlockerActionCard`.
+4. Add `start-process` to `MaterialBrowser` action allowlist.
+5. Preserve old `specificKind: 'resolve-blocker'` handling unchanged.
+
+### Step 7: Emit guarded route-scoped `start-process` actions (`src/tools/video-editor/runtime/renderPlanner.ts`)
+**Complexity:** 4
+1. Change `collectProcess()` to accept `processStatusById` and use descriptor/spec data.
+2. Emit a planner finding/nextAction with `kind: 'start-process'`, `detail.specificKind: 'start-process'`, `processId`, `operationId` when available, lifecycle state, and route scope only when `ProcessStatus.state === 'stopped'` and `ProcessSpec.protocol === 'stdio-jsonrpc'`.
+3. Ensure non-stopped states (`ready`, `busy`, `degraded`, `not-installed`, `starting`, `failed`, `stopping`) do not emit `start-process`.
+4. Keep process blockers route-scoped and do not block unrelated routes.
+
+## Phase 4: process.result.attach Evidence Wiring
+
+### Step 8: Feed attach records into planner/material projection (`src/tools/video-editor/runtime/renderPlanner.ts`, `src/tools/video-editor/runtime/composition/materialRuntime.ts`)
+**Complexity:** 4
+1. Add `processResultAttachRecords?: readonly ProcessResultAttachRecord[]` to `RenderPlannerInput`.
+2. Before `buildMaterialRuntimeProjection()`, project every record with `projectProcessResultContracts()` and merge projected `materialRefs`/`materialStatuses` with caller-provided refs/statuses.
+3. Enrich `HostMaterialRuntimeProcessFact` with attach provenance for matching process/operation/material refs so downstream inspector surfaces can show returned-ref provenance.
+4. Keep legacy material refs/statuses working when no process attach evidence is present.
+
+### Step 9: Pass attach evidence through export/render consumers (`src/tools/video-editor/hooks/useRenderState.ts`, `src/tools/video-editor/lib/renderRouter.ts`, `src/tools/video-editor/runtime/exportGuard.ts`)
+**Complexity:** 4
+1. Pass provider-held attach records into `planRender()` from `useRenderState` and render-router call sites that construct `RenderPlannerInput`.
+2. Update export guard inputs/results so process-result-attached material refs are recognized before export blockers are evaluated.
+3. Avoid output-format sidecar planning; only recognize process-returned material/artifact evidence needed for current route/material readiness.
+
+## Phase 5: Tests And Canary
+
+### Step 10: Add focused unit and component coverage
+**Complexity:** 3
+1. Add/extend tests for process dashboard lifecycle cards, Start/Cancel/Shutdown/Retry/Inspect controls, and action invocation.
+2. Add planner tests for start-process emission, state guard behavior, route scope, and old resolve-blocker compatibility.
+3. Add process.result.attach planner/material/export tests proving returned process materials become resolved before consumers read refs.
+4. Add MaterialBrowser, BlockerActionCard, RoundtripResultsPanel, provider, and command-registration tests for the new action/evidence flows.
+
+### Step 11: Add M6b canary and browser acceptance
+**Complexity:** 4
+1. Add a jsdom integration canary following the existing postprocess shader canary pattern: fixture process starts, executes, returns materials, records attach evidence, and planner resolves returned refs.
+2. Add a stopped-process repair flow: stopped trusted process creates route-scoped blocker, UI shows `start-process`, user starts it, status becomes ready, and planner re-evaluates without the blocker.
+3. Add degraded/failed diagnostics flow: degraded and recoverable failed states show diagnostics/logs and Retry without hiding the state.
+4. Add one Playwright browser acceptance path for happy-path provenance inspection and one for blocker/repair via the extension harness or a dedicated video-editor process route.
+
+## Execution Order
+1. Add provider/runtime fields first so UI, planner, and tests have a single source for process manager/status/evidence.
+2. Build dashboard read-only rendering before wiring actions; then add controls with ProcessManager calls.
+3. Add shared `start-process` action contracts before planner emits them.
+4. Wire attach evidence into planner/material/export before adding canary assertions that depend on returned refs being resolved.
+5. Land broad browser acceptance last, after targeted unit and component tests are stable.
+
+## Validation Order
+1. Run cheapest targeted tests after each phase: provider/context tests, dashboard component tests, action normalization tests, planner tests, and material/export tests.
+2. Run the process manager and process fixture suites to ensure M6a runtime behavior did not regress.
+3. Run the new canary integration test and the Playwright process acceptance spec.
+4. Finish with `npm run lint`, `npm run build`, and the relevant Vitest scoped suite; escalate to the full `npm test` if scoped failures suggest cross-cutting breakage.
+
+
+        Task graph (plan metadata):
+        {
+  "version": 1,
+  "timestamp": "2026-07-04T22:51:25Z",
+  "hash": "sha256:4d2a7c9358f84394fc75df92a9599df9b0c1e95c34a38c3de21526c96976d1ab",
+  "questions": [
+    "Should provider-created ProcessManager be the canonical owner in both editor providers, or should hosts inject a prebuilt processManager when trusted local spawning is available? Assumption below: support both, with provider creation as the default.",
+    "Should process.result.attach records persist beyond the current editor session? Assumption below: no persistence in M6b; keep them host-session scoped and provenance-visible before proposals consume refs.",
+    "What exact recoverable signal should Retry use for failed processes if `ProcessStatus.recoverable` is absent? Assumption below: Retry is shown only when `state === 'failed' && recoverable === true`."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Process dashboard renders every declared process and distinguishes all eight lifecycle states with operations, route support, config/status, diagnostics/logs/progress, and returned-ref provenance when available.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "inspect_runtime_ui"
+      ]
+    },
+    {
+      "criterion": "Dashboard controls are state guarded: Start appears only for stopped trusted stdio-jsonrpc processes; Cancel appears for starting/busy; Shutdown appears for ready/busy/degraded; Retry appears only for failed recoverable processes; each control calls the matching ProcessManager method.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`start-process` is part of the planner action contract and renders in BlockerActionCard, ExtensionStatusDrawer blocker paths, and MaterialBrowser without breaking existing `resolve-blocker` actions.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Planner emits route-scoped `start-process` next actions with process ref, lifecycle state, route scope, and `detail.specificKind: 'start-process'` only for stopped trusted processes.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "ProcessManager execution results are converted to ProcessResultAttachRecord before insertion/proposal consumers consume returned refs.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Projected process.result.attach material refs/statuses enter RenderPlannerInput before material runtime projection and appear as resolved materials in planner/export readiness.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "RoundtripResultsPanel and ProcessDashboard expose process.result.attach provenance including descriptor ref, operation, task/result identity, returned material refs, diagnostics/logs, and provenance timestamp before mutation-facing actions run.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "inspect_runtime_ui"
+      ]
+    },
+    {
+      "criterion": "Process blockers remain route-scoped and do not block unrelated routes or introduce output-format sidecar planning.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Browser acceptance covers one happy-path process execution/provenance flow and one stopped-process blocker/repair flow.",
+      "priority": "must",
+      "requires": [
+        "drive_browser",
+        "run_tests",
+        "observe_runtime_logs"
+      ]
+    },
+    {
+      "criterion": "Implementation does not introduce claims or UI copy implying sandboxing, permission enforcement, remote process safety, arbitrary shell access, or physical-device control.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Existing focused tests for planner, export guard, material runtime, ProcessManager, PropertiesPanel, BlockerActionCard, MaterialBrowser, RoundtripResultsPanel, and provider context pass.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "UI components stay compact and consistent with ExtensionManager patterns without nested cards or overlapping controls at desktop and mobile acceptance viewports.",
+      "priority": "should",
+      "requires": [
+        "inspect_runtime_ui",
+        "drive_browser",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "New process dashboard code keeps state derivation separated from rendering enough that lifecycle/action eligibility can be tested without brittle DOM-only assertions.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Provider-created ProcessManager is acceptable as the default, while allowing a host-provided manager to override it when trusted local spawning is available.",
+    "Process result attach records are in-memory host-session evidence for M6b and are not persisted into project data or timeline internals.",
+    "`start-process` uses `detail.specificKind: 'start-process'`; existing `resolve-blocker` actions keep `detail.specificKind: 'resolve-blocker'`.",
+    "Dashboard shows all declared processes, not just blocked ones.",
+    "Retry is shown only for `ProcessStatus.state === 'failed' && recoverable === true`; degraded remains visibly degraded and is not collapsed into retry.",
+    "Browser acceptance can reuse the existing extension harness route if it can host process scenarios cleanly; otherwise a dedicated process harness route/spec is created.",
+    "No output-format sidecar planning, sandboxing, marketplace, remote execution, arbitrary shell access, or process timeline mutation is introduced."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.test.tsx",
+        "reason": "PropertiesPanel tab entry point changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/BlockerActionCard.test.tsx",
+        "reason": "Shared blocker action label/normalization changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+        "reason": "Planner action allowlist changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/RoundtripResultsPanel.test.tsx",
+        "reason": "Returned-ref provenance rendering changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "reason": "Planner start-process and attach projection behavior changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "reason": "HostMaterialRuntimeProcessFact attach provenance changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/exportGuard.test.ts",
+        "reason": "Export guard process attach awareness changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/processCommandRegistration.test.ts",
+        "reason": "Process execution attach capture changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/contexts/EditorRuntimeProvider.test.tsx",
+        "reason": "Runtime context process fields and provider ownership changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/contexts/VideoEditorProvider.test.tsx",
+        "reason": "Runtime context process fields and provider ownership changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/hooks/useRenderState.test.tsx",
+        "reason": "Planner input now receives process attach records from render state."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/renderRouter.test.ts",
+        "reason": "RenderPlannerInput call sites must preserve attach evidence."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/processes/ProcessManager.test.ts",
+        "reason": "Guard against regressions in ProcessManager lifecycle assumptions."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/processes/ProcessManager.integration.test.ts",
+        "reason": "Fixture-backed runtime roundtrip behavior supports the canary."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/processes/processFixture.test.ts",
+        "reason": "Fixture process state/result scenarios support M6b canary."
+      }
+    ],
+    "changed_surfaces": [
+      "src/tools/video-editor/contexts/DataProviderContext.tsx",
+      "src/tools/video-editor/contexts/EditorRuntimeProvider.tsx",
+      "src/tools/video-editor/contexts/VideoEditorProvider.tsx",
+      "src/tools/video-editor/contexts/EditorRuntimeProvider.test.tsx",
+      "src/tools/video-editor/contexts/VideoEditorProvider.test.tsx",
+      "src/tools/video-editor/components/ProcessDashboard.tsx",
+      "src/tools/video-editor/components/ProcessDashboard.test.tsx",
+      "src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.tsx",
+      "src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.test.tsx",
+      "src/tools/video-editor/components/BlockerActionCard.tsx",
+      "src/tools/video-editor/components/BlockerActionCard.test.tsx",
+      "src/tools/video-editor/components/MaterialBrowser.tsx",
+      "src/tools/video-editor/components/MaterialBrowser.test.tsx",
+      "src/tools/video-editor/components/RoundtripResultsPanel.tsx",
+      "src/tools/video-editor/components/RoundtripResultsPanel.test.tsx",
+      "src/tools/video-editor/runtime/extensionSurface.ts",
+      "src/tools/video-editor/runtime/extensionSurface.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/renderPlanner.test.ts",
+      "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+      "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+      "src/tools/video-editor/runtime/exportGuard.ts",
+      "src/tools/video-editor/runtime/exportGuard.test.ts",
+      "src/tools/video-editor/runtime/processCommandRegistration.ts",
+      "src/tools/video-editor/runtime/processCommandRegistration.test.ts",
+      "src/tools/video-editor/hooks/useRenderState.ts",
+      "src/tools/video-editor/hooks/useRenderState.test.tsx",
+      "src/tools/video-editor/lib/renderRouter.ts",
+      "src/tools/video-editor/lib/renderRouter.test.ts",
+      "src/tools/video-editor/pages/ExtensionHarnessPage.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/process-runtime-canary.integration.test.tsx",
+      "tests/e2e/video-editor-processes.spec.ts",
+      "tests/fixtures/video-editor/process-fixture-descriptor.ts"
+    ],
+    "always_run": [
+      "npm run lint",
+      "npm run build"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/tools/video-editor/components/BlockerActionCard.test.tsx, src/tools/video-editor/components/BlockerActionCard.tsx, src/tools/video-editor/components/MaterialBrowser.test.tsx, src/tools/video-editor/components/MaterialBrowser.tsx, src/tools/video-editor/components/ProcessDashboard.test.tsx, src/tools/video-editor/components/ProcessDashboard.tsx, src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.test.tsx, src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.tsx, src/tools/video-editor/components/RoundtripResultsPanel.test.tsx, src/tools/video-editor/components/RoundtripResultsPanel.tsx, src/tools/video-editor/contexts/DataProviderContext.tsx, src/tools/video-editor/contexts/EditorRuntimeProvider.test.tsx, src/tools/video-editor/contexts/EditorRuntimeProvider.tsx, src/tools/video-editor/contexts/VideoEditorProvider.test.tsx, src/tools/video-editor/contexts/VideoEditorProvider.tsx, src/tools/video-editor/examples/extensions/__tests__/process-runtime-canary.integration.test.tsx, src/tools/video-editor/hooks/useRenderState.test.tsx, src/tools/video-editor/hooks/useRenderState.ts, src/tools/video-editor/lib/renderRouter.test.ts, src/tools/video-editor/lib/renderRouter.ts, src/tools/video-editor/pages/ExtensionHarnessPage.tsx, src/tools/video-editor/runtime/composition/materialRuntime.test.ts, src/tools/video-editor/runtime/composition/materialRuntime.ts, src/tools/video-editor/runtime/exportGuard.test.ts, src/tools/video-editor/runtime/exportGuard.ts, src/tools/video-editor/runtime/extensionSurface.test.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/processCommandRegistration.test.ts, src/tools/video-editor/runtime/processCommandRegistration.ts, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/renderPlanner.ts, tests/e2e/video-editor-processes.spec.ts, tests/fixtures/video-editor/process-fixture-descriptor.ts. Candidate: The change is cross-cutting across provider context, planner, material runtime, export guard, and visible UI. Start scoped to the directly touched tests plus ProcessManager fixture coverage, then fall back to the full suite if any scoped result indicates broader contract drift. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/tools/video-editor/components/ProcessDashboard.test.tsx, src/tools/video-editor/examples/extensions/__tests__/process-runtime-canary.integration.test.tsx, tests/e2e/video-editor-processes.spec.ts.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/tools/video-editor/components/ProcessDashboard.test.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/process-runtime-canary.integration.test.tsx",
+      "tests/e2e/video-editor-processes.spec.ts"
+    ]
+  },
+  "structure_warnings": [
+    "Each step section should reference at least one file in backticks."
+  ]
+}
+
+        Idea:
+# M6b: Process UX And Canary
+
+## Outcome
+
+Wire the M6a process runtime into extension/planner surfaces and prove users can diagnose and repair trusted process blockers without granting processes timeline mutation rights.
+
+## Execution Posture
+
+Make process state observable and repairable through host UI. Keep every user action route-scoped, provenance-aware, and compatible with old blocker UI through `detail.specificKind`.
+
+## Scope
+
+IN:
+- Add process manager UI/dashboard reachable from existing extension/planner surfaces.
+- Show lifecycle, settings/configuration status, declared operations, running tasks, progress, logs, diagnostics, route blockers, materializer blockers, route/material compatibility, and returned refs/provenance.
+- Add controls for start, cancel, shutdown, open settings, retry where retryable, and inspect returned refs/provenance.
+- Add `start-process` as process-family-specific planner action for stopped/recoverable trusted processes.
+- Preserve `resolve-blocker` compatibility mapping with `detail.specificKind: "start-process"`.
+- Wire `process.result.attach` evidence into planner/export/material-artifact flows before returned refs are consumed.
+- Add process canary with repo-controlled fixture process.
+- Add browser acceptance for happy-path and blocker/repair process UI.
+
+OUT:
+- Output-format route planning.
+- Output-format sidecar release example.
+- Arbitrary multi-process DAGs.
+- Marketplace, sandbox, remote process execution, arbitrary shell access, or untrusted execution.
+- Process timeline mutation.
+
+## Locked Decisions
+
+- `start-process` maps only to stopped/recoverable trusted processes.
+- Process blockers remain route-scoped in UI and export blockers.
+- Returned-ref provenance must be inspectable before timeline-facing patches consume refs.
+- Process UI does not certify process safety; it reports trusted-local status and diagnostics.
+- Processes cannot directly mutate the timeline.
+
+## Constraints
+
+- Do not block unrelated routes with sidecar/process requirements.
+- Do not introduce output-format sidecar planning in this milestone.
+- Do not hide degraded/failed states behind generic retry.
+- Do not imply sandboxing, permission enforcement, remote safety, or physical-device control.
+- Browser acceptance is required for visible repair paths.
+
+## Done Criteria
+
+- Dashboard diagnoses all lifecycle states and exposes correct recoverable controls.
+- `start-process` action includes process ref, lifecycle state, route scope, and `detail.specificKind`.
+- `process.result.attach` evidence is visible before consuming returned refs.
+- Canary covers success, stopped-process repair, degraded or failed diagnostics, and returned-ref provenance inspection.
+- Browser acceptance covers one happy path and one blocker/repair path.
+
+## Touchpoints
+
+- `src/tools/video-editor/components/**`
+- `src/tools/video-editor/runtime/processes/**`
+- `src/tools/video-editor/runtime/composition/**`
+- `src/tools/video-editor/lib/renderRouter.ts`
+- `examples/video-editor-extension/**`
+- `tests/e2e/video-editor-*.spec.ts`
+- `docs/extensions/**`
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m6b-process-ux-and-canary-20260704-2239/critique_evaluator_output.json
+        Read this file first by calling `read_file` with `path` exactly `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m6b-process-ux-and-canary-20260704-2239/critique_evaluator_output.json` — it contains the expected JSON structure with all known check IDs pre-populated in `skipped`.
+        If you cannot supply that exact non-empty path, do not call `read_file`.
+        Move checks you are firing to `selections`, fill `why` for the rest, and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        ## Prep that preceded this plan
+
+This plan was produced after a multi-step prep phase (triage -> research
+fan-out -> distill). Use the prep record below when deciding which lenses
+to fire: areas prep researched thoroughly may need less scrutiny, while
+areas prep flagged as gaps, contradictions, or timed-out research warrant
+extra attention from the critics.
+
+**Prep coverage:** area_count=4, fanout_count=4, completed_count=3, partial_count=0, timed_out_count=0, error_count=1
+
+**Gaps prep could not close:**
+- start-process-planner-action: research failed with worker_structural_audit_failed: model output structural audit failed: type_mismatch at /error: value does not match declared type(s) ['string'].
+
+**Contradictions surfaced in research:**
+- file src/tools/video-editor/components/BlockerActionCard.tsx appears in multiple areas with differing evidence/status: process-canary=complete, process-dashboard-ui-surface=complete
+- file src/tools/video-editor/runtime/composition/processResultAttach.test.ts appears in multiple areas with differing evidence/status: process-canary=complete, process-result-attach-evidence-wiring=complete
+- file src/tools/video-editor/runtime/composition/processResultAttach.ts appears in multiple areas with differing evidence/status: process-canary=complete, process-dashboard-ui-surface=complete, process-result-attach-evidence-wiring=complete
+- file src/tools/video-editor/runtime/extensionSurface.ts appears in multiple areas with differing evidence/status: process-canary=complete, process-dashboard-ui-surface=complete
+- file src/tools/video-editor/runtime/processes/ProcessManager.ts appears in multiple areas with differing evidence/status: process-canary=complete, process-dashboard-ui-surface=complete, process-result-attach-evidence-wiring=complete
+- file src/tools/video-editor/runtime/renderPlanner.ts appears in multiple areas with differing evidence/status: process-dashboard-ui-surface=complete, process-result-attach-evidence-wiring=complete
+
+**Prep dossier:**
+
+# Prep Research Dossier
+
+## Triage
+
+M6a delivered the process runtime core: ProcessManager with all 8 lifecycle states, JSON-RPC stdio transport, process fixture, process.result.attach contract, process command registration, and planner-level process blocker collection via collectProcess(). The host runtime fully owns ProcessStatus projection into the render planner. What remains for M6b is the user-facing surface: a process dashboard UI, the start-process repair action, wiring process.result.attach evidence into planner/export flows, and a browser-acceptance canary. The key uncertainties are not architectural — the process manager API, lifecycle states, blocker vocabulary, and fixture are already built — but integration-oriented: where the dashboard slots into the existing ExtensionManager/PropertiesPanel surface tree, how start-process extends VideoEditorPlannerNextActionKind and maps through the existing resolve-blocker compatibility layer, and where in the planner/export pipeline process.result.attach evidence should be surfaced before downstream consumers read returned refs.
+
+## Research Areas
+
+1. process-dashboard-ui-surface: Map where the process manager dashboard lives in the existing component tree, how it is reached from the ExtensionManager (Extensions tab) and planner blocker surfaces, and what existing UI patterns (e.g., ExtensionManager's expandable-card layout, BlockerActionCard's severity-driven action rendering) it should reuse. Determine the component contract: whether it receives ProcessStatus[] from a hook or context, how it emits start/cancel/shutdown/open-settings/retry/inspect-refs actions back to the ProcessManager, and how it surfaces lifecycle state, declared operations, running tasks, progress, logs, diagnostics, route blockers, materializer blockers, route/material compatibility, and returned refs/provenance. Identify the minimal surface entry point — a new tab in PropertiesPanel or an inline expansion from existing blocker surfaces.
+2. start-process-planner-action: Map how start-process is added as a new VideoEditorPlannerNextActionKind value, how the renderPlanner emits it as a nextAction for stopped/recoverable trusted processes with detail.specificKind: 'start-process', how BlockerActionCard (or the new dashboard) renders it, and how the existing resolve-blocker compatibility mapping (detail.specificKind: 'resolve-blocker') in extensionSurface.ts is preserved and co-exists. Must also trace how start-process maps only to stopped/recoverable processes per locked decision, and how the action payload includes process ref, lifecycle state, route scope.
+3. process-result-attach-evidence-wiring: Trace the data flow from ProcessManager.execute() → ProcessRoundtripResult → createProcessResultAttachRecord() → projectProcessResultContracts() into the planner, export guard, and material-artifact consumers. Identify the exact interception point where process.result.attach evidence (processRef, operationId, taskId, status, returnedMaterialRefs, diagnostics, provenance) must be visible before downstream consumers read returned refs and timeline-facing patches consume results. Determine whether this requires a new planner diagnostic, a new material status projection, or an enrichment of existing RenderMaterial.provenance. The contract is already built (processResultAttach.ts); the gap is making it inspectable in the UI/planner before consumption.
+4. process-canary: Design and produce a browser-acceptance canary that exercises: (1) happy path — process starts, executes, returns materials with inspectable process.result.attach evidence; (2) stopped-process repair — process is stopped, blocker surfaces with start-process action, user starts process, verification that blocker clears; (3) degraded or failed diagnostics — process reports degraded/failed state, diagnostics are visible; (4) returned-ref provenance inspection — the canary verifies that provenance is inspectable before downstream consumers read refs. The fixture process already exists (tests/fixtures/video-editor/process-fixture-descriptor.ts) and the canary patterns exist (e.g., postprocess-shader-canary.integration.test.tsx). Research must produce the concrete canary scenario, fixture configuration, and integration point with the new dashboard.
+
+## Findings
+
+### process-dashboard-ui-surface (complete)
+
+Map where the process manager dashboard lives in the existing component tree, how it is reached from the ExtensionManager and planner blocker surfaces, and what existing UI patterns it should reuse.
+
+- PropertiesPanel (PropertiesPanel.tsx:252-424) hosts two shadcn/ui Tabs: 'inspector' and 'extensions'. ExtensionManager is mounted inside <TabsContent value="extensions">. A 'processes' tab can be added as a third grid column in the TabsList to create the process manager dashboard entry point.
+- No existing ProcessManager UI component exists. The only process-related UI is via BlockerActionCard rendering planner/blocker diagnostics in ExtensionStatusDrawer and MaterialBrowser. The ProcessManager runtime (ProcessManager.ts) is a pure TypeScript class with no React surface; it exposes listStatuses(), getStatus(), start(), cancel(), shutdown(), checkHealth(), execute(), and dispose().
+- VideoEditorRuntimeContextValue (DataProviderContext.tsx:29-70) does NOT currently expose a processManager field. Wiring the dashboard requires adding `processManager?: ProcessManager` to this context shape so that useVideoEditorRuntime() can provide it to the dashboard component.
+- ExtensionManager pattern to reuse: uses useVideoEditorRuntime() for extensionRuntime, extensionStateRepository, triggerExtensionRefresh, diagnosticCollection, settingsNotificationRegistry. The dashboard should similarly consume useVideoEditorRuntime() for processManager and extensionRuntime.config.processes (VideoEditorProcessDescriptor[]).
+- Existing UI patterns to reuse: (a) ExtensionManager's expandable-card layout with PackageStateBadge-style state badges for lifecycle states; (b) BlockerActionCard's severity-driven single-CTA rendering with nextAction.kind/label/onAction for start/cancel/shutdown/retry/inspect-refs; (c) ExtensionManager's diagnostic expansion pattern for logs/diagnostics; (d) PackageSettingsSection's expand/collapse pattern for settings; (e) ManagerSummaryBar for aggregate process counts.
+- BlockerActionCard (BlockerActionCard.tsx) renders diagnostic severity, code, message, and a single CTA button driven by nextAction {kind, label, message} and onAction callback. The normalizeBlockerActionCardNextAction utility maps action kinds ('materialize', 'bake', 'open-settings', 'resolve-blockers', etc.) to labels. No 'start-process' kind exists yet; it must be added to the kind-to-label mapping and VideoEditorPlannerNextActionKind.
+- VideoEditorPlannerNextActionKind (extensionSurface.ts:249-256) currently lists: 'select-route', 'materialize', 'bake', 'invoke-agent', 'open-settings', 'install-extension', 'enable-extension'. The 'start-process' kind is not present. VideoEditorPlannerNextActionDetail (extensionSurface.ts:258-260) has specificKind?: 'resolve-blocker' only — this is where start-process compatibility mapping would go.
+- Process descriptors (VideoEditorProcessDescriptor, extensionSurface.ts:274-289) include: id, extensionId, processId, label, description, spec, protocol, operations (ProcessOperationSpec[]), availableRoutes, capabilities, requiredBy, blockers (VideoEditorPlannerBlockerDescriptor[]), nextActions (VideoEditorPlannerNextActionDescriptor[]). These are projected by buildProcessDescriptors() (processProjector.ts) and added to extensionRuntime.config.processes.
+- The planner blocker flow: renderPlanner.ts produces CapabilityFinding items with detail.nextAction pointing to VideoEditorPlannerNextActionDescriptor. These flow through ExtensionStatusDrawer which renders BlockerActionCard per diagnostic. Process blockers interact with this flow via processStatusById lookups in the planner (renderPlanner.ts:590-608).
+- process.result.attach evidence (processResultAttach.ts): ProcessResultAttachRecord contains full provenance (descriptor refs, operation details, result status), returnedMaterialRefs, artifacts, sidecars, diagnostics, logs, progress, availableActions, and metadata. The projectProcessResultContracts function projects RenderMaterialRef/RenderMaterialStatus/RenderArtifact for planner/export consumption. This evidence must be inspectable in the dashboard before consumer code consumes returned refs.
+- ExtensionStatusDrawer (ExtensionStatusDrawer.tsx) already renders export blockers, planner blockers, and render blockers as BlockerActionCard sections. The process dashboard could follow this same pattern, or alternatively process blockers could be surfaced inline from the existing planner blocker section (since process blockers are already routed through planner diagnostics with detail.source === 'render-planner').
+- MaterialBrowser (MaterialBrowser.tsx:114-143) filters planner actions by allowedKinds: 'select-route', 'materialize', 'bake', 'invoke-agent', 'open-settings', 'install-extension', 'enable-extension'. 'start-process' would need to be added to this allowlist for material-browser-based process repair actions.
+
+### start-process-planner-action (error)
+
+Map how start-process is added as a new VideoEditorPlannerNextActionKind value, how the renderPlanner emits it as a nextAction for stopped/recoverable trusted processes with detail.specificKind: 'start-process', how BlockerActionCard (or the new dashboard) renders it, and how the existing resolve-blocker compatibility mapping (detail.specificKind: 'resolve-blocker') in extensionSurface.ts is preserved and co-exists. Must also trace how start-process maps only to stopped/recoverable processes per locked decision, and how the action payload includes process ref, lifecycle state, route scope.
+
+Error: worker_structural_audit_failed: model output structural audit failed: type_mismatch at /error: value does not match declared type(s) ['string']
+
+### process-result-attach-evidence-wiring (complete)
+
+Trace the data flow from ProcessManager.execute() → ProcessRoundtripResult → createProcessResultAttachRecord() → projectProcessResultContracts() into the planner, export guard, and material-artifact consumers. Identify the exact interception point where process.result.attach evidence must be visible before downstream consumers read returned refs.
+
+- ProcessManager.execute() returns ProcessRoundtripResult (via JSON-RPC stdio transport) containing returnedMaterials, artifacts, diagnostics, logs, sidecars, availableActions, and status. This is the entry point for process results — defined in src/tools/video-editor/runtime/processes/ProcessManager.ts.
+- createProcessResultAttachRecord() wraps a ProcessRoundtripResult into a ProcessResultAttachRecord (kind='process.result.attach') with full provenance, descriptor metadata, operation context, and frozen deep copies of all returned data. The record includes processRef, processId, operationId, taskId, status, returnedMaterialRefs, returnedMaterials, artifactRefs, artifacts, sidecars, diagnostics, logs, progress, availableActions, and provenance.
+- projectProcessResultContracts() normalizes a ProcessResultAttachRecord into a ProcessResultContractProjection containing materialRefs (each enriched with process provenance), materialStatuses (resolved or failed), artifacts (each with a full manifest including process provenance), and sidecars.
+- CRITICAL GAP: Neither createProcessResultAttachRecord nor projectProcessResultContracts is called anywhere outside their own test file (processResultAttach.test.ts). The contract is fully built and tested but has zero consumers. The entire data path from ProcessManager.execute() to planner/export guard is unwired.
+- The planner's planRender() function (renderPlanner.ts line 1600) accepts RenderPlannerInput which includes materialRefs, materialStatuses, processStatuses, and processes — but NOT ProcessResultAttachRecord. The planner builds a HostMaterialRuntimeProjection via buildMaterialRuntimeProjection() at line 1634, then consumes it via collectMaterialRef() at line 1666. Process result attach evidence never enters this flow.
+- HostMaterialRuntimeProjectionInput (materialRuntime.ts line 156) already accepts processes and processStatuses alongside materialRefs and materialStatuses. The projectHostMaterialRuntime() function (line 1168) iterates materialRefs and builds entries with descriptorFacts that include HostMaterialRuntimeProcessFact (processId, operationId, state, availableRoutes, supportsMaterialOutput). This is the natural enrichment point for process result attach evidence.
+- HostMaterialRuntimeProcessFact currently only carries metadata from process descriptors and status — it does NOT carry result-attach-level evidence (returnedMaterialRefs, taskId, diagnostics, provenance, availableActions, logs). There is no field in HostMaterialRuntimeEntry or HostMaterialRuntimeDescriptorFacts for ProcessResultAttachRecord or its derived projection.
+- The export guard (exportGuard.ts) produces ExportGuardResult with diagnostics, findings, and blockers. It currently has NO awareness of process result attach evidence. It scans timeline configs for known IDs and composition graph diagnostics but never inspects ProcessResultAttachRecord.
+- The diagnostics module (diagnostics.ts) defines CompositionDiagnosticDetail with processId, operationId, and taskId fields (lines 227-232) — but these are used for composition-graph diagnostics, not process result attach evidence. There is no `process.result.attach` diagnostic code or evidence projection.
+- The renderRouter (renderRouter.ts) imports planRender but receives only RenderPlannerResult. It does not receive ProcessResultAttachRecord or any result-attach evidence.
+- EXACT INTERCEPTION POINT: The evidence must be injected before buildMaterialRuntimeProjection() at renderPlanner.ts line 1634. The cleanest approach is to: (1) Accept ProcessResultAttachRecord[] (or ProcessResultContractProjection) in RenderPlannerInput; (2) Call projectProcessResultContracts() on each record to extract enriched materialRefs and materialStatuses; (3) Merge those into the materialRefs/materialStatuses arrays passed to projectHostMaterialRuntime(); or alternatively, enrich HostMaterialRuntimeEntry to surface a 'processAttachResult' field showing whether a material ref came from a process result and what its status/provenance is.
+- Alternative interception point: The HostMaterialRuntimeProjectionInput could be extended to accept processResultAttach records. In buildDescriptorFacts() (materialRuntime.ts line 727), a new field could be added to HostMaterialRuntimeDescriptorFacts for process attach results, making the evidence inspectable via descriptorFacts.process. However, the more impactful path is ensuring the returned material refs from process execution enter the material runtime projection as materialRefs with proper status, so they appear in the planner as resolved/baked materials before downstream consumers read them.
+- No 'process.result.attach' diagnostic code exists in the composition diagnostics module. If a new planner diagnostic is needed, it would be a CapabilityFinding surfaced through the planner's findings/blocks, not a new composition diagnostic code — unless the evidence needs to flow through the CompositionGraph diagnostics path.
+
+### process-canary (complete)
+
+Design and produce a browser-acceptance canary that exercises happy path, stopped-process repair, degraded/failed diagnostics, and returned-ref provenance inspection using the existing repo-controlled fixture process.
+
+- Fixture process is fully operational: `tests/fixtures/video-editor/process-fixture-descriptor.ts` exposes `createProcessFixtureDescriptor()` with configurable health sequences (starting→ready→degraded→failed), execute scenarios (returnedMaterials, progress/log notifications, cancel, shutdown), and a `createNotInstalledProcessFixtureDescriptor()` variant for not-installed state.
+- Fixture script (`tests/fixtures/video-editor/process-fixture.ts`) is a real Node.js child process using readline-based JSON-RPC transport. It supports `health`, `execute`, `cancel`, `shutdown` methods and configurable scenarios via `REIGH_PROCESS_FIXTURE_HEALTH_SEQUENCE` env var.
+- ProcessManager (`src/tools/video-editor/runtime/processes/ProcessManager.ts`) fully implements lifecycle: `not-installed`, `stopped`, `starting`, `ready`, `busy`, `degraded`, `failed`, `stopping`. Handles ENOENT→not-installed, timeout→degraded, process-exit→failed with `recoverable: true` flags.
+- ProcessManager.integration.test.ts (578 lines) already exercises fixture roundtrips: lifecycle states, health→degraded→failed sequences, execute with progress/logs, cancel, shutdown, and protocol/timeout/process-exit error shapes. The `createManagedFixture()` helper spawns real child processes with spy transport.
+- processFixture.test.ts (401 lines) directly tests the fixture's JSON-RPC transport: health state sequences, execute+cancel via notification and request paths, late notifications, and error scenarios (protocol-error, timeout, invalid-request, process-exited).
+- processResultAttach.ts (`src/tools/video-editor/runtime/composition/processResultAttach.ts`) provides `createProcessResultAttachRecord()` that wraps `ProcessRoundtripResult` with full provenance (descriptor, operation, result status, upstream provenance), forbids timeline mutation fields, and `projectProcessResultContracts()` to normalize material refs/artifacts with provenance merged.
+- RoundtripResultsPanel (`src/tools/video-editor/components/RoundtripResultsPanel.tsx`) already renders process results with returned materials, artifacts, sidecars, logs, diagnostics, and insertion actions (insert-as-clip, replace-clip, attach-to-clip). This is the surface where `process.result.attach` evidence would be visible.
+- BlockerActionCard (`src/tools/video-editor/components/BlockerActionCard.tsx`) renders diagnostic cards with severity, code, message, and a single CTA button. `normalizeBlockerActionCardNextAction()` defaults labels from known kinds. Currently supports: `select-route`, `materialize`, `bake`, `invoke-agent`, `open-settings`, `install-extension`, `enable-extension`, `resolve-blockers`.
+- `VideoEditorPlannerNextActionKind` (`extensionSurface.ts:249-256`) defines action kinds: `select-route`, `materialize`, `bake`, `invoke-agent`, `open-settings`, `install-extension`, `enable-extension`. **`start-process` does NOT exist yet** — it needs to be added.
+- `VideoEditorPlannerNextActionDetail` (`extensionSurface.ts:258-260`) has `specificKind?: 'resolve-blocker'` — this is the compatibility mapping field. The `start-process` action should use this same `specificKind: 'resolve-blocker'` pattern.
+- `BlockerActionCard.defaultActionLabel()` (`BlockerActionCard.tsx:51-71`) needs a `case 'start-process'` branch added for the action label.
+- Existing canary patterns: `postprocess-shader-canary.integration.test.tsx` (639 lines) uses `@testing-library/react` in jsdom, exercises extension activation→registry→inspector→preview canvas→planner blockers. `clip-local-shader-canary.integration.test.tsx` follows the same pattern. Process canary should follow this structure.
+- E2E tests (`tests/e2e/extension-harness.spec.ts`, 561 lines) use Playwright with desktop/condensed/mobile viewports, data-attribute selectors, overlap checks. Process canary browser-acceptance would follow similar patterns but scoped to process dashboard UI.
+- `ProcessRoundtripResult` SDK type (capabilities.ts:263-276) includes `requestId`, `processId`, `operationId`, `status` ('completed'|'failed'|'cancelled'), `returnedMaterials`, `artifacts`, `sidecars`, `diagnostics`, `logs`, `progress`, `availableActions`, `metadata`. The `availableActions` field is key for exposing post-result actions.
+- No process dashboard UI exists yet — `search_files` for `ProcessDashboard`, `ProcessPanel`, `ProcessUI` in components returns zero results. This is the gap the canary must bridge.
+- `start-process` mapping to stopped/recoverable trusted processes: ProcessManager's `start()` method transitions from `stopped`/`not-installed` to `starting`→`ready`. The action should only be available when `ProcessStatus.state === 'stopped'` and `ProcessSpec.protocol === 'stdio-jsonrpc'` (trusted-local guard).
+
+## Adjudication
+
+### Gap Notes
+
+- start-process-planner-action: research failed with worker_structural_audit_failed: model output structural audit failed: type_mismatch at /error: value does not match declared type(s) ['string'].
+
+### Contradiction Notes
+
+- file src/tools/video-editor/components/BlockerActionCard.tsx appears in multiple areas with differing evidence/status: process-canary=complete, process-dashboard-ui-surface=complete
+- file src/tools/video-editor/runtime/composition/processResultAttach.test.ts appears in multiple areas with differing evidence/status: process-canary=complete, process-result-attach-evidence-wiring=complete
+- file src/tools/video-editor/runtime/composition/processResultAttach.ts appears in multiple areas with differing evidence/status: process-canary=complete, process-dashboard-ui-surface=complete, process-result-attach-evidence-wiring=complete
+- file src/tools/video-editor/runtime/extensionSurface.ts appears in multiple areas with differing evidence/status: process-canary=complete, process-dashboard-ui-surface=complete
+- file src/tools/video-editor/runtime/processes/ProcessManager.ts appears in multiple areas with differing evidence/status: process-canary=complete, process-dashboard-ui-surface=complete, process-result-attach-evidence-wiring=complete
+- file src/tools/video-editor/runtime/renderPlanner.ts appears in multiple areas with differing evidence/status: process-dashboard-ui-surface=complete, process-result-attach-evidence-wiring=complete
+
+### Overlap Groups
+
+- file: src/tools/video-editor/components/BlockerActionCard.tsx [process-canary, process-dashboard-ui-surface]
+- file: src/tools/video-editor/runtime/composition/processResultAttach.test.ts [process-canary, process-result-attach-evidence-wiring]
+- file: src/tools/video-editor/runtime/composition/processResultAttach.ts [process-canary, process-dashboard-ui-surface, process-result-attach-evidence-wiring]
+- file: src/tools/video-editor/runtime/extensionSurface.ts [process-canary, process-dashboard-ui-surface]
+- file: src/tools/video-editor/runtime/processes/ProcessManager.ts [process-canary, process-dashboard-ui-surface, process-result-attach-evidence-wiring]
+- file: src/tools/video-editor/runtime/renderPlanner.ts [process-dashboard-ui-surface, process-result-attach-evidence-wiring]
+
+### Bounded Cross-Reference
+
+- Performed: yes
+- Shared files: src/tools/video-editor/components/BlockerActionCard.tsx, src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx, src/tools/video-editor/components/MaterialBrowser.tsx, src/tools/video-editor/components/PropertiesPanel/PropertiesPanel.tsx, src/tools/video-editor/components/RoundtripResultsPanel.tsx, src/tools/video-editor/contexts/DataProviderContext.tsx, src/tools/video-editor/runtime/ExtensionStatusDrawer.tsx, src/tools/video-editor/runtime/composition/materialRuntime.ts, src/tools/video-editor/runtime/composition/processResultAttach.ts, src/tools/video-editor/runtime/exportGuard.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/families/projectors/processProjector.ts, src/tools/video-editor/runtime/processes/ProcessManager.ts, src/tools/video-editor/runtime/renderPlanner.ts, tests/fixtures/video-editor/process-fixture-descriptor.ts
+- Missing files: (none)
+
+## Metrics
+
+- Areas triaged: 4
+- Fan-out units run: 4
+- Complete: 3
+- Partial: 0
+- Timed out: 0
+- Errors: 1
+- Missed units: start-process-planner-action
+
+
+## Critique Lens Catalog (9 lenses)
+
+        ### Lens: `issue_hints` (tier: core, category: completeness)
+**Question:** Did the work fully address the issue hints, user notes, and approved plan requirements?
+**Guidance:** Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.
+
+### Lens: `correctness` (tier: core, category: correctness)
+**Question:** Are the proposed changes technically correct?
+**Guidance:** Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases — not just the one reported in the issue.
+
+### Lens: `scope` (tier: core, category: completeness)
+**Question:** Search for related code that handles the same concept. Is the reported issue a symptom of something broader — and is any single step sized to fit one worker turn?
+**Guidance:** Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes. Also audit step SIZING: each step/task is executed in ONE worker turn (~15 min, one conversation) and must be fully implemented AND verified there. A single step that bundles multiple concerns — e.g. 'extract this 2000-line file into modules AND write tests', or 'consolidate the roots AND migrate N registries AND add parity tests' — is a god-task: it cannot finish in one turn and the worker will run out of time mid-implementation. Raising complexity does not buy more time, only a stronger model for the same single turn. Flag any such step and recommend splitting along the natural seam (one step to add the abstraction + its unit tests, then one step per consumer/module to migrate, parity tests on the last).
+
+### Lens: `all_locations` (tier: core, category: completeness)
+**Question:** Does the change touch all locations AND supporting infrastructure?
+**Guidance:** Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.
+
+### Lens: `callers` (tier: core, category: correctness)
+**Question:** Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?
+**Guidance:** Grep for call sites. For each caller, check what values it passes — especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?
+
+### Lens: `conventions` (tier: extended, category: maintainability)
+**Question:** Does the approach match how the codebase solves similar problems?
+**Guidance:** Check not just naming/style but how similar PROBLEMS are solved in this codebase. If the codebase adds new methods for similar cases, the plan should too. Do not spend findings on trivial stylistic preferences.
+
+### Lens: `verification` (tier: extended, category: completeness)
+**Question:** Is there convincing verification for the change?
+**Guidance:** Flag missing tests or weak validation. If verification tests exist, trace the test's execution path through your patch — does every branch it exercises produce the expected result? A patch can look correct but fail because it misses one code path the test covers. If you manually verify an edge case because existing tests don't cover it, also test the cases next to it.
+
+### Lens: `criteria_quality` (tier: extended, category: completeness)
+**Question:** Are the success criteria well-prioritized and verifiable?
+**Guidance:** Check that each `must` criterion has a clear yes/no answer verifiable from code, tests, or git diff. Subjective goals, numeric guidelines, and aspirational targets should be `should`, not `must`. Criteria requiring manual testing or human judgment should be `info`. Flag any `must` criterion that is ambiguous, subjective, or unverifiable in the review pipeline.
+
+### Lens: `prerequisite_ordering` (tier: core, category: correctness)
+**Question:** Do tasks that depend on a precondition gracefully handle that precondition only partially holding?
+**Guidance:** Walk the task graph. For each task that depends on a precondition produced by an earlier task (e.g. 'after T5 regen, remove ref()'), check what happens if the precondition only partially holds — some inputs fail, some succeed. Then re-read the brief: does it lock a graceful-fallback policy for the earlier task (e.g. 'failed templates get skipped with a diagnostic') AND simultaneously demand absolute completion for the dependent task (e.g. 'zero callers remain', 'all migrated')? That's a brief contradiction the planner will transcribe faithfully and the executor will hit at runtime. Flag the conflicting paragraphs and recommend conditionalizing the dependent task, or specifying explicit deferral behavior.
+
+
+        ## Complexity Rubric (1–5)
+
+        Rate each selected lens on its **hardest realistic** aspect, not a
+        worst-case imagining. When genuinely torn between two tiers, choose the
+        LOWER one UNLESS you can name the specific cascading, test-evading
+        failure that earns the higher tier in the justification.
+
+        - **1 = trivial, mechanical check.** The lens's question can be
+          answered by pattern-matching a single file or a grep hit. A weak
+          model cannot get it wrong.
+        - **2 = simple, localized check.** The lens touches one or two
+          files, the question has a linear answer, and the failure mode
+          (missing something) is obvious.
+        - **3 = multi-step check with non-trivial reasoning.** The lens
+          requires holding multiple files or a dataflow in your head;
+          correctness is not self-evident from a quick skim.
+        - **4 = cross-cutting or high-stakes check.** A defect this lens would
+          miss is **non-local and not caught by an obvious test** — it
+          propagates through a shared contract or invariant that code the plan
+          does NOT touch relies on. Spanning several modules is NOT sufficient
+          on its own; a lens whose failure is local and obvious is tier 2-3.
+        - **5 = fundamental system-level check.** The lens probes a
+          security-sensitive path, a schema migration, an auth boundary, or
+          a contract relied on by the whole system, where a subtle error would
+          pass the full suite and corrupt state. Only assign tier 5 when the
+          lens genuinely requires system-level reasoning — not merely
+          "important" or central code.
+
+        **FLOOR rules (hard minimum) — these two lenses ONLY:**
+        - `correctness` — NEVER below tier 4. A correctness defect that
+          slips through is the most expensive failure mode.
+        - `prerequisite_ordering` — NEVER below tier 4. Partial-precondition
+          contradictions are subtle and cascade into runtime failures; a
+          weak model will miss them.
+        Every OTHER lens must EARN tier 4-5 under the rubric above; the
+        expected home for an ordinary, locally-verifiable check is tier 2-3.
+        Do not let "this plan is large" inflate a lens whose own question is
+        answerable by a focused read.
+
+        ## Assignment Contract
+
+        Select the FEWEST lenses that cover the real risk; keep the set lean
+        rather than firing broad, overlapping checks. If a check's verification
+        would likely depend on things outside this project root (external or
+        sibling repos), files the plan only creates later, or runtime-only
+        behavior, either scope the lens to what is statically checkable in this
+        repo or name that dependency in its justification so the worker and gate
+        expect a partial or `unverifiable` result.
+
+        - **Select deliberately**: a lens fires only when it covers a concrete
+          risk in this plan.
+        - **Justify to skip**: every skipped lens must include a concrete, specific
+          `why` — a reason grounded in the plan's content, not a generic dismissal.
+        - **Every lens is assigned exactly once**: the union of `selections` and
+          `skipped` must cover all 9 lens ids with no overlap
+          and no omission.
+        - **At least one lens must be selected** — an all-skip verdict is rejected.
+        - **Every selected catalog lens** must emit a `complexity` (int 1–5) and
+          a `complexity_justification` (one or two sentences citing why this
+          lens sits at exactly that tier — reference the lens's question, the
+          plan's concrete files/interfaces/risks). The justification must be
+          defensible against a reviewer who disagrees. A bare restatement of the
+          rubric ("this is complex") is not acceptable.
+        - **`other` custom areas**: an `other` selection is additive (does not
+          replace a catalog lens). It requires `area` (a non-empty name for the
+          custom critique area), `why` (the probe question for the critic),
+          `complexity`, and `complexity_justification`. At most 2
+          `other` areas.
+        - **Do not invent check IDs**: North Star, anchor, product, or project-
+          specific concerns must either use one of the catalog lens IDs above
+          or `check_id: "other"` with the specific concern named in `area`.
+          Values such as `north_star_alignment`, `compatibility_shim_risk`, or
+          `behavior_preservation` are invalid as `check_id`s.
+
+        Your output must be a JSON object with these keys:
+        - `selections`: list of objects. For catalog lenses:
+          {check_id, complexity (int 1–5), complexity_justification, why?}
+          For `other` custom areas:
+          {check_id: "other", area, why, complexity (int 1–5), complexity_justification}
+        - `skipped`: list of {check_id, why} objects
+        - `evaluator_model`: your own model identifier string
+        - `flag_verifications`: list of
+          {flag_id, lens, outcome, rationale} objects where outcome is
+          one of "verified" / "open" / "accepted_tradeoff"; use [] when the
+          Flag Resolution Verification section is absent. `lens` must be
+          exactly one catalog lens id; combined lens strings such as
+          `correctness/all_locations` are invalid.
+
+        Remember: prefer the smallest selected set that still covers the real
+        risk.  Skipping requires a justification.  When you skip, explain *why
+        this specific lens is unnecessary for this specific plan* — do not
+        write generic cop-outs.

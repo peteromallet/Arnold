@@ -29,6 +29,10 @@ import {
   type HostMaterialRuntimeProjection,
 } from '@/tools/video-editor/runtime/composition/materialRuntime.ts';
 import {
+  projectProcessResultContracts,
+  type ProcessResultAttachRecord,
+} from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
+import {
   projectShaderRefs,
   validateShaderComposition,
 } from '@/tools/video-editor/runtime/composition/shaderValidation.ts';
@@ -67,6 +71,7 @@ export interface RenderPlannerInput {
   readonly processes?: readonly VideoEditorProcessDescriptor[];
   readonly shaders?: readonly VideoEditorShaderDescriptor[];
   readonly processStatuses?: readonly ProcessStatus[];
+  readonly processResultAttachRecords?: readonly ProcessResultAttachRecord[];
   readonly materialRefs?: readonly RenderMaterialRef[];
   readonly materialStatuses?: readonly RenderPlannerMaterialStatus[];
   readonly materialRuntime?: HostMaterialRuntimeProjection;
@@ -163,6 +168,10 @@ const LEGACY_GRAPH_COMPATIBILITY_WARNING_ID = 'planner.compositionGraph.legacy-s
 const PROCESS_NON_DEGRADED_CAPABILITY_IDS = new Set([
   'process-health/non-degraded',
   'process-health:non-degraded',
+]);
+
+const TRUSTED_LOCAL_PROCESS_PROTOCOLS = new Set<VideoEditorProcessDescriptor['protocol']>([
+  'stdio-jsonrpc',
 ]);
 
 const DETERMINISM_RANK: Record<DeterminismStatus, number> = {
@@ -842,6 +851,36 @@ function matchingProcessOperations(
   return process.operations.filter((operation) => operation.routes?.includes(route));
 }
 
+function routeScopedProcessOperationId(
+  process: VideoEditorProcessDescriptor | undefined,
+  route: RenderRoute,
+): string | undefined {
+  if (!process) return undefined;
+  const operationIds = [...new Set(
+    matchingProcessOperations(process, undefined, route).map((operation) => operation.id),
+  )].sort();
+  return operationIds.length === 1 ? operationIds[0] : undefined;
+}
+
+function processLifecycleRouteScopes(
+  process: VideoEditorProcessDescriptor,
+): readonly { route: RenderRoute; operationId?: string }[] {
+  const routes = new Set<RenderRoute>(process.availableRoutes);
+  for (const operation of process.operations) {
+    for (const route of operation.routes ?? []) {
+      routes.add(route);
+    }
+  }
+
+  return Object.freeze(sortedRoutes([...routes]).map((route) => {
+    const operationId = routeScopedProcessOperationId(process, route);
+    return Object.freeze({
+      route,
+      ...(operationId ? { operationId } : {}),
+    });
+  }));
+}
+
 function hasNonDegradedHealthRequirement(requiredCapabilities: readonly string[] | undefined): boolean {
   return Boolean(requiredCapabilities?.some((capability) => PROCESS_NON_DEGRADED_CAPABILITY_IDS.has(capability)));
 }
@@ -898,6 +937,7 @@ function processStatusWarns(
 function processStatusDetail(status: ProcessStatus | undefined): Record<string, unknown> {
   return {
     processState: status?.state ?? 'unknown',
+    lifecycleState: status?.state ?? 'unknown',
     ...(status?.blockingOperations?.length
       ? { blockingOperations: [...status.blockingOperations] }
       : {}),
@@ -928,8 +968,11 @@ function buildProcessDependencyFinding(
   severity: CapabilityFinding['severity'],
   message: string,
   requireNonDegradedHealth: boolean,
+  process?: VideoEditorProcessDescriptor,
   status?: ProcessStatus,
+  nextAction?: VideoEditorPlannerNextActionDescriptor,
 ): CapabilityFinding {
+  const resolvedOperationId = dependency.operationId ?? routeScopedProcessOperationId(process, dependency.route);
   return {
     id: `${processDependencyBaseId(dependency)}.${reason}`,
     severity,
@@ -939,17 +982,20 @@ function buildProcessDependencyFinding(
     extensionId: dependency.outputFormat.extensionId,
     contributionId: dependency.outputFormat.id,
     processId: dependency.processId,
-    operationId: dependency.operationId,
+    ...(resolvedOperationId ? { operationId: resolvedOperationId } : {}),
     detail: {
       source: 'output-format',
       outputFormatId: dependency.outputFormat.id,
       outputLabel: dependency.outputFormat.label,
       processId: dependency.processId,
-      operationId: dependency.operationId,
+      ...(resolvedOperationId ? { operationId: resolvedOperationId } : {}),
+      routeScope: dependency.route,
       requiredCapabilities: [...dependency.requiredCapabilities].sort(),
+      ...(process ? { processProtocol: process.protocol } : {}),
       ...(dependency.determinism ? { determinism: dependency.determinism } : {}),
       requireNonDegradedHealth,
       ...processStatusDetail(status),
+      ...(nextAction ? { nextAction } : {}),
     },
   };
 }
@@ -994,6 +1040,7 @@ function processDependencyConfigurationFinding(
       'error',
       processMissingMessage(dependency.outputFormat, dependency.processId, dependency.route),
       false,
+      process,
     );
   }
 
@@ -1012,6 +1059,7 @@ function processDependencyConfigurationFinding(
           dependency.route,
         ),
         false,
+        process,
       );
     }
     return undefined;
@@ -1030,6 +1078,7 @@ function processDependencyConfigurationFinding(
         dependency.route,
       ),
       false,
+      process,
     );
   }
 
@@ -1058,6 +1107,43 @@ function processStatusMessage(
   }
 }
 
+function buildStartProcessAction(
+  process: VideoEditorProcessDescriptor,
+  route: RenderRoute,
+  message: string,
+  operationId?: string,
+): VideoEditorPlannerNextActionDescriptor {
+  return {
+    kind: 'start-process',
+    label: `Start ${process.label}`,
+    route,
+    processId: process.processId,
+    ...(operationId ? { operationId } : {}),
+    message,
+    detail: {
+      specificKind: 'start-process',
+    },
+  };
+}
+
+function buildProcessDependencyStartAction(
+  dependency: OutputFormatProcessDependencyDescriptor,
+  process: VideoEditorProcessDescriptor | undefined,
+  status: ProcessStatus | undefined,
+  message: string,
+): VideoEditorPlannerNextActionDescriptor | undefined {
+  if (!process || status?.state !== 'stopped' || !TRUSTED_LOCAL_PROCESS_PROTOCOLS.has(process.protocol)) {
+    return undefined;
+  }
+
+  return buildStartProcessAction(
+    process,
+    dependency.route,
+    message,
+    dependency.operationId ?? routeScopedProcessOperationId(process, dependency.route),
+  );
+}
+
 function buildProcessDependencyStatusFinding(
   dependency: OutputFormatProcessDependencyDescriptor,
   process: VideoEditorProcessDescriptor | undefined,
@@ -1082,6 +1168,7 @@ function buildProcessDependencyStatusFinding(
         status,
       ),
       requireNonDegradedHealth,
+      process,
       status,
     );
   }
@@ -1089,26 +1176,36 @@ function buildProcessDependencyStatusFinding(
     return undefined;
   }
 
+  const message = status
+    ? processStatusMessage(
+        dependency.outputFormat.label,
+        dependency.processId,
+        dependency.route,
+        status,
+      )
+    : (dependency.unavailableMessage
+      ?? processStatusMessage(
+        dependency.outputFormat.label,
+        dependency.processId,
+        dependency.route,
+        status,
+      ));
+  const nextAction = buildProcessDependencyStartAction(
+    dependency,
+    process,
+    status,
+    message,
+  );
+
   return buildProcessDependencyFinding(
     dependency,
     processStatusReason(status, requireNonDegradedHealth),
     'error',
-    status
-      ? processStatusMessage(
-          dependency.outputFormat.label,
-          dependency.processId,
-          dependency.route,
-          status,
-        )
-      : (dependency.unavailableMessage
-        ?? processStatusMessage(
-          dependency.outputFormat.label,
-          dependency.processId,
-          dependency.route,
-          status,
-        )),
+    message,
     requireNonDegradedHealth,
+    process,
     status,
+    nextAction,
   );
 }
 
@@ -1214,6 +1311,8 @@ function collectOutputFormat(
         acc.findings.push(finding);
         const blocker = blockerForFinding(finding);
         if (blocker) acc.blockers.push(blocker);
+        const nextAction = finding.detail?.nextAction as VideoEditorPlannerNextActionDescriptor | undefined;
+        if (nextAction) acc.nextActions.push(nextAction);
       }
     }
   }
@@ -1233,6 +1332,8 @@ function collectOutputFormat(
         acc.findings.push(finding);
         const blocker = blockerForFinding(finding);
         if (blocker) acc.blockers.push(blocker);
+        const nextAction = finding.detail?.nextAction as VideoEditorPlannerNextActionDescriptor | undefined;
+        if (nextAction) acc.nextActions.push(nextAction);
       }
     }
   }
@@ -1279,7 +1380,11 @@ function collectRequestedOutputRouteSupport(
   }
 }
 
-function collectProcess(acc: PlanAccumulator, process: VideoEditorProcessDescriptor): void {
+function collectProcess(
+  acc: PlanAccumulator,
+  process: VideoEditorProcessDescriptor,
+  status: ProcessStatus | undefined,
+): void {
   for (const route of process.availableRoutes) {
     addRouteSetValue(acc.routeCapabilities, route, process.processId);
   }
@@ -1290,6 +1395,36 @@ function collectProcess(acc: PlanAccumulator, process: VideoEditorProcessDescrip
     collectDescriptorBlocker(acc, blocker, process.availableRoutes[0] ?? 'sidecar-export', 'process');
   }
   acc.nextActions.push(...process.nextActions);
+
+  if (status?.state !== 'stopped' || !TRUSTED_LOCAL_PROCESS_PROTOCOLS.has(process.protocol)) {
+    return;
+  }
+
+  for (const scope of processLifecycleRouteScopes(process)) {
+    const message = status.message ?? `Process "${process.processId}" is stopped for ${scope.route}.`;
+    const nextAction = buildStartProcessAction(process, scope.route, message, scope.operationId);
+    acc.findings.push({
+      id: `planner.process.${process.extensionId}.${process.id}.${scope.route}${scope.operationId ? `.${scope.operationId}` : ''}.stopped`,
+      severity: 'info',
+      route: scope.route,
+      reason: 'process-dependent',
+      message,
+      extensionId: process.extensionId,
+      contributionId: process.id,
+      processId: process.processId,
+      ...(scope.operationId ? { operationId: scope.operationId } : {}),
+      detail: {
+        source: 'process',
+        processId: process.processId,
+        ...(scope.operationId ? { operationId: scope.operationId } : {}),
+        routeScope: scope.route,
+        processProtocol: process.protocol,
+        ...processStatusDetail(status),
+        nextAction,
+      },
+    });
+    acc.nextActions.push(nextAction);
+  }
 }
 
 function createProcessStatusMap(statuses: readonly ProcessStatus[] | undefined): ReadonlyMap<string, ProcessStatus> {
@@ -1393,9 +1528,52 @@ function buildMaterialRuntimeProjection(
     shaders,
     processes,
     processStatuses: input.processStatuses,
+    processResultAttachRecords: input.processResultAttachRecords,
     requestedRoutes: plannerRequestedRoutes(input.request),
     canonicalRoutes: requestedOutputFormat?.availableRoutes,
   });
+}
+
+function mergeProjectedProcessResultContracts(
+  input: RenderPlannerInput,
+): Pick<RenderPlannerInput, 'materialRefs' | 'materialStatuses'> {
+  if (!input.processResultAttachRecords?.length) {
+    return {
+      materialRefs: input.materialRefs,
+      materialStatuses: input.materialStatuses,
+    };
+  }
+
+  const mergedMaterialRefs = new Map<string, RenderMaterialRef>();
+  for (const materialRef of input.materialRefs ?? []) {
+    mergedMaterialRefs.set(materialRef.id, materialRef);
+  }
+
+  const mergedMaterialStatuses = new Map<string, RenderPlannerMaterialStatus>();
+  for (const materialStatus of input.materialStatuses ?? []) {
+    mergedMaterialStatuses.set(materialStatus.materialRefId, materialStatus);
+  }
+
+  for (const record of input.processResultAttachRecords) {
+    const projection = projectProcessResultContracts(record);
+    for (const materialRef of projection.materialRefs) {
+      mergedMaterialRefs.set(materialRef.id, materialRef);
+    }
+    for (const materialStatus of projection.materialStatuses) {
+      mergedMaterialStatuses.set(materialStatus.materialRefId, materialStatus);
+    }
+  }
+
+  return {
+    materialRefs: mergedMaterialRefs.size > 0
+      ? Object.freeze([...mergedMaterialRefs.values()])
+      : undefined,
+    materialStatuses: mergedMaterialStatuses.size > 0
+      ? Object.freeze([...mergedMaterialStatuses.values()].sort(
+        (left, right) => left.materialRefId.localeCompare(right.materialRefId),
+      ))
+      : undefined,
+  };
 }
 
 function collectMaterialRef(
@@ -1628,11 +1806,15 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
     requirements,
     compositionGraph,
   );
+  const projectedProcessResultContracts = mergeProjectedProcessResultContracts(input);
   const requestedOutputFormat = input.request?.outputFormatId
     ? outputFormats.find((format) => format.id === input.request?.outputFormatId)
     : undefined;
   const materialRuntime = buildMaterialRuntimeProjection(
-    input,
+    {
+      ...input,
+      ...projectedProcessResultContracts,
+    },
     outputFormats,
     processes,
     shaders,
@@ -1661,7 +1843,7 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
   }
   collectRequestedOutputRouteSupport(acc, requestedOutputFormat, input.request);
   for (const process of processes) {
-    collectProcess(acc, process);
+    collectProcess(acc, process, processStatusById.get(process.processId));
   }
   for (const material of materialRuntime.materials) {
     collectMaterialRef(acc, material);

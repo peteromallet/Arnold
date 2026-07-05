@@ -24,6 +24,7 @@ import {
 } from '@reigh/editor-sdk';
 import type { ProvenanceGap } from '@reigh/editor-sdk';
 import type { VideoEditorPlannerNextActionKind } from '@/tools/video-editor/runtime/extensionSurface.ts';
+import type { ProcessResultAttachRecord } from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
 import {
   buildCompositionDiagnostic,
   COMPOSITION_DIAGNOSTIC_CODE,
@@ -160,6 +161,7 @@ export interface HostMaterialRuntimeProjectionInput {
   readonly shaders?: readonly VideoEditorShaderDescriptor[];
   readonly processes?: readonly VideoEditorProcessDescriptor[];
   readonly processStatuses?: readonly ProcessStatus[];
+  readonly processResultAttachRecords?: readonly ProcessResultAttachRecord[];
   readonly requestedRoutes?: readonly RenderRoute[];
   readonly canonicalRoutes?: readonly RenderRoute[];
 }
@@ -211,6 +213,23 @@ export interface HostMaterialRuntimeProcessFact {
   readonly availableRoutes: readonly RenderRoute[];
   readonly supportsMaterialOutput: boolean;
   readonly declarative: true;
+  readonly attachProvenance?: HostMaterialRuntimeProcessAttachProvenance;
+}
+
+export interface HostMaterialRuntimeProcessAttachProvenance {
+  readonly kind: ProcessResultAttachRecord['kind'];
+  readonly inputKind: ProcessResultAttachRecord['provenance']['inputKind'];
+  readonly materialRefId: string;
+  readonly processRef: string;
+  readonly descriptorId: string;
+  readonly extensionId: string;
+  readonly processId: string;
+  readonly operationId: string;
+  readonly operationLabel?: string;
+  readonly taskId: string;
+  readonly status: ProcessResultAttachRecord['status'];
+  readonly attachedAt: string;
+  readonly attachedBy: ProcessResultAttachRecord['provenance']['attachedBy'];
 }
 
 export interface HostMaterialRuntimeDescriptorFacts {
@@ -425,6 +444,14 @@ function freezeShaderFact(
     : undefined;
 }
 
+function freezeProcessAttachProvenance(
+  attachProvenance: HostMaterialRuntimeProcessAttachProvenance | undefined,
+): HostMaterialRuntimeProcessAttachProvenance | undefined {
+  return attachProvenance
+    ? Object.freeze({ ...attachProvenance })
+    : undefined;
+}
+
 function freezeProcessFact(
   process: HostMaterialRuntimeProcessFact | undefined,
 ): HostMaterialRuntimeProcessFact | undefined {
@@ -432,6 +459,7 @@ function freezeProcessFact(
     ? Object.freeze({
         ...process,
         availableRoutes: Object.freeze([...process.availableRoutes]),
+        attachProvenance: freezeProcessAttachProvenance(process.attachProvenance),
       })
     : undefined;
 }
@@ -628,6 +656,55 @@ function materialContributionScopedKey(materialRef: RenderMaterialRef): string |
   return `${kind}:${materialRef.producerExtensionId}:${contributionId}`;
 }
 
+interface MaterialProcessProvenanceRecord {
+  readonly processRef?: string;
+  readonly descriptorId?: string;
+  readonly extensionId?: string;
+  readonly processId?: string;
+  readonly operationId?: string;
+  readonly taskId?: string;
+  readonly status?: ProcessResultAttachRecord['status'];
+  readonly attachedAt?: string;
+  readonly attachedBy?: ProcessResultAttachRecord['provenance']['attachedBy'];
+  readonly inputKind?: ProcessResultAttachRecord['provenance']['inputKind'];
+}
+
+function processProvenanceRecord(
+  materialRef: RenderMaterialRef,
+): MaterialProcessProvenanceRecord | undefined {
+  const rawProcess = materialRef.provenance?.process;
+  if (!rawProcess || typeof rawProcess !== 'object' || Array.isArray(rawProcess)) {
+    return undefined;
+  }
+
+  const process = rawProcess as Record<string, unknown>;
+  const processId = typeof process.processId === 'string' ? process.processId : undefined;
+  const operationId = typeof process.operationId === 'string' ? process.operationId : undefined;
+  if (!processId && !operationId) {
+    return undefined;
+  }
+
+  return Object.freeze({
+    processRef: typeof process.processRef === 'string' ? process.processRef : undefined,
+    descriptorId: typeof process.descriptorId === 'string' ? process.descriptorId : undefined,
+    extensionId: typeof process.extensionId === 'string' ? process.extensionId : undefined,
+    processId,
+    operationId,
+    taskId: typeof process.taskId === 'string' ? process.taskId : undefined,
+    status: typeof process.status === 'string'
+      ? process.status as ProcessResultAttachRecord['status']
+      : undefined,
+    attachedAt: typeof process.attachedAt === 'string' ? process.attachedAt : undefined,
+    attachedBy: process.attachedBy === 'host-runtime'
+      ? process.attachedBy
+      : undefined,
+    inputKind:
+      process.inputKind === 'process.result.attach' || process.inputKind === 'process.attach-result'
+        ? process.inputKind
+        : undefined,
+  });
+}
+
 function findContributionFact(
   materialRef: RenderMaterialRef,
   contributionIndex: ContributionIndex | undefined,
@@ -698,29 +775,135 @@ function supportsMaterialOutput(
   });
 }
 
-function findProcessFact(
-  shader: VideoEditorShaderDescriptor | undefined,
-  processes: readonly VideoEditorProcessDescriptor[] | undefined,
-  processStatuses: readonly ProcessStatus[] | undefined,
-): HostMaterialRuntimeProcessFact | undefined {
-  const processId = shader?.materializer?.processId;
-  if (!processId) {
+function attachRecordForMaterial(
+  materialRef: RenderMaterialRef,
+  attachRecords: readonly ProcessResultAttachRecord[] | undefined,
+  expectedProcessId?: string,
+  expectedOperationId?: string,
+): ProcessResultAttachRecord | undefined {
+  if (!attachRecords?.length) {
     return undefined;
   }
 
-  const process = processes?.find((candidate) => candidate.processId === processId);
-  const status = processStatuses?.find((candidate) => candidate.processId === processId);
-  const availableRoutes = process
-    ? process.availableRoutes
-    : Object.freeze([...(shader?.materializer?.routes ?? [])]);
+  for (let index = attachRecords.length - 1; index >= 0; index -= 1) {
+    const record = attachRecords[index];
+    if (!record?.returnedMaterialRefs.includes(materialRef.id)) {
+      continue;
+    }
+    if (expectedProcessId && record.processId !== expectedProcessId) {
+      continue;
+    }
+    if (expectedOperationId && record.operationId !== expectedOperationId) {
+      continue;
+    }
+    return record;
+  }
+
+  return undefined;
+}
+
+function buildAttachProcessProvenance(
+  materialRef: RenderMaterialRef,
+  attachRecord: ProcessResultAttachRecord | undefined,
+  provenanceRecord: MaterialProcessProvenanceRecord | undefined,
+): HostMaterialRuntimeProcessAttachProvenance | undefined {
+  if (attachRecord) {
+    return Object.freeze({
+      kind: attachRecord.kind,
+      inputKind: attachRecord.provenance.inputKind,
+      materialRefId: materialRef.id,
+      processRef: attachRecord.processRef,
+      descriptorId: attachRecord.provenance.descriptor.descriptorId,
+      extensionId: attachRecord.provenance.descriptor.extensionId,
+      processId: attachRecord.processId,
+      operationId: attachRecord.operationId,
+      operationLabel: attachRecord.provenance.operation.label,
+      taskId: attachRecord.taskId,
+      status: attachRecord.status,
+      attachedAt: attachRecord.provenance.attachedAt,
+      attachedBy: attachRecord.provenance.attachedBy,
+    });
+  }
+
+  if (
+    !provenanceRecord?.processRef
+    || !provenanceRecord.descriptorId
+    || !provenanceRecord.extensionId
+    || !provenanceRecord.processId
+    || !provenanceRecord.operationId
+    || !provenanceRecord.taskId
+    || !provenanceRecord.status
+    || !provenanceRecord.attachedAt
+    || !provenanceRecord.attachedBy
+    || !provenanceRecord.inputKind
+  ) {
+    return undefined;
+  }
 
   return Object.freeze({
+    kind: 'process.result.attach',
+    inputKind: provenanceRecord.inputKind,
+    materialRefId: materialRef.id,
+    processRef: provenanceRecord.processRef,
+    descriptorId: provenanceRecord.descriptorId,
+    extensionId: provenanceRecord.extensionId,
+    processId: provenanceRecord.processId,
+    operationId: provenanceRecord.operationId,
+    taskId: provenanceRecord.taskId,
+    status: provenanceRecord.status,
+    attachedAt: provenanceRecord.attachedAt,
+    attachedBy: provenanceRecord.attachedBy,
+  });
+}
+
+function findProcessFact(
+  materialRef: RenderMaterialRef,
+  shader: VideoEditorShaderDescriptor | undefined,
+  input: HostMaterialRuntimeProjectionInput,
+): HostMaterialRuntimeProcessFact | undefined {
+  const provenanceRecord = processProvenanceRecord(materialRef);
+  const processId = shader?.materializer?.processId ?? provenanceRecord?.processId;
+  const operationId = shader?.materializer?.operationId ?? provenanceRecord?.operationId;
+  const process = input.processes?.find((candidate) => candidate.processId === processId);
+  const status = input.processStatuses?.find((candidate) => candidate.processId === processId);
+  const attachRecord = attachRecordForMaterial(
+    materialRef,
+    input.processResultAttachRecords,
     processId,
-    operationId: shader?.materializer?.operationId,
+    operationId,
+  );
+
+  if (!processId && !attachRecord) {
+    return undefined;
+  }
+
+  const availableRoutes = process
+    ? process.availableRoutes
+    : attachRecord?.provenance.operation.routes
+      ?? Object.freeze([...(shader?.materializer?.routes ?? [])]);
+  const attachProvenance = buildAttachProcessProvenance(
+    materialRef,
+    attachRecord,
+    provenanceRecord,
+  );
+
+  return Object.freeze({
+    processId: processId ?? attachRecord?.processId ?? provenanceRecord?.processId ?? 'unknown',
+    ...(operationId || attachRecord?.operationId || provenanceRecord?.operationId
+      ? {
+          operationId: operationId
+            ?? attachRecord?.operationId
+            ?? provenanceRecord?.operationId,
+        }
+      : {}),
     state: status?.state,
     availableRoutes,
-    supportsMaterialOutput: supportsMaterialOutput(process, shader?.materializer?.operationId),
+    supportsMaterialOutput: process
+      ? supportsMaterialOutput(process, operationId ?? attachRecord?.operationId ?? provenanceRecord?.operationId)
+      : !attachRecord?.provenance.operation.outputKinds
+        || attachRecord.provenance.operation.outputKinds.includes('material'),
     declarative: true,
+    ...(attachProvenance ? { attachProvenance } : {}),
   });
 }
 
@@ -730,7 +913,7 @@ function buildDescriptorFacts(
 ): HostMaterialRuntimeDescriptorFacts {
   const shader = findShaderDescriptor(materialRef, input.shaders);
   const contribution = findContributionFact(materialRef, input.contributionIndex);
-  const process = findProcessFact(shader, input.processes, input.processStatuses);
+  const process = findProcessFact(materialRef, shader, input);
 
   return freezeDescriptorFacts({
     contribution,

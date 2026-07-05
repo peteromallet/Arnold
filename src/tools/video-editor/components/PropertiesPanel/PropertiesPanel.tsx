@@ -35,6 +35,7 @@ import {
   ExtensionManagerErrorBoundary,
   type ManagerErrorInfo,
 } from '@/tools/video-editor/components/ExtensionManager';
+import { ProcessDashboard } from '@/tools/video-editor/components/ProcessDashboard/ProcessDashboard';
 
 function InspectorRegistrySections({
   placement,
@@ -91,7 +92,7 @@ function InspectorRegistrySections({
 
 function PropertiesPanelComponent() {
   useRenderDiagnostic('PropertiesPanel');
-  const [activePanelTab, setActivePanelTab] = useState<'inspector' | 'extensions'>('inspector');
+  const [activePanelTab, setActivePanelTab] = useState<'inspector' | 'extensions' | 'processes'>('inspector');
   const handleManagerError = (_info: ManagerErrorInfo) => {
     // Error already logged by the boundary; could aggregate to diagnostics sink in future.
   };
@@ -251,12 +252,13 @@ function PropertiesPanelComponent() {
     <div className="flex h-full min-h-0 flex-col gap-3" style={VIDEO_EDITOR_THEME_VARS}>
       <Tabs
         value={activePanelTab}
-        onValueChange={(value) => setActivePanelTab(value as 'inspector' | 'extensions')}
+        onValueChange={(value) => setActivePanelTab(value as 'inspector' | 'extensions' | 'processes')}
         className="flex min-h-0 flex-1 flex-col"
       >
-        <TabsList className="grid w-full grid-cols-2 bg-muted/60">
+        <TabsList className="grid w-full grid-cols-3 bg-muted/60">
           <TabsTrigger value="inspector">Inspector</TabsTrigger>
           <TabsTrigger value="extensions">Extensions</TabsTrigger>
+          <TabsTrigger value="processes">Processes</TabsTrigger>
         </TabsList>
         <TabsContent value="inspector" className="mt-3 flex min-h-0 flex-1 flex-col gap-3">
           {showInspectorActions && (
@@ -420,6 +422,9 @@ function PropertiesPanelComponent() {
           >
             <ExtensionManager />
           </ExtensionManagerErrorBoundary>
+        </TabsContent>
+        <TabsContent value="processes" className="mt-3 min-h-0 flex-1 overflow-auto">
+          <ProcessDashboard />
         </TabsContent>
       </Tabs>
     </div>

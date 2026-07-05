@@ -212,4 +212,48 @@ describe('MaterialBrowser', () => {
     expect(results.textContent).not.toContain('mat-pending');
     expect(results.textContent).not.toContain('mat-resolved');
   });
+
+  it('recognizes start-process actions in the planner action allowlist', () => {
+    const onAction = vi.fn();
+    const startProcessAction = {
+      kind: 'start-process' as const,
+      label: 'Start Process',
+      message: 'Start the upscale process.',
+      detail: { specificKind: 'start-process' as const },
+    };
+    render(
+      <MaterialBrowser
+        materials={[material('mat-a')]}
+        materialStatuses={[{ materialRefId: 'mat-a', state: 'stale' }]}
+        plannerResult={{
+          nextActions: [startProcessAction],
+          blockers: [{
+            id: 'blocker-process',
+            severity: 'warning',
+            route: 'browser-export',
+            reason: 'process-stopped',
+            materialRefId: 'mat-a',
+            message: 'Process upscale is stopped.',
+            detail: {
+              code: 'process/stopped',
+              nextAction: startProcessAction,
+            },
+          }],
+          diagnostics: [],
+        }}
+        onAction={onAction}
+      />,
+    );
+
+    expect(screen.getByText('process/stopped')).toBeInTheDocument();
+    expect(screen.getByText('Start Process')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Start Process'));
+    expect(onAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'start-process',
+        label: 'Start Process',
+      }),
+      expect.objectContaining({ id: 'mat-a' }),
+    );
+  });
 });
