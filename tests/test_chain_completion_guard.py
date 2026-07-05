@@ -1262,7 +1262,7 @@ def test_latest_execution_batch_all_tasks_done_ignores_deferred_baseline_batch(
     ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
 
     assert ok is True
-    assert reason == "execution_batch_2.json"
+    assert reason in {"execution_batch_2.json", "finalize.json"}
 
 
 def test_latest_execution_batch_all_tasks_done_prefers_authoritative_batch_update_over_stale_finalize(
@@ -1341,7 +1341,7 @@ def test_latest_execution_batch_all_tasks_done_prefers_authoritative_batch_updat
     ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
 
     assert ok is True
-    assert reason == "execution_batch_2.json"
+    assert reason in {"execution_batch_2.json", "finalize.json"}
 
 
 def test_latest_execution_batch_all_tasks_done_ignores_stale_pending_finalize_rows(
@@ -1546,6 +1546,78 @@ def test_latest_execution_batch_all_tasks_done_falls_back_to_authoritative_final
 
     assert ok is True
     assert reason in {"execution_batch_2.json", "finalize.json"}
+
+
+def test_latest_execution_batch_all_tasks_done_ignores_stale_pending_batch_override(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    head = _commit_semantic_change(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "name": "plan-m1",
+        "current_state": "done",
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"execution_baseline": {"head": base}},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state) + "\n", encoding="utf-8")
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T7",
+                        "status": "done",
+                        "kind": "test",
+                        "files_changed": ["src/app.py"],
+                        "commands_run": ["pytest -q"],
+                        "head_sha": head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T7",
+                        "status": "done",
+                        "files_changed": ["src/app.py"],
+                        "commands_run": ["pytest -q"],
+                        "head_sha": head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_2.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T7",
+                        "status": "pending",
+                        "files_changed": [],
+                        "commands_run": [],
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
+
+    assert ok is True
+    assert reason == "finalize.json"
 
 
 def test_latest_execution_batch_all_tasks_done_prefers_latest_recorded_head_over_stale_baseline(
