@@ -127,7 +127,52 @@ def test_load_plan_reconciles_completed_review_to_done(tmp_path: Path) -> None:
     assert "resume_cursor" not in persisted
 
 
-def test_save_state_merge_meta_preserves_newer_disk_transition(tmp_path: Path) -> None:
+def test_save_state_merge_meta_phase_save_advances_state_by_default(tmp_path: Path) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "prep-plan"
+    phase_state = {
+        "name": "prep-plan",
+        "current_state": "prepped",
+        "iteration": 0,
+        "config": {},
+        "sessions": {},
+        "plan_versions": [],
+        "history": [{"step": "prep", "result": "success"}],
+        "meta": {
+            "overrides": [
+                {"action": "phase-save", "timestamp": "2026-07-03T18:03:00Z"}
+            ]
+        },
+        "last_gate": {},
+        "latest_failure": None,
+    }
+    _write_plan_state(
+        plan_dir,
+        {
+            "name": "prep-plan",
+            "current_state": "initialized",
+            "iteration": 0,
+            "config": {},
+            "sessions": {},
+            "plan_versions": [],
+            "history": [{"step": "init", "result": "success"}],
+            "meta": {
+                "notes": [{"timestamp": "2026-07-03T18:02:58Z", "note": "operator note"}]
+            },
+            "last_gate": {},
+            "latest_failure": None,
+        },
+    )
+
+    save_state_merge_meta(plan_dir, phase_state)
+
+    persisted = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert persisted["current_state"] == "prepped"
+    assert persisted["history"] == [{"step": "prep", "result": "success"}]
+    assert persisted["meta"]["notes"][0]["note"] == "operator note"
+    assert [item["action"] for item in persisted["meta"]["overrides"]] == ["phase-save"]
+
+
+def test_save_state_merge_meta_can_preserve_newer_disk_transition(tmp_path: Path) -> None:
     plan_dir = tmp_path / ".megaplan" / "plans" / "clarified-plan"
     stale_note_state = {
         "name": "clarified-plan",
@@ -168,7 +213,7 @@ def test_save_state_merge_meta_preserves_newer_disk_transition(tmp_path: Path) -
         },
     )
 
-    save_state_merge_meta(plan_dir, stale_note_state)
+    save_state_merge_meta(plan_dir, stale_note_state, preserve_disk_non_meta=True)
 
     persisted = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     assert persisted["current_state"] == "prepped"

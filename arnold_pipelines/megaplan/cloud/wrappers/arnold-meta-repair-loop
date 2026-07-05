@@ -434,13 +434,14 @@ fi
 RESP_TEXT="$(cat "$RESP_PATH")"
 log "codex response $(wc -l <<<"$RESP_TEXT" | tr -d ' ') lines"
 
-if grep -qE 'Codex meta-repair orchestrator returned no output|Codex meta-repair prompt exceeded input limit|Not inside a trusted directory|--skip-git-repo-check was not specified|Input exceeds the maximum length|input_too_large' "$RESP_PATH" "$ERR_PATH" 2>/dev/null; then
+# ---- parse verdict from response -------------------------------------------
+VERDICT="$(echo "$RESP_TEXT" | head -1 | tr -d '\r\n')"
+
+if [[ "$VERDICT" != FIXED* && "$VERDICT" != ESCALATE* && "$VERDICT" != NO_FIX* ]] && grep -qE 'Codex meta-repair orchestrator returned no output|Codex meta-repair prompt exceeded input limit|Not inside a trusted directory|--skip-git-repo-check was not specified|Input exceeds the maximum length|input_too_large' "$RESP_PATH" "$ERR_PATH" 2>/dev/null; then
   log "codex launch failed before producing a recordable meta-repair response; leaving recursion guard unpoisoned"
   exit 1
 fi
 
-# ---- parse verdict from response -------------------------------------------
-VERDICT="$(echo "$RESP_TEXT" | head -1 | tr -d '\r\n')"
 if [[ "$VERDICT" == FIXED* ]]; then
   log "verdict=FIXED"
 elif [[ "$VERDICT" == ESCALATE* ]]; then

@@ -170,6 +170,19 @@ if ! tmux has-session -t watchdog 2>/dev/null; then
   echo "cloud watchdog running in tmux session 'watchdog'"
 fi
 
+# Launch the interactive Discord resident when its shared secret env exists.
+# Watchdog escalation DMs and resident replies both read the same token/user
+# file, but only this resident session listens for inbound Discord messages.
+if [[ -f /workspace/.secrets/megaplan-resident-discord.env ]]; then
+  if ! tmux has-session -t megaplan-resident-discord 2>/dev/null; then
+    tmux new-session -d -s megaplan-resident-discord -c /workspace/arnold \
+      "bash -lc 'set -a; . /workspace/.secrets/megaplan-resident-discord.env; set +a; export PYTHONPATH=/workspace/arnold:\${PYTHONPATH:-}; echo [resident-start] \$(date -Iseconds) provider=\$MEGAPLAN_RESIDENT_MODEL_PROVIDER model=\$MEGAPLAN_RESIDENT_MODEL >> /workspace/megaplan-resident-discord.log; python -m arnold_pipelines.megaplan resident discord --mode \${MEGAPLAN_RESIDENT_MODE:-dev} >> /workspace/megaplan-resident-discord.log 2>&1'"
+    echo "Discord resident running in tmux session 'megaplan-resident-discord'"
+  fi
+else
+  echo "Discord resident not started; /workspace/.secrets/megaplan-resident-discord.env is missing"
+fi
+
 # Tiny health server so the process supervisor keeps the container alive
 python3 /usr/local/bin/healthserver.py &
 HEALTH_PID=$$!

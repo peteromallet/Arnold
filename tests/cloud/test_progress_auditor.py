@@ -1656,6 +1656,174 @@ class TestLiveSignalFiltering:
         assert len(findings["green_checks"]) == 1
         assert findings["green_checks"][0]["plan"] == "demo-plan"
 
+    def test_gather_flags_watchdog_complete_chain_health_disagreement(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"name": "demo-plan", "current_state": "executing", "iteration": 1}),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 1,
+                    "current_plan_name": "demo-plan",
+                    "last_state": "between_milestones",
+                    "chain_complete": False,
+                    "pr_state": "open",
+                    "milestones": [{"label": "m1"}, {"label": "m2"}],
+                    "completed": [{"label": "m1", "status": "done"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        watchdog_report = tmp_path / "watchdog-report.json"
+        watchdog_report.write_text(
+            json.dumps(
+                {
+                    "timestamp_utc": "2026-07-04T10:14:01+00:00",
+                    "items": [{"session": "demo-session", "plan": "demo-plan", "status": "complete"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_WATCHDOG_REPORT": str(watchdog_report)},
+        )
+
+        assert len(findings["findings"]) == 1
+        finding = findings["findings"][0]
+        assert any("watchdog_chain_health_disagreement" in reason for reason in finding["reasons"])
+        assert finding["prior_watchdog_report_refs"][0]["matched_status"] == "complete"
+        assert findings["green_checks"] == []
+
+    def test_gather_flags_watchdog_awaiting_merge_after_terminal_chain(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"name": "demo-plan", "current_state": "done", "iteration": 8}),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 2,
+                    "current_plan_name": "",
+                    "last_state": "done",
+                    "chain_complete": True,
+                    "pr_state": "merged",
+                    "milestones": [{"label": "m1"}, {"label": "m2"}],
+                    "completed": [{"label": "m1", "status": "done"}, {"label": "m2", "status": "done"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        watchdog_report = tmp_path / "watchdog-report.json"
+        watchdog_report.write_text(
+            json.dumps(
+                {
+                    "timestamp_utc": "2026-07-04T10:14:01+00:00",
+                    "issues": [{"session": "demo-session", "plan": "demo-plan", "status": "awaiting_pr_merge"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_WATCHDOG_REPORT": str(watchdog_report)},
+        )
+
+        assert len(findings["findings"]) == 1
+        assert any("watchdog_chain_health_disagreement" in reason for reason in findings["findings"][0]["reasons"])
+        assert findings["findings"][0]["prior_watchdog_report_refs"][0]["matched_status"] == "awaiting_pr_merge"
+
+    def test_gather_flags_repair_data_ghost_running(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        chain_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"name": "demo-plan", "current_state": "done", "iteration": 1}),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+        (chain_dir / "chain-demo.json").write_text(
+            json.dumps(
+                {
+                    "current_milestone_index": 1,
+                    "current_plan_name": "",
+                    "last_state": "done",
+                    "chain_complete": True,
+                    "pr_state": "merged",
+                    "milestones": [{"label": "m1"}],
+                    "completed": [{"label": "m1", "status": "done"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir(parents=True, exist_ok=True)
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "outcome": "running",
+                    "current_attempt_id": "",
+                    "attempt_ids": [],
+                    "iterations": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "chain",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            extra_env={"MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root)},
+        )
+
+        assert len(findings["findings"]) == 1
+        assert any("repair_data_ghost_running" in reason for reason in findings["findings"][0]["reasons"])
+        assert findings["findings"][0]["repair_data_summary"]["current_attempt_id"] == ""
+
 
 class TestRootCausePatternsJsonSchema:
     """Verify root_cause_patterns JSON payload shape invariants and stable keys."""

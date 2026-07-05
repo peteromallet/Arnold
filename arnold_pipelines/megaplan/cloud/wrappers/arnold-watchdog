@@ -251,6 +251,7 @@ plan_attention_status_env() {
   python3 - "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" <<'PY'
 import hashlib
 import json
+import os
 import re
 import shlex
 import sys
@@ -659,12 +660,46 @@ for raw in (
 ):
     add_unique(pushed_commits, raw if isinstance(raw, str) else None)
 
+active_step = state.get("active_step")
+active_step_present = isinstance(active_step, dict) and bool(
+    active_step.get("phase") or active_step.get("worker_pid")
+)
+active_step_phase = ""
+active_step_worker_pid = ""
+active_step_pid_alive = ""
+if isinstance(active_step, dict):
+    phase = active_step.get("phase") or active_step.get("step")
+    if isinstance(phase, str):
+        active_step_phase = phase
+    raw_pid = active_step.get("worker_pid")
+    if raw_pid not in (None, ""):
+        active_step_worker_pid = str(raw_pid)
+        try:
+            pid = int(raw_pid)
+        except (TypeError, ValueError):
+            pid = 0
+        if pid > 0:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                active_step_pid_alive = "0"
+            except PermissionError:
+                active_step_pid_alive = "1"
+            except OSError:
+                active_step_pid_alive = "0"
+            else:
+                active_step_pid_alive = "1"
+
 manual_review = current_state == "manual_review" or retry_strategy == "manual_review"
 awaiting_human = (current_state in human_gate_states or chain_last_state in human_gate_states) and not state_mismatch
 
 emit("PLAN_STATUS_FOUND", "1" if state else "0")
 emit("PLAN_STATUS_PLAN_NAME", resolved_plan_name)
 emit("PLAN_STATUS_CURRENT_STATE", current_state)
+emit("PLAN_STATUS_ACTIVE_STEP_PRESENT", "1" if active_step_present else "0")
+emit("PLAN_STATUS_ACTIVE_STEP_PHASE", active_step_phase)
+emit("PLAN_STATUS_ACTIVE_STEP_WORKER_PID", active_step_worker_pid)
+emit("PLAN_STATUS_ACTIVE_STEP_PID_ALIVE", active_step_pid_alive)
 emit("PLAN_STATUS_RETRY_STRATEGY", retry_strategy)
 emit("PLAN_STATUS_FAILURE_KIND", failure_kind)
 emit("PLAN_STATUS_FAILURE_MESSAGE", failure_message)
@@ -1007,7 +1042,11 @@ from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
-from arnold_pipelines.megaplan.cloud.repair_contract import classify_repair_dispatch, project_repair_custody
+from arnold_pipelines.megaplan.cloud.repair_contract import (
+    _blocked_task_id_from_failure,
+    classify_repair_dispatch,
+    project_repair_custody,
+)
 from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
 
 session, workspace_raw, remote_spec_raw, run_kind, plan_name, marker_dir_raw, repair_data_dir_raw = sys.argv[1:]
@@ -1158,7 +1197,11 @@ if not projection.get("active_request_ids"):
             "phase_or_step": str(latest_failure.get("phase") or ""),
             "milestone_or_plan": resolved_plan_name,
             "gate_recommendation": "",
-            "blocked_task_id": str(metadata.get("blocked_task_id") or ""),
+            "blocked_task_id": str(
+                metadata.get("blocked_task_id")
+                or _blocked_task_id_from_failure(latest_failure, metadata)
+                or ""
+            ),
         },
         root_cause_hint=str(latest_failure.get("message") or ""),
     )
@@ -2981,6 +3024,7 @@ if (
     status == "ok"
     and not completion_guard_repair_eligible
     and not plan_projected_nonterminal
+    and not plan_has_live_activity
     and no_advance_ticks >= NO_ADVANCE_TICKS
 ):
     status = "chain_no_advance"
@@ -5554,6 +5598,7 @@ def is_complete_state(payload: object) -> bool:
         incomplete = [
             item for item in completed_list
             if isinstance(item, dict) and str(item.get("status") or "").strip() not in {"done", "complete", "completed"}
+            and "label" not in item
         ]
         if incomplete:
             return False
@@ -5835,6 +5880,10 @@ PY
   PLAN_STATUS_FOUND=0
   PLAN_STATUS_PLAN_NAME=
   PLAN_STATUS_CURRENT_STATE=
+  PLAN_STATUS_ACTIVE_STEP_PRESENT=0
+  PLAN_STATUS_ACTIVE_STEP_PHASE=
+  PLAN_STATUS_ACTIVE_STEP_WORKER_PID=
+  PLAN_STATUS_ACTIVE_STEP_PID_ALIVE=
   PLAN_STATUS_RETRY_STRATEGY=
   PLAN_STATUS_FAILURE_KIND=
   PLAN_STATUS_FAILURE_MESSAGE=
@@ -5861,6 +5910,13 @@ PY
   plan_status_env="$(plan_attention_status_env "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" 2>>"$LOG" || true)"
   if [[ -n "$plan_status_env" ]]; then
     eval "$plan_status_env"
+  fi
+  if [[ "$health" == "stopped" && "${PLAN_STATUS_ACTIVE_STEP_PRESENT:-0}" == "1" && "${PLAN_STATUS_ACTIVE_STEP_PID_ALIVE:-}" != "1" ]]; then
+    local stale_active_summary
+    stale_active_summary="stale_active_step: plan=${PLAN_STATUS_PLAN_NAME:-unknown}; state=${PLAN_STATUS_CURRENT_STATE:-unknown}; phase=${PLAN_STATUS_ACTIVE_STEP_PHASE:-unknown}; worker_pid=${PLAN_STATUS_ACTIVE_STEP_WORKER_PID:-none} not live"
+    emit_watchdog_incident_bridge_event "detection" "$session" "$workspace" "$remote_spec" "$stale_active_summary" "stale_active_step" "immediate_repair"
+    repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "$stale_active_summary" || true
+    return 0
   fi
   if [[ "${PLAN_STATUS_STATE_MISMATCH:-0}" == "1" ]]; then
     local mismatch_summary repair_busy

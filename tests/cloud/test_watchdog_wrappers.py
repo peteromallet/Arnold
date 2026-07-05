@@ -2340,6 +2340,71 @@ def test_watchdog_checks_plan_phase_health_even_when_session_alive() -> None:
     assert 'report_item "$report_items" "$session" "repair" "repair_dispatched"' in text
 
 
+def test_watchdog_plan_status_exports_stale_active_step_pid(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    initiative_dir = workspace / ".megaplan" / "initiatives" / "demo"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    initiative_dir.mkdir(parents=True)
+    spec_path = initiative_dir / "chain.yaml"
+    spec_path.write_text("milestones:\n  - label: m1\n", encoding="utf-8")
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    (chain_dir / f"chain-{digest}.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": "demo-plan",
+                "current_milestone_index": 0,
+                "last_state": "initialized",
+                "completed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo-plan",
+                "current_state": "initialized",
+                "active_step": {
+                    "phase": "prep",
+                    "worker_pid": 99999999,
+                    "attempt": 1,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_attention_status_env"),
+            f"plan_attention_status_env {str(workspace)!r} {str(spec_path)!r} chain ''",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.strip().splitlines()
+    assert "PLAN_STATUS_ACTIVE_STEP_PRESENT=1" in lines
+    assert "PLAN_STATUS_ACTIVE_STEP_PHASE=prep" in lines
+    assert "PLAN_STATUS_ACTIVE_STEP_WORKER_PID=99999999" in lines
+    assert "PLAN_STATUS_ACTIVE_STEP_PID_ALIVE=0" in lines
+
+
+def test_watchdog_routes_dead_active_step_to_repair_dispatch() -> None:
+    text = _wrapper("arnold-watchdog")
+
+    assert 'PLAN_STATUS_ACTIVE_STEP_PRESENT=0' in text
+    assert 'PLAN_STATUS_ACTIVE_STEP_PID_ALIVE=' in text
+    assert 'stale_active_step: plan=${PLAN_STATUS_PLAN_NAME:-unknown}' in text
+    assert (
+        'repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" '
+        '"$stale_active_summary"'
+    ) in text
+
+
 def test_watchdog_reaper_is_wired_into_scan_and_report_summary() -> None:
     text = _wrapper("arnold-watchdog")
 
@@ -3584,6 +3649,52 @@ ps() {{
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "alive"
+
+
+def test_watchdog_terminal_status_accepts_label_only_completed_chain(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True)
+    spec_path = workspace / ".megaplan" / "briefs" / "python-shaped-workflow-authoring" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text(
+        "\n".join(
+            [
+                "merge_policy: review",
+                "milestones:",
+                "  - label: m1",
+                "  - label: m2",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_chain_state(
+        chain_dir / "chain-demo.json",
+        {
+            "last_state": "done",
+            "current_milestone_index": 2,
+            "current_plan_name": "",
+            "completed": [{"label": "m1"}, {"label": "m2"}],
+            "pr_number": 128,
+            "pr_state": "merged",
+        },
+    )
+    repair_dir = tmp_path / "repair-data"
+    repair_dir.mkdir()
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("session_terminal_status"),
+            f"MARKER_DIR={str(tmp_path / 'markers')!r}",
+            f"REPAIR_DATA_DIR={str(repair_dir)!r}",
+            f"session_terminal_status demo-session {str(workspace)!r} {str(spec_path)!r} chain",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "complete\tchain complete"
 
 
 def test_watchdog_auto_merge_policy_attempts_pr_merge_before_waiting(
@@ -5070,6 +5181,102 @@ def test_watchdog_manual_review_repairable_fixture_dispatches_l1_without_needs_h
                 "message": "repairable blocker",
                 "phase": "execute",
                 "metadata": {"blocked_task_id": "T1"},
+            },
+        },
+        events_body="{}\n",
+    )
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True, exist_ok=True)
+    import hashlib
+
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    (chain_dir / f"{spec_path.stem}-{digest}.json").write_text(
+        json.dumps({"current_plan_name": plan_name, "last_state": "blocked"}),
+        encoding="utf-8",
+    )
+    (marker_dir / "demo-chain.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-chain",
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+                "run_kind": "chain",
+                "plan_name": plan_name,
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_attention_status_env"),
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+session_health_status() { echo stopped; }
+session_terminal_status() { return 0; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
+resolve_existing_remote_spec() { printf '%s\n' "$3"; }
+dispatch_kimi_repair() { echo DISPATCH >&2; REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+notify_needs_human() {
+  report_item "$1" "$2" "observe" "needs_human" "$7" "$3" "$4"
+  log "needs-human webhook unset"
+}
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/initiatives/demo-chain/chain.yaml {str(report_path)!r} chain '' ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\trepair\trepair_dispatched\tmanual_review repair loop dispatched before needs_human\t" in report
+    assert "\tobserve\tneeds_human\t" not in report
+    assert "DISPATCH" in result.stderr
+    assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
+
+
+def test_watchdog_execution_blocked_manual_review_dispatches_l1_without_needs_human(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "progress-auditor-stage-20260704-1400"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "iteration": 8,
+            "name": plan_name,
+            "current_state": "blocked",
+            "resume_cursor": {"phase": "execute", "retry_strategy": "manual_review"},
+            "latest_failure": {
+                "kind": "execution_blocked",
+                "message": "execute reported prerequisite-blocked tasks: T4",
+                "phase": "execute",
+                "metadata": {"blocking_reasons": ["T4 fixture evidence not surfaced"]},
             },
         },
         events_body="{}\n",
@@ -8920,6 +9127,57 @@ def test_chain_health_no_advance_ignores_active_plan_step() -> None:
         assert result["CHAIN_HEALTH_STATUS"] == "ok"
 
 
+def test_chain_health_no_advance_ignores_existing_counter_after_plan_becomes_live() -> None:
+    tmp = Path(tempfile.mkdtemp())
+    ws = tmp / "ws"
+    marker = tmp / "markers"
+    repair_dir = tmp / "repair-data"
+    plan_name = "demo-plan"
+    _write_plan(
+        ws / ".megaplan" / "plans" / plan_name,
+        {
+            "current_state": "executing",
+            "iteration": 2,
+            "active_step": {"phase": "execute", "worker_pid": 1234},
+        },
+        events_body=json.dumps({"kind": "phase_started", "phase": "execute"}) + "\n",
+    )
+    _write_chain_state(
+        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        {
+            "current_milestone_index": 2,
+            "current_plan_name": plan_name,
+            "last_state": "executing",
+            "pr_state": "open",
+            "completed": [{"label": "m1"}],
+        },
+    )
+    marker.mkdir(parents=True, exist_ok=True)
+    (marker / "demo.chain-health.progress.json").write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 2,
+                "completed_count": 1,
+                "events_mtime": 1,
+                "events_size": 1,
+                "last_state": "executing",
+                "no_advance_ticks": 3,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_chain_health(
+        ws,
+        marker,
+        repair_dir,
+        env_overrides={"CLOUD_WATCHDOG_CHAIN_NO_ADVANCE_TICKS": "2"},
+    )
+
+    assert result["CHAIN_HEALTH_STATUS"] == "ok"
+    assert result["CHAIN_HEALTH_ARTIFACT_PATH"] == ""
+
+
 def test_chain_health_no_advance_ignores_projected_blocked_plan() -> None:
     tmp = Path(tempfile.mkdtemp())
     ws = tmp / "ws"
@@ -9869,6 +10127,78 @@ def test_auditor_gather_includes_chain_repair_stderr_and_user_action_evidence(tm
     assert "unresolved user actions" in reasons
     assert "latest_failure is stale" in reasons
     assert "stale block replay" in reasons
+
+
+def test_auditor_gather_flags_dead_active_step_worker_pid(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    plan_name = "ghost-worker-demo"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    _write_plan(
+        plan_dir,
+        {
+            "name": plan_name,
+            "iteration": 0,
+            "current_state": "initialized",
+            "created_at": _iso_hours_ago(0.25),
+            "active_step": {
+                "phase": "prep",
+                "attempt": 1,
+                "worker_pid": 99999999,
+            },
+        },
+        events_body=json.dumps({"kind": "llm_token_heartbeat", "phase": "prep"}) + "\n",
+    )
+
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True)
+    (chain_dir / "chain-demo.json").write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 0,
+                "current_plan_name": plan_name,
+                "last_state": "initialized",
+                "pr_state": "open",
+                "completed": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    gather_dir = tmp_path / "gather"
+    gather_dir.mkdir()
+    worklist = tmp_path / "worklist.jsonl"
+    worklist.write_text(
+        json.dumps(
+            {
+                "workspace": str(workspace),
+                "plan": plan_name,
+                "session": "ghost-worker-session",
+                "kind": "chain",
+                "remote_spec": str(workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"),
+                "launch_command": "python3 -P -m arnold_pipelines.megaplan chain start --spec demo",
+                "log": str(workspace / ".megaplan" / "cloud-chain-ghost-worker-session.log"),
+                "sources": ["marker"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    gather_path = gather_dir / "gather.py"
+    gather_path.write_text(_extract_auditor_gather_program(), encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(gather_path), str(worklist), str(gather_dir), "6", str(tmp_path), "none"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    findings = json.loads((gather_dir / "findings.json").read_text(encoding="utf-8"))["findings"]
+    assert findings, "expected dead active_step worker pid to produce a finding"
+    finding = findings[0]
+    assert finding["active_step_liveness"]["worker_pid"] == "99999999"
+    assert finding["active_step_liveness"]["worker_pid_alive"] is False
+    assert "plan_active_step_ghost_worker" in " ".join(finding["reasons"])
 
 
 def test_progress_auditor_dispatch_redacts_brief_and_codex_response_files(tmp_path: Path) -> None:
@@ -10976,6 +11306,19 @@ def test_meta_repair_wrapper_has_record_persistence() -> None:
     assert 'META_REPAIR_ID' in text
     assert 'leaving recursion guard unpoisoned' in text
     assert 'Codex meta-repair prompt exceeded input limit; see meta-repair log.' in text
+
+
+def test_meta_repair_wrapper_accepts_valid_verdict_before_launch_failure_grep() -> None:
+    """A valid verdict on stdout must not be discarded because stderr is noisy."""
+    text = _meta_repair_wrapper()
+    verdict_parse = 'VERDICT="$(echo "$RESP_TEXT" | head -1 | tr -d'
+    guarded_launch_failure = (
+        'if [[ "$VERDICT" != FIXED* && "$VERDICT" != ESCALATE* && "$VERDICT" != NO_FIX* ]] '
+        '&& grep -qE'
+    )
+
+    assert text.index(verdict_parse) < text.index(guarded_launch_failure)
+    assert guarded_launch_failure in text
 
 
 def test_meta_repair_recursion_check_embedded_python_matches_contract(

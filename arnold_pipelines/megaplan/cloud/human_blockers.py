@@ -20,6 +20,10 @@ from typing import Any, Literal, Mapping, Sequence
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.redact import redact_payload
 from arnold_pipelines.megaplan.cloud.repair_contract import atomic_write_json
+from arnold_pipelines.megaplan.observability.events import (
+    event_signature_summary,
+    format_signature_line,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -301,6 +305,7 @@ def build_needs_human_marker(
     repair_data_path: str | Path,
     discord_status: str,
     recorded_at: str | None = None,
+    escalation_label: str | None = None,
 ) -> dict[str, Any]:
     """Build a compatibility needs-human payload with additive current-pointer fields."""
 
@@ -310,9 +315,14 @@ def build_needs_human_marker(
 
     plan_name = _safe_marker_text(repair_payload.get("plan_name"))
     chain_current_plan_name = ""
+    events_path = ""
     for item in reversed(iterations):
         if not isinstance(item, Mapping):
             continue
+        if not events_path:
+            candidate = item.get("plan_events_path")
+            if isinstance(candidate, str) and candidate:
+                events_path = candidate
         chain_state = item.get("chain_state_summary")
         if isinstance(chain_state, Mapping):
             value = _safe_marker_text(chain_state.get("current_plan_name"))
@@ -330,6 +340,27 @@ def build_needs_human_marker(
             f"kimi={item.get('kimi_launch', '') or 'n/a'} why={item.get('why', '') or item.get('kimi_diagnosis', '') or 'n/a'}"
         )
 
+    # Inline the real error signatures from the plan's events.ndjson so the
+    # repair operator and humans see the primary evidence (e.g.
+    # "authority_divergence/head_mismatch x293") instead of only prose narratives.
+    if not events_path:
+        failure_context = repair_payload.get("current_failure_context")
+        if isinstance(failure_context, Mapping):
+            candidate = failure_context.get("plan_events_path")
+            if isinstance(candidate, str) and candidate:
+                events_path = candidate
+    signatures = event_signature_summary(events_path=events_path) if events_path else []
+    signature_line = format_signature_line(signatures)
+
+    summary = " | ".join(summary_parts)
+    prefixes: list[str] = []
+    if escalation_label:
+        prefixes.append(f"[{escalation_label}]")
+    if signature_line:
+        prefixes.append(signature_line)
+    if prefixes:
+        summary = " ".join(prefixes) + " | " + summary
+
     current_pointer = _build_current_pointer(
         repair_payload,
         repair_data_path=repair_data_path,
@@ -342,7 +373,10 @@ def build_needs_human_marker(
         "spec": repair_payload.get("spec"),
         "plan_name": plan_name,
         "chain_current_plan_name": chain_current_plan_name,
-        "summary": " | ".join(summary_parts),
+        "summary": summary,
+        "event_signatures": list(signatures),
+        "event_signatures_path": events_path,
+        "escalation_label": escalation_label or "",
         "repair_data_path": str(repair_data_path),
         "discord_status": discord_status,
         "recorded_at": recorded_at or datetime.now(timezone.utc).isoformat(),
@@ -361,6 +395,7 @@ def write_needs_human_marker_payload(
     repair_data_path: str | Path,
     discord_status: str,
     recorded_at: str | None = None,
+    escalation_label: str | None = None,
 ) -> dict[str, Any]:
     """Persist a compatibility needs-human payload atomically."""
 
@@ -369,6 +404,7 @@ def write_needs_human_marker_payload(
         repair_data_path=repair_data_path,
         discord_status=discord_status,
         recorded_at=recorded_at,
+        escalation_label=escalation_label,
     )
     atomic_write_json(path, marker)
     return marker

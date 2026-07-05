@@ -17,6 +17,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+from collections import Counter
 import logging
 import os
 import threading
@@ -622,6 +623,128 @@ def read_events(
                 continue
 
             yield event
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic: top-N (kind, reason) signatures from events.ndjson
+# ---------------------------------------------------------------------------
+
+def event_signature_summary(
+    plan_dir: str | Path | None = None,
+    *,
+    events_path: str | Path | None = None,
+    top_n: int = 5,
+    since_seq: Optional[int] = None,
+    kinds: Optional[Sequence[str]] = None,
+) -> list[dict[str, Any]]:
+    """Return the top-N ``(kind, reason)`` signatures from a plan's events.ndjson.
+
+    Reads the ndjson file directly (no projection side effects), so it is safe
+    to call on any events path purely for diagnosis — e.g. by the cloud fixer
+    stack when summarising a stuck plan for the repair operator / humans.
+
+    Each element is ``{"kind", "reason", "count", "last_ts", "last_seq"}``,
+    sorted by count desc then last_seq desc. ``reason`` is
+    ``payload.reason or payload.message or payload.error`` (str). Returns ``[]``
+    when the file is missing/empty/unreadable or every line is malformed.
+    """
+    if events_path is None:
+        if plan_dir is None:
+            return []
+        events_path = Path(plan_dir) / _NDJSON_FILE
+    path = Path(events_path)
+    if not path.exists():
+        return []
+    kind_set: Optional[Set[str]] = set(kinds) if kinds else None
+    counts: Counter[tuple[str, str]] = Counter()
+    last: dict[tuple[str, str], tuple[int, str]] = {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                kind = str(event.get("kind") or "")
+                if not kind or (kind_set is not None and kind not in kind_set):
+                    continue
+                seq = event.get("seq")
+                if since_seq is not None and isinstance(seq, int) and seq <= since_seq:
+                    continue
+                payload = event.get("payload")
+                if not isinstance(payload, dict):
+                    payload = {}
+                raw_reason = (
+                    payload.get("reason")
+                    or payload.get("message")
+                    or (payload.get("error") if isinstance(payload.get("error"), str) else "")
+                    or ""
+                )
+                key = (kind, str(raw_reason))
+                counts[key] += 1
+                last_seq_existing = last.get(key, (-1, ""))[0]
+                seq_int = seq if isinstance(seq, int) else -1
+                if seq_int >= last_seq_existing:
+                    last[key] = (seq_int, str(event.get("ts_utc") or ""))
+    except OSError:
+        return []
+    items = [
+        {
+            "kind": kind,
+            "reason": reason,
+            "count": count,
+            "last_ts": last.get((kind, reason), (-1, ""))[1],
+            "last_seq": last.get((kind, reason), (-1, ""))[0],
+        }
+        for (kind, reason), count in counts.items()
+    ]
+    items.sort(key=lambda d: (-d["count"], -d["last_seq"], d["kind"], d["reason"]))
+    return items[:top_n] if top_n > 0 else items
+
+
+def format_signature_line(
+    signatures: Sequence[dict[str, Any]] | Sequence[Any],
+    *,
+    max_items: int = 3,
+) -> str:
+    """Render ``signatures: kind/reason xN (last HH:MMZ), ...`` or ``""`` if empty.
+
+    Tolerates non-dict entries by skipping them. ``HH:MMZ`` falls back to the
+    raw ``last_ts`` (truncated) when it cannot be parsed.
+    """
+    if not signatures:
+        return ""
+    parts: list[str] = []
+    for sig in list(signatures)[:max_items]:
+        if not isinstance(sig, dict):
+            continue
+        kind = str(sig.get("kind") or "_")
+        reason = str(sig.get("reason") or "_")
+        count = sig.get("count")
+        hhmm = _signature_hhmm_utc(str(sig.get("last_ts") or ""))
+        parts.append(
+            f"{kind}/{reason} x{count} (last {hhmm})"
+            if hhmm
+            else f"{kind}/{reason} x{count}"
+        )
+    if not parts:
+        return ""
+    return "signatures: " + ", ".join(parts)
+
+
+def _signature_hhmm_utc(ts: str) -> str:
+    if not ts:
+        return ""
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return dt.astimezone(timezone.utc).strftime("%H:%M") + "Z"
+    except (ValueError, TypeError):
+        return ts[:19]
 
 
 # ---------------------------------------------------------------------------

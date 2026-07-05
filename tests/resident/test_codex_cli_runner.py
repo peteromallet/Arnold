@@ -9,6 +9,16 @@ from arnold_pipelines.megaplan.resident.config import ResidentConfig
 from arnold_pipelines.megaplan.resident.tool_registry import ToolRegistry
 
 
+def test_resident_config_defaults_to_codex() -> None:
+    config = ResidentConfig()
+    env_config = ResidentConfig.from_env({})
+
+    assert config.model_provider == "codex"
+    assert config.model_name == "gpt-5.5"
+    assert env_config.model_provider == "codex"
+    assert env_config.model_name == "gpt-5.5"
+
+
 def test_codex_cli_runner_uses_output_last_message_and_medium_effort(
     tmp_path: Path,
     monkeypatch,
