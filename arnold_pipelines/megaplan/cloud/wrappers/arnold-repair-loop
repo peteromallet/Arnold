@@ -3531,14 +3531,27 @@ repair_data_set_outcome() {
   require_repair_lock_held
   local outcome="$1"
   PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$outcome" <<'PY'
+import datetime as dt
 import pathlib
 import sys
 
-from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
+from arnold_pipelines.megaplan.cloud.repair_contract import (
+    is_terminal_outcome,
+    is_success_outcome,
+    load_json,
+    save_repair_data,
+)
 
 path, outcome = sys.argv[1:]
 payload = load_json(pathlib.Path(path), default={})
 payload["outcome"] = outcome
+now = dt.datetime.now(dt.timezone.utc).isoformat()
+if is_terminal_outcome(outcome):
+    payload["completed_at"] = now
+if is_success_outcome(outcome):
+    payload["last_success_at"] = now
+    payload["last_success_outcome"] = outcome
+    payload["run_recurrence_detected"] = False
 save_repair_data(pathlib.Path(path), payload)
 PY
 }
@@ -3720,6 +3733,7 @@ PY
 clear_repair_markers() {
   require_repair_lock_held
   clear_session_repair_markers_now
+  rm -f "$PROGRESS_FILE" 2>/dev/null || true
 }
 
 exit_if_repair_target_complete() {
@@ -4779,7 +4793,7 @@ exit_if_repair_target_complete "post-iterations"
 if [[ "${BREAKER_TRIPPED:-0}" == "1" ]]; then
   discord_status="$(send_discord_escalation)"
   if [[ "$discord_status" == "delivered" ]]; then
-    write_needs_human_marker "$discord_status" "deterministic_failure — mechanical re-drive cannot help (same error signature across iterations)"
+    write_needs_human_marker "$discord_status" "deterministic_failure — breaker tripped before another iteration (same unresolved signature)"
   fi
   log "deterministic-failure breaker session=$SESSION discord=$discord_status data=$DATA_FILE"
   exit 1

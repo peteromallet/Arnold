@@ -102,6 +102,12 @@ class Fixture:
             encoding="utf-8",
         )
 
+    def add_repair_data(self, name: str, *, outcome: str = "repairing") -> None:
+        (self.repair_dir / f"{name}.repair-data.json").write_text(
+            json.dumps({"session": name, "outcome": outcome}),
+            encoding="utf-8",
+        )
+
     def add_needs_human(self, name: str, *, summary: str = "awaiting human action") -> None:
         (self.repair_dir / f"{name}.needs-human.json").write_text(
             json.dumps(
@@ -249,6 +255,39 @@ def test_repair_marker_plus_blocked_watchdog_item_is_repairing(fx):
     entry = _by_session(snap, "stuck")
     assert entry["status"] == "repairing"
     assert entry["repairing"] is True
+
+
+def test_successful_repair_data_suppresses_stale_repair_marker(fx):
+    fx.add_session("recovered", plan_name="planRecovered")
+    fx.add_chain_health(
+        "recovered",
+        current_plan_name="planRecovered",
+        last_state="finalized",
+        updated_at=NOW - timedelta(hours=4),
+    )
+    fx.add_repair_progress("recovered")
+    fx.add_repair_data("recovered", outcome="live_with_fresh_activity")
+
+    snap = fx.build()
+    entry = _by_session(snap, "recovered")
+    assert entry["status"] == "attention"
+    assert entry["repairing"] is False
+
+
+def test_live_process_beats_repair_marker(fx):
+    fx.add_session("live-repair", plan_name="planLive")
+    fx.add_chain_health(
+        "live-repair",
+        current_plan_name="planLive",
+        last_state="error",
+        updated_at=NOW - timedelta(hours=4),
+    )
+    fx.add_repair_progress("live-repair")
+
+    snap = fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": True})
+    entry = _by_session(snap, "live-repair")
+    assert entry["status"] == "running"
+    assert entry["repairing"] is False
 
 
 def test_blocked_session_when_needs_human_marker_present(fx):

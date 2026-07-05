@@ -479,7 +479,13 @@ def update_session_repair_snapshot(
     recent_dispatches: list[str]
     if advanced:
         recent_dispatches = [dispatched_at]
+        last_advancement_at = dispatched_at
     else:
+        last_advancement_at = _as_text(previous.get("last_advancement_at"))
+        if not last_advancement_at and bool(previous.get("advancement_since_last_dispatch")):
+            # Backward compatibility for pre-epoch progress sidecars that
+            # recorded advancement but did not yet persist the explicit epoch.
+            last_advancement_at = _as_text(previous.get("updated_at"))
         cutoff = (_parse_when(dispatched_at) or datetime.now(timezone.utc)) - timedelta(
             seconds=max(int(window_seconds), 0)
         )
@@ -497,10 +503,23 @@ def update_session_repair_snapshot(
         "no_advance_dispatches": recent_dispatches,
         "no_advance_count": no_advance_count,
         "advancement_since_last_dispatch": advanced,
+        "last_advancement_at": last_advancement_at,
         "window_seconds": int(window_seconds),
         "min_dispatches": int(min_dispatches),
         "layer2_recurrence": no_advance_count >= int(min_dispatches),
     }
+
+
+def _attempt_is_after_epoch(
+    attempt: Mapping[str, Any],
+    epoch: datetime | None,
+) -> bool:
+    if epoch is None:
+        return True
+    when = _parse_when(attempt.get("dispatched_at") or attempt.get("timestamp"))
+    if when is None:
+        return True
+    return when > epoch
 
 
 def evaluate_recurrence(
@@ -513,18 +532,22 @@ def evaluate_recurrence(
         for field in PROBLEM_SIGNATURE_FIELDS
     }
     current_key = signature_tuple(normalized_signature)
-    prior_attempts = attempts or []
+    snapshot = _as_dict(session_snapshot)
+    advancement_epoch = _parse_when(snapshot.get("last_advancement_at"))
+    prior_attempts = [
+        attempt
+        for attempt in (attempts or [])
+        if isinstance(attempt, Mapping)
+        and _attempt_is_after_epoch(attempt, advancement_epoch)
+    ]
     matching_attempt_ids: list[int] = []
     for attempt in prior_attempts:
-        if not isinstance(attempt, Mapping):
-            continue
         prior_signature = _as_dict(attempt.get("problem_signature"))
         if signature_tuple(prior_signature) != current_key:
             continue
         attempt_id = _as_int(attempt.get("attempt_id"))
         if attempt_id is not None:
             matching_attempt_ids.append(attempt_id)
-    snapshot = _as_dict(session_snapshot)
     no_advance_count = _as_int(snapshot.get("no_advance_count")) or 0
     min_dispatches = _as_int(snapshot.get("min_dispatches")) or 0
     layer1_detected = bool(matching_attempt_ids)
@@ -538,10 +561,7 @@ def evaluate_recurrence(
     # on a non-empty signature so the breaker never trips on bootstrap/garbage.
     prior_by_id = sorted(
         (
-            attempt
-            for attempt in prior_attempts
-            if isinstance(attempt, Mapping)
-            and _as_int(attempt.get("attempt_id")) is not None
+            attempt for attempt in prior_attempts if _as_int(attempt.get("attempt_id")) is not None
         ),
         key=lambda a: _as_int(a["attempt_id"]),  # type: ignore[index]
     )

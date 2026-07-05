@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
+from arnold_pipelines.megaplan.cloud.repair_contract import is_success_outcome
 from arnold_pipelines.megaplan.cloud.session_markers import (
     is_canonical_session_marker_path,
 )
@@ -500,16 +501,16 @@ def _classify_session(
     if chain_complete:
         return "complete", "chain complete; no runner expected"
 
-    # Active automated repair takes precedence over plain stalled/running when
-    # the chain is not advancing on its own.
-    if _is_repair_active(repair_progress, repair_data_dir, session, now):
-        return "repairing", "automated repair dispatched for this session"
-
     if liveness.get("tmux") or liveness.get("process"):
         return "running", "live runner process observed"
 
     if latest_activity_dt is not None and (now - latest_activity_dt).total_seconds() <= STALE_ACTIVITY_S:
         return "running", "recent plan/chain activity"
+
+    # Active automated repair only wins after live/recent activity has been
+    # ruled out. Stale repair markers must not mask a recovered chain.
+    if _is_repair_active(repair_progress, repair_data_dir, session, now):
+        return "repairing", "automated repair dispatched for this session"
 
     # Not complete, not blocked, not under repair, not live, not recent. That is
     # exactly the "should be working but is not" case the watchdog escalates.
@@ -696,11 +697,17 @@ def _is_repair_active(
 ) -> bool:
     if not isinstance(repair_progress, Mapping) or not repair_progress:
         return False
+    repair_data = _load_json(repair_data_dir / f"{session}.repair-data.json")
+    if isinstance(repair_data, Mapping):
+        outcome = str(repair_data.get("outcome") or "").strip()
+        if is_success_outcome(outcome):
+            return False
+        if str(repair_data.get("completed_at") or "").strip():
+            return False
     recorded_at = _parse_iso(repair_progress.get("updated_at") or repair_progress.get("ts"))
     if recorded_at is None:
         # A repair-progress marker without a timestamp still means a repair ran;
         # treat it as active only if recent repair-data exists alongside.
-        repair_data = _load_json(repair_data_dir / f"{session}.repair-data.json")
         return bool(repair_data)
     age = (now - recorded_at).total_seconds()
     return age <= REPAIR_FRESH_S
