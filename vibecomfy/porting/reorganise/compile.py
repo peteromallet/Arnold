@@ -2057,6 +2057,7 @@ def _layout_sections_with_phases(
             group_layouts,
             facts,
             spacing,
+            layout_options,
         )
     group_layouts = _filter_group_layouts_for_policy(group_layouts, facts, layout_options)
     return _CompiledLayoutPlacement(
@@ -5733,6 +5734,7 @@ def _resolve_group_collisions(
     group_layouts: Sequence[CompiledGroupLayout],
     facts: GraphInventoryFacts,
     spacing: _Spacing,
+    options: LayoutCompileOptions,
 ) -> tuple[tuple[CompiledNodeLayout, ...], tuple[CompiledGroupLayout, ...]]:
     """Move whole huge-wall sections down until generated group boxes clear.
 
@@ -5784,7 +5786,7 @@ def _resolve_group_collisions(
         _shift_node_layout(layout, shift_by_section.get(layout.section_id, 0))
         for layout in node_layouts
     )
-    shifted_groups = _compiled_group_layouts(sections, shifted_nodes, facts, spacing)
+    shifted_groups = _compiled_group_layouts(sections, shifted_nodes, facts, spacing, options)
     return shifted_nodes, shifted_groups
 
 

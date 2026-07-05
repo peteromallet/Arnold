@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+import vibecomfy.porting.reorganise.compile as compile_module
 from vibecomfy.porting.reorganise import LayoutCompileOptions, compile_layout_plan
 from vibecomfy.porting.reorganise.compile import (
     COMPILE_ISSUE_BASELINE_VARIANCE_HIGH,
@@ -36,13 +37,16 @@ from vibecomfy.porting.reorganise.compile import (
     COMPILE_METRIC_NOTE_SECTION_MISMATCH_COUNT,
     COMPILE_METRIC_NODE_OVERLAP_COUNT,
     COMPILE_METRIC_STRUCTURAL_HASH_UNCHANGED,
+    _CompileSection,
     _CompileTraceAccumulator,
+    _Spacing,
     _classify_layout_phase,
     _compile_section_ownership_phase,
     _local_bounds,
     _local_section_layout,
     _layout_primary_rows,
     _node_size_for_ref,
+    _resolve_group_collisions,
     _spacing,
     CompiledGroupLayout,
     CompiledNodeLayout,
@@ -3229,6 +3233,114 @@ def test_validation_does_not_correct_coordinates() -> None:
         "validation metrics must NOT mutate node coordinates"
     assert after_groups == before_groups, \
         "validation metrics must NOT mutate group coordinates"
+
+
+def test_group_collision_repair_recomputes_groups_with_compile_options(monkeypatch) -> None:
+    """Generated group collision repair must pass options to group recompute."""
+    options = LayoutCompileOptions(preserve_node_sizes=False)
+    spacing = _Spacing(
+        section_gap_x=120,
+        island_gap_x=240,
+        band_gap_y=160,
+        section_gap_y=120,
+        node_gap_y=80,
+        group_padding=40,
+    )
+    ref_a = CanonicalNodeRef("", "a")
+    ref_b = CanonicalNodeRef("", "b")
+    sections = (
+        _CompileSection(
+            id="s1",
+            kind="custom",
+            title="S1",
+            role_hint=ROLE_HINT_UNKNOWN,
+            node_refs=(ref_a,),
+        ),
+        _CompileSection(
+            id="s2",
+            kind="custom",
+            title="S2",
+            role_hint=ROLE_HINT_UNKNOWN,
+            node_refs=(ref_b,),
+        ),
+    )
+    node_layouts = (
+        CompiledNodeLayout(
+            ref=ref_a,
+            section_id="s1",
+            role_hint=ROLE_HINT_UNKNOWN,
+            x=0,
+            y=0,
+            width=100,
+            height=100,
+        ),
+        CompiledNodeLayout(
+            ref=ref_b,
+            section_id="s2",
+            role_hint=ROLE_HINT_UNKNOWN,
+            x=0,
+            y=20,
+            width=100,
+            height=100,
+        ),
+    )
+    group_layouts = (
+        CompiledGroupLayout(
+            id="s1",
+            scope_path="",
+            title="S1",
+            kind="custom",
+            role_hint=ROLE_HINT_UNKNOWN,
+            node_refs=(ref_a,),
+            x=0,
+            y=0,
+            width=200,
+            height=200,
+            color="#646464",
+        ),
+        CompiledGroupLayout(
+            id="s2",
+            scope_path="",
+            title="S2",
+            kind="custom",
+            role_hint=ROLE_HINT_UNKNOWN,
+            node_refs=(ref_b,),
+            x=0,
+            y=20,
+            width=200,
+            height=200,
+            color="#646464",
+        ),
+    )
+    facts = extract_graph_facts(
+        {
+            "nodes": [
+                _node(1, "PrimitiveNode", "a"),
+                _node(2, "PrimitiveNode", "b"),
+            ],
+            "links": [],
+        }
+    )
+    seen: dict[str, object] = {}
+
+    def fake_compiled_group_layouts(sections_arg, shifted_nodes, facts_arg, spacing_arg, options_arg):
+        seen["options"] = options_arg
+        seen["shifted_y"] = [layout.y for layout in shifted_nodes]
+        return group_layouts
+
+    monkeypatch.setattr(compile_module, "_compiled_group_layouts", fake_compiled_group_layouts)
+
+    _resolve_group_collisions(
+        sections,
+        node_layouts,
+        group_layouts,
+        facts,
+        spacing,
+        options,
+    )
+
+    assert seen["options"] is options
+    assert seen["shifted_y"][1] > node_layouts[1].y
 
 
 def test_structural_expectations_reject_overlaps_via_report() -> None:
