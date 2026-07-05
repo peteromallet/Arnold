@@ -114,10 +114,17 @@ def format_cloud_status_detailed(snapshot: Mapping[str, Any] | None) -> str:
     out.append("")
     for entry in _ordered_sessions(snapshot):
         status = entry.get("status", "attention")
+        progress = entry.get("progress")
+        progress_str = (
+            f"  progress={progress.get('percent')}%"
+            if isinstance(progress, Mapping) and progress.get("percent") is not None
+            else ""
+        )
         out.append(
             f"[{status}] {entry.get('session', '?')}  "
             f"plan={entry.get('current_plan') or '-'}  "
             f"completed={entry.get('completed_count')}/{entry.get('milestone_count') or '-'}"
+            f"{progress_str}"
         )
         if entry.get("latest_activity"):
             out.append(f"      latest_activity: {entry['latest_activity']}")

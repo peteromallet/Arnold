@@ -439,7 +439,11 @@ class MegaplanResidentProfile:
             "watchdog; cite its generated_at timestamp. If `cloud_status_degraded` is set or the "
             "snapshot is missing/stale, say so explicitly before using `local_epic_chain_state` or "
             "`live_cloud_chain` as fallback — and label that fallback as degraded, not full cloud "
-            "status. Do not answer broad status from an arbitrary `.megaplan/plans` or `.chains` scan "
+            "status. When a snapshot session carries a `progress` block, include the active epic's "
+            "overall progress as a pre-calculated percent — e.g. 'Epic X: A/B sprints done (P%), "
+            "currently on <current_plan>' — and note the in-flight sprint where relevant; use the "
+            "pre-calculated `progress.percent`/`completed_milestones`/`total_milestones` as given and "
+            "do not recompute or invent sub-sprint percentages. Do not answer broad status from an arbitrary `.megaplan/plans` or `.chains` scan "
             "without labeling it degraded. Targeted per-plan questions may still use the cloud tools."
         )
 
