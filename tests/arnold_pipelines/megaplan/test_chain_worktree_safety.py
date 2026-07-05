@@ -254,6 +254,36 @@ def test_enable_auto_merge_refuses_dirty_worktree_before_gh_merge(
     assert "src.py" in exc_info.value.message
 
 
+def test_enable_auto_merge_ignores_internal_runtime_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    runtime_cache = repo / ".megaplan" / "runtime" / "editable-engine"
+    runtime_cache.mkdir(parents=True)
+    (runtime_cache / "README.md").write_text("generated runtime mirror\n", encoding="utf-8")
+
+    calls: list[list[str]] = []
+
+    def record_run_command(_root, argv, **_kwargs):
+        calls.append(list(argv))
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            subprocess=subprocess,
+            _run_command=record_run_command,
+            _pr_state=lambda *_args, **_kwargs: "open",
+        ),
+    )
+
+    _enable_auto_merge(repo, 77, writer=lambda _message: None)
+
+    assert calls
+    assert calls[0][:4] == ["gh", "pr", "merge", "77"]
+
+
 def test_ensure_milestone_pr_skips_when_gh_missing(monkeypatch) -> None:
     messages: list[str] = []
     milestone = MilestoneSpec(
