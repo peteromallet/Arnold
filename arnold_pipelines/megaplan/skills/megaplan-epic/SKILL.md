@@ -1,1 +1,1 @@
-/workspace/arnold/arnold_pipelines/megaplan/data/epic_skill.md
+/workspace/megaplan-native-parity-corrective/Arnold/arnold_pipelines/megaplan/data/epic_skill.md
