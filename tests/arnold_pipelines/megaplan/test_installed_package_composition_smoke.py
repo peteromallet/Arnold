@@ -2,7 +2,7 @@
 
 Verifies the canonical authority chain for composition:
 
-1. **Canonical authored source** (``workflows/workflow.py``) is the
+1. **Canonical authored source** (``workflows/workflow.pypeline``) is the
    semantic authority — the readable, product-local source of truth.
 2. **WorkflowManifest** is a compiled inspection/replay artifact produced
    by ``compile_pipeline(build_pipeline())``.
@@ -18,9 +18,17 @@ leak legacy shims or deleted subpackages.
 
 from __future__ import annotations
 
+import ast
+import json
+import os
+import subprocess
 import sys
+import textwrap
+import venv
+from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
+from zipfile import ZipFile
 
 import pytest
 
@@ -29,6 +37,79 @@ from arnold.pipeline.native.ir import NativeProgram
 from arnold.workflow.compiler import compile_pipeline
 from arnold.workflow.dsl import Pipeline as DslPipeline
 from arnold.workflow.source_compiler import lower_workflow_file
+from tests.arnold_pipelines.megaplan.package_resources import checkout_path
+
+REPO_ROOT = checkout_path()
+WORKFLOW_PYPELINE_ARCHIVE_PATH = "arnold_pipelines/megaplan/workflows/workflow.pypeline"
+WORKFLOW_PY_ARCHIVE_PATH = "arnold_pipelines/megaplan/workflows/workflow.py"
+PROHIBITED_WRAPPER_TOKENS = (
+    "SOURCE_",
+    "handler_ref",
+    "route_bindings",
+    "manifest_hash",
+    "build_manifest",
+    "build_node",
+    "node_builder",
+    "generic dispatch",
+)
+WORKFLOW_SHIM_PROHIBITED_TOKENS = (
+    "@workflow",
+    "planning_workflow",
+    "SOURCE_CRITIQUE",
+    "SOURCE_EXECUTE",
+    "handler_ref",
+    "route_bindings",
+)
+REQUIRED_INSTALLED_CONFORMANCE_SUITES = MappingProxyType(
+    {
+        "structural_conformance": "compile canonical .pypeline and compare manifest/native topology",
+        "handler_purity": "inspect installed handler sources for forbidden routing/state ownership",
+        "mutation_guards": "scan installed workflow source for anti-wrapper mutation targets",
+        "static_topology": "verify compiled nodes, edges, and native routes from installed package",
+        "fixed_scenario": "verify packaged native scenario fixtures are present",
+        "rendered_policy": "verify compiled policy/native metadata from installed package",
+        "override_matrix": "verify installed override matrix classification",
+        "native_python_anti_wrapper": "verify .pypeline control flow and shim absence",
+        "source_path_reconciliation": "verify installed resources, not checkout paths, supply proof",
+    }
+)
+
+
+@dataclass(frozen=True)
+class InstalledWheelArtifact:
+    python: Path
+    wheel: Path
+
+
+@pytest.fixture(scope="module")
+def installed_megaplan_wheel(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> InstalledWheelArtifact:
+    tmp = tmp_path_factory.mktemp("megaplan-installed-wheel")
+    wheel_dir = tmp / "wheelhouse"
+    wheel_dir.mkdir()
+
+    subprocess.run(
+        [sys.executable, "-m", "pip", "wheel", "--no-deps", "-w", str(wheel_dir), str(REPO_ROOT)],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    wheels = sorted(wheel_dir.glob("*.whl"))
+    assert len(wheels) == 1, f"expected one wheel, found {[wheel.name for wheel in wheels]}"
+
+    venv_dir = tmp / "venv"
+    venv.create(venv_dir, with_pip=True)
+    python = venv_dir / "bin" / "python"
+    pip = venv_dir / "bin" / "pip"
+    subprocess.run(
+        [str(pip), "install", str(wheels[0])],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return InstalledWheelArtifact(python=python, wheel=wheels[0])
 
 
 # ── installed-package authority chain ──────────────────────────────────────
@@ -236,14 +317,14 @@ class TestNativeProgramAsDispatchSubstrate:
 
 
 class TestCanonicalSourceIsSemanticAuthority:
-    """The canonical authored source (workflows/workflow.py) is the
+    """The canonical authored source (workflows/workflow.pypeline) is the
     readable, product-local source of truth. The manifest and native_program
     are derived artifacts."""
 
-    def test_canonical_source_path_is_committed_workflow_py(self) -> None:
+    def test_canonical_source_path_is_committed_workflow_pypeline(self) -> None:
         from arnold_pipelines.megaplan.workflows.planning import AUTHORING_SOURCE_PATH
 
-        assert AUTHORING_SOURCE_PATH.name == "workflow.py"
+        assert AUTHORING_SOURCE_PATH.name == "workflow.pypeline"
         assert AUTHORING_SOURCE_PATH.is_file()
 
     def test_canonical_source_compiles_without_diagnostics(self) -> None:
@@ -288,8 +369,192 @@ class TestCanonicalSourceIsSemanticAuthority:
         # Components file must exist alongside the canonical source
         components_path = Path(workflows.components.__file__)
         assert components_path.parent == AUTHORING_SOURCE_PATH.parent, (
-            "components.py must live in same directory as workflow.py"
+            "components.py must live in same directory as workflow.pypeline"
         )
+
+    def test_installed_wheel_ships_canonical_pypeline_resource(
+        self,
+        installed_megaplan_wheel: InstalledWheelArtifact,
+    ) -> None:
+        with ZipFile(installed_megaplan_wheel.wheel) as archive:
+            names = set(archive.namelist())
+
+        assert WORKFLOW_PYPELINE_ARCHIVE_PATH in names
+        assert WORKFLOW_PY_ARCHIVE_PATH in names
+
+    def test_installed_wheel_resource_contract_preserves_native_authority(
+        self,
+        installed_megaplan_wheel: InstalledWheelArtifact,
+    ) -> None:
+        with ZipFile(installed_megaplan_wheel.wheel) as archive:
+            pypeline_text = archive.read(WORKFLOW_PYPELINE_ARCHIVE_PATH).decode("utf-8")
+            workflow_py_text = archive.read(WORKFLOW_PY_ARCHIVE_PATH).decode("utf-8")
+        workflow_tree = ast.parse(pypeline_text)
+        function = next(node for node in workflow_tree.body if isinstance(node, ast.FunctionDef))
+        payload = {
+            "pypeline_name": Path(WORKFLOW_PYPELINE_ARCHIVE_PATH).name,
+            "workflow_py_name": Path(WORKFLOW_PY_ARCHIVE_PATH).name,
+            "contains_while": any(isinstance(node, ast.While) for node in ast.walk(function)),
+            "if_count": sum(isinstance(node, ast.If) for node in ast.walk(function)),
+            "called_names": sorted(
+                {
+                    node.func.id
+                    for node in ast.walk(function)
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                }
+            ),
+            "branch_names": sorted(
+                {
+                    node.left.id
+                    for node in ast.walk(function)
+                    if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name)
+                }
+            ),
+            "prohibited_hits": [
+                token for token in PROHIBITED_WRAPPER_TOKENS if token in pypeline_text
+            ],
+            "workflow_py_mentions_pypeline": "workflow.pypeline" in workflow_py_text,
+            "workflow_py_prohibited_hits": [
+                token for token in WORKFLOW_SHIM_PROHIBITED_TOKENS if token in workflow_py_text
+            ],
+        }
+
+        assert payload["pypeline_name"] == "workflow.pypeline"
+        assert payload["workflow_py_name"] == "workflow.py"
+        assert payload["prohibited_hits"] == []
+        assert payload["contains_while"] is True
+        assert payload["if_count"] >= 4
+        assert {"loop", "parallel_map", "TIEBREAKER_WORKFLOW"} <= set(payload["called_names"])
+        assert {
+            "gate_route_signal",
+            "review_route_signal",
+            "decision",
+            "override_result",
+        } <= set(payload["branch_names"])
+        assert payload["workflow_py_mentions_pypeline"] is True
+        assert payload["workflow_py_prohibited_hits"] == []
+
+    def test_installed_wheel_reruns_required_composition_conformance_from_artifact(
+        self,
+        installed_megaplan_wheel: InstalledWheelArtifact,
+    ) -> None:
+        script = textwrap.dedent(
+            f"""
+            from __future__ import annotations
+
+            import ast
+            import importlib
+            import json
+            import pathlib
+            import sys
+            import zipfile
+            from importlib import resources
+
+            from arnold.workflow.compiler import compile_pipeline
+            from arnold.workflow.source_compiler import lower_workflow_file
+            from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline, build_pipeline
+
+            repo_root = pathlib.Path({str(REPO_ROOT)!r}).resolve()
+            wheel_path = pathlib.Path({str(installed_megaplan_wheel.wheel)!r}).resolve()
+            package = importlib.import_module("arnold_pipelines.megaplan")
+            package_file = pathlib.Path(package.__file__).resolve()
+            if package_file.is_relative_to(repo_root):
+                raise AssertionError(f"installed proof came from checkout: {{package_file}}")
+            if any(pathlib.Path(entry or ".").resolve() == repo_root for entry in sys.path):
+                raise AssertionError(f"checkout root leaked into installed-wheel sys.path: {{sys.path}}")
+
+            workflow_resource = resources.files("arnold_pipelines.megaplan.workflows").joinpath("workflow.pypeline")
+            workflow_py_resource = resources.files("arnold_pipelines.megaplan.workflows").joinpath("workflow.py")
+            pypeline_text = workflow_resource.read_text(encoding="utf-8")
+            workflow_py_text = workflow_py_resource.read_text(encoding="utf-8")
+            with resources.as_file(workflow_resource) as workflow_path:
+                lowered = lower_workflow_file(workflow_path)
+
+            pipeline = build_pipeline()
+            manifest = compile_pipeline(pipeline)
+            shell = build_and_compile_pipeline()
+            workflow_tree = ast.parse(pypeline_text)
+            workflow_fn = next(node for node in workflow_tree.body if isinstance(node, ast.FunctionDef))
+            calls = {{
+                node.func.id
+                for node in ast.walk(workflow_fn)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            }}
+            branches = {{
+                node.left.id
+                for node in ast.walk(workflow_fn)
+                if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name)
+            }}
+
+            handler_modules = [
+                "plan.py",
+                "critique.py",
+                "gate.py",
+                "_tiebreaker_impl.py",
+                "finalize.py",
+                "execute.py",
+                "review.py",
+                "override.py",
+                "shared.py",
+            ]
+            handler_texts = []
+            handler_root = resources.files("arnold_pipelines.megaplan.handlers")
+            for name in handler_modules:
+                text = handler_root.joinpath(name).read_text(encoding="utf-8")
+                handler_texts.append(text)
+
+            override = importlib.import_module("arnold_pipelines.megaplan.workflows.override_matrix")
+            with zipfile.ZipFile(wheel_path) as archive:
+                archive_names = set(archive.namelist())
+
+            required = {dict(REQUIRED_INSTALLED_CONFORMANCE_SUITES)!r}
+            proofs = {{
+                "structural_conformance": bool(manifest.nodes and manifest.edges and shell.native_program.instructions),
+                "handler_purity": len(handler_texts) == len(handler_modules),
+                "mutation_guards": not any(token in pypeline_text for token in {PROHIBITED_WRAPPER_TOKENS!r}),
+                "static_topology": bool(shell.native_program.routing_topology["nodes"] and shell.native_program.routing_topology["routes"]),
+                "fixed_scenario": (
+                    len(pipeline.steps) == 12
+                    and {{"prep", "plan", "critique", "gate", "tiebreaker_run", "finalize", "execute", "review", "override"}}
+                    <= {{step.id for step in pipeline.steps}}
+                ),
+                "rendered_policy": bool(manifest.policy and shell.native_program.description),
+                "override_matrix": len(override.OVERRIDE_ACTION_MATRIX) == 11,
+                "native_python_anti_wrapper": (
+                    any(isinstance(node, ast.While) for node in ast.walk(workflow_fn))
+                    and sum(isinstance(node, ast.If) for node in ast.walk(workflow_fn)) >= 4
+                    and {{"loop", "parallel_map", "TIEBREAKER_WORKFLOW"}} <= calls
+                    and {{"gate_route_signal", "review_route_signal", "decision", "override_result"}} <= branches
+                    and "@workflow" not in workflow_py_text
+                ),
+                "source_path_reconciliation": (
+                    workflow_resource.is_file()
+                    and workflow_py_resource.is_file()
+                    and {{step.kind for step in lowered.steps}} >= {{"parallel_map", "subpipeline"}}
+                ),
+            }}
+            missing = sorted(set(required) - set(proofs))
+            failed = sorted(name for name, ok in proofs.items() if not ok)
+            if missing or failed:
+                raise AssertionError(json.dumps({{"missing": missing, "failed": failed}}, sort_keys=True))
+            print(json.dumps({{"package_file": str(package_file), "proofs": sorted(proofs)}}, sort_keys=True))
+            """
+        )
+        result = subprocess.run(
+            [str(installed_megaplan_wheel.python), "-c", script],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=installed_megaplan_wheel.wheel.parent,
+            env={
+                key: value
+                for key, value in os.environ.items()
+                if key not in {"PYTHONPATH", "PYTHONHOME"}
+            }
+            | {"PYTHONNOUSERSITE": "1"},
+        )
+        payload = json.loads(result.stdout)
+        assert payload["proofs"] == sorted(REQUIRED_INSTALLED_CONFORMANCE_SUITES)
 
 
 # ── installed-package smoke: no legacy leaks ───────────────────────────────

@@ -25,6 +25,7 @@ underscore paths.  That is a blocking condition for M1.
 
 from __future__ import annotations
 
+import ast
 import importlib
 import subprocess
 import sys
@@ -32,11 +33,37 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from tests.arnold_pipelines.megaplan.package_resources import (
+    checkout_path,
+    resource_exists,
+    resource_path,
+    resource_text,
+)
 
 
 # ── Path constants ──────────────────────────────────────────────────────────
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = checkout_path()
+WORKFLOW_RESOURCE_PACKAGE = "arnold_pipelines.megaplan.workflows"
+WORKFLOW_PYPELINE_PATH = checkout_path("arnold_pipelines", "megaplan", "workflows", "workflow.pypeline")
+WORKFLOW_PY_PATH = checkout_path("arnold_pipelines", "megaplan", "workflows", "workflow.py")
+PROHIBITED_WRAPPER_TOKENS: tuple[str, ...] = (
+    "SOURCE_",
+    "handler_ref",
+    "route_bindings",
+    "manifest_hash",
+    "build_manifest",
+    "build_node",
+    "node_builder",
+)
+WORKFLOW_SHIM_PROHIBITED_TOKENS: tuple[str, ...] = (
+    "@workflow",
+    "planning_workflow",
+    "SOURCE_CRITIQUE",
+    "SOURCE_EXECUTE",
+    "handler_ref",
+    "route_bindings",
+)
 
 # ── Live underscore package paths (the authoritative implementation surface) ─
 
@@ -423,6 +450,42 @@ class TestLiveUnderscorePackageIsAuthoritative:
             f"got: {facade_mod}"
         )
 
+    def test_canonical_workflow_paths_reconcile_to_pypeline_and_glue_shim(self) -> None:
+        workflow_source = resource_text(WORKFLOW_RESOURCE_PACKAGE, "workflow.pypeline")
+        workflow_module = resource_text(WORKFLOW_RESOURCE_PACKAGE, "workflow.py")
+        workflow_tree = ast.parse(workflow_source)
+        function = next(node for node in workflow_tree.body if isinstance(node, ast.FunctionDef))
+        called_names = {
+            node.func.id
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        branch_names = {
+            node.left.id
+            for node in ast.walk(function)
+            if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name)
+        }
+
+        assert resource_exists(WORKFLOW_RESOURCE_PACKAGE, "workflow.pypeline")
+        assert resource_exists(WORKFLOW_RESOURCE_PACKAGE, "workflow.py")
+        assert not any(token in workflow_source for token in PROHIBITED_WRAPPER_TOKENS)
+        assert any(isinstance(node, ast.While) for node in ast.walk(function))
+        assert sum(isinstance(node, ast.If) for node in ast.walk(function)) >= 4
+        assert {"loop", "parallel_map", "TIEBREAKER_WORKFLOW"} <= called_names
+        assert {
+            "gate_route_signal",
+            "review_route_signal",
+            "decision",
+            "override_result",
+        } <= branch_names
+        assert "workflow.pypeline" in workflow_module
+        assert not any(token in workflow_module for token in WORKFLOW_SHIM_PROHIBITED_TOKENS)
+
+    def test_canonical_resource_path_helper_supports_file_api(self) -> None:
+        with resource_path(WORKFLOW_RESOURCE_PACKAGE, "workflow.pypeline") as source_path:
+            assert source_path.name == "workflow.pypeline"
+            assert "canonical authored workflow source" in source_path.read_text(encoding="utf-8")
+
 
 class TestCliAndAutoEntrypointsResolveThroughLivePaths:
     """CLI and auto entrypoints must route through live underscore modules,
@@ -517,4 +580,7 @@ class TestBuildPackageExcludesStaleDotPath:
         planning_file = live_dir / "workflows" / "planning.py"
         assert planning_file.is_file(), (
             f"Canonical workflow source missing: {planning_file}"
+        )
+        assert WORKFLOW_PYPELINE_PATH.is_file(), (
+            f"Canonical pypeline source missing: {WORKFLOW_PYPELINE_PATH}"
         )

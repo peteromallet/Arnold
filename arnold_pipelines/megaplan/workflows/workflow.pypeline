@@ -1,0 +1,132 @@
+"""Megaplan's canonical authored workflow source."""
+
+from __future__ import annotations
+
+from arnold.pipeline import parallel_map
+from arnold.workflow.authoring import loop, workflow
+from arnold_pipelines.megaplan.workflows.components import (
+    AUTHORING_CRITIQUE,
+    AUTHORING_EXECUTE,
+    AUTHORING_FINALIZE,
+    AUTHORING_GATE,
+    AUTHORING_HALT,
+    AUTHORING_OVERRIDE,
+    AUTHORING_PLAN,
+    AUTHORING_PREP,
+    AUTHORING_REVIEW,
+    AUTHORING_REVISE,
+    CRITIQUE_PANEL_WORKFLOW,
+    DEFAULT_POLICY,
+    EXECUTE_BATCH_WORKFLOW,
+    REVIEW_PANEL_WORKFLOW,
+    REVISE_LOOP_POLICY,
+    TIEBREAKER_WORKFLOW,
+)
+
+
+@workflow(id="megaplan", version="m4-phase3", policy=DEFAULT_POLICY)
+def planning_workflow(brief: str) -> None:
+    prep_signal = AUTHORING_PREP(id="prep", brief=brief)
+    plan_payload = AUTHORING_PLAN(id="plan", prep_payload=prep_signal)
+
+    loop(policy=REVISE_LOOP_POLICY, reentry_id="critique")
+    while True:
+        critique_payload = parallel_map(
+            id="critique-fanout",
+            items="megaplan.policy.critique_lenses",
+            step=CRITIQUE_PANEL_WORKFLOW,
+            reducer=AUTHORING_CRITIQUE,
+            path_template="critique/{item_id}",
+        )
+        gate_route_signal = AUTHORING_GATE(id="gate", critique_payload=critique_payload)
+
+        if gate_route_signal == "proceed":
+            finalize_payload = AUTHORING_FINALIZE(id="finalize", gate_payload=gate_route_signal)
+            execute_payload = parallel_map(
+                id="execute-batches",
+                items="megaplan.execute.batches",
+                step=EXECUTE_BATCH_WORKFLOW,
+                reducer=AUTHORING_EXECUTE,
+                path_template="execute/{index}",
+            )
+            review_route_signal = parallel_map(
+                id="review-fan-in",
+                items=execute_payload,
+                step=REVIEW_PANEL_WORKFLOW,
+                reducer=AUTHORING_REVIEW,
+                path_template="review/{item_id}",
+            )
+            if review_route_signal == "pass":
+                AUTHORING_HALT(id="halt", review_payload=review_route_signal)
+                return None
+            elif review_route_signal == "rework":
+                AUTHORING_REVISE(id="review_revise", gate_payload=review_route_signal)
+                return None
+            elif review_route_signal == "blocked":
+                AUTHORING_OVERRIDE(id="review_override", gate_payload=review_route_signal)
+                return None
+            elif review_route_signal == "deferred_human":
+                AUTHORING_HALT(id="review_deferred_human", review_payload=review_route_signal)
+                return None
+            else:
+                AUTHORING_HALT(id="review_halt", review_payload=review_route_signal)
+                return None
+        elif gate_route_signal == "iterate":
+            AUTHORING_REVISE(id="revise", gate_payload=gate_route_signal)
+        elif gate_route_signal == "retry_gate":
+            AUTHORING_REVISE(id="gate_retry_revise", gate_payload=gate_route_signal)
+        elif gate_route_signal == "reprompt_downgrade":
+            AUTHORING_REVISE(id="gate_reprompt_revise", gate_payload=gate_route_signal)
+        elif gate_route_signal == "tiebreaker":
+            decision = TIEBREAKER_WORKFLOW(id="tiebreaker", gate_payload=gate_route_signal)
+            if decision == "proceed":
+                finalize_payload = AUTHORING_FINALIZE(id="tiebreaker_finalize", gate_payload=decision)
+                parallel_map(
+                    id="tiebreaker-execute-batches",
+                    items="megaplan.execute.batches",
+                    step=EXECUTE_BATCH_WORKFLOW,
+                    reducer=AUTHORING_EXECUTE,
+                    path_template="execute/{index}",
+                )
+                return None
+            elif decision == "iterate":
+                AUTHORING_REVISE(id="tiebreaker_revise", gate_payload=decision)
+                return None
+            elif decision == "escalate":
+                AUTHORING_OVERRIDE(id="tiebreaker_override", gate_payload=decision)
+                return None
+            else:
+                AUTHORING_OVERRIDE(id="tiebreaker_fallback_override", gate_payload=decision)
+                return None
+        elif gate_route_signal == "escalate":
+            override_result = AUTHORING_OVERRIDE(id="override", gate_payload=gate_route_signal)
+            if override_result == "abort":
+                AUTHORING_HALT(id="override_halt", override_result=override_result)
+                return None
+            elif override_result == "force_proceed":
+                finalize_payload = AUTHORING_FINALIZE(id="override_finalize", gate_payload=override_result)
+                AUTHORING_EXECUTE(id="override_execute", finalize_payload=finalize_payload)
+                return None
+            elif override_result == "replan":
+                AUTHORING_REVISE(id="override_revise", gate_payload=override_result)
+                return None
+            else:
+                AUTHORING_HALT(id="override_unknown", override_result=override_result)
+                return None
+        elif gate_route_signal == "abort":
+            AUTHORING_HALT(id="gate_abort", gate_payload=gate_route_signal)
+            return None
+        elif gate_route_signal == "suspend":
+            AUTHORING_HALT(id="gate_suspend", gate_payload=gate_route_signal)
+            return None
+        elif gate_route_signal == "blocked_preflight":
+            AUTHORING_OVERRIDE(id="blocked_override", gate_payload=gate_route_signal)
+            return None
+        elif gate_route_signal == "force_proceed":
+            finalize_payload = AUTHORING_FINALIZE(id="force_finalize", gate_payload=gate_route_signal)
+            AUTHORING_EXECUTE(id="force_execute", finalize_payload=finalize_payload)
+            return None
+        else:
+            finalize_payload = AUTHORING_FINALIZE(id="fallback_finalize", gate_payload=gate_route_signal)
+            AUTHORING_EXECUTE(id="fallback_execute", finalize_payload=finalize_payload)
+            return None
