@@ -1091,7 +1091,7 @@ def _control_action_label(next_step: str) -> str:
 def _required_state_for_control_action(next_step: str) -> str | None:
     action = _control_action_label(next_step)
     if action == "resume-clarify":
-        return STATE_AWAITING_HUMAN_VERIFY
+        return None
     if action == "recover-blocked":
         return STATE_BLOCKED
     return None

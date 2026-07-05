@@ -298,7 +298,7 @@ def test_drive_keeps_quality_failure_on_terminal_quality_block(
     assert state["resume_cursor"] == {"phase": "review", "retry_strategy": "manual_review"}
 
 
-def test_drive_preflights_resume_clarify_state_mismatch(
+def test_drive_blocked_resume_clarify_without_prep_clarification_fails_in_override(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -321,7 +321,22 @@ def test_drive_preflights_resume_clarify_state_mismatch(
         }
 
     def fake_run_planning_phase(args, **kwargs):
-        raise AssertionError("resume-clarify should be rejected before dispatch")
+        assert args == ["override", "resume-clarify", "--plan", "demo"]
+        return (
+            1,
+            json.dumps(
+                {
+                    "success": False,
+                    "error": "invalid_transition",
+                    "message": (
+                        "resume-clarify can only resume a prep-sourced "
+                        "clarification halt; use verify-human for "
+                        "criteria-verification awaiting_human states"
+                    ),
+                }
+            ),
+            "",
+        )
 
     monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
     monkeypatch.setattr(auto, "_status", fake_status)
@@ -333,18 +348,18 @@ def test_drive_preflights_resume_clarify_state_mismatch(
 
     assert outcome.status == "blocked"
     assert outcome.final_state == "blocked"
-    assert outcome.iterations == 1
+    assert outcome.iterations == 2
     assert outcome.last_phase == "resume-clarify"
-    assert outcome.blocking_reasons == ["control_binding_mismatch"]
-    assert "resume-clarify requires state 'awaiting_human_verify', got 'blocked'" in outcome.reason
+    assert outcome.blocking_reasons == ["invalid_transition_loop"]
+    assert "resume-clarify can only resume a prep-sourced clarification halt" in outcome.reason
     failure = captured_failures[-1]
-    assert failure["kind"] == "control_binding_mismatch"
+    assert failure["kind"] == "invalid_transition_loop"
     assert failure["phase"] == "resume-clarify"
     assert failure["resume_cursor"] == {
         "phase": "resume-clarify",
         "retry_strategy": "repair_control_binding",
     }
-    assert failure["metadata"]["required_state"] == "awaiting_human_verify"
+    assert failure["metadata"]["required_state"] is None
     assert failure["metadata"]["actual_state"] == "blocked"
 
 
@@ -468,6 +483,67 @@ def test_drive_auto_approve_resumes_prep_clarification(
     assert notes[-1]["source"] == "auto_approve_prep_clarification"
     assert "structured params" in notes[-1]["note"]
     assert state["meta"]["overrides"][-1]["action"] == "auto-resume-clarify"
+
+
+def test_drive_allows_blocked_prep_resume_clarify(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "blocked",
+                "clarification": {
+                    "source": "prep",
+                    "questions": ["Is the prerequisite complete?"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    status_calls = 0
+    commands: list[list[str]] = []
+
+    def fake_status(plan: str, **kwargs):
+        nonlocal status_calls
+        status_calls += 1
+        assert plan == "demo"
+        if status_calls == 1:
+            return {
+                "state": "blocked",
+                "next_step": "override resume-clarify",
+                "valid_next": ["override resume-clarify"],
+                "progress": {},
+            }
+        return {
+            "state": "prepped",
+            "next_step": None,
+            "valid_next": [],
+            "progress": {},
+        }
+
+    def fake_run_planning_phase(args, **kwargs):
+        commands.append(list(args))
+        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        state["current_state"] = "prepped"
+        state.pop("clarification", None)
+        (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        return 0, json.dumps({"success": True, "state": "prepped"}), ""
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=2, poll_sleep=0)
+
+    assert outcome.status == "failed"
+    assert outcome.final_state == "prepped"
+    assert commands == [["override", "resume-clarify", "--plan", "demo"]]
 
 
 def test_drive_internal_error_log_prefers_latest_failure_over_warning_stderr(

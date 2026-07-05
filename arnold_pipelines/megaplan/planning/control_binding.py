@@ -1169,13 +1169,13 @@ class PlanningControlBinding:
             )
 
         if action == "resume-clarify":
-            if state["current_state"] != STATE_AWAITING_HUMAN:
+            clarification = state.get("clarification")
+            source = clarification.get("source") if isinstance(clarification, Mapping) else None
+            if state["current_state"] not in {STATE_AWAITING_HUMAN, STATE_BLOCKED}:
                 raise CliError(
                     "invalid_transition",
                     f"resume-clarify requires state '{STATE_AWAITING_HUMAN}', got '{state['current_state']}'",
                 )
-            clarification = state.get("clarification")
-            source = clarification.get("source") if isinstance(clarification, Mapping) else None
             if source != "prep":
                 raise CliError(
                     "invalid_transition",
