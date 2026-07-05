@@ -2399,6 +2399,61 @@ def test_repair_loop_exits_for_terminal_plan_with_stale_chain_state(tmp_path: Pa
     assert not (marker_dir / "demo-session.repair-loop.pid").exists()
 
 
+
+def test_repair_loop_terminal_plan_is_not_complete_when_chain_health_is_incomplete(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "ws"
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(
+        "milestones:\n"
+        "  - label: m1\n"
+        "  - label: m2\n",
+        encoding="utf-8",
+    )
+    _write_chain_state(
+        workspace / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        {
+            "current_plan_name": "demo-plan",
+            "current_milestone_index": 1,
+            "last_state": "authority_divergence",
+            "completed": [{"label": "m1", "status": "done"}],
+        },
+    )
+    _write_plan(
+        workspace / ".megaplan" / "plans" / "demo-plan",
+        {"name": "demo-plan", "current_state": "done"},
+    )
+    (marker_dir / "demo-session.chain-health.progress.json").write_text(
+        json.dumps(
+            {
+                "chain_complete": False,
+                "completed_count": 1,
+                "milestone_count": 2,
+                "pr_number": 90,
+                "pr_state": "open",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_repair_function("repair_target_completion_status"),
+            f"REMOTE_SPEC={str(spec_path)!r}",
+            "SESSION=demo-session",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"repair_target_completion_status {str(workspace)!r} chain ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    fields = result.stdout.strip().split("\t")
+    assert fields[0] == "0"
+
 def test_watchdog_liveness_is_scoped_to_marked_chain_spec() -> None:
     text = _wrapper("arnold-watchdog")
 
@@ -2407,6 +2462,61 @@ def test_watchdog_liveness_is_scoped_to_marked_chain_spec() -> None:
     assert 'grep -Fq -- "$remote_spec"' in text
     assert 'health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"' in text
 
+
+
+def test_watchdog_terminal_plan_does_not_complete_chain_when_health_says_incomplete(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(
+        "milestones:\n"
+        "  - label: m1\n"
+        "  - label: m2\n",
+        encoding="utf-8",
+    )
+    _write_chain_state(
+        workspace / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        {
+            "current_plan_name": "demo-plan",
+            "current_milestone_index": 1,
+            "last_state": "authority_divergence",
+            "completed": [{"label": "m1", "status": "done"}],
+        },
+    )
+    _write_plan(
+        workspace / ".megaplan" / "plans" / "demo-plan",
+        {"name": "demo-plan", "current_state": "done"},
+    )
+    (marker_dir / "demo-session.chain-health.progress.json").write_text(
+        json.dumps(
+            {
+                "chain_complete": False,
+                "completed_count": 1,
+                "milestone_count": 2,
+                "pr_number": 90,
+                "pr_state": "open",
+            }
+        ),
+        encoding="utf-8",
+    )
+    current_target = {
+        "plan_state": {"current_state": "done"},
+        "stale_evidence": [{"kind": "stale_chain_state_after_terminal_plan"}],
+    }
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("session_terminal_status"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"session_terminal_status demo-session {str(workspace)!r} {str(spec_path)!r} chain {shlex.quote(json.dumps(current_target))} {str(marker_dir)!r}",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == ""
 
 def test_watchdog_checks_plan_phase_health_even_when_session_alive() -> None:
     text = _wrapper("arnold-watchdog")
@@ -3759,6 +3869,54 @@ def test_watchdog_terminal_status_accepts_label_only_completed_chain(tmp_path: P
             "completed": [{"label": "m1"}, {"label": "m2"}],
             "pr_number": 128,
             "pr_state": "merged",
+        },
+    )
+    repair_dir = tmp_path / "repair-data"
+    repair_dir.mkdir()
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("session_terminal_status"),
+            f"MARKER_DIR={str(tmp_path / 'markers')!r}",
+            f"REPAIR_DATA_DIR={str(repair_dir)!r}",
+            f"session_terminal_status demo-session {str(workspace)!r} {str(spec_path)!r} chain",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "complete\tchain complete"
+
+
+def test_watchdog_terminal_status_reads_spec_local_chain_state(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    spec_path = workspace / ".megaplan" / "briefs" / "god-file-splits" / "chain.yaml"
+    chain_dir = spec_path.parent / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True)
+    spec_path.write_text(
+        "\n".join(
+            [
+                "milestones:",
+                "  - label: split-comfy-nodes-agent-edit",
+                "  - label: split-porting-emitter-py-god",
+                "  - label: split-porting-edit-apply-py",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_chain_state(
+        chain_dir / "chain-demo.json",
+        {
+            "last_state": "done",
+            "current_milestone_index": 3,
+            "current_plan_name": "",
+            "completed": [
+                {"label": "split-comfy-nodes-agent-edit"},
+                {"label": "split-porting-emitter-py-god"},
+                {"label": "split-porting-edit-apply-py"},
+            ],
+            "events": [{"msg": "all milestones complete"}],
         },
     )
     repair_dir = tmp_path / "repair-data"
@@ -7093,6 +7251,70 @@ def test_write_needs_human_marker_redacts_persisted_summary(tmp_path: Path) -> N
     marker = json.loads(out_path.read_text(encoding="utf-8"))
     assert "bearer-secret-token-value" not in marker["summary"]
     assert marker["summary"].endswith(f"why=Authorization: Bearer {REDACTION}")
+
+
+
+
+
+
+def test_watchdog_checks_terminal_status_before_current_needs_human() -> None:
+    text = _wrapper("arnold-watchdog")
+    launch_start = text.index("launch_chain_tick() {")
+    sidecar_check = text.index("emit_current_needs_human_sidecar", launch_start)
+    terminal_check = text.index("session_terminal_status", launch_start)
+
+    assert terminal_check < sidecar_check
+
+
+def test_watchdog_checks_plan_status_terminal_done_before_current_needs_human() -> None:
+    text = _wrapper("arnold-watchdog")
+    plan_status_eval = text.index('eval "$plan_status_env"')
+    complete_check = text.index('PLAN_STATUS_CURRENT_STATE:-}" == "done"', plan_status_eval)
+    sidecar_check = text.index("emit_current_needs_human_sidecar", plan_status_eval)
+
+    assert complete_check < sidecar_check
+
+
+def test_watchdog_current_needs_human_sidecar_reports_every_tick_without_renotify(tmp_path: Path) -> None:
+    report_path = tmp_path / "items.jsonl"
+    repair_data_dir = tmp_path / "repair-data"
+    repair_data_dir.mkdir()
+    marker_path = repair_data_dir / "demo-session.needs-human.json"
+    marker_path.write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "summary": "repair loop exhausted",
+                "current_plan_name": "m6-current-plan",
+                "discord_status": "delivered",
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = "\n\n".join(
+        [
+            "LOG=/dev/null",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            "log() { :; }",
+            "compare_needs_human_to_resolver() { :; }",
+            _extract_wrapper_function_until("report_item", "plan_attention_status_env"),
+            _extract_wrapper_function("repair_needs_human_path"),
+            _extract_wrapper_function("repair_needs_human_summary"),
+            _extract_wrapper_function("repair_needs_human_matches_current_plan"),
+            _extract_wrapper_function("emit_current_needs_human_sidecar"),
+            f"emit_current_needs_human_sidecar {str(report_path)!r} demo-session /tmp/ws /tmp/spec m6-current-plan",
+            f"emit_current_needs_human_sidecar {str(report_path)!r} demo-session /tmp/ws /tmp/spec m6-current-plan",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    lines = [json.loads(line) for line in report_path.read_text(encoding="utf-8").splitlines()]
+    assert [item["status"] for item in lines] == ["needs_human", "needs_human"]
+    assert all(item["action"] == "observe" for item in lines)
+    assert all("repair loop exhausted" in item["message"] for item in lines)
+    assert all(item["status"] not in {"discord_dm_sent", "webhook_sent"} for item in lines)
 
 
 def test_watchdog_report_item_redacts_persisted_lines(tmp_path: Path) -> None:

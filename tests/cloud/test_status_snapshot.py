@@ -194,6 +194,25 @@ def test_completed_not_counted_as_active_even_with_stale_failure(fx):
     assert all(s["status"] != "running" for s in snap["sessions"])
 
 
+def test_completed_chain_without_active_plan_ignores_stale_needs_human(fx):
+    fx.add_session("done")
+    fx.add_chain_health(
+        "done",
+        chain_complete=True,
+        completed_count=3,
+        milestone_count=3,
+        current_plan_name="",
+        last_state="done",
+        updated_at=NOW - timedelta(minutes=1),
+    )
+    fx.add_needs_human("done", summary="old repair exhaustion from timeout_or_hang")
+
+    snap = fx.build()
+    entry = _by_session(snap, "done")
+    assert entry["status"] == "complete"
+    assert entry["operator_next"] == "chain complete; no runner expected"
+
+
 def test_missing_workspace_becomes_attention_not_complete(fx):
     # No workspace dir created; point the marker at a path that does not exist.
     (fx.marker_dir / "ghost.json").write_text(
@@ -245,6 +264,35 @@ def test_blocked_session_when_needs_human_marker_present(fx):
     entry = _by_session(snap, "gated")
     assert entry["status"] == "blocked"
     assert "merge the PR" in entry["operator_next"]
+
+
+
+
+def test_needs_human_marker_beats_watchdog_complete_verdict(fx):
+    fx.add_session("false_done", plan_name="planFalseDone")
+    fx.add_chain_health(
+        "false_done",
+        current_plan_name="planFalseDone",
+        last_state="validation_failed",
+        updated_at=NOW - timedelta(hours=1),
+    )
+    fx.add_needs_human("false_done", summary="repair loop exhausted after validation failure")
+    fx.add_watchdog_report(
+        items=[
+            {
+                "session": "false_done",
+                "status": "complete",
+                "action": "observe",
+                "message": "watchdog reports chain complete",
+            }
+        ]
+    )
+
+    snap = fx.build(watchdog_report_path=fx.root / "watchdog-report.json")
+    entry = _by_session(snap, "false_done")
+
+    assert entry["status"] == "blocked"
+    assert "repair loop exhausted" in entry["operator_next"]
 
 
 def test_stale_parent_needs_human_is_superseded_by_completed_child(fx):
