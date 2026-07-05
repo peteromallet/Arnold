@@ -228,15 +228,10 @@ import type {
   SamplingConfig,
   SamplingResult,
   TimelineRenderPassSummary,
-  ProcessOutputKind,
   ProcessLiveSourceValueShape,
   ProcessLiveSourceDeclaration,
   ProcessLiveSourceBinding,
-  ProcessSpec,
   ProcessContribution,
-  ProcessStatus,
-  ProcessRoundtripRequest,
-  ProcessRoundtripResult,
 } from '@reigh/editor-sdk';
 import type {
   ExtensionId,
@@ -249,6 +244,21 @@ import type {
   LiveSourceRef,
   MaterialRef,
 } from '@reigh/editor-sdk';
+import type {
+  ProcessProgressEvent,
+  ProcessRoundtripRequest,
+  ProcessRoundtripResult,
+  ProcessLogSummary,
+} from '@reigh/editor-sdk/capabilities';
+import type {
+  ProcessLifecycleState,
+  ProcessOutputKind,
+  ProcessSpec,
+  ProcessStatus,
+  ProcessStatusBase,
+  ProcessEnvFieldSpec,
+  ProcessOperationSpec,
+} from '@reigh/editor-sdk/video/families/processes';
 
 // M1a value exports
 import {
@@ -2948,16 +2958,7 @@ describe('M10: agent tool type interfaces are importable from @reigh/editor-sdk'
 // M12: Process spec, contribution, status, roundtrip type interfaces
 // ---------------------------------------------------------------------------
 
-import type {
-  ProcessLifecycleState,
-  ProcessProgressEvent,
-  ProcessLogSummary,
-  ProcessEnvFieldSpec,
-  ProcessOperationSpec,
-  ProcessStatusBase,
-} from '@reigh/editor-sdk';
-
-describe('M12: process type interfaces are importable from @reigh/editor-sdk', () => {
+describe('M12: process type interfaces are importable from public SDK modules', () => {
   it('ProcessLifecycleState covers all 8 states', () => {
     const states: ProcessLifecycleState[] = [
       'not-installed', 'stopped', 'starting', 'ready',

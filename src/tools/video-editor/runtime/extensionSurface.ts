@@ -29,10 +29,9 @@ import type {
   RenderArtifactSidecarDescriptor,
   IntegrationCapabilities,
   CapabilitySourceRef,
-  ProcessSpec,
-  ProcessOperationSpec,
   ProjectExtensionRequirement,
 } from '@reigh/editor-sdk';
+import type { ProcessOperationSpec, ProcessSpec } from '@/sdk/video/families/processes';
 import { buildFamilyContributionSequence } from '@/tools/video-editor/runtime/families/FamilyContributionSequence.ts';
 import { assembleExtensionRuntime } from '@/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts';
 import { VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY } from '@/tools/video-editor/runtime/families/familyAdapterRegistry.ts';

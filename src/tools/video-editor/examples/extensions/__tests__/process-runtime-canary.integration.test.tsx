@@ -4,13 +4,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { useCallback, useMemo, useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import type {
-  ProcessRoundtripResult,
-  ProcessStatus,
   RenderArtifact,
   RenderArtifactSidecarDescriptor,
   RenderMaterial,
   RenderRoute,
 } from '@reigh/editor-sdk';
+import type { ProcessRoundtripResult } from '@/sdk/capabilities';
+import type { ProcessStatus } from '@/sdk/video/families/processes';
 import {
   BlockerActionCard,
   normalizeBlockerActionCardNextAction,

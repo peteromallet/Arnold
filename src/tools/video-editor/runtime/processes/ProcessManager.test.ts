@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
-import type { ProcessRoundtripResult, ProcessSpec } from '@reigh/editor-sdk';
+import type { ProcessRoundtripResult } from '@/sdk/capabilities';
+import type { ProcessSpec } from '@/sdk/video/families/processes';
 import {
   createProcessManager,
   type ProcessManagerRestartPolicyEvent,

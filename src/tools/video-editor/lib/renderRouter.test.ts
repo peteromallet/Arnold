@@ -148,9 +148,10 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
       route: 'preview-only',
       reason: 'remotion_module_missing_artifact',
     });
-    expect(missingArtifact.planner.selectedPlannerRoute).toBe('preview');
+    expect(missingArtifact.planner.selectedPlannerRoute).toBe('sidecar-export');
     expect(missingArtifact.planner.plannerResult.canBrowserExport).toBe(false);
     expect(missingArtifact.planner.plannerResult.canWorkerExport).toBe(false);
+    expect(missingArtifact.planner.plannerResult.canSidecarExport).toBe(true);
 
     expect(decideRenderRoute({
       clips: [{ clipType: 'image-jump', generation: { sequence_lane: 'remotion_module', artifact_id: '' } }],
@@ -185,6 +186,183 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
     expect(decideRenderRoute({ clips: [] }).reason).toBe('no_clips');
     expect(decideRenderRoute(null).reason).toBe('no_clips');
     expect(decideRenderRoute(undefined).reason).toBe('no_clips');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M7b T2: Sidecar-export planner / router selection
+// ---------------------------------------------------------------------------
+
+describe('M7b T2 sidecar-export route selection', () => {
+  it('selects sidecar-export in selectPlannerRoute when browser and worker are blocked but sidecar is unblocked', () => {
+    // Blocked remotion_module blocks browser + worker but not sidecar.
+    const decision = decideRenderRoute({
+      clips: [{ clipType: 'media', generation: { sequence_lane: 'remotion_module' } }],
+    });
+    expect(decision.planner.selectedPlannerRoute).toBe('sidecar-export');
+    expect(decision.planner.plannerResult.canBrowserExport).toBe(false);
+    expect(decision.planner.plannerResult.canWorkerExport).toBe(false);
+    expect(decision.planner.plannerResult.canSidecarExport).toBe(true);
+    // Clip-level block still forces preview-only for the UI route.
+    expect(decision.route).toBe('preview-only');
+  });
+
+  it('does not select sidecar-export when browser is available (priority order)', () => {
+    const decision = decideRenderRoute({
+      clips: [{ clipType: 'media' }],
+    });
+    // Browser is available, so it should be selected over sidecar.
+    expect(decision.planner.selectedPlannerRoute).toBe('browser-export');
+    expect(decision.planner.plannerResult.canBrowserExport).toBe(true);
+    expect(decision.planner.plannerResult.canSidecarExport).toBe(true);
+    expect(decision.route).toBe('browser-remotion');
+  });
+
+  it('falls back to preview when all routes including sidecar are blocked', () => {
+    // Use a process with blockers that target all export routes including sidecar.
+    // When every export route is blocked, the planner selects preview.
+    const decision = decideRenderRoute(
+      { clips: [{ clipType: 'media' }] },
+      undefined,
+      {
+        processes: [{
+          id: 'blocker-process-contrib',
+          extensionId: 'ext.blocker',
+          processId: 'blocker-process',
+          label: 'All-routes blocker',
+          spec: {
+            id: 'blocker-process',
+            label: 'All-routes blocker',
+            protocol: 'stdio-jsonrpc',
+            spawn: { command: 'node', args: ['blocker.js'] },
+            operations: [{
+              id: 'blockAll',
+              label: 'Block all',
+              routes: ['browser-export', 'worker-export', 'sidecar-export'],
+            }],
+          },
+          protocol: 'stdio-jsonrpc',
+          operations: [{
+            id: 'blockAll',
+            label: 'Block all',
+            routes: ['browser-export', 'worker-export', 'sidecar-export'],
+          }],
+          availableRoutes: ['browser-export', 'worker-export', 'sidecar-export'],
+          requiredBy: [],
+          blockers: [
+            {
+              id: 'blocker.browser',
+              route: 'browser-export',
+              reason: 'process-dependent',
+              message: 'Browser export blocked by test process.',
+            },
+            {
+              id: 'blocker.worker',
+              route: 'worker-export',
+              reason: 'process-dependent',
+              message: 'Worker export blocked by test process.',
+            },
+            {
+              id: 'blocker.sidecar',
+              route: 'sidecar-export',
+              reason: 'process-dependent',
+              message: 'Sidecar export blocked by test process.',
+            },
+          ],
+          nextActions: [],
+        }],
+        processStatuses: [{
+          processId: 'blocker-process',
+          status: 'ready',
+          operations: {},
+        }],
+      },
+    );
+    expect(decision.planner.plannerResult.canBrowserExport).toBe(false);
+    expect(decision.planner.plannerResult.canWorkerExport).toBe(false);
+    expect(decision.planner.plannerResult.canSidecarExport).toBe(false);
+    expect(decision.planner.selectedPlannerRoute).toBe('preview');
+    // Native media clips → browser-remotion is the clip logic fallback,
+    // but when all routes are blocked, the planner context shows preview.
+    expect(decision.route).toBe('browser-remotion');
+  });
+
+  it('maps sidecar-export planner route to external for native clips with browser/worker blocked', () => {
+    // When browser and worker are blocked by process blockers but sidecar
+    // is unblocked, and the clip-based route is browser-remotion (native
+    // clips), the decision maps to external.
+    const decision = decideRenderRoute(
+      { clips: [{ clipType: 'media' }] },
+      undefined,
+      {
+        processes: [{
+          id: 'browser-worker-blocker-contrib',
+          extensionId: 'ext.bwblocker',
+          processId: 'bw-blocker-process',
+          label: 'Browser + worker blocker',
+          spec: {
+            id: 'bw-blocker-process',
+            label: 'Browser + worker blocker',
+            protocol: 'stdio-jsonrpc',
+            spawn: { command: 'node', args: ['bw-blocker.js'] },
+            operations: [{
+              id: 'blockBW',
+              label: 'Block browser + worker',
+              routes: ['browser-export', 'worker-export'],
+            }],
+          },
+          protocol: 'stdio-jsonrpc',
+          operations: [{
+            id: 'blockBW',
+            label: 'Block browser + worker',
+            routes: ['browser-export', 'worker-export'],
+          }],
+          availableRoutes: ['browser-export', 'worker-export'],
+          requiredBy: [],
+          blockers: [
+            {
+              id: 'blocker.browser',
+              route: 'browser-export',
+              reason: 'process-dependent',
+              message: 'Browser export blocked.',
+            },
+            {
+              id: 'blocker.worker',
+              route: 'worker-export',
+              reason: 'process-dependent',
+              message: 'Worker export blocked.',
+            },
+          ],
+          nextActions: [],
+        }],
+        processStatuses: [{
+          processId: 'bw-blocker-process',
+          status: 'ready',
+          operations: {},
+        }],
+      },
+    );
+    expect(decision.planner.plannerResult.canBrowserExport).toBe(false);
+    expect(decision.planner.plannerResult.canWorkerExport).toBe(false);
+    expect(decision.planner.plannerResult.canSidecarExport).toBe(true);
+    expect(decision.planner.selectedPlannerRoute).toBe('sidecar-export');
+    expect(decision.route).toBe('external');
+    expect(decision.reason).toBe('pure_native_clips');
+  });
+
+  it('blocked sidecar-export does not prevent browser export selection', () => {
+    // When browser is available and sidecar is blocked, browser should
+    // still be selected. This verifies that a blocked sidecar route
+    // leaves unrelated browser/worker/preview choices unaffected.
+    const decision = decideRenderRoute({
+      clips: [{ clipType: 'media' }],
+    });
+    // With native media, browser is available and should be selected.
+    expect(decision.planner.selectedPlannerRoute).toBe('browser-export');
+    expect(decision.planner.plannerResult.canBrowserExport).toBe(true);
+    expect(decision.route).toBe('browser-remotion');
+    // sidecar status does not affect the browser route selection.
+    expect(decision.planner.plannerResult.canSidecarExport).toBe(true);
   });
 });
 

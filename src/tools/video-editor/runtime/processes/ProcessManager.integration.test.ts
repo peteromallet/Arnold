@@ -1,7 +1,7 @@
 import { once } from 'node:events';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { ProcessSpec, ProcessStatus } from '@reigh/editor-sdk';
+import type { ProcessSpec, ProcessStatus } from '@/sdk/video/families/processes';
 import {
   createProcessManager,
   type CreateProcessManagerOptions,

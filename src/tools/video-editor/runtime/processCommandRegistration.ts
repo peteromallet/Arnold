@@ -1,6 +1,7 @@
 import type { CommandRegistry } from '@/tools/video-editor/runtime/commandRegistry.ts';
 import type { VideoEditorProcessDescriptor } from '@/tools/video-editor/runtime/extensionSurface.ts';
-import type { ProcessRoundtripRequest, ProcessRoundtripResult, ProcessStatus } from '@reigh/editor-sdk';
+import type { ProcessRoundtripRequest, ProcessRoundtripResult } from '@/sdk/capabilities';
+import type { ProcessStatus } from '@/sdk/video/families/processes';
 import type { ProcessManager } from '@/tools/video-editor/runtime/processes/ProcessManager.ts';
 import type { ProcessResultAttachRecord } from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
 import { createProcessResultAttachRecord } from '@/tools/video-editor/runtime/composition/processResultAttach.ts';

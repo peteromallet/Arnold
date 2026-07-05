@@ -493,15 +493,17 @@
       "uiIntegration": null,
       "persistencePosture": null,
       "examples": null,
-      "tests": null
+      "tests": null,
+      "sidecarExport": false,
+      "artifactRouteCompletion": false
     },
     "conformance": {
       "fullyConformant": false,
-      "gapCount": 10,
+      "gapCount": 12,
       "coherent": true,
       "schemaCovered": false,
       "metRequirementCount": 0,
-      "unmetRequirementCount": 3,
+      "unmetRequirementCount": 5,
       "unassessedRequirementCount": 7
     },
     "legacyCompatibility": {
@@ -611,15 +613,17 @@
       "uiIntegration": null,
       "persistencePosture": null,
       "examples": null,
-      "tests": null
+      "tests": null,
+      "sidecarExport": false,
+      "artifactRouteCompletion": false
     },
     "conformance": {
       "fullyConformant": false,
-      "gapCount": 10,
+      "gapCount": 12,
       "coherent": true,
       "schemaCovered": false,
       "metRequirementCount": 0,
-      "unmetRequirementCount": 3,
+      "unmetRequirementCount": 5,
       "unassessedRequirementCount": 7
     },
     "legacyCompatibility": {

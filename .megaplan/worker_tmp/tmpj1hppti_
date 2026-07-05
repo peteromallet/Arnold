@@ -1,0 +1,297 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `plan`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m7b-output-format-sidecar-20260705-0324`
+Current milestone: `m7b-output-format-sidecars`
+
+### Phase Instruction
+Build a plan that advances the local brief while preserving the North Star. If scope is narrowed, state whether the narrowing is a bridge or a contradiction.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are creating an implementation plan for the following idea.
+
+        Engineering brief produced from the codebase and task details:
+
+        ### Task Summary
+        Wire output-format route planning to trusted sidecar/process execution. Prove EX-04 as the fourth graph-backed composed example with multi-artifact completion. Add machine-path and executable-package artifact manifest profiles. Extend four governance quality scripts with M7b-specific checks. Deliver route-completion dashboard UI with browser acceptance for happy-path and blocker/repair paths.
+
+        ### Key Evidence
+        - The render planner already builds full route plans for all four SDK routes including sidecar-export, with artifact completion records, process dependency findings, and start-process next actions — but `canSidecarExport` is never exposed in RenderPlannerResult and `selectPlannerRoute` cannot dispatch it. (source: renderPlanner.ts:2656-2657 (returns only canBrowserExport/canWorkerExport), renderPlanner.ts:2611 (iterates all RENDER_ROUTES including sidecar-export), renderRouter.ts:308-316 (selectPlannerRoute only checks two booleans); relevance: high)
+- No graph-backed EX-04 composed example exists. Source material is available as separate contributions (process-example.ts for trusted-local stdio-jsonrpc process with analyze/health operations; metadata-json-output-example.ts for compile-only JSON output format with requiresRender:false). Neither file composes the two together into a sidecar/process dependency scenario. (source: m0-release-examples.md:400-402 (explicitly acknowledges no composed example exists), m5-composed-examples.browser.test.tsx (EX-02/EX-03 acceptance patterns); relevance: high)
+- The RouteArtifactCompletionRecord data contract already supports multi-artifact conjunctive completion — status goes to 'complete' only when incompleteProfiles and blockedProfiles are both empty and routeBlockers is empty. Sidecar profile inference is wired (inferRenderArtifactManifestProfile returns 'sidecar' for sidecar-export route). (source: renderPlanner.ts:140-147 (RouteArtifactCompletionRecord), renderPlanner.ts:644-686 (conjunctive completion gate), renderability.ts:73-85 (sidecar inference); relevance: high)
+- No RouteCompletionDashboard component exists. The data contracts (RenderRoutePlan with artifactCompletion, route-scoped blockers, nextActions) are fully typed and populated by planRender(). Existing reusable components (ProcessDashboard, BlockerActionCard, MaterialBrowser) and Playwright e2e patterns (video-editor-processes.spec.ts) provide a proven acceptance surface to extend. (source: renderPlanner.ts:103-112 (RenderRoutePlan), ProcessDashboard.tsx (process lifecycle UI), video-editor-processes.spec.ts (happy-path + stopped-repair e2e); relevance: high)
+- Four governance scripts have zero M7b-specific coverage: no sidecar-blocker validation, no graph-path-marker checks, no docs-claims scanning for prohibited vocabulary (sandbox, marketplace, headless renderer, physical-device control), no explicit process-type SDK export prohibition, and no composition-spine example readiness for EX-04. (source: check-extension-example-readiness.mjs:0 hits for 'graph-path-marker' or 'sidecar-blocker', check-docs-maturity-sync.mjs:121 lines with zero claims verification, check-sdk-public-exports.mjs:no explicit prohibition on ProcessSpec/ProcessLifecycleState exports; relevance: high)
+- Machine-path and executable-package ArtifactManifestProfileKind variants do not exist. Two barrel-import smoke tests hardcode assertions of exactly 4 profiles ['video','audio','sidecar','preview'] and will fail when new profiles are added. RenderLocatorKind already includes 'local-file' which can serve machine-path records, but no inference rule, profile-specific validator, or output-kind mapping exists for either new profile. (source: artifacts.ts:277 (4 profile kinds), barrel-import-smoke.test.ts:3017-3019 (hardcoded 4-profile assertion), processes.ts:56-65 (ProcessOutputKind has no machine-path or executable-package kind); relevance: high)
+- Process lifecycle repair paths are fully scoped by route in the planner: collectProcess emits 'start-process' next actions for stopped stdio-jsonrpc processes filtered by the process's availableRoutes. Sidecar blockers are route-scoped through processLifecycleRouteScopes and cannot block unrelated routes. (source: renderPlanner.ts:2067-2124 (collectProcess with route-scoped start-process actions), renderPlanner.ts:698+ (route-scoped blocker filtering); relevance: medium)
+
+        ### Relevant Code
+        | File | Functions | Why |
+| --- | --- | --- |
+| src/tools/video-editor/lib/renderRouter.ts | decideRenderRoute, selectPlannerRoute, PlannerRouteDecisionContext | Must expose canSidecarExport from planner result and wire it through selectPlannerRoute to dispatch sidecar-export. The external RenderRoute is the natural insertion point. PlannerRouteDecisionContext.selectedPlannerRoute type already includes 'sidecar-export' (line 128) but is unreachable. |
+| src/tools/video-editor/runtime/renderPlanner.ts | planRender, buildRoutePlan, buildRouteArtifactCompletion, collectOutputFormat, collectProcess, renderPlannerResultSidecarHealth | Must add canSidecarExport boolean to RenderPlannerResult and compute it from the sidecar-export route plan's blocked state. This is the single missing gate preventing sidecar-export dispatch. |
+| src/sdk/video/rendering/artifacts.ts | ArtifactManifestProfileKind, ARTIFACT_MANIFEST_PROFILE_KINDS, ArtifactManifestProfile | Must add 'machine-path' and 'executable-package' to ArtifactManifestProfileKind and ARTIFACT_MANIFEST_PROFILE_KINDS array. Must define two new discriminated union member interfaces extending ArtifactManifestProfileBase with locator kind constraints (local-file for machine-path). |
+| src/tools/video-editor/runtime/renderability.ts | inferRenderArtifactManifestProfile, resolveRenderArtifactManifestProfile, validateStrictManifestBase | Must add inference rules in inferRenderArtifactManifestProfile for machine-path (locator.kind === 'local-file') and executable-package. Must add two new profile-specific validators (validateMachinePathManifestProfile, validateExecutablePackageManifestProfile) and case branches in resolveRenderArtifactManifestProfile. |
+| src/tools/video-editor/runtime/renderPlanner.ts | processOperationArtifactProfiles, routeArtifactPrimaryProfile, attachRecordArtifactProfiles | Must update processOperationArtifactProfiles to map new ProcessOutputKind entries (or add fallback inference) for machine-path and executable-package. routeArtifactPrimaryProfile fallback logic currently defaults to 'video' which is incorrect for these profiles. |
+| src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx | - | Must add EX-04 test following the established EX-02/EX-03 pattern: React shell projecting composition graph, Testing Library assertions for happy-path (all artifacts complete, process ready, sidecars resolved) and blocker/repair path (stopped process with start-process repair action). |
+| scripts/quality/check-extension-example-readiness.mjs | - | Must extend beyond the supported/deferred matrix to check composition-spine release examples (EX-01 through EX-04) for broken refs, unsupported target paths, missing material statuses, stale planner actions, missing sidecar blockers, incomplete artifact routes, and missing graph-path markers. |
+| scripts/quality/check-docs-maturity-sync.mjs | - | Must be rewritten from a simple maturity-table sync into a docs-claims scanner that fails on prohibited vocabulary (sandbox, marketplace, headless renderer, physical-device control) and unsupported capability claims (descriptor, preview, export, materialization, output-format, sidecar, trusted-only beyond evidence). |
+| scripts/quality/check-sdk-public-exports.mjs | - | Must add an explicit prohibition rule that ProcessSpec, ProcessLifecycleState (8 states), process task result states, and sidecar-route vocabulary must never appear in src/sdk/index.ts exports. |
+
+        ### Test Expectations
+        - [fail_to_pass] renderRouter-sidecar-dispatch-unit: selectPlannerRoute returns 'sidecar-export' when canSidecarExport is true and preview-only is not forced. decideRenderRoute returns RenderRoute.external (or new 'sidecar-export') for sidecar-capable output formats.
+- [fail_to_pass] ex04-composed-example-browser-happy: EX-04 happy path: graph projection emits requires edges between output-format and process, all artifact profiles complete with sidecar manifest, process status ready or busy, no blockers, dashboard renders complete profiles and artifact/sidecar listing.
+- [fail_to_pass] ex04-composed-example-browser-blocker-repair: EX-04 blocker path: stopped process triggers process-dependent blocker scoped to sidecar-export route, start-process next action rendered as BlockerActionCard, clicking clears blocker and enables execution, route-completion status transitions to complete.
+- [fail_to_pass] machine-path-profile-validation: Machine-path manifest profile is accepted when locator.kind is 'local-file'. Rejected when locator kind is not 'local-file'. Profile appears in ARTIFACT_MANIFEST_PROFILE_KINDS and inferRenderArtifactManifestProfile returns 'machine-path' for local-file locators.
+- [fail_to_pass] executable-package-profile-validation: Executable-package manifest profile is accepted with appropriate locator kind constraint. Rejected when constraints violated. Profile appears in ARTIFACT_MANIFEST_PROFILE_KINDS.
+- [fail_to_pass] barrel-test-profile-count-update: Barrel import smoke test and SDK index test updated from hardcoded 4 profiles to 6 (adding machine-path and executable-package).
+- [fail_to_pass] governance-docs-claims-scanner: check-docs-maturity-sync.mjs fails when docs contain prohibited terms (sandbox, marketplace, headless renderer, physical-device control) or claim unsupported capabilities (descriptor/preview/export/materialization beyond evidence).
+- [fail_to_pass] governance-example-readiness-ex04: check-extension-example-readiness.mjs fails when EX-04 has missing graph-path markers, missing sidecar blockers, incomplete artifact routes, broken refs, unsupported target paths, missing material statuses, or stale planner actions.
+- [fail_to_pass] governance-sdk-export-prohibition: check-sdk-public-exports.mjs fails if ProcessSpec, ProcessLifecycleState, process task result states, or sidecar-route vocabulary appear in src/sdk/index.ts.
+- [fail_to_pass] route-completion-dashboard-e2e-happy: Playwright test for route-completion dashboard: all artifacts complete, process ready, sidecars resolved, data-testid assertions for complete profiles and artifact listing, no blocker actions surfaced.
+- [fail_to_pass] route-completion-dashboard-e2e-repair: Playwright test for route-completion dashboard: stopped/degraded/failed process or missing-artifact, blocker card with start-process/retry/materialize action, clicking resolves blocker, dashboard transitions to complete.
+
+        ### Constraints
+        - Do not reintroduce legacy planner authority — the router remains shape-driven and does not gain planning responsibility.
+- Do not claim descriptor, preview, export, materialization, output-format, sidecar, or trusted-only support beyond evidence in docs or UI.
+- Example readiness must fail on broken refs, unsupported target paths, missing material statuses, stale planner actions, missing sidecar blockers, incomplete artifact routes, and missing graph-path markers.
+- Browser acceptance is required for route completion and repair UI — both happy path and stopped/degraded/failed process or missing-artifact repair path.
+- Keep trusted process runtime namespaced outside the V1 composition SDK — ProcessSpec, ProcessLifecycleState, and sidecar-route vocabulary must not appear in src/sdk/index.ts.
+- Sidecar blockers remain route-scoped and cannot block unrelated routes — this is enforced at the planner data layer and must be enforced at the UI layer.
+- Machine-path and executable-package artifacts are verified artifact records only — Reigh does not control, certify, sandbox, execute, or preview them.
+- EX-04 must use typed requires/consumes detail and artifact completion records — no new public edge discriminants (materializes, produces, fallbacks) are introduced.
+- Multi-artifact completion requires every declared artifact to resolve with compatible manifest profiles, hashes, provenance, and route constraints.
+- No marketplace, sandbox, headless renderer, arbitrary multi-process DAGs, untrusted/remote process execution, or physical-device control claims.
+
+        ### Suggested Approach
+        Phase 1 — Profile Definitions: Add 'machine-path' and 'executable-package' discriminants to ArtifactManifestProfileKind and ARTIFACT_MANIFEST_PROFILE_KINDS in artifacts.ts. Define typed profile interfaces constraining machine-path to locator.kind === 'local-file'. Add inference rules in renderability.ts, profile-specific validators in resolveRenderArtifactManifestProfile, and update the two hardcoded barrel tests from 4 to 6 profiles. Update processOperationArtifactProfiles and routeArtifactPrimaryProfile in renderPlanner.ts for fallback inference. Phase 2 — Router Wiring: Expose canSidecarExport boolean in RenderPlannerResult by computing it from the sidecar-export route plan's blocked state. Wire selectPlannerRoute to check canSidecarExport and return 'sidecar-export'. Map the returned SDK route to the UI RenderRoute (extend 'external' or add a dedicated variant). Thread the full caller chain: UI render-click → decideRenderRoute → planRender → process execution → artifact production feedback through ProcessResultAttachRecord → buildRouteArtifactCompletion. Phase 3 — EX-04 Composed Example: Compose process-example.ts and metadata-json-output-example.ts into a graph-backed specification following EX-02/EX-03 patterns. Project composition graph with typed requires edges (output-format → process/operation) and consumes edges (output-format → material inputs). Define happy-path scenario (process ready, all sidecar artifact profiles complete) and blocker/repair scenario (stopped process, start-process action, resolution). Write browser acceptance tests in m5-composed-examples.browser.test.tsx using Testing Library. Phase 4 — Route Completion Dashboard: Build RouteCompletionDashboard component consuming RenderRoutePlan data (route, blocked, artifactCompletion with per-profile status, nextActions). Render happy path as complete-profile cards with artifact/sidecar listings and process lifecycle badges. Render blocker/repair path using BlockerActionCard for stopped/degraded/failed process and missing-artifact scenarios with start-process/retry/materialize actions. Enforce route-scoped rendering by filtering on selected route. Write Playwright e2e tests following video-editor-processes.spec.ts patterns (happy-path and stopped-repair scenarios). Phase 5 — Governance Extension: Extend check-extension-example-readiness.mjs to cover all 4 composition-spine examples with the 7 M7b failure modes. Rewrite check-docs-maturity-sync.mjs as a docs-claims scanner that fails on prohibited vocabulary from m0-decisions.md §8.1 anti-scope table and unsupported capability claims. Add explicit ProcessSpec/ProcessLifecycleState/sidecar-route export prohibition to check-sdk-public-exports.mjs. Add sidecar-blocker validation awareness to check-extension-family-conformance.mjs requirement keys.
+
+### Open Questions
+- [assume_and_proceed] Should machine-path and executable-package profiles receive full artifact-completion evidence in EX-04, or is it sufficient to define the profile types, validators, and inference rules without composing them into EX-04's multi-artifact completion scenario? _(assumption: Define both profiles as typed discriminants, inference rules, and validators. Include them in ARTIFACT_MANIFEST_PROFILE_KINDS and update barrel tests. Do not require full EX-04 artifact-completion evidence for these two profiles — they are validated as artifact record types only and EX-04 focuses on sidecar artifacts from process execution.)_
+- [assume_and_proceed] Should the UI RenderRoute for sidecar-export be a new dedicated variant ('sidecar-export') or should it reuse the existing 'external' variant (currently reserved for future external render providers)? _(assumption: Reuse the existing 'external' RenderRoute variant. The renderRouter.ts:87-88 comment already describes it as 'reserved for future external render providers. Currently unreachable from decideRenderRoute.' This is the natural insertion point and avoids introducing a new UI route discriminant.)_
+- [assume_and_proceed] Should the RouteCompletionDashboard be a net-new component or an extension of the existing ProcessDashboard that adds route-level multi-artifact completion awareness? _(assumption: Build as a net-new RouteCompletionDashboard component that consumes RenderRoutePlan directly. It should render ProcessDashboard entries for process status scoped to the selected route, BlockerActionCard for blocker paths, and a new artifact-completion section for per-profile status with artifact/sidecar listings. Do not modify ProcessDashboard to add route awareness — keep its existing single-process-scope contract intact.)_
+
+        The engineering brief above is evidence gathered from the codebase. Treat it as the default working context, challenge its conclusions when the code disagrees, and only do targeted repository lookups when a concrete gap remains. Open questions in the brief are candidate concerns, not mandates — act on ones that materially affect the plan, dismiss immaterial or already-resolved ones with a brief reason, and treat question count as noise.
+
+        Idea:
+# M7b: Output-Format Sidecar Integration
+
+## Outcome
+
+Wire output-format route planning to trusted sidecar/process execution, prove the fourth composed example, and harden release governance for the whole epic.
+
+## Execution Posture
+
+Complete release scope without expanding the V1 composition SDK. Every sidecar/output-format claim must be backed by graph facts, route requirements, artifact completion evidence, tests, docs, and browser acceptance where UI exists.
+
+## Scope
+
+IN:
+- Integrate sidecar processes through M6 process runtime and M7a route requirements.
+- Build output format + sidecar/process release example with route blockers, repair actions, artifact-resolution evidence, tests, and docs.
+- Prove non-video artifact output and multi-artifact route completion.
+- Allow sidecar artifact production to emit one or more required `RenderArtifact` records with typed manifest profiles.
+- Validate machine-path and executable-package profiles as artifact records only.
+- Add governance checks for docs claims, example readiness, graph-path markers, sidecar blockers, route claims, trusted-local posture, and process lifecycle repair paths.
+- Add browser acceptance for output-format route completion dashboard with one happy path and one blocker/repair path.
+
+OUT:
+- Marketplace.
+- Sandbox.
+- Headless renderer.
+- Arbitrary multi-process DAGs.
+- Untrusted or remote process execution.
+- Physical-device control, sandbox, execution, preview, or runtime-safety claims for generated artifacts.
+
+## Locked Decisions
+
+- Sidecar blockers remain route-scoped and cannot block unrelated routes.
+- Fourth example uses typed `requires`/`consumes` detail and artifact completion records.
+- No public `materializes`, `produces`, or `fallbacks` edge discriminants are introduced.
+- Machine-path artifacts are verified artifact records only; Reigh does not control or certify physical equipment.
+- Executable-package artifacts are verified artifact records only; Reigh does not sandbox, execute, or preview them.
+
+## Constraints
+
+- Do not reintroduce legacy planner authority.
+- Do not claim descriptor, preview, export, materialization, output-format, sidecar, or trusted-only support beyond evidence.
+- Example readiness must fail on broken refs, unsupported target paths, missing material statuses, stale planner actions, missing sidecar blockers, incomplete artifact routes, or missing graph-path markers.
+- Browser acceptance is required for route completion and repair UI.
+- Keep trusted process runtime namespaced outside the V1 composition SDK.
+
+## Done Criteria
+
+- Fourth composed example is graph-backed, tested, documented, and release-ready.
+- Sidecar/process blockers remain route-scoped.
+- Multi-artifact completion requires every declared artifact to resolve with compatible manifest profiles, hashes, provenance, and route constraints.
+- Docs claim verification fails on unsupported capability claims.
+- Example readiness and graph-path marker checks cover all four examples.
+- Browser acceptance covers route completion happy path and stopped/degraded/failed process or missing-artifact repair path.
+
+## Touchpoints
+
+- `src/tools/video-editor/runtime/processes/**`
+- `src/tools/video-editor/runtime/composition/**`
+- `src/tools/video-editor/components/**`
+- `src/tools/video-editor/lib/renderRouter.ts`
+- `src/sdk/video/rendering/artifacts.ts`
+- `scripts/quality/check-extension-family-conformance.mjs`
+- `scripts/quality/check-extension-example-readiness.mjs`
+- `scripts/quality/check-docs-maturity-sync.mjs`
+- `scripts/quality/check-sdk-public-exports.mjs`
+- `examples/video-editor-extension/**`
+- `tests/e2e/video-editor-*.spec.ts`
+- `docs/extensions/**`
+
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+
+
+
+
+        No prior clarification artifact exists. Identify ambiguities, ask clarifying questions, and state your assumptions inside the plan output.
+
+        Open tickets for this repo:
+
+- 01KS384XKZNEWQRSXN2NXQ0DTJ — Video editor: extensibility plan (preserves variation potential, ships none)  [video-editor, design, refactor, oss]
+- 01KV8XVYW2EYDDDY30V48YX520 — Megaplan plan extraction can pass malformed/escaped-newline payloads to Markdown validator  [megaplan, validator, hermes, json-extraction, plan-phase]
+
+The planner may PROPOSE linking tickets to this plan with `resolves_on_complete=true` in the plan output, but the actual linking is performed via the explicit `megaplan ticket link` CLI after planning — the planner never directly links tickets.
+
+        Requirements:
+        - If the engineering brief suggests an approach, use it as your starting hypothesis — but before committing, consider if there's a simpler or more fundamental fix. The brief is well-researched input, not a final answer.
+        - If the brief is absent, incomplete, or says "skip", inspect the repository yourself before planning.
+        - Stay focused on the requested idea. If repo exploration surfaces unrelated issues or docs, ignore them and return to the task.
+        - Prefer source code, tests, and directly relevant config files. Avoid `.megaplan/`, prior plan artifacts, and unrelated `docs/` or ops/deployment material unless the task explicitly depends on them.
+        - Stop exploring once you have enough evidence to name the concrete touch points and validation path. Do not keep browsing after you can write the plan.
+        - Produce a concrete implementation plan in markdown.
+        - Define observable success criteria as objects with `criterion` (string) and `priority` (`must`, `should`, or `info`):
+          - `must` — hard gate. The reviewer will block on failure. Use for correctness, functional requirements, and verifiable outcomes (e.g., "all existing tests pass", "API returns 200 for valid input"). Every `must` criterion must have a clear yes/no answer.
+          - `should` — quality target. The reviewer flags but does not block. Use for subjective goals, numeric guidelines, and best-effort improvements (e.g., "file under ~300 lines", "no deeply nested conditionals", "each function has a single responsibility").
+          - `info` — documented for humans, reviewer skips. Use for criteria that cannot be verified in this pipeline (e.g., "13 manual smoke tests pass", "stakeholder sign-off obtained").
+        - Each success criterion should include a `requires` field listing the capabilities needed for verification. Valid capability strings: `run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, `run_linter` (container), `drive_browser`, `inspect_runtime_ui`, `observe_runtime_logs`, `subjective_judgment`, `verify_physical_device` (human). `must` criteria MUST have non-empty `requires`. Example: `{"criterion": "All tests pass", "priority": "must", "requires": ["run_tests"]}`.
+        - Use the `questions` field for ambiguities that would materially change implementation.
+        - Use the `assumptions` field for defaults you are making so planning can proceed now.
+        - Prefer cheap validation steps early.
+        - Keep the plan proportional to the task. A 1-line fix needs a 2-step plan (apply fix + run tests), not a 5-step investigation.
+        - Size each step so it can be implemented AND verified in a single worker turn (~15 min, one model conversation). A step that bundles "create the abstraction AND migrate every consumer AND write all the tests" is too large to finish in one turn and will fail (the worker runs out of time before it can implement, leaving the step blocked). For large mechanical refactors, split along the natural seam — one step to add the new abstraction + its unit tests, then one step per consumer to migrate (the last migration step also adds parity tests) — rather than one giant step. Higher complexity does not earn a step more time; it only routes to a stronger model for the same single turn.
+        - If user notes answer earlier questions, incorporate them into the draft plan instead of re-asking them.
+        - Fix the problem fully. Do not limit scope just to avoid breaking existing tests — update the tests too if needed.
+        - Prefer the simplest, most direct fix. No fallbacks, type conversions, or defensive wrappers without concrete evidence they are needed.
+        - If the task or issue hints suggest a specific approach, follow it. Only deviate with concrete counter-evidence.
+        - Assign every plan step a complexity score 1–5 before finalize. Reason about complexity in the plan markdown (e.g. "Complexity: 2" per step), and surface it informally so the reviewer can audit:
+          - 1 = trivial single-file mechanical change
+          - 2 = simple change with tests to update
+          - 3 = multi-file change with non-trivial logic
+          - 4 = cross-cutting change with architecture implications
+          - 5 = fundamental system change with high regression risk
+        - Populate `changed_surfaces` with every concrete file path your plan will change or create. Include both source files and test files. Use repo-relative paths (e.g., `src/prompts.py`, `tests/test_prompts.py`). This list drives the deterministic test-selection blast radius; be complete. If your plan touches a file, list it.
+        - (Optional) Populate `test_blast_radius` with your own scoped test-selection proposal. This complements the deterministic floor the system computes from `changed_surfaces`. Provide `strategy` ("scoped", "full", or "none"), `selectors` (array of `{"kind": "path", "value": "<path>", "reason": "<why>"}` objects), and a `rationale` string. The system merges your proposal with the deterministic floor; you cannot narrow below the floor, but you can widen with additional selectors or escalate to full. If you intend a scoped finalize baseline while keeping the full suite as a hard gate, set `strategy` to "scoped", include concrete `selectors`, and set `full_suite_fallback` to true; the floor's full-suite requirement will be honored by the fallback without forcing the baseline strategy to "full".
+
+        Plan template — simple format (adapt to the actual repo and scope):
+````md
+# Implementation Plan: [Title]
+
+## Overview
+Summarize the goal, current repository shape, and the constraints that matter.
+
+## Main Phase
+
+### Step 1: Audit the current behavior (`src/prompts.py`)
+**Scope:** Small
+1. **Inspect** the current implementation and call out the exact insertion points (`src/prompts.py:29`).
+
+### Step 2: Add the first change (`src/evaluation.py`)
+**Scope:** Medium
+1. **Implement** the smallest viable change with exact file references (`src/evaluation.py:1`).
+2. **Capture** any tricky behavior with a short example.
+   ```python
+   issues = validate_plan_structure(plan_text)
+   ```
+
+### Step 3: Wire downstream behavior (`src/handlers.py`, `src/workers.py`)
+**Scope:** Medium
+1. **Update** the runtime flow in the touched files (`src/handlers.py:400`, `src/workers.py:199`).
+
+### Step 4: Prove the change (`tests/test_validator.py`, `tests/test_integration.py`)
+**Scope:** Small
+1. **Run** the cheapest targeted checks first (`tests/test_validator.py:1`).
+2. **Finish** with broader verification once the wiring is in place (`tests/test_integration.py:1`).
+
+## Execution Order
+1. Update prompts and mocks before enforcing stricter validation.
+2. Land higher-risk wiring after the validator and tests are ready.
+
+## Validation Order
+1. Start with focused unit tests.
+2. Run the broader suite after the flow changes are in place.
+````
+
+For complex plans, use multiple phases:
+````md
+## Phase 1: Foundation — Dependencies, DB, Types
+
+### Step 1: Install dependencies (`package.json`)
+...
+
+### Step 2: Create database migration (`supabase/migrations/`)
+...
+
+## Phase 2: Core Integration
+
+### Step 3: Port the main component (`src/components/`)
+...
+````
+
+Template guidance:
+- Simple plans: use `## Main Phase` with `### Step N:` sections underneath.
+- Complex plans: use multiple `## Phase N:` sections, each containing `### Step N:` steps. Step numbers are global (not per-phase).
+- The flat `## Step N:` format (without phases) also works for backwards compatibility.
+- Key invariants: one H1 title, one `## Overview`, numbered step sections (`### Step N:` or `## Step N:`), and at least one ordering section.

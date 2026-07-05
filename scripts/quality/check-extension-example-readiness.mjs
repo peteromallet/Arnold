@@ -57,36 +57,64 @@ import { fileURLToPath } from 'node:url';
 // ---------------------------------------------------------------------------
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(moduleDir, '..', '..');
+const DEFAULT_REPO_ROOT = resolve(moduleDir, '..', '..');
 
-const SUPPORTED_DEFERRED_PATH = resolve(
-  repoRoot,
-  'docs/video-editor/extension-platform-supported-deferred.md',
-);
-
-const CONTRACT_SURFACE_MAP_PATH = resolve(
-  repoRoot,
-  'config/governance/contract-surface-map.json',
-);
-
-const SDK_EXPORT_ALLOWLIST_PATH = resolve(
-  repoRoot,
-  'config/governance/sdk-public-export-allowlist.json',
-);
-
-const EXAMPLES_DIR = resolve(repoRoot, 'src/examples');
-const EXTENSIONS_DIR = resolve(
-  repoRoot,
-  'src/tools/video-editor/examples/extensions',
-);
+let repoRoot = DEFAULT_REPO_ROOT;
+let SUPPORTED_DEFERRED_PATH = '';
+let CONTRACT_SURFACE_MAP_PATH = '';
+let SDK_EXPORT_ALLOWLIST_PATH = '';
+let EXAMPLES_DIR = '';
+let EXTENSIONS_DIR = '';
+let RELEASE_EXAMPLES_DOC_PATH = '';
 
 const LABEL = '[example-readiness]';
+
+function configurePaths(nextRepoRoot = DEFAULT_REPO_ROOT) {
+  repoRoot = resolve(nextRepoRoot);
+  SUPPORTED_DEFERRED_PATH = resolve(
+    repoRoot,
+    'docs/video-editor/extension-platform-supported-deferred.md',
+  );
+  CONTRACT_SURFACE_MAP_PATH = resolve(
+    repoRoot,
+    'config/governance/contract-surface-map.json',
+  );
+  SDK_EXPORT_ALLOWLIST_PATH = resolve(
+    repoRoot,
+    'config/governance/sdk-public-export-allowlist.json',
+  );
+  EXAMPLES_DIR = resolve(repoRoot, 'src/examples');
+  EXTENSIONS_DIR = resolve(
+    repoRoot,
+    'src/tools/video-editor/examples/extensions',
+  );
+  RELEASE_EXAMPLES_DOC_PATH = resolve(
+    repoRoot,
+    'docs/extensions/composition-spine/m0-release-examples.md',
+  );
+}
+
+configurePaths();
 
 // ---------------------------------------------------------------------------
 // CLI argument parsing
 // ---------------------------------------------------------------------------
 
-const args = new Set(process.argv.slice(2));
+const cliArgs = process.argv.slice(2);
+const args = new Set(cliArgs);
+
+function readCliOption(name) {
+  const exactPrefix = `${name}=`;
+  const exact = cliArgs.find((arg) => arg.startsWith(exactPrefix));
+  if (exact) {
+    return exact.slice(exactPrefix.length);
+  }
+  const index = cliArgs.indexOf(name);
+  if (index >= 0 && index < cliArgs.length - 1) {
+    return cliArgs[index + 1];
+  }
+  return null;
+}
 
 /** @type {'audit' | 'release'} */
 let mode = 'audit';
@@ -97,6 +125,10 @@ if (args.has('--release')) {
 }
 
 const isRelease = mode === 'release';
+const repoRootOverride = readCliOption('--repo-root');
+if (repoRootOverride) {
+  configurePaths(resolve(repoRootOverride));
+}
 
 // ---------------------------------------------------------------------------
 // Supported/deferred matrix parser
@@ -554,197 +586,480 @@ function loadGovernanceData() {
   return { contractSurfaceMap, exportAllowlist };
 }
 
+const RELEASE_EXAMPLE_CONTRACTS = Object.freeze([
+  {
+    exampleId: 'EX-01',
+    requiredDocRefPaths: Object.freeze([
+      'src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx',
+    ]),
+    supportedDocRefPaths: Object.freeze([
+      'src/tools/video-editor/examples/extensions/clip-local-shader-canary/index.ts',
+      'src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx',
+    ]),
+    markerChecks: Object.freeze([
+      {
+        relPath:
+          'src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx',
+        label: 'shader-uniform target-path evidence',
+        patterns: Object.freeze([
+          {
+            regex: /targetKind:\s*'shader-uniform'/,
+            message: 'missing shader-uniform target kind evidence.',
+          },
+          {
+            regex: /targetPath:\s*'uniforms\.intensity'/,
+            message: 'missing supported shader-uniform target path evidence.',
+          },
+          {
+            regex: /reason:\s*'missing-material'/,
+            message: 'missing route-scoped missing-material blocker evidence.',
+          },
+        ]),
+      },
+    ]),
+  },
+  {
+    exampleId: 'EX-02',
+    requiredDocRefPaths: Object.freeze([
+      'src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx',
+      'src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx',
+    ]),
+    supportedDocRefPaths: Object.freeze([
+      'src/tools/video-editor/examples/extensions/flagship-local/index.ts',
+      'src/tools/video-editor/examples/extensions/live-webcam-canary/index.ts',
+      'src/tools/video-editor/examples/extensions/live-generated-frame-canary/index.ts',
+      'src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx',
+      'src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx',
+      'src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx',
+    ]),
+    markerChecks: Object.freeze([
+      {
+        relPath:
+          'src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-effect-live-canary.integration.test.tsx',
+        label: 'effect live-binding target-path evidence',
+        patterns: Object.freeze([
+          {
+            regex: /targetKind:\s*'effect-param'/,
+            message: 'missing effect-param target kind evidence.',
+          },
+          {
+            regex: /targetPath:\s*'intensity'/,
+            message: 'missing supported effect-param target path evidence.',
+          },
+          {
+            regex: /code:\s*'export\/live-binding-unresolved'/,
+            message: 'missing export/live-binding-unresolved blocker evidence.',
+          },
+          {
+            regex: /reason:\s*'live-unbaked'/,
+            message: 'missing live-unbaked planner blocker evidence.',
+          },
+        ]),
+      },
+    ]),
+  },
+  {
+    exampleId: 'EX-03',
+    requiredDocRefPaths: Object.freeze([
+      'src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx',
+      'src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx',
+    ]),
+    supportedDocRefPaths: Object.freeze([
+      'src/tools/video-editor/examples/extensions/flagship-local/index.ts',
+      'src/tools/video-editor/examples/extensions/__tests__/flagship-local-transition.test.ts',
+      'src/tools/video-editor/examples/extensions/agent-tools-canary/index.ts',
+      'src/tools/video-editor/examples/extensions/live-generated-frame-canary/index.ts',
+      'src/tools/video-editor/examples/extensions/__tests__/flagship-local-m5-transition-mask-canary.integration.test.tsx',
+      'src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx',
+    ]),
+    markerChecks: Object.freeze([
+      {
+        relPath:
+          'src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx',
+        label: 'material status coverage',
+        patterns: Object.freeze([
+          {
+            regex:
+              /state:\s*'missing'\s*\|\s*'pending'\s*\|\s*'resolved'\s*\|\s*'stale'\s*\|\s*'failed'/,
+            message: 'missing the full material status coverage required for EX-03.',
+          },
+          {
+            regex: /kind:\s*'materialize'/,
+            message: 'missing the materialize repair action surface for EX-03.',
+          },
+        ]),
+      },
+      {
+        relPath:
+          'src/tools/video-editor/runtime/composition/materialRuntime.test.ts',
+        label: 'stale planner action evidence',
+        patterns: Object.freeze([
+          {
+            regex: /materialStatus:\s*'stale'/,
+            message: 'missing stale material-status evidence for EX-03.',
+          },
+          {
+            regex: /repairAction:\s*\{/,
+            message: 'missing stale repair-action evidence for EX-03.',
+          },
+          {
+            regex: /kind:\s*'materialize'/,
+            message: 'missing stale planner materialize action evidence for EX-03.',
+          },
+          {
+            regex: /materialSlot:\s*'transition-mask'/,
+            message: 'missing transition-mask slot evidence for EX-03.',
+          },
+        ]),
+      },
+    ]),
+  },
+  {
+    exampleId: 'EX-04',
+    classifiedExamplePaths: Object.freeze([
+      'src/examples/output-format-sidecar-composed-example.ts',
+    ]),
+    requiredDocRefPaths: Object.freeze([
+      'src/examples/output-format-sidecar-composed-example.ts',
+      'src/tools/video-editor/components/RouteCompletionDashboard/RouteCompletionDashboard.tsx',
+      'src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx',
+    ]),
+    supportedDocRefPaths: Object.freeze([
+      'src/examples/output-format-sidecar-composed-example.ts',
+      'src/examples/metadata-json-output-example.ts',
+      'src/examples/process-example.ts',
+      'src/tools/video-editor/components/RouteCompletionDashboard/RouteCompletionDashboard.tsx',
+      'src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx',
+      'src/tools/video-editor/runtime/extensionSurface.test.ts',
+      'src/tools/video-editor/runtime/renderPlanner.test.ts',
+      'src/tools/video-editor/runtime/outputFormatRegistry.test.ts',
+    ]),
+    markerChecks: Object.freeze([
+      {
+        relPath: 'src/examples/output-format-sidecar-composed-example.ts',
+        label: 'sidecar blocker and artifact-route evidence',
+        patterns: Object.freeze([
+          {
+            regex: /graphPathMarker:\s*EX04_GRAPH_PATH_MARKER/,
+            message: 'missing EX-04 graph-path marker evidence.',
+          },
+          {
+            regex: /reason:\s*'process-dependent'/,
+            message: 'missing the route-scoped sidecar blocker for EX-04.',
+          },
+          {
+            regex: /routeConstraints:\s*EX04_ROUTE_CONSTRAINTS/,
+            message: 'missing the sidecar artifact route-constraint evidence for EX-04.',
+          },
+          {
+            regex:
+              /artifact evidence route constraints must match the sidecar-export route\./,
+            message: 'missing the conjunctive artifact-route guard for EX-04.',
+          },
+          {
+            regex: /requiredProfiles:\s*\['sidecar'\]/,
+            message: 'missing the route-completion required profile evidence for EX-04.',
+          },
+        ]),
+      },
+      {
+        relPath:
+          'src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx',
+        label: 'graph-path and dashboard acceptance evidence',
+        patterns: Object.freeze([
+          {
+            regex:
+              /edge\.detail\?\.graphPathMarker === contract\.graphPathMarker/,
+            message: 'missing graph-path marker assertions in EX-04 browser acceptance.',
+          },
+          {
+            regex: /route-completion-profile-sidecar/,
+            message: 'missing route-completion sidecar profile assertions for EX-04.',
+          },
+          {
+            regex: /requires the Example Analyzer process/i,
+            message: 'missing the route-scoped process blocker assertion for EX-04.',
+          },
+        ]),
+      },
+    ]),
+  },
+]);
+
+function parseReleaseExampleSections(markdown) {
+  const sections = new Map();
+  const matches = [...markdown.matchAll(/^## (EX-\d+) - .+$/gm)];
+
+  for (let i = 0; i < matches.length; i++) {
+    const match = matches[i];
+    const exampleId = match[1];
+    const start = match.index ?? 0;
+    const end = matches[i + 1]?.index ?? markdown.length;
+    sections.set(exampleId, markdown.slice(start, end));
+  }
+
+  return sections;
+}
+
+function parseDocPathRef(pathRef) {
+  const withLines = pathRef.match(/^(.*?):(\d+)(?:-(\d+))?$/);
+  if (!withLines) {
+    const barePath = pathRef.match(/^(src\/.*\.(?:ts|tsx|js|jsx|mjs|json|md))$/);
+    if (!barePath) return null;
+    return {
+      relPath: barePath[1],
+      startLine: null,
+      endLine: null,
+    };
+  }
+  const [, relPath, startLineRaw, endLineRaw] = withLines;
+  return {
+    relPath,
+    startLine: Number(startLineRaw),
+    endLine: Number(endLineRaw ?? startLineRaw),
+  };
+}
+
+function extractDocPathRefs(sectionText) {
+  return [...sectionText.matchAll(/`(src\/[^`]+\.(?:ts|tsx|js|jsx|mjs|json|md)(?::\d+(?:-\d+)?)?)`/g)]
+    .map((match) => match[1]);
+}
+
+function validateDocPathRef(pathRef) {
+  const parsed = parseDocPathRef(pathRef);
+  if (!parsed) {
+    return {
+      ok: false,
+      reason: `invalid path reference format "${pathRef}"`,
+    };
+  }
+
+  const absPath = resolve(repoRoot, parsed.relPath);
+  if (!existsSync(absPath)) {
+    return {
+      ok: false,
+      reason: `broken ref "${pathRef}" resolves to a missing file`,
+    };
+  }
+
+  const stat = statSync(absPath);
+  if (!stat.isFile()) {
+    return {
+      ok: false,
+      reason: `broken ref "${pathRef}" resolves to a non-file target`,
+    };
+  }
+
+  const lineCount = readFileSync(absPath, 'utf8').split('\n').length;
+  if (
+    parsed.startLine != null
+    && parsed.endLine != null
+    && (
+      parsed.startLine < 1
+      || parsed.endLine < parsed.startLine
+      || parsed.endLine > lineCount
+    )
+  ) {
+    return {
+      ok: false,
+      reason:
+        `broken ref "${pathRef}" points outside the file ` +
+        `(line count ${lineCount})`,
+    };
+  }
+
+  return { ok: true };
+}
+
+function validateReleaseExampleContracts(failures) {
+  if (!existsSync(RELEASE_EXAMPLES_DOC_PATH)) {
+    failures.push(
+      `[release-example-contract] Release example doc is missing: ${relative(repoRoot, RELEASE_EXAMPLES_DOC_PATH)}`,
+    );
+    return;
+  }
+
+  const markdown = readFileSync(RELEASE_EXAMPLES_DOC_PATH, 'utf8');
+  const sections = parseReleaseExampleSections(markdown);
+
+  for (const contract of RELEASE_EXAMPLE_CONTRACTS) {
+    const section = sections.get(contract.exampleId);
+    if (!section) {
+      failures.push(
+        `[release-example-contract] ${contract.exampleId} is missing from ${relative(repoRoot, RELEASE_EXAMPLES_DOC_PATH)}.`,
+      );
+      continue;
+    }
+
+    const docPathRefs = extractDocPathRefs(section);
+    const seenPaths = new Set(
+      docPathRefs
+        .map((pathRef) => parseDocPathRef(pathRef)?.relPath)
+        .filter(Boolean),
+    );
+    const supportedDocRefPaths = contract.supportedDocRefPaths
+      ?? contract.requiredDocRefPaths;
+
+    for (const pathRef of docPathRefs) {
+      const validated = validateDocPathRef(pathRef);
+      if (!validated.ok) {
+        failures.push(
+          `[release-example-contract] ${contract.exampleId} ${validated.reason}.`,
+        );
+      }
+    }
+
+    for (const relPath of contract.requiredDocRefPaths) {
+      if (!seenPaths.has(relPath)) {
+        failures.push(
+          `[release-example-contract] ${contract.exampleId} is missing the expected doc target path "${relPath}".`,
+        );
+      }
+    }
+
+    for (const relPath of seenPaths) {
+      if (!supportedDocRefPaths.includes(relPath)) {
+        failures.push(
+          `[release-example-contract] ${contract.exampleId} references unsupported target path "${relPath}".`,
+        );
+      }
+    }
+
+    for (const markerCheck of contract.markerChecks) {
+      const absPath = resolve(repoRoot, markerCheck.relPath);
+      if (!existsSync(absPath)) {
+        failures.push(
+          `[release-example-contract] ${contract.exampleId} evidence target is missing: ${markerCheck.relPath}.`,
+        );
+        continue;
+      }
+
+      const content = readFileSync(absPath, 'utf8');
+      for (const pattern of markerCheck.patterns) {
+        if (!pattern.regex.test(content)) {
+          failures.push(
+            `[release-example-contract] ${contract.exampleId} ${markerCheck.label} failed: ${pattern.message}`,
+          );
+        }
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
-console.log(`${LABEL} Running in ${mode} mode…\n`);
+function run() {
+  console.log(`${LABEL} Running in ${mode} mode…\n`);
 
-// ---- Step 1: Parse the supported/deferred matrix ----
-console.log(`${LABEL} Parsing supported/deferred matrix…`);
+  // ---- Step 1: Parse the supported/deferred matrix ----
+  console.log(`${LABEL} Parsing supported/deferred matrix…`);
 
-let supportedRows = [];
-let deferredRows = [];
-let unsupportedRows = [];
-let releaseBlockingRows = [];
+  let supportedRows = [];
+  let deferredRows = [];
+  let unsupportedRows = [];
+  let releaseBlockingRows = [];
 
-try {
-  const sdm = parseSupportedDeferredMatrix();
-  supportedRows = sdm.supportedRows;
-  deferredRows = sdm.deferredRows;
-  unsupportedRows = sdm.unsupportedRows;
-  releaseBlockingRows = sdm.releaseBlockingRows;
+  try {
+    const sdm = parseSupportedDeferredMatrix();
+    supportedRows = sdm.supportedRows;
+    deferredRows = sdm.deferredRows;
+    unsupportedRows = sdm.unsupportedRows;
+    releaseBlockingRows = sdm.releaseBlockingRows;
+
+    console.log(
+      `${LABEL} Parsed matrix: ${supportedRows.length} supported, ` +
+        `${deferredRows.length} deferred, ${unsupportedRows.length} unsupported, ` +
+        `${releaseBlockingRows.length} release-blocking row(s).`,
+    );
+  } catch (err) {
+    console.error(`${LABEL} Failed to parse supported/deferred matrix: ${err.message}`);
+    process.exit(1);
+  }
+
+  // ---- Step 2: Load governance data ----
+  console.log(`${LABEL} Loading governance data…`);
+  const { contractSurfaceMap, exportAllowlist } = loadGovernanceData();
+  void contractSurfaceMap;
+  void exportAllowlist;
+
+  // ---- Step 3: Extract example references from supported rows ----
+  console.log(`${LABEL} Extracting example references from supported rows…`);
+
+  /** @type {ExampleRef[]} */
+  const supportedExampleRefs = [];
+
+  for (const row of supportedRows) {
+    const refs = extractExampleRefs(row.evidence);
+    for (const ref of refs) {
+      supportedExampleRefs.push({
+        refType: ref.type,
+        refPath: ref.path,
+        sourceRowId: row.rowId,
+        classification: 'supported',
+      });
+    }
+  }
 
   console.log(
-    `${LABEL} Parsed matrix: ${supportedRows.length} supported, ` +
-      `${deferredRows.length} deferred, ${unsupportedRows.length} unsupported, ` +
-      `${releaseBlockingRows.length} release-blocking row(s).`,
+    `${LABEL} Found ${supportedExampleRefs.length} example reference(s) in supported rows.`,
   );
-} catch (err) {
-  console.error(`${LABEL} Failed to parse supported/deferred matrix: ${err.message}`);
-  process.exit(1);
-}
 
-// ---- Step 2: Load governance data ----
-console.log(`${LABEL} Loading governance data…`);
-const { contractSurfaceMap, exportAllowlist } = loadGovernanceData();
+  // ---- Step 4: Extract example references from deferred/unsupported rows ----
+  /** @type {ExampleRef[]} */
+  const unsupportedExampleRefs = [];
 
-// ---- Step 3: Extract example references from supported rows ----
-console.log(`${LABEL} Extracting example references from supported rows…`);
-
-/** @type {ExampleRef[]} */
-const supportedExampleRefs = [];
-
-for (const row of supportedRows) {
-  const refs = extractExampleRefs(row.evidence);
-  for (const ref of refs) {
-    supportedExampleRefs.push({
-      refType: ref.type,
-      refPath: ref.path,
-      sourceRowId: row.rowId,
-      classification: 'supported',
-    });
-  }
-}
-
-console.log(
-  `${LABEL} Found ${supportedExampleRefs.length} example reference(s) in supported rows.`,
-);
-
-// ---- Step 4: Extract example references from deferred/unsupported rows ----
-// These are "unsupported docs candidates" — examples demonstrating
-// behaviour that is explicitly deferred/unsupported.
-
-/** @type {ExampleRef[]} */
-const unsupportedExampleRefs = [];
-
-for (const row of [...deferredRows, ...unsupportedRows, ...releaseBlockingRows]) {
-  const refs = extractExampleRefs(row.evidence);
-  for (const ref of refs) {
-    unsupportedExampleRefs.push({
-      refType: ref.type,
-      refPath: ref.path,
-      sourceRowId: row.rowId,
-      classification: row.classification.replace(/[*_]{1,2}/g, '').toLowerCase().trim(),
-    });
-  }
-}
-
-if (unsupportedExampleRefs.length > 0) {
-  console.log(
-    `${LABEL} Found ${unsupportedExampleRefs.length} example reference(s) in deferred/unsupported rows — ` +
-      `these will be flagged as unsupported docs candidates.`,
-  );
-}
-
-// ---- Step 5: Verify supported example references ----
-console.log(`\n${LABEL} Verifying supported example references…`);
-
-/** @type {string[]} */
-const failures = [];
-/** @type {string[]} */
-const warnings = [];
-/** @type {Set<string>} */
-const docsSafeExampleIds = new Set();
-/** @type {Map<string, string>} */
-const failedExampleIds = new Map();
-
-for (const ref of supportedExampleRefs) {
-  const refLabel = `${ref.refType}:${ref.refPath} (from row ${ref.sourceRowId})`;
-
-  if (ref.refType === 'EX') {
-    const absPath = resolveExPath(ref.refPath);
-    const check = checkExFile(absPath);
-
-    if (!check.exists) {
-      const msg = `Supported example ${refLabel} does not exist: ${check.reason}`;
-      failures.push(msg);
-      failedExampleIds.set(ref.refPath, check.reason || 'missing');
-      continue;
+  for (const row of [...deferredRows, ...unsupportedRows, ...releaseBlockingRows]) {
+    const refs = extractExampleRefs(row.evidence);
+    for (const ref of refs) {
+      unsupportedExampleRefs.push({
+        refType: ref.type,
+        refPath: ref.path,
+        sourceRowId: row.rowId,
+        classification: row.classification.replace(/[*_]{1,2}/g, '').toLowerCase().trim(),
+      });
     }
-
-    // Check import boundary for .ts files
-    if (absPath.endsWith('.ts') || absPath.endsWith('.tsx')) {
-      const boundaryCheck = checkImportBoundary(absPath);
-      if (!boundaryCheck.clean) {
-        for (const violation of boundaryCheck.violations) {
-          const msg = `Supported example ${refLabel} has internal import: ${violation}`;
-          if (isRelease) {
-            failures.push(msg);
-          } else {
-            warnings.push(msg);
-          }
-        }
-        // Don't disqualify from docs-safe in audit mode for import issues
-        if (isRelease) {
-          failedExampleIds.set(ref.refPath, 'internal-imports');
-          continue;
-        }
-      }
-    }
-
-    // Derive a stable example ID from the filename
-    const exampleId = basename(absPath, '.ts').replace(/\.tsx$/, '');
-    docsSafeExampleIds.add(exampleId);
-    console.log(`${LABEL}   ✓ ${refLabel} → ${exampleId}`);
   }
 
-  if (ref.refType === 'EXT') {
-    const { absPath, isFile } = resolveExtPath(ref.refPath);
+  if (unsupportedExampleRefs.length > 0) {
+    console.log(
+      `${LABEL} Found ${unsupportedExampleRefs.length} example reference(s) in deferred/unsupported rows — ` +
+        `these will be flagged as unsupported docs candidates.`,
+    );
+  }
 
-    if (isFile) {
-      // EXT reference points to a specific file (e.g. FlagshipEffectComponent.tsx)
-      // or a test file (e.g. __tests__/flagship-local-transition.test.ts)
+  // ---- Step 5: Verify supported example references ----
+  console.log(`\n${LABEL} Verifying supported example references…`);
+
+  /** @type {string[]} */
+  const failures = [];
+  /** @type {string[]} */
+  const warnings = [];
+  /** @type {Set<string>} */
+  const docsSafeExampleIds = new Set();
+  /** @type {Map<string, string>} */
+  const failedExampleIds = new Map();
+
+  for (const ref of supportedExampleRefs) {
+    const refLabel = `${ref.refType}:${ref.refPath} (from row ${ref.sourceRowId})`;
+
+    if (ref.refType === 'EX') {
+      const absPath = resolveExPath(ref.refPath);
       const check = checkExFile(absPath);
 
       if (!check.exists) {
-        const msg = `Supported extension file ${refLabel} does not exist: ${check.reason}`;
+        const msg = `Supported example ${refLabel} does not exist: ${check.reason}`;
         failures.push(msg);
         failedExampleIds.set(ref.refPath, check.reason || 'missing');
         continue;
       }
 
-      // For files within extension directories, derive example ID from the
-      // extension directory name.
-      // e.g. flagship-local/FlagshipEffectComponent.tsx → flagship-local
-      // e.g. __tests__/flagship-local-transition.test.ts → flagship-local
-      const relToExt = relative(EXTENSIONS_DIR, absPath);
-      const parts = relToExt.split('/');
-
-      let exampleId;
-      if (parts[0] === '__tests__') {
-        // Test files: derive from the test filename, stripping .test.ts(x) suffix
-        const testFile = basename(absPath);
-        exampleId = testFile
-          .replace(/\.(test|integration)\.(ts|tsx)$/, '')
-          .replace(/\.(ts|tsx)$/, '');
-      } else {
-        // Non-test files: use the top-level extension directory name
-        exampleId = parts[0];
-      }
-
-      if (exampleId && exampleId !== '..') {
-        docsSafeExampleIds.add(exampleId);
-      }
-      console.log(`${LABEL}   ✓ ${refLabel} → ${exampleId} (file)`);
-    } else {
-      // EXT reference points to a directory (e.g. flagship-local/)
-      const check = checkExtDir(absPath);
-
-      if (!check.exists) {
-        const msg = `Supported extension directory ${refLabel} does not exist: ${check.reason}`;
-        failures.push(msg);
-        failedExampleIds.set(ref.refPath, check.reason || 'missing');
-        continue;
-      }
-
-      // Check import boundary for the index.ts in the extension directory
-      const indexFile = resolve(absPath, 'index.ts');
-      if (existsSync(indexFile)) {
-        const boundaryCheck = checkImportBoundary(indexFile);
+      if (absPath.endsWith('.ts') || absPath.endsWith('.tsx')) {
+        const boundaryCheck = checkImportBoundary(absPath);
         if (!boundaryCheck.clean) {
           for (const violation of boundaryCheck.violations) {
-            const msg = `Supported extension example ${refLabel} has internal import: ${violation}`;
+            const msg = `Supported example ${refLabel} has internal import: ${violation}`;
             if (isRelease) {
               failures.push(msg);
             } else {
@@ -758,159 +1073,225 @@ for (const ref of supportedExampleRefs) {
         }
       }
 
-      // Derive a stable example ID from the directory name
-      const exampleId = basename(absPath);
+      const exampleId = basename(absPath, '.ts').replace(/\.tsx$/, '');
       docsSafeExampleIds.add(exampleId);
       console.log(`${LABEL}   ✓ ${refLabel} → ${exampleId}`);
     }
-  }
-}
 
-// ---- Step 6: Check for on-disk example files with no supported matrix row ----
-console.log(`\n${LABEL} Checking for unclassified on-disk examples…`);
+    if (ref.refType === 'EXT') {
+      const { absPath, isFile } = resolveExtPath(ref.refPath);
 
-/**
- * Collect all example files in src/examples/
- * @returns {string[]}
- */
-function listExampleFiles() {
-  if (!existsSync(EXAMPLES_DIR)) return [];
+      if (isFile) {
+        const check = checkExFile(absPath);
 
-  try {
-    return readdirSync(EXAMPLES_DIR)
-      .filter((f) => f.endsWith('.ts') || f.endsWith('.tsx'))
-      .map((f) => resolve(EXAMPLES_DIR, f));
-  } catch {
-    return [];
-  }
-}
+        if (!check.exists) {
+          const msg = `Supported extension file ${refLabel} does not exist: ${check.reason}`;
+          failures.push(msg);
+          failedExampleIds.set(ref.refPath, check.reason || 'missing');
+          continue;
+        }
 
-const onDiskExamples = listExampleFiles();
+        const relToExt = relative(EXTENSIONS_DIR, absPath);
+        const parts = relToExt.split('/');
 
-// Build a set of resolved paths from supported example refs
-const resolvedSupportedExPaths = new Set();
-for (const ref of supportedExampleRefs) {
-  if (ref.refType === 'EX') {
-    resolvedSupportedExPaths.add(resolveExPath(ref.refPath));
-  }
-}
+        let exampleId;
+        if (parts[0] === '__tests__') {
+          const testFile = basename(absPath);
+          exampleId = testFile
+            .replace(/\.(test|integration)\.(ts|tsx)$/, '')
+            .replace(/\.(ts|tsx)$/, '');
+        } else {
+          exampleId = parts[0];
+        }
 
-// Build a set of resolved paths from unsupported example refs
-const resolvedUnsupportedExPaths = new Set();
-for (const ref of unsupportedExampleRefs) {
-  if (ref.refType === 'EX') {
-    resolvedUnsupportedExPaths.add(resolveExPath(ref.refPath));
-  }
-}
+        if (exampleId && exampleId !== '..') {
+          docsSafeExampleIds.add(exampleId);
+        }
+        console.log(`${LABEL}   ✓ ${refLabel} → ${exampleId} (file)`);
+      } else {
+        const check = checkExtDir(absPath);
 
-for (const absPath of onDiskExamples) {
-  const relPath = relative(repoRoot, absPath);
+        if (!check.exists) {
+          const msg = `Supported extension directory ${refLabel} does not exist: ${check.reason}`;
+          failures.push(msg);
+          failedExampleIds.set(ref.refPath, check.reason || 'missing');
+          continue;
+        }
 
-  if (resolvedSupportedExPaths.has(absPath)) {
-    // Already accounted for
-    continue;
-  }
+        const indexFile = resolve(absPath, 'index.ts');
+        if (existsSync(indexFile)) {
+          const boundaryCheck = checkImportBoundary(indexFile);
+          if (!boundaryCheck.clean) {
+            for (const violation of boundaryCheck.violations) {
+              const msg = `Supported extension example ${refLabel} has internal import: ${violation}`;
+              if (isRelease) {
+                failures.push(msg);
+              } else {
+                warnings.push(msg);
+              }
+            }
+            if (isRelease) {
+              failedExampleIds.set(ref.refPath, 'internal-imports');
+              continue;
+            }
+          }
+        }
 
-  if (resolvedUnsupportedExPaths.has(absPath)) {
-    // Example exists for a deferred/unsupported behaviour — flag it
-    const msg =
-      `Example "${relPath}" exists on disk but corresponds to deferred/unsupported behaviour. ` +
-      `This is an unsupported docs candidate. Either reclassify the matrix row or remove the example.`;
-    failures.push(`[unsupported-docs-candidate] ${msg}`);
-    continue;
-  }
-
-  // Unclassified example on disk
-  const msg =
-    `Example "${relPath}" exists on disk but has no corresponding row in the ` +
-    `supported/deferred matrix. Add a supported row with EX: evidence, or ` +
-    `document the file as deferred/unsupported.`;
-  if (isRelease) {
-    failures.push(`[unclassified-example] ${msg}`);
-  } else {
-    warnings.push(`[unclassified-example] ${msg}`);
-  }
-}
-
-// ---- Step 7: Check for unsupported example refs that resolve to existing files ----
-console.log(`\n${LABEL} Checking unsupported-docs-candidate references…`);
-
-for (const ref of unsupportedExampleRefs) {
-  const refLabel = `${ref.refType}:${ref.refPath} (${ref.classification} row ${ref.sourceRowId})`;
-
-  let exists = false;
-
-  if (ref.refType === 'EX') {
-    const absPath = resolveExPath(ref.refPath);
-    exists = existsSync(absPath) && statSync(absPath).isFile();
-  } else if (ref.refType === 'EXT') {
-    const { absPath, isFile } = resolveExtPath(ref.refPath);
-    if (isFile) {
-      exists = existsSync(absPath) && statSync(absPath).isFile();
-    } else {
-      exists = existsSync(absPath) && statSync(absPath).isDirectory();
+        const exampleId = basename(absPath);
+        docsSafeExampleIds.add(exampleId);
+        console.log(`${LABEL}   ✓ ${refLabel} → ${exampleId}`);
+      }
     }
   }
 
-  if (exists) {
+  // ---- Step 6: Check for on-disk example files with no supported matrix row ----
+  console.log(`\n${LABEL} Checking for unclassified on-disk examples…`);
+
+  function listExampleFiles() {
+    if (!existsSync(EXAMPLES_DIR)) return [];
+
+    try {
+      return readdirSync(EXAMPLES_DIR)
+        .filter((f) => f.endsWith('.ts') || f.endsWith('.tsx'))
+        .map((f) => resolve(EXAMPLES_DIR, f));
+    } catch {
+      return [];
+    }
+  }
+
+  const onDiskExamples = listExampleFiles();
+  const resolvedSupportedExPaths = new Set();
+  const resolvedUnsupportedExPaths = new Set();
+  const classifiedReleaseExamplePaths = new Set(
+    RELEASE_EXAMPLE_CONTRACTS.flatMap((contract) =>
+      contract.classifiedExamplePaths ?? []),
+  );
+
+  for (const ref of supportedExampleRefs) {
+    if (ref.refType === 'EX') {
+      resolvedSupportedExPaths.add(resolveExPath(ref.refPath));
+    }
+  }
+
+  for (const ref of unsupportedExampleRefs) {
+    if (ref.refType === 'EX') {
+      resolvedUnsupportedExPaths.add(resolveExPath(ref.refPath));
+    }
+  }
+
+  for (const absPath of onDiskExamples) {
+    const relPath = relative(repoRoot, absPath);
+
+    if (resolvedSupportedExPaths.has(absPath)) {
+      continue;
+    }
+
+    if (classifiedReleaseExamplePaths.has(relPath)) {
+      continue;
+    }
+
+    if (resolvedUnsupportedExPaths.has(absPath)) {
+      const msg =
+        `Example "${relPath}" exists on disk but corresponds to deferred/unsupported behaviour. ` +
+        `This is an unsupported docs candidate. Either reclassify the matrix row or remove the example.`;
+      failures.push(`[unsupported-docs-candidate] ${msg}`);
+      continue;
+    }
+
     const msg =
-      `Example ${refLabel} exists on disk but is classified as "${ref.classification}" ` +
-      `in the supported/deferred matrix. This is an unsupported docs candidate — ` +
-      `docs must not reference deferred/unsupported behaviour.`;
-    failures.push(`[unsupported-docs-candidate] ${msg}`);
+      `Example "${relPath}" exists on disk but has no corresponding row in the ` +
+      `supported/deferred matrix. Add a supported row with EX: evidence, or ` +
+      `document the file as deferred/unsupported.`;
+    if (isRelease) {
+      failures.push(`[unclassified-example] ${msg}`);
+    } else {
+      warnings.push(`[unclassified-example] ${msg}`);
+    }
+  }
+
+  // ---- Step 7: Check for unsupported example refs that resolve to existing files ----
+  console.log(`\n${LABEL} Checking unsupported-docs-candidate references…`);
+
+  for (const ref of unsupportedExampleRefs) {
+    const refLabel = `${ref.refType}:${ref.refPath} (${ref.classification} row ${ref.sourceRowId})`;
+
+    let exists = false;
+
+    if (ref.refType === 'EX') {
+      const absPath = resolveExPath(ref.refPath);
+      exists = existsSync(absPath) && statSync(absPath).isFile();
+    } else if (ref.refType === 'EXT') {
+      const { absPath, isFile } = resolveExtPath(ref.refPath);
+      if (isFile) {
+        exists = existsSync(absPath) && statSync(absPath).isFile();
+      } else {
+        exists = existsSync(absPath) && statSync(absPath).isDirectory();
+      }
+    }
+
+    if (exists) {
+      const msg =
+        `Example ${refLabel} exists on disk but is classified as "${ref.classification}" ` +
+        `in the supported/deferred matrix. This is an unsupported docs candidate — ` +
+        `docs must not reference deferred/unsupported behaviour.`;
+      failures.push(`[unsupported-docs-candidate] ${msg}`);
+    }
+  }
+
+  // ---- Step 8: Validate EX-01 through EX-04 release-example contracts ----
+  console.log(`\n${LABEL} Validating EX-01 through EX-04 release-example contracts…`);
+  validateReleaseExampleContracts(failures);
+
+  // ---- Step 9: Report ----
+  console.log(`\n${LABEL} === Results ===\n`);
+
+  if (failures.length > 0) {
+    console.error(`${LABEL} FAILURES (${failures.length}):`);
+    for (const f of failures) {
+      console.error(`  ✗ ${f}`);
+    }
+  }
+
+  if (warnings.length > 0) {
+    console.warn(`${LABEL} WARNINGS (${warnings.length}):`);
+    for (const w of warnings) {
+      console.warn(`  ⚠ ${w}`);
+    }
+  }
+
+  const sortedIds = [...docsSafeExampleIds].sort();
+  const machineOutput = {
+    docsSafeExampleIds: sortedIds,
+    failedExampleIds: [...failedExampleIds.keys()].sort(),
+    summary: {
+      totalSupportedRefs: supportedExampleRefs.length,
+      totalFailed: failedExampleIds.size,
+      totalSafe: sortedIds.length,
+      unsupportedCandidates: unsupportedExampleRefs.length,
+      unclassifiedWarnings: warnings.filter((w) =>
+        w.startsWith('[unclassified-example]'),
+      ).length,
+      releaseExampleFailures: failures.filter((failure) =>
+        failure.startsWith('[release-example-contract]'),
+      ).length,
+    },
+  };
+
+  console.log(`\n${LABEL} Machine-readable output:`);
+  console.log(JSON.stringify(machineOutput));
+
+  if (failures.length > 0) {
+    const failureText = failures.length === 1 ? 'failure' : 'failures';
+    console.error(
+      `\n${LABEL} ${mode.toUpperCase()} FAILED with ${failures.length} ${failureText}.`,
+    );
+    process.exitCode = 1;
+  } else {
+    console.log(
+      `\n${LABEL} ${mode.toUpperCase()} PASSED. ` +
+        `${sortedIds.length} docs-safe example(s), ${warnings.length} warning(s).`,
+    );
   }
 }
 
-// ---- Step 8: Report ----
-console.log(`\n${LABEL} === Results ===\n`);
-
-if (failures.length > 0) {
-  console.error(`${LABEL} FAILURES (${failures.length}):`);
-  for (const f of failures) {
-    console.error(`  ✗ ${f}`);
-  }
-}
-
-if (warnings.length > 0) {
-  console.warn(`${LABEL} WARNINGS (${warnings.length}):`);
-  for (const w of warnings) {
-    console.warn(`  ⚠ ${w}`);
-  }
-}
-
-// ---- Machine-readable output ----
-const sortedIds = [...docsSafeExampleIds].sort();
-const machineOutput = {
-  docsSafeExampleIds: sortedIds,
-  failedExampleIds: [...failedExampleIds.keys()].sort(),
-  summary: {
-    totalSupportedRefs: supportedExampleRefs.length,
-    totalFailed: failedExampleIds.size,
-    totalSafe: sortedIds.length,
-    unsupportedCandidates: unsupportedExampleRefs.length,
-    unclassifiedWarnings: warnings.filter((w) =>
-      w.startsWith('[unclassified-example]'),
-    ).length,
-  },
-};
-
-console.log(`\n${LABEL} Machine-readable output:`);
-console.log(JSON.stringify(machineOutput));
-
-// ---- Exit decision ----
-if (failures.length > 0) {
-  const failureText = failures.length === 1 ? 'failure' : 'failures';
-  console.error(
-    `\n${LABEL} ${mode.toUpperCase()} FAILED with ${failures.length} ${failureText}.`,
-  );
-  // Write a non-zero exit for tooling
-  process.exitCode = 1;
-} else {
-  console.log(
-    `\n${LABEL} ${mode.toUpperCase()} PASSED. ` +
-      `${sortedIds.length} docs-safe example(s), ${warnings.length} warning(s).`,
-  );
-}
-
-// Ensure the JSON was written as the last substantive output
-// (process.exit handles the flush)
+run();

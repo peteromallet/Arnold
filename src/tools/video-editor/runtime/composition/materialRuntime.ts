@@ -3,7 +3,6 @@ import type {
   RenderMaterialRef,
   RenderMaterialStatus,
   RenderBlockerReason,
-  ProcessStatus,
   RenderMaterialStatusDetail,
   RenderMaterialStatusPhase,
   RenderMaterialStatusQuality,
@@ -11,6 +10,7 @@ import type {
   RenderRoute,
   RouteFitMetadata,
 } from '@reigh/editor-sdk';
+import type { ProcessStatus } from '@/sdk/video/families/processes';
 import {
   hasProvenance,
   isActiveBake,

@@ -1,0 +1,298 @@
+Execute the approved plan in the repository.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M7b: Output-Format Sidecar Integration
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Batch framing:
+        - Execute batch 7 of 12.
+        - Actionable task IDs for this batch: ['T9']
+        - Already completed task IDs available as dependency context: ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8']
+
+        Actionable tasks for this batch:
+        [
+  {
+    "id": "T9",
+    "depends_on": [
+      "T8"
+    ],
+    "status": "pending",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "This changes the public SDK barrel contract and can expose non-local import fallout in examples, tests, and runtime code that currently import process-only types from `@reigh/editor-sdk`. The task is not just mechanical because the executor must distinguish public V1 SDK exports from namespaced i...",
+    "executor_notes": ""
+  }
+]
+
+        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
+        [
+  {
+    "id": "T1",
+    "depends_on": [],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 1: Add `machine-path` and `executable-package` artifact manifest profile kinds, discriminated profile interfaces, inference/resolution/strict validation support, process-output profile mapping, and focused unit coverage in `src/sdk/video/rendering/artifacts.ts` and `src/tools/video-editor/runtime/renderability.ts`.",
+    "complexity_justification": "This expands a shared artifact-profile vocabulary used by renderability and process output routing, with both type-level and runtime validators to keep in sync. The change is multi-file and correctness depends on locator/profile compatibility, but the failure modes should be directly testable in...",
+    "executor_notes": "Added machine-path and executable-package to ArtifactManifestProfileKind union and ARTIFACT_MANIFEST_PROFILE_KINDS array. Created MachinePathArtifactManifestProfile (requires locator.kind='local-file') and ExecutablePackageArtifactManifestProfile (requires locator.kind='artifact-store'|'local-file') discriminated interfaces. Added validateMachinePathManifestProfile and validateExecutablePackageManifestProfile strict validators with switch cases in resolveRenderArtifactManifestProfile. Inference functions correctly do NOT map to these profiles \u2014 explicit declaration only. Added missing Artif...",
+    "files_changed": [
+      "src/sdk/video/rendering/artifacts.ts",
+      "src/tools/video-editor/runtime/renderability.ts",
+      "src/sdk/index.ts",
+      "src/sdk/smoke/barrel-import-smoke.test.ts",
+      "src/sdk/index.test.ts",
+      "src/tools/video-editor/runtime/renderability.test.ts"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/runtime/renderability.test.ts --reporter=verbose",
+      "npx vitest run src/sdk/smoke/barrel-import-smoke.test.ts --reporter=verbose -t ARTIFACT_MANIFEST_PROFILE_KINDS",
+      "npx vitest run src/sdk/index.test.ts --reporter=verbose -t ARTIFACT_MANIFEST_PROFILE_KINDS"
+    ]
+  },
+  {
+    "id": "T6",
+    "depends_on": [
+      "T3"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 4: Implement `RouteCompletionDashboard` and its index export so a selected `RenderRoutePlan` renders route status, artifact completion by profile, artifact and sidecar listings, process lifecycle badges, and route-scoped next actions using existing `BlockerActionCard` and process display conventions.",
+    "complexity_justification": "This introduces a reusable UI surface over `RenderRoutePlan` data, and route-scoping mistakes can incorrectly surface blockers/actions for unrelated routes. The component must preserve existing process-dashboard conventions without changing `ProcessDashboard`'s single-process contract.",
+    "executor_notes": "Implemented `RouteCompletionDashboard` plus its index export, and exposed the existing process lifecycle badge helper so the new dashboard reuses the process-status visual convention. The component now renders selected-route completion status, artifact-completion profiles, artifact and sidecar listings, route-scoped process badges, and `BlockerActionCard`-based next actions while filtering planner blockers/actions to the selected route only. Verified through the full EX-04 browser acceptance file after the final rerun passed.",
+    "files_changed": [
+      "src/tools/video-editor/components/ProcessDashboard/ProcessDashboard.tsx",
+      "src/tools/video-editor/components/RouteCompletionDashboard/RouteCompletionDashboard.tsx",
+      "src/tools/video-editor/components/RouteCompletionDashboard/index.ts"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx --reporter=verbose",
+      "npx vitest run src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx --reporter=verbose"
+    ]
+  },
+  {
+    "id": "T7",
+    "depends_on": [
+      "T6"
+    ],
+    "status": "done",
+    "kind": "test",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 4: Add `RouteCompletionDashboard` component tests for complete, incomplete, blocked, and route-filtered states, then mount the dashboard in the existing process harness for deterministic browser acceptance.",
+    "complexity_justification": "The tests and harness mount must exercise several route states and ensure blockers/actions are filtered to the selected route. This touches test fixtures and one harness surface, but the behavior is observable through component assertions.",
+    "executor_notes": "Created RouteCompletionDashboard.test.tsx with 19 component tests covering: complete state (route name/status badge, artifact/sidecar listings, output format IDs, evidence source count, process lifecycle badge), incomplete state (incomplete badge, no-artifacts/no-sidecars messages, profile issues), blocked state (blocked badge, blocker count, blocker action card rendering, next actions section), route-filtered states (unrelated browser blockers filtered out, unrelated browser actions filtered out, no-actions message when empty), process filtering (only route-scoped processes visible), onAct...",
+    "files_changed": [
+      "src/tools/video-editor/components/RouteCompletionDashboard/RouteCompletionDashboard.test.tsx"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/components/RouteCompletionDashboard/RouteCompletionDashboard.test.tsx --reporter=verbose",
+      "npx vitest run src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx --reporter=verbose"
+    ]
+  },
+  {
+    "id": "T2",
+    "depends_on": [
+      "T1"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 2: Expose `canSidecarExport` from `RenderPlannerResult`, update `selectPlannerRoute()` to select unblocked `sidecar-export` after browser/worker routes and before preview fallback, map it to the existing external UI route, and add planner/router unit tests for selected, blocked, and preview-only paths.",
+    "complexity_justification": "This threads a new planner capability through planner and router behavior without moving planner logic into `renderRouter.ts`. The route-selection ordering is non-trivial but localized to the planner/router contracts and should be covered by targeted unit tests.",
+    "executor_notes": "Added canSidecarExport to RenderPlannerResult interface and computed it alongside canBrowserExport/canWorkerExport from sidecarRoute plan. Updated selectPlannerRoute() to check canSidecarExport after browser/worker and before preview fallback. Mapped sidecar-export planner route to external UI route in decideRenderRoute at all browser-remotion return paths (no_clips, mixed_browser_capable_contributed_and_native, browser_capable_contributed, pure_native_clips). Added 5 unit tests verifying: (1) sidecar-export selected when browser/worker blocked, (2) browser takes priority over sidecar, (3)...",
+    "files_changed": [
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/lib/renderRouter.ts",
+      "src/tools/video-editor/lib/renderRouter.test.ts"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/runtime/renderPlanner.test.ts --reporter=verbose",
+      "npx vitest run src/tools/video-editor/lib/renderRouter.test.ts --reporter=verbose",
+      "npx vitest run src/tools/video-editor/lib/renderRouter.attach.test.ts src/tools/video-editor/runtime/routeFitMapper.test.ts --reporter=verbose"
+    ]
+  },
+  {
+    "id": "T5",
+    "depends_on": [
+      "T3"
+    ],
+    "status": "done",
+    "kind": "docs",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Step 3: Document EX-04 in the composition-spine release examples docs with graph path markers, route blockers, repair actions, and artifact evidence while keeping output-format sidecars explicitly scoped outside unsupported runtime claims.",
+    "complexity_justification": "This is a docs-only update tied to the EX-04 fixture and existing release-example format. The main risk is wording: it must describe evidence and exclusions without claiming sandboxing, marketplace, headless rendering, or execution support.",
+    "executor_notes": "Documented EX-04 implementation evidence in the composition-spine release examples doc: graph-path `requires`/`consumes` markers, sidecar-export blockers, route-scoped `start-process` repair, conjunctive artifact evidence, and the new dashboard/browser acceptance references. The wording keeps sandboxing, marketplace, headless rendering, execution, preview support, and runtime certification explicitly out of scope.",
+    "files_changed": [
+      "docs/extensions/composition-spine/m0-release-examples.md"
+    ],
+    "commands_run": []
+  },
+  {
+    "id": "T8",
+    "depends_on": [
+      "T7"
+    ],
+    "status": "done",
+    "kind": "test",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 5: Extend `tests/e2e/video-editor-processes.spec.ts` and any necessary process harness fixtures with M7b route-completion happy-path and repair-path Playwright scenarios, including complete profiles, sidecar listings, absence/presence of route-scoped blocker actions, and transition to complete after repair.",
+    "complexity_justification": "This extends an existing Playwright acceptance surface with deterministic scenarios, fixture data, and UI assertions. The work spans e2e tests and fixtures, but it does not introduce a new app entrypoint or browser harness architecture.",
+    "executor_notes": "Extended VideoEditorProcessesHarnessPage.tsx with two new scenario types (sidecar-happy-path, sidecar-stopped-repair), sidecar-specific data factories (createSidecarDescriptor, createSidecarOutputFormat, createSidecarBrowserProcessManager), and conditional RouteCompletionDashboard rendering for sidecar scenarios. The planner-summary now includes canSidecarExport. Updated createStatus to accept optional processId/label overrides so the sidecar process manager emits correctly-scoped status objects. Extended tests/e2e/video-editor-processes.spec.ts with a new M7b Sidecar-Export Route Completio...",
+    "files_changed": [
+      "src/tools/video-editor/pages/VideoEditorProcessesHarnessPage.tsx",
+      "tests/e2e/video-editor-processes.spec.ts"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/components/RouteCompletionDashboard/RouteCompletionDashboard.test.tsx --reporter=verbose",
+      "npx vitest run src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx --reporter=verbose",
+      "npx vitest run src/tools/video-editor/runtime/renderPlanner.test.ts --reporter=verbose",
+      "npx vitest run src/tools/video-editor/lib/renderRouter.test.ts --reporter=verbose",
+      "npx vitest run src/tools/video-editor/components/RouteCompletionDashboard/RouteCompletionDashboard.test.tsx src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx --reporter=verbose"
+    ]
+  },
+  {
+    "id": "T3",
+    "depends_on": [
+      "T2"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 3: Create `src/examples/output-format-sidecar-composed-example.ts` by composing the existing trusted process and metadata JSON output examples into EX-04, using only typed `requires` and `consumes` graph details plus sidecar-export artifact completion evidence with compatible profiles, hashes, provenance, route constraints, and stopped-process repair data.",
+    "complexity_justification": "EX-04 becomes a graph-backed contract fixture consumed by examples, browser acceptance, and governance checks, so an incorrect shape can propagate beyond the file being edited. The task must preserve the SDK edge-kind boundary by avoiding new public `materializes`, `produces`, or `fallbacks` disc...",
+    "executor_notes": "Created src/examples/output-format-sidecar-composed-example.ts as the EX-04 fixture. It composes process-example and metadata-json-output-example into a render-dependent sidecar-export contract, exports only requires/consumes graph facts, validates sidecar-profile artifact evidence (manifest, SHA-256 hashes, provenance, route constraints, and attach metadata), and includes ready plus stopped/start-process-repair scenarios. Verified the module imports and exposes EX-04 contract data via two foreground tsx import checks. The one allowed examples-governance vitest run failed on broader SDK cov...",
+    "files_changed": [
+      "src/examples/output-format-sidecar-composed-example.ts"
+    ],
+    "commands_run": [
+      "npx tsx --eval \"import('./src/examples/output-format-sidecar-composed-example.ts').then((mod) => { console.log(JSON.stringify({ exampleId: mod.outputFormatSidecarComposedContract.exampleId, route: mod.outputFormatSidecarComposedContract.routeConstraints[0], artifactEvidence: mod.outputFormatSidecarComposedContract.artifactEvidence.length })); })\"",
+      "npx vitest run src/sdk/examples-governance.test.ts --reporter=verbose",
+      "npx tsx --eval \"import('./src/examples/output-format-sidecar-composed-example.ts').then((mod) => { console.log(JSON.stringify({ exampleId: mod.outputFormatSidecarComposedContract.exampleId, profileKinds: mod.outputFormatSidecarSdkCoverage.artifactProfileKinds.length, graphPreviewNodes: mod.outputFormatSidecarSdkCoverage.graphPreview.nodes.length })); })\""
+    ]
+  },
+  {
+    "id": "T4",
+    "depends_on": [
+      "T3"
+    ],
+    "status": "done",
+    "kind": "test",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 3: Add EX-04 happy-path and stopped-process repair coverage to `m5-composed-examples.browser.test.tsx` using the existing EX-02/EX-03 testing-library shell pattern.",
+    "complexity_justification": "The tests must assert graph-backed route completion and repair behavior through the existing browser/component shell, which requires understanding current example acceptance conventions. The work is still scoped to one test area and should fail visibly if assertions do not match the fixture.",
+    "executor_notes": "Added EX-04 browser/component acceptance to the existing M5 Testing Library shell file with one ready route-completion case and one stopped-process repair case. The shell now asserts graph-backed `requires` and `consumes` markers, selected-route completion state, artifact/sidecar evidence, process lifecycle state, and repair-driven recovery while confirming unrelated browser-route blockers/actions stay hidden. Verified by the full `m5-composed-examples.browser.test.tsx` file passing after one local fix-loop rerun.",
+    "files_changed": [
+      "src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx"
+    ],
+    "commands_run": [
+      "npx vitest run src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx --reporter=verbose",
+      "npx vitest run src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx --reporter=verbose"
+    ]
+  }
+]
+
+        Prior batch deviations (address if applicable):
+        [
+  "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: src/tools/video-editor/pages/VideoEditorProcessesHarnessPage.tsx, tests/e2e/video-editor-processes.spec.ts",
+  "Advisory audit finding: Executor claimed changed files not present in git status: docs/extensions/composition-spine/m0-release-examples.md, src/examples/output-format-sidecar-composed-example.ts, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/smoke/barrel-import-smoke.test.ts, src/sdk/video/rendering/artifacts.ts, src/tools/video-editor/components/ProcessDashboard/ProcessDashboard.tsx, src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx, src/tools/video-editor/lib/renderRouter.test.ts, src/tools/video-editor/lib/renderRouter.ts, src/tools/video-editor/pages/VideoEditorProcessesHarnessPage.tsx, src/tools/video-editor/runtime/renderPlanner.ts, src/tools/video-editor/runtime/renderability.test.ts, src/tools/video-editor/runtime/renderability.ts, tests/e2e/video-editor-processes.spec.ts",
+  "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC11 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC12 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC13 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC14 is missing an executor acknowledgment.",
+  "Advisory audit finding: Tasks left pending after execute (executor never started them): T9, T10, T11, T12, T13, T14"
+]
+
+        User action prerequisites:
+        No user_action prerequisites for this batch.
+
+
+        Batch-scoped sense checks:
+        [
+  {
+    "id": "SC9",
+    "task_id": "T9",
+    "verdict": "",
+    "question": "Does `src/sdk/index.ts` stop exporting process runtime types and sidecar-route-only vocabulary while all internal uses import from canonical direct SDK family modules?"
+  }
+]
+
+
+        ## Execution context (settled - DO NOT re-litigate)
+
+        - SD1: Machine-path and executable-package profiles are verified artifact record profiles only. Reigh does not control, certify, sandbox, execute, or preview artifacts produced under t... - Explicitly scoped out by the North Star and the M7b brief. These profiles exist for type coverage, validation, and governance completeness, not for runtime capability claims.
+- SD2: Sidecar export route maps to the existing UI `RenderRoute.external` path unless implementation evidence requires a dedicated route discriminant. - Avoids unnecessary UI surface expansion. The `external` route already exists as a dispatch target; reusing it keeps the component tree compact per the 'should' criterion on UI consistency.
+- SD3: No new public `materializes`, `produces`, or `fallbacks` composition edge discriminants are introduced in this milestone. - These edge kinds are explicitly locked OUT in the brief and would expand the V1 composition SDK surface beyond its authorized boundary. EX-04 uses only `requires` and `consumes`.
+
+        ## Plan execution order rationale
+
+        1. Land artifact profile types and validators first because planner, examples, and tests depend on the expanded profile vocabulary.
+2. Wire `canSidecarExport` and router selection next; this is the smallest functional unlock for sidecar execution.
+3. Build EX-04 fixture data before the dashboard so the UI can consume realistic route plans and artifact completion records.
+4. Add the dashboard and browser harness after planner/example data is stable.
+5. Tighten SDK boundary exports before release governance so the governance scripts enforce the final intended public surface.
+6. Finish with governance scripts and docs updates, then run release-mode checks.
+
+        ## Inter-task guidance from finalize
+
+        Execute in the DAG order and keep heavyweight shared-contract work isolated: artifact profiles first, then planner/router sidecar selection, EX-04 data, dashboard/UI acceptance, SDK barrel boundary, and governance. The two plan questions are settled by the assumptions for this executable plan: mount the dashboard in the deterministic process harness for M7b acceptance, and keep machine-path/executable-package primarily to type, validator, inference, and governance coverage unless the existing fixture data naturally includes them without creating runtime capability claims. Preserve North Star constraints throughout: extensions do not mutate raw timeline internals, graph-backed facts remain authoritative, process runtime stays outside the public V1 SDK barrel, and unsupported capabilities are documented only as exclusions or explicit denials.
+
+        Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations.
+        Robustness level: thorough.
+
+        Requirements:
+        - Execute only the actionable tasks in this batch.
+        - Treat completed tasks as dependency context, not new work.
+        - Return structured JSON only.
+        - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
+        - Template file already written for reference: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m7b-output-format-sidecar-20260705-0324/execute_batch_7_output.json
+        - Only produce `task_updates` for these tasks: [T9]
+        - `task_updates[].status` must be one of `done`, `skipped`, `completed`, or `blocked`; never `pending` or `in_progress`.
+        - Only produce `sense_check_acknowledgments` for these sense checks: [SC9]
+        - Do not include updates for tasks or sense checks outside this batch.
+        - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+        - Keep `executor_notes` verification-focused.
+        - Best-effort progress checkpointing: if `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m7b-output-format-sidecar-20260705-0324/execution_batch_7.json` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
+        - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
+        - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
+        - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
+
+        Batch JSON response template:
+        ```json
+        {
+  "output": "",
+  "files_changed": [],
+  "commands_run": [],
+  "deviations": [],
+  "task_updates": [
+    {
+      "task_id": "T9",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC9",
+      "executor_note": ""
+    }
+  ]
+}
+        ```

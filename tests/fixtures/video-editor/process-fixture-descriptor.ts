@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { ProcessLifecycleState, ProcessSpec } from '@reigh/editor-sdk';
+import type { ProcessLifecycleState, ProcessSpec } from '@reigh/editor-sdk/video/families/processes';
 
 export const PROCESS_FIXTURE_PROCESS_ID = 'video-editor.process-fixture';
 export const PROCESS_FIXTURE_OPERATION_ID = 'fixture.execute';

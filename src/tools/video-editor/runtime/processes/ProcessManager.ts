@@ -2,13 +2,14 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import type {
   CapabilityFinding,
   ExtensionDiagnostic,
+} from '@reigh/editor-sdk';
+import type {
   ProcessLogSummary,
   ProcessProgressEvent,
   ProcessRoundtripRequest,
   ProcessRoundtripResult,
-  ProcessSpec,
-  ProcessStatus,
-} from '@reigh/editor-sdk';
+} from '@/sdk/capabilities';
+import type { ProcessSpec, ProcessStatus } from '@/sdk/video/families/processes';
 import {
   createJsonRpcStdioTransport,
   JsonRpcTransportError,

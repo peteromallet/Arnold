@@ -348,6 +348,113 @@ function loadAllowlist() {
 }
 
 // ---------------------------------------------------------------------------
+// M7b T10: Forbidden exports — symbols that must never appear in the
+// root SDK barrel.  These were deliberately removed from the public
+// boundary and must not be reintroduced.
+// ---------------------------------------------------------------------------
+
+/**
+ * Map from forbidden export name to a short justification explaining why it
+ * is prohibited from the public barrel.
+ *
+ * Process-spec / lifecycle / status types are internal to the process manager
+ * and must not leak through the public SDK entrypoint.  Process task result
+ * states (roundtrip request / action / result, progress events, log summaries)
+ * and process output-kind vocabulary are similarly internal.
+ *
+ * Sidecar-route process vocabulary is enforced separately via a name-pattern
+ * gate (see FORBIDDEN_SIDECAR_PATTERNS below).
+ *
+ * @type {Map<string, string>}
+ */
+const FORBIDDEN_EXPORTS = new Map([
+  // Process spec / lifecycle / status — internal process-manager surface
+  [
+    'ProcessSpec',
+    'Process specification type is internal to the process manager.  Use ProcessManifestEntry or ProcessContribution instead.',
+  ],
+  [
+    'ProcessLifecycleState',
+    'Process lifecycle state type is internal to the process manager.',
+  ],
+  [
+    'ProcessStatusBase',
+    'Process status base interface is internal to the process manager.',
+  ],
+  [
+    'ProcessStatus',
+    'Process status discriminated union is internal to the process manager.',
+  ],
+
+  // Process task result states — roundtrip request / action / result
+  [
+    'ProcessRoundtripRequest',
+    'Process roundtrip request type is internal process vocabulary.',
+  ],
+  [
+    'ProcessRoundtripAction',
+    'Process roundtrip action type is internal process vocabulary.',
+  ],
+  [
+    'ProcessRoundtripResult',
+    'Process roundtrip result type is internal process vocabulary.',
+  ],
+
+  // Process event / log vocabulary
+  [
+    'ProcessProgressEvent',
+    'Process progress event type is internal process vocabulary.',
+  ],
+  [
+    'ProcessLogSummary',
+    'Process log summary type is internal process vocabulary.',
+  ],
+
+  // Process output-kind vocabulary
+  [
+    'ProcessOutputKind',
+    'Process output kind type is internal process vocabulary.',
+  ],
+]);
+
+/**
+ * Regex patterns that match sidecar-route process vocabulary which must
+ * never appear in the root SDK barrel.
+ *
+ * The three allowed sidecar artifact types are:
+ *   - RenderArtifactSidecarDescriptor
+ *   - RenderArtifactSidecarKind
+ *   - SidecarArtifactManifestProfile
+ *
+ * Any other export whose name contains "Sidecar" is suspicious and will be
+ * flagged as forbidden sidecar-route process vocabulary.
+ *
+ * @type {Array<{ pattern: RegExp, justification: string }>}
+ */
+const FORBIDDEN_SIDECAR_PATTERNS = [
+  {
+    pattern: /Sidecar/i,
+    justification:
+      'Sidecar-named export not in the allowed artifact-sidecar set ' +
+      '(RenderArtifactSidecarDescriptor, RenderArtifactSidecarKind, ' +
+      'SidecarArtifactManifestProfile).  This may be sidecar-route ' +
+      'process vocabulary leaking into the public barrel.',
+  },
+];
+
+/**
+ * Set of sidecar-related export names that are explicitly allowed in the
+ * public barrel (artifact-sidecar types, not process-sidecar vocabulary).
+ *
+ * @type {Set<string>}
+ */
+const ALLOWED_SIDECAR_EXPORT_NAMES = new Set([
+  'RenderArtifactSidecarDescriptor',
+  'RenderArtifactSidecarKind',
+  'SidecarArtifactManifestProfile',
+]);
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -419,6 +526,53 @@ if (!sourceFile) {
 const allExports = walkExports(sourceFile);
 
 console.log(`${LABEL} Found ${allExports.length} export(s) total.`);
+
+// ---- M7b T10: Forbidden exports gate ----
+// Fail fast if any export name is on the hard deny-list.  This runs before
+// the allowlist check and applies in both audit and release modes so that
+// forbidden process / sidecar-route vocabulary can never accidentally land
+// on the public boundary.
+
+/** @type {Array<{ name: string, justification: string }>} */
+const forbiddenHits = [];
+
+for (const exp of allExports) {
+  // ---- Exact-name forbidden check ----
+  const justification = FORBIDDEN_EXPORTS.get(exp.name);
+  if (justification) {
+    forbiddenHits.push({ name: exp.name, justification });
+    continue;
+  }
+
+  // ---- Sidecar-pattern forbidden check (skip allowed artifact types) ----
+  if (ALLOWED_SIDECAR_EXPORT_NAMES.has(exp.name)) {
+    continue;
+  }
+
+  for (const entry of FORBIDDEN_SIDECAR_PATTERNS) {
+    if (entry.pattern.test(exp.name)) {
+      forbiddenHits.push({ name: exp.name, justification: entry.justification });
+      break;
+    }
+  }
+}
+
+if (forbiddenHits.length > 0) {
+  console.error(
+    `${LABEL} FORBIDDEN EXPORT FAILURE: ${forbiddenHits.length} prohibited ` +
+      `export(s) detected in the public SDK barrel.`,
+  );
+  for (const hit of forbiddenHits) {
+    console.error(`${LABEL}   - ${hit.name}`);
+    console.error(`${LABEL}     ${hit.justification}`);
+  }
+  console.error(
+    `${LABEL} These symbols were deliberately removed from the public SDK ` +
+      `boundary and must not be reintroduced.  Remove them from ` +
+      `${path.relative(REPO_ROOT, SDK_ENTRY)}.`,
+  );
+  process.exit(1);
+}
 
 // ---- Classify exports ----
 /** @type {Array<{ name: string, source: string, kind: string }>} */

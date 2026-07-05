@@ -1,12 +1,11 @@
 import type {
-  ProcessRoundtripAction,
-  ProcessRoundtripResult,
   RenderArtifact,
   RenderArtifactSidecarDescriptor,
   RenderMaterial,
   TimelinePatch,
   TimelineProposalInput,
 } from '@reigh/editor-sdk';
+import type { ProcessRoundtripAction, ProcessRoundtripResult } from '@/sdk/capabilities';
 import { SidecarPreview } from '@/tools/video-editor/components/SidecarPreview.tsx';
 import type { ProcessResultAttachRecord } from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
 

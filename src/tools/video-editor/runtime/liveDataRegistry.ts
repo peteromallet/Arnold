@@ -45,10 +45,9 @@ import type {
   LiveBindingMetadata,
   LiveSessionsService,
   LiveSourceRef,
-  ProcessStatus,
-  ProcessLifecycleState,
   ProcessLiveSourceBinding,
 } from '@reigh/editor-sdk';
+import type { ProcessLifecycleState, ProcessStatus } from '@/sdk/video/families/processes';
 import { bakeLiveSource } from './liveBake';
 import {
   evaluateGenerationSessionLiveDeliveryGate,

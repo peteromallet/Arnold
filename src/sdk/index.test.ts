@@ -104,13 +104,8 @@ import type {
   SamplingConfig,
   SamplingResult,
   TimelineRenderPassSummary,
-  ProcessOutputKind,
   ProcessLiveSourceDeclaration,
-  ProcessSpec,
   ProcessContribution,
-  ProcessStatus,
-  ProcessRoundtripRequest,
-  ProcessRoundtripResult,
   DeterminismStatus,
   RenderRoute,
   RenderBlockerReason,
@@ -166,6 +161,8 @@ import type {
   PreviewArtifactManifestProfile,
   ProvenanceGap,
 } from '@/sdk/index';
+import type { ProcessRoundtripRequest, ProcessRoundtripResult } from '@/sdk/capabilities';
+import type { ProcessOutputKind, ProcessSpec, ProcessStatus } from '@/sdk/video/families/processes';
 
 // ---------------------------------------------------------------------------
 // ID validation
@@ -4643,9 +4640,9 @@ describe('M7a: Output-format route planning public contract', () => {
     expect(contributionRefKey(asContribution)).toBe('outputFormat:com.test.ext:my-format');
   });
 
-  it('ARTIFACT_MANIFEST_PROFILE_KINDS is importable and contains video, audio, sidecar, preview', () => {
-    expect(ARTIFACT_MANIFEST_PROFILE_KINDS).toEqual(['video', 'audio', 'sidecar', 'preview']);
-    expect(ARTIFACT_MANIFEST_PROFILE_KINDS).toHaveLength(4);
+  it('ARTIFACT_MANIFEST_PROFILE_KINDS is importable and contains video, audio, sidecar, preview, machine-path, executable-package', () => {
+    expect(ARTIFACT_MANIFEST_PROFILE_KINDS).toEqual(['video', 'audio', 'sidecar', 'preview', 'machine-path', 'executable-package']);
+    expect(ARTIFACT_MANIFEST_PROFILE_KINDS).toHaveLength(6);
   });
 
   it('VideoArtifactManifestProfile is constructable', () => {

@@ -125,20 +125,11 @@ import type {
   SamplingConfig,
   SamplingResultItem,
   SamplingResult,
-  ProcessOutputKind,
   ProcessLiveSourceValueShape,
   ProcessLiveSourceDeclaration,
   ProcessLiveSourceBinding,
   ProcessContribution,
   ProcessSpawnConfig,
-  ProcessSpec,
-  ProcessLifecycleState,
-  ProcessStatus,
-  ProcessRoundtripRequest,
-  ProcessRoundtripAction,
-  ProcessRoundtripResult,
-  ProcessProgressEvent,
-  ProcessLogSummary,
   // M2b video families
   MetadataFacetContribution,
   AssetDetailSectionContribution,
@@ -978,8 +969,8 @@ describe('M2a barrel-import smoke — capabilities', () => {
     expect(cfg.sources[0].kind).toBe('timeline');
   });
 
-  it('ProcessRoundtripResult type is importable from the barrel', () => {
-    const result: ProcessRoundtripResult = {
+  it('ProcessRoundtripResult type is importable from canonical direct path', () => {
+    const result: ProcRRResult_Direct = {
       requestId: 'r1',
       processId: 'p1',
       operationId: 'op1',
@@ -1955,15 +1946,15 @@ describe('M2b barrel-import smoke — process family', () => {
     expect(config.cwd).toBe('/tmp');
   });
 
-  it('ProcessSpec is importable from the public barrel', () => {
-    const outputKinds: ProcessOutputKind[] = ['live-source-scalar'];
-    const valueShape: ProcessLiveSourceValueShape = 'scalar';
-    const liveSource: ProcessLiveSourceDeclaration = {
+  it('ProcessSpec is importable from canonical direct path', () => {
+    const outputKinds: ProcessOutputKind_Direct[] = ['live-source-scalar'];
+    const valueShape: ProcessLiveSourceValueShape_Direct = 'scalar';
+    const liveSource: ProcessLiveSourceDeclaration_Direct = {
       sourceId: 'preview-scalar',
       valueShape,
       sourceKind: 'generated',
     };
-    const spec: ProcessSpec = {
+    const spec: ProcessSpec_Direct = {
       id: 'my-process',
       label: 'My Process',
       spawn: { command: 'node' },
@@ -1984,15 +1975,15 @@ describe('M2b barrel-import smoke — process family', () => {
     expect(spec.liveSources?.[0]).toEqual(liveSource);
   });
 
-  it('ProcessLifecycleState is importable from the public barrel', () => {
-    const state: ProcessLifecycleState = 'ready';
+  it('ProcessLifecycleState is importable from canonical direct path', () => {
+    const state: ProcessLifecycleState_Direct = 'ready';
     expect(state).toBe('ready');
-    const states: ProcessLifecycleState[] = ['not-installed', 'stopped', 'starting', 'ready', 'busy', 'degraded', 'failed', 'stopping'];
+    const states: ProcessLifecycleState_Direct[] = ['not-installed', 'stopped', 'starting', 'ready', 'busy', 'degraded', 'failed', 'stopping'];
     expect(states).toContain('ready');
   });
 
-  it('ProcessStatus is importable from the public barrel', () => {
-    const status: ProcessStatus = {
+  it('ProcessStatus is importable from canonical direct path', () => {
+    const status: ProcessStatus_Direct = {
       processId: 'proc-1',
       state: 'ready' as const,
       pid: 12345,
@@ -2031,11 +2022,6 @@ describe('M2b barrel-import smoke — process family', () => {
       args: ['hello'],
     };
     expect(config.command).toBe('echo');
-  });
-
-  it('ProcessLifecycleState is importable from canonical direct path', () => {
-    const state: ProcessLifecycleState_Direct = 'stopped';
-    expect(state).toBe('stopped');
   });
 
   it('process live-source declaration types are importable from canonical direct path', () => {
@@ -3015,8 +3001,8 @@ describe('M7a barrel-import smoke — Output-format route planning', () => {
   });
 
   it('ARTIFACT_MANIFEST_PROFILE_KINDS is importable from the barrel', () => {
-    expect(ARTIFACT_MANIFEST_PROFILE_KINDS).toEqual(['video', 'audio', 'sidecar', 'preview']);
-    expect(ARTIFACT_MANIFEST_PROFILE_KINDS).toHaveLength(4);
+    expect(ARTIFACT_MANIFEST_PROFILE_KINDS).toEqual(['video', 'audio', 'sidecar', 'preview', 'machine-path', 'executable-package']);
+    expect(ARTIFACT_MANIFEST_PROFILE_KINDS).toHaveLength(6);
   });
 
   it('contributionRefKey is importable from the barrel', () => {

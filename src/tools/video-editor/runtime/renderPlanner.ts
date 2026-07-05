@@ -4,7 +4,6 @@ import {
   type CapabilityRequirement,
   type CompositionGraph,
   type DeterminismStatus,
-  type ProcessStatus,
   type RenderBlocker,
   type RenderMaterialStatus as SdkRenderMaterialStatus,
   type RenderMaterialStatusState,
@@ -16,6 +15,7 @@ import {
   type TimelineShaderSummary,
   getCapabilityRequirements,
 } from '@reigh/editor-sdk';
+import type { ProcessStatus } from '@/sdk/video/families/processes';
 import { shaderMissingMaterializerBlockerMessage } from '@/sdk/video/rendering/capabilities.ts';
 import {
   COMPOSITION_DIAGNOSTIC_CODE,
@@ -171,6 +171,7 @@ export interface RenderPlannerResult {
   readonly nextActions: readonly VideoEditorPlannerNextActionDescriptor[];
   readonly canBrowserExport: boolean;
   readonly canWorkerExport: boolean;
+  readonly canSidecarExport: boolean;
 }
 
 interface PlanAccumulator {
@@ -2626,6 +2627,7 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
   })));
   const browserRoute = routePlans.find((route) => route.route === 'browser-export');
   const workerRoute = routePlans.find((route) => route.route === 'worker-export');
+  const sidecarRoute = routePlans.find((route) => route.route === 'sidecar-export');
 
   // Convert projection diagnostics into CapabilityFinding format for the
   // diagnostics field while keeping findings as the deduplicated planner set.
@@ -2655,5 +2657,6 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
     nextActions: sortedActions(acc.nextActions),
     canBrowserExport: !browserRoute?.blocked,
     canWorkerExport: !workerRoute?.blocked,
+    canSidecarExport: !sidecarRoute?.blocked,
   });
 }

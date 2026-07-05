@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createCommandRegistry } from './commandRegistry';
 import { registerProcessOperationCommands } from './processCommandRegistration';
 import type { VideoEditorProcessDescriptor } from './extensionSurface';
-import type { ProcessRoundtripResult } from '@reigh/editor-sdk';
+import type { ProcessRoundtripResult } from '@/sdk/capabilities';
 
 function process(): VideoEditorProcessDescriptor {
   return {

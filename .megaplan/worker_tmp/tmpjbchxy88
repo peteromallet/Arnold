@@ -1,0 +1,387 @@
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+You are an independent reviewer. Critique the plan against the actual repository.
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M7b: Output-Format Sidecar Integration
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Plan:
+        # Implementation Plan: M7b Output-Format Sidecar Integration
+
+## Overview
+This plan wires the already-built `sidecar-export` route plans into route selection, proves EX-04 as the fourth graph-backed composed example, adds machine-path and executable-package artifact manifest profiles as verified records only, and hardens M7b governance gates.
+
+The current repository shape matches the brief: `planRender()` builds `sidecar-export` route plans, but `RenderPlannerResult` exposes only browser/worker booleans and `selectPlannerRoute()` cannot select sidecar export. Artifact manifest profiles are still the four M7a profiles. No `RouteCompletionDashboard` exists, and existing browser acceptance is centered on the process harness.
+
+Anchor alignment: this is a bridge, not a contradiction. It advances output-format sidecars while preserving the North Star constraints that processes stay namespaced outside the V1 composition SDK and that extensions do not mutate timeline internals. One tension to handle explicitly: a literal docs ban on words like `sandbox` or `marketplace` would conflict with the North Star’s need to document exclusions. Implement the docs scanner as a positive-claim/unsupported-capability scanner that allows clear denial or anti-scope contexts.
+
+Ticket linkage: do not propose `resolves_on_complete=true` for either open ticket. `01KS384XKZNEWQRSXN2NXQ0DTJ` is broader video-editor extensibility design work, and `01KV8XVYW2EYDDDY30V48YX520` is unrelated to this implementation.
+
+## Phase 1: Artifact Profiles And Sidecar Route Selection
+
+### Step 1: Add M7b Artifact Manifest Profiles (`src/sdk/video/rendering/artifacts.ts`, `src/tools/video-editor/runtime/renderability.ts`)
+**Complexity: 3**
+1. Add `machine-path` and `executable-package` to `ArtifactManifestProfileKind` and `ARTIFACT_MANIFEST_PROFILE_KINDS`.
+2. Add discriminated profile interfaces for both profiles, constraining `machine-path` to `locator.kind === 'local-file'` and constraining `executable-package` to the agreed existing locator kinds without adding execution/sandbox semantics.
+3. Extend `inferRenderArtifactManifestProfile()`, `resolveRenderArtifactManifestProfile()`, and strict validators for the two profiles.
+4. Update `ProcessOutputKind`, `processOperationArtifactProfiles()`, and `routeArtifactPrimaryProfile()` so process outputs can require the new profiles without defaulting them to `video`.
+5. Add focused tests for accepted/rejected locators, inference, strict validation, and the profile-kind array length/order.
+
+### Step 2: Expose Sidecar Export Route Capability (`src/tools/video-editor/runtime/renderPlanner.ts`, `src/tools/video-editor/lib/renderRouter.ts`)
+**Complexity: 3**
+1. Add `canSidecarExport` to `RenderPlannerResult`, computed from the `sidecar-export` route plan’s blocked state.
+2. Update `selectPlannerRoute()` to choose `sidecar-export` after browser/worker routes and before preview fallback.
+3. Keep `renderRouter.ts` shape-driven: do not move planner logic into the router.
+4. Map selected `sidecar-export` to the existing UI `RenderRoute.external` path unless implementation evidence shows a dedicated UI route is already required.
+5. Add unit tests for sidecar-capable output formats, blocked sidecar fallback, and preview-only forced paths.
+
+## Phase 2: EX-04 Example And Route Completion UI
+
+### Step 3: Create The Graph-Backed EX-04 Composed Example (`src/examples/output-format-sidecar-composed-example.ts`)
+**Complexity: 4**
+1. Compose the existing trusted process example and metadata JSON output example into one EX-04 fixture instead of inventing a new process family contract.
+2. Project typed `requires` edges for output-format to process/operation and typed `consumes` edges for material inputs; do not add public `materializes`, `produces`, or `fallbacks` edge kinds.
+3. Include artifact completion evidence for sidecar-export with multiple required artifacts, compatible manifest profiles, hashes, provenance, and route constraints.
+4. Add happy-path and stopped-process repair scenarios to `m5-composed-examples.browser.test.tsx` using the existing EX-02/EX-03 testing-library shell pattern.
+5. Document EX-04 in the composition-spine release examples docs with graph path markers, route blockers, repair actions, and artifact evidence.
+
+### Step 4: Build `RouteCompletionDashboard` (`src/tools/video-editor/components/RouteCompletionDashboard/RouteCompletionDashboard.tsx`)
+**Complexity: 4**
+1. Create a component that consumes a selected `RenderRoutePlan` and renders route status, artifact completion by profile, artifact/sidecar listings, process lifecycle badges, and route-scoped next actions.
+2. Reuse `BlockerActionCard` for `start-process`, retry, and materialize-style repair actions; reuse existing process display patterns without changing `ProcessDashboard`’s single-process contract.
+3. Filter blockers and actions by the selected route so sidecar blockers do not appear on unrelated routes.
+4. Add component tests for complete, incomplete, blocked, and route-filtered states.
+5. Mount the dashboard in the existing process harness for deterministic browser acceptance.
+
+### Step 5: Add Browser Acceptance For Route Completion (`tests/e2e/video-editor-processes.spec.ts`)
+**Complexity: 3**
+1. Extend the existing `/video-editor-process-harness.html` scenarios or add narrowly scoped M7b scenarios in the same harness.
+2. Add a happy-path Playwright test asserting all required profiles complete, process status is ready/busy, sidecars are listed, and no blocker actions render.
+3. Add a repair-path Playwright test asserting a stopped/degraded/failed process or missing artifact surfaces the correct route-scoped action and transitions to complete after repair.
+4. Verify browser acceptance with the targeted Playwright spec before broader test runs.
+
+## Phase 3: SDK Boundary And Governance
+
+### Step 6: Keep Process Runtime Out Of The Public V1 SDK Barrel (`src/sdk/index.ts`)
+**Complexity: 4**
+1. Remove `ProcessSpec`, `ProcessLifecycleState`, process task result state types, and sidecar-route-only process vocabulary from the public `src/sdk/index.ts` barrel.
+2. Migrate internal runtime/tests/examples that currently import those process-only types from `@reigh/editor-sdk` to canonical direct SDK family modules.
+3. Update barrel smoke and SDK boundary tests so public SDK assertions no longer require process runtime types from the root barrel, while direct internal/module-path tests still cover the runtime contracts.
+4. Extend `check-sdk-public-exports.mjs` with explicit fail-fast prohibitions for the forbidden symbols and sidecar-route process vocabulary.
+
+### Step 7: Extend M7b Governance Gates (`scripts/quality/*.mjs`)
+**Complexity: 4**
+1. Extend `check-extension-example-readiness.mjs` to validate EX-01 through EX-04 for broken refs, unsupported target paths, missing material statuses, stale planner actions, missing sidecar blockers, incomplete artifact routes, and missing graph-path markers.
+2. Rewrite `check-docs-maturity-sync.mjs` into a combined maturity-table and docs-claims scanner, preserving table sync behavior while failing unsupported positive claims.
+3. Allow explicit anti-scope denial contexts for terms like `sandbox`, `marketplace`, and `headless renderer`; fail positive capability claims or ambiguous unsupported claims.
+4. Add sidecar-blocker and M7b requirement-key awareness to `check-extension-family-conformance.mjs`.
+5. Add node:test coverage for the new governance failure modes using temporary fixtures where possible.
+
+## Execution Order
+1. Land artifact profile types and validators first because planner, examples, and tests depend on the expanded profile vocabulary.
+2. Wire `canSidecarExport` and router selection next; this is the smallest functional unlock for sidecar execution.
+3. Build EX-04 fixture data before the dashboard so the UI can consume realistic route plans and artifact completion records.
+4. Add the dashboard and browser harness after planner/example data is stable.
+5. Tighten SDK boundary exports before release governance so the governance scripts enforce the final intended public surface.
+6. Finish with governance scripts and docs updates, then run release-mode checks.
+
+## Validation Order
+1. Run focused unit tests: renderability, render planner, render router, SDK barrel/index, route dashboard component.
+2. Run EX-04 browser/component acceptance with `m5-composed-examples.browser.test.tsx`.
+3. Run Playwright route-completion scenarios in `tests/e2e/video-editor-processes.spec.ts`.
+4. Run governance release commands: `check:sdk-public-exports:release`, `check:example-readiness:release`, `check:docs-maturity-sync:release`, and `check:extension-family-conformance:release`.
+5. Run `npm run test:extensions`, then `npm run build`; use the full suite fallback if targeted coverage exposes import or type fallout outside the scoped paths.
+
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-05T03:36:50Z",
+  "hash": "sha256:9b12b5073461c991788f26ebcb18a4a00b0d9223dd3b86b10987cc40125b52d8",
+  "questions": [
+    "Should `RouteCompletionDashboard` be mounted in a production editor panel in M7b, or is the deterministic harness plus reusable component sufficient acceptance for this milestone?",
+    "Should EX-04 include machine-path and executable-package artifacts in its multi-artifact completion record, or should those profiles remain validator/type coverage only while EX-04 focuses on sidecar process artifacts?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`RenderPlannerResult` exposes `canSidecarExport`, and router selection can return `sidecar-export` for an unblocked sidecar route without adding planner responsibility to `renderRouter.ts`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Machine-path manifests validate only with `locator.kind === 'local-file'`, executable-package manifests validate under their profile-specific locator constraints, and both profiles appear in the canonical profile array.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Sidecar route artifact completion remains conjunctive: every declared artifact/profile must resolve with compatible manifest profile, hash/provenance, and route constraints before status is `complete`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "EX-04 is graph-backed with typed `requires`/`consumes` details, route-scoped sidecar blockers, repair actions, and multi-artifact completion evidence.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files",
+        "inspect_runtime_ui"
+      ]
+    },
+    {
+      "criterion": "Route completion dashboard happy-path browser acceptance shows complete profiles and artifact/sidecar listings with no blocker actions.",
+      "priority": "must",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Route completion dashboard repair-path browser acceptance shows a route-scoped repair action and transitions to complete after repair.",
+      "priority": "must",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`src/sdk/index.ts` does not export `ProcessSpec`, `ProcessLifecycleState`, process task result states, or sidecar-route process vocabulary, and governance fails if they are reintroduced.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "M7b example-readiness governance fails on broken refs, unsupported target paths, missing material statuses, stale planner actions, missing sidecar blockers, incomplete artifact routes, or missing graph-path markers for EX-01 through EX-04.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Docs governance fails unsupported positive claims for sandbox, marketplace, headless renderer, physical-device control, descriptor, preview, export, materialization, output-format, sidecar, or trusted-only capabilities beyond evidence while allowing explicit anti-scope denials.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Sidecar blockers remain route-scoped in planner data and dashboard rendering, and do not block unrelated browser/worker/preview routes.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "inspect_runtime_ui"
+      ]
+    },
+    {
+      "criterion": "Implementation does not introduce public `materializes`, `produces`, or `fallbacks` composition edge discriminants.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Changed UI remains compact and consistent with existing process/material dashboard conventions.",
+      "priority": "should",
+      "requires": [
+        "subjective_judgment",
+        "inspect_runtime_ui"
+      ]
+    },
+    {
+      "criterion": "Governance script tests use temporary fixtures where practical instead of broad repo fixture churn.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "read_files"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The existing `external` UI render route is the intended dispatch target for selected `sidecar-export`; no new UI route discriminant is introduced unless implementation evidence requires it.",
+    "Machine-path and executable-package profiles are verified artifact record profiles only; the implementation must not claim Reigh controls, certifies, sandboxes, executes, or previews them.",
+    "EX-04 focuses on sidecar process artifacts unless the user answers otherwise; machine-path and executable-package get type, inference, validator, and governance coverage.",
+    "Docs scanner treats prohibited words inside explicit denial/anti-scope contexts as allowed; only positive or ambiguous unsupported claims fail.",
+    "The existing process harness is the preferred Playwright acceptance surface to avoid adding another app entrypoint unless the dashboard needs one.",
+    "No open ticket is proposed as resolved by this plan."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderability.test.ts",
+        "reason": "Covers artifact profile inference and strict validation."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "reason": "Covers route plans, artifact completion, process blockers, and sidecar capability booleans."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/renderRouter.test.ts",
+        "reason": "Covers route selection and sidecar dispatch decisions."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/index.test.ts",
+        "reason": "Covers public barrel profile exports and SDK boundary expectations."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/smoke/barrel-import-smoke.test.ts",
+        "reason": "Contains hardcoded artifact profile assertions and process public-barrel smoke checks."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/__tests__/sdk-boundary.test.ts",
+        "reason": "Covers root SDK boundary and process type exposure assumptions."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx",
+        "reason": "Will carry EX-04 browser/component acceptance."
+      },
+      {
+        "kind": "path",
+        "value": "tests/e2e/video-editor-processes.spec.ts",
+        "reason": "Browser acceptance for route-completion happy and repair paths."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/video/rendering/artifacts.ts",
+      "src/sdk/video/families/processes.ts",
+      "src/tools/video-editor/runtime/renderability.ts",
+      "src/tools/video-editor/runtime/renderability.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/renderPlanner.test.ts",
+      "src/tools/video-editor/lib/renderRouter.ts",
+      "src/tools/video-editor/lib/renderRouter.test.ts",
+      "src/sdk/index.ts",
+      "src/sdk/index.test.ts",
+      "src/sdk/__tests__/sdk-boundary.test.ts",
+      "src/sdk/boundary.test.ts",
+      "src/sdk/smoke/barrel-import-smoke.test.ts",
+      "src/examples/process-example.ts",
+      "src/examples/metadata-json-output-example.ts",
+      "src/examples/output-format-sidecar-composed-example.ts",
+      "src/sdk/examples-governance.test.ts",
+      "src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx",
+      "src/tools/video-editor/components/RouteCompletionDashboard/RouteCompletionDashboard.tsx",
+      "src/tools/video-editor/components/RouteCompletionDashboard/RouteCompletionDashboard.test.tsx",
+      "src/tools/video-editor/components/RouteCompletionDashboard/index.ts",
+      "src/tools/video-editor/pages/VideoEditorProcessesHarnessPage.tsx",
+      "tests/e2e/video-editor-processes.spec.ts",
+      "tests/fixtures/video-editor/process-fixture-descriptor.ts",
+      "src/tools/video-editor/runtime/processes/ProcessManager.ts",
+      "src/tools/video-editor/runtime/processes/ProcessManager.test.ts",
+      "src/tools/video-editor/runtime/processes/ProcessManager.integration.test.ts",
+      "src/tools/video-editor/runtime/extensionSurface.ts",
+      "src/tools/video-editor/runtime/liveDataRegistry.ts",
+      "scripts/quality/check-extension-example-readiness.mjs",
+      "scripts/quality/check-docs-maturity-sync.mjs",
+      "scripts/quality/check-sdk-public-exports.mjs",
+      "scripts/quality/check-extension-family-conformance.mjs",
+      "scripts/quality/check-m7b-governance.test.mjs",
+      "docs/extensions/composition-spine/README.md",
+      "docs/extensions/composition-spine/m0-release-examples.md",
+      "docs/extensions/composition-spine/m7b-output-format-sidecar-integration.md"
+    ],
+    "always_run": [
+      "npm run check:sdk-public-exports:release",
+      "npm run check:example-readiness:release",
+      "npm run check:docs-maturity-sync:release",
+      "npm run check:extension-family-conformance:release",
+      "npm run build"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: scripts/quality/check-docs-maturity-sync.mjs, scripts/quality/check-extension-example-readiness.mjs, scripts/quality/check-extension-family-conformance.mjs, scripts/quality/check-m7b-governance.test.mjs, scripts/quality/check-sdk-public-exports.mjs, src/examples/metadata-json-output-example.ts, src/examples/output-format-sidecar-composed-example.ts, src/examples/process-example.ts, src/sdk/__tests__/sdk-boundary.test.ts, src/sdk/boundary.test.ts, src/sdk/examples-governance.test.ts, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/smoke/barrel-import-smoke.test.ts, src/sdk/video/families/processes.ts, src/sdk/video/rendering/artifacts.ts, src/tools/video-editor/components/RouteCompletionDashboard/RouteCompletionDashboard.test.tsx, src/tools/video-editor/components/RouteCompletionDashboard/RouteCompletionDashboard.tsx, src/tools/video-editor/components/RouteCompletionDashboard/index.ts, src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx, src/tools/video-editor/lib/renderRouter.test.ts, src/tools/video-editor/lib/renderRouter.ts, src/tools/video-editor/pages/VideoEditorProcessesHarnessPage.tsx, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/liveDataRegistry.ts, src/tools/video-editor/runtime/processes/ProcessManager.integration.test.ts, src/tools/video-editor/runtime/processes/ProcessManager.test.ts, src/tools/video-editor/runtime/processes/ProcessManager.ts, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/renderPlanner.ts, src/tools/video-editor/runtime/renderability.test.ts, src/tools/video-editor/runtime/renderability.ts, tests/e2e/video-editor-processes.spec.ts, tests/fixtures/video-editor/process-fixture-descriptor.ts. Ignored documentation-only change(s) for selector derivation: docs/extensions/composition-spine/README.md, docs/extensions/composition-spine/m0-release-examples.md, docs/extensions/composition-spine/m7b-output-format-sidecar-integration.md. Candidate: The change crosses SDK types, planner/router behavior, example acceptance, UI, docs, and governance. A scoped baseline catches the direct blast radius, while full-suite fallback is warranted because removing root SDK process exports can expose indirect import fallout. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/tools/video-editor/components/RouteCompletionDashboard/RouteCompletionDashboard.test.tsx, scripts/quality/check-m7b-governance.test.mjs.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/tools/video-editor/components/RouteCompletionDashboard/RouteCompletionDashboard.test.tsx",
+      "scripts/quality/check-m7b-governance.test.mjs"
+    ]
+  },
+  "structure_warnings": []
+}
+
+        Plan structure warnings from validator:
+        []
+
+        Existing flags:
+        []
+
+
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m7b-output-format-sidecar-20260705-0324/critique_check_correctness.json
+Read this file first — it contains 1 check with a question and guidance.
+Investigate only this check, then add your findings to the `findings` array for that check.
+
+Self-monitor for non-convergence before spending more tool calls. This is NOT about duration or difficulty: hard checks that are still making new progress should continue. But if you are spinning — re-reading the same file 3+ times, searching for a file the plan says to CREATE, needing a sibling/external repo or path outside the project root, or making many tool calls without getting closer to a verdict — STOP investigating. Not finding what you need is a finding; emit exactly one non-flagged finding whose detail starts `unverifiable: ` and explains what you could not resolve and exactly why. An unverifiable check is a complete, valid result for this worker; normal code ambiguity that you can inspect should still be flagged per the usual "when in doubt, flag it" rule.
+
+Check ID: correctness
+Question: Are the proposed changes technically correct?
+Guidance: Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases — not just the one reported in the issue.
+
+Each finding needs:
+- "detail": what you specifically checked and what you found (at least a full sentence)
+- "flagged": true if this describes a difference, risk, or tension — even if you think it's justified. false only if purely informational with no possible downside.
+- This check must end with at least one finding. Never leave its `findings` array empty. If you found no issue, add one detailed `flagged: false` finding explaining what you checked and why it appears clear.
+
+When in doubt, flag it — the gate can accept tradeoffs, but it can't act on findings it never sees.
+
+Good: {"detail": "Checked callers of nthroot_mod in solveset.py line 1205 — passes prime moduli only, consistent with the fix.", "flagged": false}
+Good: {"detail": "The fix handles empty tuples but not single-element tuples which need a trailing comma.", "flagged": true}
+Bad: {"detail": "No issue found", "flagged": false}  ← too brief, will be rejected
+Bad: {"detail": "The hints suggest approach X but the plan uses Y. However Y is consistent with X's intent.", "flagged": false}  ← a different approach than the hints IS a flag. You found a divergence — flag it. The gate decides if it's acceptable.
+
+After filling in checks, add any additional concerns to the `flags` array (e.g., security, performance, dependencies).
+Use the standard format (id, concern, category, severity_hint, evidence). This array can be empty.
+
+Workflow: read the file → investigate → read file again → add finding → write file back. Repeat for this check.
+
+        Additional guidelines:
+        - Robustness level: thorough. Use balanced judgment. Flag significant risks, but do not spend flags on minor polish or executor-obvious boilerplate.
+        - Over-engineering: prefer the simplest approach that fully solves the problem.
+        - Reuse existing flag IDs when the same concern is still open.
+        - `verified_flag_ids`: list flag IDs from prior iterations that the revised plan actually resolves (e.g., if the plan was revised to fix FLAG-001, and you confirm the fix is correct, include "FLAG-001"). Only include flags you've verified — don't guess.
+        - Verify that the plan follows the expected structure when validator warnings or the outline suggest drift.
+        - Additional flags may use these categories: correctness, security, completeness, performance, maintainability, other.
+        - Focus on concrete issues, not structural formatting.
+        - Complexity audit: flag (a) missing complexity scores on plan steps, (b) inflated scores that would waste premium models on trivial work, and (c) under-rated work that should not run on cheap models. Use category `completeness`.

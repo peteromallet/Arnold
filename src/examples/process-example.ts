@@ -13,7 +13,7 @@
  * manifest shape that extensions use to describe trusted local processes.
  *
  * This file must NOT import from editor internals (src/tools/video-editor/*).
- * It imports exclusively from @reigh/editor-sdk, the public SDK entrypoint.
+ * It imports only from the public @reigh/editor-sdk package surface.
  *
  * @publicContract
  */
@@ -24,12 +24,13 @@ import type {
   ExtensionContext,
   DisposeHandle,
   ProcessContribution,
-  ProcessSpec,
   ProcessManifestEntry,
-  ProcessEnvFieldSpec,
-  ProcessOperationSpec,
-  ProcessSpawnConfig,
 } from '@reigh/editor-sdk';
+
+export type ProcessSpec = ProcessContribution['spec'];
+export type ProcessSpawnConfig = ProcessSpec['spawn'];
+export type ProcessEnvFieldSpec = NonNullable<ProcessSpec['env']>[number];
+export type ProcessOperationSpec = NonNullable<ProcessSpec['operations']>[number];
 
 // ---------------------------------------------------------------------------
 // Process specification — declarative trusted-local process descriptor
@@ -154,9 +155,5 @@ export const processExample: ReighExtension = defineExtension({
 /** Re-export types for SDK consumers. */
 export type {
   ProcessContribution,
-  ProcessSpec,
   ProcessManifestEntry,
-  ProcessEnvFieldSpec,
-  ProcessOperationSpec,
-  ProcessSpawnConfig,
 };

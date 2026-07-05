@@ -43,10 +43,10 @@ import type { ProcessResultAttachRecord } from '@/tools/video-editor/runtime/com
 import type {
   CapabilityRequirement,
   CompositionGraph,
-  ProcessStatus,
   RenderMaterialRef,
   RenderBlockerReason,
 } from '@reigh/editor-sdk';
+import type { ProcessStatus } from '@/sdk/video/families/processes';
 import type { ContributionRenderability } from '@/tools/video-editor/runtime/renderability.ts';
 import type { VideoEditorProcessDescriptor } from '@/tools/video-editor/runtime/extensionSurface.ts';
 
@@ -312,6 +312,9 @@ function selectPlannerRoute(result: RenderPlannerResult): PlannerRouteDecisionCo
   if (result.canWorkerExport) {
     return { plannerResult: result, selectedPlannerRoute: 'worker-export' };
   }
+  if (result.canSidecarExport) {
+    return { plannerResult: result, selectedPlannerRoute: 'sidecar-export' };
+  }
   return { plannerResult: result, selectedPlannerRoute: 'preview' };
 }
 
@@ -325,21 +328,22 @@ export function decideRenderRoute(
   const contributedIndex = indexContributedRecords(contributedClipRecords);
 
   if (clips.length === 0) {
+    const emptyPlanner = selectPlannerRoute(planRender({
+      requirements: [],
+      compositionGraph: plannerInput?.compositionGraph,
+      processes: plannerInput?.processes,
+      processStatuses: plannerInput?.processStatuses,
+      processResultAttachRecords: plannerInput?.processResultAttachRecords,
+      materialRefs: plannerInput?.materialRefs,
+      materialStatuses: plannerInput?.materialStatuses,
+    } satisfies RenderPlannerInput));
     return {
-      route: 'browser-remotion',
+      route: emptyPlanner.selectedPlannerRoute === 'sidecar-export' ? 'external' : 'browser-remotion',
       hasThemedClip: false,
       hasMediaClip: false,
       hasContributedClip: false,
       reason: 'no_clips',
-      planner: selectPlannerRoute(planRender({
-        requirements: [],
-        compositionGraph: plannerInput?.compositionGraph,
-        processes: plannerInput?.processes,
-        processStatuses: plannerInput?.processStatuses,
-        processResultAttachRecords: plannerInput?.processResultAttachRecords,
-        materialRefs: plannerInput?.materialRefs,
-        materialStatuses: plannerInput?.materialStatuses,
-      } satisfies RenderPlannerInput)),
+      planner: emptyPlanner,
     };
   }
 
@@ -528,9 +532,9 @@ export function decideRenderRoute(
     }
     if (hasNativeOrMediaClip) {
       // Mixed browser-capable contributed + native → browser-remotion
-      // handles both.
+      // handles both, unless sidecar-export is the selected planner route.
       return {
-        route: 'browser-remotion',
+        route: planner.selectedPlannerRoute === 'sidecar-export' ? 'external' : 'browser-remotion',
         hasThemedClip: false,
         hasMediaClip: true,
         hasContributedClip: true,
@@ -540,7 +544,7 @@ export function decideRenderRoute(
     }
     // Pure browser-capable contributed clips
     return {
-      route: 'browser-remotion',
+      route: planner.selectedPlannerRoute === 'sidecar-export' ? 'external' : 'browser-remotion',
       hasThemedClip: false,
       hasMediaClip: false,
       hasContributedClip: true,
@@ -570,7 +574,7 @@ export function decideRenderRoute(
     };
   }
   return {
-    route: 'browser-remotion',
+    route: planner.selectedPlannerRoute === 'sidecar-export' ? 'external' : 'browser-remotion',
     hasThemedClip,
     hasMediaClip,
     hasContributedClip: false,

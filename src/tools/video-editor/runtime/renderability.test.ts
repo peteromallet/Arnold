@@ -648,6 +648,184 @@ describe('render artifact manifest helpers', () => {
     expect(artifact.manifest?.sidecars).toEqual([]);
   });
 
+  it('validates machine-path profiles require local-file locator kind', () => {
+    expect(() => createRenderArtifactManifest({
+      artifactId: 'artifact.machine-path.valid',
+      route: 'sidecar-export',
+      determinism: 'process-dependent',
+      profile: 'machine-path',
+      locator: {
+        kind: 'local-file',
+        uri: '/tmp/output/render-output.exr',
+        mimeType: 'image/x-exr',
+      },
+      consumedMaterialRefs: [],
+      sidecars: [],
+      provenance: { source: 'test' },
+    })).not.toThrow();
+
+    expect(() => createRenderArtifactManifest({
+      artifactId: 'artifact.machine-path.invalid',
+      route: 'sidecar-export',
+      determinism: 'process-dependent',
+      profile: 'machine-path',
+      locator: {
+        kind: 'artifact-store',
+        uri: 'artifact://output.exr',
+        mimeType: 'image/x-exr',
+      },
+      consumedMaterialRefs: [],
+      sidecars: [],
+      provenance: { source: 'test' },
+    })).toThrow(/locator\.kind "local-file"/);
+  });
+
+  it('validates executable-package profiles require artifact-store or local-file locator kind', () => {
+    expect(() => createRenderArtifactManifest({
+      artifactId: 'artifact.exec-pkg.store',
+      route: 'sidecar-export',
+      determinism: 'process-dependent',
+      profile: 'executable-package',
+      locator: {
+        kind: 'artifact-store',
+        uri: 'artifact://tool/blender-4.0.0.py',
+        mimeType: 'text/x-python',
+      },
+      consumedMaterialRefs: [],
+      sidecars: [],
+      provenance: { source: 'test' },
+    })).not.toThrow();
+
+    expect(() => createRenderArtifactManifest({
+      artifactId: 'artifact.exec-pkg.local',
+      route: 'sidecar-export',
+      determinism: 'process-dependent',
+      profile: 'executable-package',
+      locator: {
+        kind: 'local-file',
+        uri: '/usr/local/bin/blender',
+        mimeType: 'application/octet-stream',
+      },
+      consumedMaterialRefs: [],
+      sidecars: [],
+      provenance: { source: 'test' },
+    })).not.toThrow();
+
+    expect(() => createRenderArtifactManifest({
+      artifactId: 'artifact.exec-pkg.invalid',
+      route: 'sidecar-export',
+      determinism: 'process-dependent',
+      profile: 'executable-package',
+      locator: {
+        kind: 'inline',
+        uri: 'blender.py',
+        mimeType: 'text/x-python',
+      },
+      consumedMaterialRefs: [],
+      sidecars: [],
+      provenance: { source: 'test' },
+    })).toThrow(/locator\.kind "artifact-store" or "local-file"/);
+  });
+
+  it('does not infer machine-path or executable-package profiles from standard routes', () => {
+    // browser-export + video/mp4 → video (not machine-path or executable-package)
+    expect(inferRequiredRenderArtifactManifestProfile({
+      route: 'browser-export',
+      mimeType: 'video/mp4',
+      outputFormatId: 'h264',
+    })).toBe('video');
+
+    // worker-export + audio/wav → audio (not machine-path or executable-package)
+    expect(inferRequiredRenderArtifactManifestProfile({
+      route: 'worker-export',
+      mimeType: 'audio/wav',
+    })).toBe('audio');
+
+    // sidecar-export → sidecar (not machine-path or executable-package)
+    expect(inferRequiredRenderArtifactManifestProfile({
+      route: 'sidecar-export',
+    })).toBe('sidecar');
+
+    // preview → preview (not machine-path or executable-package)
+    expect(inferRequiredRenderArtifactManifestProfile({
+      route: 'preview',
+    })).toBe('preview');
+  });
+
+  it('strictly resolves machine-path and executable-package profiles', () => {
+    const machinePathArtifact: RenderArtifact = {
+      id: 'artifact.strict.mp',
+      route: 'sidecar-export',
+      locator: {
+        kind: 'local-file',
+        uri: '/tmp/render.exr',
+        mimeType: 'image/x-exr',
+      },
+      mediaKind: 'binary',
+      consumedMaterialRefs: [],
+      determinism: 'process-dependent',
+      boundary: {
+        source: 'sidecar-process',
+        target: 'artifact-store',
+        route: 'sidecar-export',
+        failureBehavior: 'emit-diagnostic',
+      },
+      manifest: createRenderArtifactManifest({
+        artifactId: 'artifact.strict.mp',
+        route: 'sidecar-export',
+        determinism: 'process-dependent',
+        profile: 'machine-path',
+        locator: {
+          kind: 'local-file',
+          uri: '/tmp/render.exr',
+          mimeType: 'image/x-exr',
+        },
+        mediaKind: 'binary',
+        consumedMaterialRefs: [],
+        sidecars: [],
+        provenance: { source: 'test' },
+      }),
+    };
+
+    expect(resolveStrictRenderArtifactManifestProfile(machinePathArtifact).profile).toBe('machine-path');
+
+    const execPkgArtifact: RenderArtifact = {
+      id: 'artifact.strict.ep',
+      route: 'sidecar-export',
+      locator: {
+        kind: 'artifact-store',
+        uri: 'artifact://tool/blender.py',
+        mimeType: 'text/x-python',
+      },
+      mediaKind: 'text',
+      consumedMaterialRefs: [],
+      determinism: 'process-dependent',
+      boundary: {
+        source: 'sidecar-process',
+        target: 'artifact-store',
+        route: 'sidecar-export',
+        failureBehavior: 'emit-diagnostic',
+      },
+      manifest: createRenderArtifactManifest({
+        artifactId: 'artifact.strict.ep',
+        route: 'sidecar-export',
+        determinism: 'process-dependent',
+        profile: 'executable-package',
+        locator: {
+          kind: 'artifact-store',
+          uri: 'artifact://tool/blender.py',
+          mimeType: 'text/x-python',
+        },
+        mediaKind: 'text',
+        consumedMaterialRefs: [],
+        sidecars: [],
+        provenance: { source: 'test' },
+      }),
+    };
+
+    expect(resolveStrictRenderArtifactManifestProfile(execPkgArtifact).profile).toBe('executable-package');
+  });
+
   it('sweeps runtime and lib artifact producers for manifest-helper coverage', () => {
     const files = [
       ...sourceFilesUnder('src/tools/video-editor/runtime'),

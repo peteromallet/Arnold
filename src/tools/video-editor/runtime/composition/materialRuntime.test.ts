@@ -15,12 +15,12 @@ import {
 } from '@/tools/video-editor/runtime/composition/materialRuntime.ts';
 import type {
   ExtensionDiagnostic,
-  ProcessRoundtripResult,
-  ProcessStatus,
   RenderMaterial,
   RenderMaterialRef,
   RenderMaterialStatus,
 } from '@reigh/editor-sdk';
+import type { ProcessRoundtripResult } from '@/sdk/capabilities';
+import type { ProcessStatus } from '@/sdk/video/families/processes';
 import type {
   ContributionIndex,
   VideoEditorProcessDescriptor,

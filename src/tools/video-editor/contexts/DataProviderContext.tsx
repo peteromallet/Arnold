@@ -26,7 +26,7 @@ import type { LivePermissionService } from '@/tools/video-editor/runtime/livePer
 import type { ExtensionStateRepository } from '@/tools/video-editor/runtime/extensionStateRepository';
 import type { ExtensionSettingsNotificationRegistry } from '@/tools/video-editor/runtime/extensionSettingsNotification';
 import type { ProcessManager } from '@/tools/video-editor/runtime/processes/ProcessManager.ts';
-import type { ProcessStatus } from '@reigh/editor-sdk';
+import type { ProcessStatus } from '@/sdk/video/families/processes';
 import type { ProcessResultAttachRecord } from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
 
 export interface VideoEditorRuntimeContextValue {

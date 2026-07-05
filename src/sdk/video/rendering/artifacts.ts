@@ -274,7 +274,7 @@ export interface RenderArtifactManifest {
  * render route. Route completion uses these profiles to validate that
  * all required artifact kinds have been produced.
  */
-export type ArtifactManifestProfileKind = 'video' | 'audio' | 'sidecar' | 'preview';
+export type ArtifactManifestProfileKind = 'video' | 'audio' | 'sidecar' | 'preview' | 'machine-path' | 'executable-package';
 
 /**
  * The canonical ordered set of M7a artifact manifest profile kinds.
@@ -284,6 +284,8 @@ export const ARTIFACT_MANIFEST_PROFILE_KINDS: readonly ArtifactManifestProfileKi
   'audio',
   'sidecar',
   'preview',
+  'machine-path',
+  'executable-package',
 ] as const;
 
 /**
@@ -384,6 +386,44 @@ export interface PreviewArtifactManifestProfile extends ArtifactManifestProfileB
 }
 
 /**
+ * Machine-path artifact manifest profile.
+ *
+ * A machine-path profile describes a verified artifact record that
+ * points at an on-disk path on a machine that Reigh does not control,
+ * certify, sandbox, execute, or preview. This profile exists for type
+ * coverage, validation, and governance completeness, not for runtime
+ * capability claims.
+ *
+ * Validation requires `locator.kind === 'local-file'`.
+ */
+export interface MachinePathArtifactManifestProfile extends ArtifactManifestProfileBase {
+  readonly profile: 'machine-path';
+  /** The process that declared this machine path. */
+  readonly processId?: string;
+  /** The operation within the process that produced this path. */
+  readonly operationId?: string;
+}
+
+/**
+ * Executable-package artifact manifest profile.
+ *
+ * An executable-package profile describes a verified artifact record
+ * that points at an executable package/script/binary that Reigh does
+ * not control, certify, sandbox, execute, or preview. This profile
+ * exists for type coverage, validation, and governance completeness,
+ * not for runtime capability claims.
+ *
+ * Validation requires an `artifact-store` or `local-file` locator kind.
+ */
+export interface ExecutablePackageArtifactManifestProfile extends ArtifactManifestProfileBase {
+  readonly profile: 'executable-package';
+  /** The process that declared this executable package. */
+  readonly processId?: string;
+  /** The operation within the process that produced this package. */
+  readonly operationId?: string;
+}
+
+/**
  * M7a typed artifact manifest profile (discriminated union).
  *
  * Each variant enforces profile-specific constraints. Route completion
@@ -398,7 +438,9 @@ export type ArtifactManifestProfile =
   | VideoArtifactManifestProfile
   | AudioArtifactManifestProfile
   | SidecarArtifactManifestProfile
-  | PreviewArtifactManifestProfile;
+  | PreviewArtifactManifestProfile
+  | MachinePathArtifactManifestProfile
+  | ExecutablePackageArtifactManifestProfile;
 
 /** Final output or sidecar produced by a render/bake route. */
 export interface RenderArtifact {

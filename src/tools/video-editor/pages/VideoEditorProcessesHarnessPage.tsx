@@ -2,20 +2,20 @@ import { useCallback, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type {
   DataProvider,
-  ProcessRoundtripRequest,
-  ProcessRoundtripResult,
-  ProcessStatus,
   RenderArtifact,
   RenderArtifactSidecarDescriptor,
   RenderMaterial,
   RenderRoute,
 } from '@reigh/editor-sdk';
+import type { ProcessRoundtripRequest, ProcessRoundtripResult } from '@/sdk/capabilities';
+import type { ProcessStatus } from '@/sdk/video/families/processes';
 import {
   BlockerActionCard,
   normalizeBlockerActionCardNextAction,
 } from '@/tools/video-editor/components/BlockerActionCard.tsx';
 import { ProcessDashboard } from '@/tools/video-editor/components/ProcessDashboard/ProcessDashboard.tsx';
 import { RoundtripResultsPanel } from '@/tools/video-editor/components/RoundtripResultsPanel.tsx';
+import { RouteCompletionDashboard } from '@/tools/video-editor/components/RouteCompletionDashboard/RouteCompletionDashboard.tsx';
 import {
   DataProviderWrapper,
   type VideoEditorRuntimeContextValue,
@@ -34,11 +34,17 @@ import type {
 import type { ProcessManager } from '@/tools/video-editor/runtime/processes/ProcessManager.ts';
 import { planRender } from '@/tools/video-editor/runtime/renderPlanner.ts';
 
-type ProcessHarnessScenario = 'happy-path' | 'stopped-repair';
+type ProcessHarnessScenario =
+  | 'happy-path'
+  | 'stopped-repair'
+  | 'sidecar-happy-path'
+  | 'sidecar-stopped-repair';
 
 const VALID_SCENARIOS: ReadonlySet<ProcessHarnessScenario> = new Set([
   'happy-path',
   'stopped-repair',
+  'sidecar-happy-path',
+  'sidecar-stopped-repair',
 ]);
 
 const ATTACHED_AT = '2026-07-05T00:00:00.000Z';
@@ -46,6 +52,14 @@ const PROCESS_ROUTE: RenderRoute = 'browser-export';
 const PROCESS_ID = 'browser-fixture.process';
 const PROCESS_DESCRIPTOR_ID = `${PROCESS_ID}.contribution`;
 const OPERATION_ID = 'browser-fixture.execute';
+
+// ---- Sidecar-export scenario constants ----
+const SIDECAR_ROUTE: RenderRoute = 'sidecar-export';
+const SIDECAR_PROCESS_ID = 'sidecar-fixture.process';
+const SIDECAR_PROCESS_DESCRIPTOR_ID = `${SIDECAR_PROCESS_ID}.contribution`;
+const SIDECAR_OPERATION_ID = 'sidecar-fixture.export';
+const SIDECAR_OUTPUT_FORMAT_ID = 'metadata-json-sidecar';
+const SIDECAR_OUTPUT_EXT_ID = 'ext.sidecar.fixture.process';
 
 const EMPTY_PROVIDER = null as unknown as DataProvider;
 
@@ -56,6 +70,7 @@ function delay(ms: number): Promise<void> {
 function createStatus(
   state: ProcessStatus['state'],
   details: Partial<ProcessStatus> = {},
+  overrides?: { processId?: string; label?: string },
 ): ProcessStatus {
   const message = details.message ?? (
     state === 'stopped'
@@ -68,8 +83,8 @@ function createStatus(
   );
 
   return Object.freeze({
-    processId: PROCESS_ID,
-    label: 'Browser Fixture Process',
+    processId: overrides?.processId ?? PROCESS_ID,
+    label: overrides?.label ?? 'Browser Fixture Process',
     state,
     updatedAt: new Date().toISOString(),
     ...details,
@@ -357,6 +372,203 @@ function processOutputFormat(
   };
 }
 
+// ---- Sidecar-specific data factories ----
+
+function createSidecarDescriptor(): VideoEditorProcessDescriptor {
+  return {
+    id: SIDECAR_PROCESS_DESCRIPTOR_ID,
+    extensionId: SIDECAR_OUTPUT_EXT_ID,
+    processId: SIDECAR_PROCESS_ID,
+    label: 'Sidecar Fixture Process',
+    description: 'Deterministic sidecar harness for M7b route-completion acceptance.',
+    spec: {
+      id: SIDECAR_PROCESS_ID,
+      label: 'Sidecar Fixture Process',
+      description: 'Trusted local fixture for sidecar-export Playwright acceptance.',
+      protocol: 'stdio-jsonrpc',
+      spawn: {
+        command: 'sidecar-fixture',
+        args: ['--playwright'],
+      },
+      healthCheck: 'health',
+      shutdown: 'shutdown',
+      restartPolicy: 'never',
+      version: {
+        semver: '1.0.0',
+      },
+      operations: [
+        {
+          id: SIDECAR_OPERATION_ID,
+          label: 'Sidecar Export',
+          outputKinds: ['artifact', 'sidecar', 'diagnostic'],
+        },
+      ],
+    },
+    protocol: 'stdio-jsonrpc',
+    operations: [
+      {
+        id: SIDECAR_OPERATION_ID,
+        label: 'Sidecar Export',
+        routes: [SIDECAR_ROUTE],
+        outputKinds: ['artifact', 'sidecar', 'diagnostic'],
+        requiredCapabilities: [SIDECAR_ROUTE],
+      },
+    ],
+    availableRoutes: [SIDECAR_ROUTE],
+    requiredBy: [
+      {
+        source: 'extension',
+        extensionId: SIDECAR_OUTPUT_EXT_ID,
+        contributionId: SIDECAR_OUTPUT_FORMAT_ID,
+      },
+    ],
+    blockers: [],
+    nextActions: [],
+  };
+}
+
+function createSidecarOutputFormat(
+  descriptor: VideoEditorProcessDescriptor,
+): VideoEditorOutputFormatDescriptor {
+  return {
+    id: SIDECAR_OUTPUT_FORMAT_ID,
+    extensionId: descriptor.extensionId,
+    order: 1,
+    label: 'Metadata JSON Sidecar Export',
+    requiresRender: true,
+    outputExtension: '.json',
+    outputMimeType: 'application/json',
+    disabled: false,
+    availableRoutes: [SIDECAR_ROUTE],
+    routeRequirements: [
+      {
+        routes: [SIDECAR_ROUTE],
+        requiredCapabilities: [SIDECAR_ROUTE],
+        processId: descriptor.processId,
+        operationId: SIDECAR_OPERATION_ID,
+        determinism: 'process-dependent',
+        unavailableMessage:
+          'Start the sidecar fixture process before exporting metadata JSON.',
+      },
+    ],
+    processRequirements: [
+      {
+        processId: descriptor.processId,
+        operationId: SIDECAR_OPERATION_ID,
+        requiredCapabilities: [SIDECAR_ROUTE],
+      },
+    ],
+    blockers: [],
+    nextActions: [
+      {
+        kind: 'select-route',
+        label: 'Select sidecar export',
+        route: SIDECAR_ROUTE,
+        processId: descriptor.processId,
+        operationId: SIDECAR_OPERATION_ID,
+      },
+    ],
+    capabilities: {
+      extensionId: descriptor.extensionId,
+      contributionId: SIDECAR_OUTPUT_FORMAT_ID,
+      routes: [SIDECAR_ROUTE],
+      determinism: 'process-dependent',
+      sourceRefs: [
+        {
+          source: 'extension',
+          extensionId: descriptor.extensionId,
+          contributionId: SIDECAR_OUTPUT_FORMAT_ID,
+        },
+      ],
+      capabilityRequirements: [
+        {
+          id: `${descriptor.extensionId}.${SIDECAR_OUTPUT_FORMAT_ID}.${SIDECAR_ROUTE}`,
+          sourceRef: {
+            source: 'extension',
+            extensionId: descriptor.extensionId,
+            contributionId: SIDECAR_OUTPUT_FORMAT_ID,
+          },
+          route: SIDECAR_ROUTE,
+          requiredCapabilities: [SIDECAR_ROUTE],
+          determinism: 'process-dependent',
+          routeFit: { route: SIDECAR_ROUTE, fit: 'supported' },
+          blocking: false,
+        },
+      ],
+      fullySupported: true,
+      anyBlocked: false,
+    },
+    sidecars: [],
+  };
+}
+
+function createSidecarBrowserProcessManager(
+  descriptor: VideoEditorProcessDescriptor,
+  initialState: ProcessStatus['state'],
+): ProcessManager {
+  const statusOverrides = { processId: descriptor.processId, label: descriptor.label };
+  let status = createStatus(initialState, {}, statusOverrides);
+
+  return {
+    getDeclaredProcesses: () => [descriptor.spec],
+    getProcessSpec: (processId) =>
+      processId === descriptor.processId ? descriptor.spec : undefined,
+    getStatus: (processId) =>
+      processId === descriptor.processId ? status : undefined,
+    listStatuses: () => [status],
+    start: async (processId) => {
+      if (processId !== descriptor.processId) {
+        throw new Error(`Unknown process "${processId}".`);
+      }
+      status = createStatus('ready', {}, statusOverrides);
+      return status;
+    },
+    checkHealth: async (processId) => {
+      if (processId !== descriptor.processId) {
+        throw new Error(`Unknown process "${processId}".`);
+      }
+      return status;
+    },
+    execute: async (request) => {
+      if (request.processId !== descriptor.processId) {
+        throw new Error(`Unknown process "${request.processId}".`);
+      }
+      if (status.state !== 'ready' && status.state !== 'degraded') {
+        throw new Error('Start the sidecar fixture process before executing it.');
+      }
+
+      status = createStatus('busy', {
+        operationId: request.operationId,
+        progress: {
+          percent: 20,
+          message: 'Preparing sidecar fixture outputs.',
+          operationId: request.operationId,
+        },
+        taskId: request.id,
+      } as Partial<ProcessStatus>, statusOverrides);
+      await delay(50);
+      const result = createResult(request);
+      status = createStatus('ready', {}, statusOverrides);
+      return result;
+    },
+    cancel: async (processId) => {
+      if (processId !== descriptor.processId) {
+        throw new Error(`Unknown process "${processId}".`);
+      }
+      status = createStatus('ready', {}, statusOverrides);
+      return status;
+    },
+    shutdown: async (processId) => {
+      if (processId !== descriptor.processId) {
+        throw new Error(`Unknown process "${processId}".`);
+      }
+      status = createStatus('stopped', {}, statusOverrides);
+      return status;
+    },
+    dispose: async () => {},
+  };
+}
+
 function createRuntimeValue(args: {
   descriptor: VideoEditorProcessDescriptor;
   manager: ProcessManager;
@@ -428,19 +640,50 @@ const SCENARIO_META: Record<ProcessHarnessScenario, { title: string; description
     description: 'Stopped process surfaces a route-scoped blocker and clears it through Start Process.',
     initialState: 'stopped',
   },
+  'sidecar-happy-path': {
+    title: 'Sidecar Happy Path',
+    description:
+      'Ready sidecar-export process shows complete profiles, sidecar listings, and no route-scoped blockers.',
+    initialState: 'ready',
+  },
+  'sidecar-stopped-repair': {
+    title: 'Sidecar Stopped Repair',
+    description:
+      'Stopped sidecar-export process surfaces a route-scoped start-process action that transitions to complete after repair.',
+    initialState: 'stopped',
+  },
 };
+
+function isSidecarScenario(
+  scenario: ProcessHarnessScenario,
+): boolean {
+  return scenario === 'sidecar-happy-path' || scenario === 'sidecar-stopped-repair';
+}
 
 function ProcessHarnessScenarioView({
   scenario,
 }: {
   scenario: ProcessHarnessScenario;
 }) {
-  const descriptor = useMemo(() => createHarnessDescriptor(), []);
-  const manager = useMemo(
-    () => createBrowserProcessManager(descriptor, SCENARIO_META[scenario].initialState),
-    [descriptor, scenario],
+  const sidecar = isSidecarScenario(scenario);
+
+  const descriptor = useMemo(
+    () => (sidecar ? createSidecarDescriptor() : createHarnessDescriptor()),
+    [sidecar],
   );
-  const outputFormat = useMemo(() => processOutputFormat(descriptor), [descriptor]);
+  const manager = useMemo(
+    () =>
+      sidecar
+        ? createSidecarBrowserProcessManager(descriptor, SCENARIO_META[scenario].initialState)
+        : createBrowserProcessManager(descriptor, SCENARIO_META[scenario].initialState),
+    [descriptor, scenario, sidecar],
+  );
+  const outputFormat = useMemo(
+    () => (sidecar ? createSidecarOutputFormat(descriptor) : processOutputFormat(descriptor)),
+    [descriptor, sidecar],
+  );
+  const activeRoute = sidecar ? SIDECAR_ROUTE : PROCESS_ROUTE;
+  const activeOperationId = sidecar ? SIDECAR_OPERATION_ID : OPERATION_ID;
   const [statuses, setStatuses] = useState<readonly ProcessStatus[]>(() => manager.listStatuses());
   const [attachRecords, setAttachRecords] = useState<readonly ProcessResultAttachRecord[]>([]);
   const [latestResult, setLatestResult] = useState<ProcessRoundtripResult | null>(null);
@@ -460,7 +703,7 @@ function ProcessHarnessScenarioView({
     const result = await manager.execute({
       id: 'fixture-task-1',
       processId: descriptor.processId,
-      operationId: OPERATION_ID,
+      operationId: activeOperationId,
       params: {
         source: 'playwright-harness',
       },
@@ -473,7 +716,7 @@ function ProcessHarnessScenarioView({
     setLatestResult(result);
     setAttachRecords((current) => [...current, attachRecord]);
     refreshStatuses();
-  }, [descriptor, manager, refreshStatuses]);
+  }, [descriptor, manager, refreshStatuses, activeOperationId]);
 
   const planner = useMemo(() => planRender({
     outputFormats: [outputFormat],
@@ -502,9 +745,9 @@ function ProcessHarnessScenarioView({
     processes: [descriptor],
     processStatuses: statuses,
     processResultAttachRecords: attachRecords,
-    requestedRoutes: [PROCESS_ROUTE],
-    canonicalRoutes: [PROCESS_ROUTE],
-  }), [attachRecords, descriptor, projection.materialRefs, projection.materialStatuses, statuses]);
+    requestedRoutes: [activeRoute],
+    canonicalRoutes: [activeRoute],
+  }), [attachRecords, descriptor, projection.materialRefs, projection.materialStatuses, statuses, activeRoute]);
 
   const contextValue = useMemo(() => createRuntimeValue({
     descriptor,
@@ -512,6 +755,12 @@ function ProcessHarnessScenarioView({
     statuses,
     attachRecords,
   }), [attachRecords, descriptor, manager, statuses]);
+
+  // Find the route plan for the active route
+  const routePlan = useMemo(
+    () => planner.routePlans.find((rp) => rp.route === activeRoute),
+    [planner.routePlans, activeRoute],
+  );
 
   return (
     <div
@@ -533,6 +782,7 @@ function ProcessHarnessScenarioView({
             <div data-testid="planner-summary" className="text-xs text-muted-foreground">
               {JSON.stringify({
                 canBrowserExport: planner.canBrowserExport,
+                canSidecarExport: planner.canSidecarExport,
                 blockerReasons: planner.blockers.map((blocker) => blocker.reason),
                 nextActionKinds: planner.nextActions.map((action) => action.kind),
               })}
@@ -580,11 +830,33 @@ function ProcessHarnessScenarioView({
           </div>
         </section>
 
-        <DataProviderWrapper value={contextValue}>
-          <section className="rounded-xl border border-border bg-card/60 shadow-sm">
-            <ProcessDashboard />
-          </section>
-        </DataProviderWrapper>
+        {sidecar && routePlan ? (
+          <DataProviderWrapper value={contextValue}>
+            <section
+              className="rounded-xl border border-border bg-card/60 shadow-sm"
+              data-testid="route-completion-section"
+            >
+              <RouteCompletionDashboard
+                routePlan={routePlan}
+                plannerResult={planner}
+                extensionRuntime={contextValue.extensionRuntime}
+                processStatuses={statuses}
+                processResultAttachRecords={attachRecords}
+                onAction={(action) => {
+                  if (action.kind === 'start-process') {
+                    void handleStartProcess();
+                  }
+                }}
+              />
+            </section>
+          </DataProviderWrapper>
+        ) : (
+          <DataProviderWrapper value={contextValue}>
+            <section className="rounded-xl border border-border bg-card/60 shadow-sm">
+              <ProcessDashboard />
+            </section>
+          </DataProviderWrapper>
+        )}
 
         {latestResult && latestAttachRecord ? (
           <section className="rounded-xl border border-border bg-card/60 p-4 shadow-sm">

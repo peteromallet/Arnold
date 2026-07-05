@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
-  ProcessRoundtripResult,
   RenderMaterialRef,
   RenderArtifact,
   RenderArtifactSidecarDescriptor,
   RenderMaterial,
   TimelineSnapshot,
 } from '@reigh/editor-sdk';
+import type { ProcessRoundtripResult } from '@/sdk/capabilities';
 import {
   RENDER_MATERIAL_STATUSES,
   TIMELINE_PATCH_ALL_OP_FAMILIES,

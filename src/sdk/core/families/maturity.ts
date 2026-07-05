@@ -97,6 +97,10 @@ export interface FamilyRequirementChecklist {
   examples: boolean | undefined;
   /** Conformance tests exist. */
   tests: boolean | undefined;
+  /** Sidecar export capability is tracked (M7b). */
+  sidecarExport?: boolean | undefined;
+  /** Artifact route completion evidence exists (M7b). */
+  artifactRouteCompletion?: boolean | undefined;
 }
 
 // ---------------------------------------------------------------------------

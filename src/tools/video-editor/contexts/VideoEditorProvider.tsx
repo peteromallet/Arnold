@@ -90,6 +90,7 @@ import type { ClipTypeRegistry } from '@/tools/video-editor/clip-types/ClipTypeR
 import { createAgentToolRegistry, type AgentToolRegistry } from '@/tools/video-editor/runtime/agentToolRegistry.ts';
 import { createAgentToolInvocationService, type AgentToolInvocationService } from '@/tools/video-editor/runtime/agentToolInvocationService.ts';
 import type { AgentToolContribution, AgentToolRegistrationService, AgentToolHandler } from '@reigh/editor-sdk';
+import type { ProcessStatus } from '@/sdk/video/families/processes';
 
 import { useTimelineOpsFromStore } from '@/tools/video-editor/hooks/timelineStore.ts';
 import type { SaveStatus } from '@/tools/video-editor/hooks/useTimelinePersistence.ts';
@@ -100,7 +101,6 @@ import {
   syncExtensionDiagnosticsToCollection,
 } from '@/tools/video-editor/runtime/diagnosticCollectionSync.ts';
 import { createProcessManager, type ProcessManager } from '@/tools/video-editor/runtime/processes/ProcessManager.ts';
-import type { ProcessStatus } from '@reigh/editor-sdk';
 import type { ProcessResultAttachRecord } from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
 import {
   TransitionRegistryProvider,

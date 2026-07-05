@@ -46,6 +46,7 @@ export type {
 export { ARTIFACT_MANIFEST_PROFILE_KINDS } from '@/sdk/video/rendering/artifacts.ts';
 
 import type {
+  ArtifactBoundary,
   ArtifactManifestProfile,
   ArtifactManifestProfileKind,
   RenderArtifact,
@@ -144,6 +145,12 @@ export function resolveRenderArtifactManifestProfile(
       break;
     case 'preview':
       validatePreviewManifestProfile(manifest);
+      break;
+    case 'machine-path':
+      validateMachinePathManifestProfile(manifest);
+      break;
+    case 'executable-package':
+      validateExecutablePackageManifestProfile(manifest);
       break;
     default: {
       const unexpectedProfile: never = manifest.profile;
@@ -556,6 +563,27 @@ function validateSidecarManifestProfile(manifest: RenderArtifactManifest): void 
 function validatePreviewManifestProfile(manifest: RenderArtifactManifest): void {
   if (manifest.route !== 'preview') {
     throw new Error(`${manifestContextLabel(manifest)} must use route "preview" for preview profile validation.`);
+  }
+}
+
+function validateMachinePathManifestProfile(manifest: RenderArtifactManifest): void {
+  if (!manifest.locator || manifest.locator.kind !== 'local-file') {
+    throw new Error(
+      `${manifestContextLabel(manifest)} must declare locator.kind "local-file" for machine-path profile validation.`,
+    );
+  }
+}
+
+function validateExecutablePackageManifestProfile(manifest: RenderArtifactManifest): void {
+  if (!manifest.locator) {
+    throw new Error(
+      `${manifestContextLabel(manifest)} must declare a locator for executable-package profile validation.`,
+    );
+  }
+  if (manifest.locator.kind !== 'artifact-store' && manifest.locator.kind !== 'local-file') {
+    throw new Error(
+      `${manifestContextLabel(manifest)} must declare locator.kind "artifact-store" or "local-file" for executable-package profile validation.`,
+    );
   }
 }
 

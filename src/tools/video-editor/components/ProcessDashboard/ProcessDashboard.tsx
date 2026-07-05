@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import type { ProcessStatus } from '@reigh/editor-sdk';
+import type { ProcessStatus } from '@/sdk/video/families/processes';
 import { useOptionalVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import type { ProcessResultAttachRecord } from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
 import type {
@@ -231,7 +231,7 @@ export function deriveProcessDashboardEntries(args: {
   });
 }
 
-function lifecycleBadgeClass(state: ProcessStatus['state'] | undefined): string {
+export function lifecycleBadgeClass(state: ProcessStatus['state'] | undefined): string {
   switch (state) {
     case 'ready':
       return 'border-emerald-300 bg-emerald-50 text-emerald-700';

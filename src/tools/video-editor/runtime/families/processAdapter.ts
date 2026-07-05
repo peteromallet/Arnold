@@ -16,9 +16,9 @@ import type {
   FamilyConformanceReport,
   ExecutionMaturity,
   ProcessContribution,
-  ProcessStatus,
 } from '@reigh/editor-sdk';
 import { getVideoFamilyDefinition } from '@reigh/editor-sdk';
+import type { ProcessStatus } from '@/sdk/video/families/processes';
 import type { VideoEditorProcessDescriptor } from '../extensionSurface';
 import { buildProcessDescriptors } from './projectors/processProjector';
 import { buildConformanceReport } from '@/sdk/core/families/conformance';

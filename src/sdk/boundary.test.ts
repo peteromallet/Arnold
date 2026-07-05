@@ -110,15 +110,13 @@ import type {
   SamplingConfig,
   SamplingResult,
   TimelineRenderPassSummary,
-  ProcessSpec,
   ProcessContribution,
-  ProcessStatus,
-  ProcessRoundtripRequest,
-  ProcessRoundtripResult,
   ShaderContribution,
   ShaderInlineSource,
   ShaderRegistrationService,
 } from '@/sdk/index';
+import type { ProcessRoundtripRequest, ProcessRoundtripResult } from '@/sdk/capabilities';
+import type { ProcessSpec, ProcessStatus } from '@/sdk/video/families/processes';
 
 // ---------------------------------------------------------------------------
 // Helpers — path resolution and import extraction

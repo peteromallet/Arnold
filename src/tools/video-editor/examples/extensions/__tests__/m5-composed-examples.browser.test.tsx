@@ -9,6 +9,11 @@ import type {
 } from '@reigh/editor-sdk';
 import { BlockerActionCard } from '@/tools/video-editor/components/BlockerActionCard.tsx';
 import { MaterialBrowser } from '@/tools/video-editor/components/MaterialBrowser.tsx';
+import { RouteCompletionDashboard } from '@/tools/video-editor/components/RouteCompletionDashboard/index.ts';
+import {
+  outputFormatSidecarComposedContract,
+  outputFormatSidecarComposedExample,
+} from '@/examples/output-format-sidecar-composed-example.ts';
 import { flagshipLocalExtension } from '@/tools/video-editor/examples/extensions/flagship-local';
 import { buildTimelineData } from '@/tools/video-editor/lib/timeline-data.ts';
 import { serializeTimelineConfigSnapshot } from '@/tools/video-editor/lib/timeline-domain.ts';
@@ -25,9 +30,14 @@ import {
   projectHostMaterialRuntime,
   resolveMaterialAttachEntry,
 } from '@/tools/video-editor/runtime/composition/materialRuntime.ts';
+import {
+  createProcessResultAttachRecord,
+  type ProcessResultAttachRecord,
+} from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
 import { projectCompositionGraph } from '@/tools/video-editor/runtime/composition/graphProjector.ts';
 import { createLiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
 import { normalizeExtensionRuntime } from '@/tools/video-editor/runtime/extensionSurface.ts';
+import type { RenderPlannerResult } from '@/tools/video-editor/runtime/renderPlanner.ts';
 import type {
   ResolvedTimelineConfig,
   TimelineLiveBinding,
@@ -52,12 +62,38 @@ const EX03_TRANSITION_REF_KEY = `transition:${FLAGSHIP_EXTENSION_ID}:${EX03_TRAN
 const EX03_TRANSITION_NODE_ID = `contribution:${EX03_TRANSITION_REF_KEY}`;
 const EX03_MASK_SLOT = 'transition-mask';
 const EX03_MASK_MATERIAL_REF_ID = 'mat-flagship-transition-mask';
+const EX04_ROUTE = 'sidecar-export';
 
 const EMPTY_ASSET_REGISTRY = { assets: {} };
 const FLAGSHIP_RUNTIME = normalizeExtensionRuntime([flagshipLocalExtension]);
+const EX04_RUNTIME = normalizeExtensionRuntime([outputFormatSidecarComposedExample]);
 const FLAGSHIP_DECLARED_IDS = collectExtensionDeclaredIds(
   flagshipLocalExtension.manifest.contributions ?? [],
 );
+const EX04_PROCESS_DESCRIPTOR = EX04_RUNTIME.processes.find((descriptor) => (
+  descriptor.processId === outputFormatSidecarComposedContract.processSpec.id
+));
+const EX04_OUTPUT_DESCRIPTOR = EX04_RUNTIME.outputFormats.find((descriptor) => (
+  descriptor.id === outputFormatSidecarComposedContract.outputFormat.id
+));
+
+if (!EX04_PROCESS_DESCRIPTOR) {
+  throw new Error('EX-04 browser acceptance requires a normalized process descriptor.');
+}
+if (!EX04_OUTPUT_DESCRIPTOR) {
+  throw new Error('EX-04 browser acceptance requires a normalized output format descriptor.');
+}
+
+const EX04_ARTIFACT_EVIDENCE = outputFormatSidecarComposedContract.artifactEvidence[0];
+
+if (!EX04_ARTIFACT_EVIDENCE) {
+  throw new Error('EX-04 browser acceptance requires artifact evidence.');
+}
+const EX04_OPERATION_ID = EX04_ARTIFACT_EVIDENCE.manifest.operationId;
+
+if (!EX04_OPERATION_ID) {
+  throw new Error('EX-04 browser acceptance requires a manifest operation ID.');
+}
 
 function makeEffectBinding(
   overrides: Partial<TimelineLiveBinding> = {},
@@ -199,6 +235,51 @@ function makeMaskMaterialRef(): RenderMaterialRef {
       model: 'deterministic-masker',
     },
   } as RenderMaterialRef;
+}
+
+function createEx04AttachRecord(): ProcessResultAttachRecord {
+  return createProcessResultAttachRecord({
+    processDescriptor: EX04_PROCESS_DESCRIPTOR,
+    attachedAt: '2026-07-05T03:24:00.000Z',
+    result: {
+      requestId: 'task.ex04.metadata-export',
+      processId: EX04_PROCESS_DESCRIPTOR.processId,
+      operationId: EX04_OPERATION_ID,
+      status: 'completed',
+      returnedMaterials: [],
+      artifacts: [EX04_ARTIFACT_EVIDENCE.artifact],
+      sidecars: EX04_ARTIFACT_EVIDENCE.manifest.sidecars,
+      diagnostics: [],
+      logs: [{
+        level: 'info',
+        message: 'Metadata JSON sidecar export attached.',
+      }],
+      availableActions: [],
+      metadata: {
+        graphPathMarker: outputFormatSidecarComposedContract.graphPathMarker,
+      },
+    },
+  });
+}
+
+function buildEx04RoutePlan(
+  scenario: typeof outputFormatSidecarComposedContract.readyScenario,
+): RenderPlannerResult['routePlans'][number] {
+  return {
+    route: EX04_ROUTE,
+    blockerCount: scenario.blockers.length,
+    findingCount: scenario.blockers.length,
+    blocked: scenario.blockers.length > 0,
+    requiredCapabilities: EX04_OUTPUT_DESCRIPTOR.processRequirements[0]?.requiredCapabilities
+      ?? outputFormatSidecarComposedContract.outputFormat.render.requiredCapabilities,
+    determinism: outputFormatSidecarComposedContract.outputFormat.render.determinism,
+    blockers: scenario.blockers,
+    diagnostics: scenario.blockers,
+    outputFormatIds: [outputFormatSidecarComposedContract.outputFormat.id],
+    processRequirements: EX04_OUTPUT_DESCRIPTOR.processRequirements,
+    nextActions: scenario.nextActions,
+    artifactCompletion: scenario.artifactCompletion,
+  };
 }
 
 interface EffectShellState {
@@ -496,6 +577,112 @@ function TransitionMaskAcceptanceShell({
   );
 }
 
+interface Ex04RouteCompletionShellState {
+  loading: boolean;
+  hasRequiresProcessEdge: boolean;
+  hasConsumesMaterialEdge: boolean;
+  routePlan: RenderPlannerResult['routePlans'][number] | null;
+  plannerSurface: Pick<RenderPlannerResult, 'blockers' | 'nextActions'>;
+}
+
+function OutputFormatSidecarAcceptanceShell({
+  initialScenario,
+}: {
+  initialScenario: 'ready' | 'stopped';
+}) {
+  const [scenario, setScenario] = useState<'ready' | 'stopped'>(initialScenario);
+  const [state, setState] = useState<Ex04RouteCompletionShellState>({
+    loading: true,
+    hasRequiresProcessEdge: false,
+    hasConsumesMaterialEdge: false,
+    routePlan: null,
+    plannerSurface: {
+      blockers: [],
+      nextActions: [],
+    },
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    const contract = outputFormatSidecarComposedContract;
+    const activeScenario = scenario === 'ready'
+      ? contract.readyScenario
+      : contract.stoppedScenario;
+    const routePlan = buildEx04RoutePlan(activeScenario);
+    const unrelatedBrowserBlocker = {
+      id: 'planner.ex04.browser-export.unrelated',
+      severity: 'error',
+      route: 'browser-export',
+      reason: 'route-unsupported',
+      message: 'Unrelated browser blocker',
+    } as const;
+    const unrelatedBrowserAction = {
+      kind: 'select-route',
+      route: 'browser-export',
+      label: 'Select browser export',
+      message: 'Unrelated browser action',
+    } as const;
+
+    if (cancelled) {
+      return;
+    }
+
+    setState({
+      loading: false,
+      hasRequiresProcessEdge: contract.graph.edges.some((edge) => (
+        edge.kind === 'requires'
+        && edge.detail?.graphPathMarker === contract.graphPathMarker
+        && edge.detail?.requirementKind === 'process'
+        && edge.detail?.processId === contract.processSpec.id
+      )),
+      hasConsumesMaterialEdge: contract.graph.edges.some((edge) => (
+        edge.kind === 'consumes'
+        && edge.detail?.graphPathMarker === contract.graphPathMarker
+        && edge.detail?.consumedKind === 'material'
+        && edge.detail?.materialRefId === contract.consumedMaterial.id
+      )),
+      routePlan,
+      plannerSurface: {
+        blockers: [...activeScenario.blockers, unrelatedBrowserBlocker],
+        nextActions: [...activeScenario.nextActions, unrelatedBrowserAction],
+      },
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [scenario]);
+
+  const activeScenario = scenario === 'ready'
+    ? outputFormatSidecarComposedContract.readyScenario
+    : outputFormatSidecarComposedContract.stoppedScenario;
+  const attachRecords = scenario === 'ready'
+    ? [createEx04AttachRecord()]
+    : [];
+
+  return (
+    <section aria-label="EX-04 browser shell">
+      <div data-testid="ex04-loading">{String(state.loading)}</div>
+      <div data-testid="ex04-requires-process">{String(state.hasRequiresProcessEdge)}</div>
+      <div data-testid="ex04-consumes-material">{String(state.hasConsumesMaterialEdge)}</div>
+      {state.routePlan ? (
+        <RouteCompletionDashboard
+          routePlan={state.routePlan}
+          plannerResult={state.plannerSurface}
+          extensionRuntime={EX04_RUNTIME}
+          processStatuses={[activeScenario.processStatus]}
+          processResultAttachRecords={attachRecords}
+          onAction={(action) => {
+            if (action.kind === 'start-process') {
+              setScenario('ready');
+            }
+          }}
+        />
+      ) : null}
+    </section>
+  );
+}
+
 describe('M5 composed examples browser acceptance', () => {
   it('covers the EX-02 happy path through the browser provider with graph-backed readiness', async () => {
     render(
@@ -574,5 +761,48 @@ describe('M5 composed examples browser acceptance', () => {
     });
 
     expect(screen.queryByText('composition/material-not-resolved')).toBeNull();
+  });
+
+  it('covers the EX-04 happy path through the route completion dashboard with graph-backed artifact evidence', async () => {
+    render(
+      <OutputFormatSidecarAcceptanceShell initialScenario="ready" />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ex04-loading')).toHaveTextContent('false');
+    });
+
+    expect(screen.getByTestId('ex04-requires-process')).toHaveTextContent('true');
+    expect(screen.getByTestId('ex04-consumes-material')).toHaveTextContent('true');
+    expect(screen.getByTestId(`route-completion-status-${EX04_ROUTE}`)).toHaveTextContent('complete');
+    expect(screen.getByTestId('route-completion-profile-sidecar')).toHaveTextContent('complete');
+    expect(screen.getByTestId(`route-completion-process-status-${EX04_PROCESS_DESCRIPTOR.processId}`)).toHaveTextContent('ready');
+    expect(screen.getByTestId(`route-completion-artifact-${EX04_ARTIFACT_EVIDENCE.artifact.id}`)).toHaveTextContent('metadata-export.json');
+    expect(screen.queryByText('Unrelated browser blocker')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Select browser export' })).toBeNull();
+  });
+
+  it('covers the EX-04 stopped-process repair path through the route completion dashboard action surface', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <OutputFormatSidecarAcceptanceShell initialScenario="stopped" />,
+    );
+
+    expect(await screen.findByText(/requires the Example Analyzer process/i)).toBeInTheDocument();
+    expect(screen.getByTestId(`route-completion-status-${EX04_ROUTE}`)).toHaveTextContent('blocked');
+    expect(screen.getByTestId(`route-completion-process-status-${EX04_PROCESS_DESCRIPTOR.processId}`)).toHaveTextContent('stopped');
+
+    await user.click(screen.getByRole('button', { name: 'Start Example Analyzer Process' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId(`route-completion-status-${EX04_ROUTE}`)).toHaveTextContent('complete');
+    });
+
+    expect(screen.getByTestId(`route-completion-process-status-${EX04_PROCESS_DESCRIPTOR.processId}`)).toHaveTextContent('ready');
+    expect(screen.queryByText(/requires the Example Analyzer process/i)).toBeNull();
+    expect(screen.getByTestId(`route-completion-sidecar-${EX04_ARTIFACT_EVIDENCE.manifest.sidecars[0]!.id}`)).toHaveTextContent('metadata-export.manifest.json');
+    expect(screen.queryByText('Unrelated browser blocker')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Select browser export' })).toBeNull();
   });
 });

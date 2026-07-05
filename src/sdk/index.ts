@@ -38,7 +38,7 @@ export type { DependencyPosture, ExtensionDependency, IntegrityAlgorithm, Integr
 export { type ExtensionActivateFn, type ReighExtension, type DefineExtensionOptions, defineExtension } from './lifecycle';
 
 // capabilities
-export type { CapabilityVersion, CapabilitySourceRef, RouteFitMetadata, CapabilityRequirement, IntegrationCapabilities, SamplingStrategy, SamplingSourceRef, SamplingRange, SamplingAttachmentKind, SamplingAttachmentRule, SamplingConfig, SamplingResultItem, SamplingResult, ProcessRoundtripRequest, ProcessRoundtripAction, ProcessRoundtripResult, ProcessProgressEvent, ProcessLogSummary } from './capabilities';
+export type { CapabilityVersion, CapabilitySourceRef, RouteFitMetadata, CapabilityRequirement, IntegrationCapabilities, SamplingStrategy, SamplingSourceRef, SamplingRange, SamplingAttachmentKind, SamplingAttachmentRule, SamplingConfig, SamplingResultItem, SamplingResult } from './capabilities';
 export { getCapabilityRequirements } from './capabilities';
 
 // settings & persistence
@@ -103,7 +103,7 @@ export type { TransitionContribution, TransitionMaterialSlotDeclaration, Transit
 export type { ClipTypeContribution, ClipRenderer, ClipInspector, ClipParameterDefinition, ClipParameterSchema, ClipTypeRegistrationOptions, ClipTypeRegistrationService } from './video/families/clipTypeContributions';
 export type { KeyframeInterpolation, Keyframe, InterpolatedParam, AutomationClipTarget, AutomationClipParams } from './video/families/automation';
 export type { AgentToolContribution, AgentToolInputSchema, AgentToolInputProperty, ToolResultFamily, ToolResult, ToolMutationProposalResult, ToolGenerationSessionResult, ToolMaterialArtifactResult, ToolEnrichmentSearchResult, ToolExportResult, ToolProcessResult, ToolUISummaryResult, ToolSourceRef, ToolArtifactRef, ToolSearchResultMatch, ToolResultDiagnostic, AgentToolInvocationRequest, AgentToolRequestContext, AgentToolExportContext, GenerationSession, AgentToolRegistrationService, AgentToolHandler } from './video/families/agentTools';
-export type { ProcessSpawnConfig, ProcessManifestEntry, ProcessEnvFieldSpec, ProcessOutputKind, ProcessLiveSourceValueShape, ProcessLiveSourceDeclaration, ProcessLiveSourceBinding, ProcessOperationSpec, ProcessSpec, ProcessContribution, ProcessLifecycleState, ProcessStatusBase, ProcessStatus } from './video/families/processes';
+export type { ProcessSpawnConfig, ProcessManifestEntry, ProcessEnvFieldSpec, ProcessLiveSourceValueShape, ProcessLiveSourceDeclaration, ProcessLiveSourceBinding, ProcessOperationSpec, ProcessContribution } from './video/families/processes';
 export type { ShaderPassKind, ShaderColorSpace, ShaderFallbackBehavior, ShaderTextureSourceKind, ShaderTextureFilter, ShaderTextureWrap, ShaderInlineSource, ShaderModuleSource, ShaderSourceDescriptor, ShaderPassDescriptor, ShaderUniformType, ShaderUniformEnumOption, ShaderTextureRef, ShaderUniformDefaultValue, ShaderUniformDefinition, ShaderUniformSchema, ShaderTextureDefinition, ShaderTextureSchema, ShaderMaterializerDescriptor, ShaderContribution, ShaderRegistrationOptions, ShaderRegistrationService } from './video/families/shaders';
 
 // ===========================================================================
@@ -160,6 +160,8 @@ export type {
   ArtifactManifestProfileKind,
   AudioArtifactManifestProfile,
   BakeContract,
+  ExecutablePackageArtifactManifestProfile,
+  MachinePathArtifactManifestProfile,
   PreviewArtifactManifestProfile,
   ProvenanceGap,
   RenderArtifact,

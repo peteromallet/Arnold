@@ -1,15 +1,17 @@
 import type {
   CapabilityFinding,
-  ProcessLogSummary,
-  ProcessProgressEvent,
-  ProcessRoundtripAction,
-  ProcessRoundtripResult,
   RenderArtifact,
   RenderArtifactSidecarDescriptor,
   RenderMaterial,
   RenderMaterialRef,
   RenderMaterialStatus,
 } from '@reigh/editor-sdk';
+import type {
+  ProcessLogSummary,
+  ProcessProgressEvent,
+  ProcessRoundtripAction,
+  ProcessRoundtripResult,
+} from '@/sdk/capabilities';
 import type { VideoEditorProcessDescriptor } from '@/tools/video-editor/runtime/extensionSurface.ts';
 import {
   createRenderArtifactManifest,

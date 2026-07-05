@@ -2,7 +2,8 @@
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ProcessRoundtripResult, ProcessStatus } from '@reigh/editor-sdk';
+import type { ProcessRoundtripResult } from '@/sdk/capabilities';
+import type { ProcessStatus } from '@/sdk/video/families/processes';
 import { DataProviderWrapper, type VideoEditorRuntimeContextValue } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import {
   createProcessResultAttachRecord,

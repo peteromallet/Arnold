@@ -370,6 +370,10 @@ source of truth for export blocking, diagnostics, or release gating.
 - Release evidence includes at least one non-video final artifact plus manifest
   and provenance/diagnostics sidecars; partial output is inspectable but does
   not clear the route.
+- EX-04 claims only graph facts, route blockers, repair actions, and artifact
+  evidence. It does not claim sandboxing, marketplace, headless rendering,
+  process execution support, preview support, or runtime certification for
+  `machine-path` / `executable-package` profiles.
 
 ### Release gates
 
@@ -381,6 +385,45 @@ source of truth for export blocking, diagnostics, or release gating.
   rely on host/runtime contracts only.
 - Example readiness and graph-path marker checks in M7b must explicitly include
   this example alongside the first three examples.
+
+### M7b implementation evidence (V1 graph-backed)
+
+- `src/examples/output-format-sidecar-composed-example.ts`
+  composes the trusted-process and metadata JSON output examples into
+  `EX-04/output-format-sidecar-composed`, keeping the graph vocabulary to
+  `requires` and `consumes` while exporting route-scoped ready and
+  stopped-process scenarios.
+- Graph-path markers now prove the exact sidecar route chain:
+  - **Route `requires` marker:** `contribution:outputFormat:…` →
+    `contribution:process:…` with `requirementKind: 'process'`,
+    `processId`, `operationId`, and `routeScope: ['sidecar-export']`.
+  - **Artifact-input `consumes` marker:** `contribution:outputFormat:…` →
+    `clip:…` with `consumedKind: 'material'` and the durable
+    `materialRefId` required by the metadata export.
+- Artifact evidence is now concrete and conjunctive:
+  - **Final artifact:** `artifact.ex04.metadata-json` on `sidecar-export`
+    with a typed `sidecar` manifest, `outputFormatId`, `processId`,
+    `operationId`, determinism, `inputHashes`, and `graphPathMarker`.
+  - **Required sidecars:** manifest and provenance sidecars with SHA-256 hashes
+    and `routeConstraints: ['sidecar-export']`; missing any required artifact or
+    sidecar leaves the route incomplete or blocked.
+- Route blockers and repair actions are now explicit and route-scoped:
+  - **Stopped process blocker:** `process-dependent` on `sidecar-export`
+    when the Example Analyzer process is stopped.
+  - **Repair action:** `start-process` scoped to `sidecar-export`; it is not
+    allowed to block browser or worker routes.
+- `src/tools/video-editor/components/RouteCompletionDashboard/RouteCompletionDashboard.tsx`
+  renders the selected route status, artifact completion by profile, final
+  artifacts, sidecars, process lifecycle badges, and route-scoped repair cards
+  without surfacing unrelated-route blockers or actions.
+- `src/tools/video-editor/examples/extensions/__tests__/m5-composed-examples.browser.test.tsx`
+  provides Testing Library browser acceptance:
+  - **Happy path:** the dashboard shows the graph-backed `requires` and
+    `consumes` markers, `complete` sidecar profile completion, the attached
+    metadata artifact, sidecars, and a `ready` process badge.
+  - **Stopped/repair path:** the dashboard shows the
+    `process-dependent` blocker, a `start-process` repair action, a `stopped`
+    lifecycle badge, and route completion recovery after the repair action.
 
 ### Source material only
 
@@ -397,9 +440,10 @@ source of truth for export blocking, diagnostics, or release gating.
 - `src/tools/video-editor/runtime/outputFormatRegistry.test.ts:171-200`
   and `:1394-1472` prove current artifact manifest and boundary evidence for
   compile-only output formats.
-- Current gap: the repository has descriptor-level process and output-format
-  source material, but no single composed graph-backed sidecar example with
-  multi-artifact completion and browser acceptance.
+- Remaining posture: the earlier descriptor-level files remain source material
+  for EX-04 history, but release evidence now comes from the composed fixture
+  and its route-completion browser acceptance rather than from the isolated
+  shells alone.
 
 ## Cross-Example Release Gate Summary
 

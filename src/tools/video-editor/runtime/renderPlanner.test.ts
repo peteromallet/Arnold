@@ -11,8 +11,6 @@ import type {
   CapabilityFinding,
   CapabilityRequirement,
   RenderArtifact,
-  ProcessRoundtripResult,
-  ProcessStatus,
   RenderBlocker,
   RenderArtifactSidecarDescriptor,
   RenderMaterial,
@@ -20,6 +18,8 @@ import type {
   RenderRoute,
   TimelineSnapshot,
 } from '@reigh/editor-sdk';
+import type { ProcessRoundtripResult } from '@/sdk/capabilities';
+import type { ProcessStatus } from '@/sdk/video/families/processes';
 import type {
   ContributionIndex,
   VideoEditorOutputFormatDescriptor,

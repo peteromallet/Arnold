@@ -62,7 +62,17 @@ import { fileURLToPath } from 'node:url';
 // ---------------------------------------------------------------------------
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(moduleDir, '..', '..');
+
+// Allow --repo-root override for testing with temporary fixtures.
+function resolveRepoRoot() {
+  const repoRootArg = process.argv
+    .slice(2)
+    .find((a) => a.startsWith('--repo-root='));
+  if (repoRootArg) return repoRootArg.slice('--repo-root='.length);
+  return resolve(moduleDir, '..', '..');
+}
+
+const repoRoot = resolveRepoRoot();
 
 const SCHEMA_PATH = resolve(
   repoRoot,
@@ -774,9 +784,18 @@ const VALID_REQUIREMENT_KEYS = new Set([
   'tests',
 ]);
 
+/** M7b requirement keys — required for output-format sidecar families. */
+const M7B_REQUIREMENT_KEYS = new Set([
+  'sidecarExport',
+  'artifactRouteCompletion',
+]);
+
+/** Families that must declare M7b requirement keys. */
+const M7B_FAMILIES = new Set(['outputFormat', 'process']);
+
 for (const def of registry) {
   for (const key of Object.keys(def.requirements)) {
-    if (!VALID_REQUIREMENT_KEYS.has(key)) {
+    if (!VALID_REQUIREMENT_KEYS.has(key) && !M7B_REQUIREMENT_KEYS.has(key)) {
       R.warn(
         `Family '${def.kind}' has unknown requirement key '${key}'.`,
       );
@@ -791,7 +810,103 @@ for (const def of registry) {
       );
     }
   }
+
+  // M7b families must declare M7b requirement keys
+  if (M7B_FAMILIES.has(def.kind)) {
+    for (const key of M7B_REQUIREMENT_KEYS) {
+      if (!(key in def.requirements)) {
+        R.warn(
+          `Family '${def.kind}' is missing M7b requirement key '${key}'.`,
+        );
+      }
+    }
+  }
 }
+
+// ---------------------------------------------------------------------------
+// 13. Sidecar-blocker awareness: validate outputFormat/process adapter shapes
+// ---------------------------------------------------------------------------
+
+console.log(`\n${LABEL} Checking sidecar-blocker awareness…`);
+
+/**
+ * Validate that the outputFormat projector builds proper sidecar-export
+ * blocker shapes.  The projector must reference `sidecar-export` routes
+ * and handle `process-dependent` determinism in the blocker logic.
+ */
+function checkSidecarBlockerAwareness() {
+  const OUTPUT_FORMAT_PROJECTOR = resolve(
+    repoRoot,
+    'src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts',
+  );
+
+  if (!existsSync(OUTPUT_FORMAT_PROJECTOR)) {
+    R.warn('outputFormatProjector.ts not found; cannot check sidecar-blocker awareness.');
+    return;
+  }
+
+  const source = readFileSync(OUTPUT_FORMAT_PROJECTOR, 'utf8');
+
+  // The projector must reference sidecar-export route blockers
+  if (!source.includes('sidecar-export')) {
+    R.warn(
+      'outputFormatProjector.ts does not reference sidecar-export routes; ' +
+        'sidecar-blocker awareness is incomplete.',
+    );
+  }
+
+  // The projector must handle determinism-aware blocker building
+  if (
+    !source.includes('determinism') &&
+    !source.includes('process-dependent')
+  ) {
+    R.warn(
+      'outputFormatProjector.ts does not handle determinism in blocker logic; ' +
+        'sidecar-blocker awareness is incomplete.',
+    );
+  }
+
+  // The projector must have a blocker-building function
+  if (!source.includes('buildOutputFormatBlockers')) {
+    R.warn(
+      'outputFormatProjector.ts is missing buildOutputFormatBlockers; ' +
+        'sidecar-blocker awareness is incomplete.',
+    );
+  }
+
+  // The projector must surface route-scoped blockers that include sidecar-export
+  if (
+    !source.includes('blocker') ||
+    !source.includes('blockers')
+  ) {
+    R.warn(
+      'outputFormatProjector.ts does not surface route-scoped blockers; ' +
+        'sidecar-blocker awareness is incomplete.',
+    );
+  }
+
+  // Check that the process adapter also references sidecar concepts
+  const PROCESS_ADAPTER = resolve(
+    repoRoot,
+    'src/tools/video-editor/runtime/families/processAdapter.ts',
+  );
+
+  if (existsSync(PROCESS_ADAPTER)) {
+    const processSource = readFileSync(PROCESS_ADAPTER, 'utf8');
+    if (
+      !processSource.includes('sidecar') &&
+      !processSource.includes('process-dependent') &&
+      !processSource.includes('route-scoped')
+    ) {
+      R.warn(
+        'processAdapter.ts does not reference sidecar or route-scoped concepts; ' +
+          'M7b sidecar-blocker awareness may be incomplete.',
+      );
+    }
+  }
+}
+
+checkSidecarBlockerAwareness();
 
 // ---------------------------------------------------------------------------
 // Summary and exit
