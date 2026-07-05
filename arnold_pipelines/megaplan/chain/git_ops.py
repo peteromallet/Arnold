@@ -26,6 +26,12 @@ _CHAIN_RUNTIME_JOURNAL_PATTERNS = (
     ".megaplan/plans/*/execution_trace.jsonl",
 )
 
+_CHAIN_INTERNAL_DIRTY_PATTERNS = (
+    *_CHAIN_RUNTIME_JOURNAL_PATTERNS,
+    ".megaplan/incident-ledger/*",
+    ".megaplan/runtime/*",
+)
+
 _DEFAULT_COMMAND_TIMEOUT_SECONDS = 120
 _GIT_PUSH_TIMEOUT_SECONDS = 600
 
@@ -1109,11 +1115,14 @@ def _porcelain_paths(root: Path) -> set[str]:
     return paths
 
 
-def _is_internal_runtime_dirty_path(path: str) -> bool:
+def _is_internal_dirty_path(path: str) -> bool:
     normalized = path.strip()
     while normalized.startswith("./"):
         normalized = normalized[2:]
-    return normalized == ".megaplan/runtime" or normalized.startswith(".megaplan/runtime/")
+    return any(
+        normalized == pattern.rstrip("/*") or fnmatchcase(normalized, pattern)
+        for pattern in _CHAIN_INTERNAL_DIRTY_PATTERNS
+    )
 
 
 def read_plan_artifact_from_commit(root: Path, commit_sha: str, rel_path: str) -> str | None:
@@ -1757,7 +1766,7 @@ def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> str:
         line
         for line in status.stdout.splitlines()
         if line.strip()
-        and not _is_internal_runtime_dirty_path(line[3:] if len(line) > 3 else line)
+        and not _is_internal_dirty_path(line[3:] if len(line) > 3 else line)
     ]
     if dirty_lines:
         sample = ", ".join(
