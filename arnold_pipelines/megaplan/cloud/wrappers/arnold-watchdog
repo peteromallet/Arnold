@@ -3685,11 +3685,20 @@ if current_target_observation_raw:
     if isinstance(loaded_observation, dict):
         resolver_record = loaded_observation
 
+repair_outcome = str(payload.get("outcome") or "")
+needs_human_present = needs_human_path.exists()
+terminal_repair_failures = {
+    "discord_escalated",
+    "repair_timeout",
+    "repair_exhausted",
+}
 active_step_heartbeat = resolver_record.get("active_step_heartbeat")
 if (
     current_health == "alive"
     and isinstance(active_step_heartbeat, dict)
     and bool(active_step_heartbeat.get("active"))
+    and not needs_human_present
+    and repair_outcome not in terminal_repair_failures
 ):
     print("NO_TRIGGER")
     raise SystemExit(0)
@@ -3733,7 +3742,6 @@ for item in recent_attempts:
             failure_kinds.append(candidate.strip())
             break
 
-repair_outcome = str(payload.get("outcome") or "")
 attempt_outcomes = [
     str(item.get("outcome") or repair_outcome or "").strip()
     for item in recent_attempts
@@ -3883,6 +3891,8 @@ if (
         "persistent_recurring_retry",
         "partial_liveness_recurrence",
     }
+    and not needs_human_present
+    and repair_outcome not in terminal_repair_failures
 ):
     print("NO_TRIGGER")
     raise SystemExit(0)

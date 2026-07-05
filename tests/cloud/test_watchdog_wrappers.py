@@ -7913,6 +7913,72 @@ def test_compute_meta_repair_trigger_skips_recurring_retry_when_session_alive(
     assert result.stdout.strip() == "NO_TRIGGER"
 
 
+def test_compute_meta_repair_trigger_allows_recurring_retry_after_exhausted_repair_handoff(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    repair_data_dir.mkdir(parents=True)
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "outcome": "discord_escalated",
+                "attempts": [
+                    {"attempt_id": 1, "failure_classification": "timeout_or_hang"},
+                    {"attempt_id": 2, "failure_classification": "timeout_or_hang"},
+                    {"attempt_id": 3, "failure_classification": "timeout_or_hang"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (repair_data_dir / "demo-session.needs-human.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": "demo-plan",
+                "discord_status": "delivered",
+            }
+        ),
+        encoding="utf-8",
+    )
+    observation = json.dumps(
+        {
+            "authoritative_source": "chain_state",
+            "active_step_heartbeat": {
+                "active": True,
+                "attempt": 3,
+                "phase": "execute",
+                "started_at": "2026-07-04T21:37:07Z",
+            },
+            "current_refs": {
+                "current_plan_name": "demo-plan",
+                "chain_current_plan_name": "demo-plan",
+                "plan_current_state": "blocked",
+                "chain_last_state": "blocked",
+            },
+            "plan_state": {"present": True, "current_state": "blocked"},
+            "chain_state": {"present": True, "last_state": "blocked"},
+            "needs_human": {"plan_refs": ["demo-plan"]},
+        }
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            (
+                f"compute_meta_repair_trigger demo-session "
+                f"{shlex.quote(observation)} alive"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "TRIGGER:persistent_recurring_retry"
+
+
 def test_compute_meta_repair_trigger_skips_partial_liveness_when_session_alive(
     tmp_path: Path,
 ) -> None:
