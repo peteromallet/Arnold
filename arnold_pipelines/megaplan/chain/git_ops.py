@@ -26,6 +26,12 @@ _CHAIN_RUNTIME_JOURNAL_PATTERNS = (
     ".megaplan/plans/*/execution_trace.jsonl",
 )
 
+_CHAIN_INTERNAL_DIRTY_PATTERNS = (
+    *_CHAIN_RUNTIME_JOURNAL_PATTERNS,
+    ".megaplan/incident-ledger/*",
+    ".megaplan/runtime/*",
+)
+
 _DEFAULT_COMMAND_TIMEOUT_SECONDS = 120
 _GIT_PUSH_TIMEOUT_SECONDS = 600
 
@@ -1109,6 +1115,16 @@ def _porcelain_paths(root: Path) -> set[str]:
     return paths
 
 
+def _is_internal_dirty_path(path: str) -> bool:
+    normalized = path.strip()
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return any(
+        normalized == pattern.rstrip("/*") or fnmatchcase(normalized, pattern)
+        for pattern in _CHAIN_INTERNAL_DIRTY_PATTERNS
+    )
+
+
 def read_plan_artifact_from_commit(root: Path, commit_sha: str, rel_path: str) -> str | None:
     """Read a file's content from a git commit, returning None only for missing files.
 
@@ -1733,7 +1749,7 @@ def _mark_pr_ready(root: Path, pr_number: int, *, writer) -> None:
 
 def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> str:
     status = _compat().subprocess.run(
-        ["git", "status", "--porcelain"],
+        ["git", "status", "--porcelain", "-uall"],
         cwd=str(root),
         capture_output=True,
         text=True,
@@ -1743,10 +1759,15 @@ def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> str:
     if status.returncode != 0:
         raise CliError(
             "git_status_failed",
-            "git status --porcelain failed before PR merge",
+            "git status --porcelain -uall failed before PR merge",
             extra={"stdout": status.stdout, "stderr": status.stderr},
     )
-    dirty_lines = [line for line in status.stdout.splitlines() if line.strip()]
+    dirty_lines = [
+        line
+        for line in status.stdout.splitlines()
+        if line.strip()
+        and not _is_internal_dirty_path(line[3:] if len(line) > 3 else line)
+    ]
     if dirty_lines:
         sample = ", ".join(
             line[3:] if len(line) > 3 else line for line in dirty_lines[:8]
