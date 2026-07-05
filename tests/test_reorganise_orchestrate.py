@@ -52,6 +52,78 @@ def _ui() -> dict:
     }
 
 
+def _set_get_anchor_ui() -> dict:
+    return {
+        "nodes": [
+            _node(1, "PrimitiveNode", "producer"),
+            _node(2, "SetNode", "set_bus"),
+            _node(3, "GetNode", "get_bus_a"),
+            _node(4, "GetNode", "get_bus_b"),
+            _node(5, "KSampler", "consumer"),
+        ],
+        "links": [
+            [1, 1, 0, 2, 0, "*"],
+            [2, 3, 0, 5, 0, "*"],
+            [3, 4, 0, 5, 1, "*"],
+        ],
+        "groups": [],
+        "extra": {"ds": {"scale": 1.0, "offset": [0, 0]}},
+    }
+
+
+def _huge_existing_group_set_get_anchor_ui() -> dict:
+    nodes = [
+        _node(1, "PrimitiveNode", "producer"),
+        _node(2, "SetNode", "set_bus"),
+        _node(3, "GetNode", "get_bus"),
+        _node(4, "KSampler", "consumer"),
+        _node(22, "GetNode", "dangling_get_bus"),
+    ]
+    nodes[1]["widgets_values"] = ["bus"]
+    nodes[2]["widgets_values"] = ["bus"]
+    nodes[4]["widgets_values"] = ["bus"]
+    nodes[4]["outputs"] = [{"name": "*", "type": "*", "links": None}]
+    nodes[0]["pos"] = [100, 100]
+    nodes[1]["pos"] = [260, 100]
+    nodes[2]["pos"] = [460, 100]
+    nodes[3]["pos"] = [620, 100]
+    nodes[4]["pos"] = [460, 190]
+    for node_id in range(5, 22):
+        filler = _node(node_id, "PreviewImage", f"filler_{node_id}")
+        filler["pos"] = [1000 + node_id * 50, 1000]
+        nodes.append(filler)
+    return {
+        "nodes": nodes,
+        "links": [
+            [1, 1, 0, 2, 0, "*"],
+            [2, 3, 0, 4, 0, "*"],
+        ],
+        "groups": [
+            {"title": "Source Group", "bounding": [50, 50, 420, 220], "nodes": [1]},
+            {"title": "Consumer Group", "bounding": [580, 50, 420, 220], "nodes": [4]},
+        ],
+        "extra": {"ds": {"scale": 1.0, "offset": [0, 0]}},
+    }
+
+
+def _entry_center(entry: dict) -> tuple[float, float]:
+    return (
+        entry["pos"][0] + entry["size"][0] / 2,
+        entry["pos"][1] + entry["size"][1] / 2,
+    )
+
+
+def _containing_group_titles(candidate_patch: dict, uid: str) -> set[str]:
+    entry = candidate_patch["entries"][uid]
+    center_x, center_y = _entry_center(entry)
+    titles: set[str] = set()
+    for group in candidate_patch.get("groups", ()):
+        left, top, width, height = group["bounding"]
+        if left <= center_x <= left + width and top <= center_y <= top + height:
+            titles.add(group.get("title") or "")
+    return titles
+
+
 def _second_stage_plan_for_request(request) -> dict:
     return {
         "version": 1,
@@ -89,6 +161,63 @@ def test_preview_reorganise_workflow_builds_deterministic_offline_preview() -> N
     assert result.apply_data.candidate_patch_sha256 is not None
     assert result.to_json()["candidate_patch"]["entries"]["checkpoint"]["properties"]["kept"] == "checkpoint"
     assert result.to_json()["layout_trace"] == list(result.layout_trace)
+
+
+def test_deterministic_plan_anchors_set_get_helpers_to_plugged_nodes() -> None:
+    result = preview_reorganise_workflow(_set_get_anchor_ui())
+
+    assert result.ok is True
+    assert result.plan is not None
+    placements = {
+        tuple(placement["helper"]): placement
+        for placement in result.plan.to_json()["helper_placements"]
+    }
+    assert placements[("", "set_bus")]["kind"] == "near-producer"
+    assert placements[("", "set_bus")]["target"] == ["", "producer"]
+    assert placements[("", "get_bus_a")]["kind"] == "near-consumer"
+    assert placements[("", "get_bus_a")]["target"] == ["", "consumer"]
+    assert placements[("", "get_bus_b")]["kind"] == "near-consumer"
+    assert placements[("", "get_bus_b")]["target"] == ["", "consumer"]
+
+    assert result.candidate_patch is not None
+    entries = result.candidate_patch["entries"]
+    producer = entries["producer"]
+    set_bus = entries["set_bus"]
+    consumer = entries["consumer"]
+    get_a = entries["get_bus_a"]
+    get_b = entries["get_bus_b"]
+    producer_right = producer["pos"][0] + producer["size"][0]
+    assert set_bus["pos"][0] >= producer_right
+    assert get_a["pos"][0] < consumer["pos"][0]
+    assert get_b["pos"][0] < consumer["pos"][0]
+    assert get_a["pos"][1] != get_b["pos"][1]
+
+
+def test_huge_existing_group_remap_keeps_set_get_helpers_with_anchors() -> None:
+    result = preview_reorganise_workflow(_huge_existing_group_set_get_anchor_ui())
+
+    assert result.ok is True
+    assert result.plan is not None
+    assert result.candidate_patch is not None
+    plan = result.plan.to_json()
+    placements = {
+        tuple(placement["helper"]): placement
+        for placement in plan["helper_placements"]
+    }
+    assert placements[("", "set_bus")]["target"] == ["", "producer"]
+    assert placements[("", "get_bus")]["target"] == ["", "consumer"]
+    assert placements[("", "dangling_get_bus")]["kind"] == "near-producer"
+    assert placements[("", "dangling_get_bus")]["target"] == ["", "producer"]
+
+    candidate_patch = result.candidate_patch
+    set_groups = _containing_group_titles(candidate_patch, "set_bus")
+    producer_groups = _containing_group_titles(candidate_patch, "producer")
+    get_groups = _containing_group_titles(candidate_patch, "get_bus")
+    consumer_groups = _containing_group_titles(candidate_patch, "consumer")
+    dangling_get_groups = _containing_group_titles(candidate_patch, "dangling_get_bus")
+    assert set_groups & producer_groups
+    assert get_groups & consumer_groups
+    assert dangling_get_groups & producer_groups
 
 
 def test_preview_reorganise_workflow_preserves_provided_sidecar_envelope() -> None:

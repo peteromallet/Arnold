@@ -1,13 +1,24 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping
-
-from PIL import Image, ImageDraw, ImageFont
+from typing import Any, Mapping, Sequence
 
 
-def render_layout_png(ui_json: Mapping[str, Any], path: Path) -> None:
-    """Render an abstract colour-block PNG from final UI JSON node positions/sizes and group bounds."""
+def write_layout_png(ui_json: Mapping[str, Any], path: Path) -> None:
+    """Write an abstract PNG of a ComfyUI workflow layout.
+
+    The renderer is deliberately layout-only: it draws the UI node rectangles
+    and LiteGraph group bounds already present in ``ui_json``. It never computes
+    or mutates a layout, so callers can use it to inspect the exact candidate
+    produced by the normal reorganisation preview/apply path.
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError as exc:  # pragma: no cover - exercised when Pillow absent.
+        raise ImportError(
+            "write_layout_png requires Pillow. Install the `png` or `intent` extra."
+        ) from exc
+
     nodes = [node for node in ui_json.get("nodes", []) if isinstance(node, Mapping)]
     groups = [group for group in ui_json.get("groups", []) if isinstance(group, Mapping)]
     rects = [_node_rect(node) for node in nodes]
@@ -77,9 +88,32 @@ def render_layout_png(ui_json: Mapping[str, Any], path: Path) -> None:
     image.save(path)
 
 
-# ---------------------------------------------------------------------------
-# Immediate helpers for render_layout_png (extracted from the structural harness)
-# ---------------------------------------------------------------------------
+def write_layout_contact_sheet(paths: Sequence[Path], path: Path) -> None:
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError as exc:  # pragma: no cover - exercised when Pillow absent.
+        raise ImportError(
+            "write_layout_contact_sheet requires Pillow. Install the `png` or `intent` extra."
+        ) from exc
+
+    images = [Image.open(item).convert("RGB") for item in paths]
+    if not images:
+        Image.new("RGB", (1200, 800), "white").save(path)
+        return
+    thumb_w, thumb_h = 800, 500
+    label_h = 24
+    columns = 2
+    rows = (len(images) + columns - 1) // columns
+    sheet = Image.new("RGB", (columns * thumb_w, rows * (thumb_h + label_h)), "#f7f7f4")
+    draw = ImageDraw.Draw(sheet)
+    font = ImageFont.load_default()
+    for index, (image, source_path) in enumerate(zip(images, paths, strict=True)):
+        image.thumbnail((thumb_w, thumb_h), Image.Resampling.LANCZOS)
+        x = (index % columns) * thumb_w
+        y = (index // columns) * (thumb_h + label_h)
+        sheet.paste(image, (x + (thumb_w - image.width) // 2, y + label_h + (thumb_h - image.height) // 2))
+        draw.text((x + 8, y + 6), source_path.parent.name, fill=(55, 65, 75), font=font)
+    sheet.save(path)
 
 
 def _node_rect(node: Mapping[str, Any]) -> tuple[float, float, float, float] | None:
@@ -171,6 +205,7 @@ def _is_support_node(class_type: str) -> bool:
     return any(token in lowered for token in ("setnode", "getnode", "reroute"))
 
 
-__all__ = [
-    "render_layout_png",
-]
+render_layout_png = write_layout_png
+
+
+__all__ = ["render_layout_png", "write_layout_contact_sheet", "write_layout_png"]

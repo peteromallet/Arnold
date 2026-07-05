@@ -4,15 +4,18 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from PIL import Image, ImageDraw, ImageFont
-
 from tests.structural_harness.actors import _write_actions
 from vibecomfy.porting.reorganise.orchestrate import (
     apply_layout_candidate_patch_to_ui,
     assess_reorganise_workflow,
     preview_reorganise_workflow,
 )
-from vibecomfy.porting.reorganise.visualize import render_layout_png
+from vibecomfy.porting.reorganise.visualize import (
+    _group_rect,
+    _node_rect,
+    write_layout_contact_sheet,
+    write_layout_png,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LARGE_LTX_REQUEST = REPO_ROOT / "tests" / "fixtures" / "editor_sessions" / "327b0e1235c353a9" / "request.json"
@@ -70,8 +73,8 @@ def build_reorganise_large_messy_batch_evidence(report_dir: Path) -> dict[str, A
     assert batch_summary["all_wall_aspect"] is True
 
     _write_json(root / "layout_observation.json", batch_summary)
-    _write_contact_sheet(before_paths, root / "layout_before_contact.png")
-    _write_contact_sheet(after_paths, root / "layout_after_contact.png")
+    write_layout_contact_sheet(before_paths, root / "layout_before_contact.png")
+    write_layout_contact_sheet(after_paths, root / "layout_after_contact.png")
     (root / "vision_prompt.txt").write_text(
         "Review these four Comfy workflow reorganisations as a batch. The first "
         "contact sheet shows before layouts; the second shows after layouts. "
@@ -157,8 +160,8 @@ def _build_single_reorganise_case(root: Path, scenario: str, request_path: Path)
     _write_json(root / "after_ui.json", applied.ui_json)
     _write_json(root / "preview_result.json", preview.to_json())
     _write_json(root / "layout_observation.json", summary)
-    render_layout_png(before_ui, root / "layout_before.png")
-    render_layout_png(applied.ui_json, root / "layout_after.png")
+    write_layout_png(before_ui, root / "layout_before.png")
+    write_layout_png(applied.ui_json, root / "layout_after.png")
     (root / "vision_prompt.txt").write_text(
         "Use the first abstract workflow image as the reference style: a tidy "
         "high-level Comfy workflow wall with small-to-medium stage groups, close "
@@ -325,164 +328,13 @@ def _group_stats(ui_json: Mapping[str, Any]) -> dict[str, float | int]:
     }
 
 
-def _write_contact_sheet(paths: list[Path], path: Path) -> None:
-    images = [Image.open(item).convert("RGB") for item in paths]
-    if not images:
-        Image.new("RGB", (1200, 800), "white").save(path)
-        return
-    thumb_w, thumb_h = 800, 500
-    label_h = 24
-    columns = 2
-    rows = (len(images) + columns - 1) // columns
-    sheet = Image.new("RGB", (columns * thumb_w, rows * (thumb_h + label_h)), "#f7f7f4")
-    draw = ImageDraw.Draw(sheet)
-    font = ImageFont.load_default()
-    for index, (image, source_path) in enumerate(zip(images, paths, strict=True)):
-        image.thumbnail((thumb_w, thumb_h), Image.Resampling.LANCZOS)
-        x = (index % columns) * thumb_w
-        y = (index // columns) * (thumb_h + label_h)
-        sheet.paste(image, (x + (thumb_w - image.width) // 2, y + label_h + (thumb_h - image.height) // 2))
-        draw.text((x + 8, y + 6), source_path.parent.name, fill=(55, 65, 75), font=font)
-    sheet.save(path)
-
-
-def _node_rect(node: Mapping[str, Any]) -> tuple[float, float, float, float] | None:
-    pos = node.get("pos")
-    size = node.get("size")
-    if not (isinstance(pos, list) and len(pos) >= 2):
-        return None
-    width, height = 260.0, 100.0
-    if isinstance(size, list) and len(size) >= 2:
-        width = _number(size[0], width)
-        height = _number(size[1], height)
-    return (_number(pos[0], 0.0), _number(pos[1], 0.0), width, height)
-
-
-def _group_rect(group: Mapping[str, Any]) -> tuple[float, float, float, float] | None:
-    bounding = group.get("bounding")
-    if not (isinstance(bounding, list) and len(bounding) >= 4):
-        return None
-    return (
-        _number(bounding[0], 0.0),
-        _number(bounding[1], 0.0),
-        _number(bounding[2], 0.0),
-        _number(bounding[3], 0.0),
-    )
-
-
-def _number(value: Any, fallback: float) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return fallback
-
-
 _REORGANISE_BUILDERS = {
     "reorganise-large-messy-batch": build_reorganise_large_messy_batch_evidence,
     "reorganise-large-messy-ltx-workflow": build_reorganise_large_messy_ltx_workflow_evidence,
 }
 
-# ---------------------------------------------------------------------------
-# T13: Structural determinism and overlap/helper-group rejection tests
-# ---------------------------------------------------------------------------
-
-
-def test_structural_layout_cleanup_rejects_overlaps() -> None:
-    """The _assert_layout_cleanup function (used by the structural harness)
-    must reject scenarios where after-overlap-count > 0 by raising an
-    AssertionError.  This proves that structural expectations still
-    enforce zero overlaps."""
-    # Synthesize a summary that would fail: after overlap_count is non-zero
-    bad_summary = {
-        "structural_noop": True,
-        "before_metrics": {"overlap_count": 5, "spacing_density": 0.3,
-                           "group_signal_strength": 0.5, "group_coherence": 0.7},
-        "after_metrics": {"overlap_count": 2, "spacing_density": 0.2,
-                          "group_signal_strength": 1.0, "group_coherence": 0.7},
-        "after_wall_aspect_ratio": 2.0,
-        "after_group_stats": {
-            "max_primary_node_count": 5,
-            "setget_group_count": 0,
-            "standalone_label_group_count": 0,
-            "max_primary_width_ratio": 0.2,
-            "max_primary_area_ratio": 0.1,
-        },
-    }
-
-    try:
-        _assert_layout_cleanup(bad_summary)
-    except AssertionError:
-        pass  # expected: overlap rejection
-    else:
-        raise AssertionError(
-            "_assert_layout_cleanup must reject non-zero after-overlap-count"
-        )
-
-
-def test_structural_layout_cleanup_rejects_fake_helper_groups() -> None:
-    """The _assert_layout_cleanup function must reject scenarios where
-    fake helper/setget groups exceed the allowed count (i.e. setget_group_count
-    > 1 or standalone_label_group_count > 0).  This proves that structural
-    expectations still reject fake helper groups."""
-    # Synthesize a summary with too many setget groups
-    bad_summary = {
-        "structural_noop": True,
-        "before_metrics": {"overlap_count": 5, "spacing_density": 0.3,
-                           "group_signal_strength": 0.5, "group_coherence": 0.7},
-        "after_metrics": {"overlap_count": 0, "spacing_density": 0.1,
-                          "group_signal_strength": 1.0, "group_coherence": 0.7},
-        "after_wall_aspect_ratio": 2.0,
-        "after_group_stats": {
-            "max_primary_node_count": 5,
-            "setget_group_count": 3,  # too many -- max allowed is 1
-            "standalone_label_group_count": 2,  # must be 0
-            "max_primary_width_ratio": 0.2,
-            "max_primary_area_ratio": 0.1,
-        },
-    }
-
-    try:
-        _assert_layout_cleanup(bad_summary)
-    except AssertionError:
-        pass  # expected: fake helper group rejection
-    else:
-        raise AssertionError(
-            "_assert_layout_cleanup must reject excessive setget/standalone groups"
-        )
-
-
-def test_structural_repeated_build_produces_identical_evidence() -> None:
-    """Repeated calls to build_reorganise_large_messy_ltx_workflow_evidence
-    with the same report_dir must produce identical layout observations.
-    This proves the structural evidence builder is deterministic."""
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        report_dir = Path(tmpdir) / "determinism_test"
-
-        first = build_reorganise_large_messy_ltx_workflow_evidence(report_dir)
-        # Read back the observation JSON before second build overwrites
-        first_obs = json.loads(
-            (report_dir / "layout_observation.json").read_text(encoding="utf-8")
-        )
-
-        second = build_reorganise_large_messy_ltx_workflow_evidence(report_dir)
-        second_obs = json.loads(
-            (report_dir / "layout_observation.json").read_text(encoding="utf-8")
-        )
-
-        # Structural hash and metrics must be identical
-        assert first_obs["structural_hash_before"] == second_obs["structural_hash_before"]
-        assert first_obs["structural_hash_after"] == second_obs["structural_hash_after"]
-        assert first_obs["after_metrics"] == second_obs["after_metrics"]
-        assert first_obs["after_bounds"] == second_obs["after_bounds"]
-
-
 __all__ = [
     "_REORGANISE_BUILDERS",
     "build_reorganise_large_messy_batch_evidence",
     "build_reorganise_large_messy_ltx_workflow_evidence",
-    "test_structural_layout_cleanup_rejects_overlaps",
-    "test_structural_layout_cleanup_rejects_fake_helper_groups",
-    "test_structural_repeated_build_produces_identical_evidence",
 ]

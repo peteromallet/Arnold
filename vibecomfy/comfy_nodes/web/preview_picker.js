@@ -2,17 +2,18 @@
 // Hideable "Preview query" picker for the VibeComfy chat panel.
 //
 // This module is a dev/demo-only, self-contained installer. It reads
-// `localStorage["vibecomfy_demo_picker_enabled"]`: when that key is `"1"`, the
-// installer mounts a small "▦ Demo" toggle in the panel header and a hideable
-// toolbar that lists curated demo scenarios from `/vibecomfy/demo/scenarios`.
+// `localStorage["vibecomfy_demo_picker_enabled"]`: when that key is not `"0"`,
+// the installer probes `/vibecomfy/demo/scenarios`. A successful manifest
+// response mounts a small "▦ Demo" toggle in the panel header and a hideable
+// toolbar that lists curated demo scenarios.
 // Selecting a scenario and clicking "Load & Play" replays it as a fake agent
 // turn: the original graph is applied to the canvas, a user query + agent reply
 // are pushed to the chat thread, and the panel state is populated to mirror a
 // normal AWAITING_REVIEW candidate (including `__demoMode` for the demo-only
 // Apply/Reject branches defined later in the lifecycle).
 //
-// When the localStorage flag is unset, this module is a no-op: no UI is
-// created, no fetches are made, and no panel state is touched.
+// The server endpoint is the source of truth for whether demo mode exists. A
+// missing/disabled endpoint leaves no UI mounted and no panel state touched.
 
 import { app } from "../../scripts/app.js";
 import { applyGraphCandidateInPlace } from "./comfy_adapter.js";
@@ -23,6 +24,7 @@ import { PANEL_STATE, RENDER_SECTIONS } from "./agent_edit_lifecycle.js";
 const LS_DEMO_PICKER_ENABLED = "vibecomfy_demo_picker_enabled";
 const SCENARIOS_ENDPOINT = "/vibecomfy/demo/scenarios";
 const SCENARIO_ENDPOINT = "/vibecomfy/demo/scenario";
+const DEMO_STAGES = Object.freeze(["before_send", "sent_loading", "ready_to_apply", "applied"]);
 
 function makeHelpers(overrides = {}) {
   return {
@@ -36,11 +38,18 @@ function makeHelpers(overrides = {}) {
 }
 
 function isPickerEnabled() {
-  try {
-    return localStorage.getItem(LS_DEMO_PICKER_ENABLED) === "1";
-  } catch (_e) {
-    return false;
+  if (globalThis.__VIBECOMFY_FORCE_DEMO_PICKER__ === true) {
+    return true;
   }
+  try {
+    return localStorage.getItem(LS_DEMO_PICKER_ENABLED) !== "0";
+  } catch (_e) {
+    return true;
+  }
+}
+
+function isDemoUnavailableError(error) {
+  return error?.code === "demo_unavailable" || error?.status === 404;
 }
 
 function el(tag, text = "") {
@@ -124,6 +133,17 @@ function makeMessage({ role, text, sessionId, turnId }) {
   };
 }
 
+function clonePlainData(value) {
+  if (value == null) {
+    return value;
+  }
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (_e) {
+    return value;
+  }
+}
+
 function buildErrorDisplay() {
   const node = el("div");
   Object.assign(node.style, {
@@ -168,7 +188,7 @@ export function installPreviewPicker(panel, options = {}) {
 
   const pickerContainer = el("div");
   Object.assign(pickerContainer.style, {
-    display: "none",
+    display: "flex",
     flexDirection: "column",
     gap: "8px",
     padding: "8px 14px",
@@ -210,14 +230,33 @@ export function installPreviewPicker(panel, options = {}) {
   });
   loadBtn.disabled = true;
 
+  const prevBtn = button("◀", null);
+  const nextBtn = button("▶", null);
+  for (const navBtn of [prevBtn, nextBtn]) {
+    Object.assign(navBtn.style, {
+      padding: "4px 8px",
+      fontSize: "11px",
+      lineHeight: "1",
+      whiteSpace: "nowrap",
+    });
+    navBtn.disabled = true;
+  }
+  prevBtn.title = "Previous demo stage";
+  nextBtn.title = "Next demo stage";
+
   const errorDisplay = buildErrorDisplay();
 
   controlsRow.appendChild(select);
+  controlsRow.appendChild(prevBtn);
+  controlsRow.appendChild(nextBtn);
   controlsRow.appendChild(loadBtn);
   pickerContainer.appendChild(controlsRow);
   pickerContainer.appendChild(errorDisplay);
 
   let selectedScenarioId = null;
+  let loadedScenario = null;
+  let stageIndex = -1;
+  let loadingScenario = false;
 
   function showError(message) {
     errorDisplay.textContent = String(message || "");
@@ -227,7 +266,12 @@ export function installPreviewPicker(panel, options = {}) {
   async function fetchScenarios() {
     const res = await fetch(SCENARIOS_ENDPOINT);
     if (!res.ok) {
-      throw new Error(`Failed to fetch demo scenarios: ${res.status}`);
+      const error = new Error(`Failed to fetch demo scenarios: ${res.status}`);
+      error.status = res.status;
+      if (res.status === 404) {
+        error.code = "demo_unavailable";
+      }
+      throw error;
     }
     const data = await res.json();
     if (!data?.ok || !Array.isArray(data.scenarios)) {
@@ -248,6 +292,188 @@ export function installPreviewPicker(panel, options = {}) {
     return data;
   }
 
+  function stagePayload() {
+    if (!loadedScenario) {
+      return null;
+    }
+    const originalGraph = loadedScenario.original_graph;
+    const candidateGraph = loadedScenario.candidate_graph;
+    const sessionId = loadedScenario.session_id;
+    const turnId = loadedScenario.turn_id;
+    const query = loadedScenario.scenario?.query || loadedScenario.query || "";
+    const agentReply = loadedScenario.agent_reply || "";
+    const userMessage = makeMessage({ role: "user", text: query, sessionId, turnId });
+    const agentMessage = makeMessage({ role: "agent", text: agentReply, sessionId, turnId });
+    return {
+      originalGraph,
+      candidateGraph,
+      sessionId,
+      turnId,
+      query,
+      agentReply,
+      userMessage,
+      agentMessage,
+      candidateGraphHash: loadedScenario.__candidateGraphHash || null,
+      eligibility: normalizeEligibility(loadedScenario.eligibility),
+      changeDetails: loadedScenario.change_details || null,
+    };
+  }
+
+  function updateStageButtons() {
+    const hasStage = Boolean(loadedScenario) && stageIndex >= 0;
+    prevBtn.disabled = loadingScenario || !hasStage || stageIndex <= 0;
+    nextBtn.disabled = loadingScenario || !hasStage || stageIndex >= DEMO_STAGES.length - 1;
+    loadBtn.disabled = loadingScenario || !selectedScenarioId;
+    if (hasStage) {
+      loadBtn.textContent = "Reload";
+    } else {
+      loadBtn.textContent = loadingScenario ? "Loading..." : "Load & Play";
+    }
+  }
+
+  function schedulePanelRender(currentPanel) {
+    helpers.scheduleRenderAgentPanel(
+      "demo-picker",
+      currentPanel,
+      [
+        helpers.RENDER_SECTIONS.THREAD,
+        helpers.RENDER_SECTIONS.META,
+        helpers.RENDER_SECTIONS.COMPOSER,
+        helpers.RENDER_SECTIONS.NOTICE,
+      ].filter(Boolean),
+    );
+  }
+
+  function clearCandidateState(currentPanel) {
+    Object.assign(currentPanel.state, {
+      candidateGraph: null,
+      candidateGraphHash: null,
+      candidateReport: null,
+      serverSubmitGraphHash: null,
+      applyEligibility: null,
+      applyAllowed: false,
+      canvasApplyAllowed: false,
+      queueAllowed: false,
+      applyEligibilityWarning: null,
+      applyEligibilityWarningKey: null,
+      changeDetails: null,
+      deltaOps: null,
+    });
+    delete currentPanel.state._previewDiff;
+    delete currentPanel.state._previewDiffGraphHash;
+  }
+
+  function applyOriginalGraph(payload) {
+    try {
+      helpers.applyGraphCandidateInPlace(helpers.app, clonePlainData(payload.originalGraph), { repaint: true });
+    } catch (graphError) {
+      console.warn("[vibecomfy] demo original graph apply failed:", graphError);
+    }
+  }
+
+  function applyCandidateGraph(payload) {
+    helpers.applyGraphCandidateInPlace(helpers.app, clonePlainData(payload.candidateGraph), { repaint: true });
+  }
+
+  function isLayoutPreviewScenario() {
+    const report = loadedScenario?.report;
+    return Boolean(
+      report
+      && typeof report === "object"
+      && (report.kind === "reorganise" || report.route === "reorganise" || report.reorganise),
+    );
+  }
+
+  function renderDemoStage(nextStageIndex, options = {}) {
+    const currentPanel = panel || helpers.currentAgentPanel();
+    const payload = stagePayload();
+    if (!currentPanel?.state || !payload) {
+      return;
+    }
+    const boundedStage = Math.max(0, Math.min(DEMO_STAGES.length - 1, nextStageIndex));
+    stageIndex = boundedStage;
+    const stage = DEMO_STAGES[stageIndex];
+
+    currentPanel.state.__demoMode = true;
+    currentPanel.state.__demoStage = stage;
+    currentPanel.state.__demoStageIndex = stageIndex;
+    currentPanel.state.sessionId = payload.sessionId;
+    currentPanel.state.turnId = payload.turnId;
+    currentPanel.state.baselineTurnId = null;
+    currentPanel.state.message = null;
+    currentPanel.state.failure = null;
+    currentPanel.state.clarification = null;
+    currentPanel.state.lastSubmitFieldChanges = null;
+
+    if (stage === "before_send") {
+      applyOriginalGraph(payload);
+      currentPanel.state.phase = helpers.PANEL_STATE.IDLE;
+      currentPanel.state.chatMessages = [];
+      currentPanel.state.transcriptMessages = [];
+      currentPanel.state.lastAppliedChanges = null;
+      clearCandidateState(currentPanel);
+    } else if (stage === "sent_loading") {
+      applyOriginalGraph(payload);
+      currentPanel.state.phase = helpers.PANEL_STATE.SUBMITTING;
+      currentPanel.state.chatMessages = [payload.userMessage];
+      currentPanel.state.transcriptMessages = currentPanel.state.chatMessages.slice();
+      currentPanel.state.lastAppliedChanges = null;
+      clearCandidateState(currentPanel);
+      currentPanel.state.message = "Demo request sent. Waiting for agent response...";
+    } else if (stage === "ready_to_apply") {
+      if (isLayoutPreviewScenario()) {
+        applyCandidateGraph(payload);
+      } else {
+        applyOriginalGraph(payload);
+      }
+      const candidateActionAllowed = Boolean(payload.candidateGraph && payload.eligibility.applyable === true);
+      currentPanel.state.phase = helpers.PANEL_STATE.AWAITING_REVIEW;
+      currentPanel.state.chatMessages = [payload.userMessage, payload.agentMessage];
+      currentPanel.state.transcriptMessages = currentPanel.state.chatMessages.slice();
+      Object.assign(currentPanel.state, {
+        candidateGraph: payload.candidateGraph,
+        candidateGraphHash: payload.candidateGraphHash,
+        candidateReport: loadedScenario.report || {},
+        serverSubmitGraphHash: null,
+        applyEligibility: payload.eligibility,
+        applyAllowed: candidateActionAllowed,
+        canvasApplyAllowed: candidateActionAllowed,
+        queueAllowed: false,
+        applyEligibilityWarning: null,
+        applyEligibilityWarningKey: null,
+        changeDetails: payload.changeDetails,
+        lastAppliedChanges: null,
+        deltaOps: null,
+      });
+    } else if (stage === "applied") {
+      if (!options.alreadyApplied) {
+        applyCandidateGraph(payload);
+      }
+      currentPanel.state.phase = helpers.PANEL_STATE.IDLE;
+      currentPanel.state.chatMessages = [payload.userMessage, payload.agentMessage];
+      currentPanel.state.transcriptMessages = currentPanel.state.chatMessages.slice();
+      clearCandidateState(currentPanel);
+      currentPanel.state.lastAppliedChanges = options.lastAppliedChanges || payload.changeDetails || {
+        summary: "Demo candidate applied.",
+      };
+      currentPanel.state.message = "Demo candidate applied.";
+      currentPanel.state.__demoMode = false;
+    }
+
+    const detailTurnKey = `turn:${payload.turnId}`;
+    currentPanel.state.expandedBubbleTurnKeys = {
+      ...(currentPanel.state.expandedBubbleTurnKeys || {}),
+      [detailTurnKey]: stage === "ready_to_apply" || stage === "applied",
+    };
+    if (currentPanel.state.responseDetails && typeof currentPanel.state.responseDetails === "object") {
+      delete currentPanel.state.responseDetails[payload.turnId];
+    }
+
+    updateStageButtons();
+    showError("");
+    schedulePanelRender(currentPanel);
+  }
+
   async function loadAndPlay() {
     const id = selectedScenarioId;
     if (!id) {
@@ -255,8 +481,8 @@ export function installPreviewPicker(panel, options = {}) {
       return;
     }
     showError("");
-    loadBtn.disabled = true;
-    loadBtn.textContent = "Loading...";
+    loadingScenario = true;
+    updateStageButtons();
 
     try {
       const scenario = await fetchScenario(id);
@@ -276,88 +502,41 @@ export function installPreviewPicker(panel, options = {}) {
         throw new Error("Scenario response missing required graph data");
       }
 
-      // Apply the original graph to the live canvas. If the local ComfyUI
-      // cannot apply it (e.g., missing custom-node packs), the candidate is
-      // still presented in the panel and the error is logged.
-      try {
-        helpers.applyGraphCandidateInPlace(helpers.app, originalGraph, { repaint: true });
-      } catch (graphError) {
-        console.warn("[vibecomfy] demo original graph apply failed:", graphError);
-      }
-
-      const candidateGraphHash = await sha256Hex(JSON.stringify(candidateGraph));
-
-      // Deterministic transcript replay: user query followed by agent reply.
-      const userMessage = makeMessage({ role: "user", text: query, sessionId, turnId });
-      const agentMessage = makeMessage({ role: "agent", text: agentReply, sessionId, turnId });
-      currentPanel.state.chatMessages = [userMessage, agentMessage];
-      currentPanel.state.transcriptMessages = currentPanel.state.chatMessages.slice();
-
-      // Mirror the normal AWAITING_REVIEW candidate state so Apply/Reject light
-      // up exactly like a live agent-edit response.
-      const eligibility = normalizeEligibility(scenario.eligibility);
-      const candidateActionAllowed = Boolean(candidateGraph && eligibility.applyable === true);
-
-      Object.assign(currentPanel.state, {
-        sessionId,
-        turnId,
-        baselineTurnId: null,
-        phase: helpers.PANEL_STATE.AWAITING_REVIEW,
-        candidateGraph,
-        candidateGraphHash,
-        candidateReport: null,
-        serverSubmitGraphHash: null,
-        applyEligibility: eligibility,
-        applyAllowed: candidateActionAllowed,
-        canvasApplyAllowed: candidateActionAllowed,
-        queueAllowed: false,
-        applyEligibilityWarning: null,
-        applyEligibilityWarningKey: null,
-        message: null,
-        failure: null,
-        clarification: null,
-        changeDetails: scenario.change_details || null,
-        lastAppliedChanges: null,
-        lastSubmitFieldChanges: null,
-        deltaOps: null,
-        __demoMode: true,
-      });
-
-      // Auto-expand the agent bubble's details so the candidate changes and
-      // Apply button are visible without an extra click.
-      const detailTurnKey = `turn:${turnId}`;
-      currentPanel.state.expandedBubbleTurnKeys = {
-        ...(currentPanel.state.expandedBubbleTurnKeys || {}),
-        [detailTurnKey]: true,
+      loadedScenario = {
+        ...scenario,
+        original_graph: clonePlainData(originalGraph),
+        candidate_graph: clonePlainData(candidateGraph),
+        __candidateGraphHash: await sha256Hex(JSON.stringify(candidateGraph)),
       };
-
-      // Clear any stale response detail for this turn so the changeDetails
-      // fallback is used.
-      if (currentPanel.state.responseDetails && typeof currentPanel.state.responseDetails === "object") {
-        delete currentPanel.state.responseDetails[turnId];
-      }
-
-      showError("");
-      helpers.scheduleRenderAgentPanel("demo-picker", currentPanel, [
-        helpers.RENDER_SECTIONS.THREAD,
-        helpers.RENDER_SECTIONS.META,
-        helpers.RENDER_SECTIONS.CANDIDATE,
-      ]);
+      renderDemoStage(0);
     } catch (error) {
       showError(error?.message || String(error));
     } finally {
-      loadBtn.disabled = !selectedScenarioId;
-      loadBtn.textContent = "Load & Play";
+      loadingScenario = false;
+      updateStageButtons();
     }
   }
 
   select.addEventListener("change", () => {
     selectedScenarioId = select.value || null;
+    loadedScenario = null;
+    stageIndex = -1;
     loadBtn.disabled = !selectedScenarioId;
+    updateStageButtons();
     showError("");
   });
 
   loadBtn.addEventListener("click", loadAndPlay);
+  prevBtn.addEventListener("click", () => {
+    if (loadedScenario && stageIndex > 0) {
+      renderDemoStage(stageIndex - 1);
+    }
+  });
+  nextBtn.addEventListener("click", () => {
+    if (loadedScenario && stageIndex < DEMO_STAGES.length - 1) {
+      renderDemoStage(stageIndex + 1);
+    }
+  });
 
   const toggleBtn = button("▦ Demo", () => {
     const expanded = pickerContainer.style.display === "none";
@@ -372,19 +551,37 @@ export function installPreviewPicker(panel, options = {}) {
   });
   toggleBtn.title = "Demo scenario picker";
 
-  if (headerRight) {
-    headerRight.appendChild(toggleBtn);
-  } else {
-    pickerContainer.appendChild(toggleBtn);
+  let mounted = false;
+
+  function mountPicker() {
+    if (mounted) {
+      return;
+    }
+    mounted = true;
+    if (headerRight) {
+      headerRight.appendChild(toggleBtn);
+    } else {
+      pickerContainer.appendChild(toggleBtn);
+    }
+
+    // Insert the picker toolbar right after the panel header (the first child of
+    // mountContainer is expected to be the header).
+    const firstChild = mountContainer.firstChild;
+    if (firstChild) {
+      mountContainer.insertBefore(pickerContainer, firstChild.nextSibling);
+    } else {
+      mountContainer.appendChild(pickerContainer);
+    }
   }
 
-  // Insert the picker toolbar right after the panel header (the first child of
-  // mountContainer is expected to be the header).
-  const firstChild = mountContainer.firstChild;
-  if (firstChild) {
-    mountContainer.insertBefore(pickerContainer, firstChild.nextSibling);
-  } else {
-    mountContainer.appendChild(pickerContainer);
+  function unmountPicker() {
+    mounted = false;
+    if (toggleBtn.parentNode) {
+      toggleBtn.parentNode.removeChild(toggleBtn);
+    }
+    if (pickerContainer.parentNode) {
+      pickerContainer.parentNode.removeChild(pickerContainer);
+    }
   }
 
   // Load scenario list. This is the only network traffic the module emits,
@@ -396,11 +593,17 @@ export function installPreviewPicker(panel, options = {}) {
         option.value = scenario.id;
         select.appendChild(option);
       }
+      mountPicker();
       if (scenarios.length === 0) {
         showError("No demo scenarios available");
       }
     })
     .catch((error) => {
+      if (isDemoUnavailableError(error)) {
+        unmountPicker();
+        return;
+      }
+      mountPicker();
       showError(error?.message || String(error));
     });
 
@@ -408,7 +611,17 @@ export function installPreviewPicker(panel, options = {}) {
     toggle: toggleBtn,
     container: pickerContainer,
     select,
+    prevButton: prevBtn,
+    nextButton: nextBtn,
     loadButton: loadBtn,
+    get mounted() {
+      return mounted;
+    },
+    showAppliedStage(options = {}) {
+      if (loadedScenario) {
+        renderDemoStage(3, { ...options, alreadyApplied: true });
+      }
+    },
   };
 }
 

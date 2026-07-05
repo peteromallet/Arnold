@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import dataclasses
 import hashlib
 import json
@@ -176,13 +177,71 @@ def _is_safe_demo_id(scenario_id: str) -> bool:
 def _load_demo_json_file(run_dir: Path, filename: str | None) -> Any:
     if not filename:
         return None
-    path = run_dir / filename
+    path = Path(filename)
+    if path.is_absolute():
+        return None
+    path = run_dir / path
+    try:
+        path.resolve().relative_to(run_dir.resolve())
+    except ValueError:
+        return None
     if not path.is_file():
         return None
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
+
+
+def _is_litegraph_ui_graph(graph: Any) -> bool:
+    return isinstance(graph, dict) and isinstance(graph.get("nodes"), list)
+
+
+def _is_comfy_api_graph(graph: Any) -> bool:
+    if not isinstance(graph, dict) or _is_litegraph_ui_graph(graph):
+        return False
+    return any(isinstance(value, dict) and "class_type" in value for value in graph.values())
+
+
+def _convert_demo_api_graph_to_ui(api_graph: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Best-effort API→UI fallback for old demo artifacts.
+
+    Compiled ComfyUI API JSON does not carry the author's canvas layout. When
+    older scenario runs only have API JSON, this keeps the demo loadable while
+    explicitly marking the layout as generated rather than source-authored.
+    """
+    try:
+        from vibecomfy.ingest.normalize import convert_to_vibe_format  # noqa: PLC0415
+        from vibecomfy.porting.emit.ui import emit_ui_json  # noqa: PLC0415
+        from vibecomfy.schema import get_schema_provider  # noqa: PLC0415
+
+        workflow = convert_to_vibe_format(dict(api_graph))
+        ui_graph = emit_ui_json(workflow, schema_provider=get_schema_provider("local"))
+    except Exception:
+        return None
+    if not isinstance(ui_graph, dict):
+        return None
+    extra = ui_graph.setdefault("extra", {})
+    if isinstance(extra, dict):
+        vibe = extra.setdefault("vibecomfy", {})
+        if isinstance(vibe, dict):
+            vibe["demo_layout_source"] = "generated_from_api"
+            vibe["demo_layout_warning"] = (
+                "This scenario was archived as ComfyUI API JSON, which has no original canvas positions."
+            )
+    return ui_graph
+
+
+def _resolve_request_graph_as_ui(run_dir: Path) -> dict[str, Any] | None:
+    request_json = _load_demo_json_file(run_dir, "request.json")
+    if not isinstance(request_json, dict):
+        return None
+    graph = request_json.get("graph")
+    if _is_litegraph_ui_graph(graph):
+        return copy.deepcopy(graph)
+    if _is_comfy_api_graph(graph):
+        return _convert_demo_api_graph_to_ui(graph)
+    return None
 
 
 def _resolve_original_graph(
@@ -203,6 +262,9 @@ def _resolve_original_graph(
         data = _load_demo_json_file(run_dir, filename)
         if isinstance(data, dict):
             return data
+    request_graph = _resolve_request_graph_as_ui(run_dir)
+    if isinstance(request_graph, dict):
+        return request_graph
     return None
 
 
@@ -211,18 +273,8 @@ def _resolve_candidate_graph(
     run_dir: Path,
     run_location: Mapping[str, Any],
 ) -> dict[str, Any] | None:
-    """Resolve candidate graph in the locked fallback order.
-
-    1. ``response.json.candidate_graph`` or ``response.json.candidate.graph``.
-    2. ``response.json.artifacts.candidate_ui``.
-    3. Sibling ``candidate.ui.json`` under the run directory.
-    """
+    """Resolve candidate graph, preferring curated layout-bearing UI artifacts."""
     if isinstance(response_json, dict):
-        if isinstance(response_json.get("candidate_graph"), dict):
-            return response_json["candidate_graph"]
-        candidate = response_json.get("candidate")
-        if isinstance(candidate, dict) and isinstance(candidate.get("graph"), dict):
-            return candidate["graph"]
         artifacts = response_json.get("artifacts")
         if isinstance(artifacts, dict):
             candidate_ui = artifacts.get("candidate_ui")
@@ -234,7 +286,40 @@ def _resolve_candidate_graph(
     data = _load_demo_json_file(run_dir, candidate_ui)
     if isinstance(data, dict):
         return data
+    if isinstance(response_json, dict):
+        if isinstance(response_json.get("candidate_graph"), dict):
+            return response_json["candidate_graph"]
+        candidate = response_json.get("candidate")
+        if isinstance(candidate, dict) and isinstance(candidate.get("graph"), dict):
+            return candidate["graph"]
     return None
+
+
+def _inherit_demo_layout(
+    candidate_graph: dict[str, Any],
+    original_graph: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Preserve baseline canvas placement for unchanged LiteGraph node IDs."""
+    if not _is_litegraph_ui_graph(candidate_graph) or not _is_litegraph_ui_graph(original_graph):
+        return candidate_graph
+    original_nodes = {
+        node.get("id"): node
+        for node in original_graph.get("nodes", [])
+        if isinstance(node, Mapping) and node.get("id") is not None
+    }
+    if not original_nodes:
+        return candidate_graph
+    out = copy.deepcopy(candidate_graph)
+    for node in out.get("nodes", []):
+        if not isinstance(node, dict):
+            continue
+        original = original_nodes.get(node.get("id"))
+        if not isinstance(original, Mapping):
+            continue
+        for key in ("pos", "size"):
+            if key in original:
+                node[key] = copy.deepcopy(original[key])
+    return out
 
 
 def _resolve_demo_scenario(scenario_id: str) -> tuple[dict[str, Any], int]:
@@ -275,6 +360,7 @@ def _resolve_demo_scenario(scenario_id: str) -> tuple[dict[str, Any], int]:
     candidate_graph = _resolve_candidate_graph(response_json, run_dir, run_location)
     if candidate_graph is None:
         return {"ok": False, "error": "Candidate graph not found"}, 404
+    candidate_graph = _inherit_demo_layout(candidate_graph, original_graph)
 
     if isinstance(response_json, dict):
         agent_reply = response_json.get("reply") or response_json.get("message") or ""

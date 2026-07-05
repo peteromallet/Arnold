@@ -221,7 +221,7 @@ class TestDemoGraphResolution:
         assert status == 200
         assert result["candidate_graph"] == artifact
 
-    def test_candidate_resolution_order_prefer_inline_over_artifact(self, demo_fs, monkeypatch):
+    def test_candidate_resolution_order_prefer_artifact_over_inline(self, demo_fs, monkeypatch):
         inline = {"nodes": [{"id": "inline"}], "links": []}
         artifact = {"nodes": [{"id": "artifact"}], "links": []}
         original = {"nodes": [{"id": "orig"}], "links": []}
@@ -235,7 +235,18 @@ class TestDemoGraphResolution:
         (run_dir / "custom_candidate.json").write_text(json.dumps(artifact), encoding="utf-8")
         result, status = self._resolve_with_record(demo_fs, record, monkeypatch)
         assert status == 200
-        assert result["candidate_graph"] == inline
+        assert result["candidate_graph"] == artifact
+
+    def test_candidate_resolution_order_prefer_sibling_over_inline(self, demo_fs, monkeypatch):
+        inline = {"nodes": [{"id": "inline"}], "links": []}
+        sibling = {"nodes": [{"id": "sibling"}], "links": []}
+        original = {"nodes": [{"id": "orig"}], "links": []}
+        record = self._valid_manifest_record("sibling_over_inline")
+        response = {"candidate_graph": inline, "reply": "order"}
+        self._write_run(demo_fs, record["id"], response, original, sibling)
+        result, status = self._resolve_with_record(demo_fs, record, monkeypatch)
+        assert status == 200
+        assert result["candidate_graph"] == sibling
 
     def test_candidate_resolution_order_prefer_artifact_over_sibling(self, demo_fs, monkeypatch):
         artifact = {"nodes": [{"id": "artifact"}], "links": []}
@@ -259,6 +270,55 @@ class TestDemoGraphResolution:
         result, status = self._resolve_with_record(demo_fs, record, monkeypatch)
         assert status == 200
         assert result["original_graph"] == original
+
+    def test_absolute_response_artifacts_are_ignored(self, demo_fs, monkeypatch, tmp_path):
+        stale_original = {"nodes": [{"id": "stale", "pos": [999, 999]}], "links": []}
+        stale_path = tmp_path / "stale_original.json"
+        stale_path.write_text(json.dumps(stale_original), encoding="utf-8")
+        sibling_original = {"nodes": [{"id": "orig", "pos": [10, 20]}], "links": []}
+        candidate = {"nodes": [{"id": "cand"}], "links": []}
+        record = self._valid_manifest_record("absolute_artifact")
+        response = {"artifacts": {"original_ui": str(stale_path)}, "reply": "absolute artifact"}
+        self._write_run(demo_fs, record["id"], response, sibling_original, candidate)
+        result, status = self._resolve_with_record(demo_fs, record, monkeypatch)
+        assert status == 200
+        assert result["original_graph"] == sibling_original
+
+    def test_original_graph_falls_back_to_request_ui_graph(self, demo_fs, monkeypatch):
+        original = {"nodes": [{"id": 1, "type": "CheckpointLoaderSimple", "pos": [12, 34]}], "links": []}
+        candidate = {"nodes": [{"id": 1, "type": "CheckpointLoaderSimple", "pos": [500, 600]}], "links": []}
+        record = self._valid_manifest_record("request_ui_fallback")
+        run_dir = self._write_run(demo_fs, record["id"], {"reply": "request graph"}, None, candidate)
+        (run_dir / "request.json").write_text(json.dumps({"graph": original}), encoding="utf-8")
+        result, status = self._resolve_with_record(demo_fs, record, monkeypatch)
+        assert status == 200
+        assert result["original_graph"] == original
+
+    def test_candidate_inherits_original_layout_for_existing_nodes(self, demo_fs, monkeypatch):
+        original = {
+            "nodes": [
+                {"id": 1, "type": "CheckpointLoaderSimple", "pos": [12, 34], "size": [210, 88]},
+                {"id": 2, "type": "KSampler", "pos": [300, 400]},
+            ],
+            "links": [],
+        }
+        candidate = {
+            "nodes": [
+                {"id": 1, "type": "CheckpointLoaderSimple", "pos": [900, 900], "size": [10, 10]},
+                {"id": 2, "type": "KSampler", "pos": [901, 901]},
+                {"id": 3, "type": "PreviewImage", "pos": [902, 902]},
+            ],
+            "links": [],
+        }
+        record = self._valid_manifest_record("layout_inherit")
+        self._write_run(demo_fs, record["id"], {"reply": "layout"}, original, candidate)
+        result, status = self._resolve_with_record(demo_fs, record, monkeypatch)
+        assert status == 200
+        nodes = {node["id"]: node for node in result["candidate_graph"]["nodes"]}
+        assert nodes[1]["pos"] == [12, 34]
+        assert nodes[1]["size"] == [210, 88]
+        assert nodes[2]["pos"] == [300, 400]
+        assert nodes[3]["pos"] == [902, 902]
 
     def test_missing_original_graph_returns_404(self, demo_fs, monkeypatch):
         record = self._valid_manifest_record("missing_original")

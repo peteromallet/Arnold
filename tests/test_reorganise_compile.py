@@ -1109,6 +1109,279 @@ def test_compile_layout_plan_uses_deterministic_cluster_grid_for_huge_sections()
     assert compile_layout_plan(plan, extract_graph_facts({"nodes": nodes, "links": links})).to_json() == result.to_json()
 
 
+def test_compile_layout_plan_preserves_tall_rendered_node_floor_in_huge_sections() -> None:
+    node_count = COMPILE_HUGE_WORKFLOW_NODE_THRESHOLD + 4
+    nodes = []
+    links = []
+    for index in range(node_count):
+        node_id = index + 1
+        uid = f"chain-{index:02d}"
+        node = _with_io(
+            _node(node_id, "PrimitiveNode", uid),
+            inputs=[{"name": "in", "type": "*", "link": 100 + index - 1}] if index > 0 else None,
+            outputs=[{"name": "out", "type": "*", "links": [100 + index]}] if index < node_count - 1 else None,
+        )
+        if index == 3:
+            node["size"] = [320, 360]
+        nodes.append(node)
+        if index < node_count - 1:
+            links.append([100 + index, node_id, 0, node_id + 1, 0, "*"])
+    plan = parse_layout_plan(
+        {
+            "version": 1,
+            "sections": [
+                {
+                    "id": "huge",
+                    "kind": "custom",
+                    "nodes": [["", f"chain-{index:02d}"] for index in range(node_count)],
+                }
+            ],
+            "unassigned_policy": "reject",
+        }
+    )
+
+    result = compile_layout_plan(plan, extract_graph_facts({"nodes": nodes, "links": links}))
+
+    assert result.ok is True
+    tall = _layouts_by_uid(result)["chain-03"]
+    assert tall.height == 360
+    group = _groups_by_id(result)["huge"]
+    assert group.y + group.height >= tall.y + tall.height
+
+
+def test_compile_layout_plan_wraps_constant_utility_rows_to_three_nodes() -> None:
+    nodes = [_node(index + 1, "INTConstant", f"constant-{index}") for index in range(8)]
+    plan = parse_layout_plan(
+        {
+            "version": 1,
+            "sections": [
+                {
+                    "id": "utility",
+                    "kind": "utility",
+                    "nodes": [["", f"constant-{index}"] for index in range(8)],
+                }
+            ],
+            "unassigned_policy": "reject",
+        }
+    )
+
+    result = compile_layout_plan(
+        plan,
+        extract_graph_facts({"nodes": nodes}),
+        options=LayoutCompileOptions(grouping_policy="stage"),
+    )
+
+    assert result.ok is True
+    layouts = [_layouts_by_uid(result)[f"constant-{index}"] for index in range(8)]
+    rows: dict[int, list[object]] = {}
+    for layout in layouts:
+        rows.setdefault(layout.y, []).append(layout)
+    assert [len(rows[y]) for y in sorted(rows)] == [3, 3, 2]
+    assert max(layout.x for layout in layouts) - min(layout.x for layout in layouts) < 1000
+
+
+def test_compile_layout_plan_keeps_huge_custom_fallback_as_one_spatial_group() -> None:
+    nodes = []
+    for index in range(COMPILE_HUGE_WORKFLOW_NODE_THRESHOLD + 8):
+        class_type = "ImageResizeKJv2" if index < 8 else "MysteryCustomNode"
+        node = _node(index + 1, class_type, f"node-{index:02d}")
+        node["pos"] = [index * 520, (index % 3) * 100]
+        node["size"] = [320, 100]
+        nodes.append(node)
+    plan = parse_layout_plan(
+        {
+            "version": 1,
+            "sections": [
+                {
+                    "id": "mixed_custom",
+                    "kind": "custom",
+                    "nodes": [["", f"node-{index:02d}"] for index in range(len(nodes))],
+                }
+            ],
+            "unassigned_policy": "reject",
+        }
+    )
+
+    result = compile_layout_plan(plan, extract_graph_facts({"nodes": nodes}))
+
+    assert result.ok is True
+    custom_groups = [group for group in result.group_layouts if group.title.startswith("Custom")]
+    assert [group.title for group in custom_groups] == ["Custom"]
+    custom_layouts = [layout for layout in result.node_layouts if layout.ref in custom_groups[0].node_refs]
+    assert custom_groups[0].width <= 1400
+    assert len({layout.x for layout in custom_layouts}) <= 3
+
+
+def test_compile_layout_plan_splits_recognized_huge_custom_families_semantically() -> None:
+    classes = [
+        "ModelSamplingSD3",
+        "PathchSageAttentionKJ",
+        "TorchCompileModelWanVideoV2",
+        "VHS_LoadVideo",
+        "VHS_VideoInfo",
+        "easy forLoopStart",
+        "easy forLoopEnd",
+        "MathExpression|pysssss",
+        "WanVaceToVideo",
+        "VideoContinuationGenerator",
+        "WanVideoBlender",
+        "Florence2Run",
+        "ColorMatchToReference",
+        "Display Int (rgthree)",
+        "easy showAnything",
+        "Label (rgthree)",
+        "LayerUtility: PurgeVRAM",
+    ]
+    nodes = []
+    links = []
+    for index in range(COMPILE_HUGE_WORKFLOW_NODE_THRESHOLD + 2):
+        node_id = index + 1
+        node = _with_io(
+            _node(node_id, classes[index % len(classes)], f"family-{index:02d}"),
+            inputs=[{"name": "in", "type": "*", "link": 400 + index - 1}] if index > 0 else None,
+            outputs=[{"name": "out", "type": "*", "links": [400 + index]}] if index < COMPILE_HUGE_WORKFLOW_NODE_THRESHOLD + 1 else None,
+        )
+        node["pos"] = [index * 520, (index % 4) * 140]
+        node["size"] = [320, 100]
+        nodes.append(node)
+        if index < COMPILE_HUGE_WORKFLOW_NODE_THRESHOLD + 1:
+            links.append([400 + index, node_id, 0, node_id + 1, 0, "*"])
+    plan = parse_layout_plan(
+        {
+            "version": 1,
+            "sections": [
+                {
+                    "id": "custom_families",
+                    "kind": "custom",
+                    "nodes": [["", f"family-{index:02d}"] for index in range(len(nodes))],
+                }
+            ],
+            "unassigned_policy": "reject",
+        }
+    )
+
+    result = compile_layout_plan(plan, extract_graph_facts({"nodes": nodes, "links": links}))
+
+    assert result.ok is True
+    titles = {group.title for group in result.group_layouts}
+    assert "Custom" not in titles
+    assert {
+        "Model Patching",
+        "Video Input / Info",
+        "Loop / Math Control",
+        "Video Generation",
+        "Color Match",
+        "Displays / Labels",
+        "Cleanup",
+    } <= titles
+
+
+def test_compile_layout_plan_preserves_collapsed_setget_sizes_and_marks_auto_collapsed_helpers() -> None:
+    nodes = []
+    links = []
+    for index in range(COMPILE_HUGE_WORKFLOW_NODE_THRESHOLD + 2):
+        node_id = index + 1
+        node = _with_io(
+            _node(node_id, "PrimitiveNode", f"setting-{index:02d}"),
+            inputs=[{"name": "in", "type": "*", "link": 800 + index - 1}] if index > 0 else None,
+            outputs=[{"name": "out", "type": "*", "links": [800 + index]}],
+        )
+        node["size"] = [210, 58]
+        nodes.append(node)
+    collapsed_wide = _node(100, "SetNode", "collapsed-wide")
+    collapsed_wide["size"] = [364, 60]
+    collapsed_wide["flags"] = {"collapsed": True}
+    collapsed_wide["inputs"] = [{"name": "in", "type": "*", "link": 800 + COMPILE_HUGE_WORKFLOW_NODE_THRESHOLD + 1}]
+    collapsed_wide["outputs"] = [{"name": "out", "type": "*", "links": [900]}]
+    collapsed_narrow = _node(101, "GetNode", "collapsed-narrow")
+    collapsed_narrow["size"] = [210, 40]
+    collapsed_narrow["flags"] = {"collapsed": True}
+    collapsed_narrow["inputs"] = [{"name": "in", "type": "*", "link": 900}]
+    collapsed_narrow["outputs"] = [{"name": "out", "type": "*", "links": [901]}]
+    expanded = _node(102, "SetNode", "expanded-helper")
+    expanded["size"] = [420, 120]
+    expanded["inputs"] = [{"name": "in", "type": "*", "link": 901}]
+    nodes.extend([collapsed_wide, collapsed_narrow, expanded])
+    for index in range(COMPILE_HUGE_WORKFLOW_NODE_THRESHOLD + 2):
+        links.append([800 + index, index + 1, 0, (index + 2) if index < COMPILE_HUGE_WORKFLOW_NODE_THRESHOLD + 1 else 100, 0, "*"])
+    links.extend([[900, 100, 0, 101, 0, "*"], [901, 101, 0, 102, 0, "*"]])
+    plan = parse_layout_plan(
+        {
+            "version": 1,
+            "sections": [
+                {
+                    "id": "utility",
+                    "kind": "utility",
+                    "nodes": [
+                        *[["", f"setting-{index:02d}"] for index in range(COMPILE_HUGE_WORKFLOW_NODE_THRESHOLD + 2)],
+                    ],
+                }
+            ],
+            "helper_placements": [
+                {"helper": ["", "collapsed-wide"], "kind": "inside-section", "section_id": "utility"},
+                {"helper": ["", "collapsed-narrow"], "kind": "inside-section", "section_id": "utility"},
+                {"helper": ["", "expanded-helper"], "kind": "inside-section", "section_id": "utility"},
+            ],
+            "unassigned_policy": "reject",
+        }
+        )
+
+    result = compile_layout_plan(plan, extract_graph_facts({"nodes": nodes, "links": links}))
+
+    assert result.ok is True
+    patch = result.candidate_patch.to_json()
+    assert patch["entries"]["collapsed-wide"]["size"][0] < 180
+    assert patch["entries"]["collapsed-wide"]["size"][1] <= 48
+    assert patch["entries"]["collapsed-wide"]["flags"]["collapsed"] is True
+    assert patch["entries"]["collapsed-narrow"]["size"][0] < 180
+    assert patch["entries"]["collapsed-narrow"]["size"][1] <= 48
+    assert patch["entries"]["collapsed-narrow"]["flags"]["collapsed"] is True
+    assert patch["entries"]["expanded-helper"]["size"][0] < 420
+    assert patch["entries"]["expanded-helper"]["size"][1] < 120
+    assert patch["entries"]["expanded-helper"]["flags"]["collapsed"] is True
+
+
+def test_compile_layout_plan_preserves_collapsed_non_helper_size_in_huge_mode() -> None:
+    node_count = COMPILE_HUGE_WORKFLOW_NODE_THRESHOLD + 4
+    nodes = []
+    links = []
+    for index in range(node_count):
+        node_id = index + 1
+        node = _with_io(
+            _node(node_id, "PrimitiveNode", f"node-{index:02d}"),
+            inputs=[{"name": "in", "type": "*", "link": 1200 + index - 1}] if index > 0 else None,
+            outputs=[{"name": "out", "type": "*", "links": [1200 + index]}] if index < node_count - 1 else None,
+        )
+        if index == 4:
+            node["size"] = [184, 42]
+            node["flags"] = {"collapsed": True}
+        nodes.append(node)
+        if index < node_count - 1:
+            links.append([1200 + index, node_id, 0, node_id + 1, 0, "*"])
+    plan = parse_layout_plan(
+        {
+            "version": 1,
+            "sections": [
+                {
+                    "id": "huge",
+                    "kind": "custom",
+                    "nodes": [["", f"node-{index:02d}"] for index in range(node_count)],
+                }
+            ],
+            "unassigned_policy": "reject",
+        }
+    )
+
+    result = compile_layout_plan(plan, extract_graph_facts({"nodes": nodes, "links": links}))
+
+    assert result.ok is True
+    collapsed = _layouts_by_uid(result)["node-04"]
+    assert (collapsed.width, collapsed.height) == (184, 42)
+    patch = result.candidate_patch.to_json()
+    assert patch["entries"]["node-04"]["size"] == [184, 42]
+    assert patch["entries"]["node-04"]["flags"]["collapsed"] is True
+
+
 def test_compile_layout_plan_anchors_set_get_reroute_and_note_helpers_without_group_ownership() -> None:
     ui = {
         "nodes": [
@@ -2645,18 +2918,17 @@ def test_compile_layout_plan_max_primary_row_count_is_three() -> None:
             f"row at y={y} has {len(row_refs)} primaries, max allowed is 3"
     assert len(offsets) == 10
 
-    # Full compile: 4 PrimitiveNodes trigger the "row" template via
-    # _constant_like_refs (matches "primitive" in class_type).
+    # Full compile: 4 constant-like nodes trigger the "row" template.
     ui = {
         "nodes": [
-            _with_io(_node(1, "PrimitiveNode", "p1"), outputs=[{"name": "out", "type": "*", "links": [10]}]),
-            _with_io(_node(2, "PrimitiveNode", "p2"),
+            _with_io(_node(1, "ConstantNode", "p1"), outputs=[{"name": "out", "type": "*", "links": [10]}]),
+            _with_io(_node(2, "ConstantNode", "p2"),
                      inputs=[{"name": "in", "type": "*", "link": 10}],
                      outputs=[{"name": "out", "type": "*", "links": [11]}]),
-            _with_io(_node(3, "PrimitiveNode", "p3"),
+            _with_io(_node(3, "ConstantNode", "p3"),
                      inputs=[{"name": "in", "type": "*", "link": 11}],
                      outputs=[{"name": "out", "type": "*", "links": [12]}]),
-            _with_io(_node(4, "PrimitiveNode", "p4"),
+            _with_io(_node(4, "ConstantNode", "p4"),
                      inputs=[{"name": "in", "type": "*", "link": 12}]),
         ],
         "links": [[10, 1, 0, 2, 0, "*"], [11, 2, 0, 3, 0, "*"], [12, 3, 0, 4, 0, "*"]],

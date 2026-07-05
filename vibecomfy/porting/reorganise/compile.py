@@ -110,6 +110,7 @@ COMPILE_HUGE_WORKFLOW_NODE_THRESHOLD = 20
 COMPILE_HUGE_WORKFLOW_EDGE_THRESHOLD = 48
 COMPILE_HUGE_WORKFLOW_PROJECTION_TOKEN_THRESHOLD = 4000
 COMPILE_LARGE_SECTION_CLUSTER_SIZE = 10
+COMPILE_MAX_ROW_COLUMNS = 3
 
 COMPILE_METRIC_NODE_LAYOUT_COUNT = "compiled_node_layout_count"
 COMPILE_METRIC_GROUP_LAYOUT_COUNT = "compiled_group_layout_count"
@@ -351,6 +352,7 @@ class CompiledNodeLayout:
     width: int = DEFAULT_NODE_WIDTH
     height: int = DEFAULT_NODE_HEIGHT
     pinned: bool = False
+    auto_collapsed: bool = False
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -360,6 +362,7 @@ class CompiledNodeLayout:
             "pos": [self.x, self.y],
             "size": [self.width, self.height],
             "pinned": self.pinned,
+            "auto_collapsed": self.auto_collapsed,
         }
 
 
@@ -1040,6 +1043,10 @@ def _compile_sections(
                 reason="primary_shared_home",
             )
 
+    anchored_helper_targets: dict[CanonicalNodeRef, CanonicalNodeRef] = {}
+    for placement in plan.helper_placements:
+        if placement.kind in {HELPER_PLACEMENT_NEAR_PRODUCER, HELPER_PLACEMENT_NEAR_CONSUMER} and placement.target is not None:
+            anchored_helper_targets[placement.helper] = placement.target
     if huge_mode:
         prompt_generated = _GeneratedSection(
             kind=SECTION_KIND_CONDITIONING,
@@ -1060,7 +1067,6 @@ def _compile_sections(
                     reason="primary_huge_prompt_conditioning",
                 )
                 generated_defs["__huge_prompt_conditioning__"] = prompt_generated
-
     if huge_mode and _can_preserve_existing_groups(options):
         for ref, generated in _huge_existing_group_ownership(facts, classification).items():
             if ref in helper_refs:
@@ -1137,8 +1143,20 @@ def _compile_sections(
         pass
 
     incident_adjacency = _incident_ref_adjacency(facts)
+    helper_targets = {
+        placement.helper: _helper_section_id(placement, primary_owned)
+        for placement in plan.helper_placements
+    }
+    helper_targets.update(
+        _nearest_note_helper_sections(
+            facts,
+            primary_owned,
+            section_defs,
+            generated_defs,
+        )
+    )
     for helper_ref in sorted(helper_refs, key=_ref_sort_key):
-        ownership[helper_ref] = _resolve_helper_ownership(
+        resolved = _resolve_helper_ownership(
             helper_ref,
             facts=facts,
             primary_owned=primary_owned,
@@ -1146,6 +1164,20 @@ def _compile_sections(
             furniture_by_ref=furniture_by_ref,
             placement_by_helper=placement_by_helper,
             incident_adjacency=incident_adjacency,
+        )
+        section_id = helper_targets.get(helper_ref, resolved.section_id)
+        reason = resolved.reason
+        if section_id != resolved.section_id and helper_ref in helper_targets and resolved.reason in {
+            None,
+            "helper_unowned_fallback",
+            "note_unowned_fallback",
+        }:
+            reason = "helper_explicit_or_nearest_section"
+        ownership[helper_ref] = _OwnershipDecision(
+            ref=helper_ref,
+            section_id=section_id,
+            attachment_target=resolved.attachment_target,
+            reason=reason,
         )
 
     refs_by_section: dict[str, list[CanonicalNodeRef]] = {}
@@ -1193,13 +1225,148 @@ def _compile_sections(
             parent_id=section.parent_id if section is not None else None,
         )
         sections.extend(
-            _split_huge_section_for_wall(
+            _split_section_preserving_anchored_helpers(
                 compiled,
                 facts,
+                anchored_helper_targets=anchored_helper_targets,
                 enabled=huge_mode,
             )
         )
     return tuple(sections), MappingProxyType(dict(ownership))
+
+
+def _nearest_note_helper_sections(
+    facts: GraphInventoryFacts,
+    final_primary_owned: Mapping[CanonicalNodeRef, str],
+    section_defs: Mapping[str, LayoutSection],
+    generated_defs: Mapping[str, _GeneratedSection],
+) -> dict[CanonicalNodeRef, str]:
+    rects = _node_rects_by_ref(facts.node_furniture)
+    primary_centers = {
+        ref: _existing_rect_center(rect)
+        for ref, rect in rects.items()
+        if ref in final_primary_owned
+    }
+    if not primary_centers:
+        return {}
+    canonical_by_ref = {fact.ref: fact for fact in facts.canonical_refs}
+    section_title_by_id = _section_title_lookup(section_defs, generated_defs)
+    targets: dict[CanonicalNodeRef, str] = {}
+    for ref, rect in rects.items():
+        fact = canonical_by_ref.get(ref)
+        if fact is None or fact.class_type not in {"Note", "MarkdownNote"}:
+            continue
+        semantic_section = _semantic_note_section_id(fact.title or "", section_title_by_id)
+        if semantic_section is not None:
+            targets[ref] = semantic_section
+            continue
+        center = _existing_rect_center(rect)
+        candidates = [
+            (
+                _distance_sq(center, primary_center),
+                final_primary_owned[primary_ref],
+                _ref_sort_key(primary_ref),
+                primary_ref,
+            )
+            for primary_ref, primary_center in primary_centers.items()
+            if primary_ref.scope_path == ref.scope_path
+        ]
+        if not candidates:
+            continue
+        distance, section_id, _sort_key, _primary_ref = min(candidates)
+        if distance <= 500.0 * 500.0:
+            targets[ref] = section_id
+    return targets
+
+
+def _section_title_lookup(
+    section_defs: Mapping[str, LayoutSection],
+    generated_defs: Mapping[str, _GeneratedSection],
+) -> dict[str, str]:
+    titles: dict[str, str] = {}
+    for section_id, section in section_defs.items():
+        title = section.title or _title_for(section_id, section.kind)
+        titles[section_id] = title
+    for section_id, generated in generated_defs.items():
+        titles[section_id] = generated.title or _title_for(section_id, generated.kind)
+    return titles
+
+
+def _semantic_note_section_id(
+    note_title: str,
+    section_title_by_id: Mapping[str, str],
+) -> str | None:
+    text = note_title.lower()
+    preferences: list[tuple[str, ...]] = []
+    if any(token in text for token in ("video setting", "about size", "width", "height", "fps")):
+        preferences.append(("video settings", "settings"))
+    if any(token in text for token in ("lora", "model")):
+        preferences.append(("lora", "model"))
+    if any(token in text for token in ("prompt", "enhancer", "prompting")):
+        preferences.append(("prompt", "conditioning"))
+    if any(token in text for token in ("sampler", "preview", "tiny vae")):
+        preferences.append(("sampler", "decode"))
+    for tokens in preferences:
+        for token in tokens:
+            matches = [
+                (section_id, title)
+                for section_id, title in section_title_by_id.items()
+                if token in title.lower()
+            ]
+            if matches:
+                return sorted(matches, key=lambda item: (len(item[1]), item[0]))[0][0]
+    return None
+
+
+def _split_section_preserving_anchored_helpers(
+    section: _CompileSection,
+    facts: GraphInventoryFacts,
+    *,
+    anchored_helper_targets: Mapping[CanonicalNodeRef, CanonicalNodeRef],
+    enabled: bool,
+) -> tuple[_CompileSection, ...]:
+    anchored_helpers = tuple(ref for ref in section.node_refs if ref in anchored_helper_targets)
+    if not enabled or not anchored_helpers:
+        return _split_huge_section_for_wall(section, facts, enabled=enabled)
+
+    primary_section = _CompileSection(
+        id=section.id,
+        kind=section.kind,
+        title=section.title,
+        role_hint=section.role_hint,
+        node_refs=tuple(ref for ref in section.node_refs if ref not in anchored_helper_targets),
+        parent_id=section.parent_id,
+    )
+    split_sections = list(_split_huge_section_for_wall(primary_section, facts, enabled=enabled))
+    if not split_sections:
+        split_sections = [primary_section]
+
+    helpers_by_section_index: dict[int, list[CanonicalNodeRef]] = {}
+    for helper in anchored_helpers:
+        target = anchored_helper_targets[helper]
+        target_index = next(
+            (index for index, split in enumerate(split_sections) if target in split.node_refs),
+            0,
+        )
+        helpers_by_section_index.setdefault(target_index, []).append(helper)
+
+    result: list[_CompileSection] = []
+    for index, split in enumerate(split_sections):
+        helpers = tuple(sorted(helpers_by_section_index.get(index, ()), key=_ref_sort_key))
+        if not helpers:
+            result.append(split)
+            continue
+        result.append(
+            _CompileSection(
+                id=split.id,
+                kind=split.kind,
+                title=split.title,
+                role_hint=split.role_hint,
+                node_refs=tuple((*split.node_refs, *helpers)),
+                parent_id=split.parent_id,
+            )
+        )
+    return tuple(result)
 
 
 def _huge_existing_group_ownership(
@@ -1470,8 +1637,11 @@ def _split_huge_section_for_wall(
         buckets.items(),
         key=lambda item: (_wall_bucket_sort_key(item[0][0]), item[0][0]),
     ):
-        ordered_refs = tuple(sorted(refs, key=_ref_sort_key))
-        chunks = _wall_bucket_chunks(bucket_id, ordered_refs)
+        chunks = _wall_bucket_chunks(
+            bucket_id,
+            refs,
+            facts=facts,
+        )
         for index, chunk in enumerate(chunks):
             suffix = f"_{index + 1}" if len(chunks) > 1 else ""
             split.append(
@@ -1550,17 +1720,52 @@ def _refs_center(
 def _wall_bucket_chunks(
     bucket_id: str,
     refs: Sequence[CanonicalNodeRef],
+    *,
+    facts: GraphInventoryFacts | None = None,
 ) -> tuple[tuple[CanonicalNodeRef, ...], ...]:
     max_sizes = {
         "setget": 10_000,
         "labels": 6,
         "settings": 5,
+        "custom": 10_000,
     }
     max_size = max_sizes.get(bucket_id, 8)
+    if facts is not None and bucket_id in {"custom", "prep", "imageprep", "latent"}:
+        refs = _wall_spatially_ordered_refs(refs, facts)
+    else:
+        refs = tuple(sorted(refs, key=_ref_sort_key))
     return tuple(
         tuple(refs[index : index + max_size])
         for index in range(0, len(refs), max_size)
     )
+
+
+def _wall_spatially_ordered_refs(
+    refs: Sequence[CanonicalNodeRef],
+    facts: GraphInventoryFacts,
+) -> tuple[CanonicalNodeRef, ...]:
+    """Order huge fallback chunks by flow before ids.
+
+    The wall splitter is a last-resort path for nodes with weak semantic
+    classification.  Sorting those nodes by uid produces arbitrary "Custom N"
+    groups.  The original canvas position is a stronger signal for these
+    weakly-classified nodes because it preserves the user's existing local
+    neighborhoods; topology is only the tie-breaker.
+    """
+
+    rects = _node_rects_by_ref(facts.node_furniture)
+    return tuple(sorted(refs, key=lambda item: _wall_spatial_ref_sort_key(item, rects, facts)))
+
+
+def _wall_spatial_ref_sort_key(
+    ref: CanonicalNodeRef,
+    rects: Mapping[CanonicalNodeRef, _ExistingGroupRect],
+    facts: GraphInventoryFacts,
+) -> tuple[Any, ...]:
+    rect = rects.get(ref)
+    if rect is None:
+        return (1, *_local_ref_sort_key(ref, facts))
+    return (0, round(rect.x), round(rect.y), *_local_ref_sort_key(ref, facts))
 
 
 def _wall_bucket_for_ref(
@@ -1602,6 +1807,20 @@ def _wall_bucket_for_ref(
         return ("setget", "Set / Get Helpers", SECTION_KIND_UTILITY)
 
     if section.kind == SECTION_KIND_CUSTOM:
+        if any(token in text for token in ("display", "showanything", "label", "preview")):
+            return ("displays", "Displays / Labels", SECTION_KIND_UTILITY)
+        if any(token in text for token in ("forloop", "loop", "mathexpression", "math expression")):
+            return ("loop_control", "Loop / Math Control", SECTION_KIND_CONTROL)
+        if any(token in text for token in ("purgevram", "purge vram", "clear cache", "cleanup")):
+            return ("cleanup", "Cleanup", SECTION_KIND_UTILITY)
+        if any(token in text for token in ("modelsampling", "sageattention", "torchcompile", "compilemodel")):
+            return ("model_patching", "Model Patching", SECTION_KIND_LOADERS)
+        if any(token in text for token in ("loadvideo", "videoinfo", "video info")):
+            return ("video_io", "Video Input / Info", SECTION_KIND_UTILITY)
+        if any(token in text for token in ("wanvace", "wanvideo", "video continuation", "videocontinuation", "florence2")):
+            return ("video_generation", "Video Generation", SECTION_KIND_SAMPLING)
+        if any(token in text for token in ("colormatch", "color match")):
+            return ("color_match", "Color Match", SECTION_KIND_POSTPROCESS)
         if any(token in text for token in ("prompt", "text", "string", "enhance")):
             return ("prompt", "Prompt / Text", SECTION_KIND_CONDITIONING)
         if any(token in text for token in ("image", "resize", "preprocess", "latent")):
@@ -1638,15 +1857,22 @@ def _wall_bucket_sort_key(bucket_id: str) -> int:
         "settings": 5,
         "labels": 6,
         "setget": 7,
+        "video_io": 8,
         "prompt": 10,
         "conditioning": 11,
         "prep": 12,
         "imageprep": 13,
         "latent": 14,
+        "model_patching": 15,
+        "loop_control": 16,
+        "video_generation": 17,
         "sampling_settings": 20,
         "samplers": 21,
+        "color_match": 29,
         "upscale": 30,
         "postprocess": 31,
+        "displays": 32,
+        "cleanup": 33,
         "custom": 40,
     }
     return order.get(bucket_id, 999)
@@ -1798,6 +2024,7 @@ def _layout_sections_with_phases(
         spacing = _huge_wall_spacing(spacing)
     layout_options = _huge_wall_layout_options(options) if huge_mode else options
     pinned_refs = set() if huge_mode else _effective_pinned_refs(facts, layout_options, classification)
+    should_repair_huge_overlaps = huge_mode and _existing_primary_overlap_count(facts) > 0
     topology_by_section = {topology.section_id: topology for topology in section_topologies}
     placements = _section_placements(sections, section_topologies, facts, spacing, furniture_by_ref, layout_options)
     node_layouts = _global_placement_shim(
@@ -1815,10 +2042,22 @@ def _layout_sections_with_phases(
         trace=trace,
     )
     node_layouts = list(_sidecar_layout_shim(plan, node_layouts, spacing, trace=trace))
+    should_repair_helper_primary_overlaps = _helper_primary_layout_overlap_count(node_layouts, facts) > 0
+    if not huge_mode or should_repair_huge_overlaps or should_repair_helper_primary_overlaps:
+        node_layouts = list(_resolve_node_collisions(node_layouts, facts, spacing))
     if trace is not None:
         for layout in node_layouts:
             trace.record_global_layout(layout)
     group_layouts = _compiled_group_layouts(sections, node_layouts, facts, spacing, layout_options)
+    should_repair_generated_group_overlaps = huge_mode and _group_layout_overlap_count(group_layouts) > 0
+    if should_repair_huge_overlaps or should_repair_generated_group_overlaps:
+        node_layouts, group_layouts = _resolve_group_collisions(
+            sections,
+            node_layouts,
+            group_layouts,
+            facts,
+            spacing,
+        )
     group_layouts = _filter_group_layouts_for_policy(group_layouts, facts, layout_options)
     return _CompiledLayoutPlacement(
         node_layouts=tuple(sorted(node_layouts, key=lambda layout: _ref_sort_key(layout.ref))),
@@ -1942,6 +2181,12 @@ def _place_section_node_layouts(
             width=width,
             height=height,
             pinned=ref in pinned_refs,
+            auto_collapsed=_auto_collapse_setget_ref(
+                ref,
+                facts,
+                furniture,
+                minimize_setget_helpers=layout_options.minimize_setget_helpers,
+            ),
         )
         node_layouts.append(layout)
         if trace is not None:
@@ -1961,6 +2206,30 @@ def _sidecar_layout_shim(
         for layout in adjusted:
             trace.record_global_layout(layout)
     return adjusted
+
+
+def _helper_primary_layout_overlap_count(
+    node_layouts: Sequence[CompiledNodeLayout],
+    facts: GraphInventoryFacts,
+) -> int:
+    helper_refs = {fact.ref for fact in facts.canonical_refs if fact.is_helper}
+    helpers = [layout for layout in node_layouts if layout.ref in helper_refs]
+    primaries = [layout for layout in node_layouts if layout.ref not in helper_refs]
+    count = 0
+    for helper in helpers:
+        for primary in primaries:
+            if _layouts_violate_gutter(helper, primary, 0):
+                count += 1
+    return count
+
+
+def _group_layout_overlap_count(group_layouts: Sequence[CompiledGroupLayout]) -> int:
+    count = 0
+    for index, left in enumerate(group_layouts):
+        for right in group_layouts[index + 1:]:
+            if _group_layouts_violate_gutter(left, right, 0):
+                count += 1
+    return count
 
 
 def _filter_group_layouts_for_policy(
@@ -2008,6 +2277,8 @@ def _effective_grouping_policy(
     if nested_scope_count and root_node_count <= 12 and overlap_count == 0:
         return "none"
     if overlap_count > 0:
+        return "stage"
+    if node_count > 0 and helper_count == node_count:
         return "stage"
     if node_count >= 15 or (node_count >= 12 and branch_count >= 4) or helper_count >= 3:
         return "stage"
@@ -2251,17 +2522,17 @@ def _wall_section_rank(section: _CompileSection) -> int:
     if "label" in title or "note" in title:
         return 7
     bucket_id = _wall_bucket_id_from_section_id(section.id)
-    if bucket_id in {"models", "clip", "vae", "lora", "input", "settings"}:
+    if bucket_id in {"models", "clip", "vae", "lora", "input", "settings", "model_patching", "video_io"}:
         return 0
-    if bucket_id in {"labels", "prompt", "conditioning"}:
+    if bucket_id in {"labels", "prompt", "conditioning", "displays"}:
         return 1
     if bucket_id == "setget":
         return 0
-    if bucket_id in {"custom", "prep", "imageprep", "latent"}:
+    if bucket_id in {"custom", "prep", "imageprep", "latent", "loop_control"}:
         return 2
-    if bucket_id in {"sampling_settings", "samplers"}:
+    if bucket_id in {"sampling_settings", "samplers", "video_generation"}:
         return 3
-    if bucket_id in {"upscale", "postprocess"}:
+    if bucket_id in {"upscale", "postprocess", "color_match", "cleanup"}:
         return 5
     if section.kind == SECTION_KIND_OUTPUT or "output" in title or "save" in title:
         return 6
@@ -2541,19 +2812,26 @@ def _local_section_layout(
     }
     if not refs:
         return _LocalSectionLayout(template="single", offsets={}, width=0, height=0)
-
     sidecar_refs = tuple(
         ref
         for ref in refs
-        if section.id != "__helpers__" and _layout_behavior_for_ref(ref, facts) == LAYOUT_BEHAVIOR_SIDECAR
+        if section.id != "__helpers__" and _is_local_sidecar_ref(ref, facts, plan)
     )
     sidecar_ref_set = set(sidecar_refs)
     layout_refs = tuple(ref for ref in refs if ref not in sidecar_ref_set)
-    template_refs = layout_refs if layout_refs else refs
+    template_refs = _template_layout_refs(layout_refs if layout_refs else refs, plan)
+    if not template_refs:
+        template_refs = layout_refs if layout_refs else refs
+    helper_reserves = _anchored_helper_reserves(refs, sizes, plan, spacing)
+    template_sizes = {
+        ref: _reserved_template_size(ref, sizes[ref], helper_reserves)
+        for ref in template_refs
+    }
+
     edges = _section_effective_edges(facts, template_refs)
     if _use_large_section_clusters(section, facts, edges):
         template = "grid"
-        offsets = _large_section_cluster_offsets(template_refs, edges, facts, sizes, spacing)
+        offsets = _large_section_cluster_offsets(template_refs, edges, facts, template_sizes, spacing)
     else:
         template_section = (
             section
@@ -2568,7 +2846,12 @@ def _local_section_layout(
             )
         )
         template = _select_section_template(template_section, facts, edges)
-        offsets = _offsets_for_template(template, template_refs, edges, facts, sizes, spacing)
+        if sidecar_refs and template == "alternatives":
+            template = "row"
+        offsets = _offsets_for_template(template, template_refs, edges, facts, template_sizes, spacing)
+    offsets = _restore_reserved_anchor_offsets(offsets, helper_reserves)
+    if plan is not None:
+        offsets = _apply_local_helper_offsets(section, plan, offsets, sizes, spacing)
     placement_choices: dict[CanonicalNodeRef, str] = {}
     if sidecar_refs:
         offsets, sidecar_choices = _pack_sidecars(
@@ -2592,6 +2875,100 @@ def _local_section_layout(
         height=height,
         placement_choices=placement_choices,
     )
+
+
+def _is_local_sidecar_ref(
+    ref: CanonicalNodeRef,
+    facts: GraphInventoryFacts,
+    plan: LayoutPlanV1 | None,
+) -> bool:
+    if _layout_behavior_for_ref(ref, facts) == LAYOUT_BEHAVIOR_SIDECAR:
+        return True
+    placement = _helper_placement_for_ref(ref, plan)
+    return placement is not None and placement.kind in {
+        HELPER_PLACEMENT_NEAR_PRODUCER,
+        HELPER_PLACEMENT_NEAR_CONSUMER,
+    }
+
+
+def _template_layout_refs(
+    refs: Sequence[CanonicalNodeRef],
+    plan: LayoutPlanV1 | None,
+) -> tuple[CanonicalNodeRef, ...]:
+    if plan is None:
+        return tuple(refs)
+    anchored_helpers = {
+        placement.helper
+        for placement in plan.helper_placements
+        if placement.kind
+        in {
+            HELPER_PLACEMENT_NEAR_PRODUCER,
+            HELPER_PLACEMENT_NEAR_CONSUMER,
+            HELPER_PLACEMENT_EDGE_PATH,
+        }
+    }
+    return tuple(ref for ref in refs if ref not in anchored_helpers)
+
+
+def _anchored_helper_reserves(
+    refs: Sequence[CanonicalNodeRef],
+    sizes: Mapping[CanonicalNodeRef, tuple[int, int]],
+    plan: LayoutPlanV1 | None,
+    spacing: _Spacing,
+) -> dict[CanonicalNodeRef, tuple[int, int, int, int]]:
+    if plan is None:
+        return {}
+    section_refs = set(refs)
+    by_anchor: dict[tuple[str, CanonicalNodeRef], list[CanonicalNodeRef]] = {}
+    for placement in plan.helper_placements:
+        if placement.kind not in {HELPER_PLACEMENT_NEAR_PRODUCER, HELPER_PLACEMENT_NEAR_CONSUMER}:
+            continue
+        if placement.helper not in section_refs or placement.target not in section_refs:
+            continue
+        if placement.helper not in sizes or placement.target not in sizes:
+            continue
+        by_anchor.setdefault((placement.kind, placement.target), []).append(placement.helper)
+
+    anchor_gap = max(24, spacing.node_gap_y // 2)
+    stack_gap = max(8, spacing.node_gap_y // 4)
+    reserves: dict[CanonicalNodeRef, tuple[int, int, int, int]] = {}
+    for (kind, target), helpers in by_anchor.items():
+        target_width, target_height = sizes[target]
+        max_width = max((sizes[helper][0] for helper in helpers), default=0)
+        total_height = sum(sizes[helper][1] for helper in helpers) + stack_gap * max(0, len(helpers) - 1)
+        side = max_width + anchor_gap if max_width else 0
+        vertical = max(0, round((total_height - target_height) / 2))
+        left, right, top, bottom = reserves.get(target, (0, 0, 0, 0))
+        if kind == HELPER_PLACEMENT_NEAR_CONSUMER:
+            left = max(left, side)
+        else:
+            right = max(right, side)
+        top = max(top, vertical)
+        bottom = max(bottom, vertical)
+        reserves[target] = (left, right, top, bottom)
+    return reserves
+
+
+def _reserved_template_size(
+    ref: CanonicalNodeRef,
+    size: tuple[int, int],
+    reserves: Mapping[CanonicalNodeRef, tuple[int, int, int, int]],
+) -> tuple[int, int]:
+    left, right, top, bottom = reserves.get(ref, (0, 0, 0, 0))
+    return (size[0] + left + right, size[1] + top + bottom)
+
+
+def _restore_reserved_anchor_offsets(
+    offsets: Mapping[CanonicalNodeRef, tuple[int, int]],
+    reserves: Mapping[CanonicalNodeRef, tuple[int, int, int, int]],
+) -> dict[CanonicalNodeRef, tuple[int, int]]:
+    adjusted = dict(offsets)
+    for ref, (left, _right, top, _bottom) in reserves.items():
+        if ref not in adjusted:
+            continue
+        x, y = adjusted[ref]
+        adjusted[ref] = (x + left, y + top)
+    return adjusted
 
 
 def _select_section_template(
@@ -2640,7 +3017,6 @@ def _constant_like_refs(
         title = str(getattr(fact, "title", "") or "").lower()
         if (
             "constant" in class_type
-            or "primitive" in class_type
             or title in {"fps", "width", "height"}
             or "length" in title
         ):
@@ -2666,27 +3042,16 @@ def _offsets_for_template(
         return _layout_columns((ordered,), sizes, gap_x, gap_y)
     if template == "row":
         primary_refs: list[CanonicalNodeRef] = []
-        sidecar_refs: list[CanonicalNodeRef] = []
         note_refs: list[CanonicalNodeRef] = []
         for ref in ordered:
             behavior = _layout_behavior_for_ref(ref, facts)
             if behavior == LAYOUT_BEHAVIOR_NOTE:
                 note_refs.append(ref)
-            elif behavior in (LAYOUT_BEHAVIOR_SIDECAR,):
-                sidecar_refs.append(ref)
             else:
                 primary_refs.append(ref)
-        primary_offsets = _layout_primary_rows(primary_refs, sizes, gap_x, gap_y)
-        primary_width, primary_height = _local_bounds(primary_offsets, sizes)
+        primary_offsets = _layout_wrapped_row(primary_refs, sizes, gap_x, gap_y, COMPILE_MAX_ROW_COLUMNS)
+        primary_width, _primary_height = _local_bounds(primary_offsets, sizes)
         result: dict[CanonicalNodeRef, tuple[int, int]] = dict(primary_offsets)
-        # Place sidecars below the primary rows in their own row.
-        if sidecar_refs:
-            sidecar_x = 0
-            sidecar_y = primary_height + gap_y if primary_refs else 0
-            for ref in sidecar_refs:
-                result[ref] = (sidecar_x, sidecar_y)
-                sidecar_x += sizes[ref][0] + gap_x
-        # Place notes to the right of the primary area (like a sidebar).
         if note_refs:
             note_x = primary_width + gap_x if primary_refs else 0
             note_y = 0
@@ -2787,7 +3152,11 @@ def _large_section_cluster_offsets(
     row_x = 0
     cluster_gap_x = max(spacing.section_gap_x, spacing.node_gap_y * 2)
     cluster_gap_y = max(spacing.section_gap_y, spacing.node_gap_y)
-    row_width_budget = max(spacing.island_gap_x, spacing.section_gap_x * 8)
+    max_cluster_width = max((sizes[ref][0] for ref in refs), default=DEFAULT_NODE_WIDTH)
+    row_width_budget = (
+        max_cluster_width * COMPILE_MAX_ROW_COLUMNS
+        + cluster_gap_x * max(0, COMPILE_MAX_ROW_COLUMNS - 1)
+    )
     row_height = 0
     for cluster in clusters:
         cluster_width = max((sizes[ref][0] for ref in cluster), default=0)
@@ -3148,6 +3517,7 @@ def _apply_local_helper_offsets(
     adjusted = dict(offsets)
     section_refs = set(section.node_refs)
     anchor_gap = max(24, spacing.node_gap_y // 2)
+    near_placements_by_anchor: dict[tuple[str, CanonicalNodeRef], list[Any]] = {}
     for placement in sorted(plan.helper_placements, key=lambda item: _ref_sort_key(item.helper)):
         helper = placement.helper
         if helper not in section_refs or helper not in sizes:
@@ -3169,13 +3539,29 @@ def _apply_local_helper_offsets(
         target = placement.target
         if target not in adjusted or target not in sizes:
             continue
+        if placement.kind in {HELPER_PLACEMENT_NEAR_PRODUCER, HELPER_PLACEMENT_NEAR_CONSUMER}:
+            near_placements_by_anchor.setdefault((placement.kind, target), []).append(placement)
+    stack_gap = max(8, spacing.node_gap_y // 4)
+    for (kind, target), placements in sorted(
+        near_placements_by_anchor.items(),
+        key=lambda item: (item[0][0], _ref_sort_key(item[0][1])),
+    ):
+        if target not in adjusted or target not in sizes:
+            continue
         target_x, target_y = adjusted[target]
         target_width, target_height = sizes[target]
-        y = target_y + max(0, (target_height - helper_height) // 2)
-        if placement.kind == HELPER_PLACEMENT_NEAR_PRODUCER:
-            adjusted[helper] = (target_x + target_width + anchor_gap, y)
-        elif placement.kind == HELPER_PLACEMENT_NEAR_CONSUMER:
-            adjusted[helper] = (target_x - helper_width - anchor_gap, y)
+        helpers = [placement.helper for placement in sorted(placements, key=lambda item: _ref_sort_key(item.helper))]
+        total_height = sum(sizes[helper][1] for helper in helpers) + stack_gap * max(0, len(helpers) - 1)
+        y = round(target_y + (target_height - total_height) / 2)
+        max_width = max(sizes[helper][0] for helper in helpers)
+        for helper in helpers:
+            helper_width, helper_height = sizes[helper]
+            if kind == HELPER_PLACEMENT_NEAR_PRODUCER:
+                x = target_x + target_width + anchor_gap
+            else:
+                x = target_x - max_width - anchor_gap + (max_width - helper_width)
+            adjusted[helper] = (x, y)
+            y += helper_height + stack_gap
     return adjusted
 
 
@@ -3385,6 +3771,37 @@ def _layout_columns(
     return offsets
 
 
+def _layout_wrapped_row(
+    refs: Sequence[CanonicalNodeRef],
+    sizes: Mapping[CanonicalNodeRef, tuple[int, int]],
+    gap_x: int,
+    gap_y: int,
+    max_columns: int,
+) -> dict[CanonicalNodeRef, tuple[int, int]]:
+    if not refs:
+        return {}
+    columns = max(1, min(max_columns, len(refs)))
+    rows = tuple(
+        tuple(refs[index : index + columns])
+        for index in range(0, len(refs), columns)
+    )
+    column_widths = [
+        max((sizes[row[column]][0] for row in rows if column < len(row)), default=0)
+        for column in range(columns)
+    ]
+    row_heights = [
+        max((sizes[ref][1] for ref in row), default=0)
+        for row in rows
+    ]
+    column_x = [sum(column_widths[:column]) + column * gap_x for column in range(columns)]
+    row_y = [sum(row_heights[:row]) + row * gap_y for row in range(len(rows))]
+    return {
+        ref: (column_x[column], row_y[row])
+        for row, row_refs in enumerate(rows)
+        for column, ref in enumerate(row_refs)
+    }
+
+
 def _layout_grid(
     refs: Sequence[CanonicalNodeRef],
     sizes: Mapping[CanonicalNodeRef, tuple[int, int]],
@@ -3396,6 +3813,7 @@ def _layout_grid(
     columns = 1
     while columns * columns < len(refs):
         columns += 1
+    columns = min(columns, COMPILE_MAX_ROW_COLUMNS)
     rows = (len(refs) + columns - 1) // columns
     column_widths = [
         max((sizes[refs[row * columns + column]][0] for row in range(rows) if row * columns + column < len(refs)), default=0)
@@ -4778,6 +5196,8 @@ def _compiled_helper_distance_violations(
         if not neighbor_rects:
             continue
         distance = min(hypot(helper_rect.center[0] - rect.center[0], helper_rect.center[1] - rect.center[1]) for rect in neighbor_rects)
+        if len(neighbor_rects) >= 2:
+            distance = min(distance, _helper_bridge_distance(helper_rect, neighbor_rects))
         max_distance = max(max_distance, distance)
         if distance > COMPILE_HELPER_DISTANCE_THRESHOLD:
             violations.append(
@@ -4788,6 +5208,33 @@ def _compiled_helper_distance_violations(
                 }
             )
     return max_distance, tuple(violations)
+
+
+def _helper_bridge_distance(helper_rect: _CompileRect, neighbor_rects: Sequence[_CompileRect]) -> float:
+    best = float("inf")
+    helper = helper_rect.center
+    for index, left in enumerate(neighbor_rects):
+        for right in neighbor_rects[index + 1:]:
+            best = min(best, _point_to_segment_distance(helper, left.center, right.center))
+    return best
+
+
+def _point_to_segment_distance(
+    point: tuple[float, float],
+    start: tuple[float, float],
+    end: tuple[float, float],
+) -> float:
+    px, py = point
+    sx, sy = start
+    ex, ey = end
+    dx = ex - sx
+    dy = ey - sy
+    length_sq = dx * dx + dy * dy
+    if length_sq <= 0:
+        return hypot(px - sx, py - sy)
+    t = max(0.0, min(1.0, ((px - sx) * dx + (py - sy) * dy) / length_sq))
+    closest = (sx + t * dx, sy + t * dy)
+    return hypot(px - closest[0], py - closest[1])
 
 
 def _compiled_helper_neighbor_refs(
@@ -5040,6 +5487,7 @@ def _apply_floating_helper_positions(
                 width=layout.width,
                 height=layout.height,
                 pinned=layout.pinned,
+                auto_collapsed=layout.auto_collapsed,
             )
         )
     return tuple(adjusted)
@@ -5124,6 +5572,7 @@ def _rounded_node_layout(layout: CompiledNodeLayout) -> CompiledNodeLayout:
         width=max(1, width),
         height=max(1, height),
         pinned=layout.pinned,
+        auto_collapsed=layout.auto_collapsed,
     )
 
 
@@ -5170,6 +5619,7 @@ def _nudge_layout_clear_of_obstacles(
             width=candidate.width,
             height=candidate.height,
             pinned=candidate.pinned,
+            auto_collapsed=candidate.auto_collapsed,
         )
     return candidate
 
@@ -5274,6 +5724,115 @@ def _compiled_group_layouts(
             groups_by_id.values(),
             key=lambda layout: (-_scope_depth(layout.scope_path), layout.scope_path, layout.id),
         )
+    )
+
+
+def _resolve_group_collisions(
+    sections: Sequence[_CompileSection],
+    node_layouts: Sequence[CompiledNodeLayout],
+    group_layouts: Sequence[CompiledGroupLayout],
+    facts: GraphInventoryFacts,
+    spacing: _Spacing,
+) -> tuple[tuple[CompiledNodeLayout, ...], tuple[CompiledGroupLayout, ...]]:
+    """Move whole huge-wall sections down until generated group boxes clear.
+
+    The huge-wall packer preserves compact visual columns, so independent
+    semantic buckets can legitimately have overlapping vertical spans after
+    node-level collision resolution.  Since groups are derived from section
+    boxes, resolve that remaining conflict by translating the later section as
+    a unit and then recomputing groups from the shifted nodes.
+    """
+    if not group_layouts:
+        return tuple(node_layouts), tuple(group_layouts)
+
+    section_by_id = {section.id: section for section in sections}
+    primary_group_by_section = {
+        group.id: group
+        for group in group_layouts
+        if group.id in section_by_id
+    }
+    if len(primary_group_by_section) < 2:
+        return tuple(node_layouts), tuple(group_layouts)
+
+    shift_by_section: dict[str, int] = {}
+    placed: list[CompiledGroupLayout] = []
+    for group in sorted(
+        primary_group_by_section.values(),
+        key=lambda item: (item.y, item.x, item.id),
+    ):
+        shift = shift_by_section.get(group.id, 0)
+        candidate = _shift_group_layout(group, shift)
+        for _pass in range(len(placed) + 1):
+            colliding = [
+                obstacle
+                for obstacle in placed
+                if _group_layouts_violate_gutter(candidate, obstacle, MIN_GROUP_GUTTER)
+            ]
+            if not colliding:
+                break
+            next_y = max(obstacle.y + obstacle.height + MIN_GROUP_GUTTER for obstacle in colliding)
+            delta = max(0, next_y - candidate.y)
+            shift += delta
+            candidate = _shift_group_layout(group, shift)
+        shift_by_section[group.id] = shift
+        placed.append(candidate)
+
+    if not any(shift_by_section.values()):
+        return tuple(node_layouts), tuple(group_layouts)
+
+    shifted_nodes = tuple(
+        _shift_node_layout(layout, shift_by_section.get(layout.section_id, 0))
+        for layout in node_layouts
+    )
+    shifted_groups = _compiled_group_layouts(sections, shifted_nodes, facts, spacing)
+    return shifted_nodes, shifted_groups
+
+
+def _shift_node_layout(layout: CompiledNodeLayout, dy: int) -> CompiledNodeLayout:
+    if dy == 0:
+        return layout
+    return CompiledNodeLayout(
+        ref=layout.ref,
+        section_id=layout.section_id,
+        role_hint=layout.role_hint,
+        x=layout.x,
+        y=layout.y + dy,
+        width=layout.width,
+        height=layout.height,
+        pinned=layout.pinned,
+        auto_collapsed=layout.auto_collapsed,
+    )
+
+
+def _shift_group_layout(group: CompiledGroupLayout, dy: int) -> CompiledGroupLayout:
+    if dy == 0:
+        return group
+    return CompiledGroupLayout(
+        id=group.id,
+        scope_path=group.scope_path,
+        title=group.title,
+        kind=group.kind,
+        role_hint=group.role_hint,
+        node_refs=group.node_refs,
+        x=group.x,
+        y=group.y + dy,
+        width=group.width,
+        height=group.height,
+        color=group.color,
+        template=group.template,
+    )
+
+
+def _group_layouts_violate_gutter(
+    left: CompiledGroupLayout,
+    right: CompiledGroupLayout,
+    gutter: int,
+) -> bool:
+    return not (
+        left.x + left.width + gutter <= right.x
+        or right.x + right.width + gutter <= left.x
+        or left.y + left.height + gutter <= right.y
+        or right.y + right.height + gutter <= left.y
     )
 
 
@@ -5873,6 +6432,9 @@ def _entry_for_layout(
     furniture: NodeFurnitureFact | None,
 ) -> Mapping[str, Any]:
     flags = _thaw_jsonish(furniture.flags) if furniture is not None else {}
+    if layout.auto_collapsed:
+        flags = dict(flags) if isinstance(flags, Mapping) else {}
+        flags["collapsed"] = True
     properties = _thaw_jsonish(furniture.properties) if furniture is not None else {}
     mode = furniture.mode if furniture is not None and isinstance(furniture.mode, int) else 0
     return {
@@ -5944,14 +6506,48 @@ def _node_size_for_ref(
     preserve: bool,
     minimize_setget_helpers: bool,
 ) -> tuple[int, int]:
-    width, height = _node_size(furniture, preserve=preserve)
+    source_size = _size(furniture.size) if furniture is not None else None
     if (
         minimize_setget_helpers
         and _large_workflow_soft_quality_gate(facts)
         and _is_setget_ref(ref, facts)
     ):
-        return (max(120, round(width * 0.48)), max(44, round(height * 0.44)))
+        source_width, source_height = source_size if source_size is not None else _node_size(furniture, preserve=preserve)
+        return (
+            min(164, max(112, round(source_width * 0.38))),
+            min(48, max(36, round(source_height * 0.72))),
+        )
+    if _furniture_is_collapsed(furniture) and source_size is not None:
+        return source_size
+    width, height = _node_size(furniture, preserve=preserve)
+    if not preserve and furniture is not None:
+        measured = source_size
+        if measured is not None:
+            measured_width, measured_height = measured
+            width = max(width, measured_width)
+            height = max(height, measured_height)
     return (width, height)
+
+
+def _auto_collapse_setget_ref(
+    ref: CanonicalNodeRef,
+    facts: GraphInventoryFacts,
+    furniture: NodeFurnitureFact | None,
+    *,
+    minimize_setget_helpers: bool,
+) -> bool:
+    return (
+        minimize_setget_helpers
+        and _large_workflow_soft_quality_gate(facts)
+        and _is_setget_ref(ref, facts)
+        and not _furniture_is_collapsed(furniture)
+    )
+
+
+def _furniture_is_collapsed(furniture: NodeFurnitureFact | None) -> bool:
+    if furniture is None:
+        return False
+    return _truthy_flag(furniture.flags, "collapsed")
 
 
 def _is_setget_ref(ref: CanonicalNodeRef, facts: GraphInventoryFacts) -> bool:
@@ -5996,8 +6592,12 @@ def _helper_section_id(
     placement: Any,
     primary_owned: Mapping[CanonicalNodeRef, str],
 ) -> str:
-    if placement.section_id is not None:
-        return placement.section_id
+    if placement.kind == HELPER_PLACEMENT_INSIDE_SECTION:
+        for ref in (placement.target, placement.source, placement.destination):
+            if ref in primary_owned:
+                return primary_owned[ref]
+        if placement.section_id is not None:
+            return placement.section_id
     if placement.kind in {HELPER_PLACEMENT_NEAR_PRODUCER, HELPER_PLACEMENT_NEAR_CONSUMER}:
         if placement.target in primary_owned:
             return primary_owned[placement.target]
@@ -6008,10 +6608,6 @@ def _helper_section_id(
         if source_section is not None and source_section == destination_section:
             return source_section
         return "__helpers__"
-    if placement.kind == HELPER_PLACEMENT_INSIDE_SECTION:
-        for ref in (placement.target, placement.source, placement.destination):
-            if ref in primary_owned:
-                return primary_owned[ref]
     return "__helpers__"
 
 

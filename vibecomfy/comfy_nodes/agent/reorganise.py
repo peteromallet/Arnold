@@ -437,7 +437,7 @@ def _sidecar_from_payload(payload: Mapping[str, Any]) -> Mapping[str, Any] | Non
 
 
 def _plan_payload(result: Any) -> dict[str, Any]:
-    return {
+    return _json_safe({
         "status": "ok" if result.ok else "failed",
         "plan_source": result.plan_source,
         "plan": result.plan.to_json() if result.plan is not None else None,
@@ -459,7 +459,7 @@ def _plan_payload(result: Any) -> dict[str, Any]:
         "second_stage_results": [
             second_stage.to_json() for second_stage in result.second_stage_results
         ],
-    }
+    })
 
 
 def _metrics_payload(result: Any) -> dict[str, Any]:
@@ -483,7 +483,7 @@ def _metrics_payload(result: Any) -> dict[str, Any]:
             "node_layout_count": len(result.compile_result.node_layouts),
             "group_layout_count": len(result.compile_result.group_layouts),
         }
-    return payload
+    return _json_safe(payload)
 
 
 def _evidence_payload(
@@ -494,7 +494,7 @@ def _evidence_payload(
     patch_apply_error: Mapping[str, Any] | None = None,
     has_candidate: bool = False,
 ) -> dict[str, Any]:
-    return {
+    return _json_safe({
         "apply_data": result.apply_data.to_json(),
         "patch_apply": (
             patch_apply.to_json(include_ui_json=False) if patch_apply is not None else None
@@ -509,7 +509,7 @@ def _evidence_payload(
         "layout_evidence_changed": _layout_evidence_changed(result, patch_apply),
         "layout_only_structural_noop": result.apply_data.layout_only_structural_noop
         and (patch_apply.layout_only_structural_noop if patch_apply is not None else False),
-    }
+    })
 
 
 def _render_report(result: Any, *, candidate_written: bool) -> str:
@@ -650,13 +650,13 @@ def _diagnostic_issues(result: Any) -> list[dict[str, Any]]:
         *result.compile_diagnostics,
     ):
         if hasattr(item, "to_json"):
-            payload = item.to_json()
+            payload = _json_safe(item.to_json())
             if isinstance(payload, dict):
                 issues.append(payload)
     if result.validation_report is not None:
         issues.extend(
             item
-            for item in result.validation_report.to_json().get("diagnostics", [])
+            for item in _json_safe(result.validation_report.to_json()).get("diagnostics", [])
             if isinstance(item, dict)
         )
     return issues
@@ -691,7 +691,17 @@ def _relative_artifact_paths(state: Any) -> dict[str, str]:
 
 
 def _json_safe(value: Any) -> Any:
-    return json.loads(json.dumps(value, sort_keys=True, default=str))
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list | tuple | set | frozenset):
+        return [_json_safe(item) for item in value]
+    try:
+        json.dumps(value)
+    except TypeError:
+        if hasattr(value, "to_json"):
+            return _json_safe(value.to_json())
+        return str(value)
+    return value
 
 
 def _stage_snapshots(results: Any) -> list[Any]:

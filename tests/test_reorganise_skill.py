@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+from types import MappingProxyType
+from types import SimpleNamespace
 
 from vibecomfy.comfy_nodes.agent.edit import handle_agent_edit, read_session_chat
+from vibecomfy.comfy_nodes.agent.reorganise import _metrics_payload
 from vibecomfy.comfy_nodes.agent.session import payload_hash, read_state, structural_graph_hash
 
 
@@ -110,6 +113,53 @@ def test_explicit_reorganise_skill_runs_inside_durable_agent_turn(tmp_path) -> N
     assert persisted["candidate"]["graph"] == result["candidate"]["graph"]
     state = read_state(tmp_path / "reorganise-session")
     assert state["turns"][result["turn_id"]]["state"] == "candidate"
+
+
+def test_reorganise_metrics_thaw_mappingproxy_diagnostics() -> None:
+    """Compile diagnostics can carry frozen edge-pair mappings."""
+
+    result = SimpleNamespace(
+        assessment=SimpleNamespace(to_json=lambda: {"diagnostics": [], "issues": [], "verdict": "ok"}),
+        graph_summary=SimpleNamespace(to_json=lambda: {"nodes": []}),
+        projection=SimpleNamespace(
+            token_estimate=1,
+            scope_count=1,
+            canonical_ref_count=1,
+            summarized=False,
+            truncated=False,
+        ),
+        compile_result=SimpleNamespace(
+            ok=True,
+            options=SimpleNamespace(to_json=lambda: {}),
+            report=SimpleNamespace(
+                to_json=lambda: {
+                    "diagnostics": [
+                        {
+                            "code": "edge_crossings",
+                            "detail": {
+                                "edge_pairs": [
+                                    [
+                                        MappingProxyType({"source": ["", "1"], "target": ["", "2"]}),
+                                        MappingProxyType({"source": ["", "3"], "target": ["", "4"]}),
+                                    ]
+                                ]
+                            },
+                        }
+                    ]
+                }
+            ),
+            node_layouts=[object()],
+            group_layouts=[],
+        ),
+    )
+
+    payload = _metrics_payload(result)
+
+    assert payload["compile"]["report"]["diagnostics"][0]["detail"]["edge_pairs"][0][0] == {
+        "source": ["", "1"],
+        "target": ["", "2"],
+    }
+    json.dumps(payload, sort_keys=True)
 
 
 def test_candidate_mode_reorganise_uses_durable_candidate_lifecycle(

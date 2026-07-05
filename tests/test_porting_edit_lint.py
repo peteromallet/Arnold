@@ -667,6 +667,58 @@ def test_upsert_link_bad_output_slot_name() -> None:
     assert result.issues[0].code == "bad_output_slot"
 
 
+def test_upsert_link_accepts_schema_output_name_for_physical_output_slot() -> None:
+    """Lint matches apply semantics for schema-named outputs."""
+    from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
+
+    graph = {
+        "nodes": [
+            {
+                "id": 124,
+                "type": "QwenEmotionNode",
+                "properties": {"vibecomfy_uid": "124"},
+                "outputs": [{"name": "output_0", "slot_index": 0, "type": ""}],
+            },
+            {
+                "id": 138,
+                "type": "IndexTTSEngineNode",
+                "properties": {"vibecomfy_uid": "138"},
+                "inputs": [{"name": "emotion_control", "type": "*"}],
+            },
+        ],
+        "links": [],
+    }
+
+    class _StubProvider:
+        def get_schema(self, class_type: str) -> NodeSchema | None:
+            if class_type == "QwenEmotionNode":
+                return NodeSchema(
+                    class_type="QwenEmotionNode",
+                    pack=None,
+                    inputs={},
+                    outputs=[OutputSpec(name="emotion_control", type="EMOTION_CONTROL")],
+                )
+            if class_type == "IndexTTSEngineNode":
+                return NodeSchema(
+                    class_type="IndexTTSEngineNode",
+                    pack=None,
+                    inputs={"emotion_control": InputSpec(type="*")},
+                    outputs=[],
+                )
+            return None
+
+    op = UpsertLinkOp(
+        op="upsert_link",
+        source=LinkSourceRef(scope_path="", uid="124", output_slot="emotion_control"),
+        target=LinkTargetRef(scope_path="", uid="138", input_field="emotion_control"),
+    )
+    result = lint_delta([op], LintIndex.build(graph), schema_provider=_StubProvider())
+
+    assert result.passed_count == 1
+    assert result.rejected_count == 0
+    assert result.issues == ()
+
+
 def test_upsert_link_missing_target_input() -> None:
     """upsert_link with a target input that doesn't exist is rejected."""
     idx = _index()

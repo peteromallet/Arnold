@@ -347,8 +347,9 @@ def _write_preview_artifacts(
     )
     _write_text_artifact(report_path, report_text)
 
+    debug_bundle = _writes_debug_bundle(debug_artifacts)
     debug_artifact_names: dict[str, str | None] = {}
-    if any(debug_artifacts.values()):
+    if debug_bundle:
         if candidate_patch is not None:
             _write_json_artifact(debug_patch_path, candidate_patch)
             debug_artifact_names["candidate_patch_json"] = debug_patch_path.name
@@ -388,15 +389,16 @@ def _write_preview_artifacts(
             **debug_artifact_names,
         },
         "candidate_ui_sha256": candidate_sha256,
+        "visualization_error": None,
         "apply_data": result.apply_data.to_json(),
         "options": result.options.to_json(),
         "plan_source": result.plan_source,
         "sanitized_report_text": report_text,
     }
-    if any(debug_artifacts.values()):
+    if debug_bundle:
         manifest["artifacts"]["manifest_json"] = debug_manifest_path.name
     _write_json_artifact(manifest_path, manifest)
-    if any(debug_artifacts.values()):
+    if debug_bundle:
         _write_json_artifact(debug_manifest_path, manifest)
 
     return {
@@ -405,6 +407,14 @@ def _write_preview_artifacts(
         "manifest_path": manifest_path.name,
         "artifacts": manifest["artifacts"],
     }
+
+
+def _writes_debug_bundle(debug_artifacts: Mapping[str, bool]) -> bool:
+    return bool(
+        debug_artifacts.get("debug_layout")
+        or debug_artifacts.get("metrics")
+        or debug_artifacts.get("trace_layout")
+    )
 
 
 def _plan_payload(result: Any) -> dict[str, Any]:

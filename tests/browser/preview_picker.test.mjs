@@ -9,7 +9,7 @@ import {
 
 const LS_DEMO_PICKER_ENABLED = "vibecomfy_demo_picker_enabled";
 
-function waitFor(predicate, { attempts = 50 } = {}) {
+function waitFor(predicate, { attempts = 50, label = "condition" } = {}) {
   return new Promise((resolve, reject) => {
     let index = 0;
     function tick() {
@@ -18,7 +18,7 @@ function waitFor(predicate, { attempts = 50 } = {}) {
         return;
       }
       if (index >= attempts) {
-        reject(new Error("waitFor timed out"));
+        reject(new Error(`waitFor timed out: ${label}`));
         return;
       }
       index += 1;
@@ -39,7 +39,7 @@ function makeScenarioResponse(overrides = {}) {
         query: "Add a demo node",
       },
       original_graph: {
-        nodes: [{ id: 1, type: "Input", properties: { vibecomfy_uid: "uid-1" } }],
+        nodes: [{ id: 1, type: "Input", pos: [100, 200], properties: { vibecomfy_uid: "uid-1" } }],
         links: [],
       },
       candidate_graph: {
@@ -107,6 +107,7 @@ function makePanelState() {
 test("disabled picker returns null and emits no UI or network traffic", async () => {
   const harness = await createBrowserHarness();
   try {
+    globalThis.localStorage.setItem(LS_DEMO_PICKER_ENABLED, "0");
     const picker = await harness.loadPreviewPicker();
     const shell = harness.document.createElement("div");
     const result = picker.installPreviewPicker({ shell });
@@ -128,7 +129,6 @@ test("enabled picker fetches the scenario list and renders the toolbar", async (
     },
   });
   try {
-    globalThis.localStorage.setItem(LS_DEMO_PICKER_ENABLED, "1");
     const picker = await harness.loadPreviewPicker();
     const shell = harness.document.createElement("div");
     const headerRight = harness.document.createElement("div");
@@ -145,13 +145,41 @@ test("enabled picker fetches the scenario list and renders the toolbar", async (
     assert.equal(controls.select.children[2].value, "demo_b", "third option is demo_b");
     assert.equal(headerRight.children.length, 1, "toggle button is placed in headerRight");
     assert.equal(headerRight.children[0].textContent, "▦ Demo", "toggle button label");
-    assert.equal(controls.container.style.display, "none", "picker toolbar starts hidden");
+    assert.equal(controls.container.style.display, "flex", "picker toolbar starts visible");
   } finally {
     await harness.dispose();
   }
 });
 
-test("Load & Play replays transcript and populates AWAITING_REVIEW candidate state", async () => {
+test("server-disabled picker leaves no visible UI even when browser preference allows it", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/vibecomfy/demo/scenarios": { status: 404, body: { ok: false, error: "Not found" } },
+    },
+  });
+  try {
+    globalThis.localStorage.setItem(LS_DEMO_PICKER_ENABLED, "1");
+    const picker = await harness.loadPreviewPicker();
+    const shell = harness.document.createElement("div");
+    const headerRight = harness.document.createElement("div");
+    const controls = picker.installPreviewPicker({ shell }, { headerRight });
+    assert.ok(controls, "installer still returns a controller for deterministic tests");
+    await waitFor(() => harness.requests.some((r) => r.url === "/vibecomfy/demo/scenarios"));
+
+    assert.equal(controls.mounted, false, "server-disabled picker should not mount controls");
+    assert.equal(shell.children.length, 0, "server-disabled picker should not mount toolbar DOM");
+    assert.equal(headerRight.children.length, 0, "server-disabled picker should not mount toggle");
+    assert.equal(
+      controls.container.parentNode,
+      null,
+      "detached container should not leave a visible error shell",
+    );
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("Load & Play stages demo replay from before-send to review", async () => {
   const harness = await createBrowserHarness({
     responses: {
       "/vibecomfy/demo/scenarios": makeScenarioList(),
@@ -174,7 +202,14 @@ test("Load & Play replays transcript and populates AWAITING_REVIEW candidate sta
       helpers: {
         app: harness.app,
         applyGraphCandidateInPlace: (appArg, graph, opts) => {
-          appliedGraphs.push({ app: appArg, graph, opts });
+          appliedGraphs.push({
+            app: appArg,
+            graph: JSON.parse(JSON.stringify(graph)),
+            opts,
+          });
+          if (Array.isArray(graph?.nodes?.[0]?.pos)) {
+            graph.nodes[0].pos = [10, 10];
+          }
         },
         scheduleRenderAgentPanel: (reason, p, sections) => {
           scheduledRenders.push({ reason, panel: p, sections });
@@ -191,10 +226,29 @@ test("Load & Play replays transcript and populates AWAITING_REVIEW candidate sta
     assert.equal(controls.loadButton.disabled, false, "load button enabled after selection");
 
     controls.loadButton.click();
-    await waitFor(() => controls.loadButton.textContent === "Load & Play" && !controls.loadButton.disabled);
+    await waitFor(() => controls.loadButton.textContent === "Reload" && !controls.loadButton.disabled);
 
     assert.equal(appliedGraphs.length, 1, "original graph was applied to the canvas");
     assert.equal(appliedGraphs[0].graph.nodes.length, 1, "original graph has one node");
+    assert.equal(panel.state.__demoStage, "before_send", "first stage is before_send");
+    assert.equal(panel.state.phase, PANEL_STATE.IDLE, "before_send is idle");
+    assert.equal(panel.state.chatMessages.length, 0, "before_send has no transcript yet");
+    assert.equal(panel.state.candidateGraph, null, "before_send has no candidate");
+    assert.equal(controls.prevButton.disabled, true, "cannot go back from first stage");
+    assert.equal(controls.nextButton.disabled, false, "can advance from first stage");
+
+    controls.nextButton.click();
+    await waitFor(() => panel.state.__demoStage === "sent_loading");
+    assert.equal(appliedGraphs[1].graph.nodes[0].pos[0], 100, "sent stage applies a fresh original graph clone");
+    assert.equal(panel.state.phase, PANEL_STATE.SUBMITTING, "sent_loading shows loading state");
+    assert.equal(panel.state.chatMessages.length, 1, "sent_loading only shows user message");
+    assert.equal(panel.state.chatMessages[0].role, "user", "sent_loading message is from user");
+    assert.equal(panel.state.chatMessages[0].text, "Add a demo node", "user message text is query");
+    assert.equal(panel.state.candidateGraph, null, "sent_loading has no candidate yet");
+
+    controls.nextButton.click();
+    await waitFor(() => panel.state.__demoStage === "ready_to_apply");
+    assert.equal(appliedGraphs[2].graph.nodes[0].pos[0], 100, "review stage applies a fresh original graph clone");
 
     assert.equal(panel.state.phase, PANEL_STATE.AWAITING_REVIEW, "phase is AWAITING_REVIEW");
     assert.equal(panel.state.__demoMode, true, "__demoMode flag is set");
@@ -223,10 +277,64 @@ test("Load & Play replays transcript and populates AWAITING_REVIEW candidate sta
     assert.deepEqual(panel.state.transcriptMessages, panel.state.chatMessages, "transcript mirrors chat");
     assert.equal(panel.state.changeDetails.summary, "Added a demo output node.", "change details stored");
 
-    assert.equal(scheduledRenders.length, 1, "render scheduled once");
-    assert.equal(scheduledRenders[0].reason, "demo-picker");
-    assert.ok(scheduledRenders[0].sections.includes(RENDER_SECTIONS.THREAD));
-    assert.ok(scheduledRenders[0].sections.includes(RENDER_SECTIONS.CANDIDATE));
+    assert.equal(scheduledRenders.at(-1).reason, "demo-picker");
+    assert.ok(scheduledRenders.at(-1).sections.includes(RENDER_SECTIONS.THREAD));
+    assert.ok(scheduledRenders.at(-1).sections.includes(RENDER_SECTIONS.COMPOSER));
+    assert.ok(scheduledRenders.at(-1).sections.includes(RENDER_SECTIONS.NOTICE));
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("Load & Play shows reorganise candidate layout during review", async () => {
+  const originalGraph = {
+    nodes: [{ id: 1, type: "Input", pos: [100, 200], properties: { vibecomfy_uid: "uid-1" } }],
+    links: [],
+  };
+  const candidateGraph = {
+    nodes: [{ id: 1, type: "Input", pos: [500, 80], properties: { vibecomfy_uid: "uid-1" } }],
+    links: [],
+  };
+  const harness = await createBrowserHarness({
+    responses: {
+      "/vibecomfy/demo/scenarios": makeScenarioList(),
+      "/vibecomfy/demo/scenario?id=demo_a": makeScenarioResponse({
+        original_graph: originalGraph,
+        candidate_graph: candidateGraph,
+        report: { kind: "reorganise" },
+      }),
+    },
+  });
+  try {
+    globalThis.localStorage.setItem(LS_DEMO_PICKER_ENABLED, "1");
+    const picker = await harness.loadPreviewPicker();
+    const shell = harness.document.createElement("div");
+    const appliedGraphs = [];
+    const panel = { shell, state: makePanelState() };
+    const controls = picker.installPreviewPicker(panel, {
+      helpers: {
+        app: harness.app,
+        applyGraphCandidateInPlace: (_appArg, graph) => {
+          appliedGraphs.push(JSON.parse(JSON.stringify(graph)));
+        },
+        scheduleRenderAgentPanel: () => {},
+        currentAgentPanel: () => panel,
+        PANEL_STATE,
+        RENDER_SECTIONS,
+      },
+    });
+    await waitFor(() => controls.select.children.length > 1);
+
+    controls.select.value = "demo_a";
+    controls.select.dispatchEvent({ type: "change", target: controls.select });
+    controls.loadButton.click();
+    await waitFor(() => panel.state.__demoStage === "before_send");
+    controls.nextButton.click();
+    await waitFor(() => panel.state.__demoStage === "sent_loading");
+    controls.nextButton.click();
+    await waitFor(() => panel.state.__demoStage === "ready_to_apply");
+
+    assert.deepEqual(appliedGraphs.at(-1), candidateGraph, "reorganise review should apply the candidate layout");
   } finally {
     await harness.dispose();
   }
@@ -262,7 +370,11 @@ test("non-applyable eligibility disables apply/canvasApply while still expanding
     controls.select.value = "demo_b";
     controls.select.dispatchEvent({ type: "change", target: controls.select });
     controls.loadButton.click();
-    await waitFor(() => controls.loadButton.textContent === "Load & Play");
+    await waitFor(() => controls.loadButton.textContent === "Reload");
+    controls.nextButton.click();
+    await waitFor(() => panel.state.__demoStage === "sent_loading");
+    controls.nextButton.click();
+    await waitFor(() => panel.state.__demoStage === "ready_to_apply");
 
     assert.equal(panel.state.applyAllowed, false, "apply disallowed");
     assert.equal(panel.state.canvasApplyAllowed, false, "canvas apply disallowed");
@@ -301,11 +413,15 @@ test("demo Apply and Reject do not POST to the backend accept/reject routes", as
     assert.ok(panel, "panel is open");
     assert.ok(panel.previewPicker, "preview picker is installed on the panel");
 
-    await waitFor(() => panel.previewPicker.select.children.length > 1);
+    await waitFor(() => panel.previewPicker.select.children.length > 1, { label: "integrated scenario options" });
     panel.previewPicker.select.value = "demo_a";
     panel.previewPicker.select.dispatchEvent({ type: "change", target: panel.previewPicker.select });
     panel.previewPicker.loadButton.click();
-    await waitFor(() => panel.previewPicker.loadButton.textContent === "Load & Play");
+    await waitFor(() => panel.previewPicker.loadButton.textContent === "Reload", { label: "integrated first load" });
+    panel.previewPicker.nextButton.click();
+    await waitFor(() => panel.state.__demoStage === "sent_loading", { label: "integrated first sent_loading" });
+    panel.previewPicker.nextButton.click();
+    await waitFor(() => panel.state.__demoStage === "ready_to_apply", { label: "integrated first ready_to_apply" });
 
     assert.equal(panel.state.phase, PANEL_STATE.AWAITING_REVIEW, "panel is in review state");
     assert.equal(panel.state.__demoMode, true, "panel is in demo mode");
@@ -325,12 +441,17 @@ test("demo Apply and Reject do not POST to the backend accept/reject routes", as
       "demo Apply must not POST /vibecomfy/agent-edit/accept",
     );
     assert.equal(panel.state.phase, PANEL_STATE.IDLE, "demo Apply transitions to IDLE");
-    assert.equal(panel.state.__demoMode, undefined, "__demoMode is cleared after demo Apply");
+    assert.equal(panel.state.__demoStage, "applied", "demo Apply advances to applied stage");
+    assert.equal(panel.state.__demoMode, false, "__demoMode is disabled after demo Apply");
 
     // Restore demo state to exercise Reject on the same panel.
     panel.previewPicker.loadButton.click();
-    await waitFor(() => panel.previewPicker.loadButton.textContent === "Load & Play");
-    assert.equal(panel.state.__demoMode, true, "demo mode restored after replay");
+    await waitFor(() => panel.state.__demoStage === "before_send", { label: "integrated second load reset" });
+    panel.previewPicker.nextButton.click();
+    await waitFor(() => panel.state.__demoStage === "sent_loading", { label: "integrated second sent_loading" });
+    panel.previewPicker.nextButton.click();
+    await waitFor(() => panel.state.__demoStage === "ready_to_apply", { label: "integrated second ready_to_apply" });
+    assert.equal(panel.state.__demoMode, true, "demo mode restored after replay reaches review");
 
     panel.buttons.apply.disabled = false;
     panel.buttons.reject.disabled = false;

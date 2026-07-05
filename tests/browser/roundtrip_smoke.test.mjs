@@ -3073,6 +3073,163 @@ test("VibeComfy Apply requires explicit canvas allowance, rechecks canvas hash, 
   }
 });
 
+test("VibeComfy reorganisation candidates preview the candidate layout and preserve baseline undo", async () => {
+  const originalGraph = {
+    nodes: [
+      { id: 1, type: "Input", pos: [40, 50], size: [210, 90], properties: { vibecomfy_uid: "uid-1" } },
+      { id: 2, type: "Output", pos: [80, 210], size: [210, 90], properties: { vibecomfy_uid: "uid-2" } },
+    ],
+    links: [[1, 1, 0, 2, 0, "IMAGE"]],
+    groups: [{ title: "Before", bounding: [20, 30, 320, 330] }],
+  };
+  const reorganisedGraph = {
+    nodes: [
+      { id: 1, type: "Input", pos: [500, 80], size: [210, 90], properties: { vibecomfy_uid: "uid-1" } },
+      { id: 2, type: "Output", pos: [760, 80], size: [210, 90], properties: { vibecomfy_uid: "uid-2" } },
+    ],
+    links: [[1, 1, 0, 2, 0, "IMAGE"]],
+    groups: [{ title: "After", bounding: [480, 45, 520, 180] }],
+  };
+  const originalGraphHash = sha256HexUtf8(originalGraph);
+  const reorganisedGraphHash = sha256HexUtf8(reorganisedGraph);
+  const submitResponses = [
+    {
+      status: 200,
+      body: {
+        ok: true,
+        route: "reorganise",
+        session_id: "session-layout-preview",
+        turn_id: "0001",
+        canvas_apply_allowed: true,
+        apply_allowed: true,
+        queue_allowed: false,
+        apply_eligibility: {
+          applyable: true,
+          reason: "applyable",
+          message: "Reorganise candidate is ready.",
+          warnings: [],
+        },
+        message: "Reorganised layout candidate ready to review.",
+        graph: reorganisedGraph,
+        submit_graph_hash: originalGraphHash,
+        candidate_graph_hash: reorganisedGraphHash,
+        report: {
+          kind: "reorganise",
+          change: { content_edits: { preserved: ["uid-1", "uid-2"], edited: [], removed_named: [] } },
+          recovery: [],
+        },
+      },
+    },
+    {
+      status: 200,
+      body: {
+        ok: true,
+        route: "reorganise",
+        session_id: "session-layout-preview",
+        turn_id: "0002",
+        canvas_apply_allowed: true,
+        apply_allowed: true,
+        queue_allowed: false,
+        apply_eligibility: {
+          applyable: true,
+          reason: "applyable",
+          message: "Reorganise candidate is ready.",
+          warnings: [],
+        },
+        message: "Reorganised layout candidate ready to review.",
+        graph: reorganisedGraph,
+        submit_graph_hash: originalGraphHash,
+        candidate_graph_hash: reorganisedGraphHash,
+        report: {
+          kind: "reorganise",
+          change: { content_edits: { preserved: ["uid-1", "uid-2"], edited: [], removed_named: [] } },
+          recovery: [],
+        },
+      },
+    },
+  ];
+  const harness = await createBrowserHarness({
+    graph: originalGraph,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "arnold",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "arnold", browser_api_key_allowed: false },
+          },
+        },
+      },
+      "/vibecomfy/agent-executor": () => submitResponses.shift(),
+      "/vibecomfy/agent-edit/reject": () => ({
+        status: 200,
+        body: {
+          ok: true,
+          action: "reject",
+          session_id: "session-layout-preview",
+          turn_id: "0001",
+        },
+      }),
+      "/vibecomfy/agent-edit/accept": () => ({
+        status: 200,
+        body: {
+          ok: true,
+          action: "accept",
+          session_id: "session-layout-preview",
+          turn_id: "0002",
+          baseline_turn_id: "0002",
+          baseline_graph_hash: "baseline-after-layout-preview",
+          baseline_graph_hash_kind: "structural",
+          baseline_graph_hash_version: 2,
+        },
+      }),
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
+    const prompt = harness.document.getElementById("vibecomfy-agent-panel-prompt");
+    const panel = extensionModule.ensureAgentPanel();
+
+    prompt.value = "reorganise this";
+    await harness.clickButton("Submit");
+    await waitFor(() => panel.state.phase === "AWAITING_REVIEW");
+    assert.deepEqual(harness.getCurrentGraph(), reorganisedGraph, "review should show the candidate layout on the canvas");
+    const reviewDiff = extensionModule.computePreviewDiff(panel.state.candidateGraph, panel.state.candidateReport);
+    assert.equal(reviewDiff.layout_moved.length, 2, "review should preserve moved-node preview entries");
+    const reviewDrawOps = await harness.drawPreviewOverlay(reviewDiff);
+    assert.ok(
+      reviewDrawOps.some((op) => op.kind === "fillText" && String(op.args[0]).includes("moved")),
+      "review overlay should draw moved-node badges for reorganisation preview",
+    );
+
+    await harness.clickButton("Reject");
+    assert.deepEqual(harness.getCurrentGraph(), originalGraph, "reject should restore the pre-preview layout");
+
+    prompt.value = "reorganise this again";
+    await harness.clickButton("Submit");
+    await waitFor(() => panel.state.phase === "AWAITING_REVIEW");
+    assert.deepEqual(harness.getCurrentGraph(), reorganisedGraph, "second review should show the candidate layout");
+
+    await harness.clickButton("Apply");
+    assert.deepEqual(harness.getCurrentGraph(), reorganisedGraph, "apply should leave the accepted layout visible");
+    assert.equal(panel.state.undoStack.length, 1);
+    assert.deepEqual(panel.state.undoStack[0].graph, originalGraph, "undo should restore the layout before preview");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy Apply allows nonstructural serialize drift when the live canvas revision is unchanged", async () => {
   const initialGraph = {
     extra: { ds: { scale: 1.0 } },

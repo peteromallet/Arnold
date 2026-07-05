@@ -442,6 +442,8 @@ class ResolutionContext:
         scope_path: str,
         uid: str,
         output_slot: str | int,
+        *,
+        schema_provider: Any = None,
     ) -> ResolveResult[int]:
         """Resolve an output_slot (int index or str name) to a slot index."""
         node = backend.node_for(scope_path, uid)
@@ -488,6 +490,39 @@ class ResolutionContext:
                     "available_slots": _available_output_names(outputs),
                 },
             )])
+        if schema_provider is not None:
+            class_type = str(node.get("type") or node.get("class_type") or "")
+            if class_type:
+                try:
+                    from vibecomfy.schema import schema_for  # noqa: PLC0415
+
+                    schema = schema_for(schema_provider, class_type)
+                    output_specs = getattr(schema, "outputs", None) or []
+                    for index, output_spec in enumerate(output_specs):
+                        if getattr(output_spec, "name", None) == slot_str:
+                            return ResolveResult(index, [])
+                    if alias_index is not None and 0 <= alias_index < len(output_specs):
+                        if len(output_specs) == 1:
+                            return ResolveResult(alias_index, [])
+                        return ResolveResult(None, [_make_issue(
+                            "ambiguous_output_alias",
+                            (
+                                f"Node '{uid}' output {slot_str!r} is positional, but the node has "
+                                "multiple named outputs; use the exact output slot name instead."
+                            ),
+                            scope_path=scope_path, uid=uid,
+                            detail={
+                                "output_slot": output_slot,
+                                "slot_index": alias_index,
+                                "available_slots": [
+                                    str(getattr(item, "name", ""))
+                                    for item in output_specs
+                                    if getattr(item, "name", None)
+                                ],
+                            },
+                        )])
+                except ImportError:
+                    pass
         return ResolveResult(None, [_make_issue(
             "unknown_output_slot",
             f"Node '{uid}' has no output named {slot_str!r}.",

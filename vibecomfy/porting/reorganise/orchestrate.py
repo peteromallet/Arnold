@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass, field
 from os import PathLike
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Callable, Literal, Mapping, Sequence
 
 from vibecomfy.identity.uid import SCOPE_CHAIN_JOIN
@@ -27,6 +28,8 @@ from .diagnostics import ReorganiseDiagnostic, ReorganiseDiagnosticReport
 from .graph_facts import GraphInventoryFacts, extract_graph_facts
 from .parse import LAYOUT_PLAN_SCHEMA_V1, LayoutPlanParseError, parse_layout_plan
 from .plan_types import (
+    HELPER_PLACEMENT_NEAR_CONSUMER,
+    HELPER_PLACEMENT_NEAR_PRODUCER,
     HELPER_PLACEMENT_INSIDE_SECTION,
     ROLE_HINT_CONDITIONING,
     ROLE_HINT_CONTROL,
@@ -137,7 +140,7 @@ _AMBIGUOUS_SAMPLER_RELATION_KINDS = frozenset(
 
 
 def _freeze_jsonish(value: Any) -> Any:
-    if isinstance(value, Mapping):
+    if isinstance(value, (Mapping, MappingProxyType)):
         return {str(key): _freeze_jsonish(item) for key, item in value.items()}
     if isinstance(value, tuple):
         return [_freeze_jsonish(item) for item in value]
@@ -1238,7 +1241,86 @@ def build_deterministic_layout_plan(facts: GraphInventoryFacts) -> LayoutPlanV1:
         section_scope_by_id.setdefault(section_id, fact.ref.scope_path)
 
     helper_placements: list[HelperPlacement] = []
+    primary_owned = {
+        ref: section_id
+        for section_id, refs in refs_by_section.items()
+        for ref in refs
+        if ref not in helper_refs
+    }
+    raw_incoming_by_ref, raw_outgoing_by_ref = _raw_helper_edge_maps(facts)
+    channel_source_by_scope_channel = _setnode_channel_source_anchors(
+        facts,
+        raw_incoming_by_ref,
+        primary_owned,
+    )
+    nearest_primary_by_helper = _nearest_primary_anchor_by_helper(facts, primary_owned)
+    helper_channel_by_ref = {
+        helper.ref: helper.channel
+        for helper in facts.helper_nodes
+        if helper.channel
+    }
     for ref in sorted(helper_refs, key=_ref_sort_key):
+        fact = canonical_by_ref.get(ref)
+        class_type = fact.class_type if fact is not None else ""
+        if class_type == "SetNode":
+            producer = _select_helper_anchor(
+                (edge.source for edge in raw_incoming_by_ref.get(ref, ())),
+                primary_owned,
+            )
+            if producer is not None:
+                helper_placements.append(
+                    HelperPlacement(
+                        helper=ref,
+                        kind=HELPER_PLACEMENT_NEAR_PRODUCER,
+                        target=producer,
+                        reason="SetNode is displayed beside the producer feeding its broadcast value.",
+                    )
+                )
+                continue
+        elif class_type == "GetNode":
+            raw_consumers = raw_outgoing_by_ref.get(ref, ())
+            consumer = _select_helper_anchor(
+                (edge.target for edge in raw_consumers),
+                primary_owned,
+            )
+            if consumer is not None:
+                helper_placements.append(
+                    HelperPlacement(
+                        helper=ref,
+                        kind=HELPER_PLACEMENT_NEAR_CONSUMER,
+                        target=consumer,
+                        reason="GetNode is displayed beside the consumer it plugs into.",
+                    )
+                )
+                continue
+            channel = helper_channel_by_ref.get(ref)
+            producer = (
+                channel_source_by_scope_channel.get((ref.scope_path, channel))
+                if channel is not None
+                else None
+            )
+            if producer is not None:
+                helper_placements.append(
+                    HelperPlacement(
+                        helper=ref,
+                        kind=HELPER_PLACEMENT_NEAR_PRODUCER,
+                        target=producer,
+                        reason="Dangling GetNode has no consumer edge, so it is displayed beside the matching channel producer.",
+                    )
+                )
+                continue
+        elif class_type in {"Note", "MarkdownNote"}:
+            target = nearest_primary_by_helper.get(ref)
+            if target is not None:
+                helper_placements.append(
+                    HelperPlacement(
+                        helper=ref,
+                        kind=HELPER_PLACEMENT_INSIDE_SECTION,
+                        section_id=primary_owned[target],
+                        reason="Note is displayed in the section nearest to its original canvas position.",
+                    )
+                )
+                continue
         section_id = _helper_section_id_for_scope(
             ref.scope_path,
             refs_by_section,
@@ -1282,6 +1364,107 @@ def build_deterministic_layout_plan(facts: GraphInventoryFacts) -> LayoutPlanV1:
         notes="Deterministic baseline generated from graph facts and role classification.",
     )
     return parse_layout_plan(plan.to_json())
+
+
+def _raw_helper_edge_maps(
+    facts: GraphInventoryFacts,
+) -> tuple[dict[CanonicalNodeRef, list[Any]], dict[CanonicalNodeRef, list[Any]]]:
+    incoming: dict[CanonicalNodeRef, list[Any]] = {}
+    outgoing: dict[CanonicalNodeRef, list[Any]] = {}
+    for topology in facts.scope_topologies:
+        for edge in sorted(topology.raw_edges, key=_edge_sort_key):
+            incoming.setdefault(edge.target, []).append(edge)
+            outgoing.setdefault(edge.source, []).append(edge)
+    return incoming, outgoing
+
+
+def _nearest_primary_anchor_by_helper(
+    facts: GraphInventoryFacts,
+    primary_owned: Mapping[CanonicalNodeRef, str],
+) -> dict[CanonicalNodeRef, CanonicalNodeRef]:
+    centers = {
+        item.ref: center
+        for item in facts.node_furniture
+        if (center := _furniture_center(item.pos, item.size)) is not None
+    }
+    primary_centers = {
+        ref: center
+        for ref, center in centers.items()
+        if ref in primary_owned
+    }
+    anchors: dict[CanonicalNodeRef, CanonicalNodeRef] = {}
+    for helper in facts.helper_nodes:
+        helper_center = centers.get(helper.ref)
+        if helper_center is None:
+            continue
+        candidates = [
+            (
+                _distance_sq(helper_center, center),
+                primary_owned[ref],
+                _ref_sort_key(ref),
+                ref,
+            )
+            for ref, center in primary_centers.items()
+            if ref.scope_path == helper.ref.scope_path
+        ]
+        if not candidates:
+            continue
+        anchors[helper.ref] = min(candidates)[3]
+    return anchors
+
+
+def _furniture_center(pos: Any, size: Any) -> tuple[float, float] | None:
+    if (
+        isinstance(pos, Sequence)
+        and not isinstance(pos, (str, bytes))
+        and len(pos) >= 2
+        and isinstance(size, Sequence)
+        and not isinstance(size, (str, bytes))
+        and len(size) >= 2
+        and _is_number(pos[0])
+        and _is_number(pos[1])
+        and _is_number(size[0])
+        and _is_number(size[1])
+    ):
+        return (float(pos[0]) + float(size[0]) / 2, float(pos[1]) + float(size[1]) / 2)
+    return None
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def _distance_sq(left: tuple[float, float], right: tuple[float, float]) -> float:
+    return (left[0] - right[0]) ** 2 + (left[1] - right[1]) ** 2
+
+
+def _setnode_channel_source_anchors(
+    facts: GraphInventoryFacts,
+    raw_incoming_by_ref: Mapping[CanonicalNodeRef, Sequence[Any]],
+    primary_owned: Mapping[CanonicalNodeRef, str],
+) -> dict[tuple[str, str], CanonicalNodeRef]:
+    anchors: dict[tuple[str, str], CanonicalNodeRef] = {}
+    for helper in sorted(facts.helper_nodes, key=lambda item: _ref_sort_key(item.ref)):
+        if helper.class_type != "SetNode" or not helper.channel:
+            continue
+        source = _select_helper_anchor(
+            (edge.source for edge in raw_incoming_by_ref.get(helper.ref, ())),
+            primary_owned,
+        )
+        if source is not None:
+            anchors.setdefault((helper.ref.scope_path, helper.channel), source)
+    return anchors
+
+
+def _select_helper_anchor(
+    candidates: Sequence[CanonicalNodeRef] | Any,
+    primary_owned: Mapping[CanonicalNodeRef, str],
+) -> CanonicalNodeRef | None:
+    anchored = sorted(
+        {ref for ref in candidates if ref in primary_owned},
+        key=lambda ref: (primary_owned[ref], _ref_sort_key(ref)),
+    )
+    return anchored[0] if anchored else None
 
 
 def _candidate_patch_mapping(

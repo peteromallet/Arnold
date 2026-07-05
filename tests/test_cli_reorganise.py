@@ -150,6 +150,7 @@ def test_reorganise_preview_writes_artifacts_and_sanitized_report(
             spacing="wide",
             existing_group_policy="preserve",
             force_regroup=False,
+            visualize=True,
         )
     )
 
@@ -164,12 +165,12 @@ def test_reorganise_preview_writes_artifacts_and_sanitized_report(
         "reorganisation_metrics.json",
         "structural_noop_evidence.json",
         "reorganisation_preview_manifest.json",
+        "layout_before.png",
+        "layout_after.png",
     ]:
         assert (tmp_path / filename).is_file()
     for filename in [
         "candidate.patch.json",
-        "layout_before.png",
-        "layout_after.png",
         "layout_metrics.json",
         "layout_trace.json",
         "manifest.json",
@@ -194,6 +195,9 @@ def test_reorganise_preview_writes_artifacts_and_sanitized_report(
     )
     assert manifest["apply_data"]["candidate_patch_sha256"]
     assert manifest["candidate_ui_sha256"]
+    assert manifest["artifacts"]["layout_before_png"] == "layout_before.png"
+    assert manifest["artifacts"]["layout_after_png"] == "layout_after.png"
+    assert manifest["visualization_error"] is None
 
     plan_payload = json.loads(
         (tmp_path / "reorganisation_plan.json").read_text(encoding="utf-8")

@@ -628,8 +628,15 @@ def _link_target_slot(link: Any) -> int | None:
 
 def _resolve_output_slot_index(
     index: LintIndex, scope_path: str, uid: str, output_slot: str | int,
+    *, schema_provider: Any = None,
 ) -> int | None:
-    result = _ctx.resolve_output_slot_index(LintIndexBackend(index), scope_path, uid, output_slot)
+    result = _ctx.resolve_output_slot_index(
+        LintIndexBackend(index),
+        scope_path,
+        uid,
+        output_slot,
+        schema_provider=schema_provider,
+    )
     return result.value
 
 
@@ -941,7 +948,11 @@ def _lint_upsert_link(
 
     # Validate source output slot exists
     output_slot_idx = _resolve_output_slot_index(
-        index, source.scope_path, source.uid, source.output_slot,
+        index,
+        source.scope_path,
+        source.uid,
+        source.output_slot,
+        schema_provider=schema_provider,
     )
     if output_slot_idx is None:
         return None, _make_issue(
