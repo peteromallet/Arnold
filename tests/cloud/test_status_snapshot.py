@@ -495,3 +495,106 @@ def test_detailed_cites_evidence_source_and_timestamp(fx):
     assert "Cloud status —" in detailed
     assert snap["generated_at"] in detailed
     assert "cloud-local-observer" in detailed
+
+
+# --- pre-calculated progress (sprint % + epic %) --------------------------
+
+
+def test_session_progress_none_without_milestone_data():
+    assert ss._session_progress(completed_count=2, milestone_count=None, current_plan="p", complete=False) is None
+    assert ss._session_progress(completed_count=2, milestone_count=0, current_plan="p", complete=False) is None
+    assert ss._session_progress(completed_count=None, milestone_count="oops", current_plan=None, complete=False) is None
+
+
+def test_session_progress_partial_marks_in_flight_sprint():
+    progress = ss._session_progress(
+        completed_count=1, milestone_count=3, current_plan="s2-front-half-2026", complete=False
+    )
+    assert progress == {
+        "completed_milestones": 1,
+        "total_milestones": 3,
+        "percent": 33,
+        "complete": False,
+        "current_plan": "s2-front-half-2026",
+        "sprints": [
+            {"sprint": "s1", "status": "done"},
+            {"sprint": "s2", "status": "in_progress", "plan": "s2-front-half-2026"},
+            {"sprint": "s3", "status": "pending"},
+        ],
+    }
+
+
+def test_session_progress_in_flight_without_plan_name():
+    progress = ss._session_progress(completed_count=0, milestone_count=2, current_plan=None, complete=False)
+    assert progress["percent"] == 0
+    assert progress["sprints"][0] == {"sprint": "s1", "status": "in_progress"}
+    assert progress["sprints"][1] == {"sprint": "s2", "status": "pending"}
+
+
+def test_session_progress_complete_forces_all_done_and_100():
+    progress = ss._session_progress(
+        completed_count=2, milestone_count=3, current_plan=None, complete=True
+    )
+    assert progress["percent"] == 100
+    assert progress["complete"] is True
+    assert progress["completed_milestones"] == 3
+    assert [s["status"] for s in progress["sprints"]] == ["done", "done", "done"]
+
+
+def test_session_progress_clamps_and_rounds():
+    # completed_count above total clamps to total; rounds to nearest percent.
+    progress = ss._session_progress(completed_count=99, milestone_count=3, current_plan="p", complete=False)
+    assert progress["completed_milestones"] == 3
+    assert progress["percent"] == 100
+
+
+def test_session_entry_carries_progress_block(fx):
+    fx.add_session("epic-a", plan_name="s2-front-half-2026")
+    fx.add_chain_health("epic-a", current_plan_name="s2-front-half-2026", completed_count=1, milestone_count=4)
+    snap = fx.build()
+    entry = _by_session(snap, "epic-a")
+    assert entry["chain_complete"] is False
+    assert entry["progress"]["completed_milestones"] == 1
+    assert entry["progress"]["total_milestones"] == 4
+    assert entry["progress"]["percent"] == 25
+    assert entry["progress"]["current_plan"] == "s2-front-half-2026"
+    statuses = [s["status"] for s in entry["progress"]["sprints"]]
+    assert statuses == ["done", "in_progress", "pending", "pending"]
+
+
+def test_session_entry_progress_none_without_milestones(fx):
+    fx.add_session("plan-only", plan_name="planX")
+    # chain-health with no milestone_count → nothing to score → progress is None.
+    (fx.marker_dir / "plan-only.chain-health.progress.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": "planX",
+                "last_state": "executed",
+                "updated_at": (NOW - timedelta(seconds=60)).isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    snap = fx.build()
+    entry = _by_session(snap, "plan-only")
+    assert entry["progress"] is None
+
+
+def test_plan_activity_summary_propagates_progress(fx):
+    fx.add_session("epic-run", plan_name="s2-loop")
+    fx.add_chain_health("epic-run", current_plan_name="s2-loop", completed_count=1, milestone_count=2)
+    snap = fx.build()
+    summary = ss.plan_activity_summary(snap)
+    assert summary["degraded"] is False
+    active = summary["active_working"]
+    assert len(active) == 1
+    assert active[0]["progress"]["percent"] == 50
+    assert active[0]["progress"]["sprints"][1]["status"] == "in_progress"
+
+
+def test_detailed_renders_progress_percent(fx):
+    fx.add_session("epic-run", plan_name="s2-loop")
+    fx.add_chain_health("epic-run", current_plan_name="s2-loop", completed_count=1, milestone_count=4)
+    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
+    detailed = sf.format_cloud_status_detailed(snap)
+    assert "progress=25%" in detailed

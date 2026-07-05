@@ -259,6 +259,7 @@ def plan_activity_summary(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
             "current_plan": entry.get("current_plan"),
             "operator_next": entry.get("operator_next"),
             "latest_activity": entry.get("latest_activity"),
+            "progress": entry.get("progress"),
         }
         status = entry.get("status")
         if status == "running":
@@ -272,6 +273,73 @@ def plan_activity_summary(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
         "active_working": active,
         "should_be_working_but_needs_attention": needs_attention,
         "recently_completed": completed,
+    }
+
+
+def _as_int(value: Any) -> int | None:
+    """Best-effort int coercion; ``None`` for non-numeric (or bool) values."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _session_progress(
+    *,
+    completed_count: Any,
+    milestone_count: Any,
+    current_plan: str | None,
+    complete: bool,
+) -> dict[str, Any] | None:
+    """Pre-calculate epic/sprint progress for one snapshot session.
+
+    A chain (epic) is a sequence of milestones — the ``s1``/``s2`` plans. The
+    chain-health sidecar tells us how many milestones are done and the total;
+    from that we derive an overall epic percent and a per-sprint
+    done/in-progress/pending breakdown, so the resident can surface a
+    pre-calculated number instead of guessing. Returns ``None`` when there is no
+    milestone data to score against, so consumers skip cleanly.
+
+    The breakdown follows the chain's standard sequential progression: the first
+    ``completed_count`` milestones are done, the next is the in-flight sprint
+    (carrying ``current_plan``), and the rest are pending. We report discrete
+    states rather than a false-precision sub-sprint percentage.
+    """
+    total = _as_int(milestone_count)
+    if total is None or total <= 0:
+        return None
+    done = _as_int(completed_count)
+    if done is None:
+        done = 0
+    done = max(0, min(done, total))
+    if complete:
+        done = total
+    plan = current_plan or None
+
+    percent = 100 if complete else round(done / total * 100)
+    sprints: list[dict[str, Any]] = []
+    for index in range(1, total + 1):
+        if complete or index <= done:
+            sprints.append({"sprint": f"s{index}", "status": "done"})
+        elif index == done + 1:
+            sprint: dict[str, Any] = {"sprint": f"s{index}", "status": "in_progress"}
+            if plan:
+                sprint["plan"] = plan
+            sprints.append(sprint)
+        else:
+            sprints.append({"sprint": f"s{index}", "status": "pending"})
+
+    return {
+        "completed_milestones": done,
+        "total_milestones": total,
+        "percent": percent,
+        "complete": bool(complete),
+        "current_plan": plan,
+        "sprints": sprints,
     }
 
 
@@ -349,6 +417,13 @@ def _build_session_entry(
         "current_plan": current_plan,
         "completed_count": completed_count,
         "milestone_count": milestone_count,
+        "chain_complete": chain_complete,
+        "progress": _session_progress(
+            completed_count=completed_count,
+            milestone_count=milestone_count,
+            current_plan=current_plan,
+            complete=chain_complete,
+        ),
         "pr_number": chain_health.get("pr_number") if chain_health else None,
         "pr_state": chain_health.get("pr_state") if chain_health else None,
         "latest_activity": latest_activity,
