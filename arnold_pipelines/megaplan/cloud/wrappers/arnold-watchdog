@@ -40,6 +40,7 @@ REAP_ORPHAN_AGE_SECS="${CLOUD_WATCHDOG_REAP_ORPHAN_AGE_SECS:-3900}"
 REAP_STALL_GRACE_SECS="${CLOUD_WATCHDOG_REAP_STALL_GRACE_SECS:-900}"
 REAP_STALL_IDLE_SECS="${CLOUD_WATCHDOG_REAP_STALL_IDLE_SECS:-600}"
 REPAIR_DATA_RETENTION_INTERVAL_SECS="${CLOUD_WATCHDOG_REPAIR_DATA_RETENTION_INTERVAL_SECS:-21600}"
+ENV_GONE_STRIKES="${CLOUD_WATCHDOG_ENV_GONE_STRIKES:-3}"
 SRC_DIR="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
 SYNC_ENABLED="${CLOUD_WATCHDOG_SYNC_ENABLED:-1}"
 SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
@@ -3383,6 +3384,91 @@ except Exception:
 PY
 }
 
+env_gone_sidecar_path() {
+  printf '%s/%s.env-gone' "$MARKER_DIR" "$(safe_name "$1")"
+}
+
+# Detect whether a session's environment has been wiped (workspace dir or
+# chain/epic-chain spec gone — typically after a box reset/redeploy). Uses a
+# strike counter so a transient deploy gap doesn't retire a live session.
+#
+#stdout: prints one of:
+#   - "gone"    and exits 0  -> env missing AND strikes >= $ENV_GONE_STRIKES
+#   - "<count>" and exits 1  -> env missing, strikes below threshold (count printed)
+#   - "present" and exits 1  -> env present (any prior sidecar cleared; recovers
+#                              from a transient deploy that has since resolved)
+environment_gone_check() {
+  local session="$1"
+  local workspace="$2"
+  local spec_path="${3:-}"
+  local sidecar count
+  sidecar="$(env_gone_sidecar_path "$session")"
+
+  # Env present: clear any stale strike sidecar and signal fall-through.
+  if [[ -d "$workspace" ]] && { [[ -z "$spec_path" ]] || [[ -f "$spec_path" ]]; }; then
+    if [[ -f "$sidecar" ]]; then
+      rm -f "$sidecar" 2>/dev/null || true
+      log "env-gone strikes cleared; environment recovered session=$session workspace=$workspace spec=${spec_path:-}"
+    fi
+    printf 'present\n'
+    return 1
+  fi
+
+  count=0
+  if [[ -f "$sidecar" ]]; then
+    count="$(cat "$sidecar" 2>/dev/null || true)"
+    count="${count//[!0-9]/}"
+    count="${count:-0}"
+  fi
+  count=$((count + 1))
+  printf '%s\n' "$count" >"$sidecar" 2>/dev/null || true
+
+  if (( count >= ENV_GONE_STRIKES )); then
+    printf 'gone\n'
+    return 0
+  fi
+  printf '%s\n' "$count"
+  return 1
+}
+
+# Persist an environment_gone terminal outcome to repair-data for audit.
+# Writes via save_repair_data directly (NOT repair_data_set_outcome, which
+# requires the repair lock the watchdog does not hold). Best-effort: a failed
+# write must not block session retirement.
+persist_environment_gone_outcome() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local run_kind="${4:-chain}"
+  local plan_name="${5:-}"
+  local data_file="${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}/${session}.repair-data.json"
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$data_file" "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" <<'PY' 2>>"${LOG:-/dev/null}" || true
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.repair_contract import (
+    ENVIRONMENT_GONE,
+    load_json,
+    save_repair_data,
+)
+
+data_path_raw, session, workspace, remote_spec, run_kind, plan_name = sys.argv[1:]
+data_path = pathlib.Path(data_path_raw)
+payload = load_json(data_path, default={})
+if not isinstance(payload, dict):
+    payload = {}
+payload.setdefault("session", session)
+payload.setdefault("workspace", workspace)
+payload.setdefault("run_kind", run_kind)
+payload.setdefault("plan_name", plan_name)
+payload["workspace"] = workspace
+payload["run_kind"] = run_kind
+payload["plan_name"] = plan_name
+payload["outcome"] = ENVIRONMENT_GONE
+save_repair_data(data_path, payload)
+PY
+}
+
 clear_session_tracking_artifacts() {
   local session="$1"
   local plan_name="${2:-}"
@@ -5938,11 +6024,6 @@ PY
     return 0
   fi
 
-  if [[ ! -d "$workspace" ]]; then
-    log "flag $session: workspace missing: $workspace"
-    repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "workspace_missing: $workspace" || true
-    return 1
-  fi
   local resolved_remote_spec
   resolved_remote_spec="$(resolve_existing_remote_spec "$session" "$workspace" "$remote_spec" "$run_kind" 2>>"$LOG" || true)"
   if [[ -n "$resolved_remote_spec" && "$resolved_remote_spec" != "$remote_spec" ]]; then
@@ -5953,18 +6034,32 @@ PY
   if [[ "$run_kind" == "chain" && "$remote_spec" != /* ]]; then
     remote_spec_path="$workspace/$remote_spec"
   fi
+
+  # Env-gone gate (FALLTHROUGH, after the terminal/needs-human short-circuits
+  # above): a wiped workspace or missing chain/epic-chain spec means there is no
+  # environment to repair — the repair loop cannot recreate it. A strike counter
+  # tolerates transient deploy gaps; at threshold the session is retired cleanly
+  # instead of looping repair against a missing env. Below threshold we log the
+  # strike and skip dispatch this tick; if the env recovers, the sidecar clears.
+  local env_gone_out env_gone_rc
+  env_gone_out="$(environment_gone_check "$session" "$workspace" "$remote_spec_path")"
+  env_gone_rc=$?
+  if (( env_gone_rc == 0 )); then
+    log "environment gone; retiring session after env-gone strikes session=$session workspace=$workspace spec=$remote_spec_path"
+    persist_environment_gone_outcome "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name"
+    clear_session_tracking_artifacts "$session" "$plan_name"
+    rm -f "$(env_gone_sidecar_path "$session")" 2>/dev/null || true
+    report_item "$report_items" "$session" "observe" "environment_gone" "workspace/spec wiped; retired after env-gone strikes" "$workspace" "$remote_spec"
+    return 0
+  fi
+  if [[ "$env_gone_out" != "present" && -n "$env_gone_out" ]]; then
+    log "env-gone strike session=$session count=$env_gone_out/$ENV_GONE_STRIKES workspace=$workspace spec=$remote_spec_path"
+    report_item "$report_items" "$session" "observe" "env_gone_pending" "env-gone strike $env_gone_out/$ENV_GONE_STRIKES; workspace=$workspace spec=$remote_spec_path" "$workspace" "$remote_spec"
+    return 0
+  fi
+
   local health
   health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"
-  if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
-    log "flag $session: chain spec missing: $remote_spec"
-    repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "spec_missing: chain spec missing at $remote_spec" || true
-    return 1
-  fi
-  if [[ "$run_kind" == "epic_chain" && ! -f "$remote_spec_path" ]]; then
-    log "flag $session: epic-chain spec missing: $remote_spec"
-    repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "spec_missing: epic-chain spec missing at $remote_spec" || true
-    return 1
-  fi
   if [[ "$run_kind" == "chain" ]]; then
     chain_health_status "$session" "$workspace" "$remote_spec_path" "$health"
     if [[ -n "${CHAIN_HEALTH_LOG_MESSAGE:-}" ]]; then
@@ -6357,16 +6452,10 @@ PY
     fi
   fi
 
-  if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
-    log "flag $session: chain spec missing: $remote_spec"
-    repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "spec_missing: chain spec missing at $remote_spec" || true
-    return 1
-  fi
-  if [[ "$run_kind" == "epic_chain" && ! -f "$remote_spec_path" ]]; then
-    log "flag $session: epic-chain spec missing: $remote_spec"
-    repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "spec_missing: epic-chain spec missing at $remote_spec" || true
-    return 1
-  fi
+  # NOTE: a missing chain/epic-chain spec here was previously handled by
+  # dispatching repair_unintended_stop. That path is now retired by the
+  # env-gone gate above (after spec resolution) — a wiped spec means no
+  # environment to repair, so we never reach this point with a missing spec.
 
   local sibling_alive
   if [[ "$health" == "stopped" ]] && sibling_alive="$(workspace_has_other_alive_session "$session" "$workspace" 2>/dev/null)"; then

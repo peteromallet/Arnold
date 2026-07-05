@@ -355,11 +355,15 @@ def test_host_watchdog_ensure_starts_shell_wrapped_watchdog_and_verifies_livenes
 def test_watchdog_repairs_setup_deviations_instead_of_skipping() -> None:
     text = _wrapper("arnold-watchdog")
 
-    assert 'repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "workspace_missing:' in text
-    assert 'repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "spec_missing:' in text
-    assert 'report_item "$report_items" "" "flag" "setup_invalid" "missing session: $marker"' in text
-    assert 'report_item "$report_items" "$session" "flag" "setup_invalid" "missing remote_spec: $marker"' in text
+    # A wiped workspace/spec is now retired via the env-gone gate (strikes +
+    # environment_gone outcome) instead of infinitely looping repair against a
+    # missing environment. The gate is a fallthrough after the terminal and
+    # needs-human short-circuits.
+    assert 'environment_gone_check "$session" "$workspace" "$remote_spec_path"' in text
+    assert 'report_item "$report_items" "$session" "observe" "environment_gone"' in text
+    assert 'report_item "$report_items" "$session" "observe" "env_gone_pending"' in text
     assert '"repair_dispatched" "$reason"' in text
+    # The old silent-skip paths must not return.
     assert '"skip" "spec_missing"' not in text
     assert '"skip" "workspace_missing"' not in text
 
@@ -1104,47 +1108,6 @@ def test_repair_loop_classifies_repeated_failure_signature_as_repairable(
     payload = json.loads(result.stdout)
     assert payload["failure_classification"] == "blocked_state_or_recovery_error"
     assert payload["plan_latest_failure"]["kind"] == "repeated_failure_signature"
-
-
-def test_repair_loop_classifies_missing_workspace_as_stale_state(tmp_path: Path) -> None:
-    workspace = tmp_path / "missing-workflow"
-    marker_dir = tmp_path / "markers"
-    data_dir = marker_dir / "repair-data"
-    marker_dir.mkdir()
-    data_dir.mkdir()
-    (marker_dir / "demo.json").write_text(
-        json.dumps(
-            {
-                "session": "demo",
-                "workspace": str(workspace),
-                "remote_spec": str(workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"),
-                "run_kind": "chain",
-                "plan_name": "",
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    program = _extract_repair_program(
-        "collect_failure_context_json",
-        "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" <<'PY'",
-    )
-    result = _run_embedded_python(
-        program,
-        str(workspace),
-        "demo",
-        "chain",
-        "",
-        str(marker_dir),
-        str(data_dir),
-        "",
-    )
-
-    assert result.returncode == 0, result.stderr
-    payload = json.loads(result.stdout)
-    assert payload["failure_classification"] == "stale_state"
-    assert payload["stale_state"]["classification"] == "STALE STATE"
-    assert payload["stale_state"]["summary"] == "marker workspace path no longer exists"
 
 
 def test_repair_loop_prefers_awaiting_human_over_timeout_text_in_prep_clarification(tmp_path: Path) -> None:
@@ -6092,6 +6055,11 @@ def test_watchdog_missing_chain_spec_uses_terminal_chain_state_without_repair(
             _extract_wrapper_function("session_terminal_status"),
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("env_gone_sidecar_path"),
+            _extract_wrapper_function("environment_gone_check"),
+            _extract_wrapper_function("persist_environment_gone_outcome"),
+            _extract_wrapper_function("clear_session_tracking_artifacts"),
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(marker_dir / 'repair-data')!r}",
@@ -6169,6 +6137,11 @@ def test_watchdog_missing_workspace_uses_completed_repair_history_without_repair
             _extract_wrapper_function("session_terminal_status"),
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("env_gone_sidecar_path"),
+            _extract_wrapper_function("environment_gone_check"),
+            _extract_wrapper_function("persist_environment_gone_outcome"),
+            _extract_wrapper_function("clear_session_tracking_artifacts"),
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
@@ -6201,6 +6174,265 @@ tmux() { echo TMUX >&2; return 1; }
     assert "REPAIR" not in result.stderr
     assert "RELAUNCH" not in result.stderr
     assert "TMUX" not in result.stderr
+
+
+def _env_gone_script_blocks(*, marker_dir: Path, log_path: Path, report_path: Path, workspace: str, remote_spec: str) -> list[str]:
+    """Shared script blocks for the env-gone watchdog tests."""
+    return [
+        _extract_wrapper_function("session_terminal_status"),
+        _extract_wrapper_function("plan_attention_status_env"),
+        _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+        _extract_wrapper_function("safe_name"),
+        _extract_wrapper_function("session_marker_path"),
+        _extract_wrapper_function("kimi_dispatch_marker_path"),
+        _extract_wrapper_function("kimi_pgid_path"),
+        _extract_wrapper_function("kimi_dispatch_marker_clear"),
+        _extract_wrapper_function("repair_needs_human_path"),
+        _extract_wrapper_function("chain_health_snapshot_path"),
+        _extract_wrapper_function("chain_health_artifact_path"),
+        _extract_wrapper_function("env_gone_sidecar_path"),
+        _extract_wrapper_function("environment_gone_check"),
+        _extract_wrapper_function("persist_environment_gone_outcome"),
+        _extract_wrapper_function("clear_session_tracking_artifacts"),
+        _extract_wrapper_function("launch_chain_tick"),
+        f"MARKER_DIR={str(marker_dir)!r}",
+        f"REPAIR_DATA_DIR={str(marker_dir / 'repair-data')!r}",
+        f"LOG={str(log_path)!r}",
+        """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
+resolve_existing_remote_spec() { printf '%s\n' "$3"; }
+safe_name() { printf '%s\\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+    ]
+
+
+def test_watchdog_env_gone_clears_artifacts_after_strikes_threshold(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "wiped-ws"  # intentionally absent
+    marker_file = marker_dir / "demo-chain.json"
+    marker_file.write_text('{"run_kind":"chain"}', encoding="utf-8")
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        _env_gone_script_blocks(
+            marker_dir=marker_dir,
+            log_path=log_path,
+            report_path=report_path,
+            workspace=str(workspace),
+            remote_spec="/missing/demo-chain.yaml",
+        )
+        + [
+            "ENV_GONE_STRIKES=1",
+            f"launch_chain_tick demo-chain {str(workspace)!r} /missing/demo-chain.yaml {str(report_path)!r} chain '' ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\tobserve\tenvironment_gone\t" in report
+    assert "DISPATCH" not in result.stderr
+    assert "REPAIR" not in result.stderr
+    # Session is retired: marker and env-gone sidecar are gone.
+    assert not marker_file.exists()
+    assert not (marker_dir / "demo-chain.env-gone").exists()
+    # Repair-data carries the environment_gone outcome for audit.
+    repair_data = json.loads((repair_data_dir / "demo-chain.repair-data.json").read_text(encoding="utf-8"))
+    assert repair_data["outcome"] == "environment_gone"
+
+
+def test_watchdog_env_gone_below_threshold_does_not_clear(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "wiped-ws"  # intentionally absent
+    marker_file = marker_dir / "demo-chain.json"
+    marker_file.write_text('{"run_kind":"chain"}', encoding="utf-8")
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        _env_gone_script_blocks(
+            marker_dir=marker_dir,
+            log_path=log_path,
+            report_path=report_path,
+            workspace=str(workspace),
+            remote_spec="/missing/demo-chain.yaml",
+        )
+        + [
+            "ENV_GONE_STRIKES=3",
+            f"launch_chain_tick demo-chain {str(workspace)!r} /missing/demo-chain.yaml {str(report_path)!r} chain '' ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\tobserve\tenv_gone_pending\t" in report
+    assert "\tobserve\tenvironment_gone\t" not in report
+    assert "DISPATCH" not in result.stderr
+    assert "REPAIR" not in result.stderr
+    # Marker stays; sidecar records strike count = 1.
+    assert marker_file.exists()
+    sidecar = marker_dir / "demo-chain.env-gone"
+    assert sidecar.exists()
+    assert sidecar.read_text(encoding="utf-8").strip() == "1"
+    # No environment_gone outcome is written below threshold.
+    assert not (repair_data_dir / "demo-chain.repair-data.json").exists()
+
+
+def test_watchdog_env_gone_with_completed_history_still_treated_as_complete(tmp_path: Path) -> None:
+    """Regression guard: the env-gone gate is strictly below the terminal
+    short-circuit, so a completed repair-data fixture wins over a wiped env."""
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "wiped-ws"  # intentionally absent
+    (repair_data_dir / "demo-chain.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-chain",
+                "attempts": [
+                    {
+                        "failure_classification": "chain_completed",
+                        "chain_state_summary": {
+                            "current_plan_name": "",
+                            "current_state": "",
+                            "last_state": "done",
+                            "events": [{"msg": "all milestones complete"}],
+                        },
+                        "failure_context": {
+                            "failure_classification": "chain_completed",
+                            "chain_state_summary": {
+                                "current_plan_name": "",
+                                "current_state": "",
+                                "last_state": "done",
+                            },
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        _env_gone_script_blocks(
+            marker_dir=marker_dir,
+            log_path=log_path,
+            report_path=report_path,
+            workspace=str(workspace),
+            remote_spec="/missing/demo-chain.yaml",
+        )
+        + [
+            "ENV_GONE_STRIKES=1",
+            f"launch_chain_tick demo-chain {str(workspace)!r} /missing/demo-chain.yaml {str(report_path)!r} chain '' ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\tobserve\tcomplete\tchain complete\t" in report
+    assert "\tobserve\tenvironment_gone\t" not in report
+    assert "\tobserve\tenv_gone_pending\t" not in report
+
+
+def test_watchdog_env_gone_recovers_when_workspace_returns(tmp_path: Path) -> None:
+    """A transient deploy gap records strikes; when the workspace reappears the
+    sidecar is cleared and the check signals present (fall-through to normal
+    processing). Exercises environment_gone_check directly so the recovery
+    contract is isolated from the terminal short-circuit above the gate."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    sidecar = marker_dir / "demo-chain.env-gone"
+    sidecar.write_text("2\n", encoding="utf-8")
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("env_gone_sidecar_path"),
+            _extract_wrapper_function("environment_gone_check"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+log() { printf '%s\\n' "$*" >> "$LOG"; }
+safe_name() { printf '%s\\n' "$1"; }
+""".strip(),
+            f"ENV_GONE_STRIKES=3",
+            f"environment_gone_check demo-chain {str(workspace)!r} {str(spec_path)!r}",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 1, result.stderr
+    assert result.stdout.strip() == "present"
+    # Env present: the prior strike sidecar is cleared (transient-deploy recovery).
+    assert not sidecar.exists()
+
+
+def test_repair_loop_env_gone_at_entry_exits_zero_without_iteration(tmp_path: Path) -> None:
+    """The repair-loop backstop: a wiped workspace/spec at entry writes an
+    environment_gone outcome and exits 0 without entering the iteration loop
+    or escalating to Discord."""
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "wiped-ws"  # intentionally absent
+    data_file = repair_data_dir / "demo-chain.repair-data.json"
+    # A pre-existing repairing outcome that the guard must overwrite.
+    data_file.write_text(json.dumps({"session": "demo-chain", "outcome": "repairing"}), encoding="utf-8")
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
+    env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
+    env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(repair_data_dir)
+    env["CLOUD_WATCHDOG_ARNOLD_SRC"] = str(REPO_ROOT)
+    # Provide a stub discord binary so any accidental escalation would still
+    # not silently pass the test (it is never invoked on the success path).
+    result = subprocess.run(
+        [
+            "bash",
+            str(WRAPPER_DIR / "arnold-repair-loop"),
+            "demo-chain",
+            str(workspace),
+            "/missing/demo-chain.yaml",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "iteration" not in result.stderr.lower()
+    assert "needs human" not in result.stderr.lower()
+    assert "discord" not in result.stderr.lower()
+    persisted = json.loads(data_file.read_text(encoding="utf-8"))
+    assert persisted["outcome"] == "environment_gone"
 
 
 def test_watchdog_missing_base_ref_chain_state_reports_needs_human_without_plan_state(

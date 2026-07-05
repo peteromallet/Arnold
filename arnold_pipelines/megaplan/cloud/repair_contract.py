@@ -1053,13 +1053,22 @@ REPAIR_TIMEOUT = "repair_timeout"
 REPAIR_EXHAUSTED = "repair_exhausted"
 NEEDS_HUMAN = "needs_human"
 DISCORD_ESCALATED = "discord_escalated"  # legacy non-success — preserved for compatibility
+ENVIRONMENT_GONE = "environment_gone"  # wiped workspace/spec — ops concern, not repairable
 
 SUCCESS_OUTCOMES: frozenset[str] = frozenset(
     {COMPLETE, PROGRESSED, LIVE_WITH_FRESH_ACTIVITY, TRUE_HUMAN_BLOCKER}
 )
 
 NON_SUCCESS_OUTCOMES: frozenset[str] = frozenset(
-    {PARTIAL_LIVENESS, REPAIRING, REPAIR_TIMEOUT, REPAIR_EXHAUSTED, NEEDS_HUMAN, DISCORD_ESCALATED}
+    {
+        PARTIAL_LIVENESS,
+        REPAIRING,
+        REPAIR_TIMEOUT,
+        REPAIR_EXHAUSTED,
+        NEEDS_HUMAN,
+        DISCORD_ESCALATED,
+        ENVIRONMENT_GONE,
+    }
 )
 
 ALL_OUTCOMES: frozenset[str] = SUCCESS_OUTCOMES | NON_SUCCESS_OUTCOMES
@@ -2315,18 +2324,18 @@ def _is_known_repairable_shape(
 
 def _has_current_target_evidence(current_target: Mapping[str, Any]) -> bool:
     target_payload = _as_mapping(current_target)
+    current_refs = _as_mapping(target_payload.get("current_refs"))
     plan_state = _as_mapping(target_payload.get("plan_state"))
     chain_state = _as_mapping(target_payload.get("chain_state"))
-    chain_log = _as_mapping(target_payload.get("chain_log"))
     if _as_text(plan_state.get("fingerprint")):
         return True
     if _as_text(chain_state.get("fingerprint")):
         return True
-    if bool(plan_state.get("present")):
+    if _as_text(target_payload.get("authoritative_source")) and _as_text(
+        current_refs.get("current_plan_name")
+    ):
         return True
-    if bool(chain_state.get("present")):
-        return True
-    return bool(chain_log.get("present"))
+    return bool(plan_state.get("present")) or bool(chain_state.get("present"))
 
 
 __all__ = [
@@ -2359,6 +2368,7 @@ __all__ = [
     "DISPATCH_INTENT_L1",
     "DISPATCH_INTENT_QUEUE_ONLY",
     "DISCORD_ESCALATED",
+    "ENVIRONMENT_GONE",
     "LIVE_WITH_FRESH_ACTIVITY",
     "NEEDS_HUMAN",
     "NON_SUCCESS_OUTCOMES",
