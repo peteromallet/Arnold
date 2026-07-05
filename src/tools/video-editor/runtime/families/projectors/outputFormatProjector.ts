@@ -17,6 +17,7 @@ import type {
 } from '@reigh/editor-sdk';
 import type {
   VideoEditorOutputFormatDescriptor,
+  VideoEditorRouteScopeDescriptor,
   VideoEditorRouteRequirementDescriptor,
   VideoEditorProcessRequirementDescriptor,
   VideoEditorPlannerBlockerDescriptor,
@@ -34,12 +35,14 @@ export function buildOutputFormatDescriptors(
     const of = contribution as unknown as OutputFormatContribution;
     const requiresRender = of.requiresRender ?? false;
     const renderDescriptor = requiresRender ? of.render : undefined;
+    const renderRoutes = normalizedRoutes(renderDescriptor?.routes);
+    const renderRouteScope = buildRouteScope('output-format-render', renderRoutes);
     const id = contribution.id as string;
-    const routeRequirements = buildRouteRequirements(renderDescriptor);
-    const processRequirements = buildProcessRequirements(renderDescriptor);
-    const blockers = buildOutputFormatBlockers(extensionId, id, of, renderDescriptor);
-    const nextActions = buildOutputFormatNextActions(of, renderDescriptor, blockers);
-    const capabilities = buildOutputFormatCapabilities(extensionId, id, of, renderDescriptor, blockers);
+    const routeRequirements = buildRouteRequirements(renderDescriptor, renderRouteScope);
+    const processRequirements = buildProcessRequirements(renderDescriptor, renderRoutes);
+    const blockers = buildOutputFormatBlockers(extensionId, id, of, renderDescriptor, renderRouteScope);
+    const nextActions = buildOutputFormatNextActions(of, renderRoutes, renderDescriptor, blockers);
+    const capabilities = buildOutputFormatCapabilities(extensionId, id, of, renderRoutes, renderDescriptor, blockers);
 
     return freezeDescriptor({
       id,
@@ -52,7 +55,7 @@ export function buildOutputFormatDescriptors(
       description: of.description,
       disabled: false,
       disabledReason: undefined,
-      availableRoutes: Object.freeze([...(renderDescriptor?.routes ?? [])]),
+      availableRoutes: renderRoutes,
       routeRequirements,
       processRequirements,
       blockers,
@@ -64,14 +67,31 @@ export function buildOutputFormatDescriptors(
   });
 }
 
+function normalizedRoutes(routes: readonly RenderRoute[] | undefined): readonly RenderRoute[] {
+  return Object.freeze([...(routes ?? [])]);
+}
+
+function buildRouteScope(
+  source: VideoEditorRouteScopeDescriptor['source'],
+  routes: readonly RenderRoute[],
+): VideoEditorRouteScopeDescriptor {
+  return freezeDescriptor({
+    source,
+    mode: routes.length > 0 ? 'explicit-routes' : 'missing-routes',
+    routes,
+  });
+}
+
 function buildRouteRequirements(
   renderDescriptor: RenderDependentOutputDescriptor | undefined,
+  renderRouteScope: VideoEditorRouteScopeDescriptor,
 ): readonly VideoEditorRouteRequirementDescriptor[] {
   if (!renderDescriptor) return Object.freeze([]);
 
   return Object.freeze([
     freezeDescriptor({
-      routes: Object.freeze([...renderDescriptor.routes]),
+      routes: renderRouteScope.routes,
+      routeScope: renderRouteScope,
       requiredCapabilities: Object.freeze([...(renderDescriptor.requiredCapabilities ?? [])]),
       processId: renderDescriptor.processId,
       operationId: renderDescriptor.operationId,
@@ -83,6 +103,7 @@ function buildRouteRequirements(
 
 function buildProcessRequirements(
   renderDescriptor: RenderDependentOutputDescriptor | undefined,
+  renderRoutes: readonly RenderRoute[],
 ): readonly VideoEditorProcessRequirementDescriptor[] {
   if (!renderDescriptor?.processId) return Object.freeze([]);
 
@@ -90,6 +111,7 @@ function buildProcessRequirements(
     freezeDescriptor({
       processId: renderDescriptor.processId,
       operationId: renderDescriptor.operationId,
+      routeScope: buildRouteScope('output-format-process', renderRoutes),
       requiredCapabilities: Object.freeze([...(renderDescriptor.requiredCapabilities ?? [])]),
     }),
   ]);
@@ -100,13 +122,39 @@ function buildOutputFormatBlockers(
   contributionId: string,
   contribution: OutputFormatContribution,
   renderDescriptor: RenderDependentOutputDescriptor | undefined,
+  renderRouteScope: VideoEditorRouteScopeDescriptor,
 ): readonly VideoEditorPlannerBlockerDescriptor[] {
-  if (!contribution.requiresRender || renderDescriptor) return Object.freeze([]);
+  if (!contribution.requiresRender) return Object.freeze([]);
+  if (!renderDescriptor) {
+    const nextAction: VideoEditorPlannerNextActionDescriptor = freezeDescriptor({
+      kind: 'open-settings',
+      label: 'Add render route requirements',
+      message: 'Render-dependent output formats must declare render routes before planning can execute them.',
+      detail: {
+        specificKind: 'resolve-blocker',
+      },
+    });
+
+    return Object.freeze([
+      freezeDescriptor({
+        id: `${extensionId}.${contributionId}.missing-render-descriptor`,
+        extensionId,
+        contributionId,
+        reason: 'route-unsupported',
+        message: `Output format "${contribution.label ?? contributionId}" requires render planning but did not declare route requirements.`,
+        nextAction,
+      }),
+    ]);
+  }
+
+  if (renderRouteScope.mode === 'explicit-routes') {
+    return Object.freeze([]);
+  }
 
   const nextAction: VideoEditorPlannerNextActionDescriptor = freezeDescriptor({
     kind: 'open-settings',
-    label: 'Add render route requirements',
-    message: 'Render-dependent output formats must declare render routes before planning can execute them.',
+    label: 'Declare explicit render routes',
+    message: 'Render-dependent output formats must declare a non-empty render.routes array before planning can execute them.',
     detail: {
       specificKind: 'resolve-blocker',
     },
@@ -114,11 +162,11 @@ function buildOutputFormatBlockers(
 
   return Object.freeze([
     freezeDescriptor({
-      id: `${extensionId}.${contributionId}.missing-render-descriptor`,
+      id: `${extensionId}.${contributionId}.missing-render-routes`,
       extensionId,
       contributionId,
       reason: 'route-unsupported',
-      message: `Output format "${contribution.label ?? contributionId}" requires render planning but did not declare route requirements.`,
+      message: `Output format "${contribution.label ?? contributionId}" requires render planning but did not declare a non-empty explicit route set.`,
       nextAction,
     }),
   ]);
@@ -126,6 +174,7 @@ function buildOutputFormatBlockers(
 
 function buildOutputFormatNextActions(
   contribution: OutputFormatContribution,
+  renderRoutes: readonly RenderRoute[],
   renderDescriptor: RenderDependentOutputDescriptor | undefined,
   blockers: readonly VideoEditorPlannerBlockerDescriptor[],
 ): readonly VideoEditorPlannerNextActionDescriptor[] {
@@ -133,7 +182,7 @@ function buildOutputFormatNextActions(
   if (blockers[0]?.nextAction) return Object.freeze([blockers[0].nextAction]);
 
   const actions: VideoEditorPlannerNextActionDescriptor[] = [];
-  for (const route of renderDescriptor?.routes ?? []) {
+  for (const route of renderRoutes) {
     actions.push(freezeDescriptor({
       kind: 'select-route',
       label: `Plan ${route}`,
@@ -151,6 +200,7 @@ function buildOutputFormatCapabilities(
   extensionId: string,
   contributionId: string,
   contribution: OutputFormatContribution,
+  renderRoutes: readonly RenderRoute[],
   renderDescriptor: RenderDependentOutputDescriptor | undefined,
   blockers: readonly VideoEditorPlannerBlockerDescriptor[],
 ): IntegrationCapabilities | undefined {
@@ -173,7 +223,7 @@ function buildOutputFormatCapabilities(
     });
   }
 
-  const routes = Object.freeze([...(renderDescriptor?.routes ?? [])]);
+  const routes = renderRoutes;
   const determinism = renderDescriptor?.determinism ?? 'unknown';
   const requiredCapabilities = Object.freeze([...(renderDescriptor?.requiredCapabilities ?? [])]);
   const routeFit = renderDescriptor

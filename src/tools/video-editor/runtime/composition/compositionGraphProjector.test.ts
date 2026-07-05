@@ -17,8 +17,14 @@ import type {
   ClipTypeRegistrySnapshot,
   ClipTypeRegistryRecord,
 } from '@/tools/video-editor/clip-types/ClipTypeRegistry.ts';
+import { projectHostMaterialRuntime } from '@/tools/video-editor/runtime/composition/materialRuntime.ts';
 import type { ContributionRenderability, RenderBlocker } from '@/tools/video-editor/runtime/renderability.ts';
-import type { ContributionIndex, ContributionIndexEntry } from '@/tools/video-editor/runtime/extensionSurface.ts';
+import type {
+  ContributionIndex,
+  ContributionIndexEntry,
+  VideoEditorOutputFormatDescriptor,
+  VideoEditorProcessDescriptor,
+} from '@/tools/video-editor/runtime/extensionSurface.ts';
 
 function shaderSummary(
   overrides: Partial<TimelineShaderSummary> = {},
@@ -146,6 +152,131 @@ function project(overrides: Partial<CompositionGraphInput> = {}) {
   });
 }
 
+function outputFormatDescriptor(): VideoEditorOutputFormatDescriptor {
+  return {
+    id: 'dataset-zip',
+    extensionId: 'com.example.outputs',
+    label: 'Dataset ZIP',
+    requiresRender: true,
+    outputExtension: 'zip',
+    disabled: false,
+    availableRoutes: ['sidecar-export'],
+    routeRequirements: [
+      {
+        routes: ['sidecar-export'],
+        routeScope: {
+          source: 'output-format-render',
+          mode: 'explicit-routes',
+          routes: ['sidecar-export'],
+        },
+        requiredCapabilities: ['sidecar-export', 'render-material'],
+        determinism: 'process-dependent',
+        unavailableMessage: 'Route unavailable.',
+      },
+    ],
+    processRequirements: [
+      {
+        processId: 'dataset-process',
+        operationId: 'exportDataset',
+        routeScope: {
+          source: 'output-format-process',
+          mode: 'explicit-routes',
+          routes: ['sidecar-export'],
+        },
+        requiredCapabilities: ['sidecar-export'],
+      },
+    ],
+    blockers: [],
+    nextActions: [],
+    sidecars: [],
+  };
+}
+
+function processDescriptor(): VideoEditorProcessDescriptor {
+  return {
+    id: 'dataset-bridge',
+    extensionId: 'com.example.process',
+    processId: 'dataset-process',
+    label: 'Dataset Process',
+    spec: {
+      id: 'dataset-process',
+      label: 'Dataset Process',
+      protocol: 'stdio-jsonrpc',
+      spawn: {
+        command: 'dataset-process',
+      },
+      operations: [
+        {
+          id: 'exportDataset',
+          label: 'Export Dataset',
+          routes: ['sidecar-export'],
+          outputKinds: ['artifact', 'material'],
+        },
+      ],
+    },
+    protocol: 'stdio-jsonrpc',
+    operations: [
+      {
+        id: 'exportDataset',
+        label: 'Export Dataset',
+        routes: ['sidecar-export'],
+        routeScope: {
+          source: 'process-operation',
+          mode: 'explicit-routes',
+          routes: ['sidecar-export'],
+        },
+        outputKinds: ['artifact', 'material'],
+      },
+    ],
+    availableRoutes: ['sidecar-export'],
+    requiredBy: [],
+    blockers: [],
+    nextActions: [],
+  };
+}
+
+function outputMaterialRuntime(contributionIdx: ContributionIndex) {
+  return projectHostMaterialRuntime({
+    materialRefs: [
+      {
+        id: 'mat-render-pass',
+        mediaKind: 'image',
+        locator: {
+          kind: 'artifact-store',
+          uri: 'artifact://materials/render-pass.png',
+        },
+        producerExtensionId: 'com.example.shader',
+        provenance: {
+          contributionId: 'clip-glow',
+          contributionKind: 'shader',
+          shaderId: 'shader.clipGlow',
+        },
+        determinism: 'process-dependent',
+        replacementPolicy: 'materialize-on-export',
+      },
+    ],
+    materialStatuses: [
+      {
+        materialRefId: 'mat-render-pass',
+        state: 'resolved',
+      },
+    ],
+    contributionIndex: contributionIdx,
+    shaders: [
+      {
+        id: 'clip-glow',
+        extensionId: 'com.example.shader',
+        shaderId: 'shader.clipGlow',
+        label: 'Clip Glow',
+        pass: 'clip',
+        hasSourceMetadata: true,
+      },
+    ],
+    requestedRoutes: ['sidecar-export'],
+    canonicalRoutes: ['sidecar-export'],
+  });
+}
+
 describe('compositionGraphProjector', () => {
   it('projects clip, timeline-postprocess, and contribution nodes plus shader consumes edges', () => {
     const graph = project();
@@ -256,6 +387,124 @@ describe('compositionGraphProjector', () => {
         }),
       }),
     ]);
+  });
+
+  it('projects output-format requires edges for route/process/graph facts and keeps material dependencies on consumes', () => {
+    const idx: ContributionIndex = {
+      ...contributionIndex(),
+      'outputFormat:com.example.outputs:dataset-zip': [
+        indexEntry('outputFormat:com.example.outputs:dataset-zip', {
+          renderId: 'dataset.zip',
+        }),
+      ],
+      'process:com.example.process:dataset-bridge': [
+        indexEntry('process:com.example.process:dataset-bridge'),
+      ],
+    };
+
+    const graph = project({
+      contributionIndex: idx,
+      outputFormats: [outputFormatDescriptor()],
+      processes: [processDescriptor()],
+      materialRuntime: outputMaterialRuntime(idx),
+      snapshot: timelineSnapshot({
+        shaders: [
+          shaderSummary(),
+        ],
+      }),
+    });
+
+    expect(graph.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'contribution:outputFormat:com.example.outputs:dataset-zip',
+        kind: 'contribution',
+        ref: {
+          kind: 'outputFormat',
+          extensionId: 'com.example.outputs',
+          contributionId: 'dataset-zip',
+        },
+      }),
+      expect.objectContaining({
+        id: 'contribution:process:com.example.process:dataset-bridge',
+        kind: 'contribution',
+        ref: {
+          kind: 'process',
+          extensionId: 'com.example.process',
+          contributionId: 'dataset-bridge',
+        },
+      }),
+    ]));
+
+    expect(graph.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'requires',
+        sourceNodeId: 'contribution:outputFormat:com.example.outputs:dataset-zip',
+        targetNodeId: 'contribution:outputFormat:com.example.outputs:dataset-zip',
+        detail: expect.objectContaining({
+          outputFormatId: 'dataset-zip',
+          requirementKind: 'route',
+          routes: ['sidecar-export'],
+          requiredCapabilities: ['sidecar-export', 'render-material'],
+        }),
+      }),
+      expect.objectContaining({
+        kind: 'requires',
+        sourceNodeId: 'contribution:outputFormat:com.example.outputs:dataset-zip',
+        targetNodeId: 'contribution:process:com.example.process:dataset-bridge',
+        detail: expect.objectContaining({
+          outputFormatId: 'dataset-zip',
+          requirementKind: 'process',
+          processId: 'dataset-process',
+          operationId: 'exportDataset',
+        }),
+      }),
+      expect.objectContaining({
+        kind: 'requires',
+        sourceNodeId: 'contribution:outputFormat:com.example.outputs:dataset-zip',
+        targetNodeId: 'clip:clip-1',
+        detail: expect.objectContaining({
+          requirementKind: 'clip',
+          routes: ['sidecar-export'],
+        }),
+      }),
+      expect.objectContaining({
+        kind: 'requires',
+        sourceNodeId: 'contribution:outputFormat:com.example.outputs:dataset-zip',
+        targetNodeId: TIMELINE_POSTPROCESS_NODE_ID,
+        detail: expect.objectContaining({
+          requirementKind: 'timeline-postprocess',
+        }),
+      }),
+      expect.objectContaining({
+        kind: 'requires',
+        sourceNodeId: 'contribution:outputFormat:com.example.outputs:dataset-zip',
+        targetNodeId: 'contribution:shader:com.example.shader:clip-glow',
+        detail: expect.objectContaining({
+          requirementKind: 'shader',
+        }),
+      }),
+      expect.objectContaining({
+        kind: 'consumes',
+        sourceNodeId: 'contribution:outputFormat:com.example.outputs:dataset-zip',
+        targetNodeId: 'contribution:shader:com.example.shader:clip-glow',
+        detail: expect.objectContaining({
+          consumedKind: 'material',
+          materialRefId: 'mat-render-pass',
+        }),
+      }),
+    ]));
+
+    const shaderDependencyKinds = graph.edges
+      .filter((edge) =>
+        edge.sourceNodeId === 'contribution:outputFormat:com.example.outputs:dataset-zip'
+        && edge.targetNodeId === 'contribution:shader:com.example.shader:clip-glow',
+      )
+      .map((edge) => edge.kind)
+      .sort();
+    expect(shaderDependencyKinds).toEqual(['consumes', 'requires']);
+    expect(graph.edges.map((edge) => edge.kind)).not.toContain('materializes');
+    expect(graph.edges.map((edge) => edge.kind)).not.toContain('produces');
+    expect(graph.edges.map((edge) => edge.kind)).not.toContain('fallbacks');
   });
 
   it('treats undefined runtime overlay and an explicitly empty runtime overlay as equivalent no-ops', () => {

@@ -10,6 +10,11 @@
  * authority surface. M2 expands the public edge vocabulary with `animates`
  * and `binds-live` while keeping node kinds and resolver states stable.
  *
+ * M7a adds `requires` edges for capability/precondition/process requirements
+ * and `OutputFormatRef` as a constrained contribution reference for
+ * output-format route planning without introducing deferred edge kinds
+ * (`materializes`, `produces`, `fallbacks`).
+ *
  * @module video/composition/graph
  * @publicContract
  */
@@ -47,22 +52,27 @@ export const COMPOSITION_NODE_KINDS: readonly CompositionNodeKind[] = [
 // ---------------------------------------------------------------------------
 
 /**
- * M1b public edge kinds.
+ * M1b public edge kinds extended with M7a `requires`.
  *
  * - `consumes` — a source node (clip or timeline-postprocess) consumes a
  *                shader contribution from a target contribution node.
  * - `animates` — an automation clip drives a contribution target path.
  * - `binds-live` — a clip carries a resolved live binding for a target path.
+ * - `requires` — (M7a) a source contribution node declares a capability,
+ *                precondition, or process requirement on a target node.
+ *                Used for output-format route planning; distinct from
+ *                `consumes` which denotes data-flow material dependencies.
  */
-export type CompositionEdgeKind = 'consumes' | 'animates' | 'binds-live';
+export type CompositionEdgeKind = 'consumes' | 'animates' | 'binds-live' | 'requires';
 
 /**
- * The canonical set of M1b public edge kinds.
+ * The canonical set of public edge kinds including M7a `requires`.
  */
 export const COMPOSITION_EDGE_KINDS: readonly CompositionEdgeKind[] = [
   'consumes',
   'animates',
   'binds-live',
+  'requires',
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -146,8 +156,9 @@ export interface CompositionGraphNode {
  * A single directed edge in the composition graph.
  *
  * Edge detail is kind-specific: shader assignment metadata for `consumes`,
- * canonical target-path metadata for `animates` / `binds-live`, and
- * future per-kind fields as the graph surface evolves.
+ * canonical target-path metadata for `animates` / `binds-live`, capability
+ * or process requirement metadata for `requires`, and future per-kind
+ * fields as the graph surface evolves.
  */
 export interface CompositionGraphEdge {
   /** Unique edge identifier within the graph (scoped to the projection). */

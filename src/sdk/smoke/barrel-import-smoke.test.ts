@@ -45,6 +45,9 @@ import {
   COMPOSITION_NODE_KINDS,
   COMPOSITION_EDGE_KINDS,
   REFERENCE_STATES,
+  // M7a artifact profile kinds
+  ARTIFACT_MANIFEST_PROFILE_KINDS,
+  contributionRefKey,
 } from '@/sdk/index';
 import type {
   // ids
@@ -224,6 +227,14 @@ import type {
   CompositionReferenceStateEntry,
   CompositionGraphPreviewResult,
   CompositionGraph,
+  // M7a Output-format route planning types
+  OutputFormatRef,
+  ArtifactManifestProfile,
+  ArtifactManifestProfileKind,
+  VideoArtifactManifestProfile,
+  AudioArtifactManifestProfile,
+  SidecarArtifactManifestProfile,
+  PreviewArtifactManifestProfile,
 } from '@/sdk/index';
 
 // ===========================================================================
@@ -2851,8 +2862,8 @@ describe('M1b barrel-import smoke — CompositionGraph', () => {
   });
 
   it('COMPOSITION_EDGE_KINDS is importable from the barrel', () => {
-    expect(COMPOSITION_EDGE_KINDS).toEqual(['consumes', 'animates', 'binds-live']);
-    expect(COMPOSITION_EDGE_KINDS).toHaveLength(3);
+    expect(COMPOSITION_EDGE_KINDS).toEqual(['consumes', 'animates', 'binds-live', 'requires']);
+    expect(COMPOSITION_EDGE_KINDS).toHaveLength(4);
   });
 
   it('REFERENCE_STATES is importable from the barrel', () => {
@@ -2986,5 +2997,76 @@ describe('M2a barrel-import smoke — cross-cutting identity', () => {
 
     // Value exports from lifecycle
     expect(defExt_Direct).toBe(defineExtension);
+  });
+});
+
+// ===========================================================================
+// M7a: Output-format route planning barrel-import smoke
+// ===========================================================================
+
+describe('M7a barrel-import smoke — Output-format route planning', () => {
+  it('OutputFormatRef is importable from the barrel', () => {
+    const ref: OutputFormatRef = {
+      kind: 'outputFormat',
+      extensionId: 'com.test.ext',
+      contributionId: 'my-format',
+    };
+    expect(ref.kind).toBe('outputFormat');
+  });
+
+  it('ARTIFACT_MANIFEST_PROFILE_KINDS is importable from the barrel', () => {
+    expect(ARTIFACT_MANIFEST_PROFILE_KINDS).toEqual(['video', 'audio', 'sidecar', 'preview']);
+    expect(ARTIFACT_MANIFEST_PROFILE_KINDS).toHaveLength(4);
+  });
+
+  it('contributionRefKey is importable from the barrel', () => {
+    const key = contributionRefKey({
+      kind: 'outputFormat',
+      extensionId: 'com.test.ext',
+      contributionId: 'my-format',
+    });
+    expect(key).toBe('outputFormat:com.test.ext:my-format');
+  });
+
+  it('VideoArtifactManifestProfile is constructable from the barrel', () => {
+    const p: VideoArtifactManifestProfile = {
+      kind: 'video', schemaVersion: 1, mimeType: 'video/mp4',
+      consumedMaterialRefs: [], inputHashes: [],
+    };
+    expect(p.kind).toBe('video');
+  });
+
+  it('AudioArtifactManifestProfile is constructable from the barrel', () => {
+    const p: AudioArtifactManifestProfile = {
+      kind: 'audio', schemaVersion: 1, mimeType: 'audio/mp3',
+      consumedMaterialRefs: [], inputHashes: [],
+    };
+    expect(p.kind).toBe('audio');
+  });
+
+  it('SidecarArtifactManifestProfile is constructable from the barrel', () => {
+    const p: SidecarArtifactManifestProfile = {
+      kind: 'sidecar', schemaVersion: 1, mimeType: 'application/json',
+      consumedMaterialRefs: [], inputHashes: [],
+    };
+    expect(p.kind).toBe('sidecar');
+  });
+
+  it('PreviewArtifactManifestProfile is constructable from the barrel', () => {
+    const p: PreviewArtifactManifestProfile = {
+      kind: 'preview', schemaVersion: 1, mimeType: 'image/png',
+      consumedMaterialRefs: [], inputHashes: [],
+    };
+    expect(p.kind).toBe('preview');
+  });
+
+  it('ArtifactManifestProfile discriminated union works via barrel', () => {
+    const profiles: ArtifactManifestProfile[] = [
+      { kind: 'video', schemaVersion: 1, mimeType: 'video/mp4', consumedMaterialRefs: [], inputHashes: [] },
+      { kind: 'audio', schemaVersion: 1, mimeType: 'audio/mp3', consumedMaterialRefs: [], inputHashes: [] },
+      { kind: 'sidecar', schemaVersion: 1, mimeType: 'text/plain', consumedMaterialRefs: [], inputHashes: [] },
+      { kind: 'preview', schemaVersion: 1, mimeType: 'image/png', consumedMaterialRefs: [], inputHashes: [] },
+    ];
+    expect(profiles.map(p => p.kind)).toEqual(['video', 'audio', 'sidecar', 'preview']);
   });
 });

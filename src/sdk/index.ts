@@ -110,7 +110,7 @@ export type { ShaderPassKind, ShaderColorSpace, ShaderFallbackBehavior, ShaderTe
 // Video: Composition (reference identity)
 // ===========================================================================
 
-export type { ContributionRef, LiveSourceRef, MaterialRef } from './video/composition/references';
+export type { ContributionRef, LiveSourceRef, MaterialRef, OutputFormatRef } from './video/composition/references';
 export { contributionRefKey } from './video/composition/references';
 
 // ===========================================================================
@@ -145,6 +145,7 @@ export {
   RENDER_MATERIAL_STATUSES,
   RENDER_MATERIAL_STATUS_PHASES,
   RENDER_MATERIAL_STATUS_QUALITIES,
+  ARTIFACT_MANIFEST_PROFILE_KINDS,
   hasProvenance,
   describeProvenanceGap,
   isActiveBake,
@@ -154,7 +155,12 @@ export {
 } from './video/rendering/artifacts';
 export type {
   ArtifactBoundary,
+  ArtifactManifestProfile,
+  ArtifactManifestProfileBase,
+  ArtifactManifestProfileKind,
+  AudioArtifactManifestProfile,
   BakeContract,
+  PreviewArtifactManifestProfile,
   ProvenanceGap,
   RenderArtifact,
   RenderArtifactManifest,
@@ -170,6 +176,8 @@ export type {
   RenderMaterialStatusQuality,
   RenderMaterialStatusState,
   RenderStorageLocator,
+  SidecarArtifactManifestProfile,
+  VideoArtifactManifestProfile,
 } from './video/rendering/artifacts';
 
 // ===========================================================================

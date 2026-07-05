@@ -370,6 +370,7 @@
       "properties": {
         "routes": {
           "type": "array",
+          "minItems": 1,
           "items": { "$ref": "#/definitions/RenderRoute" }
         },
         "requiredCapabilities": {
@@ -495,22 +496,168 @@
         "kind": { "const": "process" },
         "label": { "type": "string" },
         "order": { "type": "number" },
-        "spec": {
+        "spec": { "$ref": "#/definitions/ProcessSpec" }
+      }
+    },
+
+    "ProcessSpawnConfig": {
+      "type": "object",
+      "required": ["command"],
+      "additionalProperties": false,
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "env": {
           "type": "object",
-          "description": "Process specification.",
-          "required": ["command"],
-          "additionalProperties": true,
+          "additionalProperties": { "type": "string" }
+        },
+        "cwd": { "type": "string" }
+      }
+    },
+
+    "CapabilityVersion": {
+      "type": "object",
+      "required": ["semver"],
+      "additionalProperties": false,
+      "properties": {
+        "semver": { "type": "string" },
+        "declaredBy": { "type": "string" },
+        "contributionId": { "type": "string" }
+      }
+    },
+
+    "CapabilitySourceRef": {
+      "type": "object",
+      "required": ["source"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": ["extension", "built-in", "registry", "manifest", "provider"]
+        },
+        "extensionId": { "type": "string" },
+        "contributionId": { "type": "string" },
+        "version": { "$ref": "#/definitions/CapabilityVersion" }
+      }
+    },
+
+    "ProcessEnvFieldSpec": {
+      "type": "object",
+      "required": ["key"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "label": { "type": "string" },
+        "description": { "type": "string" },
+        "required": { "type": "boolean" },
+        "secret": { "type": "boolean" },
+        "defaultValue": { "type": "string" },
+        "platformDefaults": {
+          "type": "object",
+          "additionalProperties": false,
           "properties": {
-            "command": { "type": "string" },
-            "args": {
-              "type": "array",
-              "items": { "type": "string" }
-            },
-            "env": { "type": "object" },
-            "cwd": { "type": "string" },
-            "timeoutMs": { "type": "number" },
-            "maxRestarts": { "type": "integer", "minimum": 0 }
+            "darwin": { "type": "string" },
+            "linux": { "type": "string" },
+            "win32": { "type": "string" }
           }
+        }
+      }
+    },
+
+    "ProcessOperationSpec": {
+      "type": "object",
+      "required": ["id", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "inputSchema": { "type": "object" },
+        "outputKinds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "artifact",
+              "material",
+              "sidecar",
+              "diagnostic",
+              "planner-result",
+              "tool-result",
+              "live-source-scalar",
+              "live-source-vector",
+              "live-source-structured"
+            ]
+          }
+        },
+        "requiredCapabilities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "routes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/RenderRoute" }
+        },
+        "determinism": { "$ref": "#/definitions/DeterminismStatus" }
+      }
+    },
+
+    "ProcessLiveSourceDeclaration": {
+      "type": "object",
+      "required": ["sourceId", "valueShape"],
+      "additionalProperties": false,
+      "properties": {
+        "sourceId": { "type": "string", "minLength": 1 },
+        "valueShape": {
+          "type": "string",
+          "enum": ["scalar", "vector", "structured"]
+        },
+        "label": { "type": "string" },
+        "description": { "type": "string" },
+        "sourceKind": { "type": "string" }
+      }
+    },
+
+    "ProcessSpec": {
+      "type": "object",
+      "required": ["id", "label", "spawn", "protocol"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "spawn": { "$ref": "#/definitions/ProcessSpawnConfig" },
+        "protocol": {
+          "type": "string",
+          "enum": ["stdio-jsonrpc"]
+        },
+        "healthCheck": { "type": "string" },
+        "shutdown": { "type": "string" },
+        "restartPolicy": {
+          "type": "string",
+          "enum": ["never", "always", "on-failure"]
+        },
+        "version": { "$ref": "#/definitions/CapabilityVersion" },
+        "env": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/ProcessEnvFieldSpec" }
+        },
+        "operations": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/ProcessOperationSpec" }
+        },
+        "liveSources": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/ProcessLiveSourceDeclaration" }
+        },
+        "capabilities": { "type": "object" },
+        "requiredBy": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/CapabilitySourceRef" }
         }
       }
     },
@@ -838,13 +985,7 @@
     },
 
     "ProcessManifestEntry": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "id": { "type": "string" },
-        "label": { "type": "string" },
-        "spec": { "type": "object" }
-      }
+      "$ref": "#/definitions/ProcessSpec"
     },
 
     "ExtensionDependency": {

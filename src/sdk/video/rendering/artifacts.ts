@@ -230,6 +230,13 @@ export interface RenderArtifactSidecarDescriptor {
 export interface RenderArtifactManifest {
   readonly id: string;
   readonly schemaVersion: 1;
+  /**
+   * Optional explicit M7a profile discriminant.
+   *
+   * Legacy schemaVersion 1 manifests may omit this field. Route-completion
+   * paths use an explicit profile and validate profile-specific requirements.
+   */
+  readonly profile?: ArtifactManifestProfileKind;
   readonly artifactId: string;
   readonly route: RenderRoute;
   readonly determinism: DeterminismStatus;
@@ -255,6 +262,143 @@ export interface RenderArtifactManifest {
   readonly createdAt?: string;
   readonly metadata?: Record<string, unknown>;
 }
+
+// ---------------------------------------------------------------------------
+// M7a: Typed artifact manifest profiles
+// ---------------------------------------------------------------------------
+
+/**
+ * Discriminant for M7a typed artifact manifest profiles.
+ *
+ * Each profile corresponds to a distinct artifact shape produced by a
+ * render route. Route completion uses these profiles to validate that
+ * all required artifact kinds have been produced.
+ */
+export type ArtifactManifestProfileKind = 'video' | 'audio' | 'sidecar' | 'preview';
+
+/**
+ * The canonical ordered set of M7a artifact manifest profile kinds.
+ */
+export const ARTIFACT_MANIFEST_PROFILE_KINDS: readonly ArtifactManifestProfileKind[] = [
+  'video',
+  'audio',
+  'sidecar',
+  'preview',
+] as const;
+
+/**
+ * Base shape shared by all M7a typed manifest profiles.
+ *
+ * Every profile carries an explicit `profile` discriminant and a
+ * `schemaVersion` of `1`, matching the existing flat manifest contract.
+ * Profile-specific constraints are layered on top via the discriminated
+ * union {@link ArtifactManifestProfile}.
+ */
+export interface ArtifactManifestProfileBase {
+  /** The explicit profile discriminant. */
+  readonly profile: ArtifactManifestProfileKind;
+  /** Schema version (always 1 for M7a profiles). */
+  readonly schemaVersion: 1;
+  /** Stable manifest identifier. */
+  readonly id: string;
+  /** The artifact this manifest describes. */
+  readonly artifactId: string;
+  /** Render route that produced this artifact. */
+  readonly route: RenderRoute;
+  /** Determinism posture for this artifact. */
+  readonly determinism: DeterminismStatus;
+  /** Extension that owns the producing contribution. */
+  readonly producerExtensionId?: string;
+  /** Version of the producing extension. */
+  readonly producerVersion?: string;
+  /** Optional storage locator. */
+  readonly locator?: RenderStorageLocator;
+  /** Material refs consumed to produce this artifact. */
+  readonly consumedMaterialRefs: readonly RenderMaterialRef[];
+  /** Sidecars attached to this artifact. */
+  readonly sidecars: readonly RenderArtifactSidecarDescriptor[];
+  /** Diagnostics produced during artifact generation. */
+  readonly diagnostics?: readonly CapabilityFinding[];
+  /** Provenance metadata. */
+  readonly provenance?: Record<string, unknown>;
+  /** Input content hashes for determinism verification. */
+  readonly inputHashes?: Record<string, string>;
+  /** Render group this artifact belongs to. */
+  readonly renderGroupId?: string;
+  /** Render pass that produced this artifact. */
+  readonly passName?: string;
+  /** Creation timestamp (ISO 8601). */
+  readonly createdAt?: string;
+  /** Extension-defined metadata. */
+  readonly metadata?: Record<string, unknown>;
+}
+
+/**
+ * Video artifact manifest profile.
+ *
+ * A video profile requires `outputFormatId` and `mediaKind: 'video'`.
+ * Validation rejects a video manifest missing either field.
+ */
+export interface VideoArtifactManifestProfile extends ArtifactManifestProfileBase {
+  readonly profile: 'video';
+  readonly mediaKind: 'video';
+  /** The output format contribution that defined this artifact's shape. */
+  readonly outputFormatId: string;
+}
+
+/**
+ * Audio artifact manifest profile.
+ *
+ * An audio profile requires `mediaKind: 'audio'`. Validation rejects
+ * an audio manifest without this media kind.
+ */
+export interface AudioArtifactManifestProfile extends ArtifactManifestProfileBase {
+  readonly profile: 'audio';
+  readonly mediaKind: 'audio';
+  /** The output format contribution that defined this artifact's shape. */
+  readonly outputFormatId?: string;
+}
+
+/**
+ * Sidecar artifact manifest profile.
+ *
+ * A sidecar profile describes auxiliary artifacts (metadata, thumbnails,
+ * scene reports, etc.) produced alongside a primary render output.
+ */
+export interface SidecarArtifactManifestProfile extends ArtifactManifestProfileBase {
+  readonly profile: 'sidecar';
+  /** The output format contribution that defined this sidecar's shape. */
+  readonly outputFormatId?: string;
+}
+
+/**
+ * Preview artifact manifest profile.
+ *
+ * A preview profile describes a non-authoritative preview artifact
+ * suitable for interactive display but not for final export.
+ */
+export interface PreviewArtifactManifestProfile extends ArtifactManifestProfileBase {
+  readonly profile: 'preview';
+  /** The output format contribution that defined this preview's shape. */
+  readonly outputFormatId?: string;
+}
+
+/**
+ * M7a typed artifact manifest profile (discriminated union).
+ *
+ * Each variant enforces profile-specific constraints. Route completion
+ * inspects the `profile` discriminant to determine whether all required
+ * artifact kinds have been satisfied for a given render route.
+ *
+ * Existing flat {@link RenderArtifactManifest} consumers remain
+ * unaffected — this union is additive and used only by new strict
+ * route-completion paths.
+ */
+export type ArtifactManifestProfile =
+  | VideoArtifactManifestProfile
+  | AudioArtifactManifestProfile
+  | SidecarArtifactManifestProfile
+  | PreviewArtifactManifestProfile;
 
 /** Final output or sidecar produced by a render/bake route. */
 export interface RenderArtifact {

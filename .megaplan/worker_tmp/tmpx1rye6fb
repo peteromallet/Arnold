@@ -1,0 +1,431 @@
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+You are an independent reviewer. Critique the plan against the actual repository.
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M7a: Output-Format Route Planning
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Plan:
+        # Implementation Plan: M7a Output-Format Route Planning
+
+## Overview
+Implement M7a as a graph-backed extension of the existing composition spine: output formats remain contribution nodes, gain `requires`/`consumes` route edges, route planning becomes artifact-profile-aware, and audio artifacts attach only through graph-owned media patch operations. This preserves the North Star: extensions declare portable contracts while the host projects, validates, plans, previews, and exports from graph-derived facts.
+
+Scope narrowing: excluding sidecar process integration, governance/docs gates, marketplace, sandbox, headless renderer, and arbitrary artifact routing is a bridge, not a contradiction. It matches the M7a OUT list and the epic constraint that sidecars stay outside the V1 composition SDK.
+
+## Phase 1: Public Contracts And Descriptor Normalization
+
+### Step 1: Add SDK identity, edge, and manifest contract foundations (`src/sdk/video/composition/graph.ts`, `src/sdk/video/composition/references.ts`, `src/sdk/video/rendering/artifacts.ts`, `src/sdk/index.ts`)
+**Complexity: 2**
+
+1. Add `requires` to `CompositionEdgeKind` and `COMPOSITION_EDGE_KINDS`, and update graph preview comments to include shader, material, keyframe, and media operations.
+2. Add `OutputFormatRef` as a constrained `ContributionRef` shape with `kind: 'outputFormat'`, and export it from the SDK barrel while continuing to serialize with `contributionRefKey()`.
+3. Introduce typed manifest profile contracts for `video`, `audio`, `sidecar`, and `preview` on top of schemaVersion `1`, preserving the existing flat manifest shape as the compatibility base.
+4. Update SDK boundary, barrel, and smoke tests so public imports compile and existing schemaVersion `1` consumers still type-check.
+
+### Step 2: Normalize explicit route scope in extension descriptors (`src/sdk/video/families/outputFormats.ts`, `src/sdk/video/families/processes.ts`, `src/tools/video-editor/runtime/extensionSurface.ts`, `src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts`, `src/tools/video-editor/runtime/families/projectors/processProjector.ts`, `config/contracts/reigh-extension.schema.json`)
+**Complexity: 3**
+
+1. Treat non-empty `routes` arrays as the explicit route set for output-format render descriptors and process operations; do not introduce an implicit `all` default.
+2. Add normalized route-scope metadata to runtime descriptors so snapshot, material, process, and output-format requirements can be validated through one path.
+3. Reject or mark missing route sets as unsupported-route blockers during projection for render-dependent output formats and process operations.
+4. Update the extension JSON schema so render-dependent output descriptors require a non-empty `routes` array, and process operation routes are explicitly validated when present.
+
+## Phase 2: Composition Diagnostics And Graph Projection
+
+### Step 3: Add route-scope diagnostic contracts (`src/tools/video-editor/runtime/composition/diagnostics.ts`)
+**Complexity: 2**
+
+1. Add `composition/unsupported-route` and `composition/unknown-route` to `COMPOSITION_DIAGNOSTIC_CODE`.
+2. Extend diagnostic detail typing with route-scope domain fields such as `route`, `routeScope`, `requirementDomain`, `outputFormatId`, and `artifactProfile` where needed.
+3. Add small helper builders for route-scope diagnostics so material runtime and render planner produce identical error contracts.
+
+### Step 4: Project output-format graph edges and render IDs (`src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts`, `src/tools/video-editor/runtime/composition/graphProjector.ts`)
+**Complexity: 4**
+
+1. Extend `contributionRenderId()` to handle output format contributions and verify stable render identity generation.
+2. After contribution node projection, add an output-format edge projection pass that locates `outputFormat` contribution nodes by `OutputFormatRef`.
+3. Project `requires` edges from output-format nodes to process, shader, clip, and timeline-postprocess nodes for route/process/capability requirements.
+4. Project `consumes` edges for material dependencies only where the dependency is data-flow-like, using existing graph node kinds and structured edge detail rather than adding arbitrary material node kinds.
+5. Keep `materializes`, `produces`, and `fallbacks` edge kinds deferred.
+
+## Phase 3: Media Patch Operations
+
+### Step 5: Add `media.attach` and `media.remove` graph preview operations (`src/tools/video-editor/runtime/composition/patchPreview.ts`, `src/tools/video-editor/runtime/composition/graphProjector.ts`)
+**Complexity: 4**
+
+1. Add `GraphMediaAttachOp` and `GraphMediaRemoveOp` with a track-based owner identity such as `{ kind: 'track', trackId, clipId? }`.
+2. Clone track-level media/audio attachment state in `cloneInput()` so preview remains pure and non-mutating.
+3. Add dispatch cases in `applyGraphPreviewOperations()` for `media.attach` and `media.remove`.
+4. Resolve targets against `TimelineTrackSummary.kind === 'audio'` and reject non-audio tracks or missing tracks with composition diagnostics.
+5. Enforce that attached artifacts must have `mediaKind: 'audio'`; keep `material.attach` limited to effect/transition material slots and reject audio artifacts there.
+
+## Phase 4: Typed Artifact Validation And Route Completion
+
+### Step 6: Implement strict manifest profile validation (`src/tools/video-editor/runtime/renderability.ts`, `src/sdk/video/rendering/artifacts.ts`)
+**Complexity: 4**
+
+1. Add validators that resolve a manifest profile and validate required fields per profile.
+2. Require video manifests to include `outputFormatId`, route, determinism, provenance, hashes, and route constraints.
+3. Require audio manifests to include `mediaKind: 'audio'`, provenance, hashes, locator alignment, and route constraints.
+4. Validate sidecar and preview profiles with profile-specific rejection rules while preserving compatibility for existing unprofiled schemaVersion `1` manifests outside strict route completion.
+5. Call strict profile validation from `assertFinalArtifactHasManifest()` and artifact creation helpers used by route planning.
+
+### Step 7: Add conjunctive multi-artifact completion records (`src/tools/video-editor/runtime/renderPlanner.ts`, `src/tools/video-editor/runtime/renderability.ts`)
+**Complexity: 4**
+
+1. Introduce `RouteArtifactCompletionRecord` with `status: 'complete' | 'incomplete' | 'blocked'`, `requiredProfiles`, `resolvedArtifacts`, `unresolvedProfiles`, and blocking diagnostics.
+2. Attach completion records to `RenderRoutePlan` without removing existing route summary fields.
+3. Resolve profile requirements from output-format descriptors, process requirements, output sidecars, material requirements, and process result attach records.
+4. Mark routes `incomplete` when inspectable partial artifacts exist but any required profile is unresolved.
+5. Mark routes `blocked` only for hard errors such as invalid route scope, rejected manifest profile, missing required process, or impossible requirement.
+
+## Phase 5: Route-Scope Symmetry
+
+### Step 8: Enforce route-scope validation across all requirement domains (`src/tools/video-editor/runtime/composition/materialRuntime.ts`, `src/tools/video-editor/runtime/renderPlanner.ts`)
+**Complexity: 4**
+
+1. Add a shared route-scope validator using the canonical `RENDER_ROUTES` set.
+2. Validate snapshot-derived requirements, material-derived route evidence, process operation routes, and output-format route requirements through the same missing/unknown route path.
+3. Emit `composition/unsupported-route` for omitted or empty route scope and block the route.
+4. Emit `composition/unknown-route` for route values outside the recognized route set and block the route.
+5. Remove the render-planner fallback that treats missing output-format routes as `sidecar-export`; no caller should treat omitted scope as all routes.
+
+## Phase 6: Tests And Contract Updates
+
+### Step 9: Add focused fail-to-pass runtime tests (`src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts`, `src/tools/video-editor/runtime/composition/patchPreview.test.ts`, `src/tools/video-editor/runtime/composition/materialRuntime.test.ts`, `src/tools/video-editor/runtime/renderability.test.ts`, `src/tools/video-editor/runtime/renderPlanner.test.ts`, `src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts`)
+**Complexity: 3**
+
+1. Add tests for output-format `requires`/`consumes` graph edges.
+2. Add tests for `media.attach`/`media.remove` preview behavior and audio-only attachment rules.
+3. Add typed manifest profile validation tests for video, audio, sidecar, and preview profiles.
+4. Add conjunctive completion tests for partial, complete, and blocked route states.
+5. Add missing and unknown route-scope tests for snapshot, material, process, and output-format domains.
+
+### Step 10: Update public contract, schema, and projection tests (`src/sdk/index.test.ts`, `src/sdk/__tests__/sdk-boundary.test.ts`, `src/sdk/smoke/barrel-import-smoke.test.ts`, `src/sdk/manifest-schema-validation.test.ts`, `src/tools/video-editor/runtime/extensionSurface.test.ts`, `src/tools/video-editor/runtime/outputFormatRegistry.test.ts`, `config/contracts/registry.json`, `config/governance/sdk-public-api-manifest.json`)
+**Complexity: 3**
+
+1. Prove `OutputFormatRef`, `requires`, and typed manifest profiles are exported and backward-compatible.
+2. Prove schema validation requires explicit route sets where M7a requires route scope.
+3. Update output-format and process descriptor projection expectations for route-scope metadata and missing-route blockers.
+4. Update checked-in contract/governance manifests if the repository’s quality checks require them for the new public SDK exports.
+
+## Execution Order
+1. Land SDK type additions first, because graph, manifest, and planner code depends on the new vocabulary.
+2. Normalize descriptor route sets before enforcing planner errors, so missing-scope diagnostics have one source of truth.
+3. Add diagnostics before wiring graph projection and planner validation, so failure modes are stable from the first runtime change.
+4. Add graph edges and render IDs before route completion, because completion should consume graph-backed output-format facts.
+5. Add media preview operations before audio route completion, so audio artifacts have a single permitted attachment path.
+6. Add strict manifest validation before conjunctive completion, so completion can distinguish incomplete from blocked.
+7. Finish with tests and checked-in contract artifacts.
+
+## Validation Order
+1. Run focused SDK contract tests: `vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/sdk/smoke/barrel-import-smoke.test.ts src/sdk/manifest-schema-validation.test.ts`.
+2. Run focused composition tests: `vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/composition/patchPreview.test.ts src/tools/video-editor/runtime/composition/materialRuntime.test.ts`.
+3. Run focused render tests: `vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/outputFormatRegistry.test.ts`.
+4. Run `npm run lint` after the TypeScript surface settles.
+5. Run `npm test` as the final broad gate.
+
+## Ticket Link Proposal
+Do not link `01KV8XVYW2EYDDDY30V48YX520`; it concerns malformed megaplan payload extraction and is unrelated. `01KS384XKZNEWQRSXN2NXQ0DTJ` is broadly related to video-editor extensibility, but this M7a plan likely does not fully resolve it, so do not propose `resolves_on_complete=true` unless that ticket’s acceptance criteria are narrower than its title suggests.
+
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-05T01:15:30Z",
+  "hash": "sha256:c07340f4c0220b862fac9a15f32d19e39abc5cc160a114deca6295891a69cc3c",
+  "questions": [
+    "Should `RouteArtifactCompletionRecord` be a public SDK artifact type or remain runtime-internal on `RenderRoutePlan` for M7a? This changes how much of route planning becomes extension-author-visible.",
+    "Should strict manifest profile discrimination use a new explicit `profile` field, or should validators infer profile from `mediaKind`, `route`, and artifact boundary? The plan assumes an explicit profile for new strict manifests plus compatibility inference for existing schemaVersion 1 manifests.",
+    "When `media.attach` targets an audio track, should it require an existing audio clip ID or may it create a preview-only audio clip on the track? The plan assumes it may update an existing track/clip attachment state but must not create arbitrary artifact-to-node routing."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Projected composition graphs include `requires` edges from output-format contribution nodes to declared process/shader/clip/timeline requirements and `consumes` edges for material dependencies without adding deferred edge kinds.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`OutputFormatRef` is exported as a constrained output-format contribution reference and `contributionRenderId()` returns a stable render identity for output-format contributions.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`media.attach` previews attaching an audio `RenderArtifact` to an audio track target, `media.remove` removes it, and both flow through `applyGraphPreviewOperations()` without mutating the original graph input.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Audio artifacts attach only through `media.attach`/`media.remove`; `material.attach` rejects audio artifacts and remains limited to effect/transition material slots.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Strict typed manifest profile validators reject a video manifest missing `outputFormatId` and an audio manifest missing `mediaKind: 'audio'`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Route artifact completion is conjunctive: any unresolved required profile leaves the route `incomplete`, partial artifacts remain inspectable, and all required profiles resolved yields `complete`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Missing or empty route scope in snapshot, material, process, or output-format requirement domains emits `composition/unsupported-route` and blocks the affected route.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Unrecognized route values in any requirement domain emit `composition/unknown-route`; no caller treats omitted route scope as all routes or silently falls back to `sidecar-export`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Existing public schemaVersion 1 manifest consumers continue to compile while new strict route-completion paths use typed profile validation.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "run_linter",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The extension manifest schema validates non-empty explicit routes for render-dependent output formats and process operations where route scope is required.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The implementation does not add marketplace, sandbox, headless renderer, arbitrary material graph, shader stack, FBO-chain, or generic texture-routing surfaces.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "New helper functions remain small and domain-specific rather than adding defensive wrappers or compatibility fallbacks without a failing test.",
+      "priority": "should",
+      "requires": [
+        "subjective_judgment",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Focused tests are added near the changed runtime modules before broad suite validation.",
+      "priority": "should",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    }
+  ],
+  "assumptions": [
+    "No North Star conflict: this plan layers output-format route planning onto the host-projected composition graph and does not give extensions raw timeline mutation authority.",
+    "The scope exclusions are bridge exclusions for this milestone, not contradictions of the epic.",
+    "`OutputFormatRef` should be a constrained structural type over `ContributionRef` with `kind: 'outputFormat'`, not a separate serialization system.",
+    "A non-empty `routes` array is an explicit route set and satisfies route-scope requirements for descriptors that already use route arrays.",
+    "The recognized route set is the existing `RENDER_ROUTES`: `preview`, `browser-export`, `worker-export`, and `sidecar-export`.",
+    "Strict artifact profiles are `video`, `audio`, `sidecar`, and `preview`; existing flat schemaVersion 1 manifests remain readable but route completion uses strict validation.",
+    "`requires` is for capability/precondition/process requirements; `consumes` remains for data-flow dependencies such as material consumption.",
+    "Audio media attachment uses track-based ownership and does not introduce arbitrary artifact-to-node routing.",
+    "Sidecar process integration for a fourth example remains out of scope for M7a."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/sdk/index.test.ts",
+        "reason": "Public SDK exports and compatibility for OutputFormatRef, graph edge kinds, and artifact manifest profile types."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/__tests__/sdk-boundary.test.ts",
+        "reason": "Boundary coverage for public contract additions."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/smoke/barrel-import-smoke.test.ts",
+        "reason": "Barrel import smoke coverage for new exported types."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/manifest-schema-validation.test.ts",
+        "reason": "Extension schema route-scope enforcement."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "reason": "Output-format and process descriptor projection changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/outputFormatRegistry.test.ts",
+        "reason": "Output-format artifact and route behavior adjacency."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "reason": "Output-format graph edge projection and contribution node behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+        "reason": "media.attach/media.remove preview dispatch and audio attachment contract."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+        "reason": "Material route-scope missing/unknown behavior and audio rejection adjacency."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderability.test.ts",
+        "reason": "Typed manifest profile validation."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "reason": "Route completion records and route-scope enforcement."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+        "reason": "Planner use of graph-authoritative facts."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/index.ts",
+      "src/sdk/video/composition/graph.ts",
+      "src/sdk/video/composition/references.ts",
+      "src/sdk/video/rendering/artifacts.ts",
+      "src/sdk/video/families/outputFormats.ts",
+      "src/sdk/video/families/processes.ts",
+      "src/tools/video-editor/runtime/extensionSurface.ts",
+      "src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts",
+      "src/tools/video-editor/runtime/families/projectors/processProjector.ts",
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+      "src/tools/video-editor/runtime/composition/graphProjector.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/runtime/composition/materialRuntime.ts",
+      "src/tools/video-editor/runtime/renderability.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "config/contracts/reigh-extension.schema.json",
+      "config/contracts/registry.json",
+      "config/governance/sdk-public-api-manifest.json",
+      "src/sdk/index.test.ts",
+      "src/sdk/__tests__/sdk-boundary.test.ts",
+      "src/sdk/smoke/barrel-import-smoke.test.ts",
+      "src/sdk/manifest-schema-validation.test.ts",
+      "src/tools/video-editor/runtime/extensionSurface.test.ts",
+      "src/tools/video-editor/runtime/outputFormatRegistry.test.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "src/tools/video-editor/runtime/composition/patchPreview.test.ts",
+      "src/tools/video-editor/runtime/composition/materialRuntime.test.ts",
+      "src/tools/video-editor/runtime/renderability.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts"
+    ],
+    "always_run": [
+      "npm run lint",
+      "npm test"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: config/contracts/registry.json, config/contracts/reigh-extension.schema.json, config/governance/sdk-public-api-manifest.json, src/sdk/__tests__/sdk-boundary.test.ts, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/manifest-schema-validation.test.ts, src/sdk/smoke/barrel-import-smoke.test.ts, src/sdk/video/composition/graph.ts, src/sdk/video/composition/references.ts, src/sdk/video/families/outputFormats.ts, src/sdk/video/families/processes.ts, src/sdk/video/rendering/artifacts.ts, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/graphProjector.ts, src/tools/video-editor/runtime/composition/materialRuntime.test.ts, src/tools/video-editor/runtime/composition/materialRuntime.ts, src/tools/video-editor/runtime/composition/patchPreview.test.ts, src/tools/video-editor/runtime/composition/patchPreview.ts, src/tools/video-editor/runtime/extensionSurface.test.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts, src/tools/video-editor/runtime/families/projectors/outputFormatProjector.ts, src/tools/video-editor/runtime/families/projectors/processProjector.ts, src/tools/video-editor/runtime/outputFormatRegistry.test.ts, src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/renderPlanner.ts, src/tools/video-editor/runtime/renderability.test.ts, src/tools/video-editor/runtime/renderability.ts. Candidate: The implementation changes public SDK types, schema validation, composition graph projection, patch preview, material runtime, and render planning. A scoped suite catches the intended fail-to-pass behavior early, while the full suite remains the final regression gate.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    }
+  },
+  "structure_warnings": []
+}
+
+        Plan structure warnings from validator:
+        []
+
+        Existing flags:
+        []
+
+
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m7a-output-format-route-20260705-0102/critique_check_all_locations.json
+Read this file first — it contains 1 check with a question and guidance.
+Investigate only this check, then add your findings to the `findings` array for that check.
+
+Self-monitor for non-convergence before spending more tool calls. This is NOT about duration or difficulty: hard checks that are still making new progress should continue. But if you are spinning — re-reading the same file 3+ times, searching for a file the plan says to CREATE, needing a sibling/external repo or path outside the project root, or making many tool calls without getting closer to a verdict — STOP investigating. Not finding what you need is a finding; emit exactly one non-flagged finding whose detail starts `unverifiable: ` and explains what you could not resolve and exactly why. An unverifiable check is a complete, valid result for this worker; normal code ambiguity that you can inspect should still be flagged per the usual "when in doubt, flag it" rule.
+
+Check ID: all_locations
+Question: Does the change touch all locations AND supporting infrastructure?
+Guidance: Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.
+
+Each finding needs:
+- "detail": what you specifically checked and what you found (at least a full sentence)
+- "flagged": true if this describes a difference, risk, or tension — even if you think it's justified. false only if purely informational with no possible downside.
+- This check must end with at least one finding. Never leave its `findings` array empty. If you found no issue, add one detailed `flagged: false` finding explaining what you checked and why it appears clear.
+
+When in doubt, flag it — the gate can accept tradeoffs, but it can't act on findings it never sees.
+
+Good: {"detail": "Checked callers of nthroot_mod in solveset.py line 1205 — passes prime moduli only, consistent with the fix.", "flagged": false}
+Good: {"detail": "The fix handles empty tuples but not single-element tuples which need a trailing comma.", "flagged": true}
+Bad: {"detail": "No issue found", "flagged": false}  ← too brief, will be rejected
+Bad: {"detail": "The hints suggest approach X but the plan uses Y. However Y is consistent with X's intent.", "flagged": false}  ← a different approach than the hints IS a flag. You found a divergence — flag it. The gate decides if it's acceptable.
+
+After filling in checks, add any additional concerns to the `flags` array (e.g., security, performance, dependencies).
+Use the standard format (id, concern, category, severity_hint, evidence). This array can be empty.
+
+Workflow: read the file → investigate → read file again → add finding → write file back. Repeat for this check.
+
+        Additional guidelines:
+        - Robustness level: thorough. Use balanced judgment. Flag significant risks, but do not spend flags on minor polish or executor-obvious boilerplate.
+        - Over-engineering: prefer the simplest approach that fully solves the problem.
+        - Reuse existing flag IDs when the same concern is still open.
+        - `verified_flag_ids`: list flag IDs from prior iterations that the revised plan actually resolves (e.g., if the plan was revised to fix FLAG-001, and you confirm the fix is correct, include "FLAG-001"). Only include flags you've verified — don't guess.
+        - Verify that the plan follows the expected structure when validator warnings or the outline suggest drift.
+        - Additional flags may use these categories: correctness, security, completeness, performance, maintainability, other.
+        - Focus on concrete issues, not structural formatting.
+        - Complexity audit: flag (a) missing complexity scores on plan steps, (b) inflated scores that would waste premium models on trivial work, and (c) under-rated work that should not run on cheap models. Use category `completeness`.

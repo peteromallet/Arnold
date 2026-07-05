@@ -103,6 +103,16 @@ export const COMPOSITION_DIAGNOSTIC_CODE = {
   /** A resolved material is incompatible with the selected render route. */
   MATERIAL_ROUTE_INCOMPATIBLE: 'composition/material-route-incompatible',
 
+  // ---------------------------------------------------------------------------
+  // Route-scope (M7a) diagnostic codes
+  // ---------------------------------------------------------------------------
+
+  /** A required route has no supporting descriptor (missing or empty route set). */
+  UNSUPPORTED_ROUTE: 'composition/unsupported-route',
+
+  /** A route cannot be resolved or is unrecognised by any available descriptor. */
+  UNKNOWN_ROUTE: 'composition/unknown-route',
+
   /** A material ref id could not be resolved for attach-time preview validation. */
   MATERIAL_NOT_RESOLVED: 'composition/material-not-resolved',
 
@@ -240,6 +250,19 @@ export interface CompositionDiagnosticDetail {
   materialRefId?: string;
   /** Render route scope when the diagnostic is route-sensitive. */
   routeScope?: string;
+
+  // ---------------------------------------------------------------------------
+  // M7a: Route-scope diagnostic detail fields
+  // ---------------------------------------------------------------------------
+
+  /** Specific render route being diagnosed. */
+  route?: string;
+
+  /** Route-scope mode from the descriptor that produced the diagnostic. */
+  routeMode?: 'explicit-routes' | 'missing-routes' | 'unknown';
+
+  /** Expected render routes when diagnosing a route-scope gap. */
+  expectedRoutes?: readonly string[];
   /** Resolved material status state. */
   materialStatus?: string;
   /** Material status detail phase. */
@@ -716,6 +739,83 @@ export function buildCompositionDiagnostic(
     severity,
     code,
     message,
+    detail: detail as Record<string, unknown>,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// M7a: Route-scope diagnostic helper builders
+// ---------------------------------------------------------------------------
+
+/**
+ * Detail parameters for building a route-scope diagnostic.
+ *
+ * Shared across material-runtime and render-planner callers so that
+ * route-scope diagnostics carry consistent field names regardless of
+ * which subsystem emits them.
+ */
+export interface RouteScopeDiagnosticParams {
+  /** Extension ID of the owning extension. */
+  extensionId: string;
+  /** Contribution ID within the owning extension. */
+  contributionId: string;
+  /** Specific render route being diagnosed. */
+  route?: string;
+  /** Route-scope mode from the descriptor. */
+  routeMode?: 'explicit-routes' | 'missing-routes' | 'unknown';
+  /** Expected routes when diagnosing a route-scope gap. */
+  expectedRoutes?: readonly string[];
+  /** Human-readable diagnostic message. */
+  message: string;
+}
+
+function buildRouteScopeDetail(params: RouteScopeDiagnosticParams): CompositionDiagnosticDetail {
+  return {
+    extensionId: params.extensionId,
+    contributionId: params.contributionId,
+    ...(params.route ? { route: params.route } : {}),
+    ...(params.routeMode ? { routeMode: params.routeMode } : {}),
+    ...(params.expectedRoutes ? { expectedRoutes: params.expectedRoutes } : {}),
+  };
+}
+
+/**
+ * Build a `composition/unsupported-route` diagnostic.
+ *
+ * Emitted when a required route has no supporting descriptor — either the
+ * render descriptor is missing entirely or its route set is empty.
+ *
+ * Always produces error severity (blocking).
+ */
+export function buildUnsupportedRouteDiagnostic(
+  params: RouteScopeDiagnosticParams,
+): ExtensionDiagnostic {
+  const detail = buildRouteScopeDetail(params);
+  return {
+    severity: 'error',
+    code: COMPOSITION_DIAGNOSTIC_CODE.UNSUPPORTED_ROUTE,
+    message: params.message,
+    detail: detail as Record<string, unknown>,
+  };
+}
+
+/**
+ * Build a `composition/unknown-route` diagnostic.
+ *
+ * Emitted when a route cannot be resolved or is unrecognised by any
+ * available descriptor — e.g. a route string that no output format or
+ * process declares.
+ *
+ * Always produces error severity (blocking).
+ */
+export function buildUnknownRouteDiagnostic(
+  params: RouteScopeDiagnosticParams,
+): ExtensionDiagnostic {
+  const detail = buildRouteScopeDetail(params);
+  return {
+    severity: 'error',
+    code: COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_ROUTE,
+    message: params.message,
     detail: detail as Record<string, unknown>,
   };
 }

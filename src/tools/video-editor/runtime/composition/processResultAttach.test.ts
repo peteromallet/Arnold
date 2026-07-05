@@ -350,6 +350,7 @@ describe('processResultAttach', () => {
     const projectedArtifact = projection.artifacts[0]!;
     assertFinalArtifactHasManifest(projectedArtifact, 'process.result.attach');
     expect(projectedArtifact.manifest).toMatchObject({
+      profile: 'sidecar',
       processId: 'dataset-process',
       operationId: 'exportDataset',
       route: 'sidecar-export',

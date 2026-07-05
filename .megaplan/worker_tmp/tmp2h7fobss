@@ -1,0 +1,292 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `plan`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m7a-output-format-route-20260705-0102`
+Current milestone: `m7a-output-format-routes`
+
+### Phase Instruction
+Build a plan that advances the local brief while preserving the North Star. If scope is narrowed, state whether the narrowing is a bridge or a contradiction.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are creating an implementation plan for the following idea.
+
+        Engineering brief produced from the codebase and task details:
+
+        ### Task Summary
+        Introduce graph-backed output-format route planning with typed artifact manifest profiles, multi-artifact conjunctive completion records, and audio artifact attachment via new media.attach/media.remove patch operations. Enforce route-scope symmetry across snapshot, material, process, and output-format requirement domains with explicit composition/unsupported-route and composition/unknown-route error contracts.
+
+        ### Key Evidence
+        - Output format descriptors already project as `contribution` graph nodes via the contribution index in `buildContributionIndexEntries` (FamilyRuntimeAssembly.ts:607-684, kind: 'outputFormat', status: 'inactive-reserved'), and `projectCompositionGraph` iterates all contribution index entries to create nodes (graphProjector.ts:901-917). However, NO edges connect these output format nodes to any other graph nodes — they are isolated leaves with no `consumes`, `requires`, or other edge projection. The `CompositionEdgeKind` union is `'consumes' | 'animates' | 'binds-live'` (graph.ts:57); a `requires` edge kind does not exist and must be added. (source: r1 findings + r4 cross-reference on edge absence; relevance: high)
+- No `OutputFormatRef` type exists in the codebase. Output format identity uses the existing `ContributionRef` interface with `kind: 'outputFormat'` (references.ts:28-37), producing ref keys via `contributionRefKey()` as `outputFormat:extensionId:contributionId`. The `OutputFormatRef` name appears only in docs (m0-release-examples.md:331). Whether to introduce a new `OutputFormatRef` type or reuse `ContributionRef` is a design decision with no blocking ambiguity — both paths are viable. (source: r1 findings, code search for OutputFormatRef; relevance: high)
+- Timeline audio slot model exists: `TimelineTrackSummary.kind: 'visual' | 'audio'` (reader.ts:327-336), and clips reference tracks via `TimelineClipSummary.track` (reader.ts:301). However, no `media.attach`/`media.remove` patch operations exist anywhere. The parallel pattern is `material.attach`/`material.remove` (patchPreview.ts:81-95), which use `CompositionGraphMaterialSlotOwnerIdentity` locked to `kind: 'effect' | 'transition'` (graphProjector.ts:45-49). Audio slots are track-based, requiring a new owner identity shape `{ kind: 'track', trackId }` rather than the effect/transition `{ kind, clipId, ownerId }` pattern. (source: r2 findings; relevance: high)
+- `RenderArtifactManifest` (artifacts.ts:230-257) is a single flat type with `schemaVersion: 1` literal — no discriminated/typed profile variants exist. It already carries `outputFormatId`, `processId`, `operationId`, `consumedMaterialRefs`, `sidecars`, `provenance`, `inputHashes`, and `route` — the foundational fields for typed profiles. The only existing manifest validation is `assertFinalArtifactHasManifest` (renderability.ts:63-91), which checks `artifactId`, `route`, and `determinism` alignment but performs no per-profile required-field validation, no rejection rules, and no profile-based discrimination. No multi-artifact route completion records exist anywhere. (source: r3 findings; relevance: high)
+- Route scope is handled independently and asymmetrically across the four domains. No mandatory `routeScope` field exists on any descriptor type — `CompositionDiagnosticDetail.routeScope` (diagnostics.ts:242) is an optional passive carrier. The error codes `composition/unsupported-route` and `composition/unknown-route` do NOT exist in `COMPOSITION_DIAGNOSTIC_CODE` (diagnostics.ts:26-185). When scope is omitted, behavior varies silently: material runtime yields empty `routeEvidence` → `[]` (materialRuntime.ts:1351-1359), render planner falls back to `'sidecar-export'` (renderPlanner.ts:1285, 1342), and `validateRouteConstraints()` in deterministicCapture.ts:201-220 is the only enforcement pattern but is capture-specific. The `routeFit.sensitivity` field (materialRuntime.ts:62-65) includes `'route-selection-required'` but never triggers a missing-scope error. (source: r4 findings, cross-referenced with r1 descriptor shape and r2 slot ownership; relevance: high)
+- `ProcessResultAttachRecord` (processResultAttach.ts:56-74) already carries `artifacts: readonly RenderArtifact[]` and `sidecars` from process roundtrips — the plumbing for process-produced artifacts (including audio with `mediaKind: 'audio'`) to flow back exists. The missing pieces are: (a) graph-owned `media.attach`/`media.remove` operations to place audio artifacts onto timeline tracks, (b) multi-artifact conjunctive completion records, and (c) audio-specific artifact profile validators. (source: r2 findings cross-referenced with r3; relevance: high)
+- The `contributionRenderId` function (FamilyRuntimeAssembly.ts:86-101) does NOT handle `outputFormat` kind — it only checks `effectId`, `transitionId`, `clipTypeId`, `shaderId`. This means output format contributions lack a render identity, which will be needed for route-scoped artifact tracking. (source: r1 findings; relevance: medium)
+- The `cloneInput` function (patchPreview.ts:1007-1029) clones clips, effects, transitions, shaders, and material slot bindings but does NOT clone track-level audio/media state. The `applyGraphPreviewOperations` dispatch (patchPreview.ts:1058-1093) handles 7 operation kinds and can be extended with `media.attach`/`media.remove` cases. The public `CompositionGraph.preview` docstring (graph.ts:226-227) says shader-only and must expand to cover 9 operation kinds. (source: r2 findings; relevance: medium)
+
+        ### Relevant Code
+        | File | Functions | Why |
+| --- | --- | --- |
+| src/sdk/video/composition/graph.ts | CompositionNodeKind (line 34), CompositionEdgeKind (line 57), CompositionGraph.preview (line 244) | Core graph contract: CompositionNodeKind, CompositionEdgeKind unions, CompositionGraph.preview docstring. Must add `requires` edge kind, expand preview docstring, and keep public SDK surface compatible. |
+| src/sdk/video/rendering/artifacts.ts | RenderArtifactManifest (line 230), RenderArtifact (line 260), RenderMaterialMediaKind (line 8) | RenderArtifactManifest and RenderArtifact types — the foundation for typed manifest profiles. Must introduce discriminated profile variants, multi-artifact completion record shape, and per-profile validators while keeping the public SDK contract backward-compatible. |
+| src/tools/video-editor/runtime/composition/graphProjector.ts | projectCompositionGraph (line 871), buildContributionNodeDetail (line 263), contributionNodeId (line 229), CompositionGraphMaterialSlotOwnerIdentity (line 45) | Graph projection engine. Must add output-format edge projection (consumes/requires edges from descriptor facts), introduce media slot owner identity for track-based audio slots, and wire output format render IDs. |
+| src/tools/video-editor/runtime/composition/patchPreview.ts | GraphMaterialAttachOp (line 81), applyGraphPreviewOperations (line 1058), cloneInput (line 1007), findMaterialSlotOwner (line 776), hasDeclaredMaterialSlot (line 766) | Patch preview pipeline. Must add media.attach/media.remove operation types, dispatch cases, clone support for track-level audio state, and track-based slot resolution parallel to existing material slot resolution. |
+| src/tools/video-editor/runtime/composition/diagnostics.ts | COMPOSITION_DIAGNOSTIC_CODE (line 26), CompositionDiagnosticDetail.routeScope (line 242) | Diagnostic code registry and detail shape. Must add composition/unsupported-route and composition/unknown-route error codes, and ensure routeScope transitions from optional passive carrier to mandatory validation field. |
+| src/tools/video-editor/runtime/composition/materialRuntime.ts | HostMaterialRuntimeRouteScope (line 241), buildRouteScope (line 589), projectHostMaterialRuntime routeEvidence (line 1351), buildMaterialDiagnosticDetail (line 1537) | Material runtime builds routeScopes from routeEvidence. Must add mandatory routeScope enforcement — emit composition/unsupported-route when scope is missing/empty and composition/unknown-route when unrecognized. |
+| src/tools/video-editor/runtime/renderPlanner.ts | RenderRoutePlan (line 89), buildRoutePlan (line 1727), collectOutputFormat (line 1277), processRequirementRoutes (line 1232), routeScopedProcessOperationId (line 854) | Render planner builds RenderRoutePlan per route. Must introduce multi-artifact conjunctive completion records, differentiate 'incomplete' from 'blocked', and enforce route-scope symmetry across all four requirement domains. |
+| src/tools/video-editor/runtime/renderability.ts | assertFinalArtifactHasManifest (line 63), createRenderArtifactManifest (line 140), CompileOnlyArtifactParams (line 222) | Manifest construction/validation helpers (runtime-internal). Must add per-profile required-field validators, rejection rules, and artifact profile resolution status for conjunctive completion. |
+| src/tools/video-editor/runtime/extensionSurface.ts | VideoEditorOutputFormatDescriptor (line 190), VideoEditorRouteRequirementDescriptor (line 219), VideoEditorProcessDescriptor (line 273) | Descriptor definitions for output formats and route requirements. Must enforce mandatory routeScope or explicit route set on VideoEditorOutputFormatDescriptor, VideoEditorRouteRequirementDescriptor, and VideoEditorProcessDescriptor. |
+| src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts | buildContributionIndexEntries (line 607), contributionRenderId (line 86) | Contribution index construction and render ID resolution. Must add outputFormat to contributionRenderId switch and ensure output format entries carry render identities. |
+| src/sdk/video/composition/references.ts | ContributionRef (line 28), contributionRefKey (line 91) | ContributionRef and ref key generation. Decision point for OutputFormatRef — either extend ContributionRef or introduce new type. Currently ContributionRef with kind: 'outputFormat' works. |
+
+        ### Test Expectations
+        - [fail_to_pass] m7a-graph-output-format-edges: Projected composition graph contains requires/consumes edges from output format contribution nodes to shader/material/clip/timeline nodes when output format descriptors carry route requirements, process requirements, and consumed material evidence
+- [fail_to_pass] m7a-media-attach-preview: media.attach operation preview places an audio RenderArtifact onto a timeline audio track clip and produces a valid CompositionGraphPreviewResult; media.remove reverts the attachment — both dispatch correctly through applyGraphPreviewOperations
+- [fail_to_pass] m7a-typed-manifest-profiles: Discriminated manifest profile variants (video, audio, sidecar, preview) validate required fields per profile; a video artifact manifest with missing outputFormatId is rejected; an audio artifact manifest with missing mediaKind: 'audio' is rejected
+- [fail_to_pass] m7a-conjunctive-completion: Multi-artifact route completion record returns incomplete when any required artifact profile is unresolved; partial success produces inspectable artifacts but the route remains incomplete; all profiles resolved yields complete
+- [fail_to_pass] m7a-route-scope-missing: A requirement with omitted or empty routeScope in any of the four domains (snapshot, material, process, output-format) emits composition/unsupported-route diagnostic and the route is blocked
+- [fail_to_pass] m7a-route-scope-unknown: A requirement with a route value not in the recognized route set emits composition/unknown-route diagnostic; no caller treats omitted scope as 'all'
+- [fail_to_pass] m7a-audio-artifact-attachment-contract: Audio artifacts attach ONLY through media.attach/media.remove operations — no alternative attachment path exists; material.attach rejects audio artifacts on effect/transition slots
+- [fail_to_pass] m7a-contribution-render-id-output-format: contributionRenderId handles outputFormat kind and produces a stable render identity for output format contributions
+
+        ### Constraints
+        - Do not reintroduce legacy planner authority or retroactively expand the V1 composition SDK — output-format planning layers over existing M1-M5 graph-backed examples and M6a process overlay contracts
+- Public `materializes`, `produces`, and `fallbacks` edge discriminants remain deferred — only add `requires` to CompositionEdgeKind
+- Route completion is conjunctive across all required artifact profiles — partial success may produce inspectable artifacts but leaves the route incomplete
+- Audio artifacts attach only through existing media/audio slot patch operations — do not introduce arbitrary artifact-to-node routing
+- Every requirement must carry explicit `routeScope` or explicit route set — missing scope emits `composition/unsupported-route`, unrecognized scope emits `composition/unknown-route`, and no caller may treat omitted scope as `all`
+- Artifact profiles must validate required fields, provenance, hashes, route constraints, and rejection rules — named non-video profiles require audio-specific validation beyond the existing flat manifest
+- Keep the public SDK contract backward-compatible — RenderArtifactManifest extensions use discriminated unions without breaking existing consumers of schemaVersion: 1
+
+        ### Suggested Approach
+        Phase 1 — Graph edges and output-format node projection: Add `requires` to `CompositionEdgeKind` in graph.ts. In graphProjector.ts, add an output-format edge projection pass after the existing contribution node loop (post line 917) that reads `availableRoutes`, `routeRequirements`, `processRequirements`, and `consumedMaterialRefs` from each output format descriptor and projects `requires` edges to shader/material/clip/process nodes and `consumes` edges for material dependencies. Wire `contributionRenderId` in FamilyRuntimeAssembly.ts to handle `outputFormat` kind. Phase 2 — Media patch operations: Introduce `GraphMediaAttachOp`/`GraphMediaRemoveOp` with `kind: 'media.attach'`/`'media.remove'` in patchPreview.ts, using a new track-based owner identity `{ kind: 'track', trackId, clipId }`. Add dispatch cases to `applyGraphPreviewOperations`, extend `cloneInput` to preserve track-level audio state, and implement slot resolution against `TimelineTrackSummary` declarations. Phase 3 — Typed manifest profiles and completion records: Discriminate `RenderArtifactManifest` by `mediaKind` (at minimum: `video`, `audio`, `sidecar`) with per-profile required-field validators and rejection rules in renderability.ts. Introduce `RouteArtifactCompletionRecord` with `status: 'complete' | 'incomplete' | 'blocked'`, `requiredProfiles`, `resolvedArtifacts`, and `unresolvedProfiles`. Wire conjunctive completion into `buildRoutePlan` in renderPlanner.ts — differentiate incomplete (partial artifacts inspectable) from blocked (hard failure with no artifacts). Phase 4 — Route-scope symmetry: Add `composition/unsupported-route` and `composition/unknown-route` to `COMPOSITION_DIAGNOSTIC_CODE`. In extensionSurface.ts, make `availableRoutes`/`routes` required (non-empty) on all four descriptor types. In materialRuntime.ts, emit `unsupported-route` when `routeEvidence` yields empty array. In renderPlanner.ts, validate route sets against recognized routes at each domain boundary (snapshot, material, process, output-format) and emit `unknown-route` for unrecognized values. Remove the silent `sidecar-export` fallback.
+
+### Open Questions
+- [assume_and_proceed] Should `OutputFormatRef` be a new distinct type or an alias/extension of the existing `ContributionRef` (which already supports `kind: 'outputFormat'`)? _(assumption: Introduce `OutputFormatRef` as a new type in references.ts with the same structural shape as `ContributionRef` but constrained to `kind: 'outputFormat'`, keeping it distinct for semantic clarity in route planning APIs while reusing `contributionRefKey()` for serialization.)_
+- [assume_and_proceed] Should the `requires` edge replace or supplement `consumes` for output-format-to-material dependencies? The task mentions both `requires` and `consumes` detail for output format edges. _(assumption: Use `consumes` edges for material/artifact dependencies that output format descriptors declare (matching existing material consumption semantics) and `requires` edges for process/operation/route-scope dependencies where the output format mandates the presence of a capability or process rather than consuming its output. This keeps `consumes` for data-flow dependencies and `requires` for capability/precondition dependencies.)_
+
+        The engineering brief above is evidence gathered from the codebase. Treat it as the default working context, challenge its conclusions when the code disagrees, and only do targeted repository lookups when a concrete gap remains. Open questions in the brief are candidate concerns, not mandates — act on ones that materially affect the plan, dismiss immaterial or already-resolved ones with a brief reason, and treat question count as noise.
+
+        Idea:
+# M7a: Output-Format Route Planning
+
+## Outcome
+
+Introduce graph-backed output-format route planning, route artifacts, typed manifest profiles, route-scope symmetry, audio attachment contract, and multi-artifact completion records.
+
+## Execution Posture
+
+Add output-format planning only after M1-M5 graph-backed examples and M6a process overlay contracts exist. Do not reintroduce legacy planner authority or retroactively expand the V1 composition SDK.
+
+## Scope
+
+IN:
+- Add output-format route planning over graph-derived facts and host-normalized descriptors.
+- Project output-format descriptors as `contribution` nodes keyed by `OutputFormatRef`.
+- Allow output-format descriptors to consume graph-derived timing facts, clip/timeline events, selected keyframe or parameter curves, material dependencies, and process requirements.
+- Add route artifacts and multi-artifact route completion records using typed `RenderArtifact` manifest profiles.
+- Enforce route-scope symmetry across snapshot-derived, material-derived, process-derived, and output-format-derived requirements.
+- Validate named non-video artifact profiles when a route needs them.
+- Add audio artifact attachment through existing timeline media/audio slots via graph-owned `media.attach`/`media.remove` patch operations.
+
+OUT:
+- Sidecar process integration for the fourth example.
+- Governance scripts and docs gates.
+- Marketplace.
+- Sandbox.
+- Headless renderer.
+- Arbitrary multi-process DAGs.
+- Untrusted or remote process execution.
+
+## Locked Decisions
+
+- Output-format routes use typed `requires`/`consumes` detail, route artifact records, and multi-artifact completion records.
+- Public `materializes`, `produces`, and `fallbacks` edge discriminants remain deferred.
+- Route completion is conjunctive across all required artifact profiles.
+- Partial success may produce inspectable artifacts but leaves the route incomplete.
+- Audio artifacts attach only through existing media/audio slot patch operations.
+
+## Constraints
+
+- Every requirement carries explicit `routeScope` or explicit route set.
+- Missing scope emits `composition/unsupported-route`; unrecognized scope emits `composition/unknown-route`.
+- No caller may treat omitted scope as `all`.
+- Artifact profiles must validate required fields, provenance, hashes, route constraints, and rejection rules.
+- Do not introduce arbitrary artifact-to-node routing.
+
+## Done Criteria
+
+- Output-format route claims are proven through graph-derived planner behavior.
+- Output-format descriptors participate as contribution nodes keyed by `OutputFormatRef`.
+- Route completion depends on every required typed artifact resolving.
+- Named non-video artifact profiles validate required manifest fields and provenance.
+- Route-scope symmetry holds for snapshot, material, process, and output-format requirements.
+- Audio artifacts attach only through existing media/audio slot operations.
+
+## Touchpoints
+
+- `src/sdk/index.ts`
+- `src/sdk/video/composition/graph.ts`
+- `src/sdk/video/composition/references.ts`
+- `src/sdk/video/rendering/artifacts.ts`
+- `src/tools/video-editor/runtime/composition/**`
+- `src/tools/video-editor/lib/renderRouter.ts`
+- `src/tools/video-editor/commands/**`
+- `config/contracts/reigh-extension.schema.json`
+- `tests/**/video-editor/**`
+- `docs/extensions/**`
+
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+
+
+
+
+        No prior clarification artifact exists. Identify ambiguities, ask clarifying questions, and state your assumptions inside the plan output.
+
+        Open tickets for this repo:
+
+- 01KS384XKZNEWQRSXN2NXQ0DTJ — Video editor: extensibility plan (preserves variation potential, ships none)  [video-editor, design, refactor, oss]
+- 01KV8XVYW2EYDDDY30V48YX520 — Megaplan plan extraction can pass malformed/escaped-newline payloads to Markdown validator  [megaplan, validator, hermes, json-extraction, plan-phase]
+
+The planner may PROPOSE linking tickets to this plan with `resolves_on_complete=true` in the plan output, but the actual linking is performed via the explicit `megaplan ticket link` CLI after planning — the planner never directly links tickets.
+
+        Requirements:
+        - If the engineering brief suggests an approach, use it as your starting hypothesis — but before committing, consider if there's a simpler or more fundamental fix. The brief is well-researched input, not a final answer.
+        - If the brief is absent, incomplete, or says "skip", inspect the repository yourself before planning.
+        - Stay focused on the requested idea. If repo exploration surfaces unrelated issues or docs, ignore them and return to the task.
+        - Prefer source code, tests, and directly relevant config files. Avoid `.megaplan/`, prior plan artifacts, and unrelated `docs/` or ops/deployment material unless the task explicitly depends on them.
+        - Stop exploring once you have enough evidence to name the concrete touch points and validation path. Do not keep browsing after you can write the plan.
+        - Produce a concrete implementation plan in markdown.
+        - Define observable success criteria as objects with `criterion` (string) and `priority` (`must`, `should`, or `info`):
+          - `must` — hard gate. The reviewer will block on failure. Use for correctness, functional requirements, and verifiable outcomes (e.g., "all existing tests pass", "API returns 200 for valid input"). Every `must` criterion must have a clear yes/no answer.
+          - `should` — quality target. The reviewer flags but does not block. Use for subjective goals, numeric guidelines, and best-effort improvements (e.g., "file under ~300 lines", "no deeply nested conditionals", "each function has a single responsibility").
+          - `info` — documented for humans, reviewer skips. Use for criteria that cannot be verified in this pipeline (e.g., "13 manual smoke tests pass", "stakeholder sign-off obtained").
+        - Each success criterion should include a `requires` field listing the capabilities needed for verification. Valid capability strings: `run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, `run_linter` (container), `drive_browser`, `inspect_runtime_ui`, `observe_runtime_logs`, `subjective_judgment`, `verify_physical_device` (human). `must` criteria MUST have non-empty `requires`. Example: `{"criterion": "All tests pass", "priority": "must", "requires": ["run_tests"]}`.
+        - Use the `questions` field for ambiguities that would materially change implementation.
+        - Use the `assumptions` field for defaults you are making so planning can proceed now.
+        - Prefer cheap validation steps early.
+        - Keep the plan proportional to the task. A 1-line fix needs a 2-step plan (apply fix + run tests), not a 5-step investigation.
+        - Size each step so it can be implemented AND verified in a single worker turn (~15 min, one model conversation). A step that bundles "create the abstraction AND migrate every consumer AND write all the tests" is too large to finish in one turn and will fail (the worker runs out of time before it can implement, leaving the step blocked). For large mechanical refactors, split along the natural seam — one step to add the new abstraction + its unit tests, then one step per consumer to migrate (the last migration step also adds parity tests) — rather than one giant step. Higher complexity does not earn a step more time; it only routes to a stronger model for the same single turn.
+        - If user notes answer earlier questions, incorporate them into the draft plan instead of re-asking them.
+        - Fix the problem fully. Do not limit scope just to avoid breaking existing tests — update the tests too if needed.
+        - Prefer the simplest, most direct fix. No fallbacks, type conversions, or defensive wrappers without concrete evidence they are needed.
+        - If the task or issue hints suggest a specific approach, follow it. Only deviate with concrete counter-evidence.
+        - Assign every plan step a complexity score 1–5 before finalize. Reason about complexity in the plan markdown (e.g. "Complexity: 2" per step), and surface it informally so the reviewer can audit:
+          - 1 = trivial single-file mechanical change
+          - 2 = simple change with tests to update
+          - 3 = multi-file change with non-trivial logic
+          - 4 = cross-cutting change with architecture implications
+          - 5 = fundamental system change with high regression risk
+        - Populate `changed_surfaces` with every concrete file path your plan will change or create. Include both source files and test files. Use repo-relative paths (e.g., `src/prompts.py`, `tests/test_prompts.py`). This list drives the deterministic test-selection blast radius; be complete. If your plan touches a file, list it.
+        - (Optional) Populate `test_blast_radius` with your own scoped test-selection proposal. This complements the deterministic floor the system computes from `changed_surfaces`. Provide `strategy` ("scoped", "full", or "none"), `selectors` (array of `{"kind": "path", "value": "<path>", "reason": "<why>"}` objects), and a `rationale` string. The system merges your proposal with the deterministic floor; you cannot narrow below the floor, but you can widen with additional selectors or escalate to full. If you intend a scoped finalize baseline while keeping the full suite as a hard gate, set `strategy` to "scoped", include concrete `selectors`, and set `full_suite_fallback` to true; the floor's full-suite requirement will be honored by the fallback without forcing the baseline strategy to "full".
+
+        Plan template — simple format (adapt to the actual repo and scope):
+````md
+# Implementation Plan: [Title]
+
+## Overview
+Summarize the goal, current repository shape, and the constraints that matter.
+
+## Main Phase
+
+### Step 1: Audit the current behavior (`src/prompts.py`)
+**Scope:** Small
+1. **Inspect** the current implementation and call out the exact insertion points (`src/prompts.py:29`).
+
+### Step 2: Add the first change (`src/evaluation.py`)
+**Scope:** Medium
+1. **Implement** the smallest viable change with exact file references (`src/evaluation.py:1`).
+2. **Capture** any tricky behavior with a short example.
+   ```python
+   issues = validate_plan_structure(plan_text)
+   ```
+
+### Step 3: Wire downstream behavior (`src/handlers.py`, `src/workers.py`)
+**Scope:** Medium
+1. **Update** the runtime flow in the touched files (`src/handlers.py:400`, `src/workers.py:199`).
+
+### Step 4: Prove the change (`tests/test_validator.py`, `tests/test_integration.py`)
+**Scope:** Small
+1. **Run** the cheapest targeted checks first (`tests/test_validator.py:1`).
+2. **Finish** with broader verification once the wiring is in place (`tests/test_integration.py:1`).
+
+## Execution Order
+1. Update prompts and mocks before enforcing stricter validation.
+2. Land higher-risk wiring after the validator and tests are ready.
+
+## Validation Order
+1. Start with focused unit tests.
+2. Run the broader suite after the flow changes are in place.
+````
+
+For complex plans, use multiple phases:
+````md
+## Phase 1: Foundation — Dependencies, DB, Types
+
+### Step 1: Install dependencies (`package.json`)
+...
+
+### Step 2: Create database migration (`supabase/migrations/`)
+...
+
+## Phase 2: Core Integration
+
+### Step 3: Port the main component (`src/components/`)
+...
+````
+
+Template guidance:
+- Simple plans: use `## Main Phase` with `### Step N:` sections underneath.
+- Complex plans: use multiple `## Phase N:` sections, each containing `### Step N:` steps. Step numbers are global (not per-phase).
+- The flat `## Step N:` format (without phases) also works for backwards compatibility.
+- Key invariants: one H1 title, one `## Overview`, numbered step sections (`### Step N:` or `## Step N:`), and at least one ordering section.

@@ -29,10 +29,12 @@ import {
   COMPOSITION_NODE_KINDS,
   COMPOSITION_EDGE_KINDS,
   REFERENCE_STATES,
+  ARTIFACT_MANIFEST_PROFILE_KINDS,
   isActiveBake,
   isLiveOnly,
   isRouteIncompatible,
   isWeakerProvenance,
+  contributionRefKey,
 } from '@/sdk/index';
 import { createExtensionContext, setEditorShellRoot, getEditorShellRoot } from '@/tools/video-editor/runtime/extensionContextFactory';
 import type {
@@ -153,6 +155,16 @@ import type {
   CompositionReferenceStateEntry,
   CompositionGraphPreviewResult,
   CompositionGraph,
+  // M7a Output-format route planning types
+  OutputFormatRef,
+  ArtifactManifestProfile,
+  ArtifactManifestProfileBase,
+  ArtifactManifestProfileKind,
+  VideoArtifactManifestProfile,
+  AudioArtifactManifestProfile,
+  SidecarArtifactManifestProfile,
+  PreviewArtifactManifestProfile,
+  ProvenanceGap,
 } from '@/sdk/index';
 
 // ---------------------------------------------------------------------------
@@ -4503,11 +4515,12 @@ describe('M1b: CompositionGraph SDK exports', () => {
     expect(COMPOSITION_NODE_KINDS).not.toContain('process');
   });
 
-  it('COMPOSITION_EDGE_KINDS contains consumes, animates, and binds-live', () => {
-    expect(COMPOSITION_EDGE_KINDS).toEqual(['consumes', 'animates', 'binds-live']);
-    expect(COMPOSITION_EDGE_KINDS).toHaveLength(3);
+  it('COMPOSITION_EDGE_KINDS contains consumes, animates, binds-live, and requires', () => {
+    expect(COMPOSITION_EDGE_KINDS).toEqual(['consumes', 'animates', 'binds-live', 'requires']);
+    expect(COMPOSITION_EDGE_KINDS).toHaveLength(4);
     expect(COMPOSITION_EDGE_KINDS).toContain('animates');
     expect(COMPOSITION_EDGE_KINDS).toContain('binds-live');
+    expect(COMPOSITION_EDGE_KINDS).toContain('requires');
     expect(COMPOSITION_EDGE_KINDS).not.toContain('materializes');
   });
 
@@ -4589,8 +4602,164 @@ describe('M1b: CompositionGraph SDK exports', () => {
   });
 
   it('CompositionEdgeKind accepts the public edge-kind union', () => {
-    const kinds: CompositionEdgeKind[] = ['consumes', 'animates', 'binds-live'];
-    expect(kinds).toEqual(['consumes', 'animates', 'binds-live']);
+    const kinds: CompositionEdgeKind[] = ['consumes', 'animates', 'binds-live', 'requires'];
+    expect(kinds).toEqual(['consumes', 'animates', 'binds-live', 'requires']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M7a: Output-format route planning public contract
+// ---------------------------------------------------------------------------
+
+describe('M7a: Output-format route planning public contract', () => {
+  it('OutputFormatRef is importable and constructable with kind outputFormat', () => {
+    const ref: OutputFormatRef = {
+      kind: 'outputFormat',
+      extensionId: 'com.test.ext',
+      contributionId: 'my-format',
+    };
+    expect(ref.kind).toBe('outputFormat');
+    expect(ref.extensionId).toBe('com.test.ext');
+    expect(ref.contributionId).toBe('my-format');
+  });
+
+  it('contributionRefKey serializes OutputFormatRef with the shared key derivation', () => {
+    const ref: OutputFormatRef = {
+      kind: 'outputFormat',
+      extensionId: 'com.test.ext',
+      contributionId: 'my-format',
+    };
+    const key = contributionRefKey(ref);
+    expect(key).toBe('outputFormat:com.test.ext:my-format');
+  });
+
+  it('OutputFormatRef is structurally compatible with ContributionRef (backward-compatible)', () => {
+    const ref: OutputFormatRef = {
+      kind: 'outputFormat',
+      extensionId: 'com.test.ext',
+      contributionId: 'my-format',
+    };
+    const asContribution: ContributionRef = ref;
+    expect(contributionRefKey(asContribution)).toBe('outputFormat:com.test.ext:my-format');
+  });
+
+  it('ARTIFACT_MANIFEST_PROFILE_KINDS is importable and contains video, audio, sidecar, preview', () => {
+    expect(ARTIFACT_MANIFEST_PROFILE_KINDS).toEqual(['video', 'audio', 'sidecar', 'preview']);
+    expect(ARTIFACT_MANIFEST_PROFILE_KINDS).toHaveLength(4);
+  });
+
+  it('VideoArtifactManifestProfile is constructable', () => {
+    const profile: VideoArtifactManifestProfile = {
+      kind: 'video',
+      schemaVersion: 1,
+      mimeType: 'video/mp4',
+      consumedMaterialRefs: [],
+      inputHashes: [],
+    };
+    expect(profile.kind).toBe('video');
+    expect(profile.schemaVersion).toBe(1);
+  });
+
+  it('AudioArtifactManifestProfile is constructable', () => {
+    const profile: AudioArtifactManifestProfile = {
+      kind: 'audio',
+      schemaVersion: 1,
+      mimeType: 'audio/mp3',
+      consumedMaterialRefs: [],
+      inputHashes: [],
+    };
+    expect(profile.kind).toBe('audio');
+  });
+
+  it('SidecarArtifactManifestProfile is constructable', () => {
+    const profile: SidecarArtifactManifestProfile = {
+      kind: 'sidecar',
+      schemaVersion: 1,
+      mimeType: 'application/json',
+      consumedMaterialRefs: [],
+      inputHashes: [],
+    };
+    expect(profile.kind).toBe('sidecar');
+  });
+
+  it('PreviewArtifactManifestProfile is constructable', () => {
+    const profile: PreviewArtifactManifestProfile = {
+      kind: 'preview',
+      schemaVersion: 1,
+      mimeType: 'image/png',
+      consumedMaterialRefs: [],
+      inputHashes: [],
+    };
+    expect(profile.kind).toBe('preview');
+  });
+
+  it('ArtifactManifestProfile discriminated union accepts all profile variants', () => {
+    const video: ArtifactManifestProfile = {
+      kind: 'video', schemaVersion: 1, mimeType: 'video/mp4',
+      consumedMaterialRefs: [], inputHashes: [],
+    };
+    const audio: ArtifactManifestProfile = {
+      kind: 'audio', schemaVersion: 1, mimeType: 'audio/mp3',
+      consumedMaterialRefs: [], inputHashes: [],
+    };
+    const sidecar: ArtifactManifestProfile = {
+      kind: 'sidecar', schemaVersion: 1, mimeType: 'application/json',
+      consumedMaterialRefs: [], inputHashes: [],
+    };
+    const preview: ArtifactManifestProfile = {
+      kind: 'preview', schemaVersion: 1, mimeType: 'image/png',
+      consumedMaterialRefs: [], inputHashes: [],
+    };
+    expect(video.kind).toBe('video');
+    expect(audio.kind).toBe('audio');
+    expect(sidecar.kind).toBe('sidecar');
+    expect(preview.kind).toBe('preview');
+  });
+
+  it('RenderArtifactManifest with a typed video profile is constructable', () => {
+    const manifest: RenderArtifactManifest = {
+      schemaVersion: 1,
+      profile: {
+        kind: 'video',
+        schemaVersion: 1,
+        mimeType: 'video/mp4',
+        consumedMaterialRefs: [],
+        inputHashes: [],
+      },
+      locator: { kind: 'artifact-store', uri: 'artifact://1' },
+      determinism: 'deterministic',
+      renderRoutes: ['streaming'],
+    };
+    expect(manifest.profile?.kind).toBe('video');
+    expect(manifest.renderRoutes).toEqual(['streaming']);
+  });
+
+  it('RenderArtifactManifest without profile remains backward-compatible', () => {
+    const manifest: RenderArtifactManifest = {
+      schemaVersion: 1,
+      locator: { kind: 'artifact-store', uri: 'artifact://2' },
+      determinism: 'deterministic',
+      renderRoutes: ['download'],
+    };
+    expect(manifest.profile).toBeUndefined();
+    expect(manifest.renderRoutes).toEqual(['download']);
+  });
+
+  it('requires edge kind is exported in COMPOSITION_EDGE_KINDS', () => {
+    expect(COMPOSITION_EDGE_KINDS).toContain('requires');
+  });
+
+  it('CompositionGraphEdge is constructable with requires kind', () => {
+    const edge: CompositionGraphEdge = {
+      id: 'edge-req-1',
+      kind: 'requires',
+      sourceNodeId: 'node-output-format',
+      targetNodeId: 'node-process',
+      detail: { route: 'streaming' },
+    };
+    expect(edge.kind).toBe('requires');
+    expect(edge.sourceNodeId).toBe('node-output-format');
+    expect(edge.targetNodeId).toBe('node-process');
   });
 });
 

@@ -7,9 +7,15 @@
  * @module families/projectors/processProjector
  */
 
-import type { ProcessContribution } from '@reigh/editor-sdk';
+import type {
+  ProcessContribution,
+  ProcessOperationSpec,
+  RenderRoute,
+} from '@reigh/editor-sdk';
 import type {
   VideoEditorProcessDescriptor,
+  VideoEditorProcessOperationDescriptor,
+  VideoEditorRouteScopeDescriptor,
   VideoEditorPlannerNextActionDescriptor,
 } from '../../extensionSurface';
 import type { CollectedContribution } from '../FamilyContributionSequence';
@@ -23,9 +29,9 @@ export function buildProcessDescriptors(
   return sorted.map(({ contribution, extensionId }) => {
     const processContrib = contribution as unknown as ProcessContribution;
     const spec = processContrib.spec;
-    const operations = Object.freeze([...(spec.operations ?? [])]);
+    const operations = normalizeOperations(spec.operations ?? []);
     const availableRoutes = Object.freeze(
-      Array.from(new Set(operations.flatMap((operation) => operation.routes ?? []))),
+      Array.from(new Set(operations.flatMap((operation) => operation.routes))),
     );
     const id = contribution.id as string;
     const label = processContrib.label ?? spec.label ?? spec.id;
@@ -46,5 +52,29 @@ export function buildProcessDescriptors(
       blockers: Object.freeze([]),
       nextActions: Object.freeze([] as VideoEditorPlannerNextActionDescriptor[]),
     });
+  });
+}
+
+function normalizeOperations(
+  operations: readonly ProcessOperationSpec[],
+): readonly VideoEditorProcessOperationDescriptor[] {
+  return Object.freeze(operations.map((operation) => {
+    const routes = Object.freeze([...(operation.routes ?? [])]);
+    return freezeDescriptor({
+      ...operation,
+      routes,
+      routeScope: buildRouteScope('process-operation', routes),
+    });
+  }));
+}
+
+function buildRouteScope(
+  source: VideoEditorRouteScopeDescriptor['source'],
+  routes: readonly RenderRoute[],
+): VideoEditorRouteScopeDescriptor {
+  return freezeDescriptor({
+    source,
+    mode: routes.length > 0 ? 'explicit-routes' : 'missing-routes',
+    routes,
   });
 }

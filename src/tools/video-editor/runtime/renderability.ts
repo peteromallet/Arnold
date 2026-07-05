@@ -29,6 +29,8 @@ export {
 } from '@/sdk/video/rendering/capabilities.ts';
 export type { ShaderMaterializerRequirementScope } from '@/sdk/video/rendering/capabilities.ts';
 export type {
+  ArtifactManifestProfile,
+  ArtifactManifestProfileKind,
   ArtifactBoundary,
   BakeContract,
   RenderArtifact,
@@ -41,8 +43,11 @@ export type {
   RenderMaterialRef,
   RenderStorageLocator,
 } from '@/sdk/video/rendering/artifacts.ts';
+export { ARTIFACT_MANIFEST_PROFILE_KINDS } from '@/sdk/video/rendering/artifacts.ts';
 
 import type {
+  ArtifactManifestProfile,
+  ArtifactManifestProfileKind,
   RenderArtifact,
   RenderArtifactManifest,
   RenderArtifactSidecarDescriptor,
@@ -50,6 +55,7 @@ import type {
   RenderMaterialRef,
   RenderStorageLocator,
 } from '@/sdk/video/rendering/artifacts.ts';
+import { ARTIFACT_MANIFEST_PROFILE_KINDS } from '@/sdk/video/rendering/artifacts.ts';
 import type {
   CapabilityFinding,
   DeterminismStatus,
@@ -59,6 +65,94 @@ import type {
 export type ManifestedRenderArtifact = RenderArtifact & {
   readonly manifest: RenderArtifactManifest;
 };
+
+export interface ResolveRenderArtifactManifestProfileOptions {
+  readonly strict?: boolean;
+}
+
+export function inferRenderArtifactManifestProfile(params: {
+  readonly route: RenderRoute;
+  readonly mediaKind: RenderMaterialMediaKind;
+  readonly outputFormatId?: string;
+}): ArtifactManifestProfileKind | null {
+  if (params.route === 'preview') return 'preview';
+  if (params.mediaKind === 'audio') return 'audio';
+  if (params.mediaKind === 'video' && isNonEmptyString(params.outputFormatId)) return 'video';
+  if (params.route === 'sidecar-export' || (params.mediaKind !== 'audio' && params.mediaKind !== 'video')) {
+    return 'sidecar';
+  }
+  return null;
+}
+
+export function inferRequiredRenderArtifactManifestProfile(params: {
+  readonly route: RenderRoute;
+  readonly outputFormatId?: string;
+  readonly mediaKind?: RenderMaterialMediaKind;
+  readonly mimeType?: string;
+}): ArtifactManifestProfileKind {
+  const mediaKind = params.mediaKind
+    ?? (params.mimeType ? mimeTypeToMediaKind(params.mimeType) : defaultRouteArtifactMediaKind(params.route));
+  return inferRenderArtifactManifestProfile({
+    route: params.route,
+    mediaKind,
+    outputFormatId: params.outputFormatId,
+  }) ?? defaultRouteArtifactProfile(params.route);
+}
+
+export function resolveStrictRenderArtifactManifestProfile(
+  artifact: RenderArtifact,
+): ArtifactManifestProfile {
+  assertFinalArtifactHasManifest(artifact, 'resolveStrictRenderArtifactManifestProfile');
+  const profile = resolveRenderArtifactManifestProfile(artifact.manifest, { strict: true });
+  if (!profile) {
+    throw new Error(
+      `Final render artifact "${artifact.id}" did not resolve a strict render artifact manifest profile.`,
+    );
+  }
+  return profile;
+}
+
+export function resolveRenderArtifactManifestProfile(
+  manifest: RenderArtifactManifest,
+  options: ResolveRenderArtifactManifestProfileOptions = {},
+): ArtifactManifestProfile | null {
+  if (manifest.profile === undefined) {
+    if (options.strict) {
+      throw new Error(
+        `${manifestContextLabel(manifest)} is missing explicit profile metadata required for strict validation.`,
+      );
+    }
+    return null;
+  }
+  if (!ARTIFACT_MANIFEST_PROFILE_KINDS.includes(manifest.profile)) {
+    throw new Error(
+      `${manifestContextLabel(manifest)} declares unsupported profile "${String(manifest.profile)}".`,
+    );
+  }
+
+  validateStrictManifestBase(manifest);
+
+  switch (manifest.profile) {
+    case 'video':
+      validateVideoManifestProfile(manifest);
+      break;
+    case 'audio':
+      validateAudioManifestProfile(manifest);
+      break;
+    case 'sidecar':
+      validateSidecarManifestProfile(manifest);
+      break;
+    case 'preview':
+      validatePreviewManifestProfile(manifest);
+      break;
+    default: {
+      const unexpectedProfile: never = manifest.profile;
+      throw new Error(`Unhandled render artifact manifest profile "${String(unexpectedProfile)}".`);
+    }
+  }
+
+  return manifest as ArtifactManifestProfile;
+}
 
 export function assertFinalArtifactHasManifest(
   artifact: RenderArtifact,
@@ -88,10 +182,24 @@ export function assertFinalArtifactHasManifest(
       `"${artifact.manifest.determinism}" but artifact determinism "${artifact.determinism}".`,
     );
   }
+  const strictProfile = resolveRenderArtifactManifestProfile(artifact.manifest);
+  if (strictProfile && 'mediaKind' in strictProfile && strictProfile.mediaKind !== artifact.mediaKind) {
+    throw new Error(
+      `Final render artifact "${artifact.id}" from ${producer} has manifest mediaKind ` +
+      `"${strictProfile.mediaKind}" but artifact mediaKind "${artifact.mediaKind}".`,
+    );
+  }
+  if (strictProfile && !locatorsEqual(strictProfile.locator, artifact.locator)) {
+    throw new Error(
+      `Final render artifact "${artifact.id}" from ${producer} has manifest locator ` +
+      `that does not match the artifact locator.`,
+    );
+  }
 }
 
 export interface CreateRenderArtifactManifestParams {
   readonly id?: string;
+  readonly profile?: ArtifactManifestProfileKind;
   readonly artifactId: string;
   readonly route: RenderRoute;
   readonly determinism: DeterminismStatus;
@@ -151,6 +259,7 @@ export function createRenderArtifactManifest(
   const manifest: RenderArtifactManifest = {
     id: params.id ?? `manifest.${params.artifactId}`,
     schemaVersion: 1,
+    profile: params.profile,
     artifactId: params.artifactId,
     route: params.route,
     determinism: params.determinism,
@@ -172,6 +281,10 @@ export function createRenderArtifactManifest(
     createdAt: params.createdAt,
     metadata: params.metadata,
   };
+
+  if (manifest.profile !== undefined) {
+    resolveRenderArtifactManifestProfile(manifest, { strict: true });
+  }
 
   return Object.freeze(manifest);
 }
@@ -305,6 +418,18 @@ export function createCompileOnlyArtifact(params: CompileOnlyArtifactParams): Re
     mimeType: params.mimeType,
   });
   const mediaKind = mimeTypeToMediaKind(params.mimeType);
+  const profile = inferRenderArtifactManifestProfile({
+    route: COMPILE_ONLY_ARTIFACT_ROUTE,
+    mediaKind,
+    outputFormatId: params.outputFormatId,
+  });
+  const provenance = params.provenance ?? Object.freeze({
+    source: 'compile-only-output',
+    filename: params.filename,
+    mimeType: params.mimeType,
+    outputFormatId: params.outputFormatId,
+  });
+  const inputHashes = params.inputHashes ?? deriveInputHashesFromMaterialRefs(frozenConsumedMaterialRefs) ?? Object.freeze({});
   const boundary: ArtifactBoundary = Object.freeze({
     source: 'browser',
     target: 'export-output',
@@ -316,6 +441,7 @@ export function createCompileOnlyArtifact(params: CompileOnlyArtifactParams): Re
     artifactId: params.artifactId,
     route: COMPILE_ONLY_ARTIFACT_ROUTE,
     determinism: 'deterministic',
+    ...(profile ? { profile } : {}),
     producerExtensionId: params.producerExtensionId,
     producerVersion: params.producerVersion,
     outputFormatId: params.outputFormatId,
@@ -324,8 +450,8 @@ export function createCompileOnlyArtifact(params: CompileOnlyArtifactParams): Re
     consumedMaterialRefs: frozenConsumedMaterialRefs,
     sidecars,
     diagnostics: frozenFindings,
-    provenance: params.provenance,
-    inputHashes: params.inputHashes,
+    provenance,
+    inputHashes,
     metadata: params.metadata,
   });
 
@@ -360,6 +486,153 @@ function mimeTypeToMediaKind(mimeType: string): RenderMaterialMediaKind {
   if (mimeType.startsWith('text/')) return 'text';
   if (mimeType === 'application/octet-stream') return 'binary';
   return 'unknown';
+}
+
+function defaultRouteArtifactMediaKind(route: RenderRoute): RenderMaterialMediaKind {
+  switch (route) {
+    case 'preview':
+      return 'image';
+    case 'sidecar-export':
+      return 'sidecar';
+    case 'browser-export':
+    case 'worker-export':
+    default:
+      return 'video';
+  }
+}
+
+function defaultRouteArtifactProfile(route: RenderRoute): ArtifactManifestProfileKind {
+  switch (route) {
+    case 'preview':
+      return 'preview';
+    case 'sidecar-export':
+      return 'sidecar';
+    case 'browser-export':
+    case 'worker-export':
+    default:
+      return 'video';
+  }
+}
+
+function validateStrictManifestBase(manifest: RenderArtifactManifest): void {
+  assertNonEmptyString(manifest.id, 'id', manifest);
+  assertNonEmptyString(manifest.artifactId, 'artifactId', manifest);
+  assertLocator(manifest.locator, manifest);
+  assertRecord(manifest.provenance, 'provenance', manifest);
+  if (!Array.isArray(manifest.consumedMaterialRefs)) {
+    throw new Error(`${manifestContextLabel(manifest)} must include consumedMaterialRefs array for strict validation.`);
+  }
+  if (!Array.isArray(manifest.sidecars)) {
+    throw new Error(`${manifestContextLabel(manifest)} must include sidecars array for strict validation.`);
+  }
+}
+
+function validateVideoManifestProfile(manifest: RenderArtifactManifest): void {
+  assertNonEmptyString(manifest.outputFormatId, 'outputFormatId', manifest);
+  if (manifest.mediaKind !== 'video') {
+    throw new Error(`${manifestContextLabel(manifest)} must declare mediaKind "video" for video profile validation.`);
+  }
+  assertInputHashes(manifest.inputHashes, manifest);
+}
+
+function validateAudioManifestProfile(manifest: RenderArtifactManifest): void {
+  if (manifest.mediaKind !== 'audio') {
+    throw new Error(`${manifestContextLabel(manifest)} must declare mediaKind "audio" for audio profile validation.`);
+  }
+  assertInputHashes(manifest.inputHashes, manifest);
+}
+
+function validateSidecarManifestProfile(manifest: RenderArtifactManifest): void {
+  if (manifest.route === 'preview') {
+    throw new Error(`${manifestContextLabel(manifest)} uses preview route and must use profile "preview".`);
+  }
+  if (manifest.mediaKind === 'audio' || manifest.mediaKind === 'video') {
+    throw new Error(
+      `${manifestContextLabel(manifest)} uses ${manifest.mediaKind} mediaKind and must use profile "${manifest.mediaKind}".`,
+    );
+  }
+}
+
+function validatePreviewManifestProfile(manifest: RenderArtifactManifest): void {
+  if (manifest.route !== 'preview') {
+    throw new Error(`${manifestContextLabel(manifest)} must use route "preview" for preview profile validation.`);
+  }
+}
+
+function deriveInputHashesFromMaterialRefs(
+  materialRefs: readonly RenderMaterialRef[],
+): Readonly<Record<string, string>> | undefined {
+  const inputHashes: Record<string, string> = {};
+  for (const materialRef of materialRefs) {
+    const uri = materialRef.locator?.uri;
+    const hash = materialRef.locator?.contentSha256;
+    if (isNonEmptyString(uri) && isNonEmptyString(hash)) {
+      inputHashes[uri] = hash;
+    }
+  }
+  return Object.keys(inputHashes).length > 0 ? Object.freeze(inputHashes) : undefined;
+}
+
+function manifestContextLabel(manifest: Pick<RenderArtifactManifest, 'id' | 'artifactId'>): string {
+  return `Render artifact manifest "${manifest.id}" for artifact "${manifest.artifactId}"`;
+}
+
+function assertNonEmptyString(
+  value: unknown,
+  field: string,
+  manifest: Pick<RenderArtifactManifest, 'id' | 'artifactId'>,
+): asserts value is string {
+  if (!isNonEmptyString(value)) {
+    throw new Error(`${manifestContextLabel(manifest)} is missing required ${field} for strict validation.`);
+  }
+}
+
+function assertInputHashes(
+  inputHashes: RenderArtifactManifest['inputHashes'],
+  manifest: Pick<RenderArtifactManifest, 'id' | 'artifactId'>,
+): asserts inputHashes is Record<string, string> {
+  assertRecord(inputHashes, 'inputHashes', manifest);
+}
+
+function assertLocator(
+  locator: RenderArtifactManifest['locator'],
+  manifest: Pick<RenderArtifactManifest, 'id' | 'artifactId'>,
+): asserts locator is RenderStorageLocator {
+  if (!locator) {
+    throw new Error(`${manifestContextLabel(manifest)} is missing required locator for strict validation.`);
+  }
+  assertNonEmptyString(locator.kind, 'locator.kind', manifest);
+  assertNonEmptyString(locator.uri, 'locator.uri', manifest);
+}
+
+function assertRecord(
+  value: unknown,
+  field: string,
+  manifest: Pick<RenderArtifactManifest, 'id' | 'artifactId'>,
+): asserts value is Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error(`${manifestContextLabel(manifest)} is missing required ${field} for strict validation.`);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function locatorsEqual(
+  left: RenderStorageLocator | undefined,
+  right: RenderStorageLocator,
+): boolean {
+  if (!left) return false;
+  return left.kind === right.kind
+    && left.uri === right.uri
+    && left.mimeType === right.mimeType
+    && left.contentSha256 === right.contentSha256
+    && left.expiresAt === right.expiresAt;
 }
 
 function compareSidecars(a: RenderArtifactSidecarDescriptor, b: RenderArtifactSidecarDescriptor): number {

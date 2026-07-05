@@ -218,9 +218,20 @@ export interface VideoEditorOutputFormatDescriptor {
   sidecars: readonly RenderArtifactSidecarDescriptor[];
 }
 
+/** Host-normalized route-scope metadata for route-aware descriptors. */
+export interface VideoEditorRouteScopeDescriptor {
+  /** Owning descriptor family that declared the route set. */
+  source: 'output-format-render' | 'output-format-process' | 'process-operation';
+  /** Whether the declaration carried an explicit non-empty route set. */
+  mode: 'explicit-routes' | 'missing-routes';
+  /** Normalized route array copied from the declaration. */
+  routes: readonly RenderRoute[];
+}
+
 /** A normalized route requirement record consumed by render planning. */
 export interface VideoEditorRouteRequirementDescriptor {
   routes: readonly RenderRoute[];
+  routeScope: VideoEditorRouteScopeDescriptor;
   requiredCapabilities: readonly string[];
   processId?: string;
   operationId?: string;
@@ -232,6 +243,7 @@ export interface VideoEditorRouteRequirementDescriptor {
 export interface VideoEditorProcessRequirementDescriptor {
   processId: string;
   operationId?: string;
+  routeScope: VideoEditorRouteScopeDescriptor;
   requiredCapabilities: readonly string[];
 }
 
@@ -271,6 +283,12 @@ export interface VideoEditorPlannerNextActionDescriptor {
   detail?: VideoEditorPlannerNextActionDetail;
 }
 
+/** A normalized trusted-local process operation descriptor produced by runtime normalization. */
+export interface VideoEditorProcessOperationDescriptor extends Omit<ProcessOperationSpec, 'routes'> {
+  routes: readonly RenderRoute[];
+  routeScope: VideoEditorRouteScopeDescriptor;
+}
+
 /** A normalized trusted-local process descriptor produced by runtime normalization. */
 export interface VideoEditorProcessDescriptor {
   id: string;
@@ -281,7 +299,7 @@ export interface VideoEditorProcessDescriptor {
   description?: string;
   spec: ProcessSpec;
   protocol: ProcessSpec['protocol'];
-  operations: readonly ProcessOperationSpec[];
+  operations: readonly VideoEditorProcessOperationDescriptor[];
   availableRoutes: readonly RenderRoute[];
   capabilities?: IntegrationCapabilities;
   requiredBy: readonly CapabilitySourceRef[];

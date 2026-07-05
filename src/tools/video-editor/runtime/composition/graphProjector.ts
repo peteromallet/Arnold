@@ -5,6 +5,7 @@ import type {
   CompositionReferenceStateEntry,
   ContributionRef,
   ExtensionDiagnostic,
+  RenderArtifact,
   ReferenceState,
   TimelineEffectSummary,
   TimelineShaderSummary,
@@ -30,7 +31,14 @@ import {
   type CompositionReferenceUsage,
 } from '@/tools/video-editor/runtime/composition/referenceResolver.ts';
 import { validateShaderComposition } from '@/tools/video-editor/runtime/composition/shaderValidation.ts';
-import type { ContributionIndex, ContributionIndexEntry } from '@/tools/video-editor/runtime/extensionSurface.ts';
+import type {
+  ContributionIndex,
+  ContributionIndexEntry,
+  VideoEditorOutputFormatDescriptor,
+  VideoEditorProcessDescriptor,
+  VideoEditorRouteRequirementDescriptor,
+  VideoEditorProcessRequirementDescriptor,
+} from '@/tools/video-editor/runtime/extensionSurface.ts';
 
 export const TIMELINE_POSTPROCESS_NODE_ID = 'timeline-postprocess';
 
@@ -57,6 +65,17 @@ export interface CompositionGraphMaterialSlotBinding {
   readonly owner: CompositionGraphMaterialSlotOwnerIdentity;
   readonly slotName: string;
   readonly materialRefId: string;
+}
+
+export interface CompositionGraphMediaTrackOwnerIdentity {
+  readonly kind: 'track';
+  readonly trackId: string;
+  readonly clipId?: string;
+}
+
+export interface CompositionGraphMediaTrackBinding {
+  readonly owner: CompositionGraphMediaTrackOwnerIdentity;
+  readonly artifactId: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -186,12 +205,16 @@ export function resolveTransitionContributionEntry(
 export interface CompositionGraphInput {
   readonly snapshot: TimelineSnapshot;
   readonly contributionIndex: ContributionIndex | undefined;
+  readonly outputFormats?: readonly VideoEditorOutputFormatDescriptor[];
+  readonly processes?: readonly VideoEditorProcessDescriptor[];
+  readonly artifacts?: readonly RenderArtifact[];
   readonly clipTypeRegistry?: ClipTypeRegistrySnapshot;
   readonly runtimeOverlay?: CompositionGraphRuntimeOverlay;
   readonly patchOverlay?: CompositionGraphPatchOverlay;
   readonly materialRuntime?: HostMaterialRuntimeProjection;
   readonly materialSlotDeclarations?: readonly CompositionGraphMaterialSlotDeclaration[];
   readonly materialSlotBindings?: readonly CompositionGraphMaterialSlotBinding[];
+  readonly mediaTrackBindings?: readonly CompositionGraphMediaTrackBinding[];
 }
 
 const EMPTY_NODES: readonly CompositionGraphNode[] = Object.freeze([]);
@@ -258,6 +281,307 @@ function ensureContributionNode(
   }
 
   return contributionNode;
+}
+
+function resolveContributionEntryByKindAndPredicate(
+  kind: string,
+  contributionEntries: readonly (readonly [string, readonly ContributionIndexEntry[]])[],
+  predicate: (entry: ContributionIndexEntry) => boolean,
+): ContributionIndexEntry | undefined {
+  let matched: ContributionIndexEntry | undefined;
+
+  for (const [, entries] of contributionEntries) {
+    for (const entry of entries) {
+      if (entry.kind !== kind || !predicate(entry)) {
+        continue;
+      }
+
+      if (matched && matched.scopedKey !== entry.scopedKey) {
+        return undefined;
+      }
+
+      matched = entry;
+    }
+  }
+
+  return matched;
+}
+
+function processContributionRef(
+  processRequirement: Readonly<{
+    processId: string;
+  }>,
+  processes: readonly VideoEditorProcessDescriptor[] | undefined,
+  contributionEntries: readonly (readonly [string, readonly ContributionIndexEntry[]])[],
+): ContributionRef | undefined {
+  const descriptor = processes?.find((candidate) => candidate.processId === processRequirement.processId);
+  if (descriptor) {
+    return {
+      kind: 'process',
+      extensionId: descriptor.extensionId,
+      contributionId: descriptor.id,
+    };
+  }
+
+  const entry = resolveContributionEntryByKindAndPredicate(
+    'process',
+    contributionEntries,
+    (candidate) =>
+      candidate.renderId === processRequirement.processId
+      || candidate.contributionId === processRequirement.processId,
+  );
+  return entry ? createContributionRef(entry) : undefined;
+}
+
+function routeRequirementDetail(
+  outputFormat: VideoEditorOutputFormatDescriptor,
+  refKey: string,
+  requirement: VideoEditorRouteRequirementDescriptor,
+  requirementKind: 'route' | 'shader' | 'clip' | 'timeline-postprocess',
+): Record<string, unknown> {
+  return Object.freeze({
+    outputFormatId: outputFormat.id,
+    outputLabel: outputFormat.label,
+    refKey,
+    requirementKind,
+    routes: Object.freeze([...requirement.routes]),
+    routeScope: Object.freeze({
+      source: requirement.routeScope.source,
+      mode: requirement.routeScope.mode,
+      routes: Object.freeze([...requirement.routeScope.routes]),
+    }),
+    requiredCapabilities: Object.freeze([...requirement.requiredCapabilities]),
+    determinism: requirement.determinism,
+    ...(requirement.processId ? { processId: requirement.processId } : {}),
+    ...(requirement.operationId ? { operationId: requirement.operationId } : {}),
+    ...(requirement.unavailableMessage ? { unavailableMessage: requirement.unavailableMessage } : {}),
+  });
+}
+
+function processRequirementDetail(
+  outputFormat: VideoEditorOutputFormatDescriptor,
+  refKey: string,
+  requirement: VideoEditorProcessRequirementDescriptor,
+): Record<string, unknown> {
+  return Object.freeze({
+    outputFormatId: outputFormat.id,
+    outputLabel: outputFormat.label,
+    refKey,
+    requirementKind: 'process',
+    processId: requirement.processId,
+    ...(requirement.operationId ? { operationId: requirement.operationId } : {}),
+    routeScope: Object.freeze({
+      source: requirement.routeScope.source,
+      mode: requirement.routeScope.mode,
+      routes: Object.freeze([...requirement.routeScope.routes]),
+    }),
+    requiredCapabilities: Object.freeze([...requirement.requiredCapabilities]),
+  });
+}
+
+function materialDependencyDetail(
+  outputFormat: VideoEditorOutputFormatDescriptor,
+  refKey: string,
+  material: HostMaterialRuntimeProjection['materials'][number],
+  producerRefKey: string | undefined,
+): Record<string, unknown> {
+  return Object.freeze({
+    outputFormatId: outputFormat.id,
+    outputLabel: outputFormat.label,
+    refKey,
+    consumedKind: 'material',
+    materialRefId: material.materialRef.id,
+    materialMediaKind: material.materialRef.mediaKind,
+    determinism: material.materialRef.determinism,
+    routeScopes: Object.freeze(material.routeScopes.map((scope) => Object.freeze({
+      route: scope.route,
+      fit: scope.fit,
+      sensitivity: scope.sensitivity,
+    }))),
+    ...(producerRefKey ? { producerRefKey } : {}),
+    ...(material.descriptorFacts.process?.processId
+      ? { processId: material.descriptorFacts.process.processId }
+      : {}),
+    ...(material.descriptorFacts.process?.operationId
+      ? { operationId: material.descriptorFacts.process.operationId }
+      : {}),
+  });
+}
+
+function resolveMaterialDependencyTargetRef(
+  material: HostMaterialRuntimeProjection['materials'][number],
+  processes: readonly VideoEditorProcessDescriptor[] | undefined,
+  contributionEntries: readonly (readonly [string, readonly ContributionIndexEntry[]])[],
+): ContributionRef | undefined {
+  const contributionScopedKey = material.descriptorFacts.contribution?.scopedKey;
+  if (contributionScopedKey) {
+    const [kind, extensionId, contributionId] = contributionScopedKey.split(':');
+    if (kind && extensionId && contributionId) {
+      return {
+        kind,
+        extensionId,
+        contributionId,
+      };
+    }
+  }
+
+  if (material.descriptorFacts.shader) {
+    return {
+      kind: 'shader',
+      extensionId: material.descriptorFacts.shader.extensionId,
+      contributionId: material.descriptorFacts.shader.contributionId,
+    };
+  }
+
+  if (material.descriptorFacts.process?.processId) {
+    return processContributionRef(material.descriptorFacts.process, processes, contributionEntries);
+  }
+
+  return undefined;
+}
+
+function projectOutputFormatEdges(
+  input: CompositionGraphInput,
+  nodes: CompositionGraphNode[],
+  edges: CompositionGraphEdge[],
+  contributionNodeByRefKey: Map<string, CompositionGraphNode>,
+  contributionEntries: readonly (readonly [string, readonly ContributionIndexEntry[]])[],
+): void {
+  if (!input.outputFormats?.length) {
+    return;
+  }
+
+  const edgeIds = new Set(edges.map((edge) => edge.id));
+  const clipNodes = nodes.filter((node) => node.kind === 'clip');
+  const shaderNodes = nodes.filter(
+    (node) => node.kind === 'contribution' && node.ref?.kind === 'shader',
+  );
+  const timelinePostprocessNode = nodes.find(
+    (node) => node.id === TIMELINE_POSTPROCESS_NODE_ID,
+  );
+
+  const pushEdge = (edge: CompositionGraphEdge) => {
+    if (edgeIds.has(edge.id)) {
+      return;
+    }
+    edgeIds.add(edge.id);
+    edges.push(edge);
+  };
+
+  for (const outputFormat of input.outputFormats) {
+    const ref: ContributionRef = {
+      kind: 'outputFormat',
+      extensionId: outputFormat.extensionId,
+      contributionId: outputFormat.id,
+    };
+    const refKey = contributionRefKey(ref);
+    const sourceNode = ensureContributionNode(
+      nodes,
+      contributionNodeByRefKey,
+      ref,
+      refKey,
+    );
+
+    for (const [requirementIndex, requirement] of outputFormat.routeRequirements.entries()) {
+      const routeKey = requirement.routes.join('+') || requirement.routeScope.mode;
+      const routeDetail = routeRequirementDetail(outputFormat, refKey, requirement, 'route');
+      pushEdge(Object.freeze({
+        id: `requires:${sourceNode.id}:${sourceNode.id}:route:${routeKey}:${requirementIndex}`,
+        kind: 'requires',
+        sourceNodeId: sourceNode.id,
+        targetNodeId: sourceNode.id,
+        detail: routeDetail,
+      }));
+
+      for (const clipNode of clipNodes) {
+        pushEdge(Object.freeze({
+          id: `requires:${sourceNode.id}:${clipNode.id}:clip:${routeKey}:${requirementIndex}`,
+          kind: 'requires',
+          sourceNodeId: sourceNode.id,
+          targetNodeId: clipNode.id,
+          detail: routeRequirementDetail(outputFormat, refKey, requirement, 'clip'),
+        }));
+      }
+
+      if (timelinePostprocessNode) {
+        pushEdge(Object.freeze({
+          id: `requires:${sourceNode.id}:${timelinePostprocessNode.id}:timeline-postprocess:${routeKey}:${requirementIndex}`,
+          kind: 'requires',
+          sourceNodeId: sourceNode.id,
+          targetNodeId: timelinePostprocessNode.id,
+          detail: routeRequirementDetail(
+            outputFormat,
+            refKey,
+            requirement,
+            'timeline-postprocess',
+          ),
+        }));
+      }
+
+      for (const shaderNode of shaderNodes) {
+        pushEdge(Object.freeze({
+          id: `requires:${sourceNode.id}:${shaderNode.id}:shader:${routeKey}:${requirementIndex}`,
+          kind: 'requires',
+          sourceNodeId: sourceNode.id,
+          targetNodeId: shaderNode.id,
+          detail: routeRequirementDetail(outputFormat, refKey, requirement, 'shader'),
+        }));
+      }
+    }
+
+    for (const requirement of outputFormat.processRequirements) {
+      const processRef = processContributionRef(requirement, input.processes, contributionEntries);
+      if (!processRef) {
+        continue;
+      }
+
+      const processRefKey = contributionRefKey(processRef);
+      const targetNode = ensureContributionNode(
+        nodes,
+        contributionNodeByRefKey,
+        processRef,
+        processRefKey,
+      );
+      const routeKey = requirement.routeScope.routes.join('+') || requirement.routeScope.mode;
+      pushEdge(Object.freeze({
+        id: `requires:${sourceNode.id}:${targetNode.id}:process:${requirement.processId}:${requirement.operationId ?? 'none'}:${routeKey}`,
+        kind: 'requires',
+        sourceNodeId: sourceNode.id,
+        targetNodeId: targetNode.id,
+        detail: Object.freeze({
+          ...processRequirementDetail(outputFormat, refKey, requirement),
+          targetRefKey: processRefKey,
+        }),
+      }));
+    }
+
+    for (const material of input.materialRuntime?.materials ?? []) {
+      const targetRef = resolveMaterialDependencyTargetRef(
+        material,
+        input.processes,
+        contributionEntries,
+      );
+      if (!targetRef) {
+        continue;
+      }
+
+      const producerRefKey = contributionRefKey(targetRef);
+      const targetNode = ensureContributionNode(
+        nodes,
+        contributionNodeByRefKey,
+        targetRef,
+        producerRefKey,
+      );
+
+      pushEdge(Object.freeze({
+        id: `consumes:${sourceNode.id}:${targetNode.id}:material:${material.materialRef.id}`,
+        kind: 'consumes',
+        sourceNodeId: sourceNode.id,
+        targetNodeId: targetNode.id,
+        detail: materialDependencyDetail(outputFormat, refKey, material, producerRefKey),
+      }));
+    }
+  }
 }
 
 function buildContributionNodeDetail(
@@ -1329,6 +1653,13 @@ export function projectCompositionGraph(input: CompositionGraphInput): Compositi
   const effectTransitionResolved = buildEffectTransitionReferenceStatesAndDiagnostics(
     effectTransitionRefUsages,
     contributionIndex,
+  );
+  projectOutputFormatEdges(
+    input,
+    nodes,
+    edges,
+    contributionNodeByRefKey,
+    contributionEntries,
   );
 
   // Merge reference states: clip type refs first, then effect/transition refs,

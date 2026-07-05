@@ -13,6 +13,7 @@ import type {
 import type { VideoEditorProcessDescriptor } from '@/tools/video-editor/runtime/extensionSurface.ts';
 import {
   createRenderArtifactManifest,
+  inferRenderArtifactManifestProfile,
   normalizeRenderArtifactSidecars,
 } from '@/tools/video-editor/runtime/renderability.ts';
 
@@ -237,6 +238,20 @@ function normalizeSidecars(
   return normalizeRenderArtifactSidecars([...byKey.values()]);
 }
 
+function deriveInputHashesFromMaterialRefs(
+  materialRefs: readonly RenderMaterialRef[],
+): Readonly<Record<string, string>> | undefined {
+  const inputHashes: Record<string, string> = {};
+  for (const materialRef of materialRefs) {
+    const uri = materialRef.locator?.uri;
+    const hash = materialRef.locator?.contentSha256;
+    if (typeof uri === 'string' && uri.length > 0 && typeof hash === 'string' && hash.length > 0) {
+      inputHashes[uri] = hash;
+    }
+  }
+  return Object.keys(inputHashes).length > 0 ? Object.freeze(inputHashes) : undefined;
+}
+
 function buildMaterialStatus(
   materialRefId: string,
   state: RenderMaterialStatus['state'],
@@ -264,11 +279,18 @@ function normalizeArtifact(
   const version = record.provenance.descriptor.version?.semver;
   const producerExtensionId = artifact.producerExtensionId ?? record.provenance.descriptor.extensionId;
   const producerVersion = artifact.producerVersion ?? version;
+  const profile = artifact.manifest?.profile ?? inferRenderArtifactManifestProfile({
+    route: artifact.route,
+    mediaKind: artifact.mediaKind,
+    outputFormatId: artifact.manifest?.outputFormatId,
+  });
+  const inputHashes = artifact.manifest?.inputHashes ?? deriveInputHashesFromMaterialRefs(consumedMaterialRefs) ?? Object.freeze({});
   const manifest = createRenderArtifactManifest({
     id: artifact.manifest?.id,
     artifactId: artifact.id,
     route: artifact.route,
     determinism: artifact.determinism,
+    ...(profile ? { profile } : {}),
     producerExtensionId,
     producerVersion,
     outputFormatId: artifact.manifest?.outputFormatId,
@@ -281,7 +303,7 @@ function normalizeArtifact(
     sidecars,
     diagnostics: artifact.manifest?.diagnostics ?? artifact.findings ?? record.diagnostics,
     provenance: mergeProcessProvenance(artifact.manifest?.provenance, record),
-    inputHashes: artifact.manifest?.inputHashes,
+    inputHashes,
     renderGroupId: artifact.manifest?.renderGroupId,
     passName: artifact.manifest?.passName,
     createdAt: artifact.manifest?.createdAt ?? record.provenance.attachedAt,

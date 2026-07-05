@@ -1,19 +1,19 @@
 {
   "fix_commits": [],
-  "generated_at": "2026-07-04T19:30:40.054907+00:00",
+  "generated_at": "2026-07-05T01:31:01.518362+00:00",
   "kind": "problem_summary",
   "linked_incident_ids": [
     "inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
   ],
   "next_review_ts": null,
-  "occurrence_count": 4,
-  "owner_actor": "watchdog",
+  "occurrence_count": 6,
+  "owner_actor": "six_hour_auditor",
   "problem_id": "problem-71f954a05546",
   "recurred_after_fix": false,
   "schema_version": 1,
   "source": {
-    "digest": "sha256:bd0888167523154db74c22a38aba6da50a577cee6b52f771b6101a9bda2ee152",
-    "last_seq": 5,
+    "digest": "sha256:7002042d0ab602bf932e417c737f27fe35b3690c94c0185203d5958b7332d919",
+    "last_seq": 9,
     "projection": "problems"
   },
   "status": "open",

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { TimelineShaderSummary, TimelineSnapshot } from '@reigh/editor-sdk';
+import type { RenderArtifact, TimelineShaderSummary, TimelineSnapshot } from '@reigh/editor-sdk';
 import type { ContributionIndex, ContributionIndexEntry } from '@/tools/video-editor/runtime/extensionSurface.ts';
 import type { ClipKeyframe } from '@/tools/video-editor/types/index.ts';
 import type { CompositionGraphInput } from '@/tools/video-editor/runtime/composition/graphProjector.ts';
@@ -14,6 +14,8 @@ import { projectHostMaterialRuntime } from '@/tools/video-editor/runtime/composi
 type HostClipSummary = TimelineSnapshot['clips'][number] & {
   keyframes?: Record<string, ClipKeyframe[]>;
 };
+
+type HostTrackSummary = TimelineSnapshot['tracks'][number];
 
 function keyframe(
   time: number,
@@ -47,14 +49,17 @@ function automationClip(overrides: Partial<HostClipSummary> = {}): HostClipSumma
   };
 }
 
-function timelineSnapshot(clips: HostClipSummary[]): TimelineSnapshot {
+function timelineSnapshot(
+  clips: HostClipSummary[],
+  tracks: readonly HostTrackSummary[] = [],
+): TimelineSnapshot {
   return {
     projectId: 'project-1',
     baseVersion: 1,
     currentVersion: 1,
     extensionRequirements: [],
     clips,
-    tracks: [],
+    tracks,
     assetKeys: [],
     app: {},
     shaders: [],
@@ -131,6 +136,38 @@ function transitionClip(overrides: Partial<HostClipSummary> = {}): HostClipSumma
       managed: true,
       managedBy: 'com.example.transitions',
     },
+    ...overrides,
+  };
+}
+
+function trackSummary(overrides: Partial<HostTrackSummary> = {}): HostTrackSummary {
+  return {
+    id: 'A1',
+    kind: 'audio',
+    label: 'Audio 1',
+    muted: false,
+    ...overrides,
+  };
+}
+
+function artifact(overrides: Partial<RenderArtifact> = {}): RenderArtifact {
+  return {
+    id: 'artifact.audio',
+    route: 'browser-export',
+    locator: {
+      kind: 'artifact-store',
+      uri: 'artifact://exports/audio.wav',
+      mimeType: 'audio/wav',
+    },
+    mediaKind: 'audio',
+    determinism: 'deterministic',
+    boundary: {
+      source: 'worker',
+      target: 'artifact-store',
+      route: 'browser-export',
+      failureBehavior: 'block-export',
+    },
+    consumedMaterialRefs: [],
     ...overrides,
   };
 }
@@ -634,5 +671,200 @@ describe('patchPreview material.attach diagnostics', () => {
     expect(clonedInput?.materialSlotBindings).toBeUndefined();
     expect(clonedClip.transition?.params?.materialSlots).toBeUndefined();
     expect(sourceClip.transition?.params?.materialSlots).toBeUndefined();
+  });
+});
+
+describe('patchPreview media.attach and media.remove operations', () => {
+  it('attaches an audio artifact to a cloned audio track target without mutating the source input', () => {
+    const input: CompositionGraphInput = {
+      snapshot: timelineSnapshot([
+        {
+          id: 'clip-audio',
+          track: 'A1',
+          at: 0,
+          clipType: 'audio',
+          duration: 48,
+          managed: false,
+        },
+      ], [trackSummary()]),
+      contributionIndex: contributionIndex(),
+      artifacts: [artifact()],
+    };
+    const sourceTracks = input.snapshot.tracks;
+    const projectorSpy = vi.spyOn(graphProjector, 'projectCompositionGraph');
+
+    const preview = applyGraphPreviewOperations(input, [
+      {
+        kind: 'media.attach',
+        owner: {
+          kind: 'track',
+          trackId: 'A1',
+          clipId: 'clip-audio',
+        },
+        artifactId: 'artifact.audio',
+      },
+    ]);
+
+    const clonedInput = projectorSpy.mock.calls[0]?.[0] as CompositionGraphInput | undefined;
+
+    expect(clonedInput?.snapshot.tracks).not.toBe(sourceTracks);
+    expect(clonedInput?.mediaTrackBindings).toEqual([
+      {
+        owner: {
+          kind: 'track',
+          trackId: 'A1',
+          clipId: 'clip-audio',
+        },
+        artifactId: 'artifact.audio',
+      },
+    ]);
+    expect(input.mediaTrackBindings).toBeUndefined();
+    expect(preview?.diagnostics.some((diagnostic) => diagnostic.severity === 'error')).toBe(false);
+  });
+
+  it('removes cloned audio-track media attachments without mutating the source input', () => {
+    const input: CompositionGraphInput = {
+      snapshot: timelineSnapshot([
+        {
+          id: 'clip-audio',
+          track: 'A1',
+          at: 0,
+          clipType: 'audio',
+          duration: 48,
+          managed: false,
+        },
+      ], [trackSummary()]),
+      contributionIndex: contributionIndex(),
+      artifacts: [artifact()],
+      mediaTrackBindings: [
+        {
+          owner: {
+            kind: 'track',
+            trackId: 'A1',
+            clipId: 'clip-audio',
+          },
+          artifactId: 'artifact.audio',
+        },
+      ],
+    };
+    const sourceBindings = input.mediaTrackBindings;
+    const projectorSpy = vi.spyOn(graphProjector, 'projectCompositionGraph');
+
+    applyGraphPreviewOperations(input, [
+      {
+        kind: 'media.remove',
+        owner: {
+          kind: 'track',
+          trackId: 'A1',
+          clipId: 'clip-audio',
+        },
+      },
+    ]);
+
+    const clonedInput = projectorSpy.mock.calls[0]?.[0] as CompositionGraphInput | undefined;
+
+    expect(clonedInput?.mediaTrackBindings).toEqual([]);
+    expect(input.mediaTrackBindings).toBe(sourceBindings);
+    expect(input.mediaTrackBindings).toEqual([
+      {
+        owner: {
+          kind: 'track',
+          trackId: 'A1',
+          clipId: 'clip-audio',
+        },
+        artifactId: 'artifact.audio',
+      },
+    ]);
+  });
+
+  it('rejects media.attach for non-audio track targets without writing bindings', () => {
+    const input: CompositionGraphInput = {
+      snapshot: timelineSnapshot([], [trackSummary({ id: 'V1', kind: 'visual', label: 'Video 1' })]),
+      contributionIndex: contributionIndex(),
+      artifacts: [artifact()],
+    };
+    const projectorSpy = vi.spyOn(graphProjector, 'projectCompositionGraph');
+
+    const preview = applyGraphPreviewOperations(input, [
+      {
+        kind: 'media.attach',
+        owner: {
+          kind: 'track',
+          trackId: 'V1',
+        },
+        artifactId: 'artifact.audio',
+      },
+    ]);
+
+    const clonedInput = projectorSpy.mock.calls[0]?.[0] as CompositionGraphInput | undefined;
+
+    expect(preview?.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: COMPOSITION_DIAGNOSTIC_CODE.NON_BINDABLE_TARGET,
+        severity: 'error',
+        detail: expect.objectContaining({
+          trackId: 'V1',
+          trackKind: 'visual',
+          targetKind: 'track',
+        }),
+      }),
+    ]));
+    expect(clonedInput?.mediaTrackBindings).toBeUndefined();
+    expect(input.mediaTrackBindings).toBeUndefined();
+  });
+
+  it('keeps material.attach limited to material slots by rejecting audio artifacts there', () => {
+    const input: CompositionGraphInput = {
+      ...graphInput(transitionClip()),
+      artifacts: [artifact()],
+      materialSlotDeclarations: [
+        {
+          owner: {
+            kind: 'transition',
+            clipId: 'clip-1',
+            ownerId: 'clip-1.transition.dissolve',
+          },
+          slotName: 'transition-mask',
+        },
+      ],
+      materialRuntime: projectHostMaterialRuntime({
+        materialRefs: [],
+      }),
+    };
+    const projectorSpy = vi.spyOn(graphProjector, 'projectCompositionGraph');
+
+    const preview = applyGraphPreviewOperations(input, [
+      {
+        kind: 'material.attach',
+        owner: {
+          kind: 'transition',
+          clipId: 'clip-1',
+          ownerId: 'clip-1.transition.dissolve',
+        },
+        slotName: 'transition-mask',
+        materialRefId: 'artifact.audio',
+      },
+    ]);
+
+    const clonedInput = projectorSpy.mock.calls[0]?.[0] as CompositionGraphInput | undefined;
+    const clonedClip = projectedClip(projectorSpy);
+
+    expect(preview?.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: COMPOSITION_DIAGNOSTIC_CODE.TARGET_VALUE_TYPE_ERROR,
+        severity: 'error',
+        detail: expect.objectContaining({
+          clipId: 'clip-1',
+          ownerKind: 'transition',
+          ownerId: 'clip-1.transition.dissolve',
+          materialSlot: 'transition-mask',
+          materialRefId: 'artifact.audio',
+          artifactId: 'artifact.audio',
+          mediaKind: 'audio',
+        }),
+      }),
+    ]));
+    expect(clonedInput?.materialSlotBindings).toBeUndefined();
+    expect(clonedClip.transition?.params?.materialSlots).toBeUndefined();
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { planRender } from '@/tools/video-editor/runtime/renderPlanner.ts';
 import { projectHostMaterialRuntime } from '@/tools/video-editor/runtime/composition/materialRuntime.ts';
 import { createProcessResultAttachRecord } from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
+import { createRenderArtifactManifest } from '@/tools/video-editor/runtime/renderability.ts';
 import {
   blockerToRouteFitMetadata,
   findingToRouteFitMetadata,
@@ -9,9 +10,11 @@ import {
 import type {
   CapabilityFinding,
   CapabilityRequirement,
+  RenderArtifact,
   ProcessRoundtripResult,
   ProcessStatus,
   RenderBlocker,
+  RenderArtifactSidecarDescriptor,
   RenderMaterial,
   RenderMaterialRef,
   RenderRoute,
@@ -381,6 +384,82 @@ function attachedMaterial(
     provenance: {
       origin: 'process',
     },
+    ...overrides,
+  };
+}
+
+function attachedSidecar(
+  filename: string,
+  overrides: Partial<RenderArtifactSidecarDescriptor> = {},
+): RenderArtifactSidecarDescriptor {
+  return {
+    id: `sidecar.metadata.${filename}`,
+    filename,
+    mimeType: 'application/json',
+    kind: 'metadata',
+    ...overrides,
+  };
+}
+
+function attachedArtifact(
+  id: string,
+  route: RenderRoute,
+  overrides: Partial<RenderArtifact> = {},
+): RenderArtifact {
+  const outputFormatId = overrides.manifest?.outputFormatId
+    ?? (route === 'browser-export' || route === 'worker-export' ? 'video.mp4' : undefined);
+  const locator = overrides.locator ?? {
+    kind: 'artifact-store' as const,
+    uri: `artifact://${id}`,
+    mimeType: route === 'preview'
+      ? 'image/png'
+      : route === 'sidecar-export'
+        ? 'application/json'
+        : 'video/mp4',
+  };
+  const mediaKind = overrides.mediaKind
+    ?? (route === 'preview'
+      ? 'image'
+      : route === 'sidecar-export'
+        ? 'json'
+        : 'video');
+  const sidecars = overrides.sidecars ?? [];
+  return {
+    id,
+    route,
+    locator,
+    mediaKind,
+    producerExtensionId: 'ext.dataset',
+    consumedMaterialRefs: [],
+    determinism: 'deterministic',
+    boundary: {
+      source: 'worker',
+      target: 'export-output',
+      route,
+      failureBehavior: 'block-export',
+    },
+    sidecars,
+    manifest: createRenderArtifactManifest({
+      artifactId: id,
+      route,
+      determinism: 'deterministic',
+      profile: route === 'preview'
+        ? 'preview'
+        : mediaKind === 'audio'
+          ? 'audio'
+          : (route === 'sidecar-export' || mediaKind !== 'video')
+            ? 'sidecar'
+            : 'video',
+      ...(outputFormatId ? { outputFormatId } : {}),
+      locator,
+      mediaKind,
+      consumedMaterialRefs: [],
+      sidecars,
+      provenance: { source: 'test' },
+      ...(mediaKind === 'audio' || mediaKind === 'video'
+        ? { inputHashes: { [`asset://${id}`]: `sha256:${id}` } }
+        : {}),
+    }),
     ...overrides,
   };
 }
@@ -1204,6 +1283,170 @@ describe('planRender', () => {
         label: 'Open settings for mat-legacy',
       }),
     ]);
+  });
+
+  it('keeps route artifact completion incomplete until every required profile has evidence', () => {
+    const format = {
+      ...renderDependentOutput({
+        availableRoutes: ['browser-export'],
+        routeRequirementRoutes: ['browser-export'],
+      }),
+      outputExtension: '.mp4',
+      outputMimeType: 'video/mp4',
+      sidecars: [attachedSidecar('dataset-metadata.json')],
+    };
+    const process = processDescriptor({
+      routes: ['browser-export'],
+      outputKinds: ['artifact', 'sidecar'],
+    });
+    const attachRecord = createProcessResultAttachRecord({
+      processDescriptor: process,
+      attachedAt: '2026-07-04T22:30:00.000Z',
+      result: attachResult({
+        artifacts: [attachedArtifact('artifact.video.partial', 'browser-export')],
+      }),
+    });
+
+    const result = planRender({
+      outputFormats: [format],
+      processes: [process],
+      processStatuses: [{ processId: 'dataset-process', state: 'ready' }],
+      materialRefs: [materialRef('mat-export', { determinism: 'deterministic' })],
+      materialStatuses: [{ materialRefId: 'mat-export', state: 'resolved' }],
+      processResultAttachRecords: [attachRecord],
+      request: { outputFormatId: 'dataset.zip', route: 'browser-export' },
+    });
+
+    expect(result.routePlans.find((routePlan) => routePlan.route === 'browser-export')).toMatchObject({
+      blocked: false,
+      artifactCompletion: {
+        status: 'incomplete',
+        requiredProfiles: ['video', 'sidecar'],
+        completeProfiles: ['video'],
+        incompleteProfiles: ['sidecar'],
+        blockedProfiles: [],
+      },
+    });
+
+    const browserCompletion = result.routePlans.find((routePlan) => routePlan.route === 'browser-export')!.artifactCompletion;
+    expect(browserCompletion.profiles.find((profile) => profile.profile === 'video')).toMatchObject({
+      status: 'complete',
+      artifacts: [expect.objectContaining({ id: 'artifact.video.partial' })],
+      requiredBy: expect.arrayContaining([
+        expect.objectContaining({ source: 'output-format', outputFormatId: 'dataset.zip' }),
+        expect.objectContaining({ source: 'process-requirement', processId: 'dataset-process' }),
+        expect.objectContaining({ source: 'material-requirement', materialRefId: 'mat-export' }),
+        expect.objectContaining({ source: 'process-attach-record', taskId: 'attach-request-1' }),
+      ]),
+    });
+    expect(browserCompletion.profiles.find((profile) => profile.profile === 'sidecar')).toMatchObject({
+      status: 'incomplete',
+      sidecars: [],
+      requiredBy: expect.arrayContaining([
+        expect.objectContaining({ source: 'output-format-sidecar', outputFormatId: 'dataset.zip' }),
+        expect.objectContaining({ source: 'process-requirement', processId: 'dataset-process' }),
+        expect.objectContaining({ source: 'process-attach-record', taskId: 'attach-request-1' }),
+      ]),
+    });
+  });
+
+  it('marks route artifact completion complete once primary artifacts and sidecars are both attached', () => {
+    const format = {
+      ...renderDependentOutput({
+        availableRoutes: ['browser-export'],
+        routeRequirementRoutes: ['browser-export'],
+      }),
+      outputExtension: '.mp4',
+      outputMimeType: 'video/mp4',
+      sidecars: [attachedSidecar('dataset-metadata.json')],
+    };
+    const process = processDescriptor({
+      routes: ['browser-export'],
+      outputKinds: ['artifact', 'sidecar'],
+    });
+    const attachRecord = createProcessResultAttachRecord({
+      processDescriptor: process,
+      attachedAt: '2026-07-04T22:35:00.000Z',
+      result: attachResult({
+        artifacts: [attachedArtifact('artifact.video.complete', 'browser-export')],
+        sidecars: [attachedSidecar('route-metadata.json')],
+      }),
+    });
+
+    const result = planRender({
+      outputFormats: [format],
+      processes: [process],
+      processStatuses: [{ processId: 'dataset-process', state: 'ready' }],
+      processResultAttachRecords: [attachRecord],
+      request: { outputFormatId: 'dataset.zip', route: 'browser-export' },
+    });
+
+    expect(result.routePlans.find((routePlan) => routePlan.route === 'browser-export')).toMatchObject({
+      blocked: false,
+      artifactCompletion: {
+        status: 'complete',
+        requiredProfiles: ['video', 'sidecar'],
+        completeProfiles: ['video', 'sidecar'],
+        incompleteProfiles: [],
+        blockedProfiles: [],
+      },
+    });
+    expect(
+      result.routePlans.find((routePlan) => routePlan.route === 'browser-export')
+        ?.artifactCompletion.profiles.find((profile) => profile.profile === 'sidecar'),
+    ).toMatchObject({
+      status: 'complete',
+      sidecars: [expect.objectContaining({ filename: 'route-metadata.json' })],
+    });
+  });
+
+  it('marks route artifact completion blocked when route blockers remain after partial artifact attachment', () => {
+    const format = {
+      ...renderDependentOutput({
+        availableRoutes: ['browser-export'],
+        routeRequirementRoutes: ['browser-export'],
+      }),
+      outputExtension: '.mp4',
+      outputMimeType: 'video/mp4',
+      sidecars: [attachedSidecar('dataset-metadata.json')],
+    };
+    const process = processDescriptor({
+      routes: ['browser-export'],
+      outputKinds: ['artifact', 'sidecar'],
+    });
+    const attachRecord = createProcessResultAttachRecord({
+      processDescriptor: process,
+      attachedAt: '2026-07-04T22:40:00.000Z',
+      result: attachResult({
+        artifacts: [attachedArtifact('artifact.video.blocked', 'browser-export')],
+      }),
+    });
+
+    const result = planRender({
+      outputFormats: [format],
+      processes: [process],
+      processStatuses: [{ processId: 'dataset-process', state: 'stopped' }],
+      processResultAttachRecords: [attachRecord],
+      request: { outputFormatId: 'dataset.zip', route: 'browser-export' },
+    });
+
+    expect(result.routePlans.find((routePlan) => routePlan.route === 'browser-export')).toMatchObject({
+      blocked: true,
+      artifactCompletion: {
+        status: 'blocked',
+        requiredProfiles: ['video', 'sidecar'],
+        completeProfiles: ['video'],
+        incompleteProfiles: ['sidecar'],
+        blockedProfiles: [],
+      },
+    });
+    expect(
+      result.routePlans.find((routePlan) => routePlan.route === 'browser-export')
+        ?.artifactCompletion.profiles.find((profile) => profile.profile === 'video'),
+    ).toMatchObject({
+      status: 'complete',
+      artifacts: [expect.objectContaining({ id: 'artifact.video.blocked' })],
+    });
   });
 
   it('treats ready processes as resolved and degraded processes as warnings without subprocess work', () => {

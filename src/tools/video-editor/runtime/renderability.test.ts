@@ -28,7 +28,10 @@ import {
   createCompileOnlyArtifact,
   createRenderArtifactManifest,
   createRenderArtifactManifestSidecar,
+  inferRequiredRenderArtifactManifestProfile,
   normalizeRenderArtifactSidecars,
+  resolveStrictRenderArtifactManifestProfile,
+  resolveRenderArtifactManifestProfile,
   serializeRenderArtifactManifest,
 } from '@/tools/video-editor/runtime/renderability.ts';
 
@@ -380,6 +383,177 @@ describe('render artifact manifest helpers', () => {
     );
   });
 
+  it('strictly validates profiled manifests while preserving legacy schemaVersion 1 compatibility', () => {
+    const legacyManifest = createRenderArtifactManifest({
+      artifactId: 'artifact.legacy',
+      route: 'browser-export',
+      determinism: 'deterministic',
+      locator: {
+        kind: 'inline',
+        uri: 'legacy.json',
+        mimeType: 'application/json',
+      },
+      mediaKind: 'json',
+      consumedMaterialRefs: [],
+      sidecars: [],
+    });
+
+    expect(resolveRenderArtifactManifestProfile(legacyManifest)).toBeNull();
+    expect(() => assertFinalArtifactHasManifest({
+      id: 'artifact.legacy',
+      route: 'browser-export',
+      locator: {
+        kind: 'inline',
+        uri: 'legacy.json',
+        mimeType: 'application/json',
+      },
+      mediaKind: 'json',
+      consumedMaterialRefs: [],
+      determinism: 'deterministic',
+      boundary: {
+        source: 'browser',
+        target: 'export-output',
+        route: 'browser-export',
+        failureBehavior: 'emit-diagnostic',
+      },
+      manifest: legacyManifest,
+    }, 'legacy-compatibility')).not.toThrow();
+
+    expect(() => createRenderArtifactManifest({
+      artifactId: 'artifact.video.missing-output-format',
+      route: 'browser-export',
+      determinism: 'deterministic',
+      profile: 'video',
+      locator: {
+        kind: 'artifact-store',
+        uri: 'artifact://video.mp4',
+        mimeType: 'video/mp4',
+      },
+      mediaKind: 'video',
+      consumedMaterialRefs: [materialRef('mat-video', 'asset://video')],
+      sidecars: [],
+      provenance: { source: 'test' },
+      inputHashes: { 'asset://video': 'sha256:video' },
+    })).toThrow(/outputFormatId/);
+
+    expect(() => createRenderArtifactManifest({
+      artifactId: 'artifact.audio.missing-kind',
+      route: 'worker-export',
+      determinism: 'deterministic',
+      profile: 'audio',
+      locator: {
+        kind: 'artifact-store',
+        uri: 'artifact://audio.wav',
+        mimeType: 'audio/wav',
+      },
+      mediaKind: 'binary',
+      consumedMaterialRefs: [materialRef('mat-audio', 'asset://audio')],
+      sidecars: [],
+      provenance: { source: 'test' },
+      inputHashes: { 'asset://audio': 'sha256:audio' },
+    })).toThrow(/mediaKind "audio"/);
+  });
+
+  it('infers required artifact profiles from route defaults and output mime types', () => {
+    expect(inferRequiredRenderArtifactManifestProfile({
+      route: 'browser-export',
+      outputFormatId: 'video.mp4',
+      mimeType: 'video/mp4',
+    })).toBe('video');
+    expect(inferRequiredRenderArtifactManifestProfile({
+      route: 'worker-export',
+      mimeType: 'audio/wav',
+    })).toBe('audio');
+    expect(inferRequiredRenderArtifactManifestProfile({
+      route: 'preview',
+      mimeType: 'video/mp4',
+    })).toBe('preview');
+    expect(inferRequiredRenderArtifactManifestProfile({
+      route: 'sidecar-export',
+    })).toBe('sidecar');
+  });
+
+  it('requires explicit strict profiles when resolving final artifact completion metadata', () => {
+    const strictArtifact: RenderArtifact = {
+      id: 'artifact.video.strict',
+      route: 'browser-export',
+      locator: {
+        kind: 'artifact-store',
+        uri: 'artifact://strict.mp4',
+        mimeType: 'video/mp4',
+      },
+      mediaKind: 'video',
+      consumedMaterialRefs: [materialRef('mat-video', 'asset://video')],
+      determinism: 'deterministic',
+      boundary: {
+        source: 'worker',
+        target: 'export-output',
+        route: 'browser-export',
+        failureBehavior: 'block-export',
+      },
+      manifest: createRenderArtifactManifest({
+        artifactId: 'artifact.video.strict',
+        route: 'browser-export',
+        determinism: 'deterministic',
+        profile: 'video',
+        outputFormatId: 'strict.mp4',
+        locator: {
+          kind: 'artifact-store',
+          uri: 'artifact://strict.mp4',
+          mimeType: 'video/mp4',
+        },
+        mediaKind: 'video',
+        consumedMaterialRefs: [materialRef('mat-video', 'asset://video')],
+        sidecars: [],
+        provenance: { source: 'test' },
+        inputHashes: { 'asset://video': 'sha256:video' },
+      }),
+    };
+
+    expect(resolveStrictRenderArtifactManifestProfile(strictArtifact).profile).toBe('video');
+
+    const legacyArtifact: RenderArtifact = {
+      ...strictArtifact,
+      id: 'artifact.video.legacy',
+      manifest: createRenderArtifactManifest({
+        artifactId: 'artifact.video.legacy',
+        route: 'browser-export',
+        determinism: 'deterministic',
+        outputFormatId: 'legacy.mp4',
+        locator: {
+          kind: 'artifact-store',
+          uri: 'artifact://legacy.mp4',
+          mimeType: 'video/mp4',
+        },
+        mediaKind: 'video',
+        consumedMaterialRefs: [materialRef('mat-video', 'asset://video')],
+        sidecars: [],
+      }),
+    };
+
+    expect(() => resolveStrictRenderArtifactManifestProfile(legacyArtifact)).toThrow(
+      /missing explicit profile metadata/,
+    );
+  });
+
+  it('rejects preview profiles outside preview route', () => {
+    expect(() => createRenderArtifactManifest({
+      artifactId: 'artifact.preview.wrong-route',
+      route: 'browser-export',
+      determinism: 'preview-only',
+      profile: 'preview',
+      locator: {
+        kind: 'inline',
+        uri: 'preview.png',
+        mimeType: 'image/png',
+      },
+      mediaKind: 'image',
+      consumedMaterialRefs: [],
+      sidecars: [],
+      provenance: { source: 'preview-test' },
+    })).toThrow(/route "preview"/);
+  });
+
   it('preserves route metadata, determinism status, producer fields, and consumed materials', () => {
     const manifest = createRenderArtifactManifest({
       artifactId: 'artifact.rendered-pass',
@@ -460,6 +634,7 @@ describe('render artifact manifest helpers', () => {
       artifactId: 'compile-only.metadata-json',
       route: COMPILE_ONLY_ARTIFACT_ROUTE,
       determinism: 'deterministic',
+      profile: 'sidecar',
       producerExtensionId: 'com.example.metadata',
       producerVersion: '1.2.3',
       outputFormatId: 'metadata-json',

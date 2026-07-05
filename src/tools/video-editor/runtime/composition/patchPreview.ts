@@ -1,6 +1,6 @@
 /**
- * Internal graph patch preview — host-owned shader, material-slot, and
- * keyframe preview operations.
+ * Internal graph patch preview — host-owned shader, material-slot, media,
+ * and keyframe preview operations.
  *
  * This module provides host-owned preview logic that clones a composition
  * graph input, applies internal patch operations, re-projects the graph,
@@ -14,11 +14,14 @@
 import type {
   CompositionGraphPreviewResult,
   ExtensionDiagnostic,
+  RenderArtifact,
   TimelineSnapshot,
   TimelineShaderSummary,
 } from '@reigh/editor-sdk';
 import type {
   CompositionGraphInput,
+  CompositionGraphMediaTrackBinding,
+  CompositionGraphMediaTrackOwnerIdentity,
   CompositionGraphMaterialSlotBinding,
   CompositionGraphMaterialSlotOwnerIdentity,
 } from '@/tools/video-editor/runtime/composition/graphProjector.ts';
@@ -92,6 +95,25 @@ export interface GraphMaterialRemoveOp {
   readonly kind: 'material.remove';
   readonly owner: CompositionGraphMaterialSlotOwnerIdentity;
   readonly slotName: string;
+}
+
+/**
+ * Internal attach operation: assign an audio artifact to an audio-track
+ * target using track-based ownership.
+ */
+export interface GraphMediaAttachOp {
+  readonly kind: 'media.attach';
+  readonly owner: CompositionGraphMediaTrackOwnerIdentity;
+  readonly artifactId: string;
+}
+
+/**
+ * Internal remove operation: clear an audio artifact attachment from an
+ * audio-track target.
+ */
+export interface GraphMediaRemoveOp {
+  readonly kind: 'media.remove';
+  readonly owner: CompositionGraphMediaTrackOwnerIdentity;
 }
 
 /**
@@ -183,6 +205,8 @@ export type GraphPreviewOperation =
   | GraphShaderRemoveOp
   | GraphMaterialAttachOp
   | GraphMaterialRemoveOp
+  | GraphMediaAttachOp
+  | GraphMediaRemoveOp
   | GraphKeyframeAddOp
   | GraphKeyframeUpdateOp
   | GraphKeyframeRemoveOp;
@@ -332,8 +356,13 @@ type MutablePreviewMaterialRefSummary = NonNullable<TimelineSnapshot['clips'][nu
   slotName?: string;
 };
 
+type MutablePreviewTrack = TimelineSnapshot['tracks'][number] & {
+  app?: Record<string, unknown>;
+};
+
 type MutablePreviewSnapshot = TimelineSnapshot & {
   clips: MutablePreviewClip[];
+  tracks: MutablePreviewTrack[];
   shaders?: TimelineShaderSummary[];
   materialRefs?: MutablePreviewMaterialRefSummary[];
 };
@@ -341,6 +370,7 @@ type MutablePreviewSnapshot = TimelineSnapshot & {
 type MutableGraphPreviewInput = CompositionGraphInput & {
   snapshot: MutablePreviewSnapshot;
   materialSlotBindings?: CompositionGraphMaterialSlotBinding[];
+  mediaTrackBindings?: CompositionGraphMediaTrackBinding[];
 };
 
 function cloneKeyframe(keyframe: ClipKeyframe): ClipKeyframe {
@@ -440,6 +470,28 @@ function cloneMaterialSlotBindings(
     owner: { ...binding.owner },
     slotName: binding.slotName,
     materialRefId: binding.materialRefId,
+  }));
+}
+
+function cloneTracks(
+  tracks: readonly TimelineSnapshot['tracks'][number][],
+): MutablePreviewTrack[] {
+  return tracks.map((track) => ({
+    ...track,
+    ...(track.app ? { app: { ...track.app } } : {}),
+  }));
+}
+
+function cloneMediaTrackBindings(
+  bindings: readonly CompositionGraphMediaTrackBinding[] | undefined,
+): CompositionGraphMediaTrackBinding[] | undefined {
+  if (!bindings?.length) {
+    return bindings ? [] : undefined;
+  }
+
+  return bindings.map((binding) => ({
+    owner: { ...binding.owner },
+    artifactId: binding.artifactId,
   }));
 }
 
@@ -763,6 +815,17 @@ function sameOwner(
   return ownerKey(left) === ownerKey(right);
 }
 
+function mediaTrackOwnerKey(owner: CompositionGraphMediaTrackOwnerIdentity): string {
+  return `${owner.kind}:${owner.trackId}:${owner.clipId ?? ''}`;
+}
+
+function sameMediaTrackOwner(
+  left: CompositionGraphMediaTrackOwnerIdentity,
+  right: CompositionGraphMediaTrackOwnerIdentity,
+): boolean {
+  return mediaTrackOwnerKey(left) === mediaTrackOwnerKey(right);
+}
+
 function hasDeclaredMaterialSlot(
   input: CompositionGraphInput,
   owner: CompositionGraphMaterialSlotOwnerIdentity,
@@ -921,6 +984,99 @@ function buildMaterialAttachDiagnosticContext(
   };
 }
 
+function buildMediaTargetDiagnostic(
+  code: typeof COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_TARGET_REF
+    | typeof COMPOSITION_DIAGNOSTIC_CODE.NON_BINDABLE_TARGET
+    | typeof COMPOSITION_DIAGNOSTIC_CODE.TARGET_VALUE_TYPE_ERROR,
+  message: string,
+  detail: Record<string, unknown>,
+): ExtensionDiagnostic {
+  return buildCompositionDiagnostic(code, message, detail);
+}
+
+function validateMediaTrackTarget(
+  input: MutableGraphPreviewInput,
+  owner: CompositionGraphMediaTrackOwnerIdentity,
+): ExtensionDiagnostic | undefined {
+  const track = input.snapshot.tracks.find((candidate) => candidate.id === owner.trackId);
+  if (!track) {
+    return buildMediaTargetDiagnostic(
+      COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_TARGET_REF,
+      `Audio track "${owner.trackId}" could not be resolved for graph preview media attachment.`,
+      {
+        targetKind: owner.kind,
+        trackId: owner.trackId,
+        ...(owner.clipId ? { clipId: owner.clipId } : {}),
+      },
+    );
+  }
+
+  if (track.kind !== 'audio') {
+    return buildMediaTargetDiagnostic(
+      COMPOSITION_DIAGNOSTIC_CODE.NON_BINDABLE_TARGET,
+      `Track "${owner.trackId}" is not an audio track and cannot accept audio media attachments.`,
+      {
+        targetKind: owner.kind,
+        trackId: owner.trackId,
+        trackKind: track.kind,
+        ...(owner.clipId ? { clipId: owner.clipId } : {}),
+      },
+    );
+  }
+
+  if (!owner.clipId) {
+    return undefined;
+  }
+
+  const clip = input.snapshot.clips.find((candidate) => candidate.id === owner.clipId);
+  if (!clip) {
+    return buildMediaTargetDiagnostic(
+      COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_TARGET_REF,
+      `Clip "${owner.clipId}" could not be resolved for graph preview media attachment.`,
+      {
+        targetKind: owner.kind,
+        trackId: owner.trackId,
+        clipId: owner.clipId,
+      },
+    );
+  }
+
+  if (clip.track !== owner.trackId) {
+    return buildMediaTargetDiagnostic(
+      COMPOSITION_DIAGNOSTIC_CODE.NON_BINDABLE_TARGET,
+      `Clip "${owner.clipId}" does not belong to audio track "${owner.trackId}".`,
+      {
+        targetKind: owner.kind,
+        trackId: owner.trackId,
+        clipId: owner.clipId,
+        clipTrackId: clip.track,
+      },
+    );
+  }
+
+  return undefined;
+}
+
+function resolveMediaArtifact(
+  input: MutableGraphPreviewInput,
+  artifactId: string,
+): RenderArtifact | undefined {
+  return input.artifacts?.find((artifact) => artifact.id === artifactId);
+}
+
+function ensureMutableMediaTrackBindings(
+  input: MutableGraphPreviewInput,
+): CompositionGraphMediaTrackBinding[] {
+  const existing = input.mediaTrackBindings;
+  if (existing) {
+    return existing;
+  }
+
+  const next = cloneMediaTrackBindings(input.mediaTrackBindings) ?? [];
+  input.mediaTrackBindings = next;
+  return next;
+}
+
 function applyMaterialAttach(
   input: MutableGraphPreviewInput,
   op: GraphMaterialAttachOp,
@@ -937,6 +1093,21 @@ function applyMaterialAttach(
   }
 
   const diagnosticContext = buildMaterialAttachDiagnosticContext(input, op.owner, slotName);
+  const artifact = resolveMediaArtifact(input, op.materialRefId);
+  if (artifact?.mediaKind === 'audio') {
+    diagnostics.push(buildCompositionDiagnostic(
+      COMPOSITION_DIAGNOSTIC_CODE.TARGET_VALUE_TYPE_ERROR,
+      'Audio artifacts must be attached through media.attach, not material.attach.',
+      {
+        ...diagnosticContext,
+        materialRefId: op.materialRefId,
+        artifactId: artifact.id,
+        mediaKind: artifact.mediaKind,
+      },
+    ));
+    return;
+  }
+
   const resolution = resolveMaterialAttachEntry(
     input.materialRuntime,
     op.materialRefId,
@@ -944,6 +1115,19 @@ function applyMaterialAttach(
   );
   if (!resolution.ok) {
     diagnostics.push(resolution.diagnostic);
+    return;
+  }
+
+  if (resolution.entry.materialRef.mediaKind === 'audio') {
+    diagnostics.push(buildCompositionDiagnostic(
+      COMPOSITION_DIAGNOSTIC_CODE.TARGET_VALUE_TYPE_ERROR,
+      'Audio media cannot be attached through material.attach; use media.attach with an audio track target.',
+      {
+        ...diagnosticContext,
+        materialRefId: resolution.entry.materialRef.id,
+        mediaKind: resolution.entry.materialRef.mediaKind,
+      },
+    ));
     return;
   }
 
@@ -1004,6 +1188,78 @@ function applyMaterialRemove(
   syncClipMaterialRefSummary(input.snapshot, op.owner, slotName, undefined);
 }
 
+function applyMediaAttach(
+  input: MutableGraphPreviewInput,
+  op: GraphMediaAttachOp,
+  diagnostics: ExtensionDiagnostic[],
+): void {
+  const targetDiagnostic = validateMediaTrackTarget(input, op.owner);
+  if (targetDiagnostic) {
+    diagnostics.push(targetDiagnostic);
+    return;
+  }
+
+  const artifact = resolveMediaArtifact(input, op.artifactId);
+  if (!artifact) {
+    diagnostics.push(buildMediaTargetDiagnostic(
+      COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_TARGET_REF,
+      `Audio artifact "${op.artifactId}" could not be resolved for graph preview media attachment.`,
+      {
+        targetKind: op.owner.kind,
+        trackId: op.owner.trackId,
+        artifactId: op.artifactId,
+        ...(op.owner.clipId ? { clipId: op.owner.clipId } : {}),
+      },
+    ));
+    return;
+  }
+
+  if (artifact.mediaKind !== 'audio') {
+    diagnostics.push(buildMediaTargetDiagnostic(
+      COMPOSITION_DIAGNOSTIC_CODE.TARGET_VALUE_TYPE_ERROR,
+      `Artifact "${op.artifactId}" has mediaKind "${artifact.mediaKind}" and cannot be attached to an audio track target.`,
+      {
+        targetKind: op.owner.kind,
+        trackId: op.owner.trackId,
+        artifactId: op.artifactId,
+        mediaKind: artifact.mediaKind,
+        ...(op.owner.clipId ? { clipId: op.owner.clipId } : {}),
+      },
+    ));
+    return;
+  }
+
+  const bindings = ensureMutableMediaTrackBindings(input);
+  const nextBinding: CompositionGraphMediaTrackBinding = {
+    owner: { ...op.owner },
+    artifactId: artifact.id,
+  };
+  const existingIndex = bindings.findIndex((binding) => sameMediaTrackOwner(binding.owner, op.owner));
+  if (existingIndex >= 0) {
+    bindings[existingIndex] = nextBinding;
+  } else {
+    bindings.push(nextBinding);
+  }
+}
+
+function applyMediaRemove(
+  input: MutableGraphPreviewInput,
+  op: GraphMediaRemoveOp,
+  diagnostics: ExtensionDiagnostic[],
+): void {
+  const targetDiagnostic = validateMediaTrackTarget(input, op.owner);
+  if (targetDiagnostic) {
+    diagnostics.push(targetDiagnostic);
+    return;
+  }
+
+  const bindings = ensureMutableMediaTrackBindings(input);
+  const existingIndex = bindings.findIndex((binding) => sameMediaTrackOwner(binding.owner, op.owner));
+  if (existingIndex >= 0) {
+    bindings.splice(existingIndex, 1);
+  }
+}
+
 function cloneInput(input: CompositionGraphInput): CompositionGraphInput {
   return {
     snapshot: {
@@ -1018,13 +1274,18 @@ function cloneInput(input: CompositionGraphInput): CompositionGraphInput {
         clone.materialRefs = cloneMaterialRefs(clip.materialRefs);
         return clone;
       }),
+      tracks: cloneTracks(input.snapshot.tracks),
       shaders: input.snapshot.shaders ? cloneShaders(input.snapshot.shaders) : [],
       materialRefs: input.snapshot.materialRefs ? input.snapshot.materialRefs.map((materialRef) => ({ ...materialRef })) : undefined,
     },
     contributionIndex: input.contributionIndex,
+    outputFormats: input.outputFormats,
+    processes: input.processes,
+    artifacts: input.artifacts,
     materialRuntime: input.materialRuntime,
     materialSlotDeclarations: input.materialSlotDeclarations,
     materialSlotBindings: cloneMaterialSlotBindings(input.materialSlotBindings),
+    mediaTrackBindings: cloneMediaTrackBindings(input.mediaTrackBindings),
   };
 }
 
@@ -1033,8 +1294,8 @@ function cloneInput(input: CompositionGraphInput): CompositionGraphInput {
 // ---------------------------------------------------------------------------
 
 /**
- * Apply internal graph patch operations (`shader.assign` / `shader.remove`)
- * to a cloned composition graph input and return the resulting preview shape.
+ * Apply internal graph patch operations to a cloned composition graph input
+ * and return the resulting preview shape.
  *
  * Returns `undefined` when no operations are provided.
  *
@@ -1068,6 +1329,12 @@ export function applyGraphPreviewOperations(
         break;
       case 'material.remove':
         applyMaterialRemove(clone, op);
+        break;
+      case 'media.attach':
+        applyMediaAttach(clone, op, operationDiagnostics);
+        break;
+      case 'media.remove':
+        applyMediaRemove(clone, op, operationDiagnostics);
         break;
       case 'keyframe.add':
         if (op.shaderId) {

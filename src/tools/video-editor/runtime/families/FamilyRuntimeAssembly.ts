@@ -97,6 +97,9 @@ function contributionRenderId(contribution: ExtensionContribution | undefined): 
   if ('shaderId' in contribution && typeof contribution.shaderId === 'string') {
     return contribution.shaderId;
   }
+  if ('outputFormatId' in contribution && typeof contribution.outputFormatId === 'string') {
+    return contribution.outputFormatId;
+  }
   return undefined;
 }
 
@@ -245,10 +248,16 @@ const EMPTY_RUNTIME_COMPOSITION_SNAPSHOT: TimelineSnapshot = Object.freeze({
   shaders: Object.freeze([]),
 });
 
-function buildCompositionGraph(contributionIndex: ContributionIndex) {
+function buildCompositionGraph(
+  contributionIndex: ContributionIndex,
+  outputFormats: readonly VideoEditorOutputFormatDescriptor[],
+  processes: readonly VideoEditorProcessDescriptor[],
+) {
   return projectCompositionGraph({
     snapshot: EMPTY_RUNTIME_COMPOSITION_SNAPSHOT,
     contributionIndex,
+    outputFormats,
+    processes,
   });
 }
 
@@ -799,7 +808,11 @@ export function assembleExtensionRuntime(
   ];
   const routeFitContributionIndex =
     normalizeContributionIndexRouteFit(contributionIndex, descriptorBlockers);
-  const compositionGraph = buildCompositionGraph(routeFitContributionIndex);
+  const compositionGraph = buildCompositionGraph(
+    routeFitContributionIndex,
+    outputFormatDescriptors,
+    processDescriptors,
+  );
 
   // ---- Graph-derived shader descriptor shim (M1b) ---------------------------
   // When the composition graph carries shader consumes edges it becomes the

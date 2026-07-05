@@ -171,6 +171,113 @@ describe('T5: Manifest schema validation (Ajv-backed)', () => {
     }
   });
 
+  describe('Route-scoped output-format and process contracts', () => {
+    it('accepts a render-dependent output format with a non-empty explicit route set', () => {
+      const manifest = {
+        ...baseValidManifest(),
+        contributions: [
+          {
+            id: 'mp4-video',
+            kind: 'outputFormat',
+            label: 'MP4 Video',
+            requiresRender: true,
+            outputExtension: 'mp4',
+            render: {
+              routes: ['browser-export'],
+            },
+          },
+        ],
+      };
+
+      expect(validateFn(manifest)).toBe(true);
+    });
+
+    it('rejects a render-dependent output format with an empty route set', () => {
+      const manifest = {
+        ...baseValidManifest(),
+        contributions: [
+          {
+            id: 'mp4-video',
+            kind: 'outputFormat',
+            label: 'MP4 Video',
+            requiresRender: true,
+            outputExtension: 'mp4',
+            render: {
+              routes: [],
+            },
+          },
+        ],
+      };
+
+      expect(validateFn(manifest)).toBe(false);
+      expect((validateFn.errors ?? []).some((error) =>
+        error.keyword === 'minItems'
+        && String((error as { instancePath?: string; dataPath?: string }).instancePath
+          ?? (error as { dataPath?: string }).dataPath
+          ?? '').includes('render.routes'),
+      )).toBe(true);
+    });
+
+    it('accepts process operations with omitted routes', () => {
+      const manifest = {
+        ...baseValidManifest(),
+        contributions: [
+          {
+            id: 'analysis-process',
+            kind: 'process',
+            spec: {
+              id: 'analysis-local',
+              label: 'Analysis Local',
+              spawn: { command: 'analysis-local' },
+              protocol: 'stdio-jsonrpc',
+              operations: [
+                {
+                  id: 'analyze',
+                  label: 'Analyze',
+                },
+              ],
+            },
+          },
+        ],
+      };
+
+      expect(validateFn(manifest)).toBe(true);
+    });
+
+    it('rejects process operations that declare an empty route set', () => {
+      const manifest = {
+        ...baseValidManifest(),
+        contributions: [
+          {
+            id: 'ffmpeg-process',
+            kind: 'process',
+            spec: {
+              id: 'ffmpeg-local',
+              label: 'FFmpeg Local',
+              spawn: { command: 'ffmpeg-local' },
+              protocol: 'stdio-jsonrpc',
+              operations: [
+                {
+                  id: 'render-mp4',
+                  label: 'Render MP4',
+                  routes: [],
+                },
+              ],
+            },
+          },
+        ],
+      };
+
+      expect(validateFn(manifest)).toBe(false);
+      expect((validateFn.errors ?? []).some((error) =>
+        error.keyword === 'minItems'
+        && String((error as { instancePath?: string; dataPath?: string }).instancePath
+          ?? (error as { dataPath?: string }).dataPath
+          ?? '').includes('spec.operations[0].routes'),
+      )).toBe(true);
+    });
+  });
+
   // -- Rejection of unknown top-level collections (schema-level) ------------
 
   describe('Schema rejects unknown top-level collections (Ajv proof)', () => {

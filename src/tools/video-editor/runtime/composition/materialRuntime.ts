@@ -31,6 +31,7 @@ import {
   type CompositionDiagnosticCode,
   type CompositionDiagnosticDetail,
 } from '@/tools/video-editor/runtime/composition/diagnostics.ts';
+import { validateRenderRouteScope } from '@/tools/video-editor/runtime/composition/routeScopeValidation.ts';
 import type { ExtensionDiagnostic } from '@reigh/editor-sdk';
 import type { ReferenceState } from '@reigh/editor-sdk';
 import type {
@@ -1351,6 +1352,11 @@ export function migrateLegacyMaterialStatus(
 export function projectHostMaterialRuntime(
   input: HostMaterialRuntimeProjectionInput,
 ): HostMaterialRuntimeProjection {
+  const hasExplicitRouteScopeInput = input.requestedRoutes !== undefined || input.canonicalRoutes !== undefined;
+  const rawRouteEvidence = Object.freeze([
+    ...(input.requestedRoutes ?? []),
+    ...(input.canonicalRoutes ?? []),
+  ]);
   const requestedRoutes = stableRouteOrder(input.requestedRoutes);
   const canonicalRoutes = stableRouteOrder(input.canonicalRoutes);
   const routeEvidence = stableRouteOrder([
@@ -1388,6 +1394,11 @@ export function projectHostMaterialRuntime(
       matrix,
       route,
     )));
+    const routeScopeDiagnostics = buildMaterialRouteScopeDiagnostics(
+      materialRef,
+      rawRouteEvidence,
+      hasExplicitRouteScopeInput,
+    );
 
     const materialProvenancePosture = provenancePosture(materialRef, descriptorFacts);
 
@@ -1426,6 +1437,7 @@ export function projectHostMaterialRuntime(
     return freezeHostMaterialRuntimeEntry({
       ...entry,
       diagnostics: Object.freeze([
+        ...routeScopeDiagnostics,
         ...matrixDiagnostics,
         ...provenanceDiagnostics,
         ...entry.routeScopes
@@ -1456,6 +1468,32 @@ export function projectHostMaterialRuntime(
     authoritativeBlockedMaterialRefIds,
     hasAuthoritativeBlockers: authoritativeBlockedMaterialRefIds.length > 0,
   });
+}
+
+function buildMaterialRouteScopeDiagnostics(
+  materialRef: RenderMaterialRef,
+  rawRouteEvidence: readonly RenderRoute[],
+  hasExplicitRouteScopeInput: boolean,
+): readonly ExtensionDiagnostic[] {
+  const validation = validateRenderRouteScope({
+    extensionId: 'host.material-runtime',
+    contributionId: materialRef.id,
+    routes: rawRouteEvidence,
+    routeMode: rawRouteEvidence.length > 0 ? 'explicit-routes' : 'missing-routes',
+    missingMessage:
+      `Material "${materialRef.id}" requires an explicit route scope before render planning can classify it.`,
+    unknownMessage: (route) =>
+      `Material "${materialRef.id}" references unknown route "${route}" in render planning scope.`,
+  });
+
+  if (!validation.missingScope && validation.unknownRoutes.length === 0) {
+    return Object.freeze([]);
+  }
+  if (validation.missingScope && !hasExplicitRouteScopeInput) {
+    return Object.freeze([]);
+  }
+
+  return validation.diagnostics;
 }
 
 // ---------------------------------------------------------------------------

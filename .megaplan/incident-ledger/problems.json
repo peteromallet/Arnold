@@ -5,15 +5,15 @@
       "first_seen_seq": 1,
       "first_seen_ts": "2026-07-04T10:52:30.738550+00:00",
       "fix_commits": [],
-      "last_seen_seq": 5,
-      "last_seen_ts": "2026-07-04T11:14:55.902034+00:00",
+      "last_seen_seq": 9,
+      "last_seen_ts": "2026-07-04T20:53:24.618924+00:00",
       "linked_incident_ids": [
         "inc-megaplan-chain-reigh-extension-composition-spine-epic-12d49a3e"
       ],
       "next_review_ts": null,
       "normalized_signature": "progress stall m clip type shader and iteration attempt plan v count events stale m",
-      "occurrence_count": 4,
-      "owner_actor": "watchdog",
+      "occurrence_count": 6,
+      "owner_actor": "six_hour_auditor",
       "problem_id": "problem-71f954a05546",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -62,10 +62,10 @@
   "projection": "problems",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:bd0888167523154db74c22a38aba6da50a577cee6b52f771b6101a9bda2ee152",
-    "event_count": 8,
-    "journal_line_count": 8,
-    "last_seq": 7,
+    "digest": "sha256:7002042d0ab602bf932e417c737f27fe35b3690c94c0185203d5958b7332d919",
+    "event_count": 10,
+    "journal_line_count": 10,
+    "last_seq": 9,
     "malformed_line_count": 0
   }
 }

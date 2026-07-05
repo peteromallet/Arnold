@@ -1523,6 +1523,11 @@ describe('normalizeExtensionRuntime — M6 output format contributions', () => {
     expect(of.routeRequirements).toEqual([
       {
         routes: ['browser-export', 'sidecar-export'],
+        routeScope: {
+          source: 'output-format-render',
+          mode: 'explicit-routes',
+          routes: ['browser-export', 'sidecar-export'],
+        },
         requiredCapabilities: ['video-encode'],
         processId: 'ffmpeg-local',
         operationId: 'render-mp4',
@@ -1534,6 +1539,11 @@ describe('normalizeExtensionRuntime — M6 output format contributions', () => {
       {
         processId: 'ffmpeg-local',
         operationId: 'render-mp4',
+        routeScope: {
+          source: 'output-format-process',
+          mode: 'explicit-routes',
+          routes: ['browser-export', 'sidecar-export'],
+        },
         requiredCapabilities: ['video-encode'],
       },
     ]);
@@ -1699,6 +1709,62 @@ describe('normalizeExtensionRuntime — M6 output format contributions', () => {
     });
     expect(of.capabilities?.anyBlocked).toBe(true);
   });
+
+  it('adds a planner blocker when a render-dependent output declares an empty route set', () => {
+    const ex = ext('com.example.export', {
+      manifest: {
+        contributions: [
+          {
+            id: 'empty-routes' as any,
+            kind: 'outputFormat',
+            label: 'Broken Routes',
+            requiresRender: true,
+            outputExtension: 'mp4',
+            render: {
+              routes: [],
+              processId: 'ffmpeg-local',
+            },
+          },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex]);
+    const of = rt.config.outputFormats[0];
+    expect(of.availableRoutes).toEqual([]);
+    expect(of.routeRequirements).toEqual([
+      {
+        routes: [],
+        routeScope: {
+          source: 'output-format-render',
+          mode: 'missing-routes',
+          routes: [],
+        },
+        requiredCapabilities: [],
+        processId: 'ffmpeg-local',
+        operationId: undefined,
+        determinism: 'unknown',
+        unavailableMessage: undefined,
+      },
+    ]);
+    expect(of.processRequirements).toEqual([
+      {
+        processId: 'ffmpeg-local',
+        operationId: undefined,
+        routeScope: {
+          source: 'output-format-process',
+          mode: 'missing-routes',
+          routes: [],
+        },
+        requiredCapabilities: [],
+      },
+    ]);
+    expect(of.blockers).toHaveLength(1);
+    expect(of.blockers[0]).toMatchObject({
+      id: 'com.example.export.empty-routes.missing-render-routes',
+      reason: 'route-unsupported',
+    });
+    expect(of.nextActions).toEqual([of.blockers[0].nextAction]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1767,6 +1833,14 @@ describe('normalizeExtensionRuntime — M12 process contributions', () => {
       availableRoutes: ['sidecar-export'],
     });
     expect(process.operations.map((operation) => operation.id)).toEqual(['render-mp4']);
+    expect(process.operations[0]).toMatchObject({
+      routes: ['sidecar-export'],
+      routeScope: {
+        source: 'process-operation',
+        mode: 'explicit-routes',
+        routes: ['sidecar-export'],
+      },
+    });
     expect(process.requiredBy).toEqual([
       {
         source: 'extension',
@@ -1777,6 +1851,41 @@ describe('normalizeExtensionRuntime — M12 process contributions', () => {
     expect(process.blockers).toEqual([]);
     expect(process.nextActions).toEqual([]);
     expect(rt.inactiveReserved.filter((item) => item.kind === 'process')).toHaveLength(1);
+  });
+
+  it('marks operations without routes as missing route scope instead of defaulting to all routes', () => {
+    const ex = ext('com.example.process', {
+      manifest: {
+        contributions: [
+          {
+            id: 'analysis-process' as any,
+            kind: 'process',
+            spec: {
+              id: 'analysis-local',
+              label: 'Analysis Local',
+              spawn: { command: 'analysis-local' },
+              protocol: 'stdio-jsonrpc',
+              operations: [
+                {
+                  id: 'analyze',
+                  label: 'Analyze',
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex]);
+    expect(rt.processes[0]?.availableRoutes).toEqual([]);
+    expect(rt.processes[0]?.operations[0]).toMatchObject({
+      routes: [],
+      routeScope: {
+        source: 'process-operation',
+        mode: 'missing-routes',
+        routes: [],
+      },
+    });
   });
 });
 

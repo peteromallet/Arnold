@@ -24,6 +24,11 @@ import {
   m5CompositionBlockerReason,
 } from '@/tools/video-editor/runtime/composition/diagnostics.ts';
 import {
+  canonicalRenderRoutes,
+  isCanonicalRenderRoute,
+  validateRenderRouteScope,
+} from '@/tools/video-editor/runtime/composition/routeScopeValidation.ts';
+import {
   projectHostMaterialRuntime,
   type HostMaterialRuntimeEntry,
   type HostMaterialRuntimeProjection,
@@ -32,10 +37,19 @@ import {
   projectProcessResultContracts,
   type ProcessResultAttachRecord,
 } from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
+import type { ExtensionDiagnostic } from '@reigh/editor-sdk';
 import {
   projectShaderRefs,
   validateShaderComposition,
 } from '@/tools/video-editor/runtime/composition/shaderValidation.ts';
+import {
+  ARTIFACT_MANIFEST_PROFILE_KINDS,
+  inferRequiredRenderArtifactManifestProfile,
+  resolveStrictRenderArtifactManifestProfile,
+  type ArtifactManifestProfileKind,
+  type RenderArtifact,
+  type RenderArtifactSidecarDescriptor,
+} from '@/tools/video-editor/runtime/renderability.ts';
 import type {
   ContributionIndex,
   ExtensionRuntime,
@@ -94,6 +108,42 @@ export interface RenderRoutePlan extends RenderRouteSummary {
   readonly outputFormatIds: readonly string[];
   readonly processRequirements: readonly VideoEditorProcessRequirementDescriptor[];
   readonly nextActions: readonly VideoEditorPlannerNextActionDescriptor[];
+  readonly artifactCompletion: RouteArtifactCompletionRecord;
+}
+
+export type RouteArtifactCompletionStatus = 'complete' | 'incomplete' | 'blocked';
+
+export interface RouteArtifactCompletionRequirementSource {
+  readonly source:
+    | 'output-format'
+    | 'output-format-sidecar'
+    | 'process-requirement'
+    | 'process-attach-record'
+    | 'material-requirement';
+  readonly outputFormatId?: string;
+  readonly processId?: string;
+  readonly operationId?: string;
+  readonly materialRefId?: string;
+  readonly taskId?: string;
+  readonly detail?: Readonly<Record<string, unknown>>;
+}
+
+export interface RouteArtifactCompletionProfileRecord {
+  readonly profile: ArtifactManifestProfileKind;
+  readonly status: RouteArtifactCompletionStatus;
+  readonly requiredBy: readonly RouteArtifactCompletionRequirementSource[];
+  readonly artifacts: readonly RenderArtifact[];
+  readonly sidecars: readonly RenderArtifactSidecarDescriptor[];
+  readonly issues: readonly string[];
+}
+
+export interface RouteArtifactCompletionRecord {
+  readonly status: RouteArtifactCompletionStatus;
+  readonly requiredProfiles: readonly ArtifactManifestProfileKind[];
+  readonly completeProfiles: readonly ArtifactManifestProfileKind[];
+  readonly incompleteProfiles: readonly ArtifactManifestProfileKind[];
+  readonly blockedProfiles: readonly ArtifactManifestProfileKind[];
+  readonly profiles: readonly RouteArtifactCompletionProfileRecord[];
 }
 
 export interface RenderPlannerGuardCompatibility {
@@ -182,6 +232,19 @@ const DETERMINISM_RANK: Record<DeterminismStatus, number> = {
   unknown: 4,
 };
 
+interface ProjectedProcessAttachRecord {
+  readonly record: ProcessResultAttachRecord;
+  readonly artifacts: readonly RenderArtifact[];
+  readonly sidecars: readonly RenderArtifactSidecarDescriptor[];
+}
+
+interface RouteArtifactRequirementAccumulator {
+  readonly requirements: RouteArtifactCompletionRequirementSource[];
+  artifacts: RenderArtifact[];
+  sidecars: RenderArtifactSidecarDescriptor[];
+  issues: string[];
+}
+
 function createAccumulator(): PlanAccumulator {
   return {
     findings: [],
@@ -247,6 +310,389 @@ function sortedBlockers(blockers: readonly RenderBlocker[]): readonly RenderBloc
   return Object.freeze(
     dedupeById(blockers.map(freezeBlocker)).sort((a, b) => a.id.localeCompare(b.id)),
   );
+}
+
+function sortedArtifactProfiles(
+  profiles: Iterable<ArtifactManifestProfileKind>,
+): readonly ArtifactManifestProfileKind[] {
+  const profileSet = new Set<ArtifactManifestProfileKind>(profiles);
+  return Object.freeze(
+    ARTIFACT_MANIFEST_PROFILE_KINDS.filter((profile) => profileSet.has(profile)),
+  );
+}
+
+function routeArtifactPrimaryProfile(
+  route: RenderRoute,
+  outputFormat?: Pick<VideoEditorOutputFormatDescriptor, 'id' | 'outputMimeType'>,
+): ArtifactManifestProfileKind {
+  return inferRequiredRenderArtifactManifestProfile({
+    route,
+    outputFormatId: outputFormat?.id,
+    mimeType: outputFormat?.outputMimeType,
+  });
+}
+
+function routeArtifactProfileForArtifact(
+  artifact: RenderArtifact,
+): ArtifactManifestProfileKind {
+  return inferRequiredRenderArtifactManifestProfile({
+    route: artifact.route,
+    outputFormatId: artifact.manifest?.outputFormatId,
+    mediaKind: artifact.mediaKind,
+  });
+}
+
+function sidecarIdentity(sidecar: RenderArtifactSidecarDescriptor): string {
+  return sidecar.id ?? `${sidecar.kind}:${sidecar.filename}:${sidecar.mimeType}`;
+}
+
+function sortedRequirementSources(
+  sources: readonly RouteArtifactCompletionRequirementSource[],
+): readonly RouteArtifactCompletionRequirementSource[] {
+  return Object.freeze([...sources]
+    .map((source) => Object.freeze({
+      ...source,
+      ...(source.detail ? { detail: Object.freeze({ ...source.detail }) } : {}),
+    }))
+    .sort((left, right) =>
+      `${left.source}:${left.outputFormatId ?? ''}:${left.processId ?? ''}:${left.operationId ?? ''}:${left.materialRefId ?? ''}:${left.taskId ?? ''}`
+        .localeCompare(
+          `${right.source}:${right.outputFormatId ?? ''}:${right.processId ?? ''}:${right.operationId ?? ''}:${right.materialRefId ?? ''}:${right.taskId ?? ''}`,
+        )));
+}
+
+function sortedArtifacts(
+  artifacts: readonly RenderArtifact[],
+): readonly RenderArtifact[] {
+  const seen = new Set<string>();
+  const deduped: RenderArtifact[] = [];
+  for (const artifact of [...artifacts].sort((left, right) => left.id.localeCompare(right.id))) {
+    if (seen.has(artifact.id)) continue;
+    seen.add(artifact.id);
+    deduped.push(artifact);
+  }
+  return Object.freeze(deduped);
+}
+
+function sortedSidecars(
+  sidecars: readonly RenderArtifactSidecarDescriptor[],
+): readonly RenderArtifactSidecarDescriptor[] {
+  const seen = new Set<string>();
+  const deduped: RenderArtifactSidecarDescriptor[] = [];
+  for (const sidecar of [...sidecars].sort((left, right) =>
+    sidecarIdentity(left).localeCompare(sidecarIdentity(right)))) {
+    const key = sidecarIdentity(sidecar);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(sidecar);
+  }
+  return Object.freeze(deduped);
+}
+
+function ensureArtifactCompletionAccumulator(
+  byProfile: Map<ArtifactManifestProfileKind, RouteArtifactRequirementAccumulator>,
+  profile: ArtifactManifestProfileKind,
+): RouteArtifactRequirementAccumulator {
+  const existing = byProfile.get(profile);
+  if (existing) {
+    return existing;
+  }
+  const created: RouteArtifactRequirementAccumulator = {
+    requirements: [],
+    artifacts: [],
+    sidecars: [],
+    issues: [],
+  };
+  byProfile.set(profile, created);
+  return created;
+}
+
+function addArtifactCompletionRequirement(
+  byProfile: Map<ArtifactManifestProfileKind, RouteArtifactRequirementAccumulator>,
+  profile: ArtifactManifestProfileKind,
+  source: RouteArtifactCompletionRequirementSource,
+): void {
+  ensureArtifactCompletionAccumulator(byProfile, profile).requirements.push(source);
+}
+
+function addArtifactCompletionArtifactEvidence(
+  byProfile: Map<ArtifactManifestProfileKind, RouteArtifactRequirementAccumulator>,
+  artifact: RenderArtifact,
+): void {
+  const profileHint = routeArtifactProfileForArtifact(artifact);
+  const entry = ensureArtifactCompletionAccumulator(byProfile, profileHint);
+  entry.artifacts.push(artifact);
+  entry.sidecars.push(...(artifact.sidecars ?? []));
+  try {
+    const strictProfile = resolveStrictRenderArtifactManifestProfile(artifact).profile;
+    if (strictProfile !== profileHint) {
+      const strictEntry = ensureArtifactCompletionAccumulator(byProfile, strictProfile);
+      strictEntry.artifacts.push(artifact);
+      strictEntry.sidecars.push(...(artifact.sidecars ?? []));
+    }
+  } catch (error) {
+    entry.issues.push(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function addArtifactCompletionSidecarEvidence(
+  byProfile: Map<ArtifactManifestProfileKind, RouteArtifactRequirementAccumulator>,
+  sidecars: readonly RenderArtifactSidecarDescriptor[],
+): void {
+  if (sidecars.length === 0) return;
+  ensureArtifactCompletionAccumulator(byProfile, 'sidecar').sidecars.push(...sidecars);
+}
+
+function processOperationArtifactProfiles(
+  route: RenderRoute,
+  process: VideoEditorProcessDescriptor | undefined,
+  operationId: string | undefined,
+  outputFormat?: Pick<VideoEditorOutputFormatDescriptor, 'id' | 'outputMimeType'>,
+): readonly ArtifactManifestProfileKind[] {
+  const operations = matchingProcessOperations(process, operationId, route);
+  if (operations.length === 0) {
+    return Object.freeze([]);
+  }
+
+  const outputKinds = new Set(operations.flatMap((operation) => operation.outputKinds ?? []));
+  const profiles = new Set<ArtifactManifestProfileKind>();
+  if (outputKinds.size === 0 || outputKinds.has('artifact')) {
+    profiles.add(routeArtifactPrimaryProfile(route, outputFormat));
+  }
+  if (outputKinds.has('sidecar')) {
+    profiles.add('sidecar');
+  }
+  return sortedArtifactProfiles(profiles);
+}
+
+function attachRecordArtifactProfiles(
+  projectedRecord: ProjectedProcessAttachRecord,
+  route: RenderRoute,
+): readonly ArtifactManifestProfileKind[] {
+  const outputKinds = new Set(projectedRecord.record.provenance.operation.outputKinds);
+  const profiles = new Set<ArtifactManifestProfileKind>();
+
+  if (outputKinds.size === 0 || outputKinds.has('artifact')) {
+    const routeArtifacts = projectedRecord.artifacts.filter((artifact) => artifact.route === route);
+    if (routeArtifacts.length > 0) {
+      for (const artifact of routeArtifacts) {
+        profiles.add(routeArtifactProfileForArtifact(artifact));
+      }
+    } else {
+      profiles.add(routeArtifactPrimaryProfile(route));
+    }
+  }
+  if (outputKinds.size === 0) {
+    if (projectedRecord.sidecars.length > 0) {
+      profiles.add('sidecar');
+    }
+  } else if (outputKinds.has('sidecar')) {
+    profiles.add('sidecar');
+  }
+
+  return sortedArtifactProfiles(profiles);
+}
+
+function materialRequiresRouteArtifact(
+  material: HostMaterialRuntimeEntry,
+  route: RenderRoute,
+): boolean {
+  if (material.materialRef.replacementPolicy !== 'materialize-on-export') {
+    return false;
+  }
+  if (material.routeScopes.some((scope) => scope.route === route)) {
+    return true;
+  }
+  return route === 'browser-export' && material.routeScopes.length === 0;
+}
+
+function projectProcessAttachRecords(
+  records: readonly ProcessResultAttachRecord[] | undefined,
+): readonly ProjectedProcessAttachRecord[] {
+  return Object.freeze((records ?? []).map((record) => {
+    const projection = projectProcessResultContracts(record);
+    return Object.freeze({
+      record,
+      artifacts: projection.artifacts,
+      sidecars: projection.sidecars,
+    });
+  }));
+}
+
+function buildRouteArtifactCompletion(
+  route: RenderRoute,
+  routeBlockers: readonly RenderBlocker[],
+  outputFormats: readonly VideoEditorOutputFormatDescriptor[],
+  processById: ReadonlyMap<string, VideoEditorProcessDescriptor>,
+  materialRuntime: HostMaterialRuntimeProjection,
+  projectedAttachRecords: readonly ProjectedProcessAttachRecord[],
+): RouteArtifactCompletionRecord {
+  const byProfile = new Map<ArtifactManifestProfileKind, RouteArtifactRequirementAccumulator>();
+
+  for (const outputFormat of outputFormats) {
+    if (!outputFormat.availableRoutes.includes(route)) {
+      continue;
+    }
+
+    addArtifactCompletionRequirement(
+      byProfile,
+      routeArtifactPrimaryProfile(route, outputFormat),
+      {
+        source: 'output-format',
+        outputFormatId: outputFormat.id,
+      },
+    );
+
+    if (outputFormat.sidecars.length > 0) {
+      addArtifactCompletionRequirement(byProfile, 'sidecar', {
+        source: 'output-format-sidecar',
+        outputFormatId: outputFormat.id,
+        detail: {
+          sidecarKinds: [...new Set(outputFormat.sidecars.map((sidecar) => sidecar.kind))].sort(),
+        },
+      });
+    }
+
+    for (const routeRequirement of outputFormat.routeRequirements) {
+      if (routeRequirement.processId === undefined || !routeRequirement.routes.includes(route)) {
+        continue;
+      }
+      for (const profile of processOperationArtifactProfiles(
+        route,
+        processById.get(routeRequirement.processId),
+        routeRequirement.operationId,
+        outputFormat,
+      )) {
+        addArtifactCompletionRequirement(byProfile, profile, {
+          source: 'process-requirement',
+          outputFormatId: outputFormat.id,
+          processId: routeRequirement.processId,
+          operationId: routeRequirement.operationId,
+          detail: Object.freeze({ scope: 'route-requirement' }),
+        });
+      }
+    }
+
+    for (const requirement of outputFormat.processRequirements) {
+      const routes = processRequirementRoutes(outputFormat, requirement, processById.get(requirement.processId));
+      if (!routes.includes(route)) {
+        continue;
+      }
+      for (const profile of processOperationArtifactProfiles(
+        route,
+        processById.get(requirement.processId),
+        requirement.operationId,
+        outputFormat,
+      )) {
+        addArtifactCompletionRequirement(byProfile, profile, {
+          source: 'process-requirement',
+          outputFormatId: outputFormat.id,
+          processId: requirement.processId,
+          operationId: requirement.operationId,
+          detail: Object.freeze({ scope: 'process-requirement' }),
+        });
+      }
+    }
+  }
+
+  for (const material of materialRuntime.materials) {
+    if (!materialRequiresRouteArtifact(material, route)) {
+      continue;
+    }
+    addArtifactCompletionRequirement(byProfile, routeArtifactPrimaryProfile(route), {
+      source: 'material-requirement',
+      materialRefId: material.materialRef.id,
+      detail: {
+        replacementPolicy: material.materialRef.replacementPolicy,
+      },
+    });
+  }
+
+  for (const projectedRecord of projectedAttachRecords) {
+    if (!projectedRecord.record.provenance.operation.routes.includes(route)) {
+      continue;
+    }
+
+    for (const profile of attachRecordArtifactProfiles(projectedRecord, route)) {
+      addArtifactCompletionRequirement(byProfile, profile, {
+        source: 'process-attach-record',
+        processId: projectedRecord.record.processId,
+        operationId: projectedRecord.record.operationId,
+        taskId: projectedRecord.record.taskId,
+        detail: {
+          outputKinds: [...projectedRecord.record.provenance.operation.outputKinds].sort(),
+        },
+      });
+    }
+
+    for (const artifact of projectedRecord.artifacts) {
+      if (artifact.route !== route) {
+        continue;
+      }
+      addArtifactCompletionArtifactEvidence(byProfile, artifact);
+    }
+    addArtifactCompletionSidecarEvidence(byProfile, projectedRecord.sidecars);
+  }
+
+  const profileEntries = ARTIFACT_MANIFEST_PROFILE_KINDS
+    .filter((profile) => byProfile.has(profile))
+    .map((profile) => {
+      const entry = byProfile.get(profile)!;
+      const artifacts = sortedArtifacts(entry.artifacts);
+      const sidecars = sortedSidecars(entry.sidecars);
+      const issues = Object.freeze([...new Set(entry.issues)].sort());
+      const isRequired = entry.requirements.length > 0;
+      const hasEvidence = artifacts.length > 0 || sidecars.length > 0;
+      const status: RouteArtifactCompletionStatus = issues.length > 0
+        ? 'blocked'
+        : isRequired
+          ? (hasEvidence ? 'complete' : 'incomplete')
+          : 'complete';
+      return Object.freeze({
+        profile,
+        status,
+        requiredBy: sortedRequirementSources(entry.requirements),
+        artifacts,
+        sidecars,
+        issues,
+      } satisfies RouteArtifactCompletionProfileRecord);
+    });
+
+  const requiredProfiles = sortedArtifactProfiles(
+    profileEntries
+      .filter((entry) => entry.requiredBy.length > 0)
+      .map((entry) => entry.profile),
+  );
+  const completeProfiles = sortedArtifactProfiles(
+    profileEntries
+      .filter((entry) => entry.requiredBy.length > 0 && entry.status === 'complete')
+      .map((entry) => entry.profile),
+  );
+  const incompleteProfiles = sortedArtifactProfiles(
+    profileEntries
+      .filter((entry) => entry.requiredBy.length > 0 && entry.status === 'incomplete')
+      .map((entry) => entry.profile),
+  );
+  const blockedProfiles = sortedArtifactProfiles(
+    profileEntries
+      .filter((entry) => entry.requiredBy.length > 0 && entry.status === 'blocked')
+      .map((entry) => entry.profile),
+  );
+
+  const status: RouteArtifactCompletionStatus = routeBlockers.length > 0 || blockedProfiles.length > 0
+    ? 'blocked'
+    : incompleteProfiles.length > 0
+      ? 'incomplete'
+      : 'complete';
+
+  return Object.freeze({
+    status,
+    requiredProfiles,
+    completeProfiles,
+    incompleteProfiles,
+    blockedProfiles,
+    profiles: Object.freeze(profileEntries),
+  });
 }
 
 function blockerForFinding(finding: CapabilityFinding): RenderBlocker | undefined {
@@ -770,20 +1216,23 @@ function diagnoseSnapshotShaderComposition(
 }
 
 function sortedRoutes(routes: readonly RenderRoute[]): readonly RenderRoute[] {
-  const requested = new Set(routes);
-  return Object.freeze(RENDER_ROUTES.filter((route) => requested.has(route)));
+  return canonicalRenderRoutes(routes);
 }
 
 function requestedRoutes(request: RenderPlannerRequest | undefined): readonly RenderRoute[] {
   if (!request) return Object.freeze([]);
   if (request.routes && request.routes.length > 0) return sortedRoutes(request.routes);
-  if (request.route) return Object.freeze([request.route]);
+  if (request.route && isCanonicalRenderRoute(request.route)) return Object.freeze([request.route]);
   return Object.freeze([]);
 }
 
 function collectRequestCapabilities(acc: PlanAccumulator, request: RenderPlannerRequest | undefined): void {
   if (!request?.requiredCapabilities || request.requiredCapabilities.length === 0) return;
   const routes = requestedRoutes(request);
+  const hadExplicitRoutes = Boolean(request.route) || Boolean(request.routes?.length);
+  if (hadExplicitRoutes && routes.length === 0) {
+    return;
+  }
   const targetRoutes = routes.length > 0 ? routes : RENDER_ROUTES;
 
   for (const route of targetRoutes) {
@@ -865,9 +1314,9 @@ function routeScopedProcessOperationId(
 function processLifecycleRouteScopes(
   process: VideoEditorProcessDescriptor,
 ): readonly { route: RenderRoute; operationId?: string }[] {
-  const routes = new Set<RenderRoute>(process.availableRoutes);
+  const routes = new Set<RenderRoute>(canonicalRenderRoutes(process.availableRoutes));
   for (const operation of process.operations) {
-    for (const route of operation.routes ?? []) {
+    for (const route of canonicalRenderRoutes(operation.routes)) {
       routes.add(route);
     }
   }
@@ -1234,6 +1683,11 @@ function processRequirementRoutes(
   requirement: VideoEditorProcessRequirementDescriptor,
   process: VideoEditorProcessDescriptor | undefined,
 ): readonly RenderRoute[] {
+  const validatedRequirementRoutes = canonicalRenderRoutes(requirement.routeScope?.routes);
+  if (validatedRequirementRoutes.length > 0) {
+    return validatedRequirementRoutes;
+  }
+
   if (process) {
     if (requirement.operationId) {
       const operation = findProcessOperation(process, requirement.operationId);
@@ -1241,7 +1695,7 @@ function processRequirementRoutes(
         return sortedRoutes(operation.routes);
       }
     } else if (process.availableRoutes.length > 0) {
-      return process.availableRoutes;
+      return canonicalRenderRoutes(process.availableRoutes);
     }
   }
 
@@ -1255,8 +1709,228 @@ function processRequirementRoutes(
   }
 
   return outputFormat.availableRoutes.length > 0
-    ? outputFormat.availableRoutes
+    ? canonicalRenderRoutes(outputFormat.availableRoutes)
     : RENDER_ROUTES;
+}
+
+function routeScopeReason(code: string): RenderBlockerReason {
+  return code === COMPOSITION_DIAGNOSTIC_CODE.UNSUPPORTED_ROUTE
+    ? 'route-unsupported'
+    : 'unknown';
+}
+
+function routeScopeFallbackRoutes(
+  fallbackRoutes: readonly RenderRoute[] | undefined,
+): readonly RenderRoute[] {
+  if (fallbackRoutes && fallbackRoutes.length > 0) {
+    return fallbackRoutes;
+  }
+  return Object.freeze([]);
+}
+
+function routeScopeDiagnosticsToFindings(
+  diagnostics: readonly ExtensionDiagnostic[],
+  options: Readonly<{
+    source: 'snapshot' | 'material' | 'process' | 'output-format' | 'render-request';
+    idPrefix: string;
+    fallbackRoutes: readonly RenderRoute[];
+    processId?: string;
+    operationId?: string;
+    outputFormatId?: string;
+    materialRefId?: string;
+  }>,
+): readonly CapabilityFinding[] {
+  const findings: CapabilityFinding[] = [];
+
+  for (const diagnostic of diagnostics) {
+    if (
+      diagnostic.code !== COMPOSITION_DIAGNOSTIC_CODE.UNSUPPORTED_ROUTE
+      && diagnostic.code !== COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_ROUTE
+    ) {
+      continue;
+    }
+
+    const detail = (
+      diagnostic.detail
+      && typeof diagnostic.detail === 'object'
+      && !Array.isArray(diagnostic.detail)
+        ? diagnostic.detail
+        : {}
+    ) as Record<string, unknown>;
+    const candidateRoute = typeof detail.route === 'string' ? detail.route : undefined;
+    const affectedRoutes = isCanonicalRenderRoute(candidateRoute)
+      ? [candidateRoute]
+      : routeScopeFallbackRoutes(options.fallbackRoutes);
+
+    for (const route of affectedRoutes) {
+      findings.push({
+        id: `${options.idPrefix}.${route}.${diagnostic.code === COMPOSITION_DIAGNOSTIC_CODE.UNSUPPORTED_ROUTE ? 'route-unsupported' : 'unknown-route'}`,
+        severity: diagnostic.severity === 'error' ? 'error' : 'warning',
+        route,
+        reason: routeScopeReason(diagnostic.code),
+        message: diagnostic.message,
+        extensionId: diagnostic.extensionId,
+        contributionId: diagnostic.contributionId,
+        ...(options.processId ? { processId: options.processId } : {}),
+        ...(options.operationId ? { operationId: options.operationId } : {}),
+        ...(options.materialRefId ? { materialRefId: options.materialRefId } : {}),
+        detail: {
+          source: options.source,
+          ...detail,
+          ...(options.outputFormatId ? { outputFormatId: options.outputFormatId } : {}),
+          ...(options.processId ? { processId: options.processId } : {}),
+          ...(options.operationId ? { operationId: options.operationId } : {}),
+          ...(options.materialRefId ? { materialRefId: options.materialRefId } : {}),
+        },
+      });
+    }
+  }
+
+  return Object.freeze(findings);
+}
+
+function snapshotRouteScopeFindings(
+  requirement: CapabilityRequirement,
+): readonly CapabilityFinding[] {
+  const validation = validateRenderRouteScope({
+    extensionId: requirement.sourceRef.extensionId,
+    contributionId: requirement.sourceRef.contributionId,
+    routes: requirement.route ? [requirement.route] : [],
+    missingMessage:
+      `Capability requirement "${requirement.id}" must declare a non-empty explicit route scope.`,
+    unknownMessage: (route) =>
+      `Capability requirement "${requirement.id}" references unknown route "${route}".`,
+  });
+
+  return routeScopeDiagnosticsToFindings(validation.diagnostics, {
+    source: 'snapshot',
+    idPrefix: `planner.snapshot.${requirement.id}`,
+    fallbackRoutes: RENDER_ROUTES,
+  });
+}
+
+function renderRequestRouteScopeFindings(
+  request: RenderPlannerRequest | undefined,
+): readonly CapabilityFinding[] {
+  if (!request) {
+    return Object.freeze([]);
+  }
+
+  const rawRoutes = [
+    ...(request.routes ?? []),
+    ...(request.route ? [request.route] : []),
+  ];
+  if (rawRoutes.length === 0) {
+    return Object.freeze([]);
+  }
+
+  const validation = validateRenderRouteScope({
+    extensionId: 'host.render-request',
+    contributionId: request.outputFormatId ?? 'render-request',
+    routes: rawRoutes,
+    routeMode: 'explicit-routes',
+    missingMessage: 'Render requests must declare a non-empty explicit route scope.',
+    unknownMessage: (route) => `Render request references unknown route "${route}".`,
+  });
+
+  return routeScopeDiagnosticsToFindings(validation.diagnostics, {
+    source: 'render-request',
+    idPrefix: `planner.request.${request.outputFormatId ?? 'render'}`,
+    fallbackRoutes: RENDER_ROUTES,
+    outputFormatId: request.outputFormatId,
+  });
+}
+
+function outputFormatRouteScopeFindings(
+  outputFormat: VideoEditorOutputFormatDescriptor,
+  fallbackRoutes: readonly RenderRoute[],
+): readonly CapabilityFinding[] {
+  const findings: CapabilityFinding[] = [];
+
+  for (const routeRequirement of outputFormat.routeRequirements) {
+    const routeScope = routeRequirement.routeScope ?? {
+      routes: routeRequirement.routes,
+      mode: routeRequirement.routes.length > 0 ? 'explicit-routes' : 'missing-routes',
+    } as const;
+    const validation = validateRenderRouteScope({
+      extensionId: outputFormat.extensionId,
+      contributionId: outputFormat.id,
+      routes: routeScope.routes,
+      routeMode: routeScope.mode,
+      missingMessage:
+        `Output format "${outputFormat.label}" must declare a non-empty explicit route scope for render requirements.`,
+      unknownMessage: (route) =>
+        `Output format "${outputFormat.label}" references unknown route "${route}" in render requirements.`,
+    });
+    findings.push(...routeScopeDiagnosticsToFindings(validation.diagnostics, {
+      source: 'output-format',
+      idPrefix: `planner.outputFormat.${outputFormat.extensionId}.${outputFormat.id}.routeRequirement`,
+      fallbackRoutes,
+      outputFormatId: outputFormat.id,
+      processId: routeRequirement.processId,
+      operationId: routeRequirement.operationId,
+    }));
+  }
+
+  for (const requirement of outputFormat.processRequirements) {
+    const routeScope = requirement.routeScope ?? {
+      routes: outputFormat.availableRoutes,
+      mode: outputFormat.availableRoutes.length > 0 ? 'explicit-routes' : 'missing-routes',
+    };
+    const validation = validateRenderRouteScope({
+      extensionId: outputFormat.extensionId,
+      contributionId: outputFormat.id,
+      routes: routeScope.routes,
+      routeMode: routeScope.mode,
+      missingMessage:
+        `Output format "${outputFormat.label}" must declare a non-empty explicit route scope for process requirements.`,
+      unknownMessage: (route) =>
+        `Output format "${outputFormat.label}" references unknown route "${route}" in process requirements.`,
+    });
+    findings.push(...routeScopeDiagnosticsToFindings(validation.diagnostics, {
+      source: 'output-format',
+      idPrefix: `planner.outputFormat.${outputFormat.extensionId}.${outputFormat.id}.processRequirement.${requirement.processId}${requirement.operationId ? `.${requirement.operationId}` : ''}`,
+      fallbackRoutes,
+      outputFormatId: outputFormat.id,
+      processId: requirement.processId,
+      operationId: requirement.operationId,
+    }));
+  }
+
+  return Object.freeze(findings);
+}
+
+function processRouteScopeFindings(
+  process: VideoEditorProcessDescriptor,
+  fallbackRoutes: readonly RenderRoute[],
+): readonly CapabilityFinding[] {
+  const findings: CapabilityFinding[] = [];
+
+  for (const operation of process.operations) {
+    const routeScope = operation.routeScope ?? {
+      routes: operation.routes ?? [],
+      mode: operation.routes?.length ? 'explicit-routes' : 'missing-routes',
+    } as const;
+    const validation = validateRenderRouteScope({
+      extensionId: process.extensionId,
+      contributionId: process.id,
+      routes: routeScope.routes,
+      routeMode: routeScope.mode,
+      missingMessage:
+        `Process "${process.label}" must declare a non-empty explicit route scope for operation "${operation.id}".`,
+      unknownMessage: (route) =>
+        `Process "${process.label}" references unknown route "${route}" in operation "${operation.id}".`,
+    });
+    findings.push(...routeScopeDiagnosticsToFindings(validation.diagnostics, {
+      source: 'process',
+      idPrefix: `planner.process.${process.extensionId}.${process.id}.${operation.id}`,
+      fallbackRoutes,
+      processId: process.processId,
+      operationId: operation.id,
+    }));
+  }
+
+  return Object.freeze(findings);
 }
 
 function processRequirementDependency(
@@ -1280,9 +1954,17 @@ function collectOutputFormat(
   processStatusById: ReadonlyMap<string, ProcessStatus>,
   processById: ReadonlyMap<string, VideoEditorProcessDescriptor>,
 ): void {
-  const availableRoutes = outputFormat.availableRoutes.length > 0
-    ? outputFormat.availableRoutes
-    : (outputFormat.requiresRender ? (['sidecar-export'] as const) : ([] as const));
+  const availableRoutes = canonicalRenderRoutes(outputFormat.availableRoutes);
+  const hasExplicitRoutes = outputFormat.availableRoutes.length > 0;
+  const routeScopeFallback = hasExplicitRoutes
+    ? availableRoutes
+    : (outputFormat.requiresRender ? RENDER_ROUTES : ([] as const));
+  const routeScopeFindings = outputFormatRouteScopeFindings(outputFormat, routeScopeFallback);
+  for (const finding of routeScopeFindings) {
+    acc.findings.push(finding);
+    const blocker = blockerForFinding(finding);
+    if (blocker) acc.blockers.push(blocker);
+  }
 
   for (const route of availableRoutes) {
     addRouteSetValue(acc.routeOutputFormatIds, route, outputFormat.id);
@@ -1339,7 +2021,9 @@ function collectOutputFormat(
   }
 
   for (const blocker of outputFormat.blockers) {
-    collectDescriptorBlocker(acc, blocker, availableRoutes[0] ?? 'sidecar-export', 'output-format');
+    if (hasExplicitRoutes) {
+      collectDescriptorBlocker(acc, blocker, availableRoutes[0], 'output-format');
+    }
   }
   acc.nextActions.push(...outputFormat.nextActions);
 }
@@ -1354,7 +2038,7 @@ function collectRequestedOutputRouteSupport(
   if (routes.length === 0) return;
 
   const availableRoutes = outputFormat.availableRoutes.length > 0
-    ? outputFormat.availableRoutes
+    ? canonicalRenderRoutes(outputFormat.availableRoutes)
     : (outputFormat.requiresRender ? ([] as const) : (['browser-export'] as const));
   const available = new Set(availableRoutes);
 
@@ -1385,14 +2069,26 @@ function collectProcess(
   process: VideoEditorProcessDescriptor,
   status: ProcessStatus | undefined,
 ): void {
-  for (const route of process.availableRoutes) {
+  const processFallbackRoutes = process.availableRoutes.length > 0
+    ? canonicalRenderRoutes(process.availableRoutes)
+    : RENDER_ROUTES;
+  const routeScopeFindings = processRouteScopeFindings(process, processFallbackRoutes);
+  for (const finding of routeScopeFindings) {
+    acc.findings.push(finding);
+    const blocker = blockerForFinding(finding);
+    if (blocker) acc.blockers.push(blocker);
+  }
+
+  for (const route of canonicalRenderRoutes(process.availableRoutes)) {
     addRouteSetValue(acc.routeCapabilities, route, process.processId);
   }
   for (const requirement of process.capabilities?.capabilityRequirements ?? []) {
     collectRequirement(acc, requirement);
   }
   for (const blocker of process.blockers) {
-    collectDescriptorBlocker(acc, blocker, process.availableRoutes[0] ?? 'sidecar-export', 'process');
+    if (process.availableRoutes.length > 0) {
+      collectDescriptorBlocker(acc, blocker, process.availableRoutes[0], 'process');
+    }
   }
   acc.nextActions.push(...process.nextActions);
 
@@ -1494,17 +2190,18 @@ function buildMaterialPlannerAction(
 
 function plannerRequestedRoutes(
   request: RenderPlannerRequest | undefined,
-): readonly RenderRoute[] {
+): readonly RenderRoute[] | undefined {
   if (!request) {
-    return Object.freeze([]);
+    return undefined;
   }
 
-  return Object.freeze(
+  const routes = Object.freeze(
     Array.from(new Set([
       ...(request.routes ?? []),
       ...(request.route ? [request.route] : []),
     ])),
   );
+  return routes.length > 0 ? routes : undefined;
 }
 
 function buildMaterialRuntimeProjection(
@@ -1729,6 +2426,10 @@ function buildRoutePlan(
   findings: readonly CapabilityFinding[],
   blockers: readonly RenderBlocker[],
   acc: PlanAccumulator,
+  outputFormats: readonly VideoEditorOutputFormatDescriptor[],
+  processById: ReadonlyMap<string, VideoEditorProcessDescriptor>,
+  materialRuntime: HostMaterialRuntimeProjection,
+  projectedAttachRecords: readonly ProjectedProcessAttachRecord[],
 ): RenderRoutePlan {
   const routeBlockers = blockers.filter((blocker) => blocker.route === route);
   const routeFindings = findings.filter((finding) => !finding.route || finding.route === route);
@@ -1744,6 +2445,14 @@ function buildRoutePlan(
     })));
 
   const actions = sortedActions(acc.nextActions.filter((action) => !action.route || action.route === route));
+  const artifactCompletion = buildRouteArtifactCompletion(
+    route,
+    routeBlockers,
+    outputFormats,
+    processById,
+    materialRuntime,
+    projectedAttachRecords,
+  );
   return Object.freeze({
     route,
     blockerCount: routeBlockers.length,
@@ -1756,6 +2465,7 @@ function buildRoutePlan(
     outputFormatIds,
     processRequirements,
     nextActions: actions,
+    artifactCompletion,
   });
 }
 
@@ -1777,6 +2487,11 @@ function emptyGuard(
 
 export function planRender(input: RenderPlannerInput): RenderPlannerResult {
   const acc = createAccumulator();
+  const requestRouteFindings = renderRequestRouteScopeFindings(input.request);
+  acc.findings.push(...requestRouteFindings);
+  acc.blockers.push(...requestRouteFindings
+    .map((finding) => blockerForFinding(finding))
+    .filter((blocker): blocker is RenderBlocker => Boolean(blocker)));
   const compositionGraph = plannerCompositionGraph(input);
   const nonShaderSnapshot = compositionGraph ? stripSnapshotShaders(input.snapshot) : input.snapshot;
   const shaderComposition = diagnoseSnapshotShaderComposition(
@@ -1796,6 +2511,9 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
       ? getCapabilityRequirements(shaderComposition.snapshot)
       : []));
   const outputFormats = input.outputFormats ?? input.extensionRuntime?.outputFormats ?? [];
+  const plannedOutputFormats = input.request?.outputFormatId
+    ? outputFormats.filter((format) => format.id === input.request?.outputFormatId)
+    : outputFormats;
   const processes = input.processes ?? input.extensionRuntime?.processes ?? [];
   const shaders = input.shaders ?? input.extensionRuntime?.shaders ?? [];
   const processStatusById = createProcessStatusMap(input.processStatuses);
@@ -1806,6 +2524,7 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
     requirements,
     compositionGraph,
   );
+  const projectedAttachRecords = projectProcessAttachRecords(input.processResultAttachRecords);
   const projectedProcessResultContracts = mergeProjectedProcessResultContracts(input);
   const requestedOutputFormat = input.request?.outputFormatId
     ? outputFormats.find((format) => format.id === input.request?.outputFormatId)
@@ -1821,6 +2540,14 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
   );
 
   for (const requirement of requirements) {
+    const invalidRouteFindings = snapshotRouteScopeFindings(requirement);
+    if (invalidRouteFindings.length > 0) {
+      acc.findings.push(...invalidRouteFindings);
+      acc.blockers.push(...invalidRouteFindings
+        .map((finding) => blockerForFinding(finding))
+        .filter((blocker): blocker is RenderBlocker => Boolean(blocker)));
+      continue;
+    }
     const shaderDescriptor = isShaderMaterializerRequirement(requirement)
       ? shaderBySourceRef.get(shaderDescriptorKey(
         requirement.sourceRef.extensionId,
@@ -1837,8 +2564,7 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
     collectRequirement(acc, requirement);
   }
   collectRequestCapabilities(acc, input.request);
-  for (const outputFormat of outputFormats) {
-    if (input.request?.outputFormatId && input.request.outputFormatId !== outputFormat.id) continue;
+  for (const outputFormat of plannedOutputFormats) {
     collectOutputFormat(acc, outputFormat, processStatusById, processById);
   }
   collectRequestedOutputRouteSupport(acc, requestedOutputFormat, input.request);
@@ -1848,6 +2574,11 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
   for (const material of materialRuntime.materials) {
     collectMaterialRef(acc, material);
   }
+  acc.findings.push(...routeScopeDiagnosticsToFindings(materialRuntime.diagnostics, {
+    source: 'material',
+    idPrefix: 'planner.materialRuntime',
+    fallbackRoutes: ['browser-export'],
+  }));
   collectRenderGroups(acc, input.snapshot, materialRuntime);
   acc.findings.push(...shaderComposition.findings);
   if (legacyCompatibilityWarning) {
@@ -1859,7 +2590,7 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
     const blocker: RenderBlocker = {
       id: `planner.outputFormat.${input.request.outputFormatId}.missing`,
       severity: 'error',
-      route: input.request.route ?? input.request.routes?.[0] ?? 'sidecar-export',
+      route: input.request.route ?? input.request.routes?.[0] ?? 'browser-export',
       reason: 'missing-contribution',
       message: `Output format "${input.request.outputFormatId}" is not registered.`,
       contributionId: input.request.outputFormatId,
@@ -1877,7 +2608,16 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
     ...acc.blockers,
     ...findings.map(blockerForFinding).filter((blocker): blocker is RenderBlocker => Boolean(blocker)),
   ]);
-  const routePlans = Object.freeze(RENDER_ROUTES.map((route) => buildRoutePlan(route, findings, blockers, acc)));
+  const routePlans = Object.freeze(RENDER_ROUTES.map((route) => buildRoutePlan(
+    route,
+    findings,
+    blockers,
+    acc,
+    plannedOutputFormats,
+    processById,
+    materialRuntime,
+    projectedAttachRecords,
+  )));
   const routes = Object.freeze(routePlans.map((routePlan) => Object.freeze({
     route: routePlan.route,
     blockerCount: routePlan.blockerCount,

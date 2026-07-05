@@ -86,8 +86,39 @@ export type MaterialRef = RenderMaterialRef;
  * include version or compatibility-range fields — those are resolver-level
  * concerns and are not part of the default composition identity.
  *
+ * This function also serves as the serialization identity for
+ * {@link OutputFormatRef}, preserving graph identity consistency:
+ * all contribution refs share the same node-key derivation.
+ *
  * @returns The scoped key string `"kind:extensionId:contributionId"`.
  */
 export function contributionRefKey(ref: ContributionRef): string {
   return `${ref.kind}:${ref.extensionId}:${ref.contributionId}`;
+}
+
+// ---------------------------------------------------------------------------
+// OutputFormatRef (M7a)
+// ---------------------------------------------------------------------------
+
+/**
+ * A constrained output-format contribution reference for M7a route planning.
+ *
+ * `OutputFormatRef` is a structural subtype of {@link ContributionRef} with
+ * `kind` fixed to `'outputFormat'`. It is serialized through
+ * {@link contributionRefKey} — no separate serialization system exists.
+ * This preserves graph identity consistency: all contribution refs share
+ * the same node-key derivation.
+ *
+ * Extension descriptors for output formats project into composition graph
+ * `contribution` nodes keyed by `OutputFormatRef`, enabling `requires` edges
+ * from output-format nodes to their declared capability, precondition, or
+ * process requirement targets.
+ */
+export interface OutputFormatRef {
+  /** Fixed contribution kind for output-format references. */
+  readonly kind: 'outputFormat';
+  /** The extension that declared this output format. */
+  readonly extensionId: string;
+  /** The output format's declared ID within the owning extension. */
+  readonly contributionId: string;
 }
