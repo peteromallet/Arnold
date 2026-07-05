@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
+from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
 from arnold_pipelines.megaplan.cloud.session_markers import (
     is_canonical_session_marker_path,
 )
@@ -327,7 +328,9 @@ def _build_session_entry(
         liveness=liveness,
         superseding_sibling=superseding_sibling,
         latest_activity_dt=_parse_iso(latest_activity),
+        marker_dir=marker_dir,
         repair_data_dir=repair_data_dir,
+        current_plan=str(current_plan or ""),
         now=now,
     )
 
@@ -375,7 +378,9 @@ def _classify_session(
     liveness: Mapping[str, bool],
     superseding_sibling: str | None,
     latest_activity_dt: datetime | None,
+    marker_dir: Path,
     repair_data_dir: Path,
+    current_plan: str,
     now: datetime,
 ) -> tuple[SessionStatus, str]:
     # Structural problems first: a session we cannot reason about is attention.
@@ -385,6 +390,25 @@ def _classify_session(
         return "attention", "workspace missing or unreadable"
     if chain_health is None and not remote_spec and not _is_plan_kind_marker(workspace):
         return "attention", "no chain-health snapshot and no remote spec"
+
+    if superseding_sibling and not (liveness.get("tmux") or liveness.get("process")):
+        return (
+            "complete",
+            f"superseded by sibling session {superseding_sibling}; no runner expected",
+        )
+
+    # A current needs-human sidecar is ground truth. It must beat derived
+    # watchdog/chain-complete labels, while confirmed stale markers stay ignored.
+    if _is_current_needs_human(
+        session=session,
+        needs_human=needs_human,
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+        current_plan=current_plan,
+        chain_complete=chain_complete,
+        latest_activity_dt=latest_activity_dt,
+    ):
+        return "blocked", _needs_human_reason(needs_human)
 
     # The watchdog report is the authority on runner truth: it reads the
     # authoritative chain state every tick. The chain-health sidecar can freeze
@@ -399,16 +423,6 @@ def _classify_session(
     # Terminal success is the strongest signal and beats stale plan failures.
     if chain_complete:
         return "complete", "chain complete; no runner expected"
-
-    if superseding_sibling and not (liveness.get("tmux") or liveness.get("process")):
-        return (
-            "complete",
-            f"superseded by sibling session {superseding_sibling}; no runner expected",
-        )
-
-    # Awaiting human action blocks progress that automation should not touch.
-    if _is_needs_human(needs_human):
-        return "blocked", _needs_human_reason(needs_human)
 
     # Active automated repair takes precedence over plain stalled/running when
     # the chain is not advancing on its own.
@@ -551,6 +565,37 @@ def _find_superseding_sibling(
 
 # --- classification helpers ------------------------------------------------
 
+
+
+def _is_current_needs_human(
+    *,
+    session: str,
+    needs_human: Mapping[str, Any] | None,
+    marker_dir: Path,
+    repair_data_dir: Path,
+    current_plan: str,
+    chain_complete: bool,
+    latest_activity_dt: datetime | None,
+) -> bool:
+    if not _is_needs_human(needs_human):
+        return False
+
+    recorded_at = _parse_iso(str(needs_human.get("recorded_at") or ""))
+    if chain_complete and recorded_at is not None and latest_activity_dt is not None:
+        if recorded_at <= latest_activity_dt:
+            return False
+
+    try:
+        classification = classify_needs_human_blocker(
+            session,
+            current_plan=current_plan,
+            marker_dir=marker_dir,
+            repair_data_dir=repair_data_dir,
+            needs_human_payload=needs_human,
+        )
+    except Exception:
+        return True
+    return classification.should_block
 
 def _is_needs_human(needs_human: Mapping[str, Any] | None) -> bool:
     return bool(needs_human)

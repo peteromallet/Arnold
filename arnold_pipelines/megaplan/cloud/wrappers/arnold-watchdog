@@ -1028,6 +1028,55 @@ PY
   rm -f "$payload_tmp" "$dm_result_tmp" "$escalation_context_tmp"
 }
 
+emit_current_needs_human_sidecar() {
+  local report_items="$1"
+  local session="$2"
+  local workspace="$3"
+  local remote_spec="$4"
+  local current_plan="$5"
+  local marker_path stale_marker_plans repair_summary
+
+  marker_path="$(repair_needs_human_path "$session")"
+  [[ -f "$marker_path" ]] || return 1
+
+  stale_marker_plans="$(repair_needs_human_matches_current_plan "$session" "$current_plan" 2>/dev/null)" || {
+    rm -f "$marker_path" 2>/dev/null || true
+    log "stale repair needs-human marker cleared; live current plan supersedes marker session=$session live_plan=${current_plan:-unknown} marker_plans=${stale_marker_plans:-unknown}"
+    compare_needs_human_to_resolver "$session" "$current_plan" "true" "${stale_marker_plans:-}"
+    return 1
+  }
+  if [[ -n "${stale_marker_plans:-}" ]]; then
+    compare_needs_human_to_resolver "$session" "$current_plan" "true" "$stale_marker_plans"
+  else
+    compare_needs_human_to_resolver "$session" "$current_plan" "false" ""
+  fi
+
+  repair_summary="$(repair_needs_human_summary "$session")"
+  log "session has current needs-human marker; reporting without re-notifying session=$session summary=$repair_summary"
+  report_item "$report_items" "$session" "observe" "needs_human" "$repair_summary" "$workspace" "$remote_spec"
+  return 0
+}
+
+
+current_target_plan_name_from_observation() {
+  local observation="$1"
+  python3 - "$observation" <<'PY'
+import json
+import sys
+
+try:
+    payload = json.loads(sys.argv[1] or "{}")
+except Exception:
+    payload = {}
+refs = payload.get("current_refs") if isinstance(payload.get("current_refs"), dict) else {}
+for key in ("current_plan_name", "chain_current_plan_name", "marker_plan_name"):
+    value = refs.get(key)
+    if isinstance(value, str) and value.strip():
+        print(value.strip())
+        break
+PY
+}
+
 manual_review_dispatch_status_env() {
   local session="$1"
   local workspace="$2"
@@ -5840,6 +5889,12 @@ PY
     log "current-target observe session=$session evidence=$current_target_observation"
   fi
 
+  local observed_current_plan
+  observed_current_plan="$(current_target_plan_name_from_observation "$current_target_observation" 2>>"${LOG:-/dev/null}" || true)"
+  if emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${observed_current_plan:-$plan_name}"; then
+    return 0
+  fi
+
   local terminal_status terminal_observe terminal_summary
   terminal_status="$(session_terminal_status "$session" "$workspace" "$remote_spec" "$run_kind" "$current_target_observation" 2>>"${LOG:-/dev/null}" || true)"
   if [[ "$terminal_status" == complete$'\t'* ]]; then
@@ -6042,6 +6097,9 @@ PY
   plan_status_env="$(plan_attention_status_env "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" 2>>"$LOG" || true)"
   if [[ -n "$plan_status_env" ]]; then
     eval "$plan_status_env"
+  fi
+  if emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${PLAN_STATUS_PLAN_NAME:-$plan_name}"; then
+    return 0
   fi
   if [[ "$health" == "stopped" && "${PLAN_STATUS_ACTIVE_STEP_PRESENT:-0}" == "1" && "${PLAN_STATUS_ACTIVE_STEP_PID_ALIVE:-}" != "1" ]]; then
     local stale_active_summary
