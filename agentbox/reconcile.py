@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import hashlib
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -17,8 +18,10 @@ from agentbox.cleanup import _classify_cleanup_recommendation
 from agentbox.config import AgentBoxConfig
 from agentbox.git_worktree import (
     GitWorktreeError,
+    GitDirtyStatus,
     WorktreeInfo,
     git,
+    git_dirty_status,
     git_operation_status,
     has_local_branch,
     has_remote_tracking_ref,
@@ -129,6 +132,17 @@ class ReconciliationReport:
         return _asdict(self)
 
 
+@dataclass(frozen=True)
+class FileProbe:
+    """Observed file state for reconcile decisions."""
+
+    path: str
+    exists: bool
+    sha256: str | None = None
+    content_matches: bool | None = None
+    sha256_matches: bool | None = None
+
+
 def reconcile(config: AgentBoxConfig) -> ReconciliationReport:
     """Return an AgentBox host-local reconciliation report without mutating state."""
 
@@ -141,6 +155,66 @@ def reconcile(config: AgentBoxConfig) -> ReconciliationReport:
     return ReconciliationReport(
         operations=operation_reports,
         orphan_run_dirs=_orphan_run_dirs(config, known_operation_ids),
+    )
+
+
+def parse_porcelain_paths(entries: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    """Extract repo-relative paths from ``git status --porcelain`` entries."""
+
+    paths: list[str] = []
+    for entry in entries:
+        if len(entry) < 4:
+            continue
+        payload = entry[3:]
+        if " -> " in payload:
+            _, _, payload = payload.partition(" -> ")
+        normalized = payload.strip()
+        if normalized:
+            paths.append(normalized)
+    return tuple(paths)
+
+
+def probe_dirty_paths(repo_path: Path | str) -> tuple[str, ...]:
+    """Return repo-relative dirty paths for a checkout."""
+
+    status: GitDirtyStatus = git_dirty_status(repo_path)
+    return parse_porcelain_paths(status.entries)
+
+
+def probe_file(
+    path: Path | str,
+    *,
+    expected_content: str | None = None,
+    expected_sha256: str | None = None,
+) -> FileProbe:
+    """Inspect a file and compare it against expected content or digest."""
+
+    target = Path(path)
+    if not target.exists():
+        return FileProbe(
+            path=str(target),
+            exists=False,
+            content_matches=False if expected_content is not None else None,
+            sha256_matches=False if expected_sha256 is not None else None,
+        )
+
+    data = target.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    content_matches: bool | None = None
+    if expected_content is not None:
+        try:
+            content_matches = data.decode("utf-8") == expected_content
+        except UnicodeDecodeError:
+            content_matches = False
+    sha256_matches = (
+        digest == expected_sha256 if expected_sha256 is not None else None
+    )
+    return FileProbe(
+        path=str(target),
+        exists=True,
+        sha256=digest,
+        content_matches=content_matches,
+        sha256_matches=sha256_matches,
     )
 
 
@@ -563,11 +637,15 @@ def _asdict(value: Any) -> Any:
 
 
 __all__ = [
+    "FileProbe",
     "OperationReconciliation",
     "OrphanRunDirReconciliation",
     "ReconciliationReport",
     "RunDirReconciliation",
     "SessionReconciliation",
     "WorktreeReconciliation",
+    "parse_porcelain_paths",
+    "probe_dirty_paths",
+    "probe_file",
     "reconcile",
 ]

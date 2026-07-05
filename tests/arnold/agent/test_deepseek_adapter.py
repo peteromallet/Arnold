@@ -12,8 +12,9 @@ from arnold.agent.costing.token_cost import PricingEntry
 
 
 class _FakeKeyPool:
-    def __init__(self, key: str = "key-1") -> None:
+    def __init__(self, key: str = "key-1", base_url: str = "") -> None:
         self.key = key
+        self.base_url = base_url
         self.acquired: list[str] = []
         self.cooldowns: list[tuple[str, str]] = []
         self.failures: list[tuple[str, str]] = []
@@ -21,6 +22,10 @@ class _FakeKeyPool:
     def acquire(self, provider: str) -> str:
         self.acquired.append(provider)
         return self.key
+
+    def resolve_base_url(self, provider: str) -> str:
+        del provider
+        return self.base_url
 
     def report_429(self, provider: str, key: str, cooldown_secs: float = 60) -> None:
         del cooldown_secs
@@ -192,6 +197,44 @@ def test_deepseek_adapter_reports_auth_failure_to_key_pool() -> None:
 def test_deepseek_adapter_fails_closed_without_available_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("HERMES_API_KEY", raising=False)
+    adapter = DeepSeekAdapter(key_pool=_FakeKeyPool(key=""), transport=lambda *args: _response())
+
+    with pytest.raises(LookupError, match="no DeepSeek API key available"):
+        adapter(AgentRequest(agent="deepseek", mode="unit", prompt="hi"))
+
+
+def test_deepseek_adapter_uses_broker_proxy_without_env_fallback(monkeypatch) -> None:
+    monkeypatch.setenv("ARNOLD_BROKER_SOCKET", "/tmp/arnold-broker.sock")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "raw-deepseek-key")
+    calls: list[tuple[str, Mapping[str, Any], Mapping[str, str], float | None]] = []
+
+    def transport(
+        url: str,
+        payload: Mapping[str, Any],
+        headers: Mapping[str, str],
+        timeout: float | None,
+    ) -> Mapping[str, Any]:
+        calls.append((url, payload, headers, timeout))
+        return _response()
+
+    adapter = DeepSeekAdapter(
+        key_pool=_FakeKeyPool(
+            key="arnold-broker-scoped-token",
+            base_url="http://broker.local/llm/deepseek",
+        ),
+        transport=transport,
+    )
+
+    adapter(AgentRequest(agent="deepseek", mode="unit", prompt="hi"))
+
+    url, _, headers, _ = calls[0]
+    assert url == "http://broker.local/llm/deepseek/v1/chat/completions"
+    assert headers["Authorization"] == "Bearer arnold-broker-scoped-token"
+
+
+def test_deepseek_adapter_broker_mode_does_not_fallback_to_raw_env(monkeypatch) -> None:
+    monkeypatch.setenv("ARNOLD_BROKER_SOCKET", "/tmp/arnold-broker.sock")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "raw-deepseek-key")
     adapter = DeepSeekAdapter(key_pool=_FakeKeyPool(key=""), transport=lambda *args: _response())
 
     with pytest.raises(LookupError, match="no DeepSeek API key available"):

@@ -131,7 +131,17 @@ def test_compiled_manifest_preserves_workflow_graph_shape() -> None:
     assert manifest.id == "megaplan"
     assert manifest.version == "m4-phase3"
     assert manifest.schema_version == "arnold.workflow.manifest.v1"
-    assert manifest.metadata == {"product": "megaplan", "max_critique_iterations": 4}
+    assert manifest.metadata == {
+        "product": "megaplan",
+        "max_critique_iterations": 4,
+        "policy_refs": [
+            "megaplan:default",
+            "megaplan:model-routing",
+            "megaplan:robustness",
+            "megaplan:artifact-contract",
+            "megaplan:suspension",
+        ],
+    }
 
     assert tuple((n.id, n.kind) for n in sorted(manifest.nodes, key=lambda n: n.id)) == tuple(
         sorted(EXPECTED_STEP_KINDS)
@@ -149,11 +159,27 @@ def test_authored_source_lowering_can_expand_nested_wrappers_without_changing_pu
     lowered = lower_workflow_file(AUTHORING_SOURCE_PATH)
 
     lowered_ids = {step.id for step in lowered.steps}
-    assert lowered_ids.issuperset(EXPECTED_STEP_ORDER)
+    assert {
+        "prep",
+        "plan",
+        "critique-fanout",
+        "gate",
+        "revise",
+        "tiebreaker",
+        "finalize",
+        "execute-batches",
+        "review-fan-in",
+        "halt",
+        "override",
+    } <= lowered_ids
     assert LOWERED_WRAPPER_STEP_IDS.issubset(lowered_ids)
 
 
 def test_authored_source_lowering_keeps_observable_entry_spine_prefix() -> None:
     lowered = lower_workflow_file(AUTHORING_SOURCE_PATH)
 
-    assert tuple(step.id for step in lowered.steps[:4]) == ("prep", "plan", "critique", "gate")
+    assert tuple(step.id for step in lowered.steps[:4]) == ("prep", "plan", "critique-fanout", "gate")
+
+
+def test_authoring_source_path_points_at_pypeline_carrier() -> None:
+    assert AUTHORING_SOURCE_PATH.name == "workflow.pypeline"

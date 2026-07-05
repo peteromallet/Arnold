@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from arnold.kernel.effect_ledger import EffectRecordState
 from arnold.pipeline.native import compile_pipeline, phase, pipeline, run_native_pipeline, workflow
-from arnold.pipeline.native.hooks import NativeRuntimeHooks, NullNativeRuntimeHooks
+from arnold.pipeline.native.audit import AuditHooks
+from arnold.pipeline.native.hooks import (
+    EffectLedgerHooks,
+    NativeRuntimeHooks,
+    NullNativeRuntimeHooks,
+)
+from arnold.pipeline.native.checkpoint import read_native_cursor
+from arnold.pipeline.native.trace import NativeTraceHooks
+from arnold.runtime.envelope import RunEnvelope
 
 
 class _StepResult:
@@ -113,3 +124,189 @@ def test_subpipeline_merge_conflict_propagates() -> None:
 
     with pytest.raises(RuntimeError, match="subpipeline merge conflict"):
         run_native_pipeline(prog, hooks=ConflictHooks())
+
+
+def test_effect_ledger_hooks_marks_side_effect_fulfilled() -> None:
+    hooks = EffectLedgerHooks()
+
+    @phase(operation="file_write", target="out/report.json", effect_class="filesystem_mutation")
+    def write_report(ctx: dict) -> dict:
+        return {"ok": True}
+
+    @pipeline
+    def my_pipe(ctx: dict) -> dict:
+        state = yield write_report(ctx)
+        return state
+
+    prog = compile_pipeline(my_pipe)
+    run_native_pipeline(prog, hooks=hooks)
+
+    instr = next(i for i in prog.instructions if i.name == "write_report")
+    record = hooks._ledger.get_record(instr.idempotency_key or "")
+    assert record is not None
+    assert record.state is EffectRecordState.FULFILLED
+    assert hooks.checkpoint_effect_metadata() == {
+        "idempotency_key": instr.idempotency_key,
+        "step_path": "root/write_report",
+        "operation": "file_write",
+        "target": "out/report.json",
+        "attempt": 1,
+        "lifecycle_state": "fulfilled",
+        "effect_class": "filesystem_mutation",
+        "duplicate_action": None,
+    }
+
+
+def test_effect_ledger_hooks_marks_side_effect_failed() -> None:
+    hooks = EffectLedgerHooks()
+
+    @phase(operation="git_commit", target="main", effect_class="git_repo_mutation")
+    def commit_step(ctx: dict) -> dict:
+        raise RuntimeError("boom")
+
+    @pipeline
+    def my_pipe(ctx: dict) -> dict:
+        state = yield commit_step(ctx)
+        return state
+
+    prog = compile_pipeline(my_pipe)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        run_native_pipeline(prog, hooks=hooks)
+
+    instr = next(i for i in prog.instructions if i.name == "commit_step")
+    record = hooks._ledger.get_record(instr.idempotency_key or "")
+    assert record is not None
+    assert record.state is EffectRecordState.FAILED
+    assert hooks.checkpoint_effect_metadata()["lifecycle_state"] == "failed"
+
+
+def test_effect_ledger_hooks_duplicate_fulfilled_defaults_to_skip() -> None:
+    hooks = EffectLedgerHooks()
+
+    @phase(operation="file_write", target="out/report.json", effect_class="filesystem_mutation")
+    def write_report(ctx: dict) -> dict:
+        return {"attempt": ctx["attempt"]}
+
+    @pipeline
+    def my_pipe(ctx: dict) -> dict:
+        state = yield write_report(ctx)
+        return state
+
+    prog = compile_pipeline(my_pipe)
+    run_native_pipeline(prog, hooks=hooks)
+    run_native_pipeline(prog, hooks=hooks)
+
+    effect = hooks.checkpoint_effect_metadata()
+    assert effect is not None
+    assert effect["duplicate_action"] == "skip"
+    assert effect["lifecycle_state"] == "fulfilled"
+
+
+def test_effect_ledger_hooks_duplicate_fulfilled_policy_is_configurable() -> None:
+    hooks = EffectLedgerHooks(duplicate_fulfilled_action="fail")
+
+    @phase(operation="git_commit", target="main", effect_class="git_repo_mutation")
+    def commit_step(ctx: dict) -> dict:
+        return {"ok": True}
+
+    @pipeline
+    def my_pipe(ctx: dict) -> dict:
+        state = yield commit_step(ctx)
+        return state
+
+    prog = compile_pipeline(my_pipe)
+    run_native_pipeline(prog, hooks=hooks)
+    run_native_pipeline(prog, hooks=hooks)
+
+    effect = hooks.checkpoint_effect_metadata()
+    assert effect is not None
+    assert effect["duplicate_action"] == "fail"
+
+
+def test_cancellation_propagates_through_wrapped_hook_chain_without_failure(
+    tmp_path: Path,
+) -> None:
+    effect_hooks = EffectLedgerHooks()
+    audit_dir = tmp_path / "audit"
+    trace_dir = tmp_path / "trace"
+    hooks = NativeTraceHooks(
+        inner=AuditHooks(inner=effect_hooks, audit_dir=audit_dir),
+        trace_dir=trace_dir,
+        artifact_root=tmp_path / "artifacts",
+    )
+
+    @phase(operation="file_write", target="out/report.json", effect_class="filesystem_mutation")
+    def write_report(ctx: dict) -> dict:
+        raise AssertionError("phase body should not run after cancellation")
+
+    @pipeline
+    def my_pipe(ctx: dict) -> dict:
+        state = yield write_report(ctx)
+        return state
+
+    result = run_native_pipeline(
+        compile_pipeline(my_pipe),
+        artifact_root=tmp_path / "artifacts",
+        hooks=hooks,
+        initial_envelope=RunEnvelope(cancellation=True),
+    )
+
+    assert result.suspended is True
+    assert effect_hooks.checkpoint_effect_metadata() is None
+
+    records = [
+        json.loads(line)
+        for line in (audit_dir / "audit.ndjson").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    step_records = [record for record in records if "attempt_id" in record]
+    assert len(step_records) == 1
+    assert step_records[0]["status"] == "cancelled"
+    assert step_records[0]["step_path"] == "root/write_report"
+    assert step_records[0]["error_type"] is None
+
+    events = [
+        json.loads(line)
+        for line in (trace_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    cancelled_events = [event for event in events if event["kind"] == "pipeline_cancelled"]
+    assert len(cancelled_events) == 1
+    assert cancelled_events[0]["payload"]["status"] == "cancelled"
+    assert cancelled_events[0]["payload"]["trace"]["path"] == "root/write_report"
+
+
+def test_effect_metadata_is_persisted_into_checkpoint(tmp_path) -> None:
+    hooks = EffectLedgerHooks()
+
+    @phase(operation="file_write", target="out/report.json", effect_class="filesystem_mutation")
+    def write_report(ctx: dict) -> dict:
+        return {"report": "ok"}
+
+    @phase
+    def pure_step(ctx: dict) -> dict:
+        return {"done": True}
+
+    @pipeline
+    def my_pipe(ctx: dict) -> dict:
+        state = yield write_report(ctx)
+        state = yield pure_step(ctx)
+        return state
+
+    prog = compile_pipeline(my_pipe)
+    result = run_native_pipeline(prog, hooks=hooks, artifact_root=tmp_path, max_phases=1)
+
+    assert result.suspended is True
+    cursor = read_native_cursor(tmp_path)
+    assert cursor is not None
+    assert cursor["effect"] == {
+        "idempotency_key": next(i for i in prog.instructions if i.name == "write_report").idempotency_key,
+        "step_path": "root/write_report",
+        "operation": "file_write",
+        "target": "out/report.json",
+        "attempt": 1,
+        "lifecycle_state": "fulfilled",
+        "effect_class": "filesystem_mutation",
+        "duplicate_action": None,
+    }

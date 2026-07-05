@@ -49,6 +49,91 @@ LEGACY_REFERENCE_CATEGORIES = frozenset(
         "historical-non-shipped",
     }
 )
+_SECURITY_NATIVE_REPRESENTATION_ROWS = (
+    {
+        "id": "human-decision-suspension",
+        "requirement": "Human decision/suspension",
+    },
+    {
+        "id": "execute-approval-gates",
+        "requirement": "Execute approval/no-review/deferred-human gates",
+    },
+    {
+        "id": "override-action-surface",
+        "requirement": "Override full action surface",
+    },
+    {
+        "id": "model-routing-policy",
+        "requirement": "Model routing by phase/task complexity",
+    },
+)
+_SECURITY_DISCOVERY_MODULE_HINTS = (
+    "arnold.agent.agent.auxiliary_client",
+    "arnold.agent.providers.env_loader",
+    "arnold.agent.providers.pool",
+    "arnold.agent.tools.image_generation_tool",
+    "arnold.agent.tools.mcp_oauth",
+    "arnold.agent.tools.mcp_tool",
+    "arnold.agent.tools.skills_hub",
+    "arnold.agent.tools.terminal_tool",
+    "arnold.agent.tools.transcription_tools",
+    "arnold.agent.tools.tts_tool",
+    "arnold.agent.tools.web_tools",
+    "arnold.security.policy",
+)
+_SECURITY_DISCOVERY_TEXT_PATTERNS = {
+    "gh auth token": "gh-cli-token",
+    ".hermes/auth.json": "oauth-auth-json",
+    "mcp-tokens": "mcp-oauth-store",
+}
+_SENSITIVE_ENV_VAR_MARKERS = (
+    "_API_KEY",
+    "_TOKEN",
+    "_SECRET",
+    "_PASSWORD",
+    "AUTHORIZATION",
+)
+_COVERED_SECURITY_ISOLATION_REQUIREMENTS = (
+    {
+        "surface_contains": "arnold.security.policy.SecurityPolicy.evaluate",
+        "path": "arnold/security/git.py",
+        "required_snippets": (
+            "BrokerClient.from_environment()",
+            "client.evaluate_action(action_request)",
+        ),
+        "failure": "git push-class broker evaluation is not wired through BrokerClient",
+    },
+    {
+        "surface_contains": "arnold.security.policy.SecurityPolicy.evaluate",
+        "path": "arnold/agent/tools/mcp_tool.py",
+        "required_snippets": (
+            "authorize_mcp_git_action(server_name, tool_name, args)",
+            "_should_strip_github_mcp_credentials",
+            "_sanitize_mcp_server_config",
+        ),
+        "failure": "covered MCP git paths are not isolated from raw GitHub credentials",
+    },
+    {
+        "surface_contains": "arnold.agent.providers.pool.KeyPool.acquire",
+        "path": "arnold/agent/providers/pool.py",
+        "required_snippets": (
+            "broker_production_mode_requested()",
+            "resolve_brokered_llm_proxy(",
+            "return self._acquire_brokered_key_unlocked(provider)",
+        ),
+        "failure": "covered provider-pool paths no longer fail closed to broker-scoped credentials",
+    },
+    {
+        "surface_contains": "arnold.agent.agent.auxiliary_client.resolve_provider_client",
+        "path": "arnold/agent/agent/auxiliary_client.py",
+        "required_snippets": (
+            "resolve_brokered_llm_proxy(",
+            "warn_deferred_oauth_provider(",
+            "broker_production_mode_requested()",
+        ),
+        "failure": "covered auxiliary provider routing is not broker-isolated in production mode",
+    },
+)
 
 
 # ---------------------------------------------------------------------------
@@ -780,6 +865,75 @@ def check_legacy_reference_allowlist(
     )
 
 
+def check_security_coverage_matrix(
+    *,
+    repo_root: Path | None = None,
+) -> ConformanceCheckResult:
+    """Validate security credential coverage classification and broker isolation."""
+
+    from arnold.security.coverage_matrix import (
+        CoverageStatus,
+        get_coverage_matrix,
+        get_uncovered_surfaces,
+    )
+
+    root = repo_root or _DEFAULT_ARNOLD_ROOT.parent
+    entries = list(get_coverage_matrix())
+    discovered = _discover_security_credential_surfaces(root / "arnold")
+    missing_classification = [
+        item
+        for item in discovered
+        if not _find_security_coverage_matches(item, entries)
+    ]
+    covered_failures = _validate_covered_security_isolation(root, entries)
+    reported_non_production = [
+        {
+            "surface": entry.credential_surface,
+            "status": entry.m2_status.value,
+            "residual_risk": entry.residual_risk.value,
+            "deferral_target": entry.deferral_target,
+            "notes": entry.notes,
+        }
+        for entry in get_uncovered_surfaces()
+    ]
+
+    details = {
+        "affected_native_representation_rows": list(
+            _SECURITY_NATIVE_REPRESENTATION_ROWS
+        ),
+        "covered_surface_count": sum(
+            1 for entry in entries if entry.m2_status == CoverageStatus.COVERED
+        ),
+        "discovered_surface_count": len(discovered),
+        "missing_classifications": missing_classification,
+        "covered_isolation_failures": covered_failures,
+        "reported_non_production_surfaces": reported_non_production,
+    }
+
+    diagnostics: list[str] = []
+    if covered_failures:
+        diagnostics.append(
+            "covered production broker isolation failures: "
+            + ", ".join(sorted(item["surface"] for item in covered_failures))
+        )
+    if missing_classification:
+        diagnostics.append(
+            "discovered credential paths missing coverage-matrix classification: "
+            + ", ".join(sorted(item["target"] for item in missing_classification))
+        )
+    if reported_non_production:
+        diagnostics.append(
+            f"reported {len(reported_non_production)} deferred/uncovered non-production credential paths"
+        )
+
+    return ConformanceCheckResult(
+        check_id="security-coverage-matrix",
+        passed=not covered_failures and not missing_classification,
+        message="; ".join(diagnostics),
+        details=details,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -1080,6 +1234,211 @@ def _string_constants(tree: ast.AST) -> set[str]:
     }
 
 
+def _discover_security_credential_surfaces(package_root: Path) -> list[dict[str, Any]]:
+    discovered: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for path in sorted(package_root.rglob("*.py")):
+        if _is_excluded_from_generic_arnold_scan(package_root, path):
+            continue
+        module = _module_name_from_path(package_root, path)
+        if not any(module.startswith(prefix) for prefix in _SECURITY_DISCOVERY_MODULE_HINTS):
+            continue
+        try:
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=str(path))
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            continue
+        _walk_security_discovery(tree, module, path, discovered)
+        for pattern, reason in _SECURITY_DISCOVERY_TEXT_PATTERNS.items():
+            if pattern in source:
+                _record_security_discovery(
+                    discovered,
+                    module=module,
+                    path=path,
+                    target=module,
+                    reason=reason,
+                    indicator=pattern,
+                )
+    return sorted(
+        discovered.values(),
+        key=lambda item: (item["target"], item["reason"], item["indicator"]),
+    )
+
+
+def _walk_security_discovery(
+    node: ast.AST,
+    module: str,
+    path: Path,
+    discovered: dict[tuple[str, str, str], dict[str, Any]],
+    scope: tuple[str, ...] = (),
+) -> None:
+    next_scope = scope
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        next_scope = (*scope, node.name)
+        if isinstance(node, ast.ClassDef) and node.name in {"GitHubAuth", "HermesTokenStorage"}:
+            _record_security_discovery(
+                discovered,
+                module=module,
+                path=path,
+                target=f"{module}.{node.name}",
+                reason="auth-surface",
+                indicator=node.name,
+            )
+        if node.name == "load_hermes_dotenv":
+            _record_security_discovery(
+                discovered,
+                module=module,
+                path=path,
+                target=f"{module}.{node.name}",
+                reason="env-loader",
+                indicator=node.name,
+            )
+
+    env_var = _extract_sensitive_env_var(node)
+    if env_var:
+        _record_security_discovery(
+            discovered,
+            module=module,
+            path=path,
+            target=_module_scope_target(module, next_scope),
+            reason="env-credential",
+            indicator=env_var,
+        )
+
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        value = node.value
+        if value.strip().startswith("git push"):
+            _record_security_discovery(
+                discovered,
+                module=module,
+                path=path,
+                target=_module_scope_target(module, next_scope),
+                reason="git-push-command",
+                indicator="git push",
+            )
+
+    for child in ast.iter_child_nodes(node):
+        _walk_security_discovery(child, module, path, discovered, next_scope)
+
+
+def _extract_sensitive_env_var(node: ast.AST) -> str | None:
+    if not isinstance(node, ast.Call) or not node.args:
+        return None
+    candidate: str | None = None
+    if isinstance(node.func, ast.Name) and node.func.id == "getenv":
+        candidate = _string_literal(node.args[0])
+    elif isinstance(node.func, ast.Attribute):
+        if node.func.attr == "getenv" and _is_os_name(node.func.value):
+            candidate = _string_literal(node.args[0])
+        elif node.func.attr == "get" and _is_os_environ(node.func.value):
+            candidate = _string_literal(node.args[0])
+    if candidate and any(marker in candidate for marker in _SENSITIVE_ENV_VAR_MARKERS):
+        return candidate
+    return None
+
+
+def _string_literal(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _is_os_name(node: ast.AST) -> bool:
+    return isinstance(node, ast.Name) and node.id == "os"
+
+
+def _is_os_environ(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "environ"
+        and _is_os_name(node.value)
+    )
+
+
+def _module_scope_target(module: str, scope: tuple[str, ...]) -> str:
+    return ".".join((module, *scope)) if scope else module
+
+
+def _record_security_discovery(
+    discovered: dict[tuple[str, str, str], dict[str, Any]],
+    *,
+    module: str,
+    path: Path,
+    target: str,
+    reason: str,
+    indicator: str,
+) -> None:
+    key = (target, reason, indicator)
+    discovered[key] = {
+        "module": module,
+        "path": path.as_posix(),
+        "target": target,
+        "reason": reason,
+        "indicator": indicator,
+    }
+
+
+def _find_security_coverage_matches(
+    discovered: Mapping[str, Any],
+    entries: Collection[Any],
+) -> list[str]:
+    module = str(discovered["module"])
+    target = str(discovered["target"])
+    matches = [
+        entry.credential_surface
+        for entry in entries
+        if target in entry.credential_surface or module in entry.credential_surface
+    ]
+    return sorted(set(matches))
+
+
+def _validate_covered_security_isolation(
+    repo_root: Path,
+    entries: Collection[Any],
+) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    for requirement in _COVERED_SECURITY_ISOLATION_REQUIREMENTS:
+        relevant_entries = [
+            entry
+            for entry in entries
+            if entry.m2_status.value == "covered"
+            and requirement["surface_contains"] in entry.credential_surface
+        ]
+        if not relevant_entries:
+            continue
+        source_path = repo_root / requirement["path"]
+        try:
+            source = source_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            failures.append(
+                {
+                    "surface": requirement["surface_contains"],
+                    "path": requirement["path"],
+                    "missing_snippets": ["<unreadable>"],
+                    "error": str(exc),
+                    "reason": requirement["failure"],
+                }
+            )
+            continue
+        missing_snippets = [
+            snippet
+            for snippet in requirement["required_snippets"]
+            if snippet not in source
+        ]
+        if missing_snippets:
+            failures.append(
+                {
+                    "surface": requirement["surface_contains"],
+                    "path": requirement["path"],
+                    "missing_snippets": missing_snippets,
+                    "reason": requirement["failure"],
+                    "classified_rows": [
+                        entry.credential_surface for entry in relevant_entries
+                    ],
+                }
+            )
+    return failures
+
+
 def check_adapter_smoke_invocation(
     registry: ExecutionRegistries,
     kind: str,
@@ -1165,5 +1524,6 @@ __all__ = [
     "check_never_port_artifacts",
     "check_package_name_staleness",
     "check_public_workflow_layering",
+    "check_security_coverage_matrix",
     "check_semantic_coupling",
 ]

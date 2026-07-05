@@ -33,6 +33,10 @@ from arnold.pipeline.native.ir import (
     TopologyEdge,
     TopologyNode,
 )
+from arnold.pipeline.native.pack_validation import (
+    PackClosureValidationError,
+    validate_shared_pack_closure,
+)
 from arnold.pipeline.pattern_dynamic import (
     FanoutConcurrency,
     FanoutJoinContract,
@@ -342,6 +346,10 @@ def project_graph(program: NativeProgram, key_mode: str = "pc") -> Pipeline:
         A :class:`Pipeline` with stages, edges, loop_condition guards, and
         a typed-port binding map.
     """
+    try:
+        validate_shared_pack_closure(program)
+    except PackClosureValidationError as exc:
+        raise ValueError(f"Invalid native projection closure: {exc}") from exc
     if key_mode not in ("pc", "phase"):
         raise ValueError(f"Unknown key_mode: {key_mode!r}; expected 'pc' or 'phase'")
 

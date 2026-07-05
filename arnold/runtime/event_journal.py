@@ -1,4 +1,4 @@
-"""Mechanism-only NDJSON event journal — store-less, fcntl-locked, opaque kinds.
+"""Mechanism-only NDJSON event journal and backend-backed adapters.
 
 This module provides a pure-mechanism append-only event journal with
 monotonic sequence numbers, thread/process-safe fcntl locking, and
@@ -14,6 +14,8 @@ Exports
 * ``read_event_journal`` — parse and return all events sorted by seq.
 * ``NdjsonEventSink`` — thin adapter wrapping ``NdjsonEventJournal`` to
   satisfy the ``EventSink`` Protocol.
+* ``BackendEventJournal`` / ``BackendEventSink`` — adapters routing event
+  writes and reads through a persistence backend that owns monotonic ordering.
 """
 
 from __future__ import annotations
@@ -382,9 +384,102 @@ class NdjsonEventSink:
         )
 
 
+class BackendEventJournal:
+    """Event journal adapter backed by a persistence backend.
+
+    The backend is responsible for assigning monotonic unique ordering via its
+    ``emit_event`` implementation. This adapter preserves the
+    ``NdjsonEventJournal`` emit surface so existing call sites can swap storage
+    backends without changing event production code.
+    """
+
+    def __init__(
+        self,
+        backend: Any,
+        scope: Any,
+        *,
+        default_scope: Optional[str] = None,
+    ) -> None:
+        self._backend = backend
+        self._scope = scope
+        self._default_scope = default_scope
+
+    def emit(
+        self,
+        kind: str,
+        *,
+        payload: Optional[dict] = None,
+        scope: Optional[str] = None,
+        phase: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> dict:
+        row = self._backend.emit_event(
+            self._scope,
+            kind=kind,
+            payload=payload,
+            phase=phase,
+            idempotency_key=idempotency_key,
+            event_scope=scope if scope is not None else self._default_scope,
+        )
+        return dict(row.payload)
+
+    def read(
+        self,
+        *,
+        since_seq: int | None = None,
+        to_seq: int | None = None,
+        limit: int | None = None,
+    ) -> list[dict]:
+        return [
+            dict(row.payload)
+            for row in self._backend.read_events(
+                self._scope,
+                since_sequence=since_seq,
+                to_sequence=to_seq,
+                limit=limit,
+            )
+        ]
+
+
+class BackendEventSink:
+    """Thin ``EventSink`` adapter over :class:`BackendEventJournal`."""
+
+    def __init__(
+        self,
+        backend: Any,
+        scope: Any,
+        *,
+        default_scope: Optional[str] = None,
+    ) -> None:
+        self._journal = BackendEventJournal(
+            backend,
+            scope,
+            default_scope=default_scope,
+        )
+
+    def emit(
+        self,
+        kind: str,
+        *,
+        payload: Optional[dict] = None,
+        scope: Optional[str] = None,
+        phase: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> dict:
+        return self._journal.emit(
+            kind,
+            payload=payload,
+            scope=scope,
+            phase=phase,
+            idempotency_key=idempotency_key,
+        )
+
+
 __all__ = [
     "EventEnvelope",
     "EventSink",
+    "BackendEventJournal",
+    "BackendEventSink",
     "NdjsonEventJournal",
     "NdjsonEventSink",
     "read_event_journal",

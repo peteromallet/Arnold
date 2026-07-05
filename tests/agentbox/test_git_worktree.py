@@ -6,15 +6,18 @@ from pathlib import Path
 import pytest
 
 from agentbox.git_worktree import (
+    commit_exists,
     GitWorktreeError,
     attach_existing_local_branch,
     checked_out_branch_worktree,
     create_branch_worktree,
+    git_dirty_status,
     git_operation_status,
     has_local_branch,
     has_remote_tracking_ref,
     is_registered_worktree,
     parse_worktree_porcelain,
+    ref_exists,
     resolve_ref,
 )
 
@@ -24,6 +27,7 @@ def test_ref_detection_separates_local_and_remote_tracking_refs(tmp_path: Path) 
     _git(repo, "update-ref", "refs/remotes/origin/feature", "HEAD")
 
     assert has_local_branch(repo, "feature") is False
+    assert ref_exists(repo, "refs/remotes/origin/feature") is True
     assert has_remote_tracking_ref(repo, "origin/feature") is True
     assert has_remote_tracking_ref(repo, "refs/remotes/origin/feature") is True
     assert resolve_ref(repo, "origin/feature") == _git(repo, "rev-parse", "HEAD")
@@ -96,6 +100,28 @@ def test_git_operation_status_reports_markers_without_cleanup(tmp_path: Path) ->
     assert status.in_progress is True
     assert status.markers == ("MERGE_HEAD",)
     assert (repo / ".git" / "MERGE_HEAD").exists()
+
+
+def test_git_dirty_status_reports_clean_and_dirty_entries(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+
+    clean = git_dirty_status(repo)
+    assert clean.is_dirty is False
+    assert clean.entries == ()
+
+    (repo / "notes.txt").write_text("dirty\n", encoding="utf-8")
+
+    dirty = git_dirty_status(repo)
+    assert dirty.is_dirty is True
+    assert dirty.entries == ("?? notes.txt",)
+
+
+def test_commit_exists_distinguishes_real_and_missing_commits(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    head = _git(repo, "rev-parse", "HEAD")
+
+    assert commit_exists(repo, head) is True
+    assert commit_exists(repo, "deadbeef") is False
 
 
 def _init_repo(path: Path) -> Path:

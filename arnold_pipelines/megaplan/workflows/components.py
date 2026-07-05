@@ -1623,6 +1623,120 @@ SOURCE_REVIEW_PANEL_WORKFLOW = _workflow(
     },
 )
 
+AUTHORING_PREP = _step(
+    export_name="AUTHORING_PREP",
+    step_id="prep",
+    kind="megaplan:prep",
+    handler_ref=f"{HANDLER_MODULE}:handle_prep",
+    outputs=({"name": "prep_payload"},),
+)
+AUTHORING_PLAN = _step(
+    export_name="AUTHORING_PLAN",
+    step_id="plan",
+    kind="megaplan:plan",
+    handler_ref=f"{HANDLER_MODULE}:handle_plan",
+    inputs=({"name": "prep_payload", "value_ref": "prep.prep_payload"},),
+    outputs=({"name": "plan_payload"},),
+)
+AUTHORING_CRITIQUE = _step(
+    export_name="AUTHORING_CRITIQUE",
+    step_id="critique",
+    kind="megaplan:critique",
+    handler_ref=f"{HANDLER_MODULE}:handle_critique",
+    inputs=({"name": "plan_payload", "value_ref": "plan.plan_payload"},),
+    outputs=({"name": "critique_payload"},),
+)
+AUTHORING_GATE = _step(
+    export_name="AUTHORING_GATE",
+    step_id="gate",
+    kind="megaplan:gate",
+    handler_ref=f"{HANDLER_MODULE}:handle_gate",
+    inputs=({"name": "critique_payload", "value_ref": "critique.critique_payload"},),
+    outputs=({"name": "gate_payload"},),
+    capability_ids=("human:gate",),
+)
+AUTHORING_REVISE = _step(
+    export_name="AUTHORING_REVISE",
+    step_id="revise",
+    kind="megaplan:revise",
+    handler_ref=f"{HANDLER_MODULE}:handle_revise",
+    inputs=({"name": "gate_payload", "value_ref": "gate.gate_payload"},),
+    outputs=({"name": "revise_payload"},),
+    capability_ids=("megaplan:planning",),
+)
+AUTHORING_FINALIZE = _step(
+    export_name="AUTHORING_FINALIZE",
+    step_id="finalize",
+    kind="megaplan:finalize",
+    handler_ref=f"{HANDLER_MODULE}:handle_finalize",
+    inputs=({"name": "gate_payload", "value_ref": "gate.gate_payload"},),
+    outputs=({"name": "finalize_payload"},),
+)
+AUTHORING_EXECUTE = _step(
+    export_name="AUTHORING_EXECUTE",
+    step_id="execute",
+    kind="megaplan:execute",
+    handler_ref=f"{HANDLER_MODULE}:handle_execute",
+    inputs=({"name": "finalize_payload", "value_ref": "finalize.finalize_payload"},),
+    outputs=({"name": "execute_payload"},),
+)
+AUTHORING_REVIEW = _step(
+    export_name="AUTHORING_REVIEW",
+    step_id="review",
+    kind="megaplan:review",
+    handler_ref=f"{HANDLER_MODULE}:handle_review",
+    inputs=({"name": "execute_payload", "value_ref": "execute.execute_payload"},),
+    outputs=({"name": "review_payload"},),
+    capability_ids=("human:review",),
+)
+AUTHORING_HALT = _step(
+    export_name="AUTHORING_HALT",
+    step_id="halt",
+    kind="megaplan:halt",
+    outputs=({"name": "status"},),
+    terminal=True,
+)
+AUTHORING_OVERRIDE = _step(
+    export_name="AUTHORING_OVERRIDE",
+    step_id="override",
+    kind="megaplan:override",
+    handler_ref=f"{HANDLER_MODULE}:handle_override",
+    inputs=({"name": "gate_payload", "value_ref": "gate.gate_payload"},),
+    outputs=({"name": "override_result"},),
+)
+CRITIQUE_PANEL_WORKFLOW = _workflow(
+    export_name="CRITIQUE_PANEL_WORKFLOW",
+    workflow_id="critique_panel",
+    inputs=("plan_payload",),
+    outputs=("critique_payload",),
+    label="Megaplan critique parallel-map child workflow",
+    metadata=SOURCE_CRITIQUE_PANEL_WORKFLOW.metadata,
+)
+TIEBREAKER_WORKFLOW = _workflow(
+    export_name="TIEBREAKER_WORKFLOW",
+    workflow_id="tiebreaker_child",
+    inputs=("gate_payload",),
+    outputs=("decision",),
+    label="Megaplan tiebreaker child workflow",
+    metadata=SOURCE_TIEBREAKER_WORKFLOW.metadata,
+)
+EXECUTE_BATCH_WORKFLOW = _workflow(
+    export_name="EXECUTE_BATCH_WORKFLOW",
+    workflow_id="execute_batch",
+    inputs=("finalize_payload",),
+    outputs=("execute_payload",),
+    label="Megaplan execute batch child workflow",
+    metadata=SOURCE_EXECUTE_BATCH_WORKFLOW.metadata,
+)
+REVIEW_PANEL_WORKFLOW = _workflow(
+    export_name="REVIEW_PANEL_WORKFLOW",
+    workflow_id="review_panel",
+    inputs=("execute_payload",),
+    outputs=("review_payload",),
+    label="Megaplan review parallel-map child workflow",
+    metadata=SOURCE_REVIEW_PANEL_WORKFLOW.metadata,
+)
+
 ALL_STEP_COMPONENTS = (
     PREP,
     PLAN,

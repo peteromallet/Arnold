@@ -32,6 +32,7 @@ import uuid
 
 _IS_WINDOWS = platform.system() == "Windows"
 from arnold_pipelines.megaplan.runtime.process import kill_group
+from arnold.supervisor.capacity_context import gate_capacity
 from typing import Any, Dict, List, Optional
 
 # Availability gate: UDS requires a POSIX OS
@@ -446,15 +447,16 @@ def execute_code(
         if _tz_name:
             child_env["TZ"] = _tz_name
 
-        proc = subprocess.Popen(
-            [sys.executable, "script.py"],
-            cwd=tmpdir,
-            env=child_env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            stdin=subprocess.DEVNULL,
-            preexec_fn=None if _IS_WINDOWS else os.setsid,
-        )
+        with gate_capacity("code_execution_subprocess"):
+            proc = subprocess.Popen(
+                [sys.executable, "script.py"],
+                cwd=tmpdir,
+                env=child_env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL,
+                preexec_fn=None if _IS_WINDOWS else os.setsid,
+            )
 
         # --- Poll loop: watch for exit, timeout, and interrupt ---
         deadline = time.monotonic() + timeout

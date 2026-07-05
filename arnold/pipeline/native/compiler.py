@@ -25,6 +25,7 @@ from arnold.pipeline.native.decorators import (
     is_phase,
     is_pipeline,
 )
+from arnold.pipeline.native.effect_taxonomy import derive_idempotency_key
 from arnold.pipeline.native.ir import (
     NativeDecision,
     NativeInstruction,
@@ -193,10 +194,21 @@ class _Compiler:
         func: Callable[..., Any],
         *,
         fallback_name: str,
+        call_site_path: tuple[str, ...] = (),
     ) -> NativePhase:
         """Build a NativePhase carrying additive decorator metadata."""
         meta = get_phase_meta(func)
         name = meta["name"] if meta else fallback_name
+        # ── Side-effect metadata (M1) ──
+        operation: str | None = meta.get("operation") if meta else None
+        target: str | None = meta.get("target") if meta else None
+        idempotency_key: str | None = meta.get("idempotency_key") if meta else None
+        effect_class: str | None = meta.get("effect_class") if meta else None
+        # Derive stable idempotency key when operation is declared but no
+        # explicit key is supplied.
+        if operation is not None and idempotency_key is None:
+            step_path = self._derive_step_path(name, call_site_path)
+            idempotency_key = derive_idempotency_key(step_path, operation, target)
         return NativePhase(
             name=name,
             func=func,
@@ -205,6 +217,10 @@ class _Compiler:
             outputs_schema=meta.get("outputs") if meta else None,
             produces=meta.get("produces", ()) if meta else (),
             consumes=meta.get("consumes", ()) if meta else (),
+            operation=operation,
+            target=target,
+            idempotency_key=idempotency_key,
+            effect_class=effect_class,
         )
 
     # ── emit helpers ──────────────────────────────────────────────
@@ -225,6 +241,11 @@ class _Compiler:
         parallel_map_index: int | None = None,
         call_site_path: tuple[str, ...] = (),
         output_bindings: Mapping[str, str] | None = None,
+        # ── Side-effect metadata (M1) ──
+        operation: str | None = None,
+        target: str | None = None,
+        idempotency_key: str | None = None,
+        effect_class: str | None = None,
     ) -> int:
         """Append an instruction and return its PC."""
         pc = self._pc
@@ -243,10 +264,29 @@ class _Compiler:
             subprogram=subprogram,
             parallel_index=parallel_index,
             parallel_map_index=parallel_map_index,
+            operation=operation,
+            target=target,
+            idempotency_key=idempotency_key,
+            effect_class=effect_class,
         )
         self._instructions.append(instr)
         self._pc = pc + 1
         return pc
+
+    def _derive_step_path(
+        self, phase_name: str, call_site_path: tuple[str, ...] = ()
+    ) -> str:
+        """Derive a stable compile-time step path for idempotency-key generation.
+
+        Uses the pipeline name as the root prefix and appends any call-site
+        path segments plus the phase name.  This path is stable across
+        recompilations and is used only for key derivation — it is NOT the
+        same as the runtime step path used for checkpoint addressing.
+        """
+        segments: list[str] = [self._pipeline_name]
+        segments.extend(call_site_path)
+        segments.append(phase_name)
+        return "/".join(segments)
 
     def _emit_halt(self) -> None:
         if not self._pending_halt:
@@ -522,6 +562,10 @@ class _Compiler:
             func=func,
             produces=phase_ir.produces,
             consumes=phase_ir.consumes,
+            operation=phase_ir.operation,
+            target=phase_ir.target,
+            idempotency_key=phase_ir.idempotency_key,
+            effect_class=phase_ir.effect_class,
         )
 
     def _lower_yield_parallel(self, yield_node: ast.Yield) -> None:
@@ -586,6 +630,10 @@ class _Compiler:
             subprogram=parallel_block,
             parallel_index=parallel_index,
             parallel_map_index=old.parallel_map_index,
+            operation=old.operation,
+            target=old.target,
+            idempotency_key=old.idempotency_key,
+            effect_class=old.effect_class,
         )
 
     def _parse_parallel_map_call(
@@ -764,6 +812,10 @@ class _Compiler:
             subprogram=parallel_map_block,
             parallel_index=old.parallel_index,
             parallel_map_index=parallel_map_index,
+            operation=old.operation,
+            target=old.target,
+            idempotency_key=old.idempotency_key,
+            effect_class=old.effect_class,
         )
 
 
@@ -1538,6 +1590,10 @@ class _Compiler:
                         subprogram=instr.subprogram,
                         parallel_index=instr.parallel_index,
                         parallel_map_index=instr.parallel_map_index,
+                        operation=instr.operation,
+                        target=instr.target,
+                        idempotency_key=instr.idempotency_key,
+                        effect_class=instr.effect_class,
                     )
 
         program = NativeProgram(

@@ -35,7 +35,9 @@ from arnold_pipelines.megaplan.workflows.components import (
     TIEBREAKER_DECIDE,
 )
 
-AUTHORING_SOURCE_PATH = Path(__file__).with_name("workflow.py")
+AUTHORING_SOURCE_PATH = Path(__file__).with_name("workflow.pypeline")
+PYPELINE_AUTHORING_SOURCE_PATH = AUTHORING_SOURCE_PATH
+WORKFLOW_MODULE_PATH = Path(__file__).with_name("workflow.py")
 
 
 AUTHOR_REVISE = StepComponent(
@@ -338,4 +340,9 @@ def build_pipeline(
     )
 
 
-__all__ = ["AUTHORING_SOURCE_PATH", "build_pipeline"]
+__all__ = [
+    "AUTHORING_SOURCE_PATH",
+    "PYPELINE_AUTHORING_SOURCE_PATH",
+    "WORKFLOW_MODULE_PATH",
+    "build_pipeline",
+]

@@ -709,6 +709,24 @@
       "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
     },
     {
+      "path": "arnold_pipelines/megaplan/skills/megaplan-cloud/SKILL.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Skill documentation references the legacy package path as historical compatibility context."
+    },
+    {
+      "path": "docs/arnold/megaplan-source-path-reconciliation.md",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Source-path reconciliation documentation preserves the deleted legacy path as migration evidence."
+    },
+    {
+      "path": "tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "Test intentionally references the deleted legacy package path as a compatibility assertion."
+    },
+    {
       "path": "tests/test_no_bare_subprocess.py",
       "pattern": "arnold/pipelines/megaplan",
       "category": "scanner-target",

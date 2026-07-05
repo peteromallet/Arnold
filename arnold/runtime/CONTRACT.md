@@ -553,3 +553,75 @@ either avoid them, implement them first, or accept that they are absent.
 - **§9.3 items** are gaps.  If M5b needs idle-output polling, heartbeat
   infrastructure, or a fully extracted subprocess supervisor, it must
   build them before depending on them — or defer them further.
+
+---
+
+## 10. M5 Supervision Boundaries (SD1)
+
+The M5 worker-fleet supervision package (`arnold/supervisor/`) is a
+**consumer** of native trace/audit/envelope data and does **not** own
+workflow routing, loop exits, model routing, suspension, or execute/review
+decisions.  Canonical authoring remains `workflow.pypeline` as the
+semantic owner; Arnold never introduces handler-dispatch, route tables,
+component wrappers, generic stage dispatch, or manifest/node-builder
+skeletons as the author-facing workflow model.
+
+### 10.1 Data consumed by supervision
+
+| Data source                     | Module(s)                                 | How supervision uses it                                    |
+|---------------------------------|-------------------------------------------|------------------------------------------------------------|
+| Native trace events (ndjson)    | `arnold/pipeline/native/trace.py`         | `ProgressSnapshot` extracts event recency, token/cost deltas, stage advancement, and checkpoint status for classification (healthy, slow-progressing, idle, dead, stuck-but-alive). |
+| Native audit records (ndjson)   | `arnold/pipeline/native/audit.py`         | Per-step audit rows supply deterministic `current_path`/`current_stage` and `last_status` for progress queries; cancellation records are distinguished from failure records. |
+| `RunEnvelope` cross-cutting     | `arnold/runtime/envelope.py`              | `lease_id`, `fencing_token`, and `cancellation` fields are read for lease fencing, capacity grant identity, and cancellation detection. |
+| `RuntimeEnvelope`               | `arnold/runtime/envelope.py`              | `run_id`, `artifact_root`, `manifest_hash`, and `trust_state` provide project identity and quarantine anchors for lease claims and reconcile-on-takeover. |
+| Native checkpoint artifacts     | `arnold/pipeline/native/trace.py`         | `checkpoint.json` supplies checkpoint recency and `cancelled` status for progress classification and resume-path verification. |
+| Native persistence backends     | `arnold/pipeline/native/persistence.py`   | File and Postgres backends provide ordered reads of events, audit rows, and checkpoint artifacts consumed by `ProgressSnapshot` and `SupervisionLoop`. |
+
+Supervision **never** mutates native trace/audit records directly; it
+reads them through the existing persistence-backend query surface.
+
+### 10.2 What supervision does NOT own
+
+Supervision is a hardened platform layer that runs alongside the
+workflow, not inside it.  The following concerns remain owned by
+canonical workflow source (`workflow.pypeline`) and declared policy:
+
+| Concern                    | Owner                               | Supervision boundary                                       |
+|----------------------------|-------------------------------------|------------------------------------------------------------|
+| Workflow routing           | `workflow.pypeline` / composition   | Supervision does not decide which step executes next.      |
+| Loop exits                 | `workflow.pypeline` / composition   | Supervision classifies stuck runs but never exits a loop.  |
+| Model routing              | `workflow.pypeline` / declared policy | Supervision does not select models or profiles.           |
+| Suspension / human gates   | `workflow.pypeline` / composition   | Supervision does not create or resume suspension points.   |
+| Execute decisions          | `workflow.pypeline` / composition   | Supervision gates capacity but never chooses *what* to execute or in what order. |
+| Review decisions           | `workflow.pypeline` / composition   | Supervision does not approve, reject, or rework reviews.   |
+
+Supervision *does* own: project-level lease claims and heartbeats,
+progress-signal classification (healthy/slow/idle/dead/stuck-but-alive),
+stuck-run escalation (warn → notify → safe restart or cancel + human-review
+flag), capacity gates for configured heavy operations, poison-project
+quarantine from crash-loop detection, lease reconciliation with
+worktree-cleanliness gating, and graceful/hard cancellation that
+releases project leases without adding workflow routing semantics.
+
+### 10.3 Affected native-representation matrix rows
+
+The following rows from the Megaplan native-representation traceability
+matrix (`docs/arnold/megaplan-native-representation-alignment-plan.md`)
+are affected by M5 supervision changes.  All four rows are status
+`enabled` with Platform M5 in their owning-milestone set; supervision
+hardens them toward platform durability but does not claim them as
+`implemented` — final conformance remains owned by the Composition
+and/or Platform M6 milestones.
+
+| #  | Row                                                              | Platform milestones | M5 impact                                                                 |
+|----|------------------------------------------------------------------|---------------------|---------------------------------------------------------------------------|
+| 1  | Dependency-aware execute batches (row 136)                       | M1/M5/M6            | Capacity gates and project leases prevent concurrent ownership and over-admission during batched execution.  Supervision does not own the execute DAG or batching policy. |
+| 2  | Review infrastructure retry and cap outcomes (row 140)           | M4/M5/M6            | Poison-project quarantine and stuck-run escalation provide hardened failure/retry boundaries for review infrastructure; supervision does not own the retry/cap classifier or review outcome semantics. |
+| 3  | Timeout/deadline policy (row 142)                                | M4/M5/M6            | `SupervisionLoop` detects expired/orphaned leases and escalates stuck-but-alive runs against configurable progress windows; canonical timeout/deadline policy remains declared at the workflow/policy level. |
+| 4  | Auto-drive/event/liveness transitions (row 147)                  | M4/M5/M6            | Supervisor events (`supervisor.warn`, `supervisor.notify`, `supervisor.restart`, `supervisor.cancel`) are emitted through native persistence and replayable; liveness decisions (stall caps, retry, escalation) remain visible as declared overlays/events, not hidden runtime mutation. |
+
+Supervision reads the native artifacts listed in §10.1 and emits
+supervisor events through the same native persistence surface.  It never
+replaces visible Python workflow control flow with handler dispatch,
+route tables, component wrappers, or supervisor-owned routing semantics
+(SD1).
