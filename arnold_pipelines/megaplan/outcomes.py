@@ -16,6 +16,25 @@ from __future__ import annotations
 from enum import StrEnum
 
 
+class PrepOutcome(StrEnum):
+    """Closed routing vocabulary for the prep step."""
+
+    CONTINUE = "continue"
+    AWAITING_HUMAN = "awaiting_human"
+
+
+class CritiqueOutcome(StrEnum):
+    """Closed routing vocabulary for the critique step."""
+
+    COMPLETED = "completed"
+
+
+class ReviseOutcome(StrEnum):
+    """Closed routing vocabulary for the revise step."""
+
+    COMPLETED = "completed"
+
+
 class GateOutcome(StrEnum):
     """Closed routing vocabulary for the gate step."""
 
@@ -27,6 +46,8 @@ class GateOutcome(StrEnum):
     SUSPEND = "suspend"
     BLOCKED_PREFLIGHT = "blocked_preflight"
     FORCE_PROCEED = "force_proceed"
+    RETRY_GATE = "retry_gate"
+    REPROMPT_DOWNGRADE = "reprompt_downgrade"
 
 
 class TiebreakerOutcome(StrEnum):
@@ -92,6 +113,9 @@ class SuspensionHaltOutcome(StrEnum):
 # Each key matches a RUNTIME_BRANCH_VOCABULARY key in workflows.components.
 # Each value is the StrEnum class whose .values() must match the tuple.
 OUTCOME_CLASS_BY_VOCABULARY_KEY: dict[str, type[StrEnum]] = {
+    "prep": PrepOutcome,
+    "critique": CritiqueOutcome,
+    "revise": ReviseOutcome,
     "gate": GateOutcome,
     "tiebreaker_decide": TiebreakerOutcome,
     "review": ReviewOutcome,
@@ -132,11 +156,14 @@ def all_vocabulary_keys_covered() -> set[str]:
 
 
 __all__ = [
+    "CritiqueOutcome",
     "ExecuteOutcome",
     "FinalizeOutcome",
     "GateOutcome",
     "OverrideOutcome",
+    "PrepOutcome",
     "ReviewOutcome",
+    "ReviseOutcome",
     "SuspensionHaltOutcome",
     "TiebreakerOutcome",
     "OUTCOME_CLASS_BY_VOCABULARY_KEY",

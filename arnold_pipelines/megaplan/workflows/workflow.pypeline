@@ -1,4 +1,10 @@
-"""Megaplan's canonical authored workflow source."""
+"""Megaplan's canonical authored workflow source.
+
+Front-half topology (prep → plan) is extracted into
+``workflows/front_half.pypeline`` for standalone authority. This file
+retains the complete workflow spine including prep/plan for backward
+compatibility while delegating semantic authority to the front-half source.
+"""
 
 from __future__ import annotations
 
@@ -15,22 +21,250 @@ from arnold_pipelines.megaplan.workflows.components import (
     AUTHORING_PREP,
     AUTHORING_REVIEW,
     AUTHORING_REVISE,
+    ARTIFACT_CONTRACT_POLICY,
+    BLAST_RADIUS_POLICY,
     CRITIQUE_PANEL_WORKFLOW,
     DEFAULT_POLICY,
     EXECUTE_BATCH_WORKFLOW,
+    PREP_CLARIFY_POLICY,
     REVIEW_PANEL_WORKFLOW,
     REVISE_LOOP_POLICY,
     TIEBREAKER_WORKFLOW,
 )
 
+CRITIQUE_TOPOLOGY = {
+    "fanout_contract": {
+        "parallel_map_id": "critique-fanout",
+        "fanout_ref": "megaplan.policy.critique_lenses",
+        "step_ref": "SOURCE_CRITIQUE_PANEL_WORKFLOW",
+        "reducer_ref": "SOURCE_CRITIQUE",
+        "path_template": "critique/{item_id}",
+        "route_signal": "critique_payload",
+        "lens_cardinality": {
+            "minimum": 0,
+            "maximum_ref": "len(megaplan.policy.critique_lenses)",
+        },
+        "typed_reducer_outcomes": {
+            "critique": ("completed",),
+            "gate": (
+                "proceed",
+                "iterate",
+                "tiebreaker",
+                "escalate",
+                "abort",
+                "suspend",
+                "blocked_preflight",
+                "force_proceed",
+                "retry_gate",
+                "reprompt_downgrade",
+            ),
+        },
+    },
+    "selection_policy": {
+        "skip": {
+            "when": "robustness == bare",
+            "route_signal": "skip_to_finalize",
+        },
+        "static": {
+            "when": "adaptive critique disabled or creative mode enabled",
+            "lens_source": "megaplan.policy.critique_lenses",
+        },
+        "adaptive": {
+            "when": "adaptive critique enabled and creative mode disabled",
+            "phase": "critique_evaluator",
+            "fallback": "static",
+        },
+    },
+    "retry_policy": {
+        "phase": "critique_evaluator",
+        "max_attempts": 2,
+        "on_exhausted": "blocked",
+        "recovery_artifact": "critique_output.json",
+        "promote_to": "critique_v{iteration}.json",
+    },
+    "phase_locality": {
+        "runtime_wrapper_ref": "arnold_pipelines.megaplan.orchestration.critique_runtime",
+        "worker_phase": "critique",
+        "evaluator_phase": "critique_evaluator",
+    },
+}
+
+CRITIQUE_EVIDENCE_CONTRACT = {
+    "skip": {
+        "construct_type": "critique",
+        "selection_mode": "skip",
+        "route_signal": "skip_to_finalize",
+    },
+    "static": {
+        "construct_type": "critique",
+        "selection_mode": "static",
+        "lens_source": "megaplan.policy.critique_lenses",
+    },
+    "adaptive": {
+        "construct_type": "critique",
+        "selection_mode": "adaptive",
+        "phase": "critique_evaluator",
+        "fallback": "static",
+    },
+    "retry_exhausted": {
+        "construct_type": "gate",
+        "phase": "critique_evaluator",
+        "route_signal": "blocked",
+    },
+}
+
+GATE_ROUTE_POLICY = {
+    "severity_policy": {
+        "blocking_statuses": ("open", "addressed", "disputed"),
+        "significant_severities": ("significant", "likely-significant"),
+        "cosmetic_severities": ("minor", "likely-minor", "trivial", "cosmetic", "low", "nit"),
+        "critical_categories": ("correctness", "security"),
+    },
+    "normalization_policy": {
+        "invalid_recommendation": {
+            "owner": "gate",
+            "effect": "normalize_to_inferred_recommendation",
+            "fallback_recommendations": {
+                "blocking_flags_present": "ITERATE",
+                "preflight_failed": "ESCALATE",
+                "clear_to_proceed": "PROCEED",
+            },
+        },
+        "empty_payload": {
+            "owner": "gate",
+            "effect": "normalize_to_inferred_recommendation",
+        },
+    },
+    "debt_visibility": {
+        "owner": "gate",
+        "effect": "publish_debt_payload_on_proceed",
+        "payload_fields": ("recommendation", "entries_added", "accepted_tradeoffs"),
+    },
+    "reprompt_policy": {
+        "downgrade_on_unresolved_blockers": {
+            "route_signal": "reprompt_downgrade",
+            "recommendation": "ITERATE",
+            "passed": False,
+            "fallback_kind": "reprompt_downgrade",
+        },
+    },
+}
+
+GATE_REVISE_LOOP_TOPOLOGY = {
+    "loop_id": "critique-gate-revise",
+    "max_iterations_ref": "M4_LOOP_MAX_ITERATIONS",
+    "max_iterations": 4,
+    "reentry": {
+        "route_id": "revise:loop",
+        "reentry_id": "critique",
+        "target_ref": "critique-fanout",
+    },
+    "until_exits": {
+        "proceed": "finalize",
+        "force_proceed": "finalize",
+    },
+    "unless_exits": {
+        "escalate": "override",
+        "abort": "halt",
+        "blocked_preflight": "override",
+        "suspend": "halt",
+    },
+    "revise_reentries": {
+        "iterate": "revise",
+        "retry_gate": "gate_retry_revise",
+        "reprompt_downgrade": "gate_reprompt_revise",
+    },
+    "cap_outcomes": {
+        "critical_or_security_blockers": "escalate",
+        "cosmetic_only": "force_proceed",
+        "no_progress_with_blockers": "escalate",
+    },
+    "termination_policy": {
+        "iteration_caps": {
+            "default_config_key": "max_critique_iterations",
+            "robust_config_key": "max_robust_critique_iterations",
+            "robustness_overrides": {
+                "light": {"max_value": 2},
+            },
+        },
+        "no_progress_cap": {
+            "config_scope": "execution",
+            "config_key": "max_critique_no_progress",
+        },
+        "severity_policy": {
+            "blocking_statuses": ("open", "addressed", "disputed"),
+            "significant_severities": ("significant", "likely-significant"),
+            "cosmetic_severities": ("minor", "likely-minor", "trivial", "cosmetic", "low", "nit"),
+            "critical_categories": ("correctness", "security"),
+        },
+        "cap_outcomes": {
+            "critical_or_security_blockers": "escalate",
+            "cosmetic_only": "force_proceed",
+            "no_progress_with_blockers": "escalate",
+        },
+        "debt_visibility": {
+            "owner": "gate",
+            "effect": "publish_debt_payload_on_proceed",
+            "payload_fields": ("recommendation", "entries_added", "accepted_tradeoffs"),
+        },
+    },
+    "gate_route_signals": (
+        "proceed",
+        "iterate",
+        "tiebreaker",
+        "escalate",
+        "abort",
+        "suspend",
+        "blocked_preflight",
+        "force_proceed",
+        "retry_gate",
+        "reprompt_downgrade",
+    ),
+    "suspension": {
+        "route_signal": "suspend",
+        "route_id": "gate:human",
+        "reentry_id": "revise:loop",
+        "resume_target_ref": "gate",
+    },
+    "tiebreaker": {
+        "call_ref": "TIEBREAKER_WORKFLOW",
+        "call_id": "tiebreaker",
+        "inputs": ("gate_payload",),
+        "rejoin": {
+            "proceed": "finalize",
+            "iterate": "revise",
+            "escalate": "override",
+            "fallback": "override",
+        },
+        "internals": "delegated",
+    },
+}
+
 
 @workflow(id="megaplan", version="m4-phase3", policy=DEFAULT_POLICY)
 def planning_workflow(brief: str) -> None:
-    prep_signal = AUTHORING_PREP(id="prep", brief=brief)
-    plan_payload = AUTHORING_PLAN(id="plan", prep_payload=prep_signal)
+    # ── Prep: research with clarification suspend/resume ────────────────
+    # Prep emits a typed PrepOutcome (continue | awaiting_human). The
+    # PREP_CLARIFY_POLICY attached to this step declares the suspension
+    # route and resume strategy. The runtime resolves the outcome to a
+    # transition without hidden routing authority in the handler.
+    prep_signal = AUTHORING_PREP(id="prep", brief=brief, policy=PREP_CLARIFY_POLICY)
+
+    # ── Plan: artifact boundaries and blast-radius policy ───────────────
+    # The plan step produces versioned artifacts (plan.md, plan_meta.json)
+    # with a computed test blast radius. BLAST_RADIUS_POLICY declares the
+    # artifact contract, versioning scheme, and blast-radius computation
+    # references as step-level authority — not buried in handler code.
+    plan_payload = AUTHORING_PLAN(
+        id="plan",
+        prep_payload=prep_signal,
+        policy=BLAST_RADIUS_POLICY,
+    )
 
     loop(policy=REVISE_LOOP_POLICY, reentry_id="critique")
-    while True:
+    for revise_iteration in range(4):
+        # Critique fanout topology is declared above as static source data.
+        # Evaluator execution remains phase-local inside critique_runtime.
         critique_payload = parallel_map(
             id="critique-fanout",
             items="megaplan.policy.critique_lenses",

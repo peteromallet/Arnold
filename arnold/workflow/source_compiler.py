@@ -65,6 +65,14 @@ from arnold.workflow.diagnostics import (
 )
 from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
 from arnold.workflow.refs import is_manifest_hash, is_ref
+from arnold.workflow.semantic_evidence import (
+    S2_CRITIQUE_ROW_ID,
+    S2_GATE_ROW_ID,
+    S2_PLAN_ROW_ID,
+    S2_PREP_ROW_ID,
+    S2_REVISE_ROW_ID,
+    SemanticEvidence,
+)
 
 _DEFAULT_SOURCE_PATH = "<workflow-source>"
 _SUPPORTED_SOURCE_SUFFIXES = frozenset({".py", ".pypeline"})
@@ -77,6 +85,14 @@ _SUPPORTED_WORKFLOW_CONTROL_POLICY_TYPES = frozenset(
 _INVALID_REF = object()
 _LOWERED_STEP_METADATA_KEYS = frozenset({"handler_ref", "terminal"})
 _MANIFEST_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+# ── S2 front-half component detection ─────────────────────────────────────
+_FRONT_HALF_LOCAL_NAME_TO_ROW_ID: Mapping[str, str] = MappingProxyType({
+    "SOURCE_PREP": S2_PREP_ROW_ID,
+    "SOURCE_PLAN": S2_PLAN_ROW_ID,
+    "SOURCE_CRITIQUE": S2_CRITIQUE_ROW_ID,
+    "SOURCE_GATE": S2_GATE_ROW_ID,
+    "SOURCE_REVISE": S2_REVISE_ROW_ID,
+})
 
 
 class SourceCompileError(ValueError):
@@ -465,9 +481,22 @@ class ParsedWorkflowSource:
 
 @dataclass(frozen=True)
 class CheckWorkflowSourceResult:
-    """Result carrier for source validation."""
+    """Result carrier for source validation.
+
+    In addition to the parsed source and its diagnostics this carrier now
+    exposes structured semantic evidence records -- one per front-half
+    construct (prep/plan/critique/gate/revise) that was checked.  Each
+    evidence record carries a stable ``row_id``, ``source_span``,
+    ``construct_type``, and ``diagnostic_code`` so downstream consumers
+    (manifests, conformance tests, quarantine inventory) can reason about
+    front-half provenance without consulting ``components.py``.
+    """
 
     parsed_source: ParsedWorkflowSource
+    evidence: tuple[SemanticEvidence, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "evidence", tuple(self.evidence))
 
     @property
     def diagnostics(self) -> tuple[AuthoringDiagnostic, ...]:
@@ -537,13 +566,67 @@ def source_span_for_node(source_path: str | Path | None, node: ast.AST) -> Sourc
     )
 
 
+def _check_row_evidence(
+    parsed_source: ParsedWorkflowSource,
+    evidence: tuple[SemanticEvidence, ...],
+) -> list[AuthoringDiagnostic]:
+    """Return diagnostics for every implemented front-half row lacking evidence.
+
+    A front-half row is considered *implemented* when a step call in the
+    parsed source references a known S2 front-half component (prep, plan,
+    critique, gate, revise).  Each implemented row must have a
+    corresponding ``SemanticEvidence`` record in *evidence* whose
+    ``row_id`` matches the expected S2 row ID.
+    """
+    diagnostics: list[AuthoringDiagnostic] = []
+    if parsed_source.workflow is None:
+        return diagnostics
+
+    evidence_row_ids: set[str] = {e.row_id for e in evidence if e.row_id is not None}
+
+    for step in parsed_source.workflow.steps:
+        expected_row_id = _FRONT_HALF_LOCAL_NAME_TO_ROW_ID.get(step.local_name)
+        if expected_row_id is not None and expected_row_id not in evidence_row_ids:
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.ROW_EVIDENCE_INSUFFICIENCY,
+                    f"front-half row '{expected_row_id}' (step '{step.id}' "
+                    f"via {step.local_name}) is implemented but lacks "
+                    f"structured semantic evidence",
+                    source_span=step.source_span,
+                    component_ref=step.component_ref,
+                )
+            )
+
+    # Also check subflow calls that may reference front-half components.
+    if parsed_source.workflow.source_block:
+        for subflow in parsed_source.workflow.source_block.subflows:
+            expected_row_id = _FRONT_HALF_LOCAL_NAME_TO_ROW_ID.get(subflow.local_name)
+            if expected_row_id is not None and expected_row_id not in evidence_row_ids:
+                diagnostics.append(
+                    _diagnostic(
+                        DiagnosticCode.ROW_EVIDENCE_INSUFFICIENCY,
+                        f"front-half row '{expected_row_id}' (subflow '{subflow.id}' "
+                        f"via {subflow.local_name}) is implemented but lacks "
+                        f"structured semantic evidence",
+                        source_span=subflow.source_span,
+                        component_ref=subflow.component_ref,
+                    )
+                )
+
+    return diagnostics
+
+
 def check_workflow_file(
     source_path: str | Path,
     *,
     resolver: ComponentResolver | None = None,
+    evidence: tuple[SemanticEvidence, ...] = (),
 ) -> CheckWorkflowSourceResult:
     path = Path(source_path)
-    return check_workflow_source(path.read_text(encoding="utf-8"), source_path=path, resolver=resolver)
+    return check_workflow_source(
+        path.read_text(encoding="utf-8"), source_path=path, resolver=resolver, evidence=evidence,
+    )
 
 
 def check_workflow_source(
@@ -551,9 +634,16 @@ def check_workflow_source(
     *,
     source_path: str | Path | None = None,
     resolver: ComponentResolver | None = None,
+    evidence: tuple[SemanticEvidence, ...] = (),
 ) -> CheckWorkflowSourceResult:
+    parsed_source = parse_workflow_source(source, source_path=source_path, resolver=resolver)
+    row_diagnostics = _check_row_evidence(parsed_source, evidence)
+    if row_diagnostics:
+        all_diagnostics = list(parsed_source.diagnostics) + row_diagnostics
+        parsed_source = replace(parsed_source, diagnostics=tuple(all_diagnostics))
     return CheckWorkflowSourceResult(
-        parsed_source=parse_workflow_source(source, source_path=source_path, resolver=resolver)
+        parsed_source=parsed_source,
+        evidence=evidence,
     )
 
 
@@ -1439,17 +1529,17 @@ def _parse_statement_block(
                 )
             )
             continue
-        if pending_loop_policy is not None and not isinstance(statement, ast.While):
+        if pending_loop_policy is not None and not isinstance(statement, (ast.For, ast.While)):
             diagnostics.append(
                 _diagnostic(
                     DiagnosticCode.AMBIGUOUS_LOOP,
-                    "loop policy must be immediately followed by while True",
+                    "loop policy must be immediately followed by a bounded loop",
                     source_span=pending_loop_policy.source_span,
                     details={"policy_ref": pending_loop_policy.policy_ref},
                 )
             )
             pending_loop_policy = None
-        if pending_invalid_loop_policy and not isinstance(statement, ast.While):
+        if pending_invalid_loop_policy and not isinstance(statement, (ast.For, ast.While)):
             pending_invalid_loop_policy = False
         if isinstance(statement, ast.Assign):
             targets = _assignment_output_bindings(statement, source_path, diagnostics)
@@ -1619,6 +1709,25 @@ def _parse_statement_block(
                     _source_block_output_spans(loop_block.body, local_outputs)
                 )
             continue
+        elif isinstance(statement, ast.For):
+            loop_block = _parse_for_loop_contract(
+                statement,
+                source_path,
+                imports,
+                parameters,
+                local_outputs,
+                pending_loop_policy,
+                pending_invalid_loop_policy,
+                diagnostics,
+            )
+            pending_loop_policy = None
+            pending_invalid_loop_policy = False
+            if loop_block is not None:
+                statements.append(loop_block)
+                local_outputs.update(
+                    _source_block_output_spans(loop_block.body, local_outputs)
+                )
+            continue
         else:
             statements.append(
                 ParsedUnsupportedStatement(
@@ -1639,7 +1748,7 @@ def _parse_statement_block(
         diagnostics.append(
             _diagnostic(
                 DiagnosticCode.AMBIGUOUS_LOOP,
-                "loop policy must be immediately followed by while True",
+                "loop policy must be immediately followed by a bounded loop",
                 source_span=pending_loop_policy.source_span,
                 details={"policy_ref": pending_loop_policy.policy_ref},
             )
@@ -1973,6 +2082,73 @@ def _parse_while_loop_contract(
     )
 
 
+def _parse_for_loop_contract(
+    statement: ast.For,
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    parameters: Sequence[str],
+    local_outputs: Mapping[str, SourceSpan],
+    pending_loop_policy: ParsedLoopPolicy | None,
+    pending_invalid_loop_policy: bool,
+    diagnostics: list[AuthoringDiagnostic],
+) -> ParsedLoopBlock | None:
+    if not _is_bounded_range_loop(statement):
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.AMBIGUOUS_LOOP,
+                "bounded loops must use for <name> in range(<literal or imported cap>) with an adjacent loop policy",
+                source_span=source_span_for_node(source_path, statement),
+            )
+        )
+        return None
+    if pending_invalid_loop_policy:
+        return None
+    if pending_loop_policy is None:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.AMBIGUOUS_LOOP,
+                "bounded loops require an adjacent literal loop policy",
+                source_span=source_span_for_node(source_path, statement),
+            )
+        )
+        return None
+    if _diagnose_unsupported_loop_controls(statement.body, source_path, diagnostics):
+        return None
+
+    body_block, _, _ = _parse_statement_block(
+        statement.body,
+        source_path,
+        imports,
+        parameters,
+        diagnostics,
+        initial_local_outputs=local_outputs,
+        return_is_terminal=True,
+        allow_output_rebinding=True,
+        allow_terminal_fallthrough=True,
+    )
+    entry_statement = body_block.statements[0] if body_block.statements else None
+    return ParsedLoopBlock(
+        policy=pending_loop_policy,
+        body=body_block,
+        source_span=source_span_for_node(source_path, statement),
+        entry_statement=entry_statement,
+        body_tail_statements=_source_block_tail_statements(body_block),
+    )
+
+
+def _is_bounded_range_loop(statement: ast.For) -> bool:
+    if not isinstance(statement.target, ast.Name):
+        return False
+    if not isinstance(statement.iter, ast.Call):
+        return False
+    if not isinstance(statement.iter.func, ast.Name) or statement.iter.func.id != "range":
+        return False
+    if len(statement.iter.args) != 1 or statement.iter.keywords:
+        return False
+    cap = statement.iter.args[0]
+    return isinstance(cap, (ast.Constant, ast.Name))
+
+
 def _diagnose_unsupported_loop_controls(
     body: Sequence[ast.stmt],
     source_path: str,
@@ -1981,11 +2157,11 @@ def _diagnose_unsupported_loop_controls(
     invalid = False
     for statement in body:
         for node in ast.walk(statement):
-            if isinstance(node, ast.While):
+            if isinstance(node, (ast.For, ast.While)):
                 diagnostics.append(
                     _diagnostic(
                         DiagnosticCode.AMBIGUOUS_LOOP,
-                        "nested while loops require a separate adjacent literal loop policy",
+                        "nested loops require a separate adjacent literal loop policy",
                         source_span=source_span_for_node(source_path, node),
                     )
                 )

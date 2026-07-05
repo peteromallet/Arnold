@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from arnold_pipelines.megaplan.route_dispatch import resolve_route_target_for_signal
+from arnold_pipelines.megaplan.workflows.components import STEP_COMPONENTS_BY_ID
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PLAN_PATH = REPO_ROOT / "arnold_pipelines" / "megaplan" / "handlers" / "plan.py"
@@ -189,3 +191,22 @@ class TestSharedRouteHelpers:
         source = ROUTE_DISPATCH_PATH.read_text(encoding="utf-8")
         assert "STEP_COMPONENTS_BY_ID" in source
         assert "route_bindings" in source
+
+    def test_front_half_route_dispatch_ignores_component_route_metadata_mutation(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.route_dispatch._component_route_bindings_for_step",
+            lambda step: (
+                (
+                    {
+                        "id": "gate:proceed",
+                        "label": "proceed",
+                        "target_ref": "halt",
+                        "condition_ref": "mutated",
+                    },
+                )
+                if step == "gate"
+                else tuple(STEP_COMPONENTS_BY_ID[step].metadata.get("route_bindings", ()))
+            ),
+        )
+
+        assert resolve_route_target_for_signal("gate", "proceed") == "finalize"

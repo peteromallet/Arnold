@@ -42,6 +42,9 @@ CAPABILITY_REQUIREMENTS = MappingProxyType(
 
 RUNTIME_BRANCH_VOCABULARY = MappingProxyType(
     {
+        "prep": ("continue", "awaiting_human"),
+        "critique": ("completed",),
+        "revise": ("completed",),
         "gate": (
             "proceed",
             "iterate",
@@ -51,12 +54,136 @@ RUNTIME_BRANCH_VOCABULARY = MappingProxyType(
             "suspend",
             "blocked_preflight",
             "force_proceed",
+            "retry_gate",
+            "reprompt_downgrade",
         ),
         "tiebreaker_decide": ("iterate", "proceed", "escalate"),
         "review": ("pass", "rework", "blocked", "force_proceeded", "deferred_human"),
         "override": ("abort", "force_proceed", "replan"),
     }
 )
+
+CRITIQUE_FANOUT_CONTRACT = {
+    "parallel_map_id": "critique-fanout",
+    "fanout_ref": "megaplan.policy.critique_lenses",
+    "step_ref": "SOURCE_CRITIQUE_PANEL_WORKFLOW",
+    "reducer_ref": "SOURCE_CRITIQUE",
+    "path_template": "critique/{item_id}",
+    "route_signal": "critique_payload",
+    "lens_cardinality": {
+        "minimum": 0,
+        "maximum_ref": "len(megaplan.policy.critique_lenses)",
+    },
+    "typed_reducer_outcomes": {
+        "critique": RUNTIME_BRANCH_VOCABULARY["critique"],
+        "gate": RUNTIME_BRANCH_VOCABULARY["gate"],
+    },
+}
+CRITIQUE_SELECTION_POLICY = {
+    "skip": {
+        "when": "robustness == bare",
+        "route_signal": "skip_to_finalize",
+    },
+    "static": {
+        "when": "adaptive critique disabled or creative mode enabled",
+        "lens_source": "megaplan.policy.critique_lenses",
+    },
+    "adaptive": {
+        "when": "adaptive critique enabled and creative mode disabled",
+        "phase": "critique_evaluator",
+        "fallback": "static",
+    },
+}
+CRITIQUE_RETRY_POLICY = {
+    "phase": "critique_evaluator",
+    "max_attempts": 2,
+    "on_exhausted": "blocked",
+    "recovery_artifact": "critique_output.json",
+    "promote_to": "critique_v{iteration}.json",
+}
+CRITIQUE_EVIDENCE_CONTRACT = {
+    "skip": {
+        "construct_type": "critique",
+        "selection_mode": "skip",
+        "route_signal": "skip_to_finalize",
+    },
+    "static": {
+        "construct_type": "critique",
+        "selection_mode": "static",
+        "lens_source": "megaplan.policy.critique_lenses",
+    },
+    "adaptive": {
+        "construct_type": "critique",
+        "selection_mode": "adaptive",
+        "phase": "critique_evaluator",
+        "fallback": "static",
+    },
+    "retry_exhausted": {
+        "construct_type": "gate",
+        "phase": "critique_evaluator",
+        "route_signal": "blocked",
+    },
+}
+CRITIQUE_EXTERNAL_CALL_SURFACE = {
+    "runtime_wrapper_ref": "arnold_pipelines.megaplan.orchestration.critique_runtime",
+    "retained_handler_ref": "arnold_pipelines.megaplan.handlers.critique:handle_critique",
+    "worker_phase": "critique",
+    "evaluator_phase": "critique_evaluator",
+}
+GATE_SEVERITY_POLICY = {
+    "blocking_statuses": ("open", "addressed", "disputed"),
+    "significant_severities": ("significant", "likely-significant"),
+    "cosmetic_severities": ("minor", "likely-minor", "trivial", "cosmetic", "low", "nit"),
+    "critical_categories": ("correctness", "security"),
+}
+GATE_NORMALIZATION_POLICY = {
+    "invalid_recommendation": {
+        "owner": "gate",
+        "effect": "normalize_to_inferred_recommendation",
+        "fallback_recommendations": {
+            "blocking_flags_present": "ITERATE",
+            "preflight_failed": "ESCALATE",
+            "clear_to_proceed": "PROCEED",
+        },
+    },
+    "empty_payload": {
+        "owner": "gate",
+        "effect": "normalize_to_inferred_recommendation",
+    },
+}
+GATE_DEBT_VISIBILITY_POLICY = {
+    "owner": "gate",
+    "effect": "publish_debt_payload_on_proceed",
+    "payload_fields": ("recommendation", "entries_added", "accepted_tradeoffs"),
+}
+GATE_REPROMPT_POLICY = {
+    "downgrade_on_unresolved_blockers": {
+        "route_signal": "reprompt_downgrade",
+        "recommendation": "ITERATE",
+        "passed": False,
+        "fallback_kind": "reprompt_downgrade",
+    }
+}
+REVISE_LOOP_TERMINATION_POLICY = {
+    "iteration_caps": {
+        "default_config_key": "max_critique_iterations",
+        "robust_config_key": "max_robust_critique_iterations",
+        "robustness_overrides": {
+            "light": {"max_value": 2},
+        },
+    },
+    "no_progress_cap": {
+        "config_scope": "execution",
+        "config_key": "max_critique_no_progress",
+    },
+    "severity_policy": GATE_SEVERITY_POLICY,
+    "cap_outcomes": {
+        "critical_or_security_blockers": "escalate",
+        "cosmetic_only": "force_proceed",
+        "no_progress_with_blockers": "escalate",
+    },
+    "debt_visibility": GATE_DEBT_VISIBILITY_POLICY,
+}
 
 
 def check_outcome_vocabulary_parity() -> list[str]:
@@ -196,6 +323,29 @@ def _step(
         input_schema=input_schema,
         output_schema=output_schema,
         metadata=component_metadata,
+    )
+
+
+def _compat_step_alias(*, export_name: str, component: StepComponent) -> StepComponent:
+    metadata = {
+        key: value
+        for key, value in component.metadata.items()
+        if key != "route_bindings"
+    }
+    metadata["compatibility_quarantine"] = {
+        "kind": "route_metadata_removed",
+        "source_of_truth": "arnold_pipelines.megaplan.workflows.planning:lowered_workflow_topology",
+    }
+    return StepComponent(
+        id=component.id,
+        provenance=_provenance(export_name),
+        label=component.label,
+        step_type=component.step_type,
+        prompt=component.prompt,
+        policy=component.policy,
+        input_schema=component.input_schema,
+        output_schema=component.output_schema,
+        metadata=metadata,
     )
 
 
@@ -518,14 +668,10 @@ DEFAULT_POLICY = _policy(
             "override",
         ),
         "critique_surface": {
-            "fanout_contract": {
-                "parallel_map_id": "critique-fanout",
-                "fanout_ref": "megaplan.policy.critique_lenses",
-                "step_ref": "SOURCE_CRITIQUE_PANEL_WORKFLOW",
-                "reducer_ref": "SOURCE_CRITIQUE",
-                "path_template": "critique/{item_id}",
-                "route_signal": "critique_payload",
-            },
+            "fanout_contract": CRITIQUE_FANOUT_CONTRACT,
+            "selection_policy": CRITIQUE_SELECTION_POLICY,
+            "retry_policy": CRITIQUE_RETRY_POLICY,
+            "evidence_contract": CRITIQUE_EVIDENCE_CONTRACT,
             "skip_and_retry_policy": {
                 "bare_robustness": {
                     "route_signal": "skip_to_finalize",
@@ -541,12 +687,7 @@ DEFAULT_POLICY = _policy(
                     "promote_to": "critique_v{iteration}.json",
                 },
             },
-            "external_call_wrapping": {
-                "runtime_wrapper_ref": "arnold_pipelines.megaplan.orchestration.critique_runtime",
-                "retained_handler_ref": "arnold_pipelines.megaplan.handlers.critique:handle_critique",
-                "worker_phase": "critique",
-                "evaluator_phase": "critique_evaluator",
-            },
+            "external_call_wrapping": CRITIQUE_EXTERNAL_CALL_SURFACE,
         },
     },
 )
@@ -609,11 +750,15 @@ GATE_POLICY = _policy(
             },
             "fallback_route_signals": {
                 "blocking_flag_reprompt": "retry_gate",
-                "reprompt_downgrade": "iterate",
+                "reprompt_downgrade": "reprompt_downgrade",
                 "preflight_failed": "blocked_preflight",
                 "unknown_recommendation": "escalate",
                 "critique_cap": "force_proceed",
             },
+            "severity_policy": GATE_SEVERITY_POLICY,
+            "normalization_policy": GATE_NORMALIZATION_POLICY,
+            "debt_visibility": GATE_DEBT_VISIBILITY_POLICY,
+            "reprompt_policy": GATE_REPROMPT_POLICY,
             "critique_gate_diagnostics": {
                 "bare_skip": {
                     "owner": "critique-fanout",
@@ -623,22 +768,13 @@ GATE_POLICY = _policy(
                     "owner": "critique-fanout",
                     "effect": "retry_unverifiable_or_unavailable_evaluators",
                 },
-                "malformed_payload": {
-                    "owner": "gate",
-                    "effect": "normalize_to_inferred_recommendation",
-                },
-                "empty_payload": {
-                    "owner": "gate",
-                    "effect": "normalize_to_inferred_recommendation",
-                },
+                "malformed_payload": GATE_NORMALIZATION_POLICY["invalid_recommendation"],
+                "empty_payload": GATE_NORMALIZATION_POLICY["empty_payload"],
                 "worker_unavailable": {
                     "owner": "gate",
                     "effect": "escalate_or_retry_via_preflight_policy",
                 },
-                "debt_recorded": {
-                    "owner": "gate",
-                    "effect": "publish_debt_payload_on_proceed",
-                },
+                "debt_recorded": GATE_DEBT_VISIBILITY_POLICY,
             },
         },
     },
@@ -659,7 +795,55 @@ REVISE_LOOP_POLICY = _policy(
             },
         ),
     },
-    metadata={"canonical_carriers": ("revise",)},
+    metadata={
+        "canonical_carriers": ("revise",),
+        "loop_surface": {
+            "loop_id": "critique-gate-revise",
+            "max_iterations": M4_LOOP_MAX_ITERATIONS,
+            "max_iterations_ref": "M4_LOOP_MAX_ITERATIONS",
+            "reentry": {
+                "route_id": "revise:loop",
+                "reentry_id": "critique",
+                "target_ref": "critique-fanout",
+            },
+            "until_exits": {
+                "proceed": "finalize",
+                "force_proceed": "finalize",
+            },
+            "unless_exits": {
+                "escalate": "override",
+                "abort": "halt",
+                "blocked_preflight": "override",
+                "suspend": "halt",
+            },
+            "revise_reentries": {
+                "iterate": "revise",
+                "retry_gate": "gate_retry_revise",
+                "reprompt_downgrade": "gate_reprompt_revise",
+            },
+            "cap_outcomes": REVISE_LOOP_TERMINATION_POLICY["cap_outcomes"],
+            "termination_policy": REVISE_LOOP_TERMINATION_POLICY,
+            "gate_route_signals": RUNTIME_BRANCH_VOCABULARY["gate"],
+            "suspension": {
+                "route_signal": "suspend",
+                "route_id": "gate:human",
+                "reentry_id": "revise:loop",
+                "resume_target_ref": "gate",
+            },
+            "tiebreaker": {
+                "call_ref": "TIEBREAKER_WORKFLOW",
+                "call_id": "tiebreaker",
+                "inputs": ("gate_payload",),
+                "rejoin": {
+                    "proceed": "finalize",
+                    "iterate": "revise",
+                    "escalate": "override",
+                    "fallback": "override",
+                },
+                "internals": "delegated",
+            },
+        },
+    },
 )
 TIEBREAKER_POLICY = _policy(
     export_name="TIEBREAKER_POLICY",
@@ -1087,6 +1271,13 @@ SUSPENSION_POLICY = _policy(
         "resume_contract_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
         "suspension_routes": (
             {
+                "route_id": "prep:clarify",
+                "capability_id": "human:gate",
+                "reentry_id": "prep:clarify",
+                "resume_schema_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
+                "resume_payload_ref": "prep.clarification",
+            },
+            {
                 "route_id": "gate:human",
                 "capability_id": "human:gate",
                 "resume_schema_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
@@ -1122,6 +1313,13 @@ SUSPENSION_POLICY = _policy(
         ),
         "topology_overlays": (
             {
+                "overlay_id": "suspension:prep-clarify",
+                "overlay_type": "suspension_point",
+                "source_ref": "prep.prep_signal",
+                "target_refs": ("prep:clarify",),
+                "condition_ref": "prep.awaiting_human",
+            },
+            {
                 "overlay_id": "suspension:gate-human",
                 "overlay_type": "suspension_point",
                 "source_ref": "gate.recommendation",
@@ -1146,6 +1344,91 @@ SUSPENSION_POLICY = _policy(
     },
     metadata={"authoring_surface": True},
 )
+PREP_CLARIFY_POLICY = _policy(
+    export_name="PREP_CLARIFY_POLICY",
+    policy_id="megaplan:prep-clarify",
+    policy_type="control-transition",
+    config={
+        "timeout_seconds_ref": "build_pipeline.timeout_seconds",
+        "suspension_routes": (
+            {
+                "route_id": "prep:clarify",
+                "capability_id": "human:gate",
+                "reentry_id": "prep:clarify",
+                "resume_schema_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
+                "resume_payload_ref": "prep.clarification",
+            },
+        ),
+        "control_transitions": (
+            {
+                "transition_id": "prep:continue",
+                "transition_type": "override",
+                "trigger_ref": "prep.prep_outcome",
+                "target_ref": "plan",
+                "policy_ref": "megaplan:prep-clarify",
+            },
+            {
+                "transition_id": "prep:awaiting_human",
+                "transition_type": "suspension",
+                "trigger_ref": "prep.prep_outcome",
+                "target_ref": "prep_suspend",
+                "policy_ref": "megaplan:prep-clarify",
+            },
+        ),
+    },
+    metadata={
+        "canonical_carriers": ("prep",),
+        "route_surface": {
+            "clarify_suspend": {
+                "route_signal": "awaiting_human",
+                "target_ref": "prep_suspend",
+                "resume_strategy": "reenter_prep_with_clarification",
+            },
+            "clarify_resume": {
+                "route_signal": "continue",
+                "target_ref": "plan",
+            },
+        },
+    },
+)
+BLAST_RADIUS_POLICY = _policy(
+    export_name="BLAST_RADIUS_POLICY",
+    policy_id="megaplan:blast-radius",
+    policy_type="authority",
+    config={
+        "timeout_seconds_ref": "build_pipeline.timeout_seconds",
+        "blast_radius": {
+            "strategy_ref": "state.config.test_selection",
+            "default_strategy": "scoped",
+            "compute_ref": "arnold_pipelines.megaplan.orchestration.test_selection:compute_default_blast_radius",
+            "merge_ref": "arnold_pipelines.megaplan.orchestration.test_selection:merge_blast_radius_floor",
+            "sanitize_ref": "arnold_pipelines.megaplan.orchestration.test_selection:sanitize_blast_radius_paths",
+            "changed_surfaces_ref": "plan.changed_surfaces",
+        },
+        "artifact_boundaries": {
+            "plan": {
+                "expected_artifacts": ("plan.md", "plan_meta.json"),
+                "versioned": True,
+                "hash_participant": True,
+            },
+        },
+        "effects": (
+            {"effect_id": "artifact.plan.payload", "payload_ref": "plan.plan_payload"},
+            {"effect_id": "artifact.plan.meta", "payload_ref": "plan.plan_meta"},
+        ),
+    },
+    metadata={
+        "authoring_surface": True,
+        "canonical_carriers": ("plan",),
+        "route_surface": {
+            "plan_artifact_contract": {
+                "expected_artifacts": ("plan.md", "plan_meta.json"),
+                "versioning_scheme": "iteration",
+                "hash_participant": True,
+            },
+        },
+    },
+)
 
 PREP = _step(
     export_name="PREP",
@@ -1154,7 +1437,7 @@ PREP = _step(
     prompt=PREP_PROMPT,
     handler_ref=f"{HANDLER_MODULE}:handle_prep",
     outputs=({"name": "prep_payload"},),
-    policy=DEFAULT_POLICY,
+    policy=PREP_CLARIFY_POLICY,
     route_bindings=({"id": "prep:plan", "label": "default", "target_ref": "plan"},),
     input_schema=PREP_INPUT_SCHEMA,
     output_schema=PREP_OUTPUT_SCHEMA,
@@ -1167,7 +1450,7 @@ PLAN = _step(
     handler_ref=f"{HANDLER_MODULE}:handle_plan",
     inputs=({"name": "prep_payload", "value_ref": "prep.prep_payload"},),
     outputs=({"name": "plan_payload"},),
-    policy=DEFAULT_POLICY,
+    policy=BLAST_RADIUS_POLICY,
     route_bindings=({"id": "plan:critique", "label": "default", "target_ref": "critique"},),
     input_schema=PLAN_INPUT_SCHEMA,
     output_schema=PLAN_OUTPUT_SCHEMA,
@@ -1182,6 +1465,16 @@ CRITIQUE = _step(
     outputs=({"name": "critique_payload"},),
     policy=DEFAULT_POLICY,
     route_bindings=({"id": "critique:gate", "label": "default", "target_ref": "gate"},),
+    metadata={
+        "route_surface": {
+            "fanout_contract": DEFAULT_POLICY.metadata["critique_surface"]["fanout_contract"],
+            "selection_policy": DEFAULT_POLICY.metadata["critique_surface"]["selection_policy"],
+            "retry_policy": DEFAULT_POLICY.metadata["critique_surface"]["retry_policy"],
+            "evidence_contract": DEFAULT_POLICY.metadata["critique_surface"]["evidence_contract"],
+            "skip_and_retry": DEFAULT_POLICY.metadata["critique_surface"]["skip_and_retry_policy"],
+            "external_call_surface": DEFAULT_POLICY.metadata["critique_surface"]["external_call_wrapping"],
+        },
+    },
     input_schema=CRITIQUE_INPUT_SCHEMA,
     output_schema=CRITIQUE_OUTPUT_SCHEMA,
 )
@@ -1206,6 +1499,18 @@ GATE = _step(
         {"id": "gate:override", "label": "escalate", "condition_ref": "escalate", "target_ref": "override"},
         {"id": "gate:halt", "label": "abort", "condition_ref": "abort", "target_ref": "halt"},
         {"id": "gate:suspend", "label": "suspend", "condition_ref": "suspend", "target_ref": "halt"},
+        {
+            "id": "gate:retry_gate",
+            "label": "retry_gate",
+            "condition_ref": "retry_gate",
+            "target_ref": "revise",
+        },
+        {
+            "id": "gate:reprompt_downgrade",
+            "label": "reprompt_downgrade",
+            "condition_ref": "reprompt_downgrade",
+            "target_ref": "revise",
+        },
         {
             "id": "gate:blocked",
             "label": "blocked_preflight",
@@ -1398,47 +1703,14 @@ SUSPEND = _step(
     output_schema=SUSPEND_OUTPUT_SCHEMA,
 )
 
-SOURCE_PREP = _step(
-    export_name="SOURCE_PREP",
-    step_id="prep",
-    kind="megaplan:prep",
-    handler_ref=f"{HANDLER_MODULE}:handle_prep",
-    outputs=({"name": "prep_payload"},),
-)
-SOURCE_PLAN = _step(
-    export_name="SOURCE_PLAN",
-    step_id="plan",
-    kind="megaplan:plan",
-    handler_ref=f"{HANDLER_MODULE}:handle_plan",
-    inputs=({"name": "prep_payload", "value_ref": "prep.prep_payload"},),
-    outputs=({"name": "plan_payload"},),
-)
-SOURCE_CRITIQUE = _step(
-    export_name="SOURCE_CRITIQUE",
-    step_id="critique",
-    kind="megaplan:critique",
-    handler_ref=f"{HANDLER_MODULE}:handle_critique",
-    inputs=({"name": "plan_payload", "value_ref": "plan.plan_payload"},),
-    outputs=({"name": "critique_payload"},),
-)
-SOURCE_GATE = _step(
-    export_name="SOURCE_GATE",
-    step_id="gate",
-    kind="megaplan:gate",
-    handler_ref=f"{HANDLER_MODULE}:handle_gate",
-    inputs=({"name": "critique_payload", "value_ref": "critique.critique_payload"},),
-    outputs=({"name": "gate_payload"},),
-    capability_ids=("human:gate",),
-)
-SOURCE_REVISE = _step(
-    export_name="SOURCE_REVISE",
-    step_id="revise",
-    kind="megaplan:revise",
-    handler_ref=f"{HANDLER_MODULE}:handle_revise",
-    inputs=({"name": "gate_payload", "value_ref": "gate.gate_payload"},),
-    outputs=({"name": "revise_payload"},),
-    capability_ids=("megaplan:planning",),
-)
+# Front-half compatibility names remain importable for source/tests, but they
+# intentionally drop route metadata so lowered source topology remains the
+# routing authority.
+SOURCE_PREP = _compat_step_alias(export_name="SOURCE_PREP", component=PREP)
+SOURCE_PLAN = _compat_step_alias(export_name="SOURCE_PLAN", component=PLAN)
+SOURCE_CRITIQUE = _compat_step_alias(export_name="SOURCE_CRITIQUE", component=CRITIQUE)
+SOURCE_GATE = _compat_step_alias(export_name="SOURCE_GATE", component=GATE)
+SOURCE_REVISE = _compat_step_alias(export_name="SOURCE_REVISE", component=REVISE)
 SOURCE_TIEBREAKER_RUN = _step(
     export_name="SOURCE_TIEBREAKER_RUN",
     step_id="tiebreaker_run",
@@ -1508,22 +1780,22 @@ SOURCE_CRITIQUE_PANEL_WORKFLOW = _workflow(
         "mapper_step_ref": "arnold_pipelines.megaplan.handlers:handle_critique",
         "topology_contract": {
             "kind": "critique_fanout",
-            "fanout_ref": "megaplan.policy.critique_lenses",
-            "parallel_map_id": "critique-fanout",
-            "path_template": "critique/{item_id}",
-            "route_signal": "critique_payload",
+            "fanout_ref": CRITIQUE_FANOUT_CONTRACT["fanout_ref"],
+            "parallel_map_id": CRITIQUE_FANOUT_CONTRACT["parallel_map_id"],
+            "path_template": CRITIQUE_FANOUT_CONTRACT["path_template"],
+            "route_signal": CRITIQUE_FANOUT_CONTRACT["route_signal"],
+            "lens_cardinality": CRITIQUE_FANOUT_CONTRACT["lens_cardinality"],
+            "typed_reducer_outcomes": CRITIQUE_FANOUT_CONTRACT["typed_reducer_outcomes"],
+            "selection_policy": CRITIQUE_SELECTION_POLICY,
+            "retry_policy": CRITIQUE_RETRY_POLICY,
+            "evidence_contract": CRITIQUE_EVIDENCE_CONTRACT,
             "skip_and_retry_policy": {
                 "bare_robustness": "skip_to_finalize",
                 "evaluator_retry_attempts": 2,
                 "on_exhausted": "blocked",
                 "payload_recovery_ref": "critique_output.json",
             },
-            "external_call_wrapping": {
-                "runtime_wrapper_ref": "arnold_pipelines.megaplan.orchestration.critique_runtime",
-                "retained_handler_ref": "arnold_pipelines.megaplan.handlers.critique:handle_critique",
-                "worker_phase": "critique",
-                "evaluator_phase": "critique_evaluator",
-            },
+            "external_call_wrapping": CRITIQUE_EXTERNAL_CALL_SURFACE,
         },
     },
 )
@@ -1662,47 +1934,11 @@ SOURCE_REVIEW_PANEL_WORKFLOW = _workflow(
     },
 )
 
-AUTHORING_PREP = _step(
-    export_name="AUTHORING_PREP",
-    step_id="prep",
-    kind="megaplan:prep",
-    handler_ref=f"{HANDLER_MODULE}:handle_prep",
-    outputs=({"name": "prep_payload"},),
-)
-AUTHORING_PLAN = _step(
-    export_name="AUTHORING_PLAN",
-    step_id="plan",
-    kind="megaplan:plan",
-    handler_ref=f"{HANDLER_MODULE}:handle_plan",
-    inputs=({"name": "prep_payload", "value_ref": "prep.prep_payload"},),
-    outputs=({"name": "plan_payload"},),
-)
-AUTHORING_CRITIQUE = _step(
-    export_name="AUTHORING_CRITIQUE",
-    step_id="critique",
-    kind="megaplan:critique",
-    handler_ref=f"{HANDLER_MODULE}:handle_critique",
-    inputs=({"name": "plan_payload", "value_ref": "plan.plan_payload"},),
-    outputs=({"name": "critique_payload"},),
-)
-AUTHORING_GATE = _step(
-    export_name="AUTHORING_GATE",
-    step_id="gate",
-    kind="megaplan:gate",
-    handler_ref=f"{HANDLER_MODULE}:handle_gate",
-    inputs=({"name": "critique_payload", "value_ref": "critique.critique_payload"},),
-    outputs=({"name": "gate_payload"},),
-    capability_ids=("human:gate",),
-)
-AUTHORING_REVISE = _step(
-    export_name="AUTHORING_REVISE",
-    step_id="revise",
-    kind="megaplan:revise",
-    handler_ref=f"{HANDLER_MODULE}:handle_revise",
-    inputs=({"name": "gate_payload", "value_ref": "gate.gate_payload"},),
-    outputs=({"name": "revise_payload"},),
-    capability_ids=("megaplan:planning",),
-)
+AUTHORING_PREP = _compat_step_alias(export_name="AUTHORING_PREP", component=PREP)
+AUTHORING_PLAN = _compat_step_alias(export_name="AUTHORING_PLAN", component=PLAN)
+AUTHORING_CRITIQUE = _compat_step_alias(export_name="AUTHORING_CRITIQUE", component=CRITIQUE)
+AUTHORING_GATE = _compat_step_alias(export_name="AUTHORING_GATE", component=GATE)
+AUTHORING_REVISE = _compat_step_alias(export_name="AUTHORING_REVISE", component=REVISE)
 AUTHORING_FINALIZE = _step(
     export_name="AUTHORING_FINALIZE",
     step_id="finalize",
@@ -1816,6 +2052,8 @@ POLICY_COMPONENTS = (
     ROBUSTNESS_POLICY,
     ARTIFACT_CONTRACT_POLICY,
     SUSPENSION_POLICY,
+    PREP_CLARIFY_POLICY,
+    BLAST_RADIUS_POLICY,
 )
 WORKFLOW_COMPONENTS = (
     SOURCE_CRITIQUE_PANEL_WORKFLOW,
@@ -1901,6 +2139,7 @@ __all__ = [
     "HALT",
     "HALT_OUTPUT_SCHEMA",
     "ARTIFACT_CONTRACT_POLICY",
+    "BLAST_RADIUS_POLICY",
     "LEGACY_ALIASES",
     "M4_LOOP_MAX_ITERATIONS",
     "MODEL_ROUTING_POLICY",
@@ -1914,6 +2153,7 @@ __all__ = [
     "PLAN_PROMPT",
     "POLICY_COMPONENTS",
     "PREP",
+    "PREP_CLARIFY_POLICY",
     "PREP_INPUT_SCHEMA",
     "PREP_OUTPUT_SCHEMA",
     "PREP_PROMPT",

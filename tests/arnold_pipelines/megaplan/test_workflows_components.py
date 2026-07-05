@@ -47,6 +47,25 @@ class TestWorkflowComponents:
         assert workflows.STEP_COMPONENTS_BY_ID["gate"].label == "Megaplan gate"
         assert workflows.STEP_COMPONENTS_BY_ID["halt"].metadata["terminal"] is True
 
+    def test_front_half_compatibility_exports_are_quarantined(self) -> None:
+        for name, canonical in (
+            ("SOURCE_PREP", workflows.PREP),
+            ("SOURCE_PLAN", workflows.PLAN),
+            ("SOURCE_CRITIQUE", workflows.CRITIQUE),
+            ("SOURCE_GATE", workflows.GATE),
+            ("SOURCE_REVISE", workflows.REVISE),
+            ("AUTHORING_PREP", workflows.PREP),
+            ("AUTHORING_PLAN", workflows.PLAN),
+            ("AUTHORING_CRITIQUE", workflows.CRITIQUE),
+            ("AUTHORING_GATE", workflows.GATE),
+            ("AUTHORING_REVISE", workflows.REVISE),
+        ):
+            compatibility = getattr(workflows.components, name)
+            assert compatibility.id == canonical.id
+            assert compatibility is not canonical
+            assert compatibility.metadata.get("route_bindings", ()) == ()
+            assert compatibility.metadata["compatibility_quarantine"]["kind"] == "route_metadata_removed"
+
     def test_handler_refs_point_to_megaplan_handlers(self) -> None:
         for component in workflows.ALL_STEP_COMPONENTS:
             handler_ref = component.metadata.get("handler_ref")
@@ -87,8 +106,15 @@ class TestWorkflowComponents:
                 binding["condition_ref"] = route.condition_ref
             routes_by_source.setdefault(route.source, []).append(binding)
 
+        front_half_sources = {
+            route.source for route in pipeline.routes if route.source in planning.FRONT_HALF_ROUTING_STEP_IDS
+        }
+        assert front_half_sources == planning.FRONT_HALF_ROUTING_STEP_IDS
+
         for component in workflows.ALL_STEP_COMPONENTS:
             step_id = component.id.removeprefix("megaplan:")
+            if step_id in planning.FRONT_HALF_ROUTING_STEP_IDS:
+                continue
             assert tuple(dict(binding) for binding in component.metadata["route_bindings"]) == tuple(
                 routes_by_source.get(step_id, ())
             )
@@ -134,6 +160,8 @@ class TestWorkflowComponents:
             "megaplan:robustness",
             "megaplan:artifact-contract",
             "megaplan:suspension",
+            "megaplan:prep-clarify",
+            "megaplan:blast-radius",
         }
 
         for component in workflows.ALL_STEP_COMPONENTS:
@@ -189,6 +217,19 @@ class TestWorkflowComponents:
                 assert all(explicit.escalation is not None for explicit in explicit_policies)
 
     def test_runtime_branch_vocabulary_is_declared(self) -> None:
+        prep = workflows.STEP_COMPONENTS_BY_ID["prep"]
+        assert prep.metadata["runtime_branch_vocabulary"] == (
+            "continue",
+            "awaiting_human",
+        )
+        critique = workflows.STEP_COMPONENTS_BY_ID["critique"]
+        assert critique.metadata["runtime_branch_vocabulary"] == (
+            "completed",
+        )
+        revise = workflows.STEP_COMPONENTS_BY_ID["revise"]
+        assert revise.metadata["runtime_branch_vocabulary"] == (
+            "completed",
+        )
         gate = workflows.STEP_COMPONENTS_BY_ID["gate"]
         assert gate.metadata["runtime_branch_vocabulary"] == (
             "proceed",
@@ -199,6 +240,8 @@ class TestWorkflowComponents:
             "suspend",
             "blocked_preflight",
             "force_proceed",
+            "retry_gate",
+            "reprompt_downgrade",
         )
         assert workflows.STEP_COMPONENTS_BY_ID["review"].metadata["runtime_branch_vocabulary"] == (
             "pass",
@@ -206,6 +249,35 @@ class TestWorkflowComponents:
             "blocked",
             "force_proceeded",
             "deferred_human",
+        )
+
+    def test_outcome_vocabulary_parity(self) -> None:
+        """Every outcome enum value must match its RUNTIME_BRANCH_VOCABULARY entry."""
+        from arnold_pipelines.megaplan.outcomes import (
+            OUTCOME_CLASS_BY_VOCABULARY_KEY,
+        )
+        from arnold_pipelines.megaplan.workflows.components import (
+            RUNTIME_BRANCH_VOCABULARY,
+        )
+
+        for key, enum_cls in OUTCOME_CLASS_BY_VOCABULARY_KEY.items():
+            expected = tuple(enum_cls.__members__.values())
+            actual = RUNTIME_BRANCH_VOCABULARY.get(key)
+            assert actual is not None, (
+                f"Outcome key '{key}' has enum {enum_cls.__name__} "
+                f"but is missing from RUNTIME_BRANCH_VOCABULARY"
+            )
+            assert expected == actual, (
+                f"Vocabulary mismatch for '{key}': "
+                f"enum values {expected!r} != RUNTIME_BRANCH_VOCABULARY {actual!r}"
+            )
+
+        # Every RUNTIME_BRANCH_VOCABULARY key must have an outcome enum
+        covered = set(OUTCOME_CLASS_BY_VOCABULARY_KEY)
+        actual_keys = set(RUNTIME_BRANCH_VOCABULARY)
+        uncovered = actual_keys - covered
+        assert not uncovered, (
+            f"RUNTIME_BRANCH_VOCABULARY keys without outcome enum: {sorted(uncovered)}"
         )
 
     def test_gate_policy_metadata_exposes_handler_free_route_surface(self) -> None:
@@ -219,10 +291,44 @@ class TestWorkflowComponents:
         }
         assert route_surface["fallback_route_signals"] == {
             "blocking_flag_reprompt": "retry_gate",
-            "reprompt_downgrade": "iterate",
+            "reprompt_downgrade": "reprompt_downgrade",
             "preflight_failed": "blocked_preflight",
             "unknown_recommendation": "escalate",
             "critique_cap": "force_proceed",
+        }
+        assert route_surface["severity_policy"] == {
+            "blocking_statuses": ("open", "addressed", "disputed"),
+            "significant_severities": ("significant", "likely-significant"),
+            "cosmetic_severities": ("minor", "likely-minor", "trivial", "cosmetic", "low", "nit"),
+            "critical_categories": ("correctness", "security"),
+        }
+        assert route_surface["normalization_policy"] == {
+            "invalid_recommendation": {
+                "owner": "gate",
+                "effect": "normalize_to_inferred_recommendation",
+                "fallback_recommendations": {
+                    "blocking_flags_present": "ITERATE",
+                    "preflight_failed": "ESCALATE",
+                    "clear_to_proceed": "PROCEED",
+                },
+            },
+            "empty_payload": {
+                "owner": "gate",
+                "effect": "normalize_to_inferred_recommendation",
+            },
+        }
+        assert route_surface["debt_visibility"] == {
+            "owner": "gate",
+            "effect": "publish_debt_payload_on_proceed",
+            "payload_fields": ("recommendation", "entries_added", "accepted_tradeoffs"),
+        }
+        assert route_surface["reprompt_policy"] == {
+            "downgrade_on_unresolved_blockers": {
+                "route_signal": "reprompt_downgrade",
+                "recommendation": "ITERATE",
+                "passed": False,
+                "fallback_kind": "reprompt_downgrade",
+            }
         }
         assert route_surface["critique_gate_diagnostics"] == {
             "bare_skip": {
@@ -236,6 +342,11 @@ class TestWorkflowComponents:
             "malformed_payload": {
                 "owner": "gate",
                 "effect": "normalize_to_inferred_recommendation",
+                "fallback_recommendations": {
+                    "blocking_flags_present": "ITERATE",
+                    "preflight_failed": "ESCALATE",
+                    "clear_to_proceed": "PROCEED",
+                },
             },
             "empty_payload": {
                 "owner": "gate",
@@ -248,7 +359,88 @@ class TestWorkflowComponents:
             "debt_recorded": {
                 "owner": "gate",
                 "effect": "publish_debt_payload_on_proceed",
+                "payload_fields": ("recommendation", "entries_added", "accepted_tradeoffs"),
             },
+        }
+
+    def test_revise_loop_policy_exposes_bounded_gate_revise_surface(self) -> None:
+        loop_surface = workflows.REVISE_LOOP_POLICY.metadata["loop_surface"]
+
+        assert loop_surface["loop_id"] == "critique-gate-revise"
+        assert loop_surface["max_iterations"] == workflows.M4_LOOP_MAX_ITERATIONS
+        assert loop_surface["max_iterations_ref"] == "M4_LOOP_MAX_ITERATIONS"
+        assert loop_surface["reentry"] == {
+            "route_id": "revise:loop",
+            "reentry_id": "critique",
+            "target_ref": "critique-fanout",
+        }
+        assert loop_surface["until_exits"] == {
+            "proceed": "finalize",
+            "force_proceed": "finalize",
+        }
+        assert loop_surface["unless_exits"] == {
+            "escalate": "override",
+            "abort": "halt",
+            "blocked_preflight": "override",
+            "suspend": "halt",
+        }
+        assert loop_surface["revise_reentries"] == {
+            "iterate": "revise",
+            "retry_gate": "gate_retry_revise",
+            "reprompt_downgrade": "gate_reprompt_revise",
+        }
+        assert loop_surface["cap_outcomes"] == {
+            "critical_or_security_blockers": "escalate",
+            "cosmetic_only": "force_proceed",
+            "no_progress_with_blockers": "escalate",
+        }
+        assert loop_surface["termination_policy"] == {
+            "iteration_caps": {
+                "default_config_key": "max_critique_iterations",
+                "robust_config_key": "max_robust_critique_iterations",
+                "robustness_overrides": {
+                    "light": {"max_value": 2},
+                },
+            },
+            "no_progress_cap": {
+                "config_scope": "execution",
+                "config_key": "max_critique_no_progress",
+            },
+            "severity_policy": {
+                "blocking_statuses": ("open", "addressed", "disputed"),
+                "significant_severities": ("significant", "likely-significant"),
+                "cosmetic_severities": ("minor", "likely-minor", "trivial", "cosmetic", "low", "nit"),
+                "critical_categories": ("correctness", "security"),
+            },
+            "cap_outcomes": {
+                "critical_or_security_blockers": "escalate",
+                "cosmetic_only": "force_proceed",
+                "no_progress_with_blockers": "escalate",
+            },
+            "debt_visibility": {
+                "owner": "gate",
+                "effect": "publish_debt_payload_on_proceed",
+                "payload_fields": ("recommendation", "entries_added", "accepted_tradeoffs"),
+            },
+        }
+        assert loop_surface["gate_route_signals"] == workflows.RUNTIME_BRANCH_VOCABULARY["gate"]
+        assert loop_surface["suspension"] == {
+            "route_signal": "suspend",
+            "route_id": "gate:human",
+            "reentry_id": "revise:loop",
+            "resume_target_ref": "gate",
+        }
+        assert loop_surface["tiebreaker"] == {
+            "call_ref": "TIEBREAKER_WORKFLOW",
+            "call_id": "tiebreaker",
+            "inputs": ("gate_payload",),
+            "rejoin": {
+                "proceed": "finalize",
+                "iterate": "revise",
+                "escalate": "override",
+                "fallback": "override",
+            },
+            "internals": "delegated",
         }
 
     def test_default_policy_metadata_exposes_critique_fanout_and_external_call_surface(self) -> None:
@@ -260,6 +452,70 @@ class TestWorkflowComponents:
             "reducer_ref": "SOURCE_CRITIQUE",
             "path_template": "critique/{item_id}",
             "route_signal": "critique_payload",
+            "lens_cardinality": {
+                "minimum": 0,
+                "maximum_ref": "len(megaplan.policy.critique_lenses)",
+            },
+            "typed_reducer_outcomes": {
+                "critique": ("completed",),
+                "gate": (
+                    "proceed",
+                    "iterate",
+                    "tiebreaker",
+                    "escalate",
+                    "abort",
+                    "suspend",
+                    "blocked_preflight",
+                    "force_proceed",
+                    "retry_gate",
+                    "reprompt_downgrade",
+                ),
+            },
+        }
+        assert critique_surface["selection_policy"] == {
+            "skip": {
+                "when": "robustness == bare",
+                "route_signal": "skip_to_finalize",
+            },
+            "static": {
+                "when": "adaptive critique disabled or creative mode enabled",
+                "lens_source": "megaplan.policy.critique_lenses",
+            },
+            "adaptive": {
+                "when": "adaptive critique enabled and creative mode disabled",
+                "phase": "critique_evaluator",
+                "fallback": "static",
+            },
+        }
+        assert critique_surface["retry_policy"] == {
+            "phase": "critique_evaluator",
+            "max_attempts": 2,
+            "on_exhausted": "blocked",
+            "recovery_artifact": "critique_output.json",
+            "promote_to": "critique_v{iteration}.json",
+        }
+        assert critique_surface["evidence_contract"] == {
+            "skip": {
+                "construct_type": "critique",
+                "selection_mode": "skip",
+                "route_signal": "skip_to_finalize",
+            },
+            "static": {
+                "construct_type": "critique",
+                "selection_mode": "static",
+                "lens_source": "megaplan.policy.critique_lenses",
+            },
+            "adaptive": {
+                "construct_type": "critique",
+                "selection_mode": "adaptive",
+                "phase": "critique_evaluator",
+                "fallback": "static",
+            },
+            "retry_exhausted": {
+                "construct_type": "gate",
+                "phase": "critique_evaluator",
+                "route_signal": "blocked",
+            },
         }
         assert critique_surface["skip_and_retry_policy"] == {
             "bare_robustness": {
@@ -291,6 +547,70 @@ class TestWorkflowComponents:
             "parallel_map_id": "critique-fanout",
             "path_template": "critique/{item_id}",
             "route_signal": "critique_payload",
+            "lens_cardinality": {
+                "minimum": 0,
+                "maximum_ref": "len(megaplan.policy.critique_lenses)",
+            },
+            "typed_reducer_outcomes": {
+                "critique": ("completed",),
+                "gate": (
+                    "proceed",
+                    "iterate",
+                    "tiebreaker",
+                    "escalate",
+                    "abort",
+                    "suspend",
+                    "blocked_preflight",
+                    "force_proceed",
+                    "retry_gate",
+                    "reprompt_downgrade",
+                ),
+            },
+            "selection_policy": {
+                "skip": {
+                    "when": "robustness == bare",
+                    "route_signal": "skip_to_finalize",
+                },
+                "static": {
+                    "when": "adaptive critique disabled or creative mode enabled",
+                    "lens_source": "megaplan.policy.critique_lenses",
+                },
+                "adaptive": {
+                    "when": "adaptive critique enabled and creative mode disabled",
+                    "phase": "critique_evaluator",
+                    "fallback": "static",
+                },
+            },
+            "retry_policy": {
+                "phase": "critique_evaluator",
+                "max_attempts": 2,
+                "on_exhausted": "blocked",
+                "recovery_artifact": "critique_output.json",
+                "promote_to": "critique_v{iteration}.json",
+            },
+            "evidence_contract": {
+                "skip": {
+                    "construct_type": "critique",
+                    "selection_mode": "skip",
+                    "route_signal": "skip_to_finalize",
+                },
+                "static": {
+                    "construct_type": "critique",
+                    "selection_mode": "static",
+                    "lens_source": "megaplan.policy.critique_lenses",
+                },
+                "adaptive": {
+                    "construct_type": "critique",
+                    "selection_mode": "adaptive",
+                    "phase": "critique_evaluator",
+                    "fallback": "static",
+                },
+                "retry_exhausted": {
+                    "construct_type": "gate",
+                    "phase": "critique_evaluator",
+                    "route_signal": "blocked",
+                },
+            },
             "skip_and_retry_policy": {
                 "bare_robustness": "skip_to_finalize",
                 "evaluator_retry_attempts": 2,
