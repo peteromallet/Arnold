@@ -280,6 +280,101 @@ class TestGateOutcomeSemantics:
         assert outcome["route_signal"] == "retry_gate"
         assert outcome["blocking_unresolved_ids"]
 
+    def test_build_reprompt_downgrade_route_emits_split_outcome(self) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _build_reprompt_downgrade_route
+
+        gate_summary = {
+            "recommendation": "PROCEED",
+            "passed": True,
+            "rationale": "Looks good",
+            "orchestrator_guidance": "",
+        }
+
+        route_signal, summary = _build_reprompt_downgrade_route(gate_summary, ["FLAG-001"])
+
+        assert route_signal["route_signal"] == "reprompt_downgrade"
+        assert route_signal["fallback_payload"] == {
+            "kind": "reprompt_downgrade",
+            "blocking_unresolved_ids": ["FLAG-001"],
+        }
+        assert gate_summary["recommendation"] == "ITERATE"
+        assert gate_summary["passed"] is False
+        assert "Auto-downgraded from PROCEED" in summary
+
+    def test_critique_terminate_branch_blocks_on_critical_cap(self) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _critique_terminate_branch
+        from arnold_pipelines.megaplan.planning.state import STATE_BLOCKED
+
+        state: dict[str, Any] = {"current_state": "critiqued"}
+        gate_summary = {
+            "unresolved_flags": [
+                {"id": "FLAG-001", "status": "open", "severity": "moderate", "category": "correctness"}
+            ]
+        }
+
+        outcome = _critique_terminate_branch(state, gate_summary, "Max critique iterations (4) reached")
+
+        assert outcome["route_signal"] == "escalate"
+        assert outcome["fallback_payload"] == {
+            "kind": "critique_cap",
+            "reason": "correctness_or_security_flags",
+        }
+        assert state["current_state"] == STATE_BLOCKED
+
+    def test_critique_terminate_branch_force_proceeds_for_cosmetic_only_flags(self) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _critique_terminate_branch
+        from arnold_pipelines.megaplan.planning.state import STATE_GATED
+
+        state: dict[str, Any] = {"current_state": "critiqued"}
+        gate_summary = {
+            "unresolved_flags": [
+                {"id": "FLAG-002", "status": "open", "severity": "minor", "category": "maintainability"}
+            ]
+        }
+
+        outcome = _critique_terminate_branch(state, gate_summary, "Max critique iterations (4) reached")
+
+        assert outcome["route_signal"] == "force_proceed"
+        assert outcome["fallback_payload"] == {
+            "kind": "critique_cap",
+            "reason": "cosmetic_flags_only",
+        }
+        assert state["current_state"] == STATE_GATED
+
+    def test_normalize_gate_payload_uses_declared_fallback_recommendations(self) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _normalize_gate_payload
+
+        normalized = _normalize_gate_payload(
+            {"recommendation": "", "rationale": "", "signals_assessment": ""},
+            {
+                "preflight_results": {"pytest": True},
+                "unresolved_flags": [{"id": "FLAG-003", "severity": "significant"}],
+            },
+        )
+
+        assert normalized["recommendation"] == "ITERATE"
+        assert normalized["warnings"] == []
+        assert normalized["accepted_tradeoffs"] == []
+
+    def test_gate_debt_payload_exposes_visibility_effect(self) -> None:
+        from arnold_pipelines.megaplan.handlers.gate import _gate_debt_payload
+
+        payload = _gate_debt_payload(
+            {
+                "recommendation": "PROCEED",
+                "flag_resolutions": [{"action": "accept_tradeoff"}, {"action": "verify_fixed"}],
+            },
+            2,
+        )
+
+        assert payload == {
+            "recommendation": "PROCEED",
+            "entries_added": 2,
+            "accepted_tradeoffs": 1,
+            "visibility_effect": "publish_debt_payload_on_proceed",
+            "payload_fields": ("recommendation", "entries_added", "accepted_tradeoffs"),
+        }
+
 
 class TestTiebreakerOutcomeSemantics:
     def test_pick_promotes_proceed_signal(self) -> None:
@@ -460,6 +555,56 @@ class TestOverrideOutcomeSemantics:
         response = _normalize_override_response("set-profile", {"success": True, "step": "override"})
         assert response["override_action"] == "set-profile"
         assert response["route_signal"] == "set_profile"
+
+
+class TestPrepOutcomeSemantics:
+    def test_prep_outcome_continue_maps_to_enum_value(self) -> None:
+        from arnold_pipelines.megaplan.outcomes import PrepOutcome
+
+        assert PrepOutcome.CONTINUE == "continue"
+        assert PrepOutcome("continue") == PrepOutcome.CONTINUE
+
+    def test_prep_outcome_awaiting_human_maps_to_enum_value(self) -> None:
+        from arnold_pipelines.megaplan.outcomes import PrepOutcome
+
+        assert PrepOutcome.AWAITING_HUMAN == "awaiting_human"
+        assert PrepOutcome("awaiting_human") == PrepOutcome.AWAITING_HUMAN
+
+
+class TestCritiqueOutcomeSemantics:
+    def test_critique_outcome_completed_maps_to_enum_value(self) -> None:
+        from arnold_pipelines.megaplan.outcomes import CritiqueOutcome
+
+        assert CritiqueOutcome.COMPLETED == "completed"
+        assert CritiqueOutcome("completed") == CritiqueOutcome.COMPLETED
+
+
+class TestReviseOutcomeSemantics:
+    def test_revise_outcome_completed_maps_to_enum_value(self) -> None:
+        from arnold_pipelines.megaplan.outcomes import ReviseOutcome
+
+        assert ReviseOutcome.COMPLETED == "completed"
+        assert ReviseOutcome("completed") == ReviseOutcome.COMPLETED
+
+
+class TestGateOutcomeRetryAndDowngradeSemantics:
+    def test_retry_gate_maps_to_enum_value(self) -> None:
+        from arnold_pipelines.megaplan.outcomes import GateOutcome
+
+        assert GateOutcome.RETRY_GATE == "retry_gate"
+        assert GateOutcome("retry_gate") == GateOutcome.RETRY_GATE
+
+    def test_reprompt_downgrade_maps_to_enum_value(self) -> None:
+        from arnold_pipelines.megaplan.outcomes import GateOutcome
+
+        assert GateOutcome.REPROMPT_DOWNGRADE == "reprompt_downgrade"
+        assert GateOutcome("reprompt_downgrade") == GateOutcome.REPROMPT_DOWNGRADE
+
+    def test_all_gate_outcome_values_are_unique(self) -> None:
+        from arnold_pipelines.megaplan.outcomes import GateOutcome
+
+        values = [m.value for m in GateOutcome]
+        assert len(values) == len(set(values)), f"Duplicate gate outcome values: {values}"
 
 
 class TestFinalizeSemanticChecks:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from difflib import SequenceMatcher
 from pathlib import Path
+from types import MappingProxyType
 
 from arnold_pipelines.megaplan.schemas import GateSignals
 from arnold_pipelines.megaplan.types import FLAG_BLOCKING_STATUSES, FlagRecord, PlanState
@@ -22,6 +23,30 @@ from arnold_pipelines.megaplan._core import (
     unresolved_significant_flags,
 )
 
+GATE_SIGNAL_WEIGHT_POLICY = MappingProxyType(
+    {
+        "security_weight": 3.0,
+        "implementation_detail_signals": (
+            "column",
+            "schema",
+            "field",
+            "as written",
+            "pseudocode",
+            "seed sql",
+            "placeholder",
+        ),
+        "implementation_detail_weight": 0.5,
+        "category_weights": {
+            "correctness": 2.0,
+            "completeness": 1.5,
+            "performance": 1.0,
+            "maintainability": 0.75,
+            "other": 1.0,
+        },
+        "default_weight": 1.0,
+    }
+)
+
 
 def flag_weight(flag: FlagRecord) -> float:
     """Weight a flag for gate context. Higher = more blocking."""
@@ -29,28 +54,14 @@ def flag_weight(flag: FlagRecord) -> float:
     concern = flag.get("concern", "").lower()
 
     if category == "security":
-        return 3.0
+        return float(GATE_SIGNAL_WEIGHT_POLICY["security_weight"])
 
-    implementation_detail_signals = [
-        "column",
-        "schema",
-        "field",
-        "as written",
-        "pseudocode",
-        "seed sql",
-        "placeholder",
-    ]
+    implementation_detail_signals = GATE_SIGNAL_WEIGHT_POLICY["implementation_detail_signals"]
     if any(signal in concern for signal in implementation_detail_signals):
-        return 0.5
+        return float(GATE_SIGNAL_WEIGHT_POLICY["implementation_detail_weight"])
 
-    weights = {
-        "correctness": 2.0,
-        "completeness": 1.5,
-        "performance": 1.0,
-        "maintainability": 0.75,
-        "other": 1.0,
-    }
-    return weights.get(category, 1.0)
+    weights = GATE_SIGNAL_WEIGHT_POLICY["category_weights"]
+    return float(weights.get(category, GATE_SIGNAL_WEIGHT_POLICY["default_weight"]))
 
 
 def compute_plan_delta_percent(previous_text: str | None, current_text: str) -> float | None:

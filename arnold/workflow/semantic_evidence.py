@@ -26,6 +26,24 @@ class ConstructType(StrEnum):
     WORKFLOW_SOURCE = "workflow_source"
     CONFORMANCE_ROW = "conformance_row"
     COMPATIBILITY_ADAPTER = "compatibility_adapter"
+    # ── S2 front-half construct types ─────────────────────────────────────
+    PREP = "prep"
+    PLAN = "plan"
+    CRITIQUE = "critique"
+    GATE = "gate"
+    REVISE = "revise"
+
+
+# ── S2 front-half stable row ID namespace ──────────────────────────────────
+# Row IDs are intentionally versioned under 's2.' to allow S3+ to introduce a
+# new namespace without collision.  The plan defers mapping these IDs to a
+# traceability artifact; S2 introduces the namespace and uses it in tests.
+
+S2_PREP_ROW_ID = "s2.prep.1"
+S2_PLAN_ROW_ID = "s2.plan.1"
+S2_CRITIQUE_ROW_ID = "s2.critique.1"
+S2_GATE_ROW_ID = "s2.gate.1"
+S2_REVISE_ROW_ID = "s2.revise.1"
 
 
 class CompatibilityQuarantineCategory(StrEnum):
@@ -203,6 +221,11 @@ __all__ = [
     "CompatibilityQuarantineCategory",
     "CompatibilityQuarantineEntry",
     "ConstructType",
+    "S2_CRITIQUE_ROW_ID",
+    "S2_GATE_ROW_ID",
+    "S2_PLAN_ROW_ID",
+    "S2_PREP_ROW_ID",
+    "S2_REVISE_ROW_ID",
     "SemanticEvidence",
     "SemanticFailure",
 ]

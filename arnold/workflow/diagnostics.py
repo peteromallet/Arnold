@@ -343,7 +343,7 @@ DIAGNOSTIC_CODE_SPECS = (
         message_template="loop control cannot be statically bounded",
         remediation=(
             "write loop(policy=<imported loop PolicyComponent>, reentry_id=<literal>) "
-            "immediately before while True"
+            "immediately before a bounded for loop or while True"
         ),
     ),
     DiagnosticCodeSpec(
