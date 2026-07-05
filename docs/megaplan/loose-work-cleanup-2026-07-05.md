@@ -9,6 +9,8 @@
 - Useful survivor from `integrate-cloud-hardening-20260703` was salvaged as `a13b9abc`; stale implementation hunks were superseded by newer cloud status/repair contracts.
 - Merge contract fixes were committed as `e948d38d`; focused verification passed: `520 passed`.
 - Local `editible-install` now points at the same commit as local `main` after this pass.
+- Final cloud `editible-install` check found the `.pypeline` source-compiler/CLI support dirty in `/workspace/arnold`; those blobs were already present on local `main`. The cloud checkout was backed up, then reset to pushed `origin/editible-install`.
+- GitHub `main` and `editible-install` were pushed to the consolidated commit.
 
 ## Delete-Ready After Approval
 
@@ -39,21 +41,27 @@ The parked refs below were rechecked after consolidation with direct `git diff m
 These are not worth merging but are not deleted in this pass:
 
 - Archive refs above if you want to retain their historical chain/runtime evidence.
-- Local untracked caches and scratch files listed below.
+- Remote archive/preserve refs that are historical evidence rather than source work.
 
 ## Worktrees / Cloud
 
-- Registered prunable worktree metadata: `/private/tmp/arnold-rootfix`.
-- Clean detached tmp worktrees: `/private/tmp/arnold-cloud-fix`, `/private/tmp/arnold-editible-hotfix`.
-- `Arnold-resident-status-snapshot` is obsolete by patch evidence but has dirty incident-ledger runtime files; remove only after approving loss of those generated events.
+- Prunable and temporary worktrees were removed/pruned.
+- `Arnold-resident-status-snapshot` was removed after backing up its generated incident-ledger diff to `/tmp/arnold-loose-work-backups/resident-status-snapshot-20260705/diff.patch`.
 - Hetzner status reported 22 known cloud sessions complete and no mutating chain tmux sessions. Cloud workspaces still contain runtime dirt/logs; source work from `/workspace/arnold` was ported.
-- Arnold-specific editable-install replacement: local yes (`editible-install -> e948d38d`); remote/cloud not updated in this pass.
+- Arnold-specific editable-install replacement: local, GitHub, and cloud `/workspace/arnold` all point at the consolidated `editible-install`.
 
-## Local Junk Candidates, Not Deleted
+## Deleted As Redundant After Approval
 
-- `node_modules/`
-- `._*` AppleDouble files: `arnold_pipelines/megaplan/._auto.py`, `arnold_pipelines/megaplan/orchestration/._phase_result_classify.py`, `docs/._hetzner-watchdog-meta-loop.md`, `tests/arnold_pipelines/megaplan/._test_auto_recover_blocked.py`
-- Scratch helpers: `_fix_normalized.py`, `_regenerate_fixtures.py`
+- Local branches: `codex/supervise-repair-queue`, `megaplan/m2-routing-validator-and-20260703-1535-push`, `integrate-cloud-hardening-20260703`, `resident-status-snapshot`.
+- Remote branches: `origin/resident-status-snapshot`, `origin/consolidate/repair-watchdog-tail-20260703`, old native-composition autopublish stack, merged native-platform autopublish stack, `origin/preserve/cloud-arnold-chain-init-20260703-015121`, `origin/preserve/native-python-m7-audit-20260703-0152`.
+- Local junk candidates:
+  - `node_modules/` untracked contents
+  - `._*` AppleDouble files: `arnold_pipelines/megaplan/._auto.py`, `arnold_pipelines/megaplan/orchestration/._phase_result_classify.py`, `docs/._hetzner-watchdog-meta-loop.md`, `tests/arnold_pipelines/megaplan/._test_auto_recover_blocked.py`
+  - Scratch helpers: `_fix_normalized.py`, `_regenerate_fixtures.py`
+
+## Kept Deliberately
+
+- `origin/archive/*` refs and remaining `origin/preserve/cloud-native-composition-*`, `origin/preserve/local-dirty-*` refs were kept because they are primarily archive/evidence safety refs. They are not merge sources, but deleting them would discard historical chain/proof state.
 
 ## Verification
 
@@ -61,3 +69,5 @@ These are not worth merging but are not deleted in this pass:
 - Result: `520 passed in 129.01s`.
 - Second-pass targeted verification: `pytest tests/test_pipelines_new.py tests/cloud/test_cloud_chain_command.py tests/cloud/test_progress_auditor.py tests/cloud/test_watchdog_wrappers.py -q`
 - Result: `376 passed in 151.82s`.
+- Final cloud `.pypeline` support verification: `pytest tests/arnold/workflow/test_source_compiler_api.py tests/cli/test_m5_workflow_source_cli.py -q`
+- Result: `147 passed in 0.33s`.
