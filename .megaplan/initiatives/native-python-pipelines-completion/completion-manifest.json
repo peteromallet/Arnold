@@ -1,69 +1,125 @@
 {
   "schema": "arnold.megaplan.chain_completion_manifest.v1",
-  "generated_at": "2026-07-02T10:13:02.758509+00:00",
   "chain": {
     "path": ".megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
     "sha256": "9ee3f687c98d67cc6d2631851f762a4baac034d4ec50d51727de8a414671937b"
   },
-  "_blocker": {
-    "reason": "harness_state_not_sufficient_for_auto_generation",
-    "details": [
-      "Chain state has an active plan in progress: current_plan_name=\"m7-megaplan-relocation-and-20260702-0856\". The helper requires current_plan_name=None.",
-      "Chain has not advanced past all milestones: current_milestone_index=7, total_milestones=8. The helper requires current_milestone_index >= len(spec.milestones).",
-      "North Star anchor \"NORTHSTAR.md\" not found at project root \u2014 this would be a hard error in the helper path.",
-      "The existing proof-map.json at .megaplan/initiatives/native-python-pipelines-completion/proof-map.json is a narrative closeout artifact (schema arnold.megaplan.m7_proof_map.v1), not the flat milestone\u2192paths dict expected by _load_manifest_proof_map. This would cause the helper to raise CliError(\"proof map for milestone 'schema' must be a non-empty list\")."
-    ],
-    "resolution_required": "Complete batch execution for the current plan (batches 7, 8, 9) until the plan reaches terminal status and current_plan_name is cleared. Then provide a conformant proof-map.json in the format {milestone_label: [relative_path, ...]} for all milestones. Only then can _write_completion_manifest be invoked successfully."
-  },
-  "available_state_summary": {
-    "note": "The following data is extracted from the chain state and spec for transparency. It is NOT a valid completion manifest \u2014 it is evidence of what is known at generation attempt time.",
-    "current_plan_name": "m7-megaplan-relocation-and-20260702-0856",
-    "current_milestone_index": 7,
-    "total_milestones": 8,
-    "completed_milestones": [
-      {
-        "label": "m1-platform-contract",
-        "plan": "m1-platform-contract-20260701-0939",
-        "status": "done"
-      },
-      {
-        "label": "m2-megaplan-subpipelines-layout",
-        "plan": "m2-megaplan-subpipelines-20260701-1422",
-        "status": "done"
-      },
-      {
-        "label": "m3-root-and-shared-package-migrations",
-        "plan": "m3-root-and-shared-package-20260701-1507",
-        "status": "done"
-      },
-      {
-        "label": "m3-5-canonical-megaplan-migration",
-        "plan": "m3-5-canonical-megaplan-20260701-1832",
-        "status": "done"
-      },
-      {
-        "label": "m4-evidence-pack-native-migration",
-        "plan": "m4-evidence-pack-native-20260701-2203",
-        "status": "done"
-      },
-      {
-        "label": "m5-native-test-and-golden-trace-cleanup",
-        "plan": "m5-native-test-and-golden-20260701-2334",
-        "status": "done"
-      },
-      {
-        "label": "m6-docs-and-scaffolds-native-first",
-        "plan": "m6-docs-and-scaffolds-native-20260702-0053",
-        "status": "done"
-      }
-    ],
-    "active_milestone": {
+  "milestones": [
+    {
+      "label": "m1-platform-contract",
+      "brief_path": ".megaplan/initiatives/native-python-pipelines-completion/briefs/m1-platform-contract.md",
+      "brief_sha256": "7afc2a823b8eb6401c18a59901d449dab0973a1459c3bf9636230df132d399d6",
+      "status": "done",
+      "plan": "m1-platform-contract-20260701-0939",
+      "proof_artifacts": [
+        {
+          "path": ".megaplan/initiatives/native-python-pipelines-completion/dependency-completion-proof.json",
+          "sha256": "fe0e9be7b0662efe1dcc8822d6126cce1fffbf4bfd6eefadc2b980f047d36d61"
+        }
+      ],
+      "publication_evidence": "chain_state_only"
+    },
+    {
+      "label": "m2-megaplan-subpipelines-layout",
+      "brief_path": ".megaplan/initiatives/native-python-pipelines-completion/briefs/m2-megaplan-subpipelines-layout.md",
+      "brief_sha256": "e48119a9c3d738a66482eddea746ecc324e65e825cc182de5a9b83bcdcd313a3",
+      "status": "done",
+      "plan": "m2-megaplan-subpipelines-20260701-1422",
+      "proof_artifacts": [
+        {
+          "path": ".megaplan/initiatives/native-python-pipelines-completion/dependency-completion-proof.json",
+          "sha256": "fe0e9be7b0662efe1dcc8822d6126cce1fffbf4bfd6eefadc2b980f047d36d61"
+        }
+      ],
+      "publication_evidence": "chain_state_only"
+    },
+    {
+      "label": "m3-root-and-shared-package-migrations",
+      "brief_path": ".megaplan/initiatives/native-python-pipelines-completion/briefs/m3-root-and-shared-package-migrations.md",
+      "brief_sha256": "e1865a3138aa514e179b18d0831d03ab206bdea216d29a37a98b4f13d77f03b5",
+      "status": "done",
+      "plan": "m3-root-and-shared-package-20260701-1507",
+      "proof_artifacts": [
+        {
+          "path": ".megaplan/initiatives/native-python-pipelines-completion/dependency-completion-proof.json",
+          "sha256": "fe0e9be7b0662efe1dcc8822d6126cce1fffbf4bfd6eefadc2b980f047d36d61"
+        }
+      ],
+      "publication_evidence": "chain_state_only"
+    },
+    {
+      "label": "m3-5-canonical-megaplan-migration",
+      "brief_path": ".megaplan/initiatives/native-python-pipelines-completion/briefs/m3-5-canonical-megaplan-migration.md",
+      "brief_sha256": "13eae6dbe432e1dcb56f1e6dae52a2e14a7e14a0a2319a00323638ab01406760",
+      "status": "done",
+      "plan": "m3-5-canonical-megaplan-20260701-1832",
+      "proof_artifacts": [
+        {
+          "path": ".megaplan/initiatives/native-python-pipelines-completion/dependency-completion-proof.json",
+          "sha256": "fe0e9be7b0662efe1dcc8822d6126cce1fffbf4bfd6eefadc2b980f047d36d61"
+        }
+      ],
+      "publication_evidence": "chain_state_only"
+    },
+    {
+      "label": "m4-evidence-pack-native-migration",
+      "brief_path": ".megaplan/initiatives/native-python-pipelines-completion/briefs/m4-evidence-pack-native-migration.md",
+      "brief_sha256": "3f52c186b7ac903a9ae72f0f3102ab67ea79746e7a094992f58bc4ff13f46137",
+      "status": "done",
+      "plan": "m4-evidence-pack-native-20260701-2203",
+      "proof_artifacts": [
+        {
+          "path": ".megaplan/initiatives/native-python-pipelines-completion/dependency-completion-proof.json",
+          "sha256": "fe0e9be7b0662efe1dcc8822d6126cce1fffbf4bfd6eefadc2b980f047d36d61"
+        }
+      ],
+      "publication_evidence": "chain_state_only"
+    },
+    {
+      "label": "m5-native-test-and-golden-trace-cleanup",
+      "brief_path": ".megaplan/initiatives/native-python-pipelines-completion/briefs/m5-native-test-and-golden-trace-cleanup.md",
+      "brief_sha256": "1be94d105d59bdfe3b590e8517edfba2e8b03753916b619133c53240fe7fe3ab",
+      "status": "done",
+      "plan": "m5-native-test-and-golden-20260701-2334",
+      "proof_artifacts": [
+        {
+          "path": ".megaplan/initiatives/native-python-pipelines-completion/dependency-completion-proof.json",
+          "sha256": "fe0e9be7b0662efe1dcc8822d6126cce1fffbf4bfd6eefadc2b980f047d36d61"
+        }
+      ],
+      "publication_evidence": "chain_state_only"
+    },
+    {
+      "label": "m6-docs-and-scaffolds-native-first",
+      "brief_path": ".megaplan/initiatives/native-python-pipelines-completion/briefs/m6-docs-and-scaffolds-native-first.md",
+      "brief_sha256": "ef00d41a84522251bb17f926193b1526008c2d67668bab6fa30f6e1cf4ec9d68",
+      "status": "done",
+      "plan": "m6-docs-and-scaffolds-native-20260702-0053",
+      "proof_artifacts": [
+        {
+          "path": ".megaplan/initiatives/native-python-pipelines-completion/dependency-completion-proof.json",
+          "sha256": "fe0e9be7b0662efe1dcc8822d6126cce1fffbf4bfd6eefadc2b980f047d36d61"
+        }
+      ],
+      "publication_evidence": "chain_state_only"
+    },
+    {
       "label": "m7-megaplan-relocation-and-final-purge",
-      "status": "in_progress",
-      "plan": "m7-megaplan-relocation-and-20260702-0856"
+      "brief_path": ".megaplan/initiatives/native-python-pipelines-completion/briefs/m7-megaplan-relocation-and-final-purge.md",
+      "brief_sha256": "b9f4763f8dc866b61282fc98c78a2a5a2e69e2868e4a8569db275bf14b6276d0",
+      "status": "done",
+      "plan": "m7-megaplan-relocation-and-20260702-0856",
+      "proof_artifacts": [
+        {
+          "path": ".megaplan/initiatives/native-python-pipelines-completion/dependency-completion-proof.json",
+          "sha256": "fe0e9be7b0662efe1dcc8822d6126cce1fffbf4bfd6eefadc2b980f047d36d61"
+        }
+      ],
+      "local_commit_sha": "6bf9330ceabccabb3110e163265973168e2e261e"
     }
-  },
-  "north_star": null,
-  "milestones": [],
-  "_integrity_note": "This manifest was generated by T7 executor as a truthful harness-compatible blocker. No milestone data was fabricated. The auto-generation helper (_write_completion_manifest / _build_completion_manifest) was imported successfully but rejected the call due to insufficient harness state as documented in _blocker."
+  ],
+  "north_star": {
+    "path": ".megaplan/initiatives/native-python-pipelines-completion/NORTHSTAR.md",
+    "sha256": "3165975f77dd23273a102f567fb00d50fdd30a507a427a069ae2592588d6d281"
+  }
 }
