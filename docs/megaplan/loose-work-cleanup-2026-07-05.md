@@ -8,7 +8,7 @@
 - Cloud `/workspace/arnold` `.pypeline` support was already covered by the m6 merge; remaining generated hash/docs updates were ported as `242380f6`.
 - Useful survivor from `integrate-cloud-hardening-20260703` was salvaged as `a13b9abc`; stale implementation hunks were superseded by newer cloud status/repair contracts.
 - Merge contract fixes were committed as `e948d38d`; focused verification passed: `520 passed`.
-- Local `editible-install` now points at the same commit as local `main`: `e948d38d`.
+- Local `editible-install` now points at the same commit as local `main` after this pass.
 
 ## Delete-Ready After Approval
 
@@ -20,12 +20,26 @@ Positive evidence: `git cherry main <ref>` is `+0` after consolidation.
 - New native-platform autopublish stack now merged: `origin/megaplan/m1-side-effect-reconcile-and-20260704-1634`, `origin/megaplan/m2-security-broker-and-20260704-1739`, `origin/megaplan/m3-shared-library-packs-and-20260704-1943`, `origin/megaplan/m4-durable-substrate-and-20260704-2124`, `origin/megaplan/m5-worker-fleet-supervision-20260704-2252`, `origin/megaplan/m6-platform-docs-conformance-20260705-0039`.
 - `origin/preserve/cloud-arnold-chain-init-20260703-015121` and `origin/preserve/native-python-m7-audit-20260703-0152` are patch-equivalent to consolidated `main`.
 
-## Park / Inspect, Not Delete Yet
+## Second-Pass Salvage Verdicts
 
-- `origin/consolidate/repair-watchdog-tail-20260703`: still `cherry +19`. PR #134 was merged, but many remaining patches are not patch-equivalent after the new consolidation. Needs selective review, not wholesale merge.
-- `integrate-cloud-hardening-20260703`: still reports `cherry +1` because only the useful non-stale slice was salvaged. Treat remaining branch as superseded/stale, but review before delete if you want proof per hunk.
-- Archive/safety refs with unique patches: `origin/archive/cloud-tiered-m1-cloud-safe-repair-20260703`, `origin/archive/cloud-tiered-m2-correctness-20260703`, `origin/archive/engine-watchdog-runner-20260703`, `origin/archive/live-watchdog-supervisor-20260703`, `origin/archive/snapshot-arnold-m1-m6-wip-20260703`, `origin/archive/snapshot-arnold-m7-m8-wip-20260703`.
-- Preserve refs with unique patches: `origin/preserve/cloud-native-composition-current-20260703-0355`, `origin/preserve/cloud-native-composition-evidence-20260703-0152`, `origin/preserve/cloud-native-composition-source-20260703-015147`, `origin/preserve/local-dirty-20260703-015050`, `origin/preserve/local-dirty-cloud-push-20260703`.
+The parked refs below were rechecked after consolidation with direct `git diff main <ref>` comparisons. They may still show `git cherry` `+N` because patch IDs changed across conflict resolution, file moves, generated artifacts, or deliberately stale branches. No additional source salvage is recommended.
+
+- `origin/consolidate/repair-watchdog-tail-20260703`: delete-ready for code purposes. Evidence-pack source/docs and wheel-smoke diagnostics are already on `main`; the remaining direct diff is older versions of `tests/cloud/test_cloud_chain_command.py`, `tests/cloud/test_progress_auditor.py`, and `tests/cloud/test_watchdog_wrappers.py` that would remove current compact-status, phase-model, incident-audit, and repair-data-payload contracts.
+- `integrate-cloud-hardening-20260703`: delete-ready for code purposes. The useful non-stale hardening slice was salvaged as `a13b9abc`; the leftover unique patch is AppleDouble metadata only (`._auto.py`, `._phase_result_classify.py`, `._hetzner-watchdog-meta-loop.md`, `._test_auto_recover_blocked.py`).
+- `origin/archive/cloud-tiered-m1-cloud-safe-repair-20260703` and `origin/archive/cloud-tiered-m2-correctness-20260703`: delete-ready for code purposes. Branch-only payload is chain runtime state plus `tests/arnold/pipelines/megaplan/test_legacy_pipeline_baseline.py`, which imports the deleted `arnold.pipelines.megaplan` legacy surface.
+- `origin/archive/engine-watchdog-runner-20260703`: delete-ready for code purposes. Branch-only additions live under old `arnold/pipelines/...` and old runner/profile paths; current `main` has the surviving implementations under `arnold_pipelines.megaplan` and `arnold.execution`.
+- `origin/archive/live-watchdog-supervisor-20260703`: delete-ready for code purposes. It would reintroduce old `arnold/pipelines/megaplan/...` plus vendored agent copies; current discovery/docs/tests cover the migrated live-supervisor path.
+- `origin/preserve/cloud-native-composition-source-20260703-015147` and `origin/preserve/cloud-native-composition-current-20260703-0355`: delete-ready for code purposes. Branch-only source is `arnold/pipelines/deliberation`, `arnold/pipelines/folder_audit`, `_deliberation_example`, and `arnold_pipelines/megaplan/cli/arnold.py`; `docs/arnold/m6-deletion-list.md` explicitly marks those as archive/delete targets, and the archived copies exist under `docs/archive/m5/`.
+- `origin/preserve/cloud-native-composition-evidence-20260703-0152`: archive-only runtime evidence. Delete-ready if historical chain/proof state is no longer needed; no source code to port.
+- `origin/preserve/local-dirty-20260703-015050` and `origin/preserve/local-dirty-cloud-push-20260703`: delete-ready for code purposes. Direct diffs are older cloud repair/watchdog variants, M6-deleted legacy source, runtime chain evidence, or the `cli.arnold` shim already listed for deletion by M6.
+- `origin/archive/snapshot-arnold-m1-m6-wip-20260703` and `origin/archive/snapshot-arnold-m7-m8-wip-20260703`: archive-only snapshots. Delete-ready if you do not need the historical safety snapshot; not useful as a merge source because they contain runtime state, old vendored agent trees, and M6-deleted legacy package surfaces.
+
+## Remaining Not-Code-Keeper Items
+
+These are not worth merging but are not deleted in this pass:
+
+- Archive refs above if you want to retain their historical chain/runtime evidence.
+- Local untracked caches and scratch files listed below.
 
 ## Worktrees / Cloud
 
@@ -45,3 +59,5 @@ Positive evidence: `git cherry main <ref>` is `+0` after consolidation.
 
 - `pytest tests/cloud/test_progress_auditor.py tests/cloud/test_watchdog_wrappers.py tests/cloud/test_cloud_chain_command.py tests/resident/test_megaplan_initiatives.py tests/arnold/workflow/test_source_compiler_api.py tests/cli/test_m5_workflow_source_cli.py`
 - Result: `520 passed in 129.01s`.
+- Second-pass targeted verification: `pytest tests/test_pipelines_new.py tests/cloud/test_cloud_chain_command.py tests/cloud/test_progress_auditor.py tests/cloud/test_watchdog_wrappers.py -q`
+- Result: `376 passed in 151.82s`.
