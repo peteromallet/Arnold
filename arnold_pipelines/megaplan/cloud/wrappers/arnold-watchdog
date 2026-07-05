@@ -3742,7 +3742,6 @@ if (
     and isinstance(active_step_heartbeat, dict)
     and bool(active_step_heartbeat.get("active"))
     and not needs_human_present
-    and repair_outcome not in terminal_repair_failures
 ):
     print("NO_TRIGGER")
     raise SystemExit(0)

@@ -2922,10 +2922,7 @@ for entry in plans:
     meta_summary = ev.get("meta_repair_summary") or {}
     if meta_summary.get("missing_meta_run_evidence"):
         meta_gap_reason = f"meta-repair trigger {meta_summary.get('trigger')} has no meta record or run log"
-        if _meta_repair_gap_is_primary(incident_brief, incident_projection, incident_audit):
-            reasons.append(meta_gap_reason)
-        else:
-            soft_corroboration.append(meta_gap_reason)
+        reasons.append(meta_gap_reason)
     if meta_summary.get("failed_meta_run_evidence"):
         reasons.append(
             f"meta-repair trigger {meta_summary.get('trigger')} has only failed launch/no-output evidence "
