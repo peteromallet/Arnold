@@ -63,7 +63,7 @@ launch_preconditions:
     path: docs/arnold/megaplan-composition-conformance-report.md
     check:
       kind: contains_text
-      text: "Megaplan composition conformance"
+      text: "Megaplan Composition Conformance"
   - name: composition conformance report is committed and clean
     kind: git_tracked
     path: docs/arnold/megaplan-composition-conformance-report.md
