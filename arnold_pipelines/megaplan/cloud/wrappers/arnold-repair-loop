@@ -962,7 +962,7 @@ repair_target_completion_status() {
   local workspace="$1"
   local run_kind="$2"
   local plan_name="${3:-}"
-  python3 - "$workspace" "$run_kind" "$plan_name" "$REMOTE_SPEC" <<'PY'
+  python3 - "$workspace" "$run_kind" "$plan_name" "$REMOTE_SPEC" "$SESSION" "${MARKER_DIR:-/workspace/.megaplan/cloud-sessions}" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -972,6 +972,8 @@ workspace = pathlib.Path(sys.argv[1])
 run_kind = sys.argv[2]
 plan_name = sys.argv[3]
 remote_spec = pathlib.Path(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] else None
+session = sys.argv[5] if len(sys.argv) > 5 else ""
+marker_dir = pathlib.Path(sys.argv[6]) if len(sys.argv) > 6 and sys.argv[6] else pathlib.Path("/workspace/.megaplan/cloud-sessions")
 
 def load_json(path: pathlib.Path | None) -> dict[str, object]:
     if path is None:
@@ -1109,6 +1111,28 @@ def chain_completion_reason(chain_state: dict[str, object]) -> str:
         return ""
     return ""
 
+def chain_health_blocks_terminal_shortcut() -> bool:
+    if not session:
+        return False
+    payload = load_json(marker_dir / f"{session}.chain-health.progress.json")
+    if payload.get("chain_complete") is not False:
+        return False
+    try:
+        completed_count = int(payload.get("completed_count") or 0)
+    except Exception:
+        completed_count = 0
+    try:
+        milestone_count = int(payload.get("milestone_count") or 0)
+    except Exception:
+        milestone_count = 0
+    pr_state = str(payload.get("pr_state") or "").strip().lower()
+    if milestone_count and completed_count < milestone_count:
+        return True
+    if pr_state and pr_state not in {"merged", "closed"}:
+        return True
+    return True
+
+
 chain_path = latest_chain_state(workspace) if run_kind == "chain" else None
 chain_state = load_json(chain_path)
 preferred_plan_name = plan_name or str(chain_state.get("current_plan_name") or "").strip()
@@ -1137,6 +1161,7 @@ elif (
     and chain_path is not None
     and chain_path.exists()
     and chain_last_state not in {"done", "complete"}
+    and not chain_health_blocks_terminal_shortcut()
 ):
     print(
         "\t".join(
