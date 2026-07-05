@@ -1106,6 +1106,47 @@ def test_repair_loop_classifies_repeated_failure_signature_as_repairable(
     assert payload["plan_latest_failure"]["kind"] == "repeated_failure_signature"
 
 
+def test_repair_loop_classifies_missing_workspace_as_stale_state(tmp_path: Path) -> None:
+    workspace = tmp_path / "missing-workflow"
+    marker_dir = tmp_path / "markers"
+    data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    data_dir.mkdir()
+    (marker_dir / "demo.json").write_text(
+        json.dumps(
+            {
+                "session": "demo",
+                "workspace": str(workspace),
+                "remote_spec": str(workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"),
+                "run_kind": "chain",
+                "plan_name": "",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    program = _extract_repair_program(
+        "collect_failure_context_json",
+        "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" <<'PY'",
+    )
+    result = _run_embedded_python(
+        program,
+        str(workspace),
+        "demo",
+        "chain",
+        "",
+        str(marker_dir),
+        str(data_dir),
+        "",
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["failure_classification"] == "stale_state"
+    assert payload["stale_state"]["classification"] == "STALE STATE"
+    assert payload["stale_state"]["summary"] == "marker workspace path no longer exists"
+
+
 def test_repair_loop_prefers_awaiting_human_over_timeout_text_in_prep_clarification(tmp_path: Path) -> None:
     workspace = tmp_path / "workflow"
     plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
