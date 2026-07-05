@@ -99,7 +99,9 @@ def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
     )
 
     assert "if [ -f /workspace/.cloud-hot-env ]; then set -a; . /workspace/.cloud-hot-env; set +a; fi;" in command
-    assert "cd /workspace/project && PYTHONSAFEPATH=1 PYTHONPATH=/workspace/arnold:${PYTHONPATH:-}" in command
+    assert 'ENGINE_DIR="${MEGAPLAN_RUNTIME_SRC:-}"' in command
+    assert 'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR=/workspace/arnold; fi;' in command
+    assert 'cd /workspace/project && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${PYTHONPATH:-}"' in command
     assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start" in command
 
 

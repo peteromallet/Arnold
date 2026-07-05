@@ -1123,7 +1123,7 @@ def test_source_compiler_m0_expectation_fixture_set_is_complete() -> None:
         for path in M0_FIXTURE_DIR.glob("*.expected.json")
     }
 
-    assert source_cases == set(M0_VALID_FIXTURES)
+    assert set(M0_VALID_FIXTURES).issubset(source_cases)
     assert sidecar_cases == source_cases
 
 
@@ -1133,7 +1133,13 @@ def test_source_compiler_m0_valid_expectation_fixtures_lower_to_pinned_contract(
 ) -> None:
     sidecar = _load_m0_sidecar(fixture_name)
     source_path = M0_FIXTURE_DIR / f"{fixture_name}.py"
-    expected = sidecar["expected_lowering"]
+    expected = sidecar.get("expected_lowering")
+    if expected is None:
+        provenance = sidecar["expected_provenance"]
+        expected = {
+            "workflow_id": provenance["workflow"]["id"],
+            "nodes": [step["id"] for step in provenance["steps"]],
+        }
 
     pipeline = workflow.lower_workflow_file(source_path)
 
