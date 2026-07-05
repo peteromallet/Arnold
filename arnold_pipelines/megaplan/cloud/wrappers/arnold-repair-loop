@@ -2020,20 +2020,26 @@ def _state_mismatch_analysis(
 def _resolver_stale_state_analysis(resolver_output: dict[str, object] | None) -> dict[str, object] | None:
     if not isinstance(resolver_output, dict):
         return None
-    stale_kinds = {
-        str(item.get("kind") or "").strip().lower()
+    stale_items = [
+        item
         for item in (resolver_output.get("stale_evidence") or [])
         if isinstance(item, dict)
-    }
-    if not stale_kinds:
+    ]
+    if not stale_items:
         return None
-    if "workspace_missing" in stale_kinds:
+    stale_by_kind = {
+        str(item.get("kind") or "").strip().lower(): str(item.get("path") or "").strip()
+        for item in stale_items
+    }
+    workspace_path = stale_by_kind.get("workspace_missing", "")
+    spec_path = stale_by_kind.get("spec_missing", "")
+    if workspace_path:
         return {
             "classification": "STALE STATE",
             "summary": "marker workspace path no longer exists",
             "recommended_action": "clear stale session markers and re-drive; do not dispatch dev-fix for a source bug",
         }
-    if "spec_missing" in stale_kinds:
+    if spec_path:
         return {
             "classification": "STALE STATE",
             "summary": "marker remote spec path no longer exists",
@@ -2109,10 +2115,14 @@ def _classify_failure(
         and bool(str(active_step.get("phase") or "").strip())
     )
     latest_failure_empty = not any((kind, phase, message, recorded_at))
-    stale_kinds = {
-        str(item.get("kind") or "").strip().lower()
+    stale_items = [
+        item
         for item in (resolver_output or {}).get("stale_evidence", [])
         if isinstance(item, dict)
+    ]
+    stale_paths = {
+        str(item.get("kind") or "").strip().lower(): str(item.get("path") or "").strip()
+        for item in stale_items
     }
     if (
         last_state == "done"
@@ -2131,9 +2141,9 @@ def _classify_failure(
         and current_state in {"", "initialized", "unknown"}
     ):
         return "stale_state"
-    if "workspace_missing" in stale_kinds:
+    if stale_paths.get("workspace_missing"):
         return "workspace_missing"
-    if "spec_missing" in stale_kinds:
+    if stale_paths.get("spec_missing"):
         return "spec_missing"
     if "unrecognized arguments" in combined or "usage:" in combined:
         return "cli_or_argument_error"
@@ -2444,6 +2454,7 @@ resolver_stale_state = _resolver_stale_state_analysis(
 if resolver_stale_state is not None and stale_state.get("classification") == "NO LATEST FAILURE":
     stale_state = resolver_stale_state
     payload["stale_state"] = stale_state
+    payload["failure_classification"] = "stale_state"
 if not state_mismatch.get("detected") and stale_state.get("classification") != "STALE STATE":
     failure_classification = _classify_failure(
         raw_failure_signals,
