@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 import arnold_pipelines.megaplan.workers as worker_module
+from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
 from arnold_pipelines.megaplan.feature_flags import calibration_query_route_on
 from arnold_pipelines.megaplan.store import write_plan_artifact_json
 from arnold_pipelines.megaplan._core import (
@@ -407,7 +408,7 @@ def _calibration_tier_spec(
 
 def _resolve_tier_spec(
     args: argparse.Namespace,
-    tier_spec: str,
+    tier_spec: str | list[str],
     *,
     phase: str = "execute",
 ) -> tuple[str, str, str | None]:
@@ -421,12 +422,16 @@ def _resolve_tier_spec(
     """
     import copy
 
-    tier_args = copy.copy(args)
-    tier_args.phase_model = [f"{phase}={tier_spec}"]
-    agent, _mode, _refreshed, model = worker_module.resolve_agent_mode(
-        phase, tier_args
+    selected_spec = (
+        tier_spec
+        if isinstance(tier_spec, str)
+        else select_fallback_spec(tier_spec, 0, path=f"tier_models.{phase}")
     )
-    return agent, _mode, model
+    tier_args = copy.copy(args)
+    tier_args.phase_model = [f"{phase}={selected_spec}"]
+    resolved = worker_module.resolve_agent_mode(phase, tier_args)
+    resolved_model = resolved.resolved_model if hasattr(resolved, "resolved_model") else None
+    return resolved.agent, resolved.mode, resolved_model if resolved_model is not None else resolved.model
 
 
 def _task_to_global_batch_number_map(
@@ -511,6 +516,9 @@ def normalize_tier_map(tier_map: dict[Any, Any] | None) -> dict[int, str] | None
             continue
         if isinstance(raw_value, str) and raw_value:
             normalized[key] = raw_value
+            continue
+        if isinstance(raw_value, list):
+            normalized[key] = select_fallback_spec(raw_value, 0, path=f"tier_models.execute.{key}")
     return normalized or None
 
 
@@ -1477,6 +1485,7 @@ def handle_execute_one_batch(
                 agent=agent,
                 mode=mode,
                 refreshed=refreshed,
+                model=resolved_model,
                 auto_approve=auto_approve,
                 args=args,
                 batch_number=batch_number,
@@ -1495,6 +1504,7 @@ def handle_execute_one_batch(
         result.worker.session_id,
         mode=result.mode,
         refreshed=result.refreshed,
+        model=resolved_model,
         worker_channel=result.worker.worker_channel,
         auth_channel=result.worker.auth_channel,
         auth_metadata=result.worker.auth_metadata,
@@ -3049,6 +3059,7 @@ def handle_execute_auto_loop(
                     agent=batch_agent,
                     mode=batch_mode,
                     refreshed=refreshed,
+                    model=batch_resolved_model,
                     auto_approve=auto_approve,
                     args=args,
                     batch_number=(
@@ -3086,6 +3097,7 @@ def handle_execute_auto_loop(
             result.worker.session_id,
             mode=result.mode,
             refreshed=result.refreshed,
+            model=batch_resolved_model,
             worker_channel=result.worker.worker_channel,
             auth_channel=result.worker.auth_channel,
             auth_metadata=result.worker.auth_metadata,
@@ -3330,7 +3342,13 @@ def handle_execute_auto_loop(
         state["current_state"] = STATE_EXECUTED
     if timeout_error is not None and latest_session_id is not None:
         apply_session_update(
-            state, "execute", agent, latest_session_id, mode=mode, refreshed=refreshed
+            state,
+            "execute",
+            agent,
+            latest_session_id,
+            mode=mode,
+            refreshed=refreshed,
+            model=resolved_model,
         )
     user_approved_gate = bool(state["meta"].get("user_approved_gate", False))
     approval_mode = _resolve_execute_approval_mode(

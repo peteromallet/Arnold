@@ -36,7 +36,14 @@ One of four values; each dictates a different response:
 
 When `state: blocked`, this field enumerates the exact recovery actions the state machine will accept. **Never try a recovery action that isn't in this list.** The `invalid_transition` error exists precisely because callers guessed — `recoverable_via` replaces guessing with the canonical transition table.
 
-The list is drawn from `workflow_next()` / `infer_next_steps()` — the single-source function in `megaplan/_core/workflow.py` that the override handler itself checks against. It is always consistent with what `megaplan override` will accept.
+The list is drawn from `workflow_next()` / `infer_next_steps()` in
+`megaplan/_core/workflow.py`, the runtime state-machine module that the
+override handler itself checks against. It is always consistent with what
+`megaplan override` will accept.
+
+Important: `megaplan/_core/workflow.py` is not the authored workflow DSL source.
+If you need the canonical authored workflow, use
+`arnold_pipelines/megaplan/workflows/workflow.py`.
 
 ### `rubric_doc.drift` — tooling/doc misalignment before it bites
 

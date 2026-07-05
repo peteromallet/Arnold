@@ -160,6 +160,28 @@ execute  = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 review   = "codex"
 ```
 `--phase-model` overrides on the CLI stack on top of any profile.
+
+### Fallback chains (v1)
+
+Phase spec values can also be **TOML string arrays** to declare an ordered fallback chain. The first element is the selected spec; subsequent elements are only tried when the preceding spec fails with a retryable availability or infrastructure error and the next spec crosses a provider-family boundary. Example:
+
+```toml
+[profiles.safe-mix]
+plan   = ["claude", "codex"]
+review = ["codex:gpt-5.5", "claude:sonnet"]
+```
+
+**This is the only v1 entry point for fallback chains.** Comma-separated strings, CLI fallback-list flags, and YAML chain editing syntax are not supported in v1 and are deferred to later versions.
+
+Internally, multi-spec phase values are persisted in `state.json` using the compact `__fallback_json__:<json-array>` encoding. This encoding is an implementation detail of the persistence bridge — you never write it by hand. The harness decodes it transparently; every downstream consumer sees the selected spec (first element) as the legacy scalar value.
+
+**Fallback advancement rules (v1):**
+- **Allowed:** Fallback advances to the next spec only on retryable **availability** or **infrastructure** failures (connection errors, timeouts, crashes, service unavailable, internal errors).
+- **Blocked:** Fallback does **not** advance for malformed output, schema failures, test/evidence failures, blocked results, gate/review rejection, semantic failures, auth errors, quota exhaustion, rate limits, bad requests, unsupported models, or context-window errors.
+- **Cross-provider requirement:** The next spec must belong to a different provider family than the failing spec (e.g., `claude` → `codex`, or `hermes:deepseek` → `hermes:fireworks`). Same-provider advancement is rejected.
+- **execute / loop_execute:** Fallback chains are preserved in state but advancement beyond the first spec is **blocked** in v1 — the harness raises `ExecuteFallbackUnsafe` if a retryable failure would trigger a second attempt. This protects against duplicate side effects (file mutations, checkpoints, merges).
+
+When an explicit fallback chain is configured for a phase, ambient runtime fallback (e.g., automatic provider retry) is **suppressed** — only the declared chain controls advancement.
 ## Bakeoff
 See the **bakeoff** skill for methodology and the **megaplan-prep** skill for when bake-offs earn their cost. This section covers the CLI mechanics once you've decided to run one.
 

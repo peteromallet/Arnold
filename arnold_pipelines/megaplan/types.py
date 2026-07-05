@@ -137,6 +137,12 @@ class ActivePhase(TypedDict, total=False):
     last_activity_at: str
     last_activity_kind: str
     last_activity_detail: str
+    configured_specs: list[str]
+    attempted_specs: list[str]
+    selected_spec_index: int
+    selected_spec_total: int
+    fallback_trigger: str | None
+    failed_attempt_reasons: list[str]
 
 
 class PlanVersionRecord(TypedDict, total=False):
@@ -165,6 +171,12 @@ class HistoryEntry(TypedDict, total=False):
     recommendation: str
     approval_mode: str
     environment: dict[str, bool]
+    configured_specs: list[str]
+    attempted_specs: list[str]
+    selected_spec_index: int
+    selected_spec_total: int
+    fallback_trigger: str | None
+    failed_attempt_reasons: list[str]
 
 
 class ClarificationRecord(TypedDict, total=False):

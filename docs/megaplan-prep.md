@@ -246,6 +246,14 @@ vendors, pass a full premium spec such as `--model claude:sonnet` or
 `--model codex:gpt-5.5`; passing only `--model sonnet` keeps the phase's
 currently inferred premium agent and changes only its model token.
 
+**Fallback chains via profile TOML arrays.** Profile TOML phase values can be
+string arrays (e.g., `plan = ["claude", "codex"]`) to declare an ordered
+fallback chain — see the **Profiles > Fallback chains (v1)** section in the main
+megaplan skill. TOML arrays are the only v1 entry point for fallback chains;
+there is no comma syntax, CLI fallback-list flag, or YAML chain editing in v1.
+`override set-model` replaces an encoded chain with a scalar selected spec
+in v1.
+
 Important: `--phase-model critique=...` and `override set-model --phase critique`
 pin the critique **phase/orchestrator**. They do not by themselves pin the
 per-lens critics chosen by adaptive critique. In the normal adaptive path, a

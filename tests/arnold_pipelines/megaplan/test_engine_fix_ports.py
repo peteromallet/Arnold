@@ -23,7 +23,10 @@ from arnold_pipelines.megaplan.orchestration.plan_structure import (
     validate_plan_structure,
 )
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
+    _authority_divergence_payload,
     _evidence_from_task_record,
+    AuthorityDecision,
+    EvidenceStatus,
     effective_execute_completed_task_ids,
 )
 from arnold_pipelines.megaplan.orchestration.execution_evidence import (
@@ -309,6 +312,40 @@ def test_effective_execute_completed_task_ids_accepts_execution_window_and_expla
     }
 
 
+def test_authority_divergence_payload_ignores_explained_skips() -> None:
+    task = {
+        "id": "t_baseline_checkpoint",
+        "status": "skipped",
+        "reviewer_verdict": "deferred_baseline_unavailable",
+    }
+    decision = AuthorityDecision(
+        task_id="t_baseline_checkpoint",
+        status=EvidenceStatus.unknown,
+        satisfied=False,
+        would_block_reasons=("missing_linked_evidence",),
+    )
+
+    assert _authority_divergence_payload(task, decision) is None
+
+
+def test_authority_divergence_payload_ignores_explained_noops() -> None:
+    task = {
+        "id": "t_optional_watchdog_regression",
+        "status": "done",
+        "executor_notes": "No code change needed because existing coverage already proves the signal.",
+        "files_changed": [],
+        "commands_run": [],
+    }
+    decision = AuthorityDecision(
+        task_id="t_optional_watchdog_regression",
+        status=EvidenceStatus.unknown,
+        satisfied=False,
+        would_block_reasons=("missing_linked_evidence",),
+    )
+
+    assert _authority_divergence_payload(task, decision) is None
+
+
 def test_execute_completion_authority_uses_execution_window_and_explained_skips(
     tmp_path: Path,
 ) -> None:
@@ -318,6 +355,44 @@ def test_execute_completion_authority_uses_execution_window_and_explained_skips(
 
     assert ok is True
     assert missing == []
+
+
+def test_effective_execute_completed_task_ids_marks_explained_noops_authoritative(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    base_sha, _head_sha = _init_git_repo(project_dir)
+    plan_dir = project_dir / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True)
+    state = {
+        "config": {"project_dir": str(project_dir)},
+        "meta": {"execution_baseline": {"head": base_sha}},
+    }
+    tasks = [
+        {
+            "id": "T9",
+            "status": "done",
+            "kind": "test",
+            "executor_notes": "No code change needed. Existing progress-auditor coverage already proves this signal.",
+            "files_changed": [],
+            "commands_run": [],
+        }
+    ]
+
+    decisions: dict[str, AuthorityDecision] = {}
+    completed = effective_execute_completed_task_ids(
+        tasks,
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        state=state,
+        decisions=decisions,
+    )
+
+    assert completed == {"T9"}
+    assert decisions["T9"].authoritative is True
+    assert decisions["T9"].status == EvidenceStatus.satisfied
+    assert decisions["T9"].diagnostics["execute_completion"] == "explained_noop_completion"
 
 
 def test_execute_completion_authority_prefers_fresh_execution_evidence_over_stale_finalize(
@@ -368,6 +443,44 @@ def test_execute_completion_authority_prefers_fresh_execution_evidence_over_stal
                         "kind": "test",
                         "commands_run": ["pytest tests/test_example.py -q"],
                         "head_sha": current_head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ok, missing = _execute_completion_authority(plan_dir)
+
+    assert ok is True
+    assert missing == []
+
+
+def test_execute_completion_authority_accepts_explained_noop_done_task(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    plan_dir = project_dir / ".megaplan" / "plans" / "plan-explained-noop"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"config": {"project_dir": str(project_dir)}}) + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "executor_notes": (
+                            "No code change needed. The existing progress-auditor "
+                            "fixture already covers this case at the correct layer."
+                        ),
+                        "files_changed": [],
+                        "commands_run": [],
                     }
                 ]
             }

@@ -394,8 +394,8 @@ sys.path.insert(0, str(pathlib.Path.cwd()))
 from arnold_pipelines.megaplan.cloud.redact import redact_text
 from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
 from arnold_pipelines.megaplan.cloud.repair_contract import read_jsonl_records
-from arnold_pipelines.megaplan.cloud.six_hour_auditor import audit_projection_input, build_audit_input
-from arnold_pipelines.megaplan.incident.summaries import write_projection_summaries
+import arnold_pipelines.megaplan.cloud.six_hour_auditor as six_hour_auditor
+import arnold_pipelines.megaplan.incident.summaries as incident_summaries
 
 MAX_CROSS_REF_ITEMS = 3
 MAX_COMMIT_REFS = 5
@@ -731,11 +731,31 @@ def _attempt_has_runtime_context(item):
             return True
     return False
 
-def _meta_repair_summary(session, repair_data, meta_refs, *, run_kind="", current_state="", chain_state_summary=None):
+def _meta_repair_summary(
+    session,
+    repair_data,
+    meta_refs,
+    *,
+    run_kind="",
+    current_state="",
+    chain_state_summary=None,
+    chain_log_summary=None,
+    events_mtime_age_min=None,
+):
     repair_root = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_REPAIR_DATA_DIR", "/workspace/.megaplan/cloud-sessions/repair-data"))
     repair_payload = _load_json(repair_root / f"{session}.repair-data.json")
     if not isinstance(repair_payload, dict):
         repair_payload = {}
+    normalized_kind = str(run_kind or "").strip().lower()
+    normalized_state = str(current_state or "").strip().lower()
+    chain_current = (chain_state_summary or {}).get("current") if isinstance(chain_state_summary, dict) else {}
+    chain_last_state = str((chain_current or {}).get("last_state") or "").strip().lower()
+    chain_current_plan = str((chain_current or {}).get("current_plan_name") or "").strip()
+    terminal_success = False
+    if normalized_kind == "plan":
+        terminal_success = normalized_state in {"done", "complete", "completed", "finalized"}
+    else:
+        terminal_success = chain_last_state in {"done", "complete", "completed"} and not chain_current_plan
     run_refs = _collect_meta_run_refs(session)
     repair_outcome, attempt_outcomes, failure_kinds = _repair_attempt_signals(repair_payload)
     recent_attempts = [
@@ -751,16 +771,10 @@ def _meta_repair_summary(session, repair_data, meta_refs, *, run_kind="", curren
     current_attempt_id = str(repair_payload.get("current_attempt_id") or "").strip()
     current_recurrence = repair_payload.get("current_recurrence") if isinstance(repair_payload.get("current_recurrence"), dict) else {}
     current_signature = repair_payload.get("current_signature") if isinstance(repair_payload.get("current_signature"), dict) else {}
-    terminal_success = False
     if isinstance(repair_data, dict) and not repair_data.get("exists"):
-        normalized_kind = str(run_kind or "").strip().lower()
-        normalized_state = str(current_state or "").strip().lower()
         if normalized_kind == "plan":
             terminal_success = normalized_state in {"done", "complete", "completed", "finalized"}
         else:
-            chain_current = (chain_state_summary or {}).get("current") if isinstance(chain_state_summary, dict) else {}
-            chain_last_state = str((chain_current or {}).get("last_state") or "").strip().lower()
-            chain_current_plan = str((chain_current or {}).get("current_plan_name") or "").strip()
             terminal_success = chain_last_state in {"done", "complete", "completed"} and not chain_current_plan
     if terminal_success and not meta_refs and not run_refs:
         return {
@@ -863,6 +877,29 @@ def _meta_repair_summary(session, repair_data, meta_refs, *, run_kind="", curren
         should_dispatch = False
         trigger = "classification_error"
         rationale = [_redact_scalar(exc)]
+    if should_dispatch and terminal_success:
+        should_dispatch = False
+        trigger = ""
+        rationale = [
+            "current gathered target state already reached terminal success; "
+            "stale repair-data recurrence does not require meta-repair dispatch"
+        ]
+    live_event_activity = isinstance(events_mtime_age_min, int) and events_mtime_age_min <= 5
+    chain_log_age = None
+    if isinstance(chain_log_summary, dict):
+        chain_log_age = chain_log_summary.get("mtime_age_min")
+    live_chain_activity = isinstance(chain_log_age, int) and chain_log_age <= 5
+    non_terminal_state = normalized_state not in {"done", "complete", "completed", "finalized"}
+    live_target_activity = non_terminal_state and (
+        live_event_activity or (normalized_kind == "chain" and live_chain_activity)
+    )
+    if should_dispatch and trigger in {"persistent_recurring_retry", "partial_liveness_recurrence"} and live_target_activity:
+        should_dispatch = False
+        trigger = ""
+        rationale = [
+            "watchdog-corroborated live target activity supersedes recurring meta-repair dispatch: "
+            f"events_mtime_age_min={events_mtime_age_min!r}, chain_log_mtime_age_min={chain_log_age!r}"
+        ]
     failed_run_refs = [item for item in run_refs if item.get("launch_failure")]
     failed_meta_records = []
     for item in meta_refs or []:
@@ -1331,6 +1368,9 @@ def _repair_data_summary(session):
     if not path.exists():
         return {"path": str(path), "exists": False}
     payload = _load_json(path)
+    attempts = payload.get("attempts") if isinstance(payload, dict) else []
+    if not isinstance(attempts, list):
+        attempts = []
     iterations = payload.get("iterations") if isinstance(payload, dict) else []
     if not isinstance(iterations, list):
         iterations = []
@@ -1387,7 +1427,15 @@ def _repair_data_summary(session):
         "mtime_age_min": int((now.timestamp() - _mtime(path)) // 60) if _mtime(path) else None,
         "outcome": payload.get("outcome") if isinstance(payload, dict) else "",
         "current_attempt_id": payload.get("current_attempt_id") if isinstance(payload, dict) else "",
-        "attempt_ids": payload.get("attempt_ids") if isinstance(payload, dict) and isinstance(payload.get("attempt_ids"), list) else [],
+        "attempt_count": len(attempts),
+        "attempt_ids": (
+            [
+                str(item.get("attempt_id") or item.get("id") or "").strip()
+                for item in attempts[-8:]
+                if isinstance(item, dict) and str(item.get("attempt_id") or item.get("id") or "").strip()
+            ]
+            or (payload.get("attempt_ids") if isinstance(payload, dict) and isinstance(payload.get("attempt_ids"), list) else [])
+        ),
         "repair_run_count": payload.get("repair_run_count") if isinstance(payload, dict) else None,
         "iteration_count": len(iterations),
         "iterations": summarized_iterations,
@@ -1500,6 +1548,649 @@ def _event_excerpt(event):
         "status": event.get("status") or event.get("result") or payload.get("status") or payload.get("result") or payload.get("exit_kind") or "",
         "recommendation": event.get("recommendation") or payload.get("recommendation") or "",
     }
+
+STAGE_METRIC_STAGES = (
+    "prep",
+    "plan",
+    "critique",
+    "gate",
+    "revise",
+    "finalize",
+    "execute",
+    "review",
+    "feedback",
+    "chain",
+    "repair",
+    "meta_repair",
+    "human_pr_ci",
+    "deployment_runtime",
+)
+
+STAGE_METRIC_COUNTERS = (
+    "stalls",
+    "retries",
+    "repair_attempts",
+    "meta_repair_attempts",
+    "human_waits",
+    "ci_waits",
+    "handoff_gaps",
+    "no_op_loops",
+    "dead_workers",
+    "duration_seconds",
+    "unknowns",
+    "missing_evidence",
+)
+
+_STAGE_METRIC_PHASE_EXACT = {
+    "prep": "prep",
+    "plan": "plan",
+    "critique": "critique",
+    "gate": "gate",
+    "quality_gate": "gate",
+    "revise": "revise",
+    "finalize": "finalize",
+    "execute": "execute",
+    "review": "review",
+    "feedback": "feedback",
+    "chain": "chain",
+    "repair": "repair",
+    "immediate_repair": "repair",
+    "meta_repair": "meta_repair",
+    "human_pr_ci": "human_pr_ci",
+    "deployment_runtime": "deployment_runtime",
+}
+
+_STAGE_METRIC_PHASE_PREFIXES = (
+    ("prep_", "prep"),
+    ("plan_", "plan"),
+    ("critique_", "critique"),
+    ("gate_", "gate"),
+    ("revise_", "revise"),
+    ("finalize_", "finalize"),
+    ("execute_", "execute"),
+    ("review_", "review"),
+    ("feedback_", "feedback"),
+    ("chain_", "chain"),
+    ("repair_", "repair"),
+    ("meta_repair_", "meta_repair"),
+    ("human_pr_ci_", "human_pr_ci"),
+    ("deployment_runtime_", "deployment_runtime"),
+)
+
+def _normalize_stage_metric_phase(phase):
+    token = str(phase or "").strip().lower()
+    if not token:
+        return ""
+    token = token.replace(".", "_").replace("-", "_").replace(" ", "_")
+    while "__" in token:
+        token = token.replace("__", "_")
+    return token.strip("_")
+
+def _map_phase_to_stage(phase):
+    normalized = _normalize_stage_metric_phase(phase)
+    if not normalized:
+        return None
+    stage = _STAGE_METRIC_PHASE_EXACT.get(normalized)
+    if stage:
+        return stage
+    for prefix, candidate in _STAGE_METRIC_PHASE_PREFIXES:
+        if normalized.startswith(prefix):
+            return candidate
+    return None
+
+def _stage_metric_bucket():
+    bucket = {}
+    for counter in STAGE_METRIC_COUNTERS:
+        bucket[counter] = 0
+        bucket[f"{counter}_evidence"] = []
+    return bucket
+
+def _stage_metrics_template():
+    return {
+        **{stage: _stage_metric_bucket() for stage in STAGE_METRIC_STAGES},
+        "unknown_phase_count": 0,
+        "unknown_phase_evidence": [],
+    }
+
+def _stage_metric_ref(ref_type, value, **extra):
+    ref = {"type": ref_type, "value": value}
+    for key, extra_value in extra.items():
+        if extra_value in (None, "", [], {}):
+            continue
+        ref[key] = extra_value
+    return ref
+
+def _unknown_stage_phase_refs(entry, phase):
+    refs = []
+    normalized = _normalize_stage_metric_phase(phase)
+    if normalized:
+        refs.append(_stage_metric_ref("phase_name", normalized, source="active_step_phase"))
+    refs.append(_stage_metric_ref("plan", entry.get("plan") or ""))
+    refs.append(_stage_metric_ref("workspace", entry.get("workspace") or ""))
+    refs.append(_stage_metric_ref("session_id", entry.get("session") or ""))
+    refs.append(_stage_metric_ref("file_path", entry.get("state_path") or ""))
+    return [ref for ref in refs if ref.get("value")]
+
+def _append_stage_metric(bucket, counter, amount, *refs):
+    try:
+        delta = int(amount or 0)
+    except (TypeError, ValueError):
+        delta = 0
+    if delta <= 0:
+        return
+    bucket[counter] += delta
+    evidence_key = f"{counter}_evidence"
+    seen = {
+        json.dumps(item, sort_keys=True)
+        for item in bucket.get(evidence_key, [])
+        if isinstance(item, dict)
+    }
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        marker = json.dumps(ref, sort_keys=True)
+        if marker in seen:
+            continue
+        bucket[evidence_key].append(ref)
+        seen.add(marker)
+
+def _resolve_event_phase(events):
+    """Walk events in reverse chronological order to find the most recent phase-bearing event.
+
+    Returns (phase_name, kind, timestamp) or (\"\", \"\", None) when no phase event exists.
+    ``llm_token_heartbeat`` events indicate active LLM work; they do not carry a phase
+    name but are evidence that the most recent phase_start is still in-flight.
+    """
+    sorted_events = sorted(
+        events, key=lambda e: _event_timestamp(e) or 0, reverse=True
+    )
+    last_heartbeat_ts = None
+    for event in sorted_events:
+        kind = str(event.get("kind") or event.get("event_type") or "").strip().lower()
+        ts = _event_timestamp(event)
+        if kind == "llm_token_heartbeat":
+            if last_heartbeat_ts is None:
+                last_heartbeat_ts = ts
+            continue
+        if kind in ("phase_start", "phase_end", "state_transition"):
+            payload = event.get("payload") or {}
+            phase = (payload.get("phase") or "").strip()
+            if not phase:
+                phase = (event.get("phase") or "").strip()
+            if phase:
+                return _normalize_stage_metric_phase(phase), kind, ts
+        # Other event kinds that may carry phase info
+        payload = event.get("payload") or {}
+        phase = (payload.get("phase") or "").strip()
+        if phase:
+            return _normalize_stage_metric_phase(phase), kind, ts
+    return "", "", None
+
+
+def _build_stage_metrics(entries):
+    stage_metrics = _stage_metrics_template()
+    events_cache = {}  # events_path_str -> list of events
+
+    for entry in (entries if isinstance(entries, list) else []):
+        if not isinstance(entry, dict):
+            continue
+
+        # ── derive events path from state_path ──────────────────────────
+        state_path = entry.get("state_path") or ""
+        events_path_str = ""
+        events = []
+        if state_path:
+            try:
+                events_path_obj = pathlib.Path(state_path).parent / "events.ndjson"
+                events_path_str = str(events_path_obj)
+            except Exception:
+                pass
+
+        # Load events once per plan (dedup by path)
+        if events_path_str:
+            if events_path_str not in events_cache:
+                events_cache[events_path_str] = _load_events(pathlib.Path(events_path_str))
+            events = events_cache.get(events_path_str, [])
+
+        # ── active_event_phase from event telemetry ─────────────────────
+        if events:
+            active_phase, phase_kind, phase_ts = _resolve_event_phase(events)
+            if active_phase:
+                entry["active_event_phase"] = active_phase
+                entry["active_event_phase_stage"] = _map_phase_to_stage(active_phase)
+                entry["active_event_phase_kind"] = phase_kind
+                if phase_ts is not None:
+                    entry["active_event_phase_ts"] = phase_ts.isoformat() if isinstance(phase_ts, dt.datetime) else str(phase_ts)
+
+        if not events:
+            # No events file – fall back to state-based unknown detection
+            phase = entry.get("active_step_phase")
+            if phase:
+                stage = _map_phase_to_stage(phase)
+                if not stage:
+                    stage_metrics["unknown_phase_count"] += 1
+                    stage_metrics["unknown_phase_evidence"].append(
+                        {
+                            "phase": _normalize_stage_metric_phase(phase),
+                            "refs": _unknown_stage_phase_refs(entry, phase),
+                        }
+                    )
+        else:
+            # ── collect phase_start / phase_end pairs ───────────────────────
+            phase_starts = {}  # phase_name -> [(ts, event), ...]
+            phase_ends = {}    # phase_name -> [(ts, event), ...]
+
+            for event in events:
+                kind = str(event.get("kind") or event.get("event_type") or "").strip().lower()
+                if kind not in ("phase_start", "phase_end"):
+                    continue
+                payload = event.get("payload") or {}
+                phase = (payload.get("phase") or "").strip()
+                if not phase:
+                    phase = (event.get("phase") or "").strip()
+                if not phase:
+                    continue
+                ts = _event_timestamp(event)
+                if kind == "phase_start":
+                    phase_starts.setdefault(phase, []).append((ts, event))
+                else:
+                    phase_ends.setdefault(phase, []).append((ts, event))
+
+            all_phases = set(list(phase_starts.keys()) + list(phase_ends.keys()))
+
+            for phase_name in sorted(all_phases):
+                starts = sorted(phase_starts.get(phase_name, []), key=lambda x: x[0] or 0)
+                ends = sorted(phase_ends.get(phase_name, []), key=lambda x: x[0] or 0)
+
+                stage = _map_phase_to_stage(phase_name)
+                normalized_phase = _normalize_stage_metric_phase(phase_name)
+
+                # Greedy pairing: each start matched with the next end after it
+                paired = []
+                end_idx = 0
+                for start_ts, start_ev in starts:
+                    if start_ts is None:
+                        continue
+                    while end_idx < len(ends):
+                        end_ts, end_ev = ends[end_idx]
+                        if end_ts is not None and end_ts >= start_ts:
+                            paired.append((start_ts, start_ev, end_ts, end_ev))
+                            end_idx += 1
+                            break
+                        end_idx += 1
+
+                # ── durations from paired events ─────────────────────────
+                for start_ts, start_ev, end_ts, end_ev in paired:
+                    duration = max(0, int((end_ts - start_ts).total_seconds()))
+                    start_iso = start_ts.isoformat() if isinstance(start_ts, dt.datetime) else str(start_ts)
+                    end_iso = end_ts.isoformat() if isinstance(end_ts, dt.datetime) else str(end_ts)
+                    if stage:
+                        bucket = stage_metrics[stage]
+                        bucket["duration_seconds"] += duration
+                        bucket["duration_seconds_evidence"].append(
+                            _stage_metric_ref(
+                                "phase_duration",
+                                normalized_phase,
+                                duration_seconds=duration,
+                                start_ts=start_iso,
+                                end_ts=end_iso,
+                                source="events.ndjson",
+                            )
+                        )
+                    else:
+                        stage_metrics["unknown_phase_count"] += 1
+                        stage_metrics["unknown_phase_evidence"].append(
+                            {
+                                "phase": normalized_phase,
+                                "duration_seconds": duration,
+                                "refs": [
+                                    _stage_metric_ref(
+                                        "phase_duration",
+                                        normalized_phase,
+                                        duration_seconds=duration,
+                                        start_ts=start_iso,
+                                        end_ts=end_iso,
+                                        source="events.ndjson",
+                                    ),
+                                    *_unknown_stage_phase_refs(entry, phase_name),
+                                ],
+                            }
+                        )
+
+                # ── unpaired phase_start (missing phase_end) ─────────────
+                for i in range(len(paired), len(starts)):
+                    start_ts, start_ev = starts[i]
+                    start_iso = start_ts.isoformat() if isinstance(start_ts, dt.datetime) else str(start_ts) if start_ts else ""
+                    ev_ref = _stage_metric_ref(
+                        "unpaired_phase_start",
+                        normalized_phase,
+                        timestamp=start_iso,
+                        source="events.ndjson",
+                    )
+                    if stage:
+                        bucket = stage_metrics[stage]
+                        bucket["missing_evidence"] += 1
+                        bucket["missing_evidence_evidence"].append(ev_ref)
+                    else:
+                        stage_metrics["unknown_phase_count"] += 1
+                        stage_metrics["unknown_phase_evidence"].append(
+                            {
+                                "phase": normalized_phase,
+                                "refs": [ev_ref, *_unknown_stage_phase_refs(entry, phase_name)],
+                            }
+                        )
+
+                # ── unpaired phase_end (missing phase_start) ─────────────
+                for i in range(len(paired), len(ends)):
+                    end_ts, end_ev = ends[i]
+                    end_iso = end_ts.isoformat() if isinstance(end_ts, dt.datetime) else str(end_ts) if end_ts else ""
+                    ev_ref = _stage_metric_ref(
+                        "unpaired_phase_end",
+                        normalized_phase,
+                        timestamp=end_iso,
+                        source="events.ndjson",
+                    )
+                    if stage:
+                        bucket = stage_metrics[stage]
+                        bucket["missing_evidence"] += 1
+                        bucket["missing_evidence_evidence"].append(ev_ref)
+                    else:
+                        stage_metrics["unknown_phase_count"] += 1
+                        stage_metrics["unknown_phase_evidence"].append(
+                            {
+                                "phase": normalized_phase,
+                                "refs": [ev_ref, *_unknown_stage_phase_refs(entry, phase_name)],
+                            }
+                        )
+
+        # ── state-based unknown phases (phases in state but not in events) ──
+        phase = entry.get("active_step_phase")
+        if phase:
+            stage = _map_phase_to_stage(phase)
+            if not stage:
+                already_recorded = any(
+                    e.get("phase") == _normalize_stage_metric_phase(phase)
+                    for e in stage_metrics["unknown_phase_evidence"]
+                )
+                if not already_recorded:
+                    stage_metrics["unknown_phase_count"] += 1
+                    stage_metrics["unknown_phase_evidence"].append(
+                        {
+                            "phase": _normalize_stage_metric_phase(phase),
+                            "refs": _unknown_stage_phase_refs(entry, phase),
+                        }
+                    )
+
+        repair_summary = entry.get("repair_data_summary") if isinstance(entry.get("repair_data_summary"), dict) else {}
+        repair_bucket = stage_metrics["repair"]
+        repair_attempt_count = int(repair_summary.get("attempt_count") or 0)
+        if repair_attempt_count > 0:
+            _append_stage_metric(
+                repair_bucket,
+                "repair_attempts",
+                repair_attempt_count,
+                _stage_metric_ref(
+                    "repair_data",
+                    repair_summary.get("path") or "",
+                    source="repair-data",
+                    session_id=entry.get("session") or "",
+                    attempt_count=repair_attempt_count,
+                    attempt_ids=(repair_summary.get("attempt_ids") or [])[:5],
+                ),
+            )
+        for item in (repair_summary.get("repeated_failure_signatures") or []):
+            if not isinstance(item, dict):
+                continue
+            repeats = max(0, int(item.get("count") or 0) - 1)
+            if repeats <= 0:
+                continue
+            _append_stage_metric(
+                repair_bucket,
+                "retries",
+                repeats,
+                _stage_metric_ref(
+                    "repeated_failure_signature",
+                    (item.get("signature") or "")[:160],
+                    source="repair-data",
+                    path=repair_summary.get("path") or "",
+                    occurrences=int(item.get("count") or 0),
+                ),
+            )
+
+        meta_summary = entry.get("meta_repair_summary") if isinstance(entry.get("meta_repair_summary"), dict) else {}
+        meta_bucket = stage_metrics["meta_repair"]
+        meta_record_count = int(meta_summary.get("meta_record_count") or 0)
+        meta_run_count = int(meta_summary.get("meta_run_log_count") or 0)
+        meta_attempt_count = max(meta_record_count, meta_run_count)
+        if meta_attempt_count > 0:
+            meta_refs = [
+                item.get("path")
+                for item in (entry.get("meta_repair_refs") or [])
+                if isinstance(item, dict) and item.get("path")
+            ]
+            run_refs = [
+                item.get("path")
+                for item in (meta_summary.get("meta_run_refs") or [])
+                if isinstance(item, dict) and item.get("path")
+            ]
+            _append_stage_metric(
+                meta_bucket,
+                "meta_repair_attempts",
+                meta_attempt_count,
+                _stage_metric_ref(
+                    "meta_repair_artifacts",
+                    entry.get("session") or "",
+                    source="meta-repair",
+                    meta_record_count=meta_record_count,
+                    meta_run_log_count=meta_run_count,
+                    meta_record_paths=meta_refs[:3],
+                    meta_run_paths=run_refs[:3],
+                ),
+            )
+
+        if int(entry.get("recent_gate_iterate") or 0) > 0:
+            _append_stage_metric(
+                stage_metrics["gate"],
+                "retries",
+                int(entry.get("recent_gate_iterate") or 0),
+                _stage_metric_ref(
+                    "recent_gate_history",
+                    entry.get("plan") or "",
+                    source="state.json",
+                    state_path=entry.get("state_path") or "",
+                    iterate_count=int(entry.get("recent_gate_iterate") or 0),
+                    total=int(entry.get("recent_gate_total") or 0),
+                ),
+            )
+
+        chain_log = entry.get("chain_log") if isinstance(entry.get("chain_log"), dict) else {}
+        chain_bucket = stage_metrics["chain"]
+        for item in (chain_log.get("repetition_summary") or []):
+            if not isinstance(item, dict):
+                continue
+            count = int(item.get("count") or 0)
+            if count < 2:
+                continue
+            signature = str(item.get("signature") or "").strip()
+            _append_stage_metric(
+                chain_bucket,
+                "retries",
+                count - 1,
+                _stage_metric_ref(
+                    "chain_log_repetition",
+                    signature,
+                    source="chain_log",
+                    path=chain_log.get("path") or "",
+                    occurrences=count,
+                    first_line=item.get("first_line"),
+                    last_line=item.get("last_line"),
+                ),
+            )
+        stop_cycles = chain_log.get("one_milestone_stop_cycles") or []
+        if stop_cycles:
+            last_cycle = stop_cycles[-1] if isinstance(stop_cycles[-1], dict) else {}
+            _append_stage_metric(
+                chain_bucket,
+                "no_op_loops",
+                len(stop_cycles),
+                _stage_metric_ref(
+                    "one_milestone_stop_cycles",
+                    entry.get("plan") or "",
+                    source="chain_log",
+                    path=chain_log.get("path") or "",
+                    cycle_count=len(stop_cycles),
+                    start_line=last_cycle.get("start_line"),
+                    stop_line=last_cycle.get("stop_line"),
+                ),
+            )
+
+        stale_state = entry.get("stale_state_evidence") if isinstance(entry.get("stale_state_evidence"), dict) else {}
+        if stale_state.get("stale_block_replay"):
+            _append_stage_metric(
+                chain_bucket,
+                "no_op_loops",
+                1,
+                _stage_metric_ref(
+                    "stale_block_replay",
+                    entry.get("plan") or "",
+                    source="state.json",
+                    state_path=entry.get("state_path") or "",
+                ),
+            )
+        if stale_state.get("between_milestone_cycling"):
+            _append_stage_metric(
+                chain_bucket,
+                "no_op_loops",
+                1,
+                _stage_metric_ref(
+                    "between_milestone_cycling",
+                    entry.get("plan") or "",
+                    source="chain_log",
+                    path=chain_log.get("path") or "",
+                    cycle_count=stale_state.get("one_milestone_stop_cycle_count"),
+                    repair_advances=stale_state.get("repair_one_milestone_advances"),
+                ),
+            )
+
+        human_bucket = stage_metrics["human_pr_ci"]
+        unresolved_actions = (entry.get("user_action_context") or {}).get("unresolved_user_actions") or []
+        if unresolved_actions:
+            _append_stage_metric(
+                human_bucket,
+                "human_waits",
+                len(unresolved_actions),
+                _stage_metric_ref(
+                    "unresolved_user_actions",
+                    entry.get("plan") or "",
+                    source="finalize.json",
+                    action_ids=[str(item.get("id")) for item in unresolved_actions[:5] if item.get("id")],
+                    finalize_path=(entry.get("user_action_context") or {}).get("finalize_path") or "",
+                ),
+            )
+        chain_current = ((entry.get("chain_state_summary") or {}).get("current") if isinstance(entry.get("chain_state_summary"), dict) else {}) or {}
+        chain_last_state = str(chain_current.get("last_state") or "").strip().lower()
+        if chain_last_state == "awaiting_human":
+            _append_stage_metric(
+                human_bucket,
+                "human_waits",
+                1,
+                _stage_metric_ref(
+                    "chain_last_state",
+                    "awaiting_human",
+                    source="chain_state",
+                    path=chain_current.get("path") or "",
+                ),
+            )
+        if chain_last_state == "pr_closed":
+            _append_stage_metric(
+                human_bucket,
+                "ci_waits",
+                1,
+                _stage_metric_ref(
+                    "chain_last_state",
+                    "pr_closed",
+                    source="chain_state",
+                    path=chain_current.get("path") or "",
+                ),
+            )
+        pr_closed_repeat = next(
+            (
+                item for item in (chain_log.get("repetition_summary") or [])
+                if isinstance(item, dict) and item.get("signature") == "pr_closed"
+            ),
+            None,
+        )
+        if isinstance(pr_closed_repeat, dict) and int(pr_closed_repeat.get("count") or 0) >= 2:
+            _append_stage_metric(
+                human_bucket,
+                "ci_waits",
+                int(pr_closed_repeat.get("count") or 0) - 1,
+                _stage_metric_ref(
+                    "chain_log_repetition",
+                    "pr_closed",
+                    source="chain_log",
+                    path=chain_log.get("path") or "",
+                    occurrences=int(pr_closed_repeat.get("count") or 0),
+                    first_line=pr_closed_repeat.get("first_line"),
+                    last_line=pr_closed_repeat.get("last_line"),
+                ),
+            )
+
+        incident_audit = entry.get("incident_audit") if isinstance(entry.get("incident_audit"), dict) else {}
+        incident_brief = entry.get("incident_brief") if isinstance(entry.get("incident_brief"), dict) else {}
+        expected_handoff = incident_audit.get("next_expected_event") or incident_brief.get("next_expected_event") or ""
+        incident_handoff_gap_count = int(entry.get("incident_handoff_gap_count") or 0)
+        if incident_handoff_gap_count > 0:
+            _append_stage_metric(
+                chain_bucket,
+                "handoff_gaps",
+                incident_handoff_gap_count,
+                *((entry.get("incident_handoff_gap_refs") or [])[:3] if isinstance(entry.get("incident_handoff_gap_refs"), list) else []),
+            )
+        incident_dead_worker_count = int(entry.get("incident_dead_worker_count") or 0)
+        if incident_dead_worker_count > 0:
+            _append_stage_metric(
+                stage_metrics["deployment_runtime"],
+                "dead_workers",
+                incident_dead_worker_count,
+                *((entry.get("incident_dead_worker_refs") or [])[:3] if isinstance(entry.get("incident_dead_worker_refs"), list) else []),
+            )
+        for finding in (incident_audit.get("findings") or []):
+            if not isinstance(finding, dict) or finding.get("status") == "ok":
+                continue
+            code = str(finding.get("code") or "").strip()
+            layer = str(finding.get("layer") or "").strip()
+            recommendation = str(finding.get("recommendation") or "").strip()
+            if incident_handoff_gap_count <= 0 and (layer == "stale_claim" or code == "stale_claim_detected"):
+                handoff_amount = len(finding.get("claim_ids") or []) if isinstance(finding.get("claim_ids"), list) and finding.get("claim_ids") else 1
+                _append_stage_metric(
+                    chain_bucket,
+                    "handoff_gaps",
+                    handoff_amount,
+                    _stage_metric_ref(
+                        "incident_audit",
+                        code or layer or "stale_claim",
+                        source="incident_audit",
+                        incident_id=incident_audit.get("incident_id") or incident_brief.get("incident_id") or "",
+                        claim_ids=(finding.get("claim_ids") or [])[:5] if isinstance(finding.get("claim_ids"), list) else [],
+                        next_expected_event=expected_handoff,
+                    ),
+                )
+            elif incident_dead_worker_count <= 0 and code == "live_process_absent":
+                _append_stage_metric(
+                    stage_metrics["deployment_runtime"],
+                    "dead_workers",
+                    1,
+                    _stage_metric_ref(
+                        "incident_audit",
+                        code,
+                        source="incident_audit",
+                        incident_id=incident_audit.get("incident_id") or incident_brief.get("incident_id") or "",
+                        next_expected_event=recommendation or expected_handoff,
+                    ),
+                )
+
+    return stage_metrics
 
 def _latest_failure_staleness(latest_failure, events_path):
     if not isinstance(latest_failure, dict) or not latest_failure:
@@ -1858,6 +2549,25 @@ def _active_step_ghost_worker_reason(ev):
         f"phase={liveness.get('phase') or 'unknown'} worker_pid={pid} is not live"
     )
 
+def _meta_repair_gap_is_primary(incident_brief, incident_projection, incident_audit):
+    findings = incident_audit.get("findings") if isinstance(incident_audit, dict) else []
+    for finding in findings if isinstance(findings, list) else []:
+        if not isinstance(finding, dict):
+            continue
+        if str(finding.get("layer") or "").strip() != "meta_repair":
+            continue
+        if str(finding.get("status") or "").strip() != "ok":
+            return True
+
+    for expected in (
+        incident_audit.get("next_expected_event") if isinstance(incident_audit, dict) else "",
+        incident_brief.get("next_expected_event") if isinstance(incident_brief, dict) else "",
+        incident_projection.get("next_expected_event") if isinstance(incident_projection, dict) else "",
+    ):
+        if str(expected or "").strip() == "meta_repair.repair_attempt":
+            return True
+    return False
+
 def _plan_evidence(entry):
     workspace = entry["workspace"]
     plan = entry["plan"]
@@ -1917,6 +2627,8 @@ def _plan_evidence(entry):
         run_kind=run_kind,
         current_state=state.get("current_state") or "",
         chain_state_summary=chain_state,
+        chain_log_summary=chain_log,
+        events_mtime_age_min=int((now.timestamp() - events_mtime) // 60) if events_mtime else None,
     )
     prior_incident_ids = [item.get("incident_id") for item in cross_refs.get("prior_incident_refs", []) if item.get("incident_id")]
     prior_watchdog_report_refs = _collect_watchdog_report_refs(session, plan, workspace_path)
@@ -1989,14 +2701,14 @@ def _plan_evidence(entry):
         repair_data,
         run_kind,
     )
-    audit_input = build_audit_input(session, root=workspace_path, now=_now_iso())
+    audit_input = six_hour_auditor.build_audit_input(session, root=workspace_path, now=_now_iso())
     incident_brief = audit_input.get("brief") if isinstance(audit_input.get("brief"), dict) else {}
     incident_projection = audit_input.get("incident") if isinstance(audit_input.get("incident"), dict) else {}
     problem_projection = audit_input.get("problem") if isinstance(audit_input.get("problem"), dict) else {}
     incident_audit = {}
     if incident_brief.get("found"):
-        write_projection_summaries(projections=audit_input.get("projections"), root=workspace_path)
-        incident_audit = audit_projection_input(
+        incident_summaries.write_projection_summaries(projections=audit_input.get("projections"), root=workspace_path)
+        incident_audit = six_hour_auditor.audit_projection_input(
             audit_input,
             live_process_snapshot=_incident_live_snapshot(
                 session=session,
@@ -2009,11 +2721,44 @@ def _plan_evidence(entry):
             ),
             now=_now_iso(),
         )
+    expired_claims = [
+        item
+        for item in (incident_brief.get("claims") or [])
+        if isinstance(item, dict) and item.get("classification") == "expired"
+    ]
+    incident_handoff_gap_refs = []
+    if expired_claims:
+        incident_handoff_gap_refs.append(
+            {
+                "type": "incident_claims",
+                "value": incident_brief.get("incident_id") or "",
+                "source": "incident_brief",
+                "claim_ids": [item.get("claim_id") for item in expired_claims[:5] if item.get("claim_id")],
+                "next_expected_event": incident_audit.get("next_expected_event") or incident_brief.get("next_expected_event") or "",
+            }
+        )
+    incident_dead_worker_refs = []
+    dead_worker_count = 0
+    for finding in (incident_audit.get("findings") or []):
+        if not isinstance(finding, dict) or finding.get("status") == "ok":
+            continue
+        if str(finding.get("code") or "").strip() == "live_process_absent":
+            dead_worker_count += 1
+            incident_dead_worker_refs.append(
+                {
+                    "type": "incident_audit",
+                    "value": "live_process_absent",
+                    "source": "incident_audit",
+                    "incident_id": incident_audit.get("incident_id") or incident_brief.get("incident_id") or "",
+                    "next_expected_event": finding.get("recommendation") or incident_audit.get("next_expected_event") or incident_brief.get("next_expected_event") or "",
+                }
+            )
 
     return {
         "plan": plan_dir.name,
         "workspace": workspace,
         "session": session,
+        "state_path": str(state_path),
         "sources": entry.get("sources") or [],
         "session_header": session_header,
         "chain_log": chain_log,
@@ -2029,6 +2774,7 @@ def _plan_evidence(entry):
         "current_state": state.get("current_state"),
         "iteration": state.get("iteration"),
         "active_step_phase": active.get("phase"),
+        "active_step_stage": _map_phase_to_stage(active.get("phase")),
         "active_step_attempt": active.get("attempt"),
         "active_step_liveness": active_liveness,
         "plan_v_count": len(plan_v_files),
@@ -2049,6 +2795,10 @@ def _plan_evidence(entry):
         "incident_projection": incident_projection,
         "problem_projection": problem_projection,
         "incident_audit": incident_audit,
+        "incident_handoff_gap_count": len(expired_claims),
+        "incident_handoff_gap_refs": incident_handoff_gap_refs,
+        "incident_dead_worker_count": dead_worker_count,
+        "incident_dead_worker_refs": incident_dead_worker_refs,
         "related_prior_incidents": cross_refs.get("related_prior_incidents") or [],
         "prior_incident_refs": cross_refs.get("prior_incident_refs") or [],
         "prior_audit_refs": prior_audit_refs,
@@ -2082,14 +2832,18 @@ def _plan_evidence(entry):
 
 findings = []
 green_checks = []
+stage_metric_entries = []
 for entry in plans:
     ev = _plan_evidence(entry)
     if ev is None:
         continue
+    stage_metric_entries.append(ev)
     incident_brief = ev.get("incident_brief") if isinstance(ev.get("incident_brief"), dict) else {}
+    incident_projection = ev.get("incident_projection") if isinstance(ev.get("incident_projection"), dict) else {}
     incident_audit = ev.get("incident_audit") if isinstance(ev.get("incident_audit"), dict) else {}
     reasons = _reconciler_reasons(incident_audit) if incident_brief.get("found") else []
     corroboration = []
+    soft_corroboration = []
     v_sizes = list(ev["plan_v_sizes"].values())
     if ev["plan_v_count"] >= 4 and len(set(v_sizes)) >= 3:
         corroboration.append(f"plan_v refreshed {ev['plan_v_count']}x in {int(window)}h ({min(v_sizes)}->{max(v_sizes)} bytes)")
@@ -2142,7 +2896,11 @@ for entry in plans:
         corroboration.append(f"repair data repeats same failure signature {repeated_failures[0].get('count')}x")
     meta_summary = ev.get("meta_repair_summary") or {}
     if meta_summary.get("missing_meta_run_evidence"):
-        reasons.append(f"meta-repair trigger {meta_summary.get('trigger')} has no meta record or run log")
+        meta_gap_reason = f"meta-repair trigger {meta_summary.get('trigger')} has no meta record or run log"
+        if _meta_repair_gap_is_primary(incident_brief, incident_projection, incident_audit):
+            reasons.append(meta_gap_reason)
+        else:
+            soft_corroboration.append(meta_gap_reason)
     if meta_summary.get("failed_meta_run_evidence"):
         reasons.append(
             f"meta-repair trigger {meta_summary.get('trigger')} has only failed launch/no-output evidence "
@@ -2162,8 +2920,9 @@ for entry in plans:
         corroboration.append(f"unresolved user actions: {ids}")
     if not reasons:
         reasons = corroboration
-    elif corroboration:
-        ev["corroboration"] = corroboration
+    combined_corroboration = corroboration + soft_corroboration
+    if combined_corroboration:
+        ev["corroboration"] = combined_corroboration
     if not reasons:
         green_checks.append({
             "plan": ev["plan"],
@@ -2185,6 +2944,8 @@ for entry in plans:
         continue
     ev["reasons"] = reasons
     findings.append(ev)
+
+stage_metrics = _build_stage_metrics(stage_metric_entries)
 
 root_cause_patterns = {}
 # (a) Repeated failure signatures across plans.
@@ -2297,6 +3058,7 @@ with open(os.path.join(gather_dir, "findings.json"), "w", encoding="utf-8") as h
             "stall_summary": stall_summary,
             "findings": findings,
             "green_checks": green_checks,
+            "stage_metrics": stage_metrics,
             "root_cause_patterns": root_cause_patterns,
         },
         h,

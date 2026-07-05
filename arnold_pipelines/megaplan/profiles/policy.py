@@ -8,6 +8,14 @@ from typing import Any
 
 from .._core import user_config as _user_config_module
 from .._core.user_config import VALID_VENDORS
+from ..fallback_chains import (
+    FallbackSpecChain,
+    decode_phase_model_value,
+    encode_phase_model_value,
+    map_fallback_spec_value,
+    normalize_fallback_spec_list,
+    select_fallback_spec,
+)
 from ..types import (
     PREMIUM_AGENT,
     _PREMIUM_VENDORS,
@@ -23,6 +31,16 @@ log = logging.getLogger("megaplan")
 # One-shot guard so the stale-override warning fires at most once per phase
 # per process (apply_profile_expansion runs many times per plan).
 _WARNED_STALE_OVERRIDE: set[tuple[str, str]] = set()
+
+
+def _selected_phase_specs(phase_models: list[str]) -> dict[str, str]:
+    selected: dict[str, str] = {}
+    for entry in phase_models:
+        if not isinstance(entry, str) or "=" not in entry:
+            continue
+        phase, chain = decode_phase_model_value(entry)
+        selected[phase] = chain.selected()
+    return selected
 
 DEFAULT_AGENT_ROUTING: dict[str, str] = build_default_agent_routing()
 KNOWN_AGENTS = ["claude", "codex", "hermes", "shannon"]
@@ -135,7 +153,7 @@ def validate_prep_stage_provider(
     stage: str,
     path: Any | None = None,
     profile_name: str | None = None,
-) -> str:
+) -> str | list[str]:
     from . import _raise_invalid_profile
 
     key = f"prep_models.{stage}"
@@ -148,9 +166,34 @@ def validate_prep_stage_provider(
 
     if stage not in PREP_MODEL_STAGES:
         _fail(f"unknown prep stage '{stage}'. Valid stages: {', '.join(PREP_MODEL_STAGES)}")
-    if not isinstance(raw_spec, str) or not raw_spec.strip():
-        _fail(f"expected a non-empty string agent spec, got {type(raw_spec).__name__}")
-    spec = raw_spec.strip()
+
+    # Accept both scalar strings and TOML arrays.
+    if isinstance(raw_spec, str):
+        if not raw_spec.strip():
+            _fail(f"expected a non-empty string agent spec, got {type(raw_spec).__name__}")
+        spec = raw_spec.strip()
+        _validate_prep_spec(spec, key, _fail)
+        return spec
+
+    if isinstance(raw_spec, list):
+        if not raw_spec:
+            _fail("prep_models list must not be empty")
+        specs: list[str] = []
+        for index, item in enumerate(raw_spec):
+            if not isinstance(item, str):
+                _fail(f"prep_models.{stage}[{index}] must be a string, got {type(item).__name__}")
+            if not item.strip():
+                _fail(f"prep_models.{stage}[{index}] must be a non-empty string")
+            spec = item.strip()
+            _validate_prep_spec(spec, f"{key}[{index}]", _fail)
+            specs.append(spec)
+        return specs
+
+    _fail(f"expected a non-empty string agent spec or list[str], got {type(raw_spec).__name__}")
+
+
+def _validate_prep_spec(spec: str, key: str, _fail) -> None:
+    """Validate a single prep-stage agent spec against known-agent and read-only rules."""
     parsed = parse_agent_spec(spec)
     if parsed.agent not in KNOWN_AGENTS and not is_premium_placeholder_agent(parsed.agent):
         _fail(
@@ -162,7 +205,6 @@ def validate_prep_stage_provider(
             "prep stages currently support only read-only providers: "
             f"{', '.join(sorted(READ_ONLY_PREP_AGENTS))}"
         )
-    return spec
 
 
 def _validate_projected_tier_models(
@@ -194,17 +236,30 @@ def _canonicalize_tier_models_for_json(
     return canonical
 
 
-def _prep_flat_spec_from_profile(resolved: dict[str, str]) -> str | None:
+def _prep_flat_spec_from_profile(resolved: dict[str, str | list[str]]) -> str | None:
     spec = resolved.get("prep")
-    return spec if isinstance(spec, str) and spec else None
+    if isinstance(spec, str):
+        return spec if spec else None
+    if isinstance(spec, list):
+        try:
+            return select_fallback_spec(spec, 0, path="prep")
+        except (ValueError, IndexError):
+            return None
+    return None
 
 
 def resolve_prep_models(
     *,
     flat_prep_spec: str | None,
-    prep_models: dict[str, str] | None,
+    prep_models: dict[str, str | list[str]] | None,
 ) -> tuple[dict[str, str], dict[str, Any]]:
-    explicit = dict(prep_models or {})
+    explicit_raw = dict(prep_models or {})
+    explicit: dict[str, str] = {}
+    for stage, spec_value in explicit_raw.items():
+        if isinstance(spec_value, str):
+            explicit[stage] = spec_value
+        else:
+            explicit[stage] = select_fallback_spec(spec_value, 0, path=f"prep_models.{stage}")
     resolved: dict[str, str] = {}
     canonical_fallback_used: dict[str, bool] = {}
     flat_agent = parse_agent_spec(flat_prep_spec).agent if flat_prep_spec else None
@@ -231,12 +286,12 @@ def resolve_pipeline_profile(
     cli_profile: str | None,
     *,
     pipeline_name: str,
-    system_profiles: dict[str, dict[str, str]] | None = None,
+    system_profiles: dict[str, dict[str, str | list[str]]] | None = None,
     system_metadata: dict[str, dict[str, Any]] | None = None,
-    pipeline_local_profiles: dict[str, dict[str, str]] | None = None,
+    pipeline_local_profiles: dict[str, dict[str, str | list[str]]] | None = None,
     pipeline_local_metadata: dict[str, dict[str, Any]] | None = None,
     default_profile: str | None = None,
-) -> dict[str, str]:
+) -> dict[str, str | list[str]]:
     from . import (
         _load_pipeline_local_metadata,
         _load_pipeline_local_profiles,
@@ -359,8 +414,15 @@ def resolve_pipeline_profile(
     )
 
 
-def profile_to_phase_models(profile: dict[str, str]) -> list[str]:
-    return [f"{phase}={spec}" for phase, spec in profile.items()]
+def profile_to_phase_models(profile: dict[str, str | list[str]]) -> list[str]:
+    result: list[str] = []
+    for phase, spec in profile.items():
+        if isinstance(spec, str):
+            result.append(f"{phase}={spec}")
+        else:
+            chain = FallbackSpecChain.from_value(spec, path=f"profile.{phase}")
+            result.append(encode_phase_model_value(phase, chain))
+    return result
 
 
 def _swap_premium_spec(spec: str, target_vendor: str) -> str:
@@ -395,12 +457,12 @@ def _swap_premium_spec(spec: str, target_vendor: str) -> str:
 
 
 def apply_vendor_rewrite(
-    profile: dict[str, str],
+    profile: dict[str, str | list[str]],
     vendor: str,
     *,
-    tier_models: dict[str, dict[int, str]] | None = None,
-    prep_models: dict[str, str] | None = None,
-) -> dict[str, str]:
+    tier_models: dict[str, dict[int, str | list[str]]] | None = None,
+    prep_models: dict[str, str | list[str]] | None = None,
+) -> dict[str, str | list[str]]:
     from ..types import CliError
 
     if vendor not in VALID_VENDORS:
@@ -408,14 +470,20 @@ def apply_vendor_rewrite(
             "invalid_vendor",
             f"--vendor must be one of {', '.join(VALID_VENDORS)}; got {vendor!r}",
         )
+
     def _resolve_symbolic(spec: str) -> str:
         return format_agent_spec(resolve_premium_placeholder_spec(spec, vendor))
+
+    def _vendor_map(spec: str, _ctx: str = "") -> str:
+        return _swap_premium_spec(_resolve_symbolic(spec), vendor)
 
     if tier_models is not None:
         for phase, tiers in tier_models.items():
             for tier_int, spec in tiers.items():
                 try:
-                    tiers[tier_int] = _swap_premium_spec(_resolve_symbolic(spec), vendor)
+                    tiers[tier_int] = map_fallback_spec_value(
+                        spec, _vendor_map, path=f"tier_models.{phase}.{tier_int}",
+                    )
                 except CliError as e:
                     if e.code == "vendor_swap_model_conflict":
                         raise _cli_error(
@@ -426,7 +494,9 @@ def apply_vendor_rewrite(
     if prep_models is not None:
         for stage, spec in prep_models.items():
             try:
-                prep_models[stage] = _swap_premium_spec(_resolve_symbolic(spec), vendor)
+                prep_models[stage] = map_fallback_spec_value(
+                    spec, _vendor_map, path=f"prep_models.{stage}",
+                )
             except CliError as e:
                 if e.code == "vendor_swap_model_conflict":
                     raise _cli_error(
@@ -434,10 +504,12 @@ def apply_vendor_rewrite(
                         f"Vendor swap conflict on prep stage '{stage}': {e.message}",
                     ) from e
                 raise
-    result: dict[str, str] = {}
+    result: dict[str, str | list[str]] = {}
     for phase, spec in profile.items():
         try:
-            result[phase] = _swap_premium_spec(_resolve_symbolic(spec), vendor)
+            result[phase] = map_fallback_spec_value(
+                spec, _vendor_map, path=f"profile.{phase}",
+            )
         except CliError as e:
             if e.code == "vendor_swap_model_conflict":
                 raise _cli_error(
@@ -449,12 +521,12 @@ def apply_vendor_rewrite(
 
 
 def apply_critic_rewrite(
-    profile: dict[str, str],
+    profile: dict[str, str | list[str]],
     critic: str,
     *,
     vendor: str,
     profile_name: str | None = None,
-) -> dict[str, str]:
+) -> dict[str, str | list[str]]:
     if critic not in VALID_CRITIC_CHOICES:
         raise _cli_error(
             "invalid_critic",
@@ -476,56 +548,58 @@ def apply_critic_rewrite(
     other = "codex" if vendor == "claude" else "claude"
     result = dict(profile)
     for phase in ("critique", "review"):
-        parsed = parse_agent_spec(profile[phase])
-        if parsed.agent not in _PREMIUM_VENDORS:
-            continue
-        if parsed.model is None and parsed.effort is None:
-            result[phase] = other
-        elif parsed.model is None and parsed.effort is not None:
-            result[phase] = f"{other}:{parsed.effort}"
-        else:
+        def _cross_critic_spec(spec: str) -> str:
+            parsed = parse_agent_spec(spec)
+            if parsed.agent not in _PREMIUM_VENDORS:
+                return spec
+            if parsed.model is None and parsed.effort is None:
+                return other
+            if parsed.model is None and parsed.effort is not None:
+                return f"{other}:{parsed.effort}"
             raise _cli_error(
                 "vendor_swap_model_conflict",
                 f"Critic cross-swap would overwrite explicit model pin "
-                f"'{parsed.model}' on phase '{phase}' spec '{profile[phase]}'",
+                f"'{parsed.model}' on phase '{phase}' spec '{spec}'",
             )
+        result[phase] = map_fallback_spec_value(
+            profile[phase], _cross_critic_spec, path=f"profile.{phase}",
+        )
     return result
 
 
 def apply_depth_rewrite(
-    profile: dict[str, str],
+    profile: dict[str, str | list[str]],
     depth: str,
     *,
-    tier_models: dict[str, dict[int, str]] | None = None,
-) -> dict[str, str]:
+    tier_models: dict[str, dict[int, str | list[str]]] | None = None,
+) -> dict[str, str | list[str]]:
     if depth not in VALID_DEPTH_CHOICES:
         raise _cli_error(
             "invalid_depth",
             f"--depth must be one of {', '.join(VALID_DEPTH_CHOICES)}; got {depth!r}",
         )
+
+    def _depth_spec(spec: str) -> str:
+        parsed = parse_agent_spec(spec)
+        if parsed.agent not in _PREMIUM_VENDORS:
+            return spec
+        if parsed.model is not None:
+            return f"{parsed.agent}:{parsed.model}:{depth}"
+        return f"{parsed.agent}:{depth}"
+
     result = dict(profile)
     for phase, spec in profile.items():
         if phase not in DEPTH_AUTHOR_PHASES:
             continue
-        parsed = parse_agent_spec(spec)
-        if parsed.agent not in _PREMIUM_VENDORS:
-            continue
-        if parsed.model is not None:
-            result[phase] = f"{parsed.agent}:{parsed.model}:{depth}"
-        else:
-            result[phase] = f"{parsed.agent}:{depth}"
+        result[phase] = map_fallback_spec_value(spec, _depth_spec, path=f"profile.{phase}")
     if tier_models is not None:
         for phase, tiers in tier_models.items():
             if phase not in DEPTH_AUTHOR_PHASES:
                 continue
             for tier_int, spec in tiers.items():
-                parsed = parse_agent_spec(spec)
-                if parsed.agent not in _PREMIUM_VENDORS:
-                    continue
-                if parsed.model is not None:
-                    tiers[tier_int] = f"{parsed.agent}:{parsed.model}:{depth}"
-                else:
-                    tiers[tier_int] = f"{parsed.agent}:{depth}"
+                tiers[tier_int] = map_fallback_spec_value(
+                    spec, _depth_spec, path=f"tier_models.{phase}.{tier_int}",
+                )
     return result
 
 
@@ -536,25 +610,31 @@ def _swap_deepseek_provider_spec(spec: str, provider: str) -> str:
 
 
 def apply_deepseek_provider_rewrite(
-    profile: dict[str, str],
+    profile: dict[str, str | list[str]],
     provider: str,
     *,
-    tier_models: dict[str, dict[int, str]] | None = None,
-) -> dict[str, str]:
+    tier_models: dict[str, dict[int, str | list[str]]] | None = None,
+) -> dict[str, str | list[str]]:
     if provider not in VALID_DEEPSEEK_PROVIDER_CHOICES:
         raise _cli_error(
             "invalid_deepseek_provider",
             f"--deepseek-provider must be one of {', '.join(VALID_DEEPSEEK_PROVIDER_CHOICES)}; "
             f"got {provider!r}",
         )
+
+    def _ds_map(spec: str) -> str:
+        return _swap_deepseek_provider_spec(spec, provider)
+
     if tier_models is not None:
         for _phase, tiers in tier_models.items():
             for tier_int, spec in tiers.items():
-                tiers[tier_int] = _swap_deepseek_provider_spec(spec, provider)
-    return {
-        phase: _swap_deepseek_provider_spec(spec, provider)
-        for phase, spec in profile.items()
-    }
+                tiers[tier_int] = map_fallback_spec_value(
+                    spec, _ds_map, path=f"tier_models.{_phase}.{tier_int}",
+                )
+    result: dict[str, str | list[str]] = {}
+    for phase, spec in profile.items():
+        result[phase] = map_fallback_spec_value(spec, _ds_map, path=f"profile.{phase}")
+    return result
 
 
 _PREMIUM_CREDENTIAL_ENV: dict[str, str] = {
@@ -665,76 +745,115 @@ def _warn_routing_degradations(degradations: list[dict[str, Any]]) -> None:
     log.warning("M_WARN_ROUTING_DEGRADED %s", "; ".join(parts))
 
 
-def apply_available_model_floor(
-    profile: dict[str, str],
+def _apply_floor_to_spec_value(
+    spec_value: str | list[str],
     *,
-    tier_models: dict[str, dict[int, str]] | None = None,
-    degradations: list[dict[str, Any]] | None = None,
-) -> dict[str, str]:
-    result = dict(profile)
-    local_degradations: list[dict[str, Any]] = []
-    for phase, original in list(result.items()):
-        floored, reason = _best_available_floor_spec(original)
-        if floored != original:
-            result[phase] = floored
+    phase: str,
+    tier: int | None,
+    degradations: list[dict[str, Any]],
+) -> str | list[str]:
+    specs = normalize_fallback_spec_list(spec_value, path=f"floor.{phase}")
+    floored_list: list[str] = []
+    any_changed = False
+    for idx, spec in enumerate(specs):
+        floored, reason = _best_available_floor_spec(spec)
+        floored_list.append(floored)
+        if floored != spec:
+            any_changed = True
             _record_routing_degradation(
-                local_degradations,
+                degradations,
                 phase=phase,
-                tier=None,
-                from_spec=original,
+                tier=tier,
+                from_spec=spec,
                 to_spec=floored,
                 reason=reason,
             )
+    if not any_changed:
+        return spec_value
+    if isinstance(spec_value, str):
+        return floored_list[0]
+    return floored_list
+
+
+def apply_available_model_floor(
+    profile: dict[str, str | list[str]],
+    *,
+    tier_models: dict[str, dict[int, str | list[str]]] | None = None,
+    degradations: list[dict[str, Any]] | None = None,
+) -> dict[str, str | list[str]]:
+    result = dict(profile)
+    local_degradations: list[dict[str, Any]] = []
+    for phase, original in list(result.items()):
+        result[phase] = _apply_floor_to_spec_value(
+            original,
+            phase=phase,
+            tier=None,
+            degradations=local_degradations,
+        )
     if tier_models is not None:
         for phase in ("execute", "critique"):
             tiers = tier_models.get(phase)
             if isinstance(tiers, dict):
                 for tier_int, spec in list(tiers.items()):
-                    floored, reason = _best_available_floor_spec(spec)
-                    if floored != spec:
-                        tiers[tier_int] = floored
-                        _record_routing_degradation(
-                            local_degradations,
-                            phase=phase,
-                            tier=tier_int,
-                            from_spec=spec,
-                            to_spec=floored,
-                            reason=reason,
-                        )
+                    tiers[tier_int] = _apply_floor_to_spec_value(
+                        spec,
+                        phase=phase,
+                        tier=tier_int,
+                        degradations=local_degradations,
+                    )
     if degradations is not None:
         degradations.extend(local_degradations)
     _warn_routing_degradations(local_degradations)
     return result
 
 
-def _profile_has_premium_slots(profile: dict[str, str]) -> bool:
-    for spec in profile.values():
-        parsed = parse_agent_spec(spec)
-        if parsed.agent in _PREMIUM_VENDORS or is_premium_placeholder_agent(parsed.agent):
-            return True
+def _profile_has_premium_slots(profile: dict[str, str | list[str]]) -> bool:
+    for spec_value in profile.values():
+        specs = normalize_fallback_spec_list(spec_value, path="profile")
+        for spec in specs:
+            parsed = parse_agent_spec(spec)
+            if parsed.agent in _PREMIUM_VENDORS or is_premium_placeholder_agent(parsed.agent):
+                return True
     return False
 
 
 def _validate_resolved_profile_invariants(
     profile_name: str,
-    resolved: dict[str, str],
+    resolved: dict[str, str | list[str]],
     *,
-    tier_models: dict[str, dict[int, str]] | None = None,
-    prep_models: dict[str, str] | None = None,
+    tier_models: dict[str, dict[int, str | list[str]]] | None = None,
+    prep_models: dict[str, str | list[str]] | None = None,
 ) -> None:
     bad: list[str] = []
-    for phase, spec in resolved.items():
-        if is_premium_placeholder_agent(parse_agent_spec(spec).agent):
-            bad.append(f"{phase}={spec}")
+    for phase, spec_value in resolved.items():
+        specs = normalize_fallback_spec_list(spec_value, path=f"invariant.{phase}")
+        for idx, spec in enumerate(specs):
+            if is_premium_placeholder_agent(parse_agent_spec(spec).agent):
+                if len(specs) == 1:
+                    bad.append(f"{phase}={spec}")
+                else:
+                    bad.append(f"{phase}[{idx}]={spec}")
     if tier_models:
         for phase, tiers in tier_models.items():
-            for tier_int, spec in tiers.items():
-                if is_premium_placeholder_agent(parse_agent_spec(spec).agent):
-                    bad.append(f"tier_models.{phase}.{tier_int}={spec}")
+            for tier_int, spec_value in tiers.items():
+                specs = normalize_fallback_spec_list(
+                    spec_value, path=f"tier_models.{phase}.{tier_int}",
+                )
+                for idx, spec in enumerate(specs):
+                    if is_premium_placeholder_agent(parse_agent_spec(spec).agent):
+                        if len(specs) == 1:
+                            bad.append(f"tier_models.{phase}.{tier_int}={spec}")
+                        else:
+                            bad.append(f"tier_models.{phase}.{tier_int}[{idx}]={spec}")
     if prep_models:
-        for stage, spec in prep_models.items():
-            if is_premium_placeholder_agent(parse_agent_spec(spec).agent):
-                bad.append(f"prep_models.{stage}={spec}")
+        for stage, spec_value in prep_models.items():
+            specs = normalize_fallback_spec_list(spec_value, path=f"prep_models.{stage}")
+            for idx, spec in enumerate(specs):
+                if is_premium_placeholder_agent(parse_agent_spec(spec).agent):
+                    if len(specs) == 1:
+                        bad.append(f"prep_models.{stage}={spec}")
+                    else:
+                        bad.append(f"prep_models.{stage}[{idx}]={spec}")
     if bad:
         raise _cli_error(
             "profile_resolution_mismatch",
@@ -745,29 +864,41 @@ def _validate_resolved_profile_invariants(
 
 def _validate_named_profile_invariants(
     profile_name: str,
-    resolved: dict[str, str],
+    resolved: dict[str, str | list[str]],
     *,
-    tier_models: dict[str, dict[int, str]] | None = None,
+    tier_models: dict[str, dict[int, str | list[str]]] | None = None,
 ) -> None:
     expected = _NAMED_VENDOR_PROFILES.get(profile_name)
     if expected is None:
         return
     bad: list[str] = []
-    for phase, spec in resolved.items():
+    for phase, spec_value in resolved.items():
         if phase == "feedback":
             continue
-        agent, _model = parse_agent_spec(spec)
-        if agent != expected:
-            bad.append(f"{phase}={spec}")
+        specs = normalize_fallback_spec_list(spec_value, path=f"invariant.{phase}")
+        for idx, spec in enumerate(specs):
+            agent, _model = parse_agent_spec(spec)
+            if agent != expected:
+                if len(specs) == 1:
+                    bad.append(f"{phase}={spec}")
+                else:
+                    bad.append(f"{phase}[{idx}]={spec}")
     premium_agents = frozenset({"claude", "codex"})
     if tier_models:
         for phase, tiers in tier_models.items():
             if phase == "feedback":
                 continue
-            for tier_int, spec in tiers.items():
-                agent, _model = parse_agent_spec(spec)
-                if agent in premium_agents and agent != expected:
-                    bad.append(f"tier_models.{phase}.{tier_int}={spec}")
+            for tier_int, spec_value in tiers.items():
+                specs = normalize_fallback_spec_list(
+                    spec_value, path=f"tier_models.{phase}.{tier_int}",
+                )
+                for idx, spec in enumerate(specs):
+                    agent, _model = parse_agent_spec(spec)
+                    if agent in premium_agents and agent != expected:
+                        if len(specs) == 1:
+                            bad.append(f"tier_models.{phase}.{tier_int}={spec}")
+                        else:
+                            bad.append(f"tier_models.{phase}.{tier_int}[{idx}]={spec}")
     if bad:
         raise _cli_error(
             "profile_resolution_mismatch",
@@ -796,11 +927,7 @@ def apply_profile_expansion(
 
     preexpanded_tier_models = bool(getattr(args, "tier_models", None))
     cli_phase_models = list(getattr(args, "phase_model", None) or [])
-    cli_phase_specs = {
-        pm.split("=", 1)[0]: pm.split("=", 1)[1]
-        for pm in cli_phase_models
-        if isinstance(pm, str) and "=" in pm
-    }
+    cli_phase_specs = _selected_phase_specs(cli_phase_models)
     raw_cli_steps = set(cli_phase_specs)
     if preexpanded_tier_models:
         live_steps = getattr(args, "_live_phase_model_steps", set())
@@ -831,7 +958,7 @@ def apply_profile_expansion(
         profile_meta = metadata.get(profile_name, {})
         vendor_locked = bool(profile_meta.get("vendor_locked", False))
 
-        tier_models: dict[str, dict[int, str]] | None = None
+        tier_models: dict[str, dict[int, str | list[str]]] | None = None
         try:
             tier_models = _resolve_tier_models_with_inheritance(
                 profile_name,
@@ -964,20 +1091,21 @@ def apply_profile_expansion(
         profile_block_start = len(cli_phase_models)
         for entry in phase_models[profile_block_start:]:
             if isinstance(entry, str) and "=" in entry:
-                _ps, _pv = entry.split("=", 1)
-                profile_default_specs.setdefault(_ps, _pv)
-        latest_persisted_index_by_step = {
-            pm.split("=", 1)[0]: index
-            for index, pm in enumerate(persisted)
-            if isinstance(pm, str) and "=" in pm
-        }
+                _ps, chain = decode_phase_model_value(entry)
+                profile_default_specs.setdefault(_ps, chain.selected())
+        latest_persisted_index_by_step = {}
+        for index, pm in enumerate(persisted):
+            if not isinstance(pm, str) or "=" not in pm:
+                continue
+            phase, _chain = decode_phase_model_value(pm)
+            latest_persisted_index_by_step[phase] = index
         for index, pm in enumerate(persisted):
             if "=" not in pm:
                 continue
-            step = pm.split("=", 1)[0]
+            step, persisted_chain = decode_phase_model_value(pm)
             if latest_persisted_index_by_step.get(step) != index:
                 continue
-            persisted_spec = pm.split("=", 1)[1]
+            persisted_spec = persisted_chain.selected()
             if step in cli_steps:
                 continue
             if step in profile_steps:
@@ -1010,11 +1138,7 @@ def apply_profile_expansion(
     # wipe out the adaptive tier table.
     tier_models_after_persisted = getattr(args, "tier_models", None)
     if tier_models_after_persisted:
-        effective_specs: dict[str, str] = {}
-        for pm in phase_models:
-            if isinstance(pm, str) and "=" in pm:
-                _step, _spec = pm.split("=", 1)
-                effective_specs[_step] = _spec
+        effective_specs = _selected_phase_specs(phase_models)
         for phase in ("execute", "critique"):
             if phase not in cli_steps:
                 continue

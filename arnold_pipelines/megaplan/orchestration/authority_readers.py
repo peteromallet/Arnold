@@ -370,17 +370,26 @@ def effective_execute_completed_task_ids(
         for task in tasks
         if isinstance(task, Mapping)
         and isinstance(task_id := _task_id(task), str)
-        and _optional_str(task.get("status")) == "skipped"
-        and (
-            _optional_str(task.get("reviewer_verdict")) == "deferred_baseline_unavailable"
-            or (
-                isinstance(task.get("executor_notes"), str)
-                and task["executor_notes"].strip()
-                and not is_rubber_stamp(task["executor_notes"], strict=True)
-            )
-        )
+        and _is_explained_skip(task)
     }
     completed |= explained_skips
+    explained_noops = {
+        task_id
+        for task in tasks
+        if isinstance(task, Mapping)
+        and isinstance(task_id := _task_id(task), str)
+        and _is_explained_noop_completion(task)
+    }
+    completed |= explained_noops
+    if decisions is not None:
+        for task in tasks:
+            if not isinstance(task, Mapping):
+                continue
+            task_id = _task_id(task)
+            if task_id in explained_skips:
+                decisions[task_id] = _explained_skip_decision(task_id, task)
+            elif task_id in explained_noops:
+                decisions[task_id] = _explained_noop_decision(task_id, task)
 
     authoritative_commands = {
         command
@@ -409,6 +418,68 @@ def effective_execute_completed_task_ids(
                     },
                 )
     return completed
+
+
+def _is_explained_skip(task: Mapping[str, Any]) -> bool:
+    return _optional_str(task.get("status")) == "skipped" and (
+        _optional_str(task.get("reviewer_verdict")) == "deferred_baseline_unavailable"
+        or (
+            isinstance(task.get("executor_notes"), str)
+            and task["executor_notes"].strip()
+            and not is_rubber_stamp(task["executor_notes"], strict=True)
+        )
+    )
+
+
+def _is_explained_noop_completion(task: Mapping[str, Any]) -> bool:
+    status = _optional_str(task.get("status"))
+    if status not in {"done", "completed"}:
+        return False
+    if _declared_task_outputs(task):
+        return False
+    notes = task.get("executor_notes")
+    return (
+        isinstance(notes, str)
+        and notes.strip()
+        and not is_rubber_stamp(notes, strict=True)
+    )
+
+
+def _explained_skip_decision(task_id: str, task: Mapping[str, Any]) -> AuthorityDecision:
+    return AuthorityDecision(
+        task_id=task_id,
+        status=EvidenceStatus.not_applicable,
+        satisfied=False,
+        diagnostics={
+            "raw_terminal_status": _optional_str(task.get("status")),
+            "execute_completion": "explained_skip",
+        },
+    )
+
+
+def _explained_noop_decision(task_id: str, task: Mapping[str, Any]) -> AuthorityDecision:
+    return AuthorityDecision(
+        task_id=task_id,
+        status=EvidenceStatus.satisfied,
+        satisfied=True,
+        diagnostics={
+            "raw_terminal_status": _optional_str(task.get("status")),
+            "execute_completion": "explained_noop_completion",
+        },
+    )
+
+
+def _declared_task_outputs(task: Mapping[str, Any]) -> tuple[str, ...]:
+    declared: list[str] = []
+    for key in ("files_changed", "commands_run", "evidence_files", "sections_written"):
+        values = task.get(key)
+        if isinstance(values, str):
+            if values.strip():
+                declared.append(key)
+        elif isinstance(values, Sequence):
+            if any(isinstance(item, str) and item.strip() for item in values):
+                declared.append(key)
+    return tuple(declared)
 
 
 def _execution_baseline_head(state: Mapping[str, Any] | None) -> str | None:
@@ -799,7 +870,12 @@ def _authority_divergence_payload(
     decision: AuthorityDecision,
 ) -> dict[str, Any] | None:
     raw_status = _optional_str(task.get("status"))
-    if raw_status not in _TERMINAL_AUTHORITY_CLAIMS or decision.authoritative:
+    if (
+        raw_status not in _TERMINAL_AUTHORITY_CLAIMS
+        or decision.authoritative
+        or _is_explained_skip(task)
+        or _is_explained_noop_completion(task)
+    ):
         return None
     reasons = tuple(
         str(reason)

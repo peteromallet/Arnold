@@ -13,11 +13,13 @@ import copy
 import logging
 from typing import Any
 
+from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
+
 log = logging.getLogger(__name__)
 
 
 def resolve_dispatch_spec(
-    tier_models: dict[str, dict[int, str]] | None,
+    tier_models: dict[str, dict[int, str | list[str]]] | None,
     slot: str,
     tier_ordinal: int,
     default: str | None = None,
@@ -38,12 +40,17 @@ def resolve_dispatch_spec(
     slot_table = tier_models.get(slot)
     if not isinstance(slot_table, dict):
         return default
-    return slot_table.get(tier_ordinal, default)
+    selected = slot_table.get(tier_ordinal)
+    if selected is None:
+        return default
+    if isinstance(selected, str):
+        return selected
+    return select_fallback_spec(selected, 0, path=f"tier_models.{slot}.{tier_ordinal}")
 
 
 def resolve_dispatch_agent(
     args: argparse.Namespace,
-    tier_spec: str,
+    tier_spec: str | list[str],
 ) -> tuple[str, str, str | None]:
     """Resolve a tier-spec string to *(agent, mode, model)* without mutating *args*.
 
@@ -55,9 +62,13 @@ def resolve_dispatch_agent(
     """
     import arnold_pipelines.megaplan.workers as worker_module
 
-    tier_args = copy.copy(args)
-    tier_args.phase_model = [f"execute={tier_spec}"]
-    agent, _mode, _refreshed, model = worker_module.resolve_agent_mode(
-        "execute", tier_args
+    selected_spec = (
+        tier_spec
+        if isinstance(tier_spec, str)
+        else select_fallback_spec(tier_spec, 0, path="tier_models.execute")
     )
-    return agent, _mode, model
+    tier_args = copy.copy(args)
+    tier_args.phase_model = [f"execute={selected_spec}"]
+    resolved = worker_module.resolve_agent_mode("execute", tier_args)
+    resolved_model = resolved.resolved_model if hasattr(resolved, "resolved_model") else None
+    return resolved.agent, resolved.mode, resolved_model if resolved_model is not None else resolved.model
