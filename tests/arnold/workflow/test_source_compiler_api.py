@@ -98,6 +98,47 @@ def test_source_compiler_public_api_call_shapes_accept_source_and_file_inputs() 
     workflow.compile_workflow_file(source_path)
 
 
+def test_source_compiler_accepts_pypeline_suffix_with_same_ast_semantics_and_spans() -> None:
+    """``.pypeline`` files accept Python-shaped AST source and preserve source spans."""
+    pypeline_path = Path("tests/fixtures/workflow_authoring/valid_direct_linear.pypeline")
+    py_path = Path("tests/fixtures/workflow_authoring/valid_direct_linear.py")
+
+    pypeline_source = pypeline_path.read_text(encoding="utf-8")
+    py_source = py_path.read_text(encoding="utf-8")
+
+    # Same source text
+    assert pypeline_source == py_source
+
+    # All six public APIs accept the .pypeline path
+    workflow.check_workflow_source(pypeline_source, source_path=pypeline_path)
+    workflow.lower_workflow_source(pypeline_source, source_path=pypeline_path)
+    workflow.compile_workflow_source(pypeline_source, source_path=pypeline_path)
+    workflow.check_workflow_file(pypeline_path)
+    workflow.lower_workflow_file(pypeline_path)
+    manifest = workflow.compile_workflow_file(pypeline_path)
+
+    # Manifest identity is independent of suffix
+    assert manifest.id == "linear-direct"
+
+    # Source spans are preserved (path carries .pypeline suffix)
+    py_manifest = workflow.compile_workflow_file(py_path)
+    for node in manifest.nodes:
+        assert node.source_span is not None
+        assert node.source_span.path.endswith(".pypeline")
+    for edge in manifest.edges:
+        if edge.source_span:
+            assert edge.source_span.path.endswith(".pypeline")
+    # Manifest hashes match between .py and .pypeline (content-identical)
+    assert manifest.manifest_hash == py_manifest.manifest_hash
+
+
+def test_source_compiler_supported_suffixes_includes_pypeline() -> None:
+    """The ``_SUPPORTED_SOURCE_SUFFIXES`` constant names both ``.py`` and ``.pypeline``."""
+    assert hasattr(workflow, "_SUPPORTED_SOURCE_SUFFIXES")
+    assert ".py" in workflow._SUPPORTED_SOURCE_SUFFIXES
+    assert ".pypeline" in workflow._SUPPORTED_SOURCE_SUFFIXES
+
+
 def test_source_compiler_m3_diagnostic_registry_pins_control_flow_policy_codes() -> None:
     expected = {
         diagnostics.DiagnosticCode.ROUTE_METADATA_MISMATCH: (

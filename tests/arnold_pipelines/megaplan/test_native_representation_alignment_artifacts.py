@@ -38,9 +38,9 @@ def _write_conformance_traceability_fixture(path: Path, row_ids: list[str]) -> N
                         ],
                         "deferred_semantic_carriers": ["explicit_deferral"],
                         "carrier_evidence_suffixes": {
-                            "canonical_source": [".py"],
+                            "canonical_source": [".pypeline"],
                             "audited_pure_phase_body": [".py"],
-                            "declared_policy": [".py", ".yaml", ".yml", ".json", ".md"],
+                            "declared_policy": [".pypeline", ".py", ".yaml", ".yml", ".json", ".md"],
                         },
                         "required_row_fields": [
                             "id",
@@ -265,9 +265,9 @@ def test_final_conformance_gate_is_milestone_validation_stage() -> None:
         assert carrier in closeout_text, carrier
     suffixes = machine_report["carrier_evidence_suffixes"]
     assert suffixes == {
-        "canonical_source": [".py"],
+        "canonical_source": [".pypeline"],
         "audited_pure_phase_body": [".py"],
-        "declared_policy": [".py", ".yaml", ".yml", ".json", ".md"],
+        "declared_policy": [".pypeline", ".py", ".yaml", ".yml", ".json", ".md"],
     }
     for carrier, allowed_suffixes in suffixes.items():
         assert carrier in closeout_text, carrier
@@ -288,7 +288,7 @@ def test_final_conformance_yaml_validator_accepts_complete_ledger(tmp_path: Path
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
     (tmp_path / "proof-one.md").write_text("# Proof one\n", encoding="utf-8")
-    (tmp_path / "carrier-one.py").write_text("# carrier one\n", encoding="utf-8")
+    (tmp_path / "carrier-one.pypeline").write_text("# carrier one\n", encoding="utf-8")
     (tmp_path / "proof-two.md").write_text("# Proof two\n", encoding="utf-8")
     (tmp_path / "blocking-proof.md").write_text("# Blocking proof\n", encoding="utf-8")
     _write_conformance_traceability_fixture(traceability_path, ["row-one", "row-two"])
@@ -303,7 +303,7 @@ def test_final_conformance_yaml_validator_accepts_complete_ledger(tmp_path: Path
                         "id": "row-one",
                         "status": "implemented",
                         "semantic_carrier": "canonical_source",
-                        "carrier_evidence": ["carrier-one.py"],
+                        "carrier_evidence": ["carrier-one.pypeline"],
                         "proof_categories": ["source_excerpt"],
                         "proof_artifacts": ["proof-one.md"],
                     },
@@ -440,7 +440,7 @@ def test_final_conformance_yaml_validator_rejects_non_code_canonical_source(
         traceability_path=traceability_path,
     )
 
-    assert any("canonical_source requires one of ['.py']" in error for error in errors)
+    assert any("canonical_source requires one of ['.pypeline']" in error for error in errors)
 
 
 def test_final_conformance_yaml_validator_accepts_declared_policy_artifact(
@@ -488,7 +488,7 @@ def test_final_conformance_yaml_validator_uses_traceability_target_report(
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
     (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
-    (tmp_path / "carrier.py").write_text("# carrier\n", encoding="utf-8")
+    (tmp_path / "carrier.pypeline").write_text("# carrier\n", encoding="utf-8")
     _write_conformance_traceability_fixture(traceability_path, ["row-one"])
     traceability = yaml.safe_load(traceability_path.read_text(encoding="utf-8"))
     traceability["target_report"] = "docs/arnold/custom-native-target.md"
@@ -504,7 +504,7 @@ def test_final_conformance_yaml_validator_uses_traceability_target_report(
                         "id": "row-one",
                         "status": "implemented",
                         "semantic_carrier": "canonical_source",
-                        "carrier_evidence": ["carrier.py"],
+                        "carrier_evidence": ["carrier.pypeline"],
                         "proof_categories": ["source_excerpt"],
                         "proof_artifacts": ["proof.md"],
                     }
@@ -530,7 +530,7 @@ def test_final_conformance_yaml_validator_rejects_stale_target_report(
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
     (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
-    (tmp_path / "carrier.py").write_text("# carrier\n", encoding="utf-8")
+    (tmp_path / "carrier.pypeline").write_text("# carrier\n", encoding="utf-8")
     _write_conformance_traceability_fixture(traceability_path, ["row-one"])
     traceability = yaml.safe_load(traceability_path.read_text(encoding="utf-8"))
     traceability["target_report"] = "docs/arnold/custom-native-target.md"
@@ -546,7 +546,7 @@ def test_final_conformance_yaml_validator_rejects_stale_target_report(
                         "id": "row-one",
                         "status": "implemented",
                         "semantic_carrier": "canonical_source",
-                        "carrier_evidence": ["carrier.py"],
+                        "carrier_evidence": ["carrier.pypeline"],
                         "proof_categories": ["source_excerpt"],
                         "proof_artifacts": ["proof.md"],
                     }
@@ -574,7 +574,7 @@ def test_final_conformance_yaml_validator_requires_traceability_proof_categories
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
     (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
-    (tmp_path / "carrier.py").write_text("# carrier\n", encoding="utf-8")
+    (tmp_path / "carrier.pypeline").write_text("# carrier\n", encoding="utf-8")
     _write_conformance_traceability_fixture(traceability_path, ["row-one"])
     traceability = yaml.safe_load(traceability_path.read_text(encoding="utf-8"))
     traceability["rows"][0]["proof_artifacts"] = ["source_excerpt", "rendered_route"]
@@ -590,7 +590,7 @@ def test_final_conformance_yaml_validator_requires_traceability_proof_categories
                         "id": "row-one",
                         "status": "implemented",
                         "semantic_carrier": "canonical_source",
-                        "carrier_evidence": ["carrier.py"],
+                        "carrier_evidence": ["carrier.pypeline"],
                         "proof_categories": ["source_excerpt"],
                         "proof_artifacts": ["proof.md"],
                     }
@@ -618,7 +618,7 @@ def test_final_conformance_yaml_validator_rejects_unknown_proof_categories(
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
     (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
-    (tmp_path / "carrier.py").write_text("# carrier\n", encoding="utf-8")
+    (tmp_path / "carrier.pypeline").write_text("# carrier\n", encoding="utf-8")
     _write_conformance_traceability_fixture(traceability_path, ["row-one"])
     conformance_path.write_text(
         yaml.safe_dump(
@@ -631,7 +631,7 @@ def test_final_conformance_yaml_validator_rejects_unknown_proof_categories(
                         "id": "row-one",
                         "status": "implemented",
                         "semantic_carrier": "canonical_source",
-                        "carrier_evidence": ["carrier.py"],
+                        "carrier_evidence": ["carrier.pypeline"],
                         "proof_categories": ["source_excerpt", "typoed_label"],
                         "proof_artifacts": ["proof.md"],
                     }
@@ -659,7 +659,7 @@ def test_final_conformance_yaml_validator_uses_required_row_field_contract(
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
     (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
-    (tmp_path / "carrier.py").write_text("# carrier\n", encoding="utf-8")
+    (tmp_path / "carrier.pypeline").write_text("# carrier\n", encoding="utf-8")
     _write_conformance_traceability_fixture(traceability_path, ["row-one"])
     traceability = yaml.safe_load(traceability_path.read_text(encoding="utf-8"))
     traceability["final_conformance_gate"]["machine_readable_report"][
@@ -677,7 +677,7 @@ def test_final_conformance_yaml_validator_uses_required_row_field_contract(
                         "id": "row-one",
                         "status": "implemented",
                         "semantic_carrier": "canonical_source",
-                        "carrier_evidence": ["carrier.py"],
+                        "carrier_evidence": ["carrier.pypeline"],
                         "proof_categories": ["source_excerpt"],
                         "proof_artifacts": ["proof.md"],
                     }
@@ -702,7 +702,7 @@ def test_final_conformance_yaml_validator_uses_status_specific_field_contract(
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
     (tmp_path / "proof-one.md").write_text("# Proof one\n", encoding="utf-8")
-    (tmp_path / "carrier-one.py").write_text("# carrier one\n", encoding="utf-8")
+    (tmp_path / "carrier-one.pypeline").write_text("# carrier one\n", encoding="utf-8")
     (tmp_path / "proof-two.md").write_text("# Proof two\n", encoding="utf-8")
     (tmp_path / "blocking-proof.md").write_text("# Blocking proof\n", encoding="utf-8")
     _write_conformance_traceability_fixture(traceability_path, ["row-one", "row-two"])
@@ -722,7 +722,7 @@ def test_final_conformance_yaml_validator_uses_status_specific_field_contract(
                         "id": "row-one",
                         "status": "implemented",
                         "semantic_carrier": "canonical_source",
-                        "carrier_evidence": ["carrier-one.py"],
+                        "carrier_evidence": ["carrier-one.pypeline"],
                         "proof_categories": ["source_excerpt"],
                         "proof_artifacts": ["proof-one.md"],
                     },

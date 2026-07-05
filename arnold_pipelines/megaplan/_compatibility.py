@@ -2,7 +2,7 @@
 
 This module is intentionally narrow: it projects the authored workflow DSL
 pipeline into the neutral Arnold graph shell and attaches a NativeProgram.
-The authored source in ``workflows/workflow.py`` remains the canonical DSL.
+The authored source in ``workflows/workflow.pypeline`` remains the canonical DSL.
 """
 
 from __future__ import annotations

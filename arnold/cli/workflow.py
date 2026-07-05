@@ -230,7 +230,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
     if not args.module:
         print(
             render_human_diagnostics(
-                "check requires either <workflow.py> or --module package.module:build_pipeline"
+                "check requires either <workflow.py|.pypeline> or --module package.module:build_pipeline"
             ),
             file=sys.stderr,
         )
@@ -400,7 +400,7 @@ def _cmd_compile(args: argparse.Namespace) -> int:
             manifest = _compile_from_target(args.module)
         else:
             print(
-                "compile requires either <workflow.py> or --module package.module:build_pipeline",
+                "compile requires either <workflow.py|.pypeline> or --module package.module:build_pipeline",
                 file=sys.stderr,
             )
             return 2
@@ -441,7 +441,7 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
             manifest = _compile_from_target(args.module)
         else:
             print(
-                "inspect requires either <workflow.py> or --module package.module:build_pipeline",
+                "inspect requires either <workflow.py|.pypeline> or --module package.module:build_pipeline",
                 file=sys.stderr,
             )
             return 2
@@ -505,7 +505,7 @@ def _cmd_explain(args: argparse.Namespace) -> int:
         return 1
     if source_path is None:
         print(
-            "explain requires <workflow.py> or --module with AUTHORING_SOURCE_PATH",
+            "explain requires <workflow.py|.pypeline> or --module with AUTHORING_SOURCE_PATH",
             file=sys.stderr,
         )
         return 2
@@ -670,7 +670,7 @@ def _render_mermaid_graph(
 def _cmd_graph(args: argparse.Namespace) -> int:
     source_path = _source_path_or_none(args)
     if source_path is None:
-        print("graph requires <workflow.py>", file=sys.stderr)
+        print("graph requires <workflow.py|.pypeline>", file=sys.stderr)
         return 2
 
     try:
@@ -792,7 +792,7 @@ def build_parser() -> argparse.ArgumentParser:
             sub.add_argument(
                 "source_path",
                 nargs="?",
-                help="Python-shaped workflow source file.",
+                help="Python-shaped workflow source file (.py or .pypeline).",
             )
         sub.add_argument(
             "--module",

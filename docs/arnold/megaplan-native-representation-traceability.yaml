@@ -46,9 +46,9 @@ final_conformance_gate:
     implemented_semantic_carriers: [canonical_source, declared_policy, audited_pure_phase_body]
     deferred_semantic_carriers: [explicit_deferral]
     carrier_evidence_suffixes:
-      canonical_source: [".py"]
+      canonical_source: [".pypeline"]
       audited_pure_phase_body: [".py"]
-      declared_policy: [".py", ".yaml", ".yml", ".json", ".md"]
+      declared_policy: [".pypeline", ".py", ".yaml", ".yml", ".json", ".md"]
     required_row_fields: [id, status, semantic_carrier, proof_categories, proof_artifacts]
     implemented_required_row_fields: [carrier_evidence]
     deferred_required_row_fields: [downstream_owner, blocking_proof, reason]

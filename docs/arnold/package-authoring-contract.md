@@ -259,6 +259,41 @@ filesystem paths survive worker migration, calls into worker-fleet APIs,
 or dispatches to model providers directly is crossing the platform boundary.
 Such code will fail validation under `authoring_style = "compositional"`.
 
+## Pack Identity, Dependencies, And Pins
+
+Shared packs are package resources, not checkout-relative folders. A pack that
+is consumed by another workflow must declare:
+
+| Field | Requirement |
+| --- | --- |
+| Pack ID | Stable identifier scoped to the package, for example `megaplan.shared.v1`. |
+| Version | Semver or immutable artifact version that appears in rollout records. |
+| Dependency metadata | Required pack IDs, version constraints, source distribution, and owner. |
+| Resource paths | `importlib.resources`-addressable files for source, docs, handlers, fixtures, and policy artifacts. |
+| Lockfile pin | Exact wheel filename/hash and pack version used by an operator rollout. |
+
+Authors may re-pin or upgrade a pack only by changing the lockfile entry and
+recording the structural diff evidence that was rerun: topology, policy,
+source-path reconciliation, fixture inclusion, and installed-wheel conformance.
+Do not treat an editable checkout as a production pin.
+
+## Structural Reconciliation For Pack Changes
+
+Before a package or shared pack is promoted beyond local development:
+
+1. Confirm every dependency resolves through package metadata and
+   `importlib.resources`.
+2. Compare the compiled topology and rendered policy against the previous pin.
+3. Run cycle and depth checks on workflow calls and pack dependency edges.
+4. Verify intentional loops use bounded loop or reentry carriers rather than
+   arbitrary graph cycles.
+5. Record any deliberate re-pin or upgrade with the old pin, new pin, reason,
+   and proof command.
+
+These checks preserve the composition contract: package metadata describes
+identity and dependencies, while workflow source and declared policy remain the
+semantic carriers.
+
 Instead, declare intent (credential requirements, artifact content types,
 target worker pool hints) as metadata and let the platform execute.
 

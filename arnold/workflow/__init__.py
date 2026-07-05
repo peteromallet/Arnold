@@ -22,6 +22,7 @@ from arnold.workflow.dsl import (
 from arnold.workflow.expressions import ExpressionRef, expression_ref
 from arnold.workflow.inspect import inspect_manifest, to_dot, to_yaml
 from arnold.workflow.source_compiler import (
+    _SUPPORTED_SOURCE_SUFFIXES,
     CheckWorkflowSourceResult,
     SourceCompileError,
     SourceCompilationError,
@@ -126,6 +127,7 @@ __all__ = [
     "RetryPolicy",
     "SubpipelineRef",
     "SuspensionRoute",
+    "_SUPPORTED_SOURCE_SUFFIXES",
     "TimingPolicy",
     "TopologyOverlaySlot",
     "WorkflowEdge",

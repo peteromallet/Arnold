@@ -6,7 +6,7 @@ This thin module re-exports :func:`build_pipeline` from
 authored workflow to a native-backed compatibility shell.
 
 The readable, product-local source of truth for the graph lives in
-``arnold_pipelines/megaplan/workflows/workflow.py``.
+``arnold_pipelines/megaplan/workflows/workflow.pypeline``.
 """
 
 from __future__ import annotations
