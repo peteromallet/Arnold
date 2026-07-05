@@ -192,6 +192,45 @@ def test_layer3_breaker_trips_on_consecutive_same_signature() -> None:
     assert result["layer3"]["breaker_signature"] == result["problem_signature"]
 
 
+def test_layer3_breaker_ignores_same_signature_before_advancement_epoch() -> None:
+    signature = repair_recurrence.build_problem_signature(_failure_context())
+    attempts = [
+        {
+            "attempt_id": 1,
+            "dispatched_at": "2026-06-30T00:00:00+00:00",
+            "problem_signature": signature,
+        }
+    ]
+    result = repair_recurrence.evaluate_recurrence(
+        signature,
+        attempts,
+        {"last_advancement_at": "2026-06-30T00:10:00+00:00"},
+    )
+    assert result["deterministic_failure_breaker"] is False
+    assert result["layer1"]["detected"] is False
+
+
+def test_legacy_advancement_snapshot_promotes_updated_at_to_epoch() -> None:
+    snapshot = repair_recurrence.build_advancement_snapshot(_failure_context(), run_kind="chain")
+    legacy_previous = {
+        "updated_at": "2026-06-30T00:10:00+00:00",
+        "advancement_since_last_dispatch": True,
+        "last_dispatch_snapshot": snapshot,
+        "no_advance_dispatches": ["2026-06-30T00:10:00+00:00"],
+        "no_advance_count": 1,
+    }
+
+    updated = repair_recurrence.update_session_repair_snapshot(
+        legacy_previous,
+        snapshot,
+        dispatched_at="2026-06-30T00:20:00+00:00",
+        min_dispatches=3,
+        window_seconds=3600,
+    )
+
+    assert updated["last_advancement_at"] == "2026-06-30T00:10:00+00:00"
+
+
 def test_layer3_breaker_does_not_trip_when_signature_changed() -> None:
     prior_sig = repair_recurrence.build_problem_signature(_failure_context(blocked_task_id="task-a"))
     attempts = [{"attempt_id": 1, "problem_signature": prior_sig}]
