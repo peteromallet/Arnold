@@ -5587,14 +5587,15 @@ session_terminal_status() {
   local workspace="$2"
   local remote_spec="$3"
   local run_kind="${4:-chain}"
+  local current_target_observation="${5:-}"
   [[ "$run_kind" == "chain" || "$run_kind" == "epic_chain" ]] || return 0
-  python3 - "$session" "$workspace" "$remote_spec" "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}" <<'PY'
+  python3 - "$session" "$workspace" "$remote_spec" "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}" "$current_target_observation" <<'PY'
 import hashlib
 import json
 import pathlib
 import sys
 
-session, workspace_raw, remote_spec_raw, repair_data_raw = sys.argv[1:]
+session, workspace_raw, remote_spec_raw, repair_data_raw, current_target_raw = sys.argv[1:]
 workspace = pathlib.Path(workspace_raw)
 remote_spec = pathlib.Path(remote_spec_raw)
 if not remote_spec.is_absolute():
@@ -5694,6 +5695,36 @@ def iter_chain_states() -> list[pathlib.Path]:
     return paths
 
 
+def current_target_marks_terminal_stale_chain() -> bool:
+    if not current_target_raw:
+        return False
+    try:
+        payload = json.loads(current_target_raw)
+    except Exception:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    plan_state = payload.get("plan_state")
+    if not isinstance(plan_state, dict):
+        return False
+    plan_current_state = str(plan_state.get("current_state") or "").strip().lower()
+    if plan_current_state not in {"done", "complete", "completed"}:
+        return False
+    stale_evidence = payload.get("stale_evidence")
+    if not isinstance(stale_evidence, list):
+        return False
+    return any(
+        isinstance(item, dict)
+        and str(item.get("kind") or "").strip() == "stale_chain_state_after_terminal_plan"
+        for item in stale_evidence
+    )
+
+
+if current_target_marks_terminal_stale_chain():
+    print("complete\tterminal plan state supersedes stale chain state")
+    raise SystemExit(0)
+
+
 for path in iter_chain_states():
     if not path.exists():
         continue
@@ -5767,7 +5798,7 @@ PY
   fi
 
   local terminal_status terminal_observe terminal_summary
-  terminal_status="$(session_terminal_status "$session" "$workspace" "$remote_spec" "$run_kind" 2>>"${LOG:-/dev/null}" || true)"
+  terminal_status="$(session_terminal_status "$session" "$workspace" "$remote_spec" "$run_kind" "$current_target_observation" 2>>"${LOG:-/dev/null}" || true)"
   if [[ "$terminal_status" == complete$'\t'* ]]; then
     terminal_observe="${terminal_status%%$'\t'*}"
     terminal_summary="${terminal_status#*$'\t'}"
