@@ -194,6 +194,25 @@ def test_completed_not_counted_as_active_even_with_stale_failure(fx):
     assert all(s["status"] != "running" for s in snap["sessions"])
 
 
+def test_completed_chain_without_active_plan_ignores_stale_needs_human(fx):
+    fx.add_session("done")
+    fx.add_chain_health(
+        "done",
+        chain_complete=True,
+        completed_count=3,
+        milestone_count=3,
+        current_plan_name="",
+        last_state="done",
+        updated_at=NOW - timedelta(minutes=1),
+    )
+    fx.add_needs_human("done", summary="old repair exhaustion from timeout_or_hang")
+
+    snap = fx.build()
+    entry = _by_session(snap, "done")
+    assert entry["status"] == "complete"
+    assert entry["operator_next"] == "chain complete; no runner expected"
+
+
 def test_missing_workspace_becomes_attention_not_complete(fx):
     # No workspace dir created; point the marker at a path that does not exist.
     (fx.marker_dir / "ghost.json").write_text(

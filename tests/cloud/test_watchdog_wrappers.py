@@ -7209,13 +7209,22 @@ def test_write_needs_human_marker_redacts_persisted_summary(tmp_path: Path) -> N
 
 
 
-def test_watchdog_checks_current_needs_human_before_terminal_status() -> None:
+def test_watchdog_checks_terminal_status_before_current_needs_human() -> None:
     text = _wrapper("arnold-watchdog")
     launch_start = text.index("launch_chain_tick() {")
     sidecar_check = text.index("emit_current_needs_human_sidecar", launch_start)
     terminal_check = text.index("session_terminal_status", launch_start)
 
-    assert sidecar_check < terminal_check
+    assert terminal_check < sidecar_check
+
+
+def test_watchdog_checks_plan_status_terminal_done_before_current_needs_human() -> None:
+    text = _wrapper("arnold-watchdog")
+    plan_status_eval = text.index('eval "$plan_status_env"')
+    complete_check = text.index('PLAN_STATUS_CURRENT_STATE:-}" == "done"', plan_status_eval)
+    sidecar_check = text.index("emit_current_needs_human_sidecar", plan_status_eval)
+
+    assert complete_check < sidecar_check
 
 
 def test_watchdog_current_needs_human_sidecar_reports_every_tick_without_renotify(tmp_path: Path) -> None:

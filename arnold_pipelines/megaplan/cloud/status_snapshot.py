@@ -397,8 +397,9 @@ def _classify_session(
             f"superseded by sibling session {superseding_sibling}; no runner expected",
         )
 
-    # A current needs-human sidecar is ground truth. It must beat derived
-    # watchdog/chain-complete labels, while confirmed stale markers stay ignored.
+    # A current needs-human sidecar is ground truth for active work. A complete
+    # chain with no active plan has no live repair target, so stale repair
+    # exhaustion markers from earlier ticks must not keep it blocked forever.
     if _is_current_needs_human(
         session=session,
         needs_human=needs_human,
@@ -578,6 +579,9 @@ def _is_current_needs_human(
     latest_activity_dt: datetime | None,
 ) -> bool:
     if not _is_needs_human(needs_human):
+        return False
+
+    if chain_complete and not current_plan:
         return False
 
     recorded_at = _parse_iso(str(needs_human.get("recorded_at") or ""))
