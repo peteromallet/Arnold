@@ -5680,19 +5680,21 @@ session_terminal_status() {
   local remote_spec="$3"
   local run_kind="${4:-chain}"
   local current_target_observation="${5:-}"
+  local marker_dir="${6:-$MARKER_DIR}"
   [[ "$run_kind" == "chain" || "$run_kind" == "epic_chain" ]] || return 0
-  python3 - "$session" "$workspace" "$remote_spec" "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}" "$current_target_observation" <<'PY'
+  python3 - "$session" "$workspace" "$remote_spec" "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}" "$current_target_observation" "$marker_dir" <<'PY'
 import hashlib
 import json
 import pathlib
 import sys
 
-session, workspace_raw, remote_spec_raw, repair_data_raw, current_target_raw = sys.argv[1:]
+session, workspace_raw, remote_spec_raw, repair_data_raw, current_target_raw, marker_dir_raw = sys.argv[1:]
 workspace = pathlib.Path(workspace_raw)
 remote_spec = pathlib.Path(remote_spec_raw)
 if not remote_spec.is_absolute():
     remote_spec = workspace / remote_spec
 repair_data_dir = pathlib.Path(repair_data_raw)
+marker_dir = pathlib.Path(marker_dir_raw)
 
 
 def spec_milestone_count() -> int | None:
@@ -5811,8 +5813,33 @@ def current_target_marks_terminal_stale_chain() -> bool:
         for item in stale_evidence
     )
 
+def chain_health_blocks_terminal_shortcut() -> bool:
+    path = marker_dir / f"{session}.chain-health.progress.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("chain_complete") is not False:
+        return False
+    try:
+        completed_count = int(payload.get("completed_count") or 0)
+    except Exception:
+        completed_count = 0
+    try:
+        milestone_count = int(payload.get("milestone_count") or 0)
+    except Exception:
+        milestone_count = 0
+    pr_state = str(payload.get("pr_state") or "").strip().lower()
+    if milestone_count and completed_count < milestone_count:
+        return True
+    if pr_state and pr_state not in {"merged", "closed"}:
+        return True
+    return True
 
-if current_target_marks_terminal_stale_chain():
+
+if current_target_marks_terminal_stale_chain() and not chain_health_blocks_terminal_shortcut():
     print("complete\tterminal plan state supersedes stale chain state")
     raise SystemExit(0)
 
@@ -5896,7 +5923,7 @@ PY
   fi
 
   local terminal_status terminal_observe terminal_summary
-  terminal_status="$(session_terminal_status "$session" "$workspace" "$remote_spec" "$run_kind" "$current_target_observation" 2>>"${LOG:-/dev/null}" || true)"
+  terminal_status="$(session_terminal_status "$session" "$workspace" "$remote_spec" "$run_kind" "$current_target_observation" "$MARKER_DIR" 2>>"${LOG:-/dev/null}" || true)"
   if [[ "$terminal_status" == complete$'\t'* ]]; then
     terminal_observe="${terminal_status%%$'\t'*}"
     terminal_summary="${terminal_status#*$'\t'}"
