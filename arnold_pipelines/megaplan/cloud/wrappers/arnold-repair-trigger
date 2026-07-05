@@ -348,11 +348,6 @@ def _classify_request(
         current_refs["current_plan_name"] = current_plan_name
     if current_plan_name and not target_plan.get("name"):
         target_plan["name"] = current_plan_name
-    if not target_plan.get("present") and current_plan_name:
-        target_plan["present"] = True
-    remote_spec = Path(str(current_refs.get("remote_spec") or ""))
-    if remote_spec.exists() and not target_plan.get("fingerprint"):
-        target_plan["fingerprint"] = "sha256:" + hashlib.sha256(remote_spec.read_bytes()).hexdigest()
     normalized_target = dict(target)
     normalized_target["current_refs"] = current_refs
     normalized_target["plan_state"] = target_plan

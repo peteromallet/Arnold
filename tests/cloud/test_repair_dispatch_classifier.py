@@ -294,6 +294,49 @@ def test_classifier_defaults_unknown_manual_review_shape_to_human_required(tmp_p
     assert decision.dispatch_intent == DISPATCH_INTENT_HUMAN_REQUIRED
 
 
+def test_classifier_does_not_dispatch_marker_only_target(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    enqueue_repair_request(
+        marker_dir=marker_dir,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "blocked_recovery_not_resolved",
+            "current_state": "blocked",
+            "phase_or_step": "execute",
+            "milestone_or_plan": "agentic-replay-viewer",
+            "blocked_task_id": "T1",
+        },
+        root_cause_hint="marker-only stale session",
+    )
+    target = _current_target(
+        authoritative_source="marker",
+        plan_state={"present": False, "fingerprint": ""},
+        current_refs={
+            "current_plan_name": "agentic-replay-viewer",
+            "plan_current_state": "blocked",
+        },
+    )
+    projection = project_repair_custody(
+        plan_state=_plan_state(),
+        current_target=target,
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+
+    decision = classify_repair_dispatch(
+        plan_state=_plan_state(),
+        current_target=target,
+        custody_projection=projection,
+    )
+
+    assert decision.decision == DISPATCH_DECISION_HUMAN_REQUIRED
+    assert decision.dispatch_intent == DISPATCH_INTENT_HUMAN_REQUIRED
+
+
 def test_classifier_recognizes_terminal_repair_state() -> None:
     decision = classify_repair_dispatch(
         plan_state=_plan_state(current_state="done"),

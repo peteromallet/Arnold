@@ -2315,18 +2315,18 @@ def _is_known_repairable_shape(
 
 def _has_current_target_evidence(current_target: Mapping[str, Any]) -> bool:
     target_payload = _as_mapping(current_target)
-    current_refs = _as_mapping(target_payload.get("current_refs"))
     plan_state = _as_mapping(target_payload.get("plan_state"))
     chain_state = _as_mapping(target_payload.get("chain_state"))
+    chain_log = _as_mapping(target_payload.get("chain_log"))
     if _as_text(plan_state.get("fingerprint")):
         return True
     if _as_text(chain_state.get("fingerprint")):
         return True
-    if _as_text(target_payload.get("authoritative_source")) and _as_text(
-        current_refs.get("current_plan_name")
-    ):
+    if bool(plan_state.get("present")):
         return True
-    return bool(plan_state.get("present")) or bool(chain_state.get("present"))
+    if bool(chain_state.get("present")):
+        return True
+    return bool(chain_log.get("present"))
 
 
 __all__ = [
