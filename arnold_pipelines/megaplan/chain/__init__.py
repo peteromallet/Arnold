@@ -1789,6 +1789,8 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
             for record in batch_records:
                 task_id = str(record.get("task_id") or record.get("id") or "")
                 if task_id and task_id in batch_completed:
+                    if not _task_record_can_override_finalize(record):
+                        continue
                     overrides[task_id] = dict(record)
         return overrides
 
@@ -2688,6 +2690,26 @@ def _finalize_records_missing_authority_fields(
             continue
         missing.append(f"{task_id}='unknown':missing_finalize_authority_fields")
     return missing
+
+
+def _task_record_has_authority_payload(task: dict[str, Any]) -> bool:
+    return any(
+        task.get(field)
+        for field in (
+            "files_changed",
+            "commands_run",
+            "evidence_files",
+            "sections_written",
+            "evidence",
+        )
+    )
+
+
+def _task_record_can_override_finalize(task: dict[str, Any]) -> bool:
+    status = str(task.get("status") or "").strip().lower()
+    if status in {"done", "waived", "not_applicable", "skipped"}:
+        return True
+    return _task_record_has_authority_payload(task)
 
 
 def _non_authoritative_task_reasons(
