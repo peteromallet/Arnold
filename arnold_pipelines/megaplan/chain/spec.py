@@ -142,21 +142,54 @@ def _normalize_advanced_completed_cursor(
     state: "ChainState",
     spec: "ChainSpec",
 ) -> "ChainState":
+    # Rewrite a stale blocked/authority_divergence marker ONLY when the cursor
+    # has genuinely advanced past a completed milestone AND the chain is NOT
+    # actively retrying the current milestone.
+    #
+    # The original commit 50a8ee92 targeted the case where a chain was blocked,
+    # then externally advanced (e.g. by the agentbox handler or a repair script)
+    # past a now-completed milestone, leaving a stale "blocked" marker. Its
+    # discriminator (``current_milestone_index == completed_prefix``) also fired
+    # at the START of any milestone N whose predecessors were complete, which
+    # collapsed a fresh completion-guard retry at milestone N into "done" on
+    # every load_chain_state — a false-completion regression.
+    #
+    # The two discriminator guards below make the rewrite safe:
+    #   1. The milestone IMMEDIATELY before the cursor must be completed (the
+    #      cursor advanced past a finished milestone), which excludes the
+    #      common case of a fresh block/retry at milestone 0 or at any milestone
+    #      whose predecessor has not yet completed.
+    #   2. The current milestone must NOT have an active retry counter — a live
+    #      completion-guard retry leaves a non-empty ``retry_counts[label]`` for
+    #      the milestone it is retrying, so we must not silently clear its
+    #      "blocked" marker. This distinguishes a live retry (blocked stays)
+    #      from an externally-advanced cursor with a leftover marker (cleared).
     if state.current_plan_name:
         return state
-    if state.current_milestone_index < 0:
+    if state.current_milestone_index <= 0:
         return state
     completed_labels = {
         record.get("label")
         for record in state.completed
         if isinstance(record, dict) and isinstance(record.get("label"), str)
     }
-    completed_prefix = 0
-    for milestone in spec.milestones:
-        if milestone.label not in completed_labels:
-            break
-        completed_prefix += 1
-    if state.current_milestone_index != completed_prefix:
+    previous_index = state.current_milestone_index - 1
+    if previous_index >= len(spec.milestones):
+        return state
+    previous_milestone_label = spec.milestones[previous_index].label
+    if previous_milestone_label not in completed_labels:
+        # Cursor is sitting at a milestone whose predecessor has NOT completed;
+        # a blocked/authority_divergence marker here is live, not stale.
+        return state
+    if state.current_milestone_index >= len(spec.milestones):
+        # Cursor is past the final milestone; nothing current to retry-check.
+        if state.last_state in {"blocked", "authority_divergence"}:
+            state.last_state = "done"
+        return state
+    current_milestone_label = spec.milestones[state.current_milestone_index].label
+    if state.retry_counts.get(current_milestone_label, 0) > 0:
+        # The chain is actively retrying this milestone (e.g. a live
+        # completion-guard retry); the blocked marker is live, not stale.
         return state
     if state.last_state in {"blocked", "authority_divergence"}:
         state.last_state = "done"
