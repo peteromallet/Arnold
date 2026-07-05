@@ -130,6 +130,13 @@ class DiagnosticCode(StrEnum):
     WORKFLOW_OUTPUT_BINDING_MISMATCH = "AWF237_WORKFLOW_OUTPUT_BINDING_MISMATCH"
     RESUME_SCHEMA_MISMATCH = "AWF238_RESUME_SCHEMA_MISMATCH"
     COMPOSITION_EFFECT_SCHEMA_MISMATCH = "AWF239_COMPOSITION_EFFECT_SCHEMA_MISMATCH"
+    # ── Megaplan semantic diagnostics (AWF240+) ──────────────────────────
+    UNRESOLVED_CALLEE_PROVENANCE = "AWF240_UNRESOLVED_CALLEE_PROVENANCE"
+    BRANCH_VOCABULARY_MISMATCH = "AWF241_BRANCH_VOCABULARY_MISMATCH"
+    RAW_STRING_ROUTE_BRANCH = "AWF242_RAW_STRING_ROUTE_BRANCH"
+    LOWERED_TOPOLOGY_DISCARD = "AWF243_LOWERED_TOPOLOGY_DISCARD"
+    HANDLER_PURITY_VIOLATION = "AWF244_HANDLER_PURITY_VIOLATION"
+    ROW_EVIDENCE_INSUFFICIENCY = "AWF245_ROW_EVIDENCE_INSUFFICIENCY"
 
 
 class DiagnosticFamily(StrEnum):
@@ -198,6 +205,13 @@ class DiagnosticFamily(StrEnum):
     WORKFLOW_OUTPUT_BINDING_MISMATCH = "workflow_output_binding_mismatch"
     RESUME_SCHEMA_MISMATCH = "resume_schema_mismatch"
     COMPOSITION_EFFECT_SCHEMA_MISMATCH = "composition_effect_schema_mismatch"
+    # ── Megaplan semantic families ───────────────────────────────────────
+    UNRESOLVED_CALLEE_PROVENANCE = "unresolved_callee_provenance"
+    BRANCH_VOCABULARY_MISMATCH = "branch_vocabulary_mismatch"
+    RAW_STRING_ROUTE_BRANCH = "raw_string_route_branch"
+    LOWERED_TOPOLOGY_DISCARD = "lowered_topology_discard"
+    HANDLER_PURITY_VIOLATION = "handler_purity_violation"
+    ROW_EVIDENCE_INSUFFICIENCY = "row_evidence_insufficiency"
 
 
 @dataclass(frozen=True)
@@ -641,6 +655,43 @@ DIAGNOSTIC_CODE_SPECS = (
         DiagnosticFamily.COMPOSITION_EFFECT_SCHEMA_MISMATCH,
         "composition-side effect metadata does not satisfy the declared schema",
         "keep composition effect payloads within the declared workflow interface",
+    ),
+    # ── Megaplan semantic diagnostic specs ───────────────────────────────
+    _v2_spec(
+        DiagnosticCode.UNRESOLVED_CALLEE_PROVENANCE,
+        DiagnosticFamily.UNRESOLVED_CALLEE_PROVENANCE,
+        "handler_ref cannot be resolved to a declared Megaplan handler",
+        "ensure the handler is exported from arnold_pipelines.megaplan.handlers and declared in components metadata",
+    ),
+    _v2_spec(
+        DiagnosticCode.BRANCH_VOCABULARY_MISMATCH,
+        DiagnosticFamily.BRANCH_VOCABULARY_MISMATCH,
+        "route branch vocabulary does not match the declared RUNTIME_BRANCH_VOCABULARY for the active step domain",
+        "use only declared enum members whose values are present in the runtime branch vocabulary",
+    ),
+    _v2_spec(
+        DiagnosticCode.RAW_STRING_ROUTE_BRANCH,
+        DiagnosticFamily.RAW_STRING_ROUTE_BRANCH,
+        "route branch comparison uses a raw string literal instead of a declared typed outcome enum member",
+        "replace string-constant branch conditions with typed outcome enum member comparisons",
+    ),
+    _v2_spec(
+        DiagnosticCode.LOWERED_TOPOLOGY_DISCARD,
+        DiagnosticFamily.LOWERED_TOPOLOGY_DISCARD,
+        "source-derived lowered topology is discarded in favour of component-only rebuild",
+        "consume lowered steps and routes instead of rebuilding topology solely from ALL_STEP_COMPONENTS route metadata",
+    ),
+    _v2_spec(
+        DiagnosticCode.HANDLER_PURITY_VIOLATION,
+        DiagnosticFamily.HANDLER_PURITY_VIOLATION,
+        "handler declared as pure phase body contains routing call markers or state-mutation side effects",
+        "remove routing logic from pure handlers or reclassify them as report-semantic owners",
+    ),
+    _v2_spec(
+        DiagnosticCode.ROW_EVIDENCE_INSUFFICIENCY,
+        DiagnosticFamily.ROW_EVIDENCE_INSUFFICIENCY,
+        "conformance row is marked proven but lacks structured semantic evidence records",
+        "provide source span, construct type, positive test, negative fixture, and compatibility quarantine records for every proven row",
     ),
 )
 

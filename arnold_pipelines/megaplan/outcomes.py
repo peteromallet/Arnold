@@ -1,0 +1,145 @@
+"""Closed Megaplan workflow outcome StrEnum classes.
+
+Each StrEnum captures the exact routing vocabulary for one workflow domain
+(gate, tiebreaker, review, override, execution, finalize, suspension/halt).
+The enum values are required to match the authoritative RUNTIME_BRANCH_VOCABULARY
+defined in ``workflows.components``, but these enums live here to avoid
+reusing ``arnold/runtime/outcome.py`` as the workflow authority.
+
+North Star compatibility quarantine: raw strings may only remain at explicit
+enum-to-string serialization adapters (manifests, CLI compat, persisted
+payloads, external schema boundaries) — never in workflow routing authority.
+"""
+
+from __future__ import annotations
+
+from enum import StrEnum
+
+
+class GateOutcome(StrEnum):
+    """Closed routing vocabulary for the gate step."""
+
+    PROCEED = "proceed"
+    ITERATE = "iterate"
+    TIEBREAKER = "tiebreaker"
+    ESCALATE = "escalate"
+    ABORT = "abort"
+    SUSPEND = "suspend"
+    BLOCKED_PREFLIGHT = "blocked_preflight"
+    FORCE_PROCEED = "force_proceed"
+
+
+class TiebreakerOutcome(StrEnum):
+    """Closed routing vocabulary for the tiebreaker subpipeline."""
+
+    ITERATE = "iterate"
+    PROCEED = "proceed"
+    ESCALATE = "escalate"
+
+
+class ReviewOutcome(StrEnum):
+    """Closed routing vocabulary for the review step."""
+
+    PASS = "pass"
+    REWORK = "rework"
+    BLOCKED = "blocked"
+    FORCE_PROCEEDED = "force_proceeded"
+    DEFERRED_HUMAN = "deferred_human"
+
+
+class OverrideOutcome(StrEnum):
+    """Closed routing vocabulary for the override step."""
+
+    ABORT = "abort"
+    FORCE_PROCEED = "force_proceed"
+    REPLAN = "replan"
+
+
+class ExecuteOutcome(StrEnum):
+    """Closed routing vocabulary for the execute step.
+
+    Execute is a terminal-or-loop step; the routing vocabulary is the set
+    of outcomes that may be emitted by the execution phase.
+    """
+
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    TIMEOUT = "timeout"
+    BLOCKED = "blocked"
+
+
+class FinalizeOutcome(StrEnum):
+    """Closed routing vocabulary for the finalize step.
+
+    Finalize is a terminal step; its outcomes describe the final disposition
+    of the workflow run.
+    """
+
+    COMPLETED = "completed"
+    ESCALATED = "escalated"
+
+
+class SuspensionHaltOutcome(StrEnum):
+    """Closed routing vocabulary for suspension and halt transitions."""
+
+    SUSPEND = "suspend"
+    HALT = "halt"
+    AWAITING_HUMAN = "awaiting_human"
+
+
+# ── Aggregate mapping for RUNTIME_BRANCH_VOCABULARY parity checks ───────────
+
+# Each key matches a RUNTIME_BRANCH_VOCABULARY key in workflows.components.
+# Each value is the StrEnum class whose .values() must match the tuple.
+OUTCOME_CLASS_BY_VOCABULARY_KEY: dict[str, type[StrEnum]] = {
+    "gate": GateOutcome,
+    "tiebreaker_decide": TiebreakerOutcome,
+    "review": ReviewOutcome,
+    "override": OverrideOutcome,
+}
+
+
+def assert_vocabulary_parity() -> None:
+    """Assert that all outcome enum values match RUNTIME_BRANCH_VOCABULARY.
+
+    This function is called by components.py at import time to ensure that
+    the outcome enums stay in sync with the authoritative vocabulary.
+    """
+    from arnold_pipelines.megaplan.workflows.components import RUNTIME_BRANCH_VOCABULARY
+
+    for key, enum_cls in OUTCOME_CLASS_BY_VOCABULARY_KEY.items():
+        expected = tuple(enum_cls.__members__.values())  # type: ignore[attr-defined]
+        actual = RUNTIME_BRANCH_VOCABULARY.get(key)
+        if actual is None:
+            raise AssertionError(
+                f"Outcome key '{key}' has enum {enum_cls.__name__} "
+                f"but is missing from RUNTIME_BRANCH_VOCABULARY"
+            )
+        if expected != actual:
+            raise AssertionError(
+                f"Vocabulary mismatch for '{key}': "
+                f"enum values {expected!r} != RUNTIME_BRANCH_VOCABULARY {actual!r}"
+            )
+
+
+def all_vocabulary_keys_covered() -> set[str]:
+    """Return the set of RUNTIME_BRANCH_VOCABULARY keys NOT covered by an enum."""
+    from arnold_pipelines.megaplan.workflows.components import RUNTIME_BRANCH_VOCABULARY
+
+    covered = set(OUTCOME_CLASS_BY_VOCABULARY_KEY)
+    actual = set(RUNTIME_BRANCH_VOCABULARY)
+    return actual - covered
+
+
+__all__ = [
+    "ExecuteOutcome",
+    "FinalizeOutcome",
+    "GateOutcome",
+    "OverrideOutcome",
+    "ReviewOutcome",
+    "SuspensionHaltOutcome",
+    "TiebreakerOutcome",
+    "OUTCOME_CLASS_BY_VOCABULARY_KEY",
+    "all_vocabulary_keys_covered",
+    "assert_vocabulary_parity",
+]
