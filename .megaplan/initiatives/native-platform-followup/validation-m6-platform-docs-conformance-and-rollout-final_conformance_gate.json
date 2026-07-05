@@ -23,8 +23,8 @@
   "validator_sha256": "14df45a02e91812b4620ac9aeba7c64f83151ebf665376f22c8c3ac87ad9fa79",
   "conformance_sha256": "dd4d0bcc67eac6c1bc127cb5d7782798104fd5c6b1f9513f75c92afa15e59421",
   "traceability_sha256": "9856681e91eecc461ba6ee7df5cf654231cfd3a92108100a0d0b5bd836418ad3",
-  "proof_map_sha256_before": "6060be6e2b3e1030bb6327da2bd7b94f514b9fb22a9c9bd60ddf00aaf98aadad",
-  "git_head": "18470d9ec0b7cff6819b49d9be42294eadd15290",
-  "started_at": "2026-07-05T13:05:45.075804+00:00",
-  "finished_at": "2026-07-05T13:05:45.203402+00:00"
+  "proof_map_sha256_before": "ee8fdf603d80ff67f665412a5fe80213afba22e22911c4b7739582adfde20795",
+  "git_head": "7e407bc26ddedfc5a3e194316b9e18e70c9db150",
+  "started_at": "2026-07-05T13:11:24.304775+00:00",
+  "finished_at": "2026-07-05T13:11:24.409456+00:00"
 }
