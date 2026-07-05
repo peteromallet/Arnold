@@ -742,6 +742,16 @@ def _meta_repair_summary(
     repair_payload = _load_json(repair_root / f"{session}.repair-data.json")
     if not isinstance(repair_payload, dict):
         repair_payload = {}
+    normalized_kind = str(run_kind or "").strip().lower()
+    normalized_state = str(current_state or "").strip().lower()
+    chain_current = (chain_state_summary or {}).get("current") if isinstance(chain_state_summary, dict) else {}
+    chain_last_state = str((chain_current or {}).get("last_state") or "").strip().lower()
+    chain_current_plan = str((chain_current or {}).get("current_plan_name") or "").strip()
+    terminal_success = False
+    if normalized_kind == "plan":
+        terminal_success = normalized_state in {"done", "complete", "completed", "finalized"}
+    else:
+        terminal_success = chain_last_state in {"done", "complete", "completed"} and not chain_current_plan
     run_refs = _collect_meta_run_refs(session)
     repair_outcome, attempt_outcomes, failure_kinds = _repair_attempt_signals(repair_payload)
     recent_attempts = [
@@ -757,16 +767,10 @@ def _meta_repair_summary(
     current_attempt_id = str(repair_payload.get("current_attempt_id") or "").strip()
     current_recurrence = repair_payload.get("current_recurrence") if isinstance(repair_payload.get("current_recurrence"), dict) else {}
     current_signature = repair_payload.get("current_signature") if isinstance(repair_payload.get("current_signature"), dict) else {}
-    terminal_success = False
     if isinstance(repair_data, dict) and not repair_data.get("exists"):
-        normalized_kind = str(run_kind or "").strip().lower()
-        normalized_state = str(current_state or "").strip().lower()
         if normalized_kind == "plan":
             terminal_success = normalized_state in {"done", "complete", "completed", "finalized"}
         else:
-            chain_current = (chain_state_summary or {}).get("current") if isinstance(chain_state_summary, dict) else {}
-            chain_last_state = str((chain_current or {}).get("last_state") or "").strip().lower()
-            chain_current_plan = str((chain_current or {}).get("current_plan_name") or "").strip()
             terminal_success = chain_last_state in {"done", "complete", "completed"} and not chain_current_plan
     if terminal_success and not meta_refs and not run_refs:
         return {
@@ -869,8 +873,13 @@ def _meta_repair_summary(
         should_dispatch = False
         trigger = "classification_error"
         rationale = [_redact_scalar(exc)]
-    normalized_kind = str(run_kind or "").strip().lower()
-    normalized_state = str(current_state or "").strip().lower()
+    if should_dispatch and terminal_success:
+        should_dispatch = False
+        trigger = ""
+        rationale = [
+            "current gathered target state already reached terminal success; "
+            "stale repair-data recurrence does not require meta-repair dispatch"
+        ]
     live_event_activity = isinstance(events_mtime_age_min, int) and events_mtime_age_min <= 5
     chain_log_age = None
     if isinstance(chain_log_summary, dict):
