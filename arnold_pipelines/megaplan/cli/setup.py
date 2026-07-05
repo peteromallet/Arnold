@@ -18,6 +18,7 @@ from arnold_pipelines.megaplan._core import (
     load_config,
     save_config,
 )
+from .editor_setup import ensure_repo_editor_support, ensure_user_editor_support
 from .skills import (
     _GLOBAL_TARGETS,
     _canonical_pre_commit_hook,
@@ -275,6 +276,23 @@ def handle_setup_hooks(
 def handle_setup(args: argparse.Namespace) -> StepResponse:
     if getattr(args, "regen_composed", False):
         return handle_regen_composed()
+    if getattr(args, "editors", False):
+        target_dir = Path(args.target_dir).resolve() if args.target_dir else Path.cwd()
+        changes = ensure_repo_editor_support(target_dir)
+        if getattr(args, "user_editors", False):
+            changes.extend(ensure_user_editor_support(Path.home()))
+        lines = [
+            f"  {change.target}: {change.status} {change.path}"
+            + (f" ({change.reason})" if change.reason else "")
+            for change in changes
+        ]
+        return {
+            "success": True,
+            "step": "setup",
+            "mode": "editors",
+            "summary": "Editor setup complete:\n" + "\n".join(lines),
+            "changes": [change.as_dict() for change in changes],
+        }
     if getattr(args, "install_hooks", False):
         target_dir = Path(args.target_dir).resolve() if args.target_dir else Path.cwd()
         return handle_setup_hooks(target_dir, force=args.force)
