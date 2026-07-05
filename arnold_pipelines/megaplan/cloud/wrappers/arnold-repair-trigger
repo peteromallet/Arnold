@@ -23,6 +23,8 @@ TERMINAL_DECISIONS = {"coalesced", "stale", "superseded", "dispatched"}
 STALE_EVIDENCE_KINDS = {
     "invalid_marker_json",
     "missing_marker_json",
+    "workspace_missing",
+    "spec_missing",
     "stale_marker_plan_ref",
     "stale_needs_human_plan_ref",
 }

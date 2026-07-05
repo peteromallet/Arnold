@@ -2066,6 +2066,7 @@ def _classify_failure(
     latest_failure: dict[str, object],
     chain_state: dict[str, object],
     plan_runtime: dict[str, object],
+    resolver_output: dict[str, object] | None = None,
 ) -> str:
     combined = "\n".join(signals).lower()
     kind = str(latest_failure.get("kind") or "").lower()
@@ -2074,6 +2075,11 @@ def _classify_failure(
     current_state = str(chain_state.get("current_state") or "").lower()
     current_plan_name = str(chain_state.get("current_plan_name") or "").strip()
     plan_current_state = str(plan_runtime.get("current_state") or "").strip().lower()
+    stale_kinds = {
+        str(item.get("kind") or "").strip().lower()
+        for item in (resolver_output or {}).get("stale_evidence", [])
+        if isinstance(item, dict)
+    }
     if (
         last_state == "done"
         and current_state in {"", "done", "unknown"}
@@ -2083,6 +2089,10 @@ def _classify_failure(
         return "chain_completed"
     if plan_current_state == "awaiting_human_verify":
         return "awaiting_human_user_action_gate"
+    if "workspace_missing" in stale_kinds:
+        return "workspace_missing"
+    if "spec_missing" in stale_kinds:
+        return "spec_missing"
     if "unrecognized arguments" in combined or "usage:" in combined:
         return "cli_or_argument_error"
     if "couldn't find remote ref" in combined or "missing_base_ref" in combined or last_state == "missing_base_ref":
@@ -2341,7 +2351,12 @@ raw_failure_signals = _unique_strings(
     ]
 )
 
-failure_classification = _classify_failure(raw_failure_signals, latest_failure, chain_state, plan_runtime_state)
+failure_classification = _classify_failure(
+    raw_failure_signals,
+    latest_failure,
+    chain_state,
+    plan_runtime_state,
+)
 if state_mismatch.get("detected"):
     failure_classification = "plan_chain_state_mismatch"
 elif stale_state.get("classification") == "STALE STATE":
@@ -2381,6 +2396,15 @@ try:
     )
 except Exception:
     payload["resolver_output"] = {}
+if not state_mismatch.get("detected") and stale_state.get("classification") != "STALE STATE":
+    failure_classification = _classify_failure(
+        raw_failure_signals,
+        latest_failure,
+        chain_state,
+        plan_runtime_state,
+        payload["resolver_output"] if isinstance(payload.get("resolver_output"), dict) else None,
+    )
+    payload["failure_classification"] = failure_classification
 print(json.dumps(payload, sort_keys=True))
 PY
 }

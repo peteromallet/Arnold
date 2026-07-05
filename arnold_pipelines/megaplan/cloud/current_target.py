@@ -125,9 +125,21 @@ def resolve_current_target(
         rationale.append("marker JSON missing")
 
     if remote_spec is None:
+        stale_evidence.append(_artifact(kind="spec_missing", path=_safe_text(marker.get("remote_spec"))))
         rationale.append("marker did not provide a usable remote spec")
     if workspace is None:
+        stale_evidence.append(_artifact(kind="workspace_missing", path=_safe_text(marker.get("workspace"))))
         rationale.append("marker did not provide a usable workspace")
+    elif not workspace.exists():
+        stale_evidence.append(_artifact(kind="workspace_missing", path=workspace))
+        rationale.append("marker workspace path does not exist")
+    if (
+        remote_spec is not None
+        and run_kind in {"chain", "epic_chain"}
+        and not remote_spec.exists()
+    ):
+        stale_evidence.append(_artifact(kind="spec_missing", path=remote_spec, run_kind=run_kind))
+        rationale.append("marker remote spec path does not exist")
 
     if chain_state_path is not None and not chain_state_path.exists():
         stale_evidence.append(_artifact(kind="missing_chain_state", path=chain_state_path))
