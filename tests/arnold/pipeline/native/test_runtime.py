@@ -35,10 +35,18 @@ from arnold.pipeline.native import (
     run_native_pipeline,
     workflow,
 )
+from arnold.pipeline.native.audit import AuditHooks
 from arnold.pipeline.native.checkpoint import read_native_cursor
-from arnold.pipeline.native.hooks import NullNativeRuntimeHooks
+from arnold.pipeline.native.hooks import EffectLedgerHooks, NullNativeRuntimeHooks
+from arnold.pipeline.native.ir import ParallelMapInstruction
+from arnold.pipeline.native.persistence import (
+    FileNativePersistenceBackend,
+    bind_legacy_artifact_root,
+)
 from arnold.pipeline.types import ContractResult, ContractStatus, HumanSuspension, StepResult
 from arnold.runtime.envelope import RunEnvelope
+from arnold.supervisor.leases import ProjectLeaseState
+from arnold.supervisor.store import FileProjectLeaseStore
 
 
 # ── module-level fixture ──────────────────────────────────────────────
@@ -58,6 +66,265 @@ def _make_program(
     instructions: tuple[NativeInstruction, ...] = (),
 ) -> NativeProgram:
     return NativeProgram(name=name, instructions=instructions)
+
+
+def test_cancellation_boundary_checkpoints_typed_outcome_and_releases_lease(tmp_path: Path) -> None:
+    store = FileProjectLeaseStore(tmp_path / "leases")
+    claimed = store.claim_project_lease(
+        "project-1",
+        "worktree-1",
+        run_id="run-1",
+        owner_id="worker-1",
+        lease_token="token-1",
+        lease_seconds=60,
+    )
+
+    def phase_body(ctx):
+        raise AssertionError("phase body should not run after cancellation")
+
+    prog = _make_program(
+        instructions=(
+            NativeInstruction(pc=0, op="phase", name="work", func=phase_body),
+            NativeInstruction(pc=1, op="halt", name="halt"),
+        )
+    )
+
+    result = run_native_pipeline(
+        prog,
+        artifact_root=tmp_path / "artifacts",
+        initial_envelope=RunEnvelope(cancellation=True),
+        project_lease_store=store,
+        project_lease_project_id=claimed.project_id,
+        project_lease_worktree_id=claimed.worktree_id,
+        project_lease_token=claimed.lease_token,
+    )
+
+    assert result.suspended is True
+    assert result.state["__cancelled__"]["boundary"] == "step_enter"
+    contract = result.state["__contract_results__"]["__runtime_cancelled__"]
+    assert contract.status is ContractStatus.FAILED
+    assert contract.payload["cancelled"] is True
+
+    released = store.load_project_lease("project-1", "worktree-1")
+    assert released.state is ProjectLeaseState.CANCELLED
+    assert released.last_progress_at is not None
+    assert released.last_result == {
+        "cancellation": result.state["__cancelled__"],
+    }
+
+    cursor = read_native_cursor(tmp_path / "artifacts")
+    assert cursor is not None
+    assert cursor["suspension_kind"] == "cancelled"
+    assert cursor["cancellation"]["reason"] == "cancellation_requested"
+
+
+def test_cancellation_trace_emits_cancelled_status_and_boundary_metadata(tmp_path: Path) -> None:
+    def phase_body(ctx):
+        raise AssertionError("phase body should not run after cancellation")
+
+    prog = _make_program(
+        instructions=(
+            NativeInstruction(pc=0, op="phase", name="work", func=phase_body),
+            NativeInstruction(pc=1, op="halt", name="halt"),
+        )
+    )
+    trace_dir = tmp_path / "trace"
+    audit_dir = tmp_path / "audit"
+
+    result = run_native_pipeline(
+        prog,
+        artifact_root=tmp_path / "artifacts",
+        hooks=AuditHooks(audit_dir=audit_dir),
+        trace_dir=trace_dir,
+        initial_envelope=RunEnvelope(cancellation=True),
+    )
+
+    assert result.suspended is True
+
+    events = [
+        json.loads(line)
+        for line in (trace_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    cancelled_events = [event for event in events if event["kind"] == "pipeline_cancelled"]
+    assert cancelled_events[-1]["payload"]["status"] == "cancelled"
+    assert cancelled_events[-1]["payload"]["reason"] == "cancellation_requested"
+    assert cancelled_events[-1]["payload"]["boundary"] == "step_enter"
+    assert cancelled_events[-1]["payload"]["trace"]["path"] == "root/work"
+
+    checkpoint = json.loads((trace_dir / "checkpoint.json").read_text(encoding="utf-8"))
+    assert checkpoint["status"] == "cancelled"
+    assert checkpoint["cancellation"]["boundary"] == "step_enter"
+
+    audit_records = [
+        json.loads(line)
+        for line in (audit_dir / "audit.ndjson").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    cancelled_records = [record for record in audit_records if record.get("status") == "cancelled"]
+    assert cancelled_records[-1]["reason"] == "cancellation_requested"
+    assert cancelled_records[-1]["boundary"] == "step_enter"
+
+
+def test_cancellation_persistence_readers_expose_cancelled_trace_and_audit_records(
+    tmp_path: Path,
+) -> None:
+    def phase_body(ctx):
+        raise AssertionError("phase body should not run after cancellation")
+
+    prog = _make_program(
+        instructions=(
+            NativeInstruction(pc=0, op="phase", name="work", func=phase_body),
+            NativeInstruction(pc=1, op="halt", name="halt"),
+        )
+    )
+    artifact_root = tmp_path / "artifacts"
+    trace_dir = tmp_path / "trace"
+    binding = bind_legacy_artifact_root(artifact_root)
+    backend = FileNativePersistenceBackend(
+        lambda scope: artifact_root
+        if scope == binding.scope
+        else (_ for _ in ()).throw(KeyError(scope))
+    )
+
+    result = run_native_pipeline(
+        prog,
+        artifact_root=artifact_root,
+        hooks=AuditHooks(
+            audit_dir=None,
+            persistence_backend=backend,
+            persistence_scope=binding.scope,
+        ),
+        trace_dir=trace_dir,
+        persistence_backend=backend,
+        initial_envelope=RunEnvelope(cancellation=True),
+    )
+
+    assert result.suspended is True
+
+    events = backend.read_events(binding.scope)
+    cancelled_events = [row.payload for row in events if row.kind == "pipeline_cancelled"]
+    assert cancelled_events[-1]["payload"]["status"] == "cancelled"
+    assert cancelled_events[-1]["payload"]["boundary"] == "step_enter"
+    assert cancelled_events[-1]["payload"]["trace"]["path"] == "root/work"
+
+    checkpoint = backend.read_trace_artifact(binding.scope, name="checkpoint.json")
+    assert checkpoint["status"] == "cancelled"
+    assert checkpoint["step_path"] == "root/work"
+
+    audit_records = [
+        row.payload for row in backend.read_audit_records(binding.scope) if "attempt_id" in row.payload
+    ]
+    assert audit_records[-1]["status"] == "cancelled"
+    assert audit_records[-1]["error_type"] is None
+    assert not [record for record in audit_records if record["status"] == "failure"]
+
+
+class _MemoryNativePersistenceBackend:
+    def __init__(self) -> None:
+        self.resume: dict[object, dict] = {}
+        self.human_gate: dict[object, dict] = {}
+        self.trace_artifacts: dict[tuple[object, str], object] = {}
+        self.events: dict[object, list[dict]] = {}
+        self.resume_writes: list[tuple[object, dict]] = []
+        self.human_gate_writes: list[tuple[object, dict]] = []
+        self.resume_deletes: list[object] = []
+        self.human_gate_deletes: list[object] = []
+
+    def write_resume_cursor(self, scope, *, payload):
+        self.resume[scope] = dict(payload)
+        self.resume_writes.append((scope, dict(payload)))
+        return None
+
+    def read_resume_cursor(self, scope):
+        payload = self.resume.get(scope)
+        return dict(payload) if payload is not None else None
+
+    def delete_resume_cursor(self, scope) -> None:
+        self.resume_deletes.append(scope)
+        self.resume.pop(scope, None)
+
+    def read_state_resume_cursor(self, scope):
+        return None
+
+    def write_composite_resume_cursor(self, scope, *, payload):
+        return None
+
+    def read_composite_resume_cursor(self, scope):
+        return None
+
+    def delete_composite_resume_cursor(self, scope) -> None:
+        return None
+
+    def write_human_gate(self, scope, *, payload):
+        self.human_gate[scope] = dict(payload)
+        self.human_gate_writes.append((scope, dict(payload)))
+        return None
+
+    def read_human_gate(self, scope):
+        payload = self.human_gate.get(scope)
+        return dict(payload) if payload is not None else None
+
+    def delete_human_gate(self, scope) -> None:
+        self.human_gate_deletes.append(scope)
+        self.human_gate.pop(scope, None)
+
+    def resolve_resume_surface(self, scope):
+        raise NotImplementedError
+
+    def append_audit_record(self, scope, *, payload):
+        raise NotImplementedError
+
+    def read_audit_records(self, scope):
+        return []
+
+    def emit_event(self, scope, *, kind, payload=None, phase=None, idempotency_key=None, event_scope=None):
+        entries = self.events.setdefault(scope, [])
+        event = {
+            "seq": len(entries),
+            "schema_version": 1,
+            "kind": kind,
+            "payload": dict(payload or {}),
+        }
+        if phase is not None:
+            event["phase"] = phase
+        if idempotency_key is not None:
+            event["idempotency_key"] = idempotency_key
+        if event_scope is not None:
+            event["scope"] = event_scope
+        entries.append(event)
+        return type("Row", (), {"sequence": event["seq"], "payload": event, "kind": kind})()
+
+    def read_events(self, scope, *, since_sequence=None, to_sequence=None, limit=None):
+        rows = []
+        for event in self.events.get(scope, []):
+            seq = event["seq"]
+            if since_sequence is not None and seq <= since_sequence:
+                continue
+            if to_sequence is not None and seq >= to_sequence:
+                continue
+            rows.append(type("Row", (), {"sequence": seq, "payload": dict(event), "kind": event["kind"]})())
+            if limit is not None and len(rows) >= limit:
+                break
+        return rows
+
+    def write_trace_artifact(self, scope, *, name, payload):
+        if isinstance(payload, dict):
+            stored = dict(payload)
+        elif isinstance(payload, list):
+            stored = list(payload)
+        else:
+            stored = payload
+        self.trace_artifacts[(scope, name)] = stored
+        return None
+
+    def read_trace_artifact(self, scope, *, name):
+        payload = self.trace_artifacts.get((scope, name))
+        if isinstance(payload, dict):
+            return dict(payload)
+        if isinstance(payload, list):
+            return list(payload)
+        return payload
 
 
 # ── sequential execution ──────────────────────────────────────────────
@@ -473,6 +740,68 @@ class TestPcAndStageTracking:
             "call_site_path": ("child_call",),
         }
         assert observed["child_root"] == str(tmp_path / "_child_child_call")
+
+    def test_subpipeline_composite_cursor_uses_injected_persistence_backend(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from arnold.pipeline.types import Suspension
+
+        backend = _MemoryNativePersistenceBackend()
+        calls = {"child": 0}
+
+        @phase
+        def child_step(ctx: dict) -> StepResult | dict:
+            calls["child"] += 1
+            if calls["child"] == 1:
+                return StepResult(
+                    outputs={"waiting": True},
+                    contract_result=ContractResult(
+                        status=ContractStatus.SUSPENDED,
+                        suspension=Suspension(
+                            kind="human",
+                            resume_cursor="child-review",
+                        ),
+                    ),
+                )
+            return {"child": "done"}
+
+        @workflow(
+            name="child_flow",
+            outputs={"type": "object", "required": ["child"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield child(ctx, id="child_call")
+            return state
+
+        prog = compile_pipeline(parent)
+        first = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            persistence_backend=backend,
+        )
+        assert first.suspended is True
+        assert not (tmp_path / "resume_cursor.json").exists()
+
+        parent_scope, parent_cursor = backend.resume_writes[-1]
+        assert parent_cursor["composite"]["kind"] == "parent_child"
+        assert parent_cursor["native"]["suspension_kind"] == "child_suspended"
+
+        resumed = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            resume=True,
+            persistence_backend=backend,
+        )
+        assert resumed.suspended is False
+        assert resumed.state["child"] == "done"
+        assert parent_scope in backend.resume_deletes
+        assert parent_scope not in backend.resume
 
     def test_repeated_subpipeline_call_sites_have_distinct_child_cursor_paths(
         self,
@@ -1057,6 +1386,43 @@ class TestMaxPhasesAndResume:
         assert cursor["native"]["pc"] == result.pc
         assert len(cursor["stages"]) == 1
 
+    def test_max_phases_uses_injected_persistence_backend(self, tmp_path: Path) -> None:
+        backend = _MemoryNativePersistenceBackend()
+
+        @phase
+        def a(ctx: dict) -> dict:
+            return {"x": 1}
+
+        @phase
+        def b(ctx: dict) -> dict:
+            return {"y": ctx["state"]["x"] + 1}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield a(ctx)
+            state = yield b(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        first = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            max_phases=1,
+            persistence_backend=backend,
+        )
+        assert first.suspended is True
+        assert not (tmp_path / "resume_cursor.json").exists()
+        assert backend.resume_writes[-1][1]["native"]["pc"] == 1
+
+        resumed = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            resume=True,
+            persistence_backend=backend,
+        )
+        assert resumed.suspended is False
+        assert resumed.state == {"x": 1, "y": 2}
+
     def test_resume_from_max_phases(self, tmp_path: Path) -> None:
         @phase
         def a(ctx: dict) -> dict:
@@ -1454,6 +1820,36 @@ class TestMaxPhasesAndResume:
         tree = json.loads((trace_dir / "tree.json").read_text(encoding="utf-8"))
         nodes = {node["path"]: node for node in tree["nodes"]}
         assert nodes["root/child_call"]["kind"] == "subpipeline"
+
+    def test_trace_dir_compatibility_uses_injected_backend_for_trace_artifacts(
+        self, tmp_path: Path
+    ) -> None:
+        backend = _MemoryNativePersistenceBackend()
+
+        @phase
+        def write(ctx: dict) -> dict:
+            Path(ctx["artifact_root"], "artifact.txt").write_text("ok", encoding="utf-8")
+            return {"ok": True}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield write(ctx)
+            return state
+
+        trace_dir = tmp_path / "trace"
+        result = run_native_pipeline(
+            compile_pipeline(my_pipe),
+            artifact_root=tmp_path,
+            trace_dir=trace_dir,
+            persistence_backend=backend,
+        )
+
+        assert result.suspended is False
+        trace_keys = {name for (_, name) in backend.trace_artifacts}
+        assert {"state.json", "stages.json", "tree.json", "artifacts.json", "checkpoint.json"} <= trace_keys
+        events = next(iter(backend.events.values()))
+        assert events[0]["kind"] == "pipeline.init"
+        assert any(event["kind"] == "checkpoint" for event in events)
 
 
 class TestCancellationBoundarySentinel:
@@ -1965,6 +2361,69 @@ class TestWhileLoopExecution:
             match="Runtime subpipeline cycle detected: workflow.recursive -> workflow.recursive",
         ):
             run_native_pipeline(recursive)
+
+    def test_runtime_entry_validation_rejects_parallel_map_cycle_before_execution(self) -> None:
+        phase_calls: list[str] = []
+
+        def setup(ctx: object) -> dict:
+            phase_calls.append("setup")
+            return {}
+
+        root = NativeProgram(
+            name="mapper_parent",
+            stable_id="workflow.mapper_parent",
+            instructions=(
+                NativeInstruction(pc=0, op="phase", name="setup", func=setup, next_pc=1),
+                NativeInstruction(pc=1, op="parallel_map", name="fanout", next_pc=2),
+                NativeInstruction(pc=2, op="halt"),
+            ),
+        )
+        child = NativeProgram(
+            name="mapper_child",
+            stable_id="workflow.mapper_child",
+            instructions=(
+                NativeInstruction(
+                    pc=0,
+                    op="subpipeline",
+                    name="parent_call",
+                    subprogram=root,
+                ),
+                NativeInstruction(pc=1, op="halt"),
+            ),
+        )
+        object.__setattr__(
+            root,
+            "instructions",
+            (
+                root.instructions[0],
+                NativeInstruction(
+                    pc=1,
+                    op="parallel_map",
+                    name="fanout",
+                    subprogram=ParallelMapInstruction(
+                        name="fanout",
+                        items_ref="items",
+                        mapper=child,
+                        mapper_name="mapper_child",
+                        path_template="fanout/{index}",
+                        merge_pc=2,
+                    ),
+                    next_pc=2,
+                ),
+                root.instructions[2],
+            ),
+        )
+
+        with pytest.raises(
+            NativeRuntimeError,
+            match=(
+                "Runtime subpipeline cycle detected: "
+                "workflow.mapper_parent -> workflow.mapper_child -> workflow.mapper_parent"
+            ),
+        ):
+            run_native_pipeline(root, initial_state={"items": [1]})
+
+        assert phase_calls == []
 
 
 # ── NativeExecutionResult ─────────────────────────────────────────────
@@ -3206,6 +3665,59 @@ class TestHumanGateSuspension:
         assert cursor.get("suspension_kind") == "human_gate"
         assert cursor.get("choices") == ["continue", "stop"]
 
+    def test_human_gate_uses_injected_persistence_backend(self, tmp_path: Path) -> None:
+        backend = _MemoryNativePersistenceBackend()
+
+        @phase
+        def do_work(ctx: dict) -> dict:
+            return {"result": 42}
+
+        @decision(
+            vocabulary={"continue", "stop"},
+            human_gate=True,
+            artifact_stage="do_work",
+            choices=("continue", "stop"),
+        )
+        def human_decide(ctx: dict) -> str:
+            return "continue"
+
+        @phase
+        def after(ctx: dict) -> dict:
+            return {"after": True}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield do_work(ctx)
+            if human_decide(ctx) == "continue":
+                state = yield after(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        first = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            persistence_backend=backend,
+        )
+        assert first.suspended is True
+        assert not (tmp_path / "awaiting_user.json").exists()
+        assert not (tmp_path / "resume_cursor.json").exists()
+        assert backend.human_gate_writes[-1][1]["choices"] == ["continue", "stop"]
+        assert backend.resume_writes[-1][1]["native"]["suspension_kind"] == "human_gate"
+
+        resumed = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            resume=True,
+            human_input={"choice": "continue"},
+            persistence_backend=backend,
+        )
+        assert resumed.suspended is False
+        assert resumed.state["after"] is True
+        assert backend.human_gate_deletes
+        assert backend.resume_deletes
+        assert not backend.human_gate
+        assert not backend.resume
+
     def test_human_gate_resume_routes_by_choice(self, tmp_path: Path) -> None:
         """Resume after human-gate reads _resume_choice from awaiting_user.json
         and routes to the correct branch."""
@@ -3784,6 +4296,130 @@ class TestPhaseContractSuspension:
         assert resumed.state["approved"] is True
         assert resumed.state["review_status"] == "done"
         assert resumed.state["after"] == "done"
+
+    def test_resume_skips_fulfilled_side_effect_without_replaying(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from arnold.pipeline.types import (
+            ContractResult,
+            ContractStatus,
+            StepResult,
+            Suspension,
+        )
+
+        calls = {"write": 0}
+
+        @phase(
+            operation="file_write",
+            target="out.txt",
+            effect_class="filesystem_mutation",
+        )
+        def write_once(ctx: dict) -> StepResult:
+            calls["write"] += 1
+            (Path(ctx["artifact_root"]) / "out.txt").write_text(
+                f"call-{calls['write']}\n",
+                encoding="utf-8",
+            )
+            return StepResult(
+                outputs={"status": "waiting"},
+                contract_result=ContractResult(
+                    status=ContractStatus.SUSPENDED,
+                    suspension=Suspension(
+                        kind="human",
+                        awaitable="review",
+                        prompt="Review",
+                        resume_cursor="review-cursor",
+                    ),
+                ),
+            )
+
+        @phase
+        def after(ctx: dict) -> dict:
+            return {"after": True}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            s = yield write_once(ctx)
+            s = yield after(ctx)
+            return s
+
+        hooks = EffectLedgerHooks()
+        prog = compile_pipeline(my_pipe)
+        first = run_native_pipeline(prog, artifact_root=tmp_path, hooks=hooks)
+        assert first.suspended is True
+
+        resumed = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            resume=True,
+            hooks=hooks,
+        )
+
+        assert resumed.suspended is False
+        assert calls["write"] == 1
+        assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "call-1\n"
+
+    def test_resume_blocks_unreconciled_unowned_file_write(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from arnold.pipeline.types import (
+            ContractResult,
+            ContractStatus,
+            StepResult,
+            Suspension,
+        )
+
+        @phase(
+            operation="file_write",
+            target="out.txt",
+            effect_class="filesystem_mutation",
+        )
+        def write_then_suspend(ctx: dict) -> StepResult:
+            (Path(ctx["artifact_root"]) / "out.txt").write_text(
+                "partial\n",
+                encoding="utf-8",
+            )
+            return StepResult(
+                outputs={"status": "waiting"},
+                contract_result=ContractResult(
+                    status=ContractStatus.SUSPENDED,
+                    suspension=Suspension(
+                        kind="human",
+                        awaitable="review",
+                        prompt="Review",
+                        resume_cursor="review-cursor",
+                    ),
+                ),
+            )
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield write_then_suspend(ctx)
+            return state
+
+        hooks = EffectLedgerHooks()
+        prog = compile_pipeline(my_pipe)
+        first = run_native_pipeline(prog, artifact_root=tmp_path, hooks=hooks)
+        assert first.suspended is True
+
+        cursor_path = tmp_path / "resume_cursor.json"
+        cursor = json.loads(cursor_path.read_text(encoding="utf-8"))
+        cursor["effect"]["lifecycle_state"] = "intended"
+        cursor["effect"]["expected_content"] = "complete\n"
+        cursor_path.write_text(json.dumps(cursor), encoding="utf-8")
+
+        with pytest.raises(
+            NativeRuntimeError,
+            match="Cannot resume native side-effecting step",
+        ):
+            run_native_pipeline(
+                prog,
+                artifact_root=tmp_path,
+                resume=True,
+                hooks=hooks,
+            )
 
     def test_phase_suspension_resume_rejects_malformed_saved_state(
         self,

@@ -24,6 +24,10 @@ class SuspensionState(StrEnum):
     QUARANTINED = "quarantined"
 
 
+class ManualSuspensionClearRequired(ValueError):
+    """Raised when a caller attempts to clear a non-quarantined suspension."""
+
+
 @dataclass(frozen=True)
 class SuspendCapabilityRoute:
     """Route used to suspend and later re-enter a workflow."""
@@ -76,6 +80,16 @@ class ResumeValidation:
 
     ok: bool
     reason: str | None = None
+
+
+def ensure_manual_quarantine_clear_allowed(state: SuspensionState) -> None:
+    """Require an explicit manual clear only for quarantined suspension state."""
+
+    if state is not SuspensionState.QUARANTINED:
+        raise ManualSuspensionClearRequired(
+            f"manual quarantine clear requires state={SuspensionState.QUARANTINED.value!r}, "
+            f"got {state.value!r}"
+        )
 
 
 def validate_suspension_record(

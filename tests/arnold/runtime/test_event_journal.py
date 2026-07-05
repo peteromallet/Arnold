@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import threading
 
 from arnold.runtime.event_journal import (
+    BackendEventJournal,
+    BackendEventSink,
     read_event_journal,
     read_event_journal_paged,
     stream_event_journal,
@@ -607,3 +610,79 @@ def test_read_event_journal_sorts_with_duplicate_seqs_present(tmp_path: Path) ->
     assert result[0]["seq"] == 0
     assert result[1]["seq"] == 1
     assert result[2]["seq"] == 1
+
+
+class _MemoryBackend:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._events: dict[object, list[dict]] = {}
+
+    def emit_event(
+        self,
+        scope,
+        *,
+        kind,
+        payload=None,
+        phase=None,
+        idempotency_key=None,
+        event_scope=None,
+    ):
+        with self._lock:
+            events = self._events.setdefault(scope, [])
+            event = {
+                "seq": len(events),
+                "schema_version": 1,
+                "kind": kind,
+                "payload": dict(payload or {}),
+            }
+            if phase is not None:
+                event["phase"] = phase
+            if idempotency_key is not None:
+                event["idempotency_key"] = idempotency_key
+            if event_scope is not None:
+                event["scope"] = event_scope
+            events.append(event)
+        return type("Row", (), {"sequence": event["seq"], "payload": dict(event), "kind": kind})()
+
+    def read_events(self, scope, *, since_sequence=None, to_sequence=None, limit=None):
+        rows = []
+        for event in self._events.get(scope, []):
+            seq = event["seq"]
+            if since_sequence is not None and seq <= since_sequence:
+                continue
+            if to_sequence is not None and seq >= to_sequence:
+                continue
+            rows.append(type("Row", (), {"sequence": seq, "payload": dict(event), "kind": event["kind"]})())
+            if limit is not None and len(rows) >= limit:
+                break
+        return rows
+
+
+def test_backend_event_journal_assigns_monotonic_unique_sequences() -> None:
+    backend = _MemoryBackend()
+    journal = BackendEventJournal(backend, scope="trace")
+
+    events: list[dict] = []
+
+    def _emit(index: int) -> None:
+        events.append(journal.emit("tick", payload={"n": index}))
+
+    threads = [threading.Thread(target=_emit, args=(i,)) for i in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    seqs = sorted(event["seq"] for event in events)
+    assert seqs == list(range(8))
+    assert [event["seq"] for event in journal.read()] == list(range(8))
+
+
+def test_backend_event_sink_delegates_emit_and_scope() -> None:
+    backend = _MemoryBackend()
+    sink = BackendEventSink(backend, scope="trace", default_scope="native-trace")
+
+    event = sink.emit("phase.end", payload={"phase": "review"})
+
+    assert event["kind"] == "phase.end"
+    assert event["scope"] == "native-trace"

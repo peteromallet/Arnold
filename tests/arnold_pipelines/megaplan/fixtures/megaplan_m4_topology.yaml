@@ -48,7 +48,7 @@ review_targets:
 - label: rework
   target: revise
 canonical_authoring:
-  source_path: arnold_pipelines/megaplan/workflows/workflow.py
+  source_path: arnold_pipelines/megaplan/workflows/workflow.pypeline
   workflow_id: megaplan
   workflow_version: m4-phase3
   semantic_nodes:

@@ -89,6 +89,7 @@ artifacts = [
     "arnold/pipelines/evidence_pack/pipeline_ids.json",
     "arnold_pipelines/**/pipeline_ids.json",
     "arnold_pipelines/**/SKILL.md",
+    "arnold_pipelines/**/*.pypeline",
     "arnold_pipelines/megaplan/skills/**/*.py",
     "agentbox/systemd/*.service",
 ]

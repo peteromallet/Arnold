@@ -5,6 +5,12 @@ result carriers.  It is intentionally separate from ``arnold.workflow.compiler``
 that module lowers explicit DSL objects to manifests, while this one parses
 Python-shaped source into compiler-owned intermediate data.
 
+Author-facing workflow source files use either the ``.py`` or ``.pypeline``
+suffix.  Both suffixes carry Python-shaped AST source and are parsed
+identically; source spans, diagnostics, and manifest identity are preserved
+regardless of suffix.  The ``.pypeline`` suffix is the author-facing convention
+for explicit-node product workflows.
+
 Ownership:
     Source diagnostics are produced here before lowering.  Explicit-node data
     is owned by ``arnold.workflow.dsl``, manifest output by
@@ -61,6 +67,7 @@ from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
 from arnold.workflow.refs import is_manifest_hash, is_ref
 
 _DEFAULT_SOURCE_PATH = "<workflow-source>"
+_SUPPORTED_SOURCE_SUFFIXES = frozenset({".py", ".pypeline"})
 _SUPPORTED_STEP_POLICY_TYPES = frozenset(
     {"approval", "authority", "control-transition", "retry", "timing"}
 )
@@ -4713,6 +4720,7 @@ def _diagnostic(
 __all__ = [
     "CheckWorkflowSourceResult",
     "CompileWorkflowSourceResult",
+    "_SUPPORTED_SOURCE_SUFFIXES",
     "ComponentResolver",
     "ImportBinding",
     "LowerWorkflowSourceResult",

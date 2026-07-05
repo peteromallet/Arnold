@@ -24,6 +24,11 @@ def phase(
     outputs: dict[str, Any] | None = None,
     produces: tuple = (),
     consumes: tuple = (),
+    # ── Side-effect metadata (M1) ──
+    operation: str | None = None,
+    target: str | None = None,
+    idempotency_key: str | None = None,
+    effect_class: str | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Mark a function as a native pipeline phase.
 
@@ -51,14 +56,31 @@ def phase(
         Typed ports this phase produces.
     consumes:
         Typed ports this phase consumes.
+    operation:
+        For side-effecting phases: canonical operation type from the effect
+        taxonomy (e.g. ``'file_write'``, ``'git_commit'``).  ``None`` for
+        pure phases.  Must be one of the recognised operation literals.
+    target:
+        For side-effecting phases: stable target identifier for the operation
+        (e.g. a relpath, branch name).  ``None`` when no target is declared
+        or the phase is pure.
+    idempotency_key:
+        For side-effecting phases: explicit idempotency key for the effect
+        ledger.  When ``None`` and *operation* is set, the compiler derives a
+        stable key from ``(step_path, operation, target)``.  Ignored for pure
+        phases.
+    effect_class:
+        For side-effecting phases: effect class from the taxonomy
+        (e.g. ``'filesystem_mutation'``).  ``None`` for pure phases.
 
     Returns
     -------
     Callable
         The decorated function with ``__phase_name__``, ``__phase_description__``,
         ``__phase_produces__``, ``__phase_consumes__``, ``__step_id__``,
-        ``__step_inputs__``, ``__step_outputs__``, and ``__phase__``
-        attributes attached.
+        ``__step_inputs__``, ``__step_outputs__``, ``__phase__``, and
+        side-effect attributes (``__phase_operation__``, ``__phase_target__``,
+        ``__phase_idempotency_key__``, ``__phase_effect_class__``) attached.
     """
 
     def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -70,6 +92,11 @@ def phase(
         fn.__step_id__ = id  # type: ignore[attr-defined]
         fn.__step_inputs__ = inputs  # type: ignore[attr-defined]
         fn.__step_outputs__ = outputs  # type: ignore[attr-defined]
+        # Side-effect metadata (M1)
+        fn.__phase_operation__ = operation  # type: ignore[attr-defined]
+        fn.__phase_target__ = target  # type: ignore[attr-defined]
+        fn.__phase_idempotency_key__ = idempotency_key  # type: ignore[attr-defined]
+        fn.__phase_effect_class__ = effect_class  # type: ignore[attr-defined]
         return fn
 
     if callable(name):
@@ -86,6 +113,11 @@ def step(
     outputs: dict[str, Any] | None = None,
     produces: tuple = (),
     consumes: tuple = (),
+    # ── Side-effect metadata (M1) ──
+    operation: str | None = None,
+    target: str | None = None,
+    idempotency_key: str | None = None,
+    effect_class: str | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Mark a function as a step (preferred authoring alias for ``@phase``).
 
@@ -109,6 +141,17 @@ def step(
         Typed ports this step produces.
     consumes:
         Typed ports this step consumes.
+    operation:
+        For side-effecting steps: canonical operation type from the effect
+        taxonomy (e.g. ``'file_write'``, ``'git_commit'``).
+    target:
+        For side-effecting steps: stable target identifier for the operation.
+    idempotency_key:
+        For side-effecting steps: explicit idempotency key for the effect
+        ledger.
+    effect_class:
+        For side-effecting steps: effect class from the taxonomy
+        (e.g. ``'filesystem_mutation'``).
 
     Returns
     -------
@@ -124,6 +167,10 @@ def step(
         outputs=outputs,
         produces=produces,
         consumes=consumes,
+        operation=operation,
+        target=target,
+        idempotency_key=idempotency_key,
+        effect_class=effect_class,
     )
 
 
@@ -582,6 +629,9 @@ def get_phase_meta(fn: Any) -> dict[str, Any] | None:
     Includes ``id``, ``inputs``, and ``outputs`` keys (may be ``None``)
     in addition to the existing ``name``, ``description``, ``produces``,
     and ``consumes`` keys.
+
+    When side-effect metadata is attached (M1), ``operation``, ``target``,
+    ``idempotency_key``, and ``effect_class`` keys are also included.
     """
     if not is_phase(fn):
         return None
@@ -593,6 +643,11 @@ def get_phase_meta(fn: Any) -> dict[str, Any] | None:
         "id": getattr(fn, "__step_id__", None),
         "inputs": getattr(fn, "__step_inputs__", None),
         "outputs": getattr(fn, "__step_outputs__", None),
+        # Side-effect metadata (M1)
+        "operation": getattr(fn, "__phase_operation__", None),
+        "target": getattr(fn, "__phase_target__", None),
+        "idempotency_key": getattr(fn, "__phase_idempotency_key__", None),
+        "effect_class": getattr(fn, "__phase_effect_class__", None),
     }
 
 

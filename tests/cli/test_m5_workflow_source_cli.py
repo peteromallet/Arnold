@@ -15,7 +15,7 @@ from tests.fixtures.workflow import demo_pipeline
 
 FIXTURE_DIR = Path("tests/fixtures/workflow_authoring")
 DEMO_TARGET = "tests.fixtures.workflow.demo_pipeline:build_pipeline"
-MEGAPLAN_SOURCE_PATH = Path("arnold_pipelines/megaplan/workflows/workflow.py")
+MEGAPLAN_SOURCE_PATH = Path("arnold_pipelines/megaplan/workflows/workflow.pypeline")
 MEGAPLAN_TARGET = "arnold_pipelines.megaplan.workflows.planning:build_pipeline"
 
 
@@ -550,3 +550,75 @@ def test_workflow_explain_megaplan_module_uses_advertised_source_path(
         "source_path": str(planning.AUTHORING_SOURCE_PATH),
     }
     assert payload["entries"][0]["source"]["path"] == str(planning.AUTHORING_SOURCE_PATH)
+
+
+# --- .pypeline CLI acceptance tests ---
+
+PYPELINE_FIXTURE = FIXTURE_DIR / "valid_direct_linear.pypeline"
+
+
+def test_workflow_check_pypeline_source_json_accepts_and_preserves_kind(capsys) -> None:
+    rc = workflow_cli.main(["check", str(PYPELINE_FIXTURE), "--format", "json"])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.err == ""
+    payload = json.loads(captured.out)
+    assert payload == {
+        "ok": True,
+        "source": {"kind": "python", "path": str(PYPELINE_FIXTURE)},
+        "diagnostics": [],
+    }
+
+
+def test_workflow_compile_pypeline_source_writes_manifest(tmp_path: Path) -> None:
+    out_path = tmp_path / "manifest.json"
+
+    rc = workflow_cli.main(["compile", str(PYPELINE_FIXTURE), "--out", str(out_path)])
+
+    assert rc == 0
+    assert out_path.exists()
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert payload["id"] == "linear-direct"
+    assert payload["version"] == "1.0"
+    assert payload["manifest_hash"].startswith("sha256:")
+
+
+def test_workflow_inspect_pypeline_source_json_has_stable_sections(capsys) -> None:
+    rc = workflow_cli.main(["inspect", str(PYPELINE_FIXTURE), "--format", "json"])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    payload = json.loads(captured.out)
+    assert payload["workflow"]["id"] == "linear-direct"
+    assert [c["id"] for c in payload["components"]] == ["plan", "execute", "review"]
+    assert len(payload["control_routes"]) == 2
+
+
+def test_workflow_explain_pypeline_source_json_has_ordered_entries(capsys) -> None:
+    rc = workflow_cli.main(["explain", str(PYPELINE_FIXTURE), "--format", "json"])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    payload = json.loads(captured.out)
+    assert payload["workflow"]["id"] == "linear-direct"
+    entries = payload["entries"]
+    assert len(entries) == 3
+    assert entries[0]["kind"] == "step"
+    assert entries[0]["id"] == "plan"
+    assert "source" in entries[0]
+
+
+def test_workflow_graph_pypeline_source_json_includes_spans(capsys) -> None:
+    rc = workflow_cli.main(["graph", str(PYPELINE_FIXTURE), "--format", "json"])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    payload = json.loads(captured.out)
+    assert len(payload["nodes"]) == 3
+    for node in payload["nodes"]:
+        assert "source_span" in node
+        span = node["source_span"]
+        assert span is not None
+        assert span["path"] == str(PYPELINE_FIXTURE)
+    assert len(payload["edges"]) == 2

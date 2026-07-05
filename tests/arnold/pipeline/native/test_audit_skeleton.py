@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 from arnold.pipeline.native import (
+    EffectLedgerHooks,
     compile_pipeline,
     phase,
     pipeline,
@@ -27,6 +28,9 @@ from arnold.pipeline.native import (
 )
 from arnold.pipeline.native.audit import AuditHooks, AuditRecord
 from arnold.pipeline.native.hooks import NullNativeRuntimeHooks
+from arnold.pipeline.native.persistence import OrderedPersistenceRow
+from arnold.runtime.envelope import RunEnvelope
+from arnold.security.audit import record_broker_audit_entry
 
 
 # ── helpers ───────────────────────────────────────────────────────────
@@ -47,6 +51,31 @@ def _read_audit_ndjson(audit_dir: Path) -> list[dict[str, Any]]:
 def _step_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Filter audit records to only step-attempt records (exclude run.init)."""
     return [r for r in records if "attempt_id" in r]
+
+
+class _MemoryAuditBackend:
+    def __init__(self) -> None:
+        self.rows: dict[object, list[dict[str, Any]]] = {}
+
+    def append_audit_record(self, scope, *, payload):
+        rows = self.rows.setdefault(scope, [])
+        rows.append(dict(payload))
+        event = payload.get("event") if isinstance(payload.get("event"), str) else "audit"
+        return OrderedPersistenceRow(
+            sequence=len(rows),
+            payload=dict(payload),
+            kind=event,
+        )
+
+    def read_audit_records(self, scope):
+        return [
+            OrderedPersistenceRow(
+                sequence=index,
+                payload=dict(payload),
+                kind=payload.get("event") if isinstance(payload.get("event"), str) else "audit",
+            )
+            for index, payload in enumerate(self.rows.get(scope, []), start=1)
+        ]
 
 
 # ── AuditRecord unit tests ────────────────────────────────────────────
@@ -143,8 +172,22 @@ class TestAuditRecordFields:
             "started_at",
             "ended_at",
             "status",
+            "reason",
+            "boundary",
             "error_type",
             "error_message",
+            "operation",
+            "target",
+            "idempotency_key",
+            "effect_class",
+            "effect_lifecycle_state",
+            "duplicate_action",
+            "git_command_ref",
+            "git_effect_ref",
+            "prompt_ref",
+            "completion_ref",
+            "redaction_status",
+            "retention_policy",
         }
         assert set(d.keys()) == required_fields
         assert d["attempt_id"] == "abc123"
@@ -155,6 +198,10 @@ class TestAuditRecordFields:
         assert d["call_site_path"] == []
         assert d["attempt"] == 1
         assert d["status"] == "started"
+        assert d["operation"] is None
+        assert d["idempotency_key"] is None
+        assert d["redaction_status"] == "sanitized"
+        assert d["retention_policy"] == "audit"
 
     def test_started_at_is_iso_timestamp(self) -> None:
         """started_at must be an ISO-8601 timestamp string."""
@@ -372,6 +419,36 @@ class TestAuditHooksIntegration:
         # Ended_at must still be populated for failures
         assert "T" in rec["ended_at"]
 
+    def test_cancellation_produces_cancelled_record_with_stable_path(self, tmp_path: Path) -> None:
+        audit_dir = tmp_path / "audit"
+
+        @phase
+        def do_work(ctx: dict) -> dict:
+            raise AssertionError("phase body should not run after cancellation")
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield do_work(ctx)
+            return state
+
+        result = run_native_pipeline(
+            compile_pipeline(my_pipe),
+            artifact_root=tmp_path / "artifacts",
+            hooks=AuditHooks(audit_dir=audit_dir),
+            initial_envelope=RunEnvelope(cancellation=True),
+        )
+
+        assert result.suspended is True
+
+        records = _step_records(_read_audit_ndjson(audit_dir))
+        assert len(records) == 1
+        assert records[0]["status"] == "cancelled"
+        assert records[0]["reason"] == "cancellation_requested"
+        assert records[0]["boundary"] == "step_enter"
+        assert records[0]["run_path"] == "root"
+        assert records[0]["step_path"] == "root/do_work"
+        assert records[0]["call_site_path"] == []
+
     def test_pass_through_when_audit_dir_is_none(self) -> None:
         """When audit_dir is None, AuditHooks is a pure pass-through."""
         hooks = AuditHooks(audit_dir=None)
@@ -390,6 +467,73 @@ class TestAuditHooksIntegration:
         assert result.state == {"result": 42}
         # No audit file written
         assert hooks._audit_path() is None
+
+    def test_backend_only_constructor_writes_audit_records_without_audit_dir(
+        self,
+    ) -> None:
+        backend = _MemoryAuditBackend()
+        scope = object()
+
+        @phase
+        def do_work(ctx: dict) -> dict:
+            return {"result": 42}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield do_work(ctx)
+            return state
+
+        result = run_native_pipeline(
+            compile_pipeline(my_pipe),
+            hooks=AuditHooks(
+                audit_dir=None,
+                persistence_backend=backend,
+                persistence_scope=scope,
+            ),
+        )
+
+        assert result.state == {"result": 42}
+        records = [row.payload for row in backend.read_audit_records(scope)]
+        assert records[0]["event"] == "run.init"
+        assert _step_records(records)[0]["status"] == "success"
+
+    def test_backend_reader_keeps_cancelled_records_distinct_from_failures(
+        self,
+    ) -> None:
+        backend = _MemoryAuditBackend()
+        scope = object()
+
+        @phase
+        def do_work(ctx: dict) -> dict:
+            raise AssertionError("phase body should not run after cancellation")
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield do_work(ctx)
+            return state
+
+        result = run_native_pipeline(
+            compile_pipeline(my_pipe),
+            hooks=AuditHooks(
+                audit_dir=None,
+                persistence_backend=backend,
+                persistence_scope=scope,
+            ),
+            initial_envelope=RunEnvelope(cancellation=True),
+        )
+
+        assert result.suspended is True
+
+        records = [row.payload for row in backend.read_audit_records(scope)]
+        step_records = _step_records(records)
+        assert len(step_records) == 1
+        assert step_records[0]["status"] == "cancelled"
+        assert step_records[0]["reason"] == "cancellation_requested"
+        assert step_records[0]["boundary"] == "step_enter"
+        assert step_records[0]["step_path"] == "root/do_work"
+        assert not [record for record in step_records if record["status"] == "failure"]
+        assert step_records[0]["error_type"] is None
+        assert step_records[0]["error_message"] is None
 
     def test_audit_record_has_run_init_marker(self, tmp_path: Path) -> None:
         """The audit file starts with a run.init event."""
@@ -580,6 +724,64 @@ class TestAuditHooksIntegration:
         # Context dict contains at minimum: state, inputs, run_path, step_path, etc.
         assert "state" in step_recs[0]["input_keys"]
         assert "inputs" in step_recs[0]["input_keys"]
+
+    def test_side_effect_metadata_is_recorded(self, tmp_path: Path) -> None:
+        audit_dir = tmp_path / "audit"
+
+        @phase(operation="file_write", target="out/report.json", effect_class="filesystem_mutation")
+        def write_report(ctx: dict) -> dict:
+            return {"ok": True}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield write_report(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        hooks = AuditHooks(inner=EffectLedgerHooks(), audit_dir=audit_dir)
+        run_native_pipeline(prog, hooks=hooks)
+
+        rec = _step_records(_read_audit_ndjson(audit_dir))[0]
+        assert rec["operation"] == "file_write"
+        assert rec["target"] == "out/report.json"
+        assert rec["effect_class"] == "filesystem_mutation"
+        assert rec["effect_lifecycle_state"] == "fulfilled"
+        assert rec["duplicate_action"] is None
+        assert isinstance(rec["idempotency_key"], str)
+        assert rec["idempotency_key"].endswith(":file_write:out/report.json")
+
+    def test_broker_audit_entry_is_joined_and_redacted_before_flush(self, tmp_path: Path) -> None:
+        audit_dir = tmp_path / "audit"
+        hooks = AuditHooks(audit_dir=audit_dir)
+
+        @phase
+        def brokered_step(ctx: dict) -> dict:
+            record_broker_audit_entry(
+                run_id=hooks._run_id,
+                step_path=ctx["step_path"],
+                git_command_ref="artifact://git-command?token=ghp_1234567890abcdef",
+                git_effect_ref="artifact://git-effect/1",
+                prompt_ref="artifact://prompt/sk-secret-token-1234567890",
+                completion_ref="artifact://completion/1",
+                metadata={"authorization": "Bearer sk-secret-token-1234567890"},
+            )
+            return {"ok": True}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            state = yield brokered_step(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        run_native_pipeline(prog, hooks=hooks)
+
+        rec = _step_records(_read_audit_ndjson(audit_dir))[0]
+        assert rec["git_command_ref"] == "artifact://git-command?token=[REDACTED]"
+        assert rec["git_effect_ref"] == "artifact://git-effect/1"
+        assert rec["prompt_ref"] == "artifact://prompt/[REDACTED]"
+        assert rec["completion_ref"] == "artifact://completion/1"
+        assert rec["redaction_status"] == "sanitized"
+        assert rec["retention_policy"] == "audit"
 
 
 # ── AuditHooks constructor tests ──────────────────────────────────────

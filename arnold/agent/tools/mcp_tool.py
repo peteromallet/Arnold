@@ -80,6 +80,9 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+from arnold.security.git import authorize_mcp_git_action
+from arnold.security.redaction import REDACTED, redact_text
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -129,6 +132,16 @@ _SAFE_ENV_KEYS = frozenset({
     "PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "SHELL", "TMPDIR",
 })
 
+_GITHUB_MCP_TOKEN_ENV_KEYS = frozenset({
+    "GITHUB_PERSONAL_ACCESS_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+})
+_GITHUB_MCP_HEADER_KEYS = frozenset({
+    "authorization",
+    "x-github-token",
+})
+
 # Regex for credential patterns to strip from error messages
 _CREDENTIAL_PATTERN = re.compile(
     r"(?:"
@@ -149,7 +162,7 @@ _CREDENTIAL_PATTERN = re.compile(
 # Security helpers
 # ---------------------------------------------------------------------------
 
-def _build_safe_env(user_env: Optional[dict]) -> dict:
+def _build_safe_env(user_env: Optional[dict], *, server_name: str | None = None) -> dict:
     """Build a filtered environment dict for stdio subprocesses.
 
     Only passes through safe baseline variables (PATH, HOME, etc.) and XDG_*
@@ -165,6 +178,9 @@ def _build_safe_env(user_env: Optional[dict]) -> dict:
             env[key] = value
     if user_env:
         env.update(user_env)
+    if _should_strip_github_mcp_credentials(server_name):
+        for key in _GITHUB_MCP_TOKEN_ENV_KEYS:
+            env.pop(key, None)
     return env
 
 
@@ -174,7 +190,37 @@ def _sanitize_error(text: str) -> str:
     Replaces tokens, keys, and other secrets with [REDACTED] to prevent
     accidental credential exposure in tool error responses.
     """
-    return _CREDENTIAL_PATTERN.sub("[REDACTED]", text)
+    return redact_text(_CREDENTIAL_PATTERN.sub(REDACTED, text))
+
+
+def _should_strip_github_mcp_credentials(server_name: str | None) -> bool:
+    if not server_name or "github" not in server_name.lower():
+        return False
+    return bool(os.getenv("ARNOLD_BROKER_SOCKET") or os.getenv("ARNOLD_BROKER_URL"))
+
+
+def _sanitize_mcp_server_config(name: str, config: dict[str, Any]) -> dict[str, Any]:
+    sanitized = dict(config)
+    if not _should_strip_github_mcp_credentials(name):
+        return sanitized
+
+    env = sanitized.get("env")
+    if isinstance(env, dict):
+        sanitized["env"] = {
+            key: value
+            for key, value in env.items()
+            if str(key) not in _GITHUB_MCP_TOKEN_ENV_KEYS
+        }
+
+    headers = sanitized.get("headers")
+    if isinstance(headers, dict):
+        sanitized["headers"] = {
+            key: value
+            for key, value in headers.items()
+            if str(key).lower() not in _GITHUB_MCP_HEADER_KEYS
+        }
+
+    return sanitized
 
 
 def _prepend_path(env: dict, directory: str) -> dict:
@@ -722,7 +768,7 @@ class MCPServerTask:
                 f"MCP server '{self.name}' has no 'command' in config"
             )
 
-        safe_env = _build_safe_env(user_env)
+        safe_env = _build_safe_env(user_env, server_name=self.name)
         command, safe_env = _resolve_stdio_command(command, safe_env)
         server_params = StdioServerParameters(
             command=command,
@@ -972,7 +1018,10 @@ def _load_mcp_config() -> Dict[str, dict]:
             load_hermes_dotenv()
         except Exception:
             pass
-        return {name: _interpolate_env_vars(cfg) for name, cfg in servers.items()}
+        return {
+            name: _sanitize_mcp_server_config(name, _interpolate_env_vars(cfg))
+            for name, cfg in servers.items()
+        }
     except Exception as exc:
         logger.debug("Failed to load MCP config: %s", exc)
         return {}
@@ -1017,6 +1066,13 @@ def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float):
                 "error": f"MCP server '{server_name}' is not connected"
             })
 
+        authorization = authorize_mcp_git_action(server_name, tool_name, args)
+        if authorization.sensitive and not authorization.allowed:
+            return json.dumps({
+                "error": authorization.result.summary if authorization.result else "Broker denied MCP action",
+                "broker": authorization.broker_payload(),
+            })
+
         async def _call():
             result = await server.session.call_tool(tool_name, arguments=args)
             # MCP CallToolResult has .content (list of content blocks) and .isError
@@ -1036,7 +1092,10 @@ def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float):
             for block in (result.content or []):
                 if hasattr(block, "text"):
                     parts.append(block.text)
-            return json.dumps({"result": "\n".join(parts) if parts else ""})
+            response: dict[str, Any] = {"result": "\n".join(parts) if parts else ""}
+            if authorization.sensitive:
+                response["broker"] = authorization.broker_payload()
+            return json.dumps(response)
 
         try:
             return _run_on_mcp_loop(_call(), timeout=tool_timeout)

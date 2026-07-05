@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Mapping, Protocol, runtime_checkable
 
+from arnold.supervisor.capacity_context import CapacityGateRejected, gate_capacity
+
 __all__ = [
     "OperationKind",
     "OperationRequest",
@@ -117,6 +119,21 @@ class NullOperationRegistry:
             if isinstance(request.kind, OperationKind)
             else str(request.kind)
         )
+        if request.kind == OperationKind.EXECUTE:
+            try:
+                with gate_capacity(
+                    "operation_registry_execute",
+                    request.payload.get("capacity_context")
+                    if isinstance(request.payload, Mapping)
+                    else None,
+                ):
+                    pass
+            except CapacityGateRejected as exc:
+                return OperationResult(
+                    ok=False,
+                    payload={"last_result": {"capacity": exc.metadata}},
+                    errors=("capacity_exhausted", kind_value),
+                )
         return OperationResult(
             ok=False,
             payload={},

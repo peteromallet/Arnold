@@ -27,8 +27,9 @@ IMPLEMENTED_SEMANTIC_CARRIERS = {
     "audited_pure_phase_body",
 }
 DEFERRED_SEMANTIC_CARRIERS = {"explicit_deferral"}
-CODE_CARRIER_SUFFIXES = {".py"}
-POLICY_CARRIER_SUFFIXES = {".py", ".yaml", ".yml", ".json", ".md"}
+CANONICAL_SOURCE_SUFFIXES = {".pypeline"}
+PURE_PHASE_BODY_SUFFIXES = {".py"}
+POLICY_CARRIER_SUFFIXES = {".pypeline", ".py", ".yaml", ".yml", ".json", ".md"}
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -144,8 +145,8 @@ def _suffix_contract(contract: dict[str, Any]) -> dict[str, set[str]]:
     raw = contract.get("carrier_evidence_suffixes")
     if raw is None:
         return {
-            "canonical_source": set(CODE_CARRIER_SUFFIXES),
-            "audited_pure_phase_body": set(CODE_CARRIER_SUFFIXES),
+            "canonical_source": set(CANONICAL_SOURCE_SUFFIXES),
+            "audited_pure_phase_body": set(PURE_PHASE_BODY_SUFFIXES),
             "declared_policy": set(POLICY_CARRIER_SUFFIXES),
         }
     if not isinstance(raw, dict):

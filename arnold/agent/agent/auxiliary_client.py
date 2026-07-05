@@ -49,6 +49,13 @@ from openai import OpenAI
 
 from arnold.agent.hermes_cli.config import get_hermes_home
 from arnold.agent.hermes_constants import OPENROUTER_BASE_URL
+from arnold.security.llm_proxy import (
+    LlmProxyUnavailable,
+    broker_production_mode_requested,
+    covered_openai_compatible_provider,
+    resolve_brokered_llm_proxy,
+    warn_deferred_oauth_provider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -529,7 +536,10 @@ def _resolve_api_key_provider() -> Tuple[Optional[OpenAI], Optional[str]]:
             from arnold.agent.hermes_cli.models import copilot_default_headers
 
             extra["default_headers"] = copilot_default_headers()
-        return OpenAI(api_key=api_key, base_url=base_url, **extra), model
+        client = _openai_client_with_broker(provider_id, api_key=api_key, base_url=base_url, **extra)
+        if client is None:
+            continue
+        return client, model
 
     return None, None
 
@@ -562,16 +572,53 @@ def _get_auxiliary_env_override(task: str, suffix: str) -> Optional[str]:
     return None
 
 
+def _openai_client_with_broker(provider: str, *, api_key: str, base_url: str, **kwargs) -> Optional[OpenAI]:
+    """Build an OpenAI-compatible client, substituting broker proxy auth in broker mode."""
+
+    resolved_base = str(base_url or "").strip().rstrip("/")
+    if broker_production_mode_requested() and covered_openai_compatible_provider(provider):
+        try:
+            broker_credential = resolve_brokered_llm_proxy(provider, resolved_base)
+        except LlmProxyUnavailable as exc:
+            logger.warning(
+                "Auxiliary provider %s is broker-covered but unavailable in broker "
+                "production mode: %s",
+                provider,
+                exc,
+            )
+            return None
+        logger.debug("Auxiliary client: %s through broker LLM proxy", provider)
+        client = OpenAI(
+            api_key=broker_credential.broker_auth,
+            base_url=broker_credential.base_url,
+            **kwargs,
+        )
+        if "default_headers" in kwargs:
+            setattr(client, "_arnold_default_headers", dict(kwargs["default_headers"]))
+        return client
+
+    client = OpenAI(api_key=api_key, base_url=resolved_base, **kwargs)
+    if "default_headers" in kwargs:
+        setattr(client, "_arnold_default_headers", dict(kwargs["default_headers"]))
+    return client
+
+
 def _try_openrouter() -> Tuple[Optional[OpenAI], Optional[str]]:
     or_key = os.getenv("OPENROUTER_API_KEY")
     if not or_key:
         return None, None
     logger.debug("Auxiliary client: OpenRouter")
-    return OpenAI(api_key=or_key, base_url=OPENROUTER_BASE_URL,
-                   default_headers=_OR_HEADERS), _OPENROUTER_MODEL
+    client = _openai_client_with_broker(
+        "openrouter",
+        api_key=or_key,
+        base_url=OPENROUTER_BASE_URL,
+        default_headers=_OR_HEADERS,
+    )
+    return client, _OPENROUTER_MODEL if client is not None else None
 
 
 def _try_nous() -> Tuple[Optional[OpenAI], Optional[str]]:
+    warn_deferred_oauth_provider("nous")
     nous = _read_nous_auth()
     if not nous:
         return None, None
@@ -651,10 +698,12 @@ def _try_custom_endpoint() -> Tuple[Optional[OpenAI], Optional[str]]:
         return None, None
     model = _read_main_model() or "gpt-4o-mini"
     logger.debug("Auxiliary client: custom endpoint (%s)", model)
-    return OpenAI(api_key=custom_key, base_url=custom_base), model
+    client = _openai_client_with_broker("custom", api_key=custom_key, base_url=custom_base)
+    return client, model if client is not None else None
 
 
 def _try_codex() -> Tuple[Optional[Any], Optional[str]]:
+    warn_deferred_oauth_provider("openai-codex")
     codex_token = _read_codex_access_token()
     if not codex_token:
         return None, None
@@ -693,6 +742,20 @@ def _try_anthropic() -> Tuple[Optional[Any], Optional[str]]:
     from arnold.agent.agent.anthropic_adapter import _is_oauth_token
     is_oauth = _is_oauth_token(token)
     model = _API_KEY_PROVIDER_AUX_MODELS.get("anthropic", "claude-haiku-4-5-20251001")
+    if is_oauth:
+        warn_deferred_oauth_provider("anthropic-oauth")
+    elif broker_production_mode_requested():
+        try:
+            broker_credential = resolve_brokered_llm_proxy("anthropic", base_url)
+        except LlmProxyUnavailable as exc:
+            logger.warning(
+                "Auxiliary provider anthropic is broker-covered but unavailable "
+                "in broker production mode: %s",
+                exc,
+            )
+            return None, None
+        token = broker_credential.broker_auth
+        base_url = broker_credential.base_url
     logger.debug("Auxiliary client: Anthropic native (%s) at %s (oauth=%s)", model, base_url, is_oauth)
     real_client = build_anthropic_client(token, base_url)
     return AnthropicAuxiliaryClient(real_client, model, token, base_url, is_oauth=is_oauth), model
@@ -779,6 +842,10 @@ def _to_async_client(sync_client, model: str):
         "api_key": sync_client.api_key,
         "base_url": str(sync_client.base_url),
     }
+    preserved_headers = getattr(sync_client, "_arnold_default_headers", None)
+    if isinstance(preserved_headers, dict) and preserved_headers:
+        async_kwargs["default_headers"] = dict(preserved_headers)
+        return AsyncOpenAI(**async_kwargs), model
     base_lower = str(sync_client.base_url).lower()
     if "openrouter" in base_lower:
         async_kwargs["default_headers"] = dict(_OR_HEADERS)
@@ -935,7 +1002,11 @@ def resolve_provider_client(
                 )
                 return _resolve_explicit_provider_fallback(async_mode)
             final_model = model or _read_main_model() or "gpt-4o-mini"
-            client = OpenAI(api_key=custom_key, base_url=custom_base)
+            client = _openai_client_with_broker(
+                "custom", api_key=custom_key, base_url=custom_base
+            )
+            if client is None:
+                return _resolve_explicit_provider_fallback(async_mode)
             return (_to_async_client(client, final_model) if async_mode
                     else (client, final_model))
         # Try custom first, then codex, then API-key providers
@@ -998,13 +1069,20 @@ def resolve_provider_client(
 
             headers.update(copilot_default_headers())
 
-        client = OpenAI(api_key=api_key, base_url=base_url,
-                        **({"default_headers": headers} if headers else {}))
+        client = _openai_client_with_broker(
+            provider,
+            api_key=api_key,
+            base_url=base_url,
+            **({"default_headers": headers} if headers else {}),
+        )
+        if client is None:
+            return _resolve_explicit_provider_fallback(async_mode)
         logger.debug("resolve_provider_client: %s (%s)", provider, final_model)
         return (_to_async_client(client, final_model) if async_mode
                 else (client, final_model))
 
     elif pconfig.auth_type in ("oauth_device_code", "oauth_external"):
+        warn_deferred_oauth_provider(provider)
         # OAuth providers — route through their specific try functions
         if provider == "nous":
             return resolve_provider_client("nous", model, async_mode)

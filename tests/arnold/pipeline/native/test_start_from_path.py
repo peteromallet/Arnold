@@ -7,7 +7,9 @@ import pytest
 
 from arnold.pipeline import start_from_trace as pipeline_start_from_trace
 from arnold.pipeline.native import (
+    FileNativePersistenceBackend,
     NativeProgram,
+    bind_legacy_artifact_root,
     compile_pipeline,
     phase,
     pipeline,
@@ -60,6 +62,16 @@ def _build_suspended_trace(tmp_path: Path) -> tuple[NativeProgram, Path, str]:
     target_path = checkpoint["step_path"]
     assert isinstance(target_path, str)
     return program, trace_dir, target_path
+
+
+def _backend_for_trace_dir(trace_dir: Path) -> tuple[FileNativePersistenceBackend, object]:
+    binding = bind_legacy_artifact_root(trace_dir)
+    backend = FileNativePersistenceBackend(
+        lambda scope: trace_dir
+        if scope == binding.scope
+        else (_ for _ in ()).throw(KeyError(scope))
+    )
+    return backend, binding.scope
 
 
 def test_start_from_trace_is_reexported() -> None:
@@ -123,3 +135,23 @@ def test_start_from_trace_validates_injected_state_against_declared_schemas(
             tmp_path / "replay",
             injected_state={"seed": "bad"},
         )
+
+
+def test_start_from_trace_reads_trace_artifacts_through_backend(
+    tmp_path: Path,
+) -> None:
+    program, trace_dir, target_path = _build_suspended_trace(tmp_path)
+    backend, scope = _backend_for_trace_dir(trace_dir)
+
+    replayed = start_from_trace(
+        program,
+        None,
+        target_path,
+        tmp_path / "replay",
+        persistence_backend=backend,
+        persistence_scope=scope,
+    )
+
+    assert replayed.suspended is False
+    assert replayed.state["answer"] == 42
+    assert (tmp_path / "replay" / "answer.txt").read_text(encoding="utf-8") == "42"

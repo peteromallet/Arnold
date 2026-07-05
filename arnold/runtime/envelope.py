@@ -102,9 +102,9 @@ class RunEnvelope:
         Monotonic fencing token for stale-lease detection.  Join takes the max
         (treating ``None`` as ``-1`` so any concrete token dominates).
     capacity_grant : int
-        Additive capacity-grant amount in abstract units.  Join sums; the
-        budget authority is responsible for downstream
-        (lease_id, fencing_token) de-duplication.
+        Capacity-grant amount in abstract units.  Join sums across distinct
+        grants, but suppresses duplicate concrete ``(lease_id, fencing_token)``
+        grant identities by keeping the larger grant.
     """
 
     taint: str = "clean"
@@ -197,8 +197,16 @@ class RunEnvelope:
         merged_ft = max(a, b)
         fencing_token = None if merged_ft == -1 else merged_ft
 
-        # capacity_grant: additive (downstream de-dups by (lease_id, fencing_token)).
-        capacity_grant = self.capacity_grant + other.capacity_grant
+        # capacity_grant: additive except duplicate concrete grant identity.
+        if (
+            lease_id is not None
+            and self.lease_id == other.lease_id == lease_id
+            and self.fencing_token is not None
+            and self.fencing_token == other.fencing_token
+        ):
+            capacity_grant = max(self.capacity_grant, other.capacity_grant)
+        else:
+            capacity_grant = self.capacity_grant + other.capacity_grant
 
         return RunEnvelope(
             taint=taint,

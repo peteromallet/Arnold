@@ -245,7 +245,7 @@ class TestMegaplanRoutingValidatorCompatibility:
     """Assert that the canonical Megaplan pipeline satisfies the M2
     routing-purity validator and exposes the expected static route
     topology carriers without requiring any semantic rewrite of
-    workflow.py for this milestone."""
+    workflow.pypeline for this milestone."""
 
     # ── helpers ───────────────────────────────────────────────────────
 
@@ -398,10 +398,10 @@ class TestMegaplanRoutingValidatorCompatibility:
             f"Override missing 'replan → revise' carrier; got {override_labels}"
         )
 
-    # ── workflow.py semantic stability ────────────────────────────────
+    # ── workflow.pypeline semantic stability ──────────────────────────
 
     def test_workflow_dsl_compiles_to_same_canonical_steps(self) -> None:
-        """workflow.py must still compile to the same 12 canonical DSL
+        """workflow.pypeline must still compile to the same 12 canonical DSL
         steps — proving no semantic rewrite was needed for this milestone."""
         pipeline = build_pipeline()
         steps = pipeline.steps
