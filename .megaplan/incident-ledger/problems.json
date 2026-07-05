@@ -22,14 +22,14 @@
       "first_seen_seq": 0,
       "first_seen_ts": "2026-07-03T20:59:15.263244+00:00",
       "fix_commits": [],
-      "last_seen_seq": 117,
-      "last_seen_ts": "2026-07-04T02:35:45.093728+00:00",
+      "last_seen_seq": 129,
+      "last_seen_ts": "2026-07-05T02:26:40.559591+00:00",
       "linked_incident_ids": [
         "incident-42"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repairing plan m plan kind chain workspace transient path",
-      "occurrence_count": 17,
+      "occurrence_count": 19,
       "owner_actor": "meta_repair",
       "problem_id": "problem-68a048c70af7",
       "recurred_after_fix": false,
@@ -41,14 +41,14 @@
       "first_seen_seq": 4,
       "first_seen_ts": "2026-07-03T21:24:24.562997+00:00",
       "fix_commits": [],
-      "last_seen_seq": 126,
-      "last_seen_ts": "2026-07-04T02:41:36.795171+00:00",
+      "last_seen_seq": 133,
+      "last_seen_ts": "2026-07-05T02:27:07.042669+00:00",
       "linked_incident_ids": [
         "inc-demo-session"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repairing plan demo plan kind chain workspace transient path",
-      "occurrence_count": 90,
+      "occurrence_count": 94,
       "owner_actor": "meta_repair",
       "problem_id": "problem-6e386e382223",
       "recurred_after_fix": false,
@@ -60,29 +60,48 @@
       "first_seen_seq": 8,
       "first_seen_ts": "2026-07-03T21:24:28.137736+00:00",
       "fix_commits": [],
-      "last_seen_seq": 127,
-      "last_seen_ts": "2026-07-04T02:41:37.653604+00:00",
+      "last_seen_seq": 134,
+      "last_seen_ts": "2026-07-05T02:27:08.197168+00:00",
       "linked_incident_ids": [
         "inc-demo-session"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome discord escalated plan demo plan kind chain workspace transient path",
-      "occurrence_count": 21,
+      "occurrence_count": 22,
       "owner_actor": "meta_repair",
       "problem_id": "problem-9e338df241c5",
       "recurred_after_fix": false,
       "scope": "repair_system",
       "status": "open",
       "title": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace"
+    },
+    {
+      "first_seen_seq": 135,
+      "first_seen_ts": "2026-07-05T02:27:34.712582+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 135,
+      "last_seen_ts": "2026-07-05T02:27:34.712582+00:00",
+      "linked_incident_ids": [
+        "inc-demo-session"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "repair data outcome repairing plan demo plan kind plan workspace transient path",
+      "occurrence_count": 1,
+      "owner_actor": "immediate_repair",
+      "problem_id": "problem-b3c4cc0b2599",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "repair-data outcome=repairing plan=demo-plan kind=plan workspace=/tmp/pytest-of-root/pytest-701/test_repair_loop_serializes_sa0/ws"
     }
   ],
   "projection": "problems",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:36a0d1068a095d24024183d27264dccb380b02c92830e63a3d111b690607a732",
-    "event_count": 128,
-    "journal_line_count": 128,
-    "last_seq": 127,
+    "digest": "sha256:abaf9e44e48e13bf63653897e34fc0ff2c3e615f700c22087f5c9216985302f9",
+    "event_count": 136,
+    "journal_line_count": 136,
+    "last_seq": 135,
     "malformed_line_count": 0
   }
 }
