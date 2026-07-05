@@ -109,6 +109,7 @@ from .feedback import (
     _render_feedback_table,
     handle_feedback,
 )
+from .editor_setup import maybe_auto_sync_repo_editor_support
 from .resolutions import handle_quality_gate, handle_user_action
 from .roots import (
     _collect_megaplan_roots,
@@ -178,6 +179,8 @@ def build_parser() -> argparse.ArgumentParser:
     setup_parser.add_argument("--force", action="store_true")
     setup_parser.add_argument("--regen-composed", action="store_true")
     setup_parser.add_argument("--install-hooks", action="store_true")
+    setup_parser.add_argument("--editors", action="store_true")
+    setup_parser.add_argument("--user-editors", action="store_true")
 
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--project-dir", required=False)
@@ -3055,6 +3058,7 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
     argv = _normalize_execute_compat_argv(list(argv))
+    maybe_auto_sync_repo_editor_support(Path.cwd())
     if argv and argv[0] == "cloud":
         from arnold_pipelines.megaplan.cloud.cli import _register_cloud_subcommands, run_cloud_cli
 
