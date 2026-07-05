@@ -2017,37 +2017,6 @@ def _state_mismatch_analysis(
     }
 
 
-def _resolver_stale_state_analysis(resolver_output: dict[str, object] | None) -> dict[str, object] | None:
-    if not isinstance(resolver_output, dict):
-        return None
-    stale_items = [
-        item
-        for item in (resolver_output.get("stale_evidence") or [])
-        if isinstance(item, dict)
-    ]
-    if not stale_items:
-        return None
-    stale_by_kind = {
-        str(item.get("kind") or "").strip().lower(): str(item.get("path") or "").strip()
-        for item in stale_items
-    }
-    workspace_path = stale_by_kind.get("workspace_missing", "")
-    spec_path = stale_by_kind.get("spec_missing", "")
-    if workspace_path:
-        return {
-            "classification": "STALE STATE",
-            "summary": "marker workspace path no longer exists",
-            "recommended_action": "clear stale session markers and re-drive; do not dispatch dev-fix for a source bug",
-        }
-    if spec_path:
-        return {
-            "classification": "STALE STATE",
-            "summary": "marker remote spec path no longer exists",
-            "recommended_action": "clear stale session markers and re-drive; do not dispatch dev-fix for a source bug",
-        }
-    return None
-
-
 def _collect_signal_values(value: object, prefix: str = "", depth: int = 0) -> list[str]:
     if depth > 4:
         return []
@@ -2097,33 +2066,14 @@ def _classify_failure(
     latest_failure: dict[str, object],
     chain_state: dict[str, object],
     plan_runtime: dict[str, object],
-    resolver_output: dict[str, object] | None = None,
 ) -> str:
     combined = "\n".join(signals).lower()
     kind = str(latest_failure.get("kind") or "").lower()
     phase = str(latest_failure.get("phase") or "").lower()
-    message = str(latest_failure.get("message") or "").strip().lower()
-    recorded_at = str(latest_failure.get("recorded_at") or "").strip()
     last_state = str(chain_state.get("last_state") or "").lower()
     current_state = str(chain_state.get("current_state") or "").lower()
     current_plan_name = str(chain_state.get("current_plan_name") or "").strip()
     plan_current_state = str(plan_runtime.get("current_state") or "").strip().lower()
-    active_step = (resolver_output or {}).get("active_step_heartbeat")
-    active_step_running = (
-        isinstance(active_step, dict)
-        and bool(active_step.get("active"))
-        and bool(str(active_step.get("phase") or "").strip())
-    )
-    latest_failure_empty = not any((kind, phase, message, recorded_at))
-    stale_items = [
-        item
-        for item in (resolver_output or {}).get("stale_evidence", [])
-        if isinstance(item, dict)
-    ]
-    stale_paths = {
-        str(item.get("kind") or "").strip().lower(): str(item.get("path") or "").strip()
-        for item in stale_items
-    }
     if (
         last_state == "done"
         and current_state in {"", "done", "unknown"}
@@ -2133,18 +2083,6 @@ def _classify_failure(
         return "chain_completed"
     if plan_current_state == "awaiting_human_verify":
         return "awaiting_human_user_action_gate"
-    if (
-        latest_failure_empty
-        and active_step_running
-        and plan_current_state in {"", "initialized"}
-        and last_state in {"", "initialized", "unknown"}
-        and current_state in {"", "initialized", "unknown"}
-    ):
-        return "stale_state"
-    if stale_paths.get("workspace_missing"):
-        return "workspace_missing"
-    if stale_paths.get("spec_missing"):
-        return "spec_missing"
     if "unrecognized arguments" in combined or "usage:" in combined:
         return "cli_or_argument_error"
     if "couldn't find remote ref" in combined or "missing_base_ref" in combined or last_state == "missing_base_ref":
@@ -2403,12 +2341,7 @@ raw_failure_signals = _unique_strings(
     ]
 )
 
-failure_classification = _classify_failure(
-    raw_failure_signals,
-    latest_failure,
-    chain_state,
-    plan_runtime_state,
-)
+failure_classification = _classify_failure(raw_failure_signals, latest_failure, chain_state, plan_runtime_state)
 if state_mismatch.get("detected"):
     failure_classification = "plan_chain_state_mismatch"
 elif stale_state.get("classification") == "STALE STATE":
@@ -2448,22 +2381,6 @@ try:
     )
 except Exception:
     payload["resolver_output"] = {}
-resolver_stale_state = _resolver_stale_state_analysis(
-    payload["resolver_output"] if isinstance(payload.get("resolver_output"), dict) else None
-)
-if resolver_stale_state is not None and stale_state.get("classification") == "NO LATEST FAILURE":
-    stale_state = resolver_stale_state
-    payload["stale_state"] = stale_state
-    payload["failure_classification"] = "stale_state"
-if not state_mismatch.get("detected") and stale_state.get("classification") != "STALE STATE":
-    failure_classification = _classify_failure(
-        raw_failure_signals,
-        latest_failure,
-        chain_state,
-        plan_runtime_state,
-        payload["resolver_output"] if isinstance(payload.get("resolver_output"), dict) else None,
-    )
-    payload["failure_classification"] = failure_classification
 print(json.dumps(payload, sort_keys=True))
 PY
 }
@@ -2507,7 +2424,6 @@ metadata = plan_failure.get("metadata") or {}
 classification = latest_context.get("failure_classification") or "unknown_failure_mode"
 stale_state = latest_context.get("stale_state") or {}
 state_mismatch = latest_context.get("state_mismatch") or {}
-resolver_output = latest_context.get("resolver_output") if isinstance(latest_context.get("resolver_output"), dict) else {}
 state_classification = stale_state.get("classification") or (
     "STATE MISMATCH" if classification == "plan_chain_state_mismatch" else (
         "STALE STATE" if classification == "stale_state" else "LIVE FAILURE"
@@ -2586,17 +2502,6 @@ if (
     and _summary_chain_complete(chain_state)
 ):
     classification = "chain_completed"
-
-resolver_stale_state = _resolver_stale_state_analysis(resolver_output)
-if resolver_stale_state is not None:
-    stale_state = stale_state if stale_state.get("classification") != "NO LATEST FAILURE" else resolver_stale_state
-    if classification == "unknown_failure_mode":
-        if "workspace" in str(resolver_stale_state.get("summary") or ""):
-            classification = "workspace_missing"
-        elif "spec" in str(resolver_stale_state.get("summary") or ""):
-            classification = "spec_missing"
-    if state_classification == "LIVE FAILURE":
-        state_classification = str(stale_state.get("classification") or state_classification)
 
 if classification == "unknown_failure_mode":
     combined_signals = "\n".join(str(item) for item in signals).lower()
@@ -4666,6 +4571,44 @@ PY
 
 log "starting session=$SESSION workspace=$WORKSPACE spec=$REMOTE_SPEC source=$ARNOLD_SRC branch=$SYNC_BRANCH"
 guard_against_recursive_repair_loop || exit 0
+
+# Environment-gone backstop: if the workspace dir is gone the repair loop has
+# nothing to repair (it is a code-fixer, not a provisioner — it cannot recreate
+# a wiped workspace). Persist an environment_gone outcome for audit and exit 0
+# so we do not burn iterations or escalate to Discord. The watchdog primary
+# gate retires the session cleanly on its next tick (with its strikes safety
+# margin, which also covers a missing spec file). This guard keys on the
+# workspace alone: a present workspace with a missing spec is a transient
+# concern the watchdog gate handles with tolerance, not a hard no-op here.
+# This guard runs BEFORE acquire_repair_lock, so it writes repair-data via
+# save_repair_data directly rather than repair_data_set_outcome (which requires
+# the lock). Best-effort: a failed write must not block the no-op exit.
+if [[ ! -d "$WORKSPACE" ]]; then
+  log "environment gone at entry; exiting without repair session=$SESSION workspace=$WORKSPACE spec=$REMOTE_SPEC"
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" <<'PY' || true
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.repair_contract import (
+    ENVIRONMENT_GONE,
+    load_json,
+    save_repair_data,
+)
+
+data_path_raw, session, workspace, remote_spec = sys.argv[1:]
+data_path = pathlib.Path(data_path_raw)
+payload = load_json(data_path, default={})
+if not isinstance(payload, dict):
+    payload = {}
+payload.setdefault("session", session)
+payload.setdefault("workspace", workspace)
+payload["workspace"] = workspace
+payload["outcome"] = ENVIRONMENT_GONE
+save_repair_data(data_path, payload)
+PY
+  exit 0
+fi
+
 acquire_repair_lock || exit 75
 export CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE=1
 export CLOUD_WATCHDOG_REPAIR_LOOP_SESSION="$SESSION"

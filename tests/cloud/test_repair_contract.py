@@ -863,6 +863,7 @@ def test_outcome_constants_are_well_defined() -> None:
     assert repair_contract.REPAIR_EXHAUSTED == "repair_exhausted"
     assert repair_contract.NEEDS_HUMAN == "needs_human"
     assert repair_contract.DISCORD_ESCALATED == "discord_escalated"
+    assert repair_contract.ENVIRONMENT_GONE == "environment_gone"
 
 
 def test_success_outcomes_match_planned_lattice() -> None:
@@ -878,6 +879,17 @@ def test_non_success_outcomes_include_liveness_and_exhaustion() -> None:
     assert "needs_human" in repair_contract.NON_SUCCESS_OUTCOMES
     assert "repairing" in repair_contract.NON_SUCCESS_OUTCOMES
     assert "discord_escalated" in repair_contract.NON_SUCCESS_OUTCOMES
+    assert "environment_gone" in repair_contract.NON_SUCCESS_OUTCOMES
+
+
+def test_environment_gone_outcome_is_terminal_and_non_success() -> None:
+    """environment_gone retires a wiped session without Discord escalation."""
+    assert repair_contract.ENVIRONMENT_GONE == "environment_gone"
+    assert repair_contract.ENVIRONMENT_GONE in repair_contract.NON_SUCCESS_OUTCOMES
+    assert repair_contract.ENVIRONMENT_GONE not in repair_contract.SUCCESS_OUTCOMES
+    assert repair_contract.ENVIRONMENT_GONE in repair_contract.ALL_OUTCOMES
+    assert repair_contract.is_terminal_outcome(repair_contract.ENVIRONMENT_GONE)
+    assert not repair_contract.is_success_outcome(repair_contract.ENVIRONMENT_GONE)
 
 
 def test_all_outcomes_union_covers_both_sets() -> None:
