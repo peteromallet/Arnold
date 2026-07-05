@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import shutil
 from dataclasses import dataclass
@@ -85,6 +86,31 @@ def _iter_marker_workspaces(marker_dir: Path) -> Iterable[Path]:
                 yield path
 
 
+def _candidate_sibling_chains(workspace: Path, prereq_rel: Path) -> Iterable[Path]:
+    yield (workspace / prereq_rel).resolve(strict=False)
+    parts = prereq_rel.parts
+    try:
+        initiatives_index = parts.index("initiatives")
+    except ValueError:
+        return
+    if len(parts) <= initiatives_index + 2 or parts[-1] != "chain.yaml":
+        return
+    initiative = parts[initiatives_index + 1]
+    if initiative.endswith(".chain"):
+        alternate = Path(
+            *parts[: initiatives_index + 1],
+            initiative[: -len(".chain")],
+            *parts[initiatives_index + 2 :],
+        )
+    else:
+        alternate = Path(
+            *parts[: initiatives_index + 1],
+            f"{initiative}.chain",
+            *parts[initiatives_index + 2 :],
+        )
+    yield (workspace / alternate).resolve(strict=False)
+
+
 def _find_completed_sibling(
     *,
     target_root: Path,
@@ -95,17 +121,17 @@ def _find_completed_sibling(
     for workspace in _iter_marker_workspaces(marker_dir):
         if workspace.resolve(strict=False) == target_root.resolve(strict=False):
             continue
-        candidate = (workspace / prereq_rel).resolve(strict=False)
-        if candidate in seen or not candidate.is_file():
-            continue
-        seen.add(candidate)
-        try:
-            spec = load_spec(candidate)
-            state = load_chain_state(candidate)
-        except Exception:
-            continue
-        if _is_complete_state(state, spec):
-            return workspace, candidate, spec, state
+        for candidate in _candidate_sibling_chains(workspace, prereq_rel):
+            if candidate in seen or not candidate.is_file():
+                continue
+            seen.add(candidate)
+            try:
+                spec = load_spec(candidate)
+                state = load_chain_state(candidate)
+            except Exception:
+                continue
+            if _is_complete_state(state, spec):
+                return workspace, candidate, spec, state
     return None
 
 
@@ -149,7 +175,21 @@ def _sync_completed_prerequisite(
             shutil.copytree(source_plan, target_plan)
             copied_plans.append(plan)
 
-    save_chain_state(target_chain, state)
+    state_for_manifest = copy.deepcopy(state)
+    if spec.merge_policy == "review":
+        for record in state_for_manifest.completed:
+            if not isinstance(record, dict):
+                continue
+            pr_number = record.get("pr_number")
+            pr_state = record.get("pr_state")
+            local_commit_sha = record.get("local_commit_sha")
+            if isinstance(pr_number, int) and pr_state == "merged":
+                continue
+            if isinstance(local_commit_sha, str) and local_commit_sha.strip():
+                continue
+            record.setdefault("publication_evidence", "chain_state_only")
+
+    save_chain_state(target_chain, state_for_manifest)
 
     now = datetime.now(timezone.utc).isoformat()
     completed = [
@@ -158,8 +198,9 @@ def _sync_completed_prerequisite(
             "plan": item.get("plan"),
             "status": item.get("status"),
             "local_commit_sha": item.get("local_commit_sha"),
+            "publication_evidence": item.get("publication_evidence"),
         }
-        for item in state.completed
+        for item in state_for_manifest.completed
         if isinstance(item, dict)
     ]
     proof_path = target_chain.with_name("dependency-completion-proof.json")
@@ -185,7 +226,7 @@ def _sync_completed_prerequisite(
         root=target_root,
         spec_path=target_chain,
         spec=spec,
-        state=state,
+        state=state_for_manifest,
         proof_map_path=proof_map_path,
         output_path=None,
     )
@@ -352,15 +393,19 @@ def repair_dependency_manifests(*, workspace: Path, remote_spec: Path, marker_di
         if sibling is None:
             continue
         source_root, source_chain, prereq_spec, prereq_state = sibling
+        try:
+            target_spec = load_spec(target_chain)
+        except Exception:
+            target_spec = prereq_spec
         sync = _sync_completed_prerequisite(
             target_root=target_root,
             target_chain=target_chain,
             source_root=source_root,
             source_chain=source_chain,
-            spec=prereq_spec,
+            spec=target_spec,
             state=prereq_state,
         )
-        changed_docs = _refresh_stale_dependency_audit_docs(target_root, prereq_rel, prereq_state, prereq_spec)
+        changed_docs = _refresh_stale_dependency_audit_docs(target_root, prereq_rel, prereq_state, target_spec)
         changed_states = _clear_dependent_blocked_plan_state(target_root, prereq_rel)
         repairs.append(
             {

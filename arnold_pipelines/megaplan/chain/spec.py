@@ -1510,6 +1510,7 @@ def _validate_completed_record_evidence(
     prerequisite_spec: ChainSpec,
     precondition_label: str,
     dependent_spec_path: Path,
+    require_manifest: bool,
 ) -> None:
     status = record.get("status")
     if status != "done":
@@ -1527,6 +1528,13 @@ def _validate_completed_record_evidence(
         pr_number = record.get("pr_number")
         pr_state = record.get("pr_state")
         if not isinstance(pr_number, int) or pr_state != "merged":
+            local_commit_sha = record.get("local_commit_sha")
+            publication_evidence = record.get("publication_evidence")
+            if require_manifest and (
+                (isinstance(local_commit_sha, str) and local_commit_sha.strip())
+                or publication_evidence == "chain_state_only"
+            ):
+                return
             raise CliError(
                 "launch_precondition_failed",
                 f"{precondition_label} failed for {dependent_spec_path}: prerequisite milestone {label!r} requires merged PR evidence",
@@ -1976,6 +1984,7 @@ def _validate_chain_completed_precondition(
             prerequisite_spec=prereq_spec,
             precondition_label=label,
             dependent_spec_path=spec_path,
+            require_manifest=precondition.require_manifest,
         )
     if precondition.require_manifest:
         _validate_completion_manifest(
