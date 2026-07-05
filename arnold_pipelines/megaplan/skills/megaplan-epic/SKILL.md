@@ -1,1 +1,1 @@
-/workspace/native-platform-followup/Arnold/.megaplan/runtime/editable-engine/arnold_pipelines/megaplan/data/epic_skill.md
+/workspace/arnold/arnold_pipelines/megaplan/data/epic_skill.md
