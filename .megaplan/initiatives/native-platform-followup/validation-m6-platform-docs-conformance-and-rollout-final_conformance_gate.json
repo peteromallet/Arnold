@@ -3,7 +3,7 @@
   "milestone": "m6-platform-docs-conformance-and-rollout",
   "kind": "final_conformance_gate",
   "command": [
-    "/root/.pyenv/versions/3.11.11/bin/python",
+    "/root/.pyenv/versions/3.11.11/bin/python3",
     "scripts/validate_native_representation_conformance.py",
     "--conformance",
     "docs/arnold/megaplan-native-representation-conformance.yaml",
@@ -24,7 +24,7 @@
   "conformance_sha256": "dd4d0bcc67eac6c1bc127cb5d7782798104fd5c6b1f9513f75c92afa15e59421",
   "traceability_sha256": "9856681e91eecc461ba6ee7df5cf654231cfd3a92108100a0d0b5bd836418ad3",
   "proof_map_sha256_before": "6060be6e2b3e1030bb6327da2bd7b94f514b9fb22a9c9bd60ddf00aaf98aadad",
-  "git_head": "6952e12c8eba6555caef96895c223317ff94a414",
-  "started_at": "2026-07-05T02:38:02.619154+00:00",
-  "finished_at": "2026-07-05T02:38:02.751978+00:00"
+  "git_head": "18470d9ec0b7cff6819b49d9be42294eadd15290",
+  "started_at": "2026-07-05T13:05:45.075804+00:00",
+  "finished_at": "2026-07-05T13:05:45.203402+00:00"
 }

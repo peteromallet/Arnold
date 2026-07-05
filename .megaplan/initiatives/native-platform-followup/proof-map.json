@@ -32,7 +32,34 @@
       "tests/arnold_pipelines/megaplan/test_semantics_carrier.py",
       "tests/arnold_pipelines/megaplan/test_source_path_reconciliation.py",
       "tests/arnold_pipelines/megaplan/test_workflows_planning.py",
-      "tests/characterization/test_pipeline_golden.py"
+      "tests/characterization/test_pipeline_golden.py",
+      ".megaplan/plans/m6-platform-docs-conformance-20260705-0039/final.md",
+      ".megaplan/plans/m6-platform-docs-conformance-20260705-0039/finalize.json"
+    ],
+    "m1-side-effect-reconcile-and-idempotency": [
+      ".megaplan/initiatives/native-platform-followup/briefs/m1-side-effect-reconcile-and-idempotency.md",
+      ".megaplan/plans/m1-side-effect-reconcile-and-20260704-1634/final.md",
+      ".megaplan/plans/m1-side-effect-reconcile-and-20260704-1634/finalize.json"
+    ],
+    "m2-security-broker-and-approval-gates": [
+      ".megaplan/initiatives/native-platform-followup/briefs/m2-security-broker-and-approval-gates.md",
+      ".megaplan/plans/m2-security-broker-and-20260704-1739/final.md",
+      ".megaplan/plans/m2-security-broker-and-20260704-1739/finalize.json"
+    ],
+    "m3-shared-library-packs-and-versioning": [
+      ".megaplan/initiatives/native-platform-followup/briefs/m3-shared-library-packs-and-versioning.md",
+      ".megaplan/plans/m3-shared-library-packs-and-20260704-1943/final.md",
+      ".megaplan/plans/m3-shared-library-packs-and-20260704-1943/finalize.json"
+    ],
+    "m4-durable-substrate-and-checkpoint-backend": [
+      ".megaplan/initiatives/native-platform-followup/briefs/m4-durable-substrate-and-checkpoint-backend.md",
+      ".megaplan/plans/m4-durable-substrate-and-20260704-2124/final.md",
+      ".megaplan/plans/m4-durable-substrate-and-20260704-2124/finalize.json"
+    ],
+    "m5-worker-fleet-supervision-and-cancellation": [
+      ".megaplan/initiatives/native-platform-followup/briefs/m5-worker-fleet-supervision-and-cancellation.md",
+      ".megaplan/plans/m5-worker-fleet-supervision-20260704-2252/final.md",
+      ".megaplan/plans/m5-worker-fleet-supervision-20260704-2252/finalize.json"
     ]
   }
 }
