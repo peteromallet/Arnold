@@ -35,11 +35,18 @@ from arnold.pipeline.native import (
     run_native_pipeline,
     workflow,
 )
+from arnold.pipeline.native.audit import AuditHooks
 from arnold.pipeline.native.checkpoint import read_native_cursor
 from arnold.pipeline.native.hooks import EffectLedgerHooks, NullNativeRuntimeHooks
 from arnold.pipeline.native.ir import ParallelMapInstruction
+from arnold.pipeline.native.persistence import (
+    FileNativePersistenceBackend,
+    bind_legacy_artifact_root,
+)
 from arnold.pipeline.types import ContractResult, ContractStatus, HumanSuspension, StepResult
 from arnold.runtime.envelope import RunEnvelope
+from arnold.supervisor.leases import ProjectLeaseState
+from arnold.supervisor.store import FileProjectLeaseStore
 
 
 # ── module-level fixture ──────────────────────────────────────────────
@@ -59,6 +66,158 @@ def _make_program(
     instructions: tuple[NativeInstruction, ...] = (),
 ) -> NativeProgram:
     return NativeProgram(name=name, instructions=instructions)
+
+
+def test_cancellation_boundary_checkpoints_typed_outcome_and_releases_lease(tmp_path: Path) -> None:
+    store = FileProjectLeaseStore(tmp_path / "leases")
+    claimed = store.claim_project_lease(
+        "project-1",
+        "worktree-1",
+        run_id="run-1",
+        owner_id="worker-1",
+        lease_token="token-1",
+        lease_seconds=60,
+    )
+
+    def phase_body(ctx):
+        raise AssertionError("phase body should not run after cancellation")
+
+    prog = _make_program(
+        instructions=(
+            NativeInstruction(pc=0, op="phase", name="work", func=phase_body),
+            NativeInstruction(pc=1, op="halt", name="halt"),
+        )
+    )
+
+    result = run_native_pipeline(
+        prog,
+        artifact_root=tmp_path / "artifacts",
+        initial_envelope=RunEnvelope(cancellation=True),
+        project_lease_store=store,
+        project_lease_project_id=claimed.project_id,
+        project_lease_worktree_id=claimed.worktree_id,
+        project_lease_token=claimed.lease_token,
+    )
+
+    assert result.suspended is True
+    assert result.state["__cancelled__"]["boundary"] == "step_enter"
+    contract = result.state["__contract_results__"]["__runtime_cancelled__"]
+    assert contract.status is ContractStatus.FAILED
+    assert contract.payload["cancelled"] is True
+
+    released = store.load_project_lease("project-1", "worktree-1")
+    assert released.state is ProjectLeaseState.CANCELLED
+    assert released.last_progress_at is not None
+    assert released.last_result == {
+        "cancellation": result.state["__cancelled__"],
+    }
+
+    cursor = read_native_cursor(tmp_path / "artifacts")
+    assert cursor is not None
+    assert cursor["suspension_kind"] == "cancelled"
+    assert cursor["cancellation"]["reason"] == "cancellation_requested"
+
+
+def test_cancellation_trace_emits_cancelled_status_and_boundary_metadata(tmp_path: Path) -> None:
+    def phase_body(ctx):
+        raise AssertionError("phase body should not run after cancellation")
+
+    prog = _make_program(
+        instructions=(
+            NativeInstruction(pc=0, op="phase", name="work", func=phase_body),
+            NativeInstruction(pc=1, op="halt", name="halt"),
+        )
+    )
+    trace_dir = tmp_path / "trace"
+    audit_dir = tmp_path / "audit"
+
+    result = run_native_pipeline(
+        prog,
+        artifact_root=tmp_path / "artifacts",
+        hooks=AuditHooks(audit_dir=audit_dir),
+        trace_dir=trace_dir,
+        initial_envelope=RunEnvelope(cancellation=True),
+    )
+
+    assert result.suspended is True
+
+    events = [
+        json.loads(line)
+        for line in (trace_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    cancelled_events = [event for event in events if event["kind"] == "pipeline_cancelled"]
+    assert cancelled_events[-1]["payload"]["status"] == "cancelled"
+    assert cancelled_events[-1]["payload"]["reason"] == "cancellation_requested"
+    assert cancelled_events[-1]["payload"]["boundary"] == "step_enter"
+    assert cancelled_events[-1]["payload"]["trace"]["path"] == "root/work"
+
+    checkpoint = json.loads((trace_dir / "checkpoint.json").read_text(encoding="utf-8"))
+    assert checkpoint["status"] == "cancelled"
+    assert checkpoint["cancellation"]["boundary"] == "step_enter"
+
+    audit_records = [
+        json.loads(line)
+        for line in (audit_dir / "audit.ndjson").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    cancelled_records = [record for record in audit_records if record.get("status") == "cancelled"]
+    assert cancelled_records[-1]["reason"] == "cancellation_requested"
+    assert cancelled_records[-1]["boundary"] == "step_enter"
+
+
+def test_cancellation_persistence_readers_expose_cancelled_trace_and_audit_records(
+    tmp_path: Path,
+) -> None:
+    def phase_body(ctx):
+        raise AssertionError("phase body should not run after cancellation")
+
+    prog = _make_program(
+        instructions=(
+            NativeInstruction(pc=0, op="phase", name="work", func=phase_body),
+            NativeInstruction(pc=1, op="halt", name="halt"),
+        )
+    )
+    artifact_root = tmp_path / "artifacts"
+    trace_dir = tmp_path / "trace"
+    binding = bind_legacy_artifact_root(artifact_root)
+    backend = FileNativePersistenceBackend(
+        lambda scope: artifact_root
+        if scope == binding.scope
+        else (_ for _ in ()).throw(KeyError(scope))
+    )
+
+    result = run_native_pipeline(
+        prog,
+        artifact_root=artifact_root,
+        hooks=AuditHooks(
+            audit_dir=None,
+            persistence_backend=backend,
+            persistence_scope=binding.scope,
+        ),
+        trace_dir=trace_dir,
+        persistence_backend=backend,
+        initial_envelope=RunEnvelope(cancellation=True),
+    )
+
+    assert result.suspended is True
+
+    events = backend.read_events(binding.scope)
+    cancelled_events = [row.payload for row in events if row.kind == "pipeline_cancelled"]
+    assert cancelled_events[-1]["payload"]["status"] == "cancelled"
+    assert cancelled_events[-1]["payload"]["boundary"] == "step_enter"
+    assert cancelled_events[-1]["payload"]["trace"]["path"] == "root/work"
+
+    checkpoint = backend.read_trace_artifact(binding.scope, name="checkpoint.json")
+    assert checkpoint["status"] == "cancelled"
+    assert checkpoint["step_path"] == "root/work"
+
+    audit_records = [
+        row.payload for row in backend.read_audit_records(binding.scope) if "attempt_id" in row.payload
+    ]
+    assert audit_records[-1]["status"] == "cancelled"
+    assert audit_records[-1]["error_type"] is None
+    assert not [record for record in audit_records if record["status"] == "failure"]
 
 
 class _MemoryNativePersistenceBackend:

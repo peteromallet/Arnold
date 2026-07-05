@@ -101,12 +101,14 @@ from arnold.kernel.replay import (
     validate_replay_cursor,
 )
 from arnold.kernel.suspension import (
+    ManualSuspensionClearRequired,
     ResumeCursor,
     ResumeValidation,
     SuspendCapabilityRoute,
     SuspensionCursor,
     SuspensionRecord,
     SuspensionState,
+    ensure_manual_quarantine_clear_allowed,
     validate_resume_payload,
     validate_suspension_record,
 )
@@ -147,6 +149,7 @@ __all__ = [
     "JudgeManifestRelationship",
     "LegacyAliasRecord",
     "ManifestReference",
+    "ManualSuspensionClearRequired",
     "MissingIdempotencyPolicyError",
     "NDJsonEventJournal",
     "ProvenanceParent",
@@ -198,6 +201,7 @@ __all__ = [
     "schema_hash",
     "settlement_payload",
     "validate_logical_root_id",
+    "ensure_manual_quarantine_clear_allowed",
     "validate_safe_relative_subpath",
     "validate_artifact_content_hashes",
     "validate_event_sequence_against_cursor",

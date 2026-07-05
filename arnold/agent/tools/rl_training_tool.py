@@ -42,6 +42,7 @@ from datetime import datetime
 import yaml
 from dataclasses import dataclass, field
 from arnold_pipelines.megaplan.runtime.process import kill_group, spawn, spawn_async
+from arnold.supervisor.capacity_context import gate_capacity
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -337,12 +338,13 @@ async def _spawn_training_run(run_state: RunState, config_path: Path):
         # spawn() adds start_new_session=True (SD5 — session isolation).
         # This site previously had no session/pgroup isolation; the change
         # is deliberate so kill_group can reap the whole tree.
-        run_state.api_process = spawn(
-            ["run-api"],
-            stdout=api_log_file,
-            stderr=subprocess.STDOUT,
-            cwd=str(TINKER_ATROPOS_ROOT),
-        )
+        with gate_capacity("rl_training_subprocess"):
+            run_state.api_process = spawn(
+                ["run-api"],
+                stdout=api_log_file,
+                stderr=subprocess.STDOUT,
+                cwd=str(TINKER_ATROPOS_ROOT),
+            )
 
         # Wait for API to start
         await asyncio.sleep(5)
@@ -360,13 +362,14 @@ async def _spawn_training_run(run_state: RunState, config_path: Path):
 
         trainer_log_file = open(trainer_log, "w")  # closed by _stop_training_run
         run_state.trainer_log_file = trainer_log_file
-        run_state.trainer_process = spawn(
-            [sys.executable, "launch_training.py", "--config", str(config_path)],
-            stdout=trainer_log_file,
-            stderr=subprocess.STDOUT,
-            cwd=str(TINKER_ATROPOS_ROOT),
-            env={**os.environ, "TINKER_API_KEY": os.getenv("TINKER_API_KEY", "")},
-        )
+        with gate_capacity("rl_training_subprocess"):
+            run_state.trainer_process = spawn(
+                [sys.executable, "launch_training.py", "--config", str(config_path)],
+                stdout=trainer_log_file,
+                stderr=subprocess.STDOUT,
+                cwd=str(TINKER_ATROPOS_ROOT),
+                env={**os.environ, "TINKER_API_KEY": os.getenv("TINKER_API_KEY", "")},
+            )
 
         # Wait for trainer to initialize (it starts FastAPI inference server on 8001)
         logger.info("[%s] Waiting 30 seconds for trainer to initialize...", run_id)
@@ -401,12 +404,13 @@ async def _spawn_training_run(run_state: RunState, config_path: Path):
 
         env_log_file = open(env_log, "w")  # closed by _stop_training_run
         run_state.env_log_file = env_log_file
-        run_state.env_process = spawn(
-            [sys.executable, str(env_info.file_path), "serve", "--config", str(config_path)],
-            stdout=env_log_file,
-            stderr=subprocess.STDOUT,
-            cwd=str(TINKER_ATROPOS_ROOT),
-        )
+        with gate_capacity("rl_training_subprocess"):
+            run_state.env_process = spawn(
+                [sys.executable, str(env_info.file_path), "serve", "--config", str(config_path)],
+                stdout=env_log_file,
+                stderr=subprocess.STDOUT,
+                cwd=str(TINKER_ATROPOS_ROOT),
+            )
 
         # Wait for environment to connect
         await asyncio.sleep(10)

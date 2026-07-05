@@ -248,6 +248,13 @@ def test_capacity_grant_additive_commutative():
     assert b.join(a).capacity_grant == 7
 
 
+def test_capacity_grant_suppresses_duplicate_concrete_identity():
+    a = make_envelope(lease_id="L1", fencing_token=3, capacity_grant=2)
+    b = make_envelope(lease_id="L1", fencing_token=3, capacity_grant=5)
+    assert a.join(b).capacity_grant == 5
+    assert b.join(a).capacity_grant == 5
+
+
 def test_new_fields_default_to_empty():
     env = RunEnvelope()
     assert env.lease_id is None

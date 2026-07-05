@@ -30,6 +30,7 @@ __all__ = [
     "TRUST_TRUSTED",
     "TRUST_QUARANTINED_MANIFEST_MISMATCH",
     "migrate_legacy_resume",
+    "resume_trust_allows_takeover",
 ]
 
 
@@ -201,3 +202,24 @@ def migrate_legacy_resume(
         ),
         TrustTransition(TRUST_UNKNOWN, TRUST_TRUSTED),
     )
+
+
+def resume_trust_allows_takeover(
+    transition: TrustTransition | None,
+    *,
+    current_trust_state: str | None = None,
+) -> tuple[bool, str]:
+    """Return whether resume trust is sufficient for expired lease takeover.
+
+    Quarantine labels are preserved as denial reasons; callers should not
+    flatten them into a generic takeover failure.
+    """
+
+    after = transition.after if transition is not None else current_trust_state
+    if after == TRUST_TRUSTED:
+        return True, "resume_trust:trusted"
+    if after == TRUST_QUARANTINED_MANIFEST_MISMATCH:
+        return False, f"resume_trust:{TRUST_QUARANTINED_MANIFEST_MISMATCH}"
+    if after:
+        return False, f"resume_trust:{after}"
+    return False, "resume_trust:missing"

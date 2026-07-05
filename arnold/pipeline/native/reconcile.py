@@ -215,6 +215,12 @@ def reconcile_git_worktree(
     return _dirty_or_clean_decision(status_path or repo_path, metadata)
 
 
+def reconcile_decision_allows_takeover(decision: ReconcileDecision) -> bool:
+    """Return whether a native reconcile decision can authorize takeover."""
+
+    return not decision.blocked and (decision.continue_execution or decision.skip_execution)
+
+
 def _dirty_or_clean_decision(
     repo_path: Path | str,
     metadata: ReconcileMetadata,
@@ -264,6 +270,7 @@ __all__ = [
     "ReconcileMetadata",
     "action_entry",
     "reconcile_file_write",
+    "reconcile_decision_allows_takeover",
     "reconcile_git_branch_create",
     "reconcile_git_commit",
     "reconcile_git_worktree",

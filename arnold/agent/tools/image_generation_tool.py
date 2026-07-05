@@ -35,6 +35,7 @@ import datetime
 from typing import Dict, Any, Optional, Union
 import fal_client
 from arnold.agent.tools.debug_helpers import DebugSession
+from arnold.supervisor.capacity_context import gate_capacity
 
 logger = logging.getLogger(__name__)
 
@@ -186,10 +187,11 @@ def _upscale_image(image_url: str, original_prompt: str) -> Dict[str, Any]:
         # The async API (submit_async) caches a global httpx.AsyncClient via
         # @cached_property, which breaks when asyncio.run() destroys the loop
         # between calls (gateway thread-pool pattern).
-        handler = fal_client.submit(
-            UPSCALER_MODEL,
-            arguments=upscaler_arguments
-        )
+        with gate_capacity("image_generation_submission"):
+            handler = fal_client.submit(
+                UPSCALER_MODEL,
+                arguments=upscaler_arguments
+            )
 
         # Get the upscaled result (sync — blocks until done)
         result = handler.get()
@@ -312,10 +314,11 @@ def image_generate_tool(
         logger.info("  Guidance: %s", validated_params['guidance_scale'])
 
         # Submit request to FAL.ai using sync API (avoids cached event loop issues)
-        handler = fal_client.submit(
-            DEFAULT_MODEL,
-            arguments=arguments
-        )
+        with gate_capacity("image_generation_submission"):
+            handler = fal_client.submit(
+                DEFAULT_MODEL,
+                arguments=arguments
+            )
 
         # Get the result (sync — blocks until done)
         result = handler.get()
