@@ -77,6 +77,7 @@ from arnold_pipelines.megaplan._core import (
 )
 from arnold_pipelines.megaplan._core.user_config import VALID_VENDORS
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
+    _is_explained_noop_completion,
     AuthorityDecision,
     effective_execute_completed_task_ids,
     load_evidence_nucleus,
@@ -1309,14 +1310,21 @@ def _build_completion_manifest(
         if spec.merge_policy == "review":
             pr_number = record.get("pr_number")
             pr_state = record.get("pr_state")
-            if not isinstance(pr_number, int) or pr_state != "merged":
+            local_commit_sha = record.get("local_commit_sha")
+            publication_evidence = record.get("publication_evidence")
+            if isinstance(pr_number, int) and pr_state == "merged":
+                milestone_entry["pr_number"] = pr_number
+                milestone_entry["pr_state"] = "merged"
+                milestone_entry["pr_merge_sha"] = _record_pr_merge_sha(root, record)
+            elif isinstance(local_commit_sha, str) and local_commit_sha.strip():
+                milestone_entry["local_commit_sha"] = local_commit_sha
+            elif publication_evidence == "chain_state_only":
+                milestone_entry["publication_evidence"] = "chain_state_only"
+            else:
                 raise CliError(
                     "invalid_chain_state",
-                    f"completed record {milestone.label!r} missing merged PR evidence",
+                    f"completed record {milestone.label!r} missing merged PR or explicit publication evidence",
                 )
-            milestone_entry["pr_number"] = pr_number
-            milestone_entry["pr_state"] = "merged"
-            milestone_entry["pr_merge_sha"] = _record_pr_merge_sha(root, record)
         manifest["milestones"].append(milestone_entry)
     return manifest
 
@@ -2664,6 +2672,8 @@ def _finalize_records_missing_authority_fields(
             and notes.strip()
             and not is_rubber_stamp(notes, strict=True)
         ):
+            continue
+        if _is_explained_noop_completion(task):
             continue
         if reviewer_verdict == "deferred_baseline_unavailable":
             continue

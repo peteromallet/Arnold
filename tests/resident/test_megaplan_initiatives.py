@@ -43,8 +43,6 @@ def test_megaplan_resident_tool_catalog_exposes_initiatives_policy(tmp_path: Pat
     assert ".megaplan/initiatives/<slug>/" in prompt
     assert "Never create planning docs directly under .megaplan/briefs" in prompt
     assert "search initiatives by rough slug/title/description first" in prompt
-    assert "plan_activity_summary" in prompt
-    assert "active/working plans" in prompt
 
 
 def test_megaplan_resident_write_initiative_doc_creates_canonical_folder(tmp_path: Path) -> None:
@@ -240,7 +238,119 @@ def test_megaplan_resident_hot_context_includes_local_epic_chain_state(
     assert local_state["epic_chains"][0]["current_epic_id"] == "native-python"
     assert local_state["active_chains"][0]["current_plan_name"] == "m1-demo"
     assert local_state["active_chains"][0]["plan_state"]["current_state"] == "initialized"
-    activity = context["plan_activity_summary"]
-    assert activity["counts"]["visible_chains"] == 1
-    assert activity["should_be_working_but_needs_attention"][0]["current_plan_name"] == "m1-demo"
-    assert activity["recently_completed"] == []
+
+
+def test_megaplan_resident_hot_context_prefers_cloud_status_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Broad-status context carries the canonical snapshot, labeled degraded when absent."""
+    import json
+    from datetime import datetime, timezone
+
+    project = tmp_path / "project"
+    project.mkdir()
+    snapshot_path = tmp_path / "cloud-status.json"
+    snapshot = {
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "source": "cloud-local-observer",
+        "summary": {"running": 1, "blocked": 0, "repairing": 0, "complete": 0, "attention": 0},
+        "sessions": [
+            {
+                "session": "demo",
+                "status": "running",
+                "current_plan": "m1",
+                "operator_next": "executing",
+                "latest_activity": "2026-07-04T22:00:00Z",
+            }
+        ],
+        "degraded": None,
+    }
+    snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+    profile = MegaplanResidentProfile(
+        store=FileStore(tmp_path / "store"),
+        config=ResidentConfig(status_snapshot_path=snapshot_path),
+        cloud_backend=FakeCloudBackend(),
+    )
+    monkeypatch.chdir(project)
+
+    context = asyncio.run(profile.load_hot_context("missing-conversation"))
+
+    assert context["cloud_status_snapshot"] is not None
+    assert context["cloud_status_snapshot"]["summary"]["running"] == 1
+    assert context["cloud_status_degraded"] is None
+    summary = context["plan_activity_summary"]
+    assert summary["degraded"] is False
+    assert [e["session"] for e in summary["active_working"]] == ["demo"]
+
+
+def test_megaplan_resident_hot_context_labels_missing_snapshot_degraded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    profile = MegaplanResidentProfile(
+        store=FileStore(tmp_path / "store"),
+        config=ResidentConfig(status_snapshot_path=tmp_path / "absent.json"),
+        cloud_backend=FakeCloudBackend(),
+    )
+    monkeypatch.chdir(project)
+
+    context = asyncio.run(profile.load_hot_context("missing-conversation"))
+
+    assert context["cloud_status_snapshot"] is None
+    assert context["cloud_status_degraded"] is not None
+    assert "missing" in context["cloud_status_degraded"]
+    assert context["plan_activity_summary"]["degraded"] is True
+
+
+def test_megaplan_resident_hot_context_builds_fresh_snapshot_in_trusted_container(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In-container, the resident builds a fresh local snapshot each turn instead
+    of reading the (stale, hourly) on-disk file, so newly-started sessions appear
+    immediately and the on-disk file is refreshed."""
+    import json
+    from arnold_pipelines.megaplan.cloud import status_snapshot
+
+    marker_dir = tmp_path / "cloud-sessions"
+    marker_dir.mkdir()
+    ws = tmp_path / "live"
+    ws.mkdir()
+    (marker_dir / "live.json").write_text(
+        json.dumps(
+            {
+                "session": "live",
+                "workspace": str(ws),
+                "remote_spec": "/spec/live",
+                "started_at": "2026-07-04T20:00:00Z",
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    monkeypatch.setattr(status_snapshot, "DEFAULT_MARKER_DIR", marker_dir)
+    monkeypatch.setattr(status_snapshot, "DEFAULT_WATCHDOG_REPORT", tmp_path / "absent-report.json")
+    on_disk = tmp_path / "cloud-status.json"
+
+    profile = MegaplanResidentProfile(
+        store=FileStore(tmp_path / "store"),
+        # Points at a nonexistent file; in-container it must be ignored in favor of a fresh build.
+        config=ResidentConfig(status_snapshot_path=on_disk),
+        cloud_backend=FakeCloudBackend(),
+    )
+    monkeypatch.chdir(tmp_path)
+
+    context = asyncio.run(profile.load_hot_context("c"))
+
+    snap = context["cloud_status_snapshot"]
+    assert snap is not None
+    assert context["cloud_status_degraded"] is None
+    assert any(s["session"] == "live" for s in snap["sessions"])
+    # The fresh build also refreshed the on-disk file for CLI/laptop consumers.
+    assert on_disk.exists()
+    written = json.loads(on_disk.read_text(encoding="utf-8"))
+    assert any(s["session"] == "live" for s in written["sessions"])

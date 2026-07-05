@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .._core.user_config import config_dir
+from ..fallback_chains import normalize_fallback_spec_list
 from ..types import CliError, is_premium_placeholder_agent, parse_agent_spec
 from .policy import (
     CANONICAL_PREP_MODELS,
@@ -49,7 +50,7 @@ from .policy import (
 )
 
 
-def _known_profiles_text(profiles: dict[str, dict[str, str]]) -> str:
+def _known_profiles_text(profiles: dict[str, dict[str, Any]]) -> str:
     names = sorted(profiles)
     return ", ".join(names) if names else "(none)"
 
@@ -197,7 +198,7 @@ def _validate_metadata(
     return validated
 
 
-def _validate_prep_models(path: Any, profile_name: str, value: Any) -> dict[str, str]:
+def _validate_prep_models(path: Any, profile_name: str, value: Any) -> dict[str, str | list[str]]:
     if not isinstance(value, dict):
         _raise_invalid_profile(
             path,
@@ -205,7 +206,7 @@ def _validate_prep_models(path: Any, profile_name: str, value: Any) -> dict[str,
             "prep_models",
             f"expected a TOML table for prep_models, got {type(value).__name__}",
         )
-    validated: dict[str, str] = {}
+    validated: dict[str, str | list[str]] = {}
     for stage, raw_spec in value.items():
         validated[str(stage)] = validate_prep_stage_provider(
             raw_spec,
@@ -216,17 +217,88 @@ def _validate_prep_models(path: Any, profile_name: str, value: Any) -> dict[str,
     return validated
 
 
+def _validate_phase_spec_value(
+    raw_spec: Any,
+    *,
+    path: Any,
+    profile_name: str,
+    phase: str,
+) -> str | list[str]:
+    """Validate a scalar-or-list profile phase spec against known-agent rules.
+
+    Returns the validated value preserving input shape (scalar → str,
+    list → list[str]).
+    """
+    # Use normalize_fallback_spec_list for basic structural validation
+    # (rejects non-string, empty strings, empty arrays, non-string members).
+    try:
+        specs = normalize_fallback_spec_list(raw_spec, path=f"{profile_name}.{phase}")
+    except ValueError as exc:
+        _raise_invalid_profile(path, profile_name, phase, str(exc))
+        raise  # unreachable
+
+    # Validate each element against known-agent rules.
+    for index, spec in enumerate(specs):
+        parsed = parse_agent_spec(spec)
+        if parsed.agent not in KNOWN_AGENTS and not is_premium_placeholder_agent(parsed.agent):
+            element_path = f"{phase}[{index}]" if len(specs) > 1 else phase
+            _raise_invalid_profile(
+                path,
+                profile_name,
+                element_path,
+                f"unknown agent '{parsed.agent}' in spec {spec!r}. Valid agents: "
+                f"{', '.join(KNOWN_AGENTS)} (and 'premium' symbolic placeholder)",
+            )
+
+    if isinstance(raw_spec, str):
+        return specs[0]
+    return list(specs)
+
+
+def _validate_tier_spec_value(
+    raw_spec: Any,
+    *,
+    path: Any,
+    profile_name: str,
+    phase: str,
+    tier_key: object,
+) -> str | list[str]:
+    """Validate a scalar-or-list tier model spec against known-agent rules."""
+    tier_label = f"tier_models.{phase}.{tier_key}"
+    try:
+        specs = normalize_fallback_spec_list(raw_spec, path=f"{profile_name}.{tier_label}")
+    except ValueError as exc:
+        _raise_invalid_profile(path, profile_name, tier_label, str(exc))
+        raise  # unreachable
+
+    for index, spec in enumerate(specs):
+        parsed = parse_agent_spec(spec)
+        if parsed.agent not in KNOWN_AGENTS and not is_premium_placeholder_agent(parsed.agent):
+            element_path = f"{tier_label}[{index}]" if len(specs) > 1 else tier_label
+            _raise_invalid_profile(
+                path,
+                profile_name,
+                element_path,
+                f"unknown agent '{parsed.agent}' in spec {spec!r}. Valid agents: "
+                f"{', '.join(KNOWN_AGENTS)} (and 'premium' symbolic placeholder)",
+            )
+
+    if isinstance(raw_spec, str):
+        return specs[0]
+    return list(specs)
+
+
 def _validate_profile_map(
     path: Any,
     profile_name: str,
     raw_profile: Any,
     *,
     valid_phase_keys: frozenset[str] | None = None,
-) -> dict[str, str]:
+) -> dict[str, str | list[str]]:
     if valid_phase_keys is None:
         valid_phase_keys = VALID_PHASE_KEYS
     phase_map, _metadata = _split_profile_dict(path, profile_name, raw_profile)
-    validated: dict[str, str] = {}
+    validated: dict[str, str | list[str]] = {}
     for phase, raw_spec in phase_map.items():
         if phase not in valid_phase_keys:
             _raise_invalid_profile(
@@ -235,18 +307,8 @@ def _validate_profile_map(
                 str(phase),
                 f"unknown phase '{phase}'. Valid phases: {', '.join(sorted(valid_phase_keys))}",
             )
-        if not isinstance(raw_spec, str):
-            _raise_invalid_profile(path, profile_name, phase, f"expected a string agent spec, got {type(raw_spec).__name__}")
-        parsed = parse_agent_spec(raw_spec)
-        if parsed.agent not in KNOWN_AGENTS and not is_premium_placeholder_agent(parsed.agent):
-            _raise_invalid_profile(
-                path,
-                profile_name,
-                phase,
-                f"unknown agent '{parsed.agent}' in spec {raw_spec!r}. Valid agents: "
-                f"{', '.join(KNOWN_AGENTS)} (and 'premium' symbolic placeholder)",
-            )
-        validated[str(phase)] = raw_spec
+        spec_validated = _validate_phase_spec_value(raw_spec, path=path, profile_name=profile_name, phase=phase)
+        validated[str(phase)] = spec_validated
     return validated
 
 
@@ -316,15 +378,16 @@ def _extract_tier_models(
 def _validate_tier_models(
     path: Any,
     profile_name: str,
-    tier_models: dict[str, dict[int, str]],
+    tier_models: dict[str, dict[int, Any]],
     *,
     valid_phase_keys: frozenset[str] | None = None,
-) -> dict[str, dict[int, str]]:
+) -> dict[str, dict[int, str | list[str]]]:
     """Validate tier model entries: phase names must be known, tier keys
-    must be 1..5, and values must use valid ``agent:model`` specs."""
+    must be 1..5, and values must use valid ``agent:model`` specs.
+    Accepts both scalar strings and TOML arrays for each tier spec."""
     if valid_phase_keys is None:
         valid_phase_keys = VALID_PHASE_KEYS
-    validated: dict[str, dict[int, str]] = {}
+    validated: dict[str, dict[int, str | list[str]]] = {}
     for phase, tiers in tier_models.items():
         if phase not in valid_phase_keys:
             _raise_invalid_profile(
@@ -333,7 +396,7 @@ def _validate_tier_models(
                 f"tier_models.{phase}",
                 f"unknown phase '{phase}' in tier_models. Valid phases: {', '.join(sorted(valid_phase_keys))}",
             )
-        v_tiers: dict[int, str] = {}
+        v_tiers: dict[int, str | list[str]] = {}
         for tier_int, spec in tiers.items():
             if not isinstance(tier_int, int) or tier_int < 1 or tier_int > 5:
                 _raise_invalid_profile(
@@ -342,23 +405,13 @@ def _validate_tier_models(
                     f"tier_models.{phase}.{tier_int}",
                     f"tier key must be an integer 1..5, got {tier_int!r}",
                 )
-            if not isinstance(spec, str):
-                _raise_invalid_profile(
-                    path,
-                    profile_name,
-                    f"tier_models.{phase}.{tier_int}",
-                    f"expected a string agent spec, got {type(spec).__name__}",
-                )
-            agent, _model = parse_agent_spec(spec)
-            if agent not in KNOWN_AGENTS and not is_premium_placeholder_agent(agent):
-                _raise_invalid_profile(
-                    path,
-                    profile_name,
-                    f"tier_models.{phase}.{tier_int}",
-                    f"unknown agent '{agent}' in spec {spec!r}. Valid agents: "
-                    f"{', '.join(KNOWN_AGENTS)} (and 'premium' symbolic placeholder)",
-                )
-            v_tiers[tier_int] = spec
+            v_tiers[tier_int] = _validate_tier_spec_value(
+                spec,
+                path=path,
+                profile_name=profile_name,
+                phase=phase,
+                tier_key=tier_int,
+            )
         if v_tiers:
             validated[phase] = v_tiers
     return validated
@@ -369,7 +422,7 @@ def _parse_profiles_doc(
     content: str,
     *,
     valid_phase_keys: frozenset[str] | None = None,
-) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, Any]]]:
+) -> tuple[dict[str, dict[str, str | list[str]]], dict[str, dict[str, Any]]]:
     """Return (profiles_phase_maps, profiles_metadata).
 
     Both dicts are keyed by profile name. Metadata is empty when a
@@ -390,7 +443,7 @@ def _parse_profiles_doc(
         return {}, {}
     if not isinstance(raw_profiles, dict):
         raise CliError("invalid_profile", f"Invalid profile file {path}: [profiles] must be a TOML table")
-    profiles: dict[str, dict[str, str]] = {}
+    profiles: dict[str, dict[str, str | list[str]]] = {}
     metadata: dict[str, dict[str, Any]] = {}
     for profile_name, raw_profile in raw_profiles.items():
         _phase_map, raw_metadata = _split_profile_dict(path, profile_name, raw_profile)
@@ -409,7 +462,7 @@ def _load_profiles_file(
     path: Any,
     *,
     valid_phase_keys: frozenset[str] | None = None,
-) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, Any]]]:
+) -> tuple[dict[str, dict[str, str | list[str]]], dict[str, dict[str, Any]]]:
     try:
         content = path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -481,8 +534,8 @@ def load_profile_sources(
     project_dir: Path | None = None,
     *,
     valid_phase_keys: frozenset[str] | None = None,
-) -> list[tuple[str, str, dict[str, str]]]:
-    sources: list[tuple[str, str, dict[str, str]]] = []
+) -> list[tuple[str, str, dict[str, str | list[str]]]]:
+    sources: list[tuple[str, str, dict[str, str | list[str]]]] = []
 
     for path in _built_in_profile_files():
         profile_maps, _metadata = _load_profiles_file(
@@ -514,8 +567,8 @@ def load_profiles(
     project_dir: Path | None = None,
     *,
     valid_phase_keys: frozenset[str] | None = None,
-) -> dict[str, dict[str, str]]:
-    profiles: dict[str, dict[str, str]] = {}
+) -> dict[str, dict[str, str | list[str]]]:
+    profiles: dict[str, dict[str, str | list[str]]] = {}
     for _source_label, profile_name, phase_map in load_profile_sources(
         home=home, project_dir=project_dir, valid_phase_keys=valid_phase_keys,
     ):
@@ -560,7 +613,7 @@ def load_profile_metadata(
     return metadata
 
 
-def resolve_profile(name: str, profiles: dict[str, dict[str, str]]) -> dict[str, str]:
+def resolve_profile(name: str, profiles: dict[str, dict[str, str | list[str]]]) -> dict[str, str | list[str]]:
     try:
         return dict(profiles[name])
     except KeyError as exc:
@@ -616,7 +669,7 @@ def _pipeline_local_profiles_dir(pipeline_name: str, *, builtin: bool = True) ->
 
 def _load_pipeline_local_profiles(
     pipeline_name: str,
-) -> dict[str, dict[str, str]]:
+) -> dict[str, dict[str, str | list[str]]]:
     """Load pipeline-local profiles for *pipeline_name*.
 
     Pipeline-local profiles define their own TOML slot keys matching YAML
@@ -633,7 +686,7 @@ def _load_pipeline_local_profiles(
     """
     import tomllib as _tomllib
 
-    profiles: dict[str, dict[str, str]] = {}
+    profiles: dict[str, dict[str, str | list[str]]] = {}
 
     for is_builtin in (True, False):
         profiles_dir = _pipeline_local_profiles_dir(pipeline_name, builtin=is_builtin)
@@ -725,12 +778,12 @@ def _load_pipeline_local_metadata(
 def _resolve_extends_ref(
     ref: str,
     *,
-    system_profiles: dict[str, dict[str, str]],
+    system_profiles: dict[str, dict[str, str | list[str]]],
     system_metadata: dict[str, dict[str, Any]],
-    pipeline_local_profiles: dict[str, dict[str, str]],
+    pipeline_local_profiles: dict[str, dict[str, str | list[str]]],
     pipeline_local_metadata: dict[str, dict[str, Any]],
     _visited: set[str] | None = None,
-) -> dict[str, str]:
+) -> dict[str, str | list[str]]:
     """Resolve an ``extends`` reference to a concrete profile map.
 
     Supported formats:
@@ -790,12 +843,12 @@ def _resolve_extends_ref(
 def _resolve_with_inheritance(
     profile_name: str,
     *,
-    system_profiles: dict[str, dict[str, str]],
+    system_profiles: dict[str, dict[str, str | list[str]]],
     system_metadata: dict[str, dict[str, Any]],
-    pipeline_local_profiles: dict[str, dict[str, str]],
+    pipeline_local_profiles: dict[str, dict[str, str | list[str]]],
     pipeline_local_metadata: dict[str, dict[str, Any]],
     _visited: set[str] | None = None,
-) -> dict[str, str]:
+) -> dict[str, str | list[str]]:
     """Resolve a profile, applying ``extends`` inheritance with cycle detection.
 
     The child profile's keys override the parent's. Inheritance chains are
@@ -813,7 +866,7 @@ def _resolve_with_inheritance(
     _visited.add(profile_name)
 
     # Find the profile in pipeline-local first, then system
-    profile: dict[str, str] | None = None
+    profile: dict[str, str | list[str]] | None = None
     metadata: dict[str, Any] | None = None
 
     if profile_name in pipeline_local_profiles:
@@ -850,12 +903,12 @@ def _resolve_with_inheritance(
 def _resolve_tier_models_with_inheritance(
     profile_name: str,
     *,
-    system_profiles: dict[str, dict[str, str]],
+    system_profiles: dict[str, dict[str, str | list[str]]],
     system_metadata: dict[str, dict[str, Any]],
-    pipeline_local_profiles: dict[str, dict[str, str]],
+    pipeline_local_profiles: dict[str, dict[str, str | list[str]]],
     pipeline_local_metadata: dict[str, dict[str, Any]],
     _visited: set[str] | None = None,
-) -> dict[str, dict[int, str]]:
+) -> dict[str, dict[int, str | list[str]]]:
     """Walk the ``extends`` chain and merge ``tier_models`` metadata.
 
     Parent tier maps are applied first; child entries override per-phase
@@ -886,7 +939,7 @@ def _resolve_tier_models_with_inheritance(
         )
 
     extends_ref = metadata.get("extends") if metadata else None
-    parent_tiers: dict[str, dict[int, str]] = {}
+    parent_tiers: dict[str, dict[int, str | list[str]]] = {}
     if extends_ref and isinstance(extends_ref, str):
         # Resolve the extends reference to a bare profile name
         if extends_ref.startswith("system:"):
@@ -912,12 +965,12 @@ def _resolve_tier_models_with_inheritance(
             except CliError:
                 parent_tiers = {}
 
-    own_tiers: dict[str, dict[int, str]] = metadata.get("tier_models", {}) if metadata else {}
+    own_tiers: dict[str, dict[int, str | list[str]]] = metadata.get("tier_models", {}) if metadata else {}
     if not isinstance(own_tiers, dict):
         own_tiers = {}
 
     # Parent first, child overrides
-    merged: dict[str, dict[int, str]] = {
+    merged: dict[str, dict[int, str | list[str]]] = {
         phase: dict(tiers)
         for phase, tiers in parent_tiers.items()
     }
@@ -933,12 +986,12 @@ def _resolve_tier_models_with_inheritance(
 def _resolve_prep_models_with_inheritance(
     profile_name: str,
     *,
-    system_profiles: dict[str, dict[str, str]],
+    system_profiles: dict[str, dict[str, str | list[str]]],
     system_metadata: dict[str, dict[str, Any]],
-    pipeline_local_profiles: dict[str, dict[str, str]],
+    pipeline_local_profiles: dict[str, dict[str, str | list[str]]],
     pipeline_local_metadata: dict[str, dict[str, Any]],
     _visited: set[str] | None = None,
-) -> dict[str, str]:
+) -> dict[str, str | list[str]]:
     """Walk ``extends`` and merge ``prep_models`` metadata.
 
     Parent prep stage declarations are applied first; child declarations
@@ -966,7 +1019,7 @@ def _resolve_prep_models_with_inheritance(
         raise CliError("unknown_profile", f"Unknown profile '{profile_name}'")
 
     extends_ref = metadata.get("extends") if metadata else None
-    parent_models: dict[str, str] = {}
+    parent_models: dict[str, str | list[str]] = {}
     if extends_ref and isinstance(extends_ref, str):
         if extends_ref.startswith("system:"):
             parent_name = extends_ref[len("system:"):]
@@ -997,7 +1050,7 @@ def _resolve_prep_models_with_inheritance(
 
     merged = dict(parent_models)
     for stage, spec in own_models.items():
-        if stage in PREP_MODEL_STAGES and isinstance(spec, str):
+        if stage in PREP_MODEL_STAGES and (isinstance(spec, str) or isinstance(spec, list)):
             merged[stage] = spec
     return merged
 

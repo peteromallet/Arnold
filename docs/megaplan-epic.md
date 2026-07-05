@@ -92,7 +92,7 @@ driver:
 | `vendor` | no | `claude` / `codex`. |
 | `critic` | no | `cross` / `kimi`. |
 | `with_prep`, `with_feedback` | no | Booleans. |
-| `phase_model` | no | List of `phase=spec` strings — the surgical escape hatch. |
+| `phase_model` | no | List of `phase=spec` strings — the surgical escape hatch. Spec values can be TOML string arrays for fallback chains (see the main megaplan skill's **Fallback chains (v1)** section). |
 | `deepseek_provider` | no | `direct` / `fireworks`. |
 | `bakeoff` | no | Bake-off spec; rarely needed inside a chain. |
 | `notes` | no | Free text retained in state for the audit trail. |

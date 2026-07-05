@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan.chain import ChainSpec
+from arnold_pipelines.megaplan.fallback_chains import FallbackSpecChain, decode_phase_model_value
 from arnold_pipelines.megaplan.profiles import (
     DEFAULT_AGENT_ROUTING,
     apply_profile_expansion,
@@ -76,17 +77,34 @@ def _expanded_phase_models(
     return list(args.phase_model or [])
 
 
-def _resolved_phase_map(phase_models: list[str], fallback_routing: dict[str, str]) -> dict[str, str]:
-    overrides: dict[str, str] = {}
+def _resolved_phase_chains(
+    phase_models: list[str],
+    fallback_routing: dict[str, str],
+) -> tuple[dict[str, FallbackSpecChain], dict[str, str]]:
+    overrides: dict[str, FallbackSpecChain] = {}
+    explicit_entries: dict[str, str] = {}
     for entry in phase_models:
         if "=" not in entry:
             continue
-        phase, spec = entry.split("=", 1)
+        phase, chain = decode_phase_model_value(entry)
         if phase not in overrides:
-            overrides[phase] = spec
+            overrides[phase] = chain
+            explicit_entries[phase] = entry
+    return (
+        {
+            phase: overrides.get(phase, FallbackSpecChain.from_value(fallback, path=f"fallback.{phase}"))
+            for phase, fallback in fallback_routing.items()
+        },
+        explicit_entries,
+    )
+
+
+def _resolved_phase_map(
+    resolved_phase_chains: dict[str, FallbackSpecChain],
+) -> dict[str, str]:
     return {
-        phase: overrides.get(phase, fallback)
-        for phase, fallback in fallback_routing.items()
+        phase: chain.selected()
+        for phase, chain in resolved_phase_chains.items()
     }
 
 
@@ -159,38 +177,48 @@ def resolve_cloud_chain_runtime_dependencies(
             critic=milestone.critic,
             deepseek_provider=milestone.deepseek_provider,
         )
-        resolved = _resolved_phase_map(expanded_phase_models, fallback_routing)
+        resolved_phase_chains, explicit_phase_entries = _resolved_phase_chains(
+            expanded_phase_models,
+            fallback_routing,
+        )
+        resolved = _resolved_phase_map(resolved_phase_chains)
         milestone_agents: set[str] = set()
         milestone_commands: set[str] = set()
         milestone_env_hints: set[str] = set()
         milestone_provider_requirements: list[dict[str, Any]] = []
 
-        for spec in resolved.values():
-            parsed = parse_agent_spec(spec)
-            milestone_agents.add(parsed.agent)
-            required_agents.add(parsed.agent)
-            for command in _COMMANDS_BY_AGENT.get(parsed.agent, ()):
-                milestone_commands.add(command)
-                runtime_commands.add(command)
-            for env_name in _ENV_HINTS_BY_AGENT.get(parsed.agent, ()):
-                milestone_env_hints.add(env_name)
-                env_hints.add(env_name)
-            requirements = _provider_requirements(parsed.agent, parsed.model)
-            if requirements:
-                milestone_provider_requirements.extend(requirements)
-                provider_requirements.extend(requirements)
-                for requirement in requirements:
-                    for env_name in requirement.get("env_hints", []):
-                        if isinstance(env_name, str):
-                            milestone_env_hints.add(env_name)
-                            env_hints.add(env_name)
+        for chain in resolved_phase_chains.values():
+            for spec in chain:
+                parsed = parse_agent_spec(spec)
+                milestone_agents.add(parsed.agent)
+                required_agents.add(parsed.agent)
+                for command in _COMMANDS_BY_AGENT.get(parsed.agent, ()):
+                    milestone_commands.add(command)
+                    runtime_commands.add(command)
+                for env_name in _ENV_HINTS_BY_AGENT.get(parsed.agent, ()):
+                    milestone_env_hints.add(env_name)
+                    env_hints.add(env_name)
+                requirements = _provider_requirements(parsed.agent, parsed.model)
+                if requirements:
+                    milestone_provider_requirements.extend(requirements)
+                    provider_requirements.extend(requirements)
+                    for requirement in requirements:
+                        for env_name in requirement.get("env_hints", []):
+                            if isinstance(env_name, str):
+                                milestone_env_hints.add(env_name)
+                                env_hints.add(env_name)
 
         milestone_summaries.append(
             {
                 "label": milestone.label,
                 "profile": milestone.profile,
                 "explicit_phase_model": list(milestone.phase_model),
+                "explicit_phase_model_by_phase": explicit_phase_entries,
                 "resolved_phase_map": resolved,
+                "resolved_phase_chains": {
+                    phase: list(chain.specs)
+                    for phase, chain in resolved_phase_chains.items()
+                },
                 "required_agents": sorted(milestone_agents),
                 "runtime_commands": sorted(milestone_commands),
                 "env_hints": sorted(milestone_env_hints),

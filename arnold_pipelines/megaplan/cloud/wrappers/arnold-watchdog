@@ -31,6 +31,7 @@ REPORT_WEBHOOK="${CLOUD_WATCHDOG_REPORT_WEBHOOK:-}"
 INTERVAL="${CLOUD_WATCHDOG_INTERVAL_SECS:-3600}"
 MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
+STATUS_DIR="${CLOUD_WATCHDOG_STATUS_DIR:-/workspace/.megaplan/status}"
 REPAIR_ENABLED="${ARNOLD_REPAIR_TRIGGER_ENABLED:-1}"
 PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-1}"
 CODEX_TIMEOUT="${CLOUD_WATCHDOG_CODEX_TIMEOUT_SECS:-7200}"
@@ -1349,6 +1350,29 @@ PY
     fi
   fi
   rm -f "$report_tmp"
+}
+
+write_status_snapshot() {
+  # Produce the canonical cloud-status.json after each sweep. Built from local
+  # observation only (marker dir + the report emit_report just wrote). Never let
+  # a snapshot failure break the watchdog sweep — log and move on.
+  local marker_dir="${1:-$MARKER_DIR}"
+  local report_path="${2:-$REPORT_PATH}"
+  local status_dir="${3:-$STATUS_DIR}"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$marker_dir" "$report_path" "$status_dir" <<'PY' 2>>"${LOG:-/dev/null}" || log "status snapshot write failed"
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud import status_snapshot
+
+marker_dir, report_path, status_dir = (Path(p) for p in sys.argv[1:4])
+status_snapshot.build_and_write_snapshot(
+    marker_dir=marker_dir,
+    watchdog_report_path=report_path,
+    path=status_dir / "cloud-status.json",
+    previous_path=status_dir / "cloud-status.previous.json",
+)
+PY
 }
 
 sync_cloud_runtime_wrappers() {
@@ -3136,6 +3160,79 @@ default_plan_relaunch_command() {
     "$workspace" "$SRC_DIR" "$plan_name" "$workspace" "$log_path"
 }
 
+stale_marker_relaunch_command() {
+  local relaunch_command="${1:-}"
+  [[ "$relaunch_command" == *"[megaplan-refresh] refusing editable install refresh: tracked changes"* ]] \
+    && [[ "$relaunch_command" != *"MEGAPLAN_RUNTIME_SRC"* ]]
+}
+
+default_chain_relaunch_command() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local log_relative repo runtime_src
+  if [[ "$session" == "megaplan-chain" ]]; then
+    log_relative=".megaplan/cloud-chain.log"
+  else
+    log_relative=".megaplan/cloud-chain-${session}.log"
+  fi
+  repo="$(git -C "$SRC_DIR" remote get-url origin 2>/dev/null || true)"
+  case "$repo" in
+    https://*@github.com/*) repo="https://github.com/${repo#*@github.com/}" ;;
+  esac
+  runtime_src="$workspace/.megaplan/runtime/editable-engine"
+  printf '{ set -e
+echo "[megaplan-refresh] $(date -Iseconds) starting"
+SRC=%q
+REPO=%q
+REF=%q
+RUNTIME_SRC=%q
+if [ -n "$REPO" ] && [ ! -d "$SRC/.git" ]; then
+  mkdir -p "$(dirname "$SRC")"
+  CLONE_URL="$REPO"
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    case "$CLONE_URL" in
+      https://github.com/*) CLONE_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${CLONE_URL#https://github.com/}" ;;
+    esac
+  fi
+  git clone --branch "$REF" "$CLONE_URL" "$SRC"
+fi
+if [ -d "$SRC/.git" ]; then
+  git -C "$SRC" fetch origin "$REF"
+  BRANCH="$(git -C "$SRC" branch --show-current)"
+  if [ "$BRANCH" != "$REF" ]; then git -C "$SRC" checkout "$REF"; fi
+  if [ -n "$(git -C "$SRC" status --porcelain --untracked-files=no)" ]; then
+    echo "[megaplan-refresh] source checkout dirty; using clean runtime mirror at $RUNTIME_SRC"
+    rm -rf "$RUNTIME_SRC"
+    mkdir -p "$(dirname "$RUNTIME_SRC")"
+    git clone --shared --no-checkout "$SRC" "$RUNTIME_SRC"
+    git -C "$RUNTIME_SRC" fetch origin "$REF"
+    git -C "$RUNTIME_SRC" checkout --detach "origin/$REF"
+    export MEGAPLAN_RUNTIME_SRC="$RUNTIME_SRC"
+  else
+    if ! git -C "$SRC" merge-base --is-ancestor HEAD "origin/$REF"; then
+      echo "[megaplan-refresh] refusing editable install refresh: $SRC has local commits not contained in origin/$REF"
+      git -C "$SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true
+      exit 20
+    fi
+    git -C "$SRC" pull --ff-only origin "$REF"
+    export MEGAPLAN_RUNTIME_SRC="$SRC"
+  fi
+  if ! git -C "$MEGAPLAN_RUNTIME_SRC" merge-base --is-ancestor HEAD "origin/$REF"; then
+    echo "[megaplan-refresh] refusing editable install refresh: $MEGAPLAN_RUNTIME_SRC has local commits not contained in origin/$REF"
+    git -C "$MEGAPLAN_RUNTIME_SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true
+    exit 20
+  fi
+  pip install -e "$MEGAPLAN_RUNTIME_SRC"
+else
+  echo "[megaplan-refresh] source clone missing at $SRC; skipping editable install"
+  export MEGAPLAN_RUNTIME_SRC="$SRC"
+fi
+echo "[megaplan-refresh] done"
+true; } >> %q 2>&1 && if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH="$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}" MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
+    "$SRC_DIR" "$repo" "$SYNC_BRANCH" "$runtime_src" "$workspace/$log_relative" "$workspace" "$remote_spec" "$workspace" "$workspace/$log_relative"
+}
+
 resolve_relaunch_command() {
   local session="$1"
   local workspace="$2"
@@ -3144,7 +3241,7 @@ resolve_relaunch_command() {
   local plan_name="${5:-}"
   local relaunch_command="${6:-}"
 
-  if [[ -n "$relaunch_command" ]]; then
+  if [[ -n "$relaunch_command" ]] && ! stale_marker_relaunch_command "$relaunch_command"; then
     printf '%s' "$relaunch_command"
     return 0
   fi
@@ -3154,14 +3251,7 @@ resolve_relaunch_command() {
     return 0
   fi
 
-  local log_relative
-  if [[ "$session" == "megaplan-chain" ]]; then
-    log_relative=".megaplan/cloud-chain.log"
-  else
-    log_relative=".megaplan/cloud-chain-${session}.log"
-  fi
-  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
-    "$workspace" "$SRC_DIR" "$remote_spec" "$workspace" "$workspace/$log_relative"
+  default_chain_relaunch_command "$session" "$workspace" "$remote_spec"
 }
 
 kimi_dispatch_marker_set() {
@@ -3604,7 +3694,10 @@ import sys
 from typing import Any
 
 from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
-from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
+from arnold_pipelines.megaplan.cloud.meta_repair import (
+    evaluate_meta_repair_triggers,
+    is_model_tool_launch_failure_status,
+)
 
 session, repair_data_dir_raw, marker_dir_raw, current_target_observation_raw, current_health = sys.argv[1:]
 repair_data_dir = pathlib.Path(repair_data_dir_raw)
@@ -3636,11 +3729,20 @@ if current_target_observation_raw:
     if isinstance(loaded_observation, dict):
         resolver_record = loaded_observation
 
+repair_outcome = str(payload.get("outcome") or "")
+needs_human_present = needs_human_path.exists()
+terminal_repair_failures = {
+    "discord_escalated",
+    "repair_timeout",
+    "repair_exhausted",
+}
 active_step_heartbeat = resolver_record.get("active_step_heartbeat")
 if (
     current_health == "alive"
     and isinstance(active_step_heartbeat, dict)
     and bool(active_step_heartbeat.get("active"))
+    and not needs_human_present
+    and repair_outcome not in terminal_repair_failures
 ):
     print("NO_TRIGGER")
     raise SystemExit(0)
@@ -3684,7 +3786,6 @@ for item in recent_attempts:
             failure_kinds.append(candidate.strip())
             break
 
-repair_outcome = str(payload.get("outcome") or "")
 attempt_outcomes = [
     str(item.get("outcome") or repair_outcome or "").strip()
     for item in recent_attempts
@@ -3713,8 +3814,7 @@ for item in recent_attempts + recent_iterations:
         if isinstance(item, dict)
     )
 has_model_tool_launch_error = any(
-    status.startswith("failed:")
-    and not any(token in status for token in state_tokens)
+    is_model_tool_launch_failure_status(status, state_tokens=state_tokens)
     for status in launch_statuses
 )
 
@@ -3835,6 +3935,8 @@ if (
         "persistent_recurring_retry",
         "partial_liveness_recurrence",
     }
+    and not needs_human_present
+    and repair_outcome not in terminal_repair_failures
 ):
     print("NO_TRIGGER")
     raise SystemExit(0)
@@ -5529,14 +5631,15 @@ session_terminal_status() {
   local workspace="$2"
   local remote_spec="$3"
   local run_kind="${4:-chain}"
+  local current_target_observation="${5:-}"
   [[ "$run_kind" == "chain" || "$run_kind" == "epic_chain" ]] || return 0
-  python3 - "$session" "$workspace" "$remote_spec" "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}" <<'PY'
+  python3 - "$session" "$workspace" "$remote_spec" "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}" "$current_target_observation" <<'PY'
 import hashlib
 import json
 import pathlib
 import sys
 
-session, workspace_raw, remote_spec_raw, repair_data_raw = sys.argv[1:]
+session, workspace_raw, remote_spec_raw, repair_data_raw, current_target_raw = sys.argv[1:]
 workspace = pathlib.Path(workspace_raw)
 remote_spec = pathlib.Path(remote_spec_raw)
 if not remote_spec.is_absolute():
@@ -5636,6 +5739,36 @@ def iter_chain_states() -> list[pathlib.Path]:
     return paths
 
 
+def current_target_marks_terminal_stale_chain() -> bool:
+    if not current_target_raw:
+        return False
+    try:
+        payload = json.loads(current_target_raw)
+    except Exception:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    plan_state = payload.get("plan_state")
+    if not isinstance(plan_state, dict):
+        return False
+    plan_current_state = str(plan_state.get("current_state") or "").strip().lower()
+    if plan_current_state not in {"done", "complete", "completed"}:
+        return False
+    stale_evidence = payload.get("stale_evidence")
+    if not isinstance(stale_evidence, list):
+        return False
+    return any(
+        isinstance(item, dict)
+        and str(item.get("kind") or "").strip() == "stale_chain_state_after_terminal_plan"
+        for item in stale_evidence
+    )
+
+
+if current_target_marks_terminal_stale_chain():
+    print("complete\tterminal plan state supersedes stale chain state")
+    raise SystemExit(0)
+
+
 for path in iter_chain_states():
     if not path.exists():
         continue
@@ -5709,7 +5842,7 @@ PY
   fi
 
   local terminal_status terminal_observe terminal_summary
-  terminal_status="$(session_terminal_status "$session" "$workspace" "$remote_spec" "$run_kind" 2>>"${LOG:-/dev/null}" || true)"
+  terminal_status="$(session_terminal_status "$session" "$workspace" "$remote_spec" "$run_kind" "$current_target_observation" 2>>"${LOG:-/dev/null}" || true)"
   if [[ "$terminal_status" == complete$'\t'* ]]; then
     terminal_observe="${terminal_status%%$'\t'*}"
     terminal_summary="${terminal_status#*$'\t'}"
@@ -6281,6 +6414,7 @@ scan_once() {
   if [[ ! -d "$MARKER_DIR" ]]; then
     log "scan complete: marker directory missing"
     emit_report "$report_items" 0
+    write_status_snapshot
     rm -f "$report_items"
     return 0
   fi
@@ -6332,6 +6466,7 @@ PY
   reap_stale_repairs "$report_items"
   log "scan complete markers=$found"
   emit_report "$report_items" "$found"
+  write_status_snapshot
   rm -f "$report_items"
 }
 

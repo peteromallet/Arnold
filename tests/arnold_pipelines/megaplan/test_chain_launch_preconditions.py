@@ -478,6 +478,50 @@ milestones:
         validate_paths(spec, tmp_path, spec_path=dependent_path)
 
 
+def test_review_chain_completed_precondition_without_manifest_rejects_publication_fallback(tmp_path: Path) -> None:
+    prereq_path = _write_chain(
+        tmp_path,
+        """
+merge_policy: review
+milestones:
+  - label: m1
+    idea: m1.md
+""",
+    )
+    (tmp_path / "m1.md").write_text("# M1\n", encoding="utf-8")
+    save_chain_state(
+        prereq_path,
+        ChainState(
+            current_milestone_index=1,
+            completed=[
+                {
+                    "label": "m1",
+                    "status": "done",
+                    "plan": "plan-m1",
+                    "publication_evidence": "chain_state_only",
+                }
+            ],
+        ),
+    )
+    dependent_path = tmp_path / "dependent.yaml"
+    dependent_path.write_text("milestones: []\n", encoding="utf-8")
+    spec = ChainSpec.from_dict(
+        {
+            "launch_preconditions": [
+                {
+                    "name": "completion chain complete",
+                    "kind": "chain_completed",
+                    "chain": str(prereq_path.relative_to(tmp_path)),
+                }
+            ],
+            "milestones": [],
+        }
+    )
+
+    with pytest.raises(CliError, match="requires merged PR evidence"):
+        validate_paths(spec, tmp_path, spec_path=dependent_path)
+
+
 def test_chain_completed_precondition_passes_when_all_current_milestones_done(tmp_path: Path) -> None:
     prereq_path = _write_chain(
         tmp_path,
@@ -650,6 +694,55 @@ milestones:
     validate_paths(spec, tmp_path, spec_path=dependent_path)
 
 
+def test_review_chain_completed_require_manifest_accepts_explicit_publication_fallback(tmp_path: Path) -> None:
+    prereq_path = _write_chain(
+        tmp_path,
+        """
+merge_policy: review
+milestones:
+  - label: m1
+    idea: m1.md
+""",
+    )
+    (tmp_path / "m1.md").write_text("# M1\n", encoding="utf-8")
+    _write_completion_manifest(tmp_path, prereq_path)
+    manifest_path = prereq_path.with_name("completion-manifest.json")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["milestones"][0]["publication_evidence"] = "chain_state_only"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    save_chain_state(
+        prereq_path,
+        ChainState(
+            current_milestone_index=1,
+            completed=[
+                {
+                    "label": "m1",
+                    "status": "done",
+                    "plan": "plan-m1",
+                    "publication_evidence": "chain_state_only",
+                }
+            ],
+        ),
+    )
+    dependent_path = tmp_path / "dependent.yaml"
+    dependent_path.write_text("milestones: []\n", encoding="utf-8")
+    spec = ChainSpec.from_dict(
+        {
+            "launch_preconditions": [
+                {
+                    "name": "completion chain complete",
+                    "kind": "chain_completed",
+                    "chain": str(prereq_path.relative_to(tmp_path)),
+                    "require_manifest": True,
+                }
+            ],
+            "milestones": [],
+        }
+    )
+
+    validate_paths(spec, tmp_path, spec_path=dependent_path)
+
+
 def test_chain_completed_require_manifest_rejects_stale_brief_hash(tmp_path: Path) -> None:
     prereq_path = _write_chain(
         tmp_path,
@@ -789,6 +882,58 @@ milestones:
         }
     )
     validate_paths(spec, tmp_path, spec_path=dependent_path)
+
+
+def test_review_chain_manifest_command_writes_explicit_publication_fallback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    prereq_path = _write_chain(
+        tmp_path,
+        """
+merge_policy: review
+milestones:
+  - label: m1
+    idea: m1.md
+""",
+    )
+    (tmp_path / "m1.md").write_text("# M1\n", encoding="utf-8")
+    (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
+    (tmp_path / "proof-map.json").write_text(
+        json.dumps({"m1": ["proof.md"]}) + "\n",
+        encoding="utf-8",
+    )
+    save_chain_state(
+        prereq_path,
+        ChainState(
+            current_milestone_index=1,
+            completed=[
+                {
+                    "label": "m1",
+                    "status": "done",
+                    "plan": "plan-m1",
+                    "publication_evidence": "chain_state_only",
+                }
+            ],
+        ),
+    )
+
+    rc = run_chain_cli(
+        tmp_path,
+        argparse.Namespace(
+            chain_action="manifest",
+            spec=str(prereq_path),
+            project_dir=str(tmp_path),
+            proof_map="proof-map.json",
+            output=None,
+        ),
+    )
+
+    assert rc == 0
+    capsys.readouterr()
+    manifest = json.loads(
+        prereq_path.with_name("completion-manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["milestones"][0]["publication_evidence"] == "chain_state_only"
 
 
 def test_chain_manifest_command_requires_explicit_proof_for_every_milestone(

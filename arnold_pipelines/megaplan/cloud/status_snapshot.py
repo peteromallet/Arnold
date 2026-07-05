@@ -1,0 +1,735 @@
+"""Canonical cloud status snapshot — local observation only, never SSH.
+
+This module produces the single "what is running?" truth document for the cloud
+worker, ``/workspace/.megaplan/status/cloud-status.json``. Every status consumer
+reads this same document: the Discord resident, watchdog notifications,
+``megaplan cloud status --all``, and humans debugging the box.
+
+Design rules (see ``docs/ops/elegant-cloud-status-resident-plan.md``):
+
+- Describe the cloud box from inside the cloud box. Never SSH.
+- Read only files the watchdog already writes: the canonical session markers in
+  ``/workspace/.megaplan/cloud-sessions/*.json``, the chain-health sidecars
+  ``*.chain-health.progress.json``, repair markers, ``needs-human`` markers, the
+  ``/workspace/watchdog-report.json`` verdicts, and the plan state files. The only
+  process namespace touch is best-effort tmux/ps liveness probing.
+- Be unit-testable with fixture directories and an injectable liveness probe.
+- Know nothing about Discord, resident conversations, or CLI rendering. Those
+  live in :mod:`arnold_pipelines.megaplan.cloud.status_format` and the resident.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Iterable, Mapping
+
+from arnold_pipelines.megaplan.cloud.session_markers import (
+    is_canonical_session_marker_path,
+)
+
+# --- canonical paths -------------------------------------------------------
+
+DEFAULT_MARKER_DIR = Path("/workspace/.megaplan/cloud-sessions")
+DEFAULT_WATCHDOG_REPORT = Path("/workspace/watchdog-report.json")
+DEFAULT_FALLBACK_WATCHDOG_REPORT = Path("/workspace/.megaplan/watchdog-report.json")
+DEFAULT_STATUS_DIR = Path("/workspace/.megaplan/status")
+DEFAULT_SNAPSHOT_PATH = DEFAULT_STATUS_DIR / "cloud-status.json"
+DEFAULT_PREVIOUS_SNAPSHOT_PATH = DEFAULT_STATUS_DIR / "cloud-status.previous.json"
+DEFAULT_WORKSPACE_ROOT = Path("/workspace")
+
+SNAPSHOT_SOURCE = "cloud-local-observer"
+
+
+def is_trusted_container() -> bool:
+    """True when this process is the cloud worker itself (local observation fits).
+
+    The resident, watchdog, and runners set ``MEGAPLAN_TRUSTED_CONTAINER=1`` inside
+    the container; combined with the canonical marker directory being present, that
+    means a fresh local snapshot can be built on demand with no SSH. Consumers that
+    opt into a per-turn fresh view (the resident hot context) use this to decide
+    build-vs-read.
+    """
+    if os.environ.get("MEGAPLAN_TRUSTED_CONTAINER") != "1":
+        return False
+    return DEFAULT_MARKER_DIR.exists()
+
+# A session whose latest activity is older than this is not "running" on
+# activity alone; it must have a live process or be under active repair.
+STALE_ACTIVITY_S = 30 * 60
+# A repair-progress marker older than this no longer counts as "repairing".
+REPAIR_FRESH_S = 6 * 60 * 60
+
+SessionStatus = str  # one of: running | repairing | blocked | complete | attention
+LivenessProbe = Callable[[Mapping[str, Any]], dict[str, bool]]
+
+
+# --- public API ------------------------------------------------------------
+
+
+def build_cloud_status_snapshot(
+    *,
+    marker_dir: Path | None = None,
+    watchdog_report_path: Path | None = None,
+    repair_data_dir: Path | None = None,
+    workspace_root: Path = DEFAULT_WORKSPACE_ROOT,
+    now: datetime | None = None,
+    liveness_probe: LivenessProbe | None = None,
+) -> dict[str, Any]:
+    """Build the canonical cloud status snapshot from local observation only.
+
+    All file reads are defensive: a missing or malformed source file degrades a
+    session to ``attention`` rather than raising. The function never raises on
+    absent inputs — callers may inspect the top-level ``degraded`` field.
+    """
+    now = now or _utcnow()
+    # Resolve defaults at call time so tests (and in-container callers) see the
+    # current module-level paths rather than values captured at def time.
+    marker_dir = Path(marker_dir) if marker_dir else DEFAULT_MARKER_DIR
+    watchdog_report_path = Path(watchdog_report_path) if watchdog_report_path else DEFAULT_WATCHDOG_REPORT
+    repair_data_dir = Path(repair_data_dir) if repair_data_dir else marker_dir / "repair-data"
+    probe = liveness_probe or default_liveness_probe
+
+    watchdog_report, watchdog_by_session, degraded_reasons = _load_watchdog_report(
+        watchdog_report_path, DEFAULT_FALLBACK_WATCHDOG_REPORT
+    )
+    markers = _load_session_markers(marker_dir)
+
+    sessions: list[dict[str, Any]] = []
+    for marker in markers:
+        sessions.append(
+            _build_session_entry(
+                marker,
+                marker_dir=marker_dir,
+                repair_data_dir=repair_data_dir,
+                watchdog_by_session=watchdog_by_session,
+                watchdog_report_path=watchdog_report_path,
+                now=now,
+                liveness_probe=probe,
+            )
+        )
+
+    sessions.sort(key=lambda entry: (entry["session"] != "editable-install", entry["status"], entry["session"]))
+
+    summary = _summarize(sessions)
+    snapshot: dict[str, Any] = {
+        "generated_at": _isoformat(now),
+        "source": SNAPSHOT_SOURCE,
+        "marker_dir": str(marker_dir),
+        "watchdog_report": str(watchdog_report_path),
+        "summary": summary,
+        "sessions": sessions,
+        "degraded": {"reasons": degraded_reasons} if degraded_reasons else None,
+    }
+    if watchdog_report is not None:
+        snapshot["watchdog_generated_at"] = watchdog_report.get("timestamp_utc") or ""
+        snapshot["watchdog_sessions_seen"] = watchdog_report.get("sessions_seen")
+    return snapshot
+
+
+def write_cloud_status_snapshot(
+    snapshot: Mapping[str, Any],
+    path: Path | str = DEFAULT_SNAPSHOT_PATH,
+    *,
+    previous_path: Path | str | None = DEFAULT_PREVIOUS_SNAPSHOT_PATH,
+) -> Path:
+    """Atomically write ``snapshot`` to ``path``, rotating the prior file.
+
+    Writes through a temp file in the same directory and renames, so partial
+    writes are never observable. When ``previous_path`` is set, the existing
+    snapshot (if any) is moved there first so consumers can diff consecutive
+    sweeps. Returns the final path written.
+    """
+    target = Path(path)
+    previous = Path(previous_path) if previous_path else None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(snapshot, indent=2, sort_keys=True) + "\n"
+
+    # Rotate the previous snapshot before overwriting.
+    if previous is not None and target.exists():
+        try:
+            shutil.move(str(target), str(previous))
+        except OSError:
+            # Rotation is best-effort; the fresh write is what matters.
+            pass
+
+    fd, tmp_name = tempfile.mkstemp(prefix=".cloud-status.", suffix=".json", dir=str(target.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+        os.replace(tmp_name, target)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+    return target
+
+
+def build_and_write_snapshot(
+    *,
+    marker_dir: Path | None = None,
+    watchdog_report_path: Path | None = None,
+    path: Path | str = DEFAULT_SNAPSHOT_PATH,
+    previous_path: Path | str | None = DEFAULT_PREVIOUS_SNAPSHOT_PATH,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Build the snapshot and atomically write it + the previous rotation.
+
+    Convenience entrypoint for the watchdog: one call after each sweep keeps
+    ``cloud-status.json`` fresh. Returns the snapshot that was written.
+    """
+    snapshot = build_cloud_status_snapshot(
+        marker_dir=marker_dir,
+        watchdog_report_path=watchdog_report_path,
+        now=now,
+    )
+    write_cloud_status_snapshot(snapshot, path=path, previous_path=previous_path)
+    return snapshot
+
+
+def load_cloud_status_snapshot(
+    path: Path | str = DEFAULT_SNAPSHOT_PATH,
+    *,
+    max_age_s: float | None = None,
+    now: datetime | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Read a snapshot from disk, returning ``(snapshot, degraded_reason)``.
+
+    Returns ``(None, reason)`` when the file is missing, unreadable, or — when
+    ``max_age_s`` is given — older than the freshness window. This is the single
+    entry point consumers use to decide snapshot-first vs. degraded fallback.
+    """
+    path = Path(path)
+    if not path.exists():
+        return None, f"snapshot missing at {path}"
+    try:
+        raw = path.read_text(encoding="utf-8")
+        snapshot = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, f"snapshot unreadable at {path}: {exc.__class__.__name__}"
+    if not isinstance(snapshot, dict):
+        return None, f"snapshot at {path} is not a JSON object"
+
+    if max_age_s is not None:
+        now = now or _utcnow()
+        generated_at = _parse_iso(snapshot.get("generated_at"))
+        if generated_at is None:
+            return snapshot, "snapshot has no generated_at timestamp"
+        age = (now - generated_at).total_seconds()
+        if age > max_age_s:
+            return snapshot, f"snapshot stale ({int(age)}s old, limit {int(max_age_s)}s)"
+    return snapshot, None
+
+
+def plan_activity_summary(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Derive the resident ``plan_activity_summary`` from a snapshot.
+
+    Returns three buckets — ``active_working`` (running),
+    ``should_be_working_but_needs_attention`` (repairing + attention + blocked
+    that should be running), and ``recently_completed`` — plus a ``degraded``
+    flag when no snapshot was supplied. This is the shape the resident hot
+    context injects; it is derived from the canonical snapshot first.
+    """
+    if not snapshot or not isinstance(snapshot, Mapping):
+        return {
+            "degraded": True,
+            "reason": "no cloud status snapshot available",
+            "active_working": [],
+            "should_be_working_but_needs_attention": [],
+            "recently_completed": [],
+        }
+    sessions = snapshot.get("sessions") or []
+    active: list[dict[str, Any]] = []
+    needs_attention: list[dict[str, Any]] = []
+    completed: list[dict[str, Any]] = []
+    for entry in sessions:
+        if not isinstance(entry, Mapping):
+            continue
+        compact = {
+            "session": entry.get("session"),
+            "status": entry.get("status"),
+            "current_plan": entry.get("current_plan"),
+            "operator_next": entry.get("operator_next"),
+            "latest_activity": entry.get("latest_activity"),
+        }
+        status = entry.get("status")
+        if status == "running":
+            active.append(compact)
+        elif status == "complete":
+            completed.append(compact)
+        elif status in {"repairing", "attention", "blocked"}:
+            needs_attention.append(compact)
+    return {
+        "degraded": False,
+        "active_working": active,
+        "should_be_working_but_needs_attention": needs_attention,
+        "recently_completed": completed,
+    }
+
+
+# --- per-session classification -------------------------------------------
+
+
+def _build_session_entry(
+    marker: Mapping[str, Any],
+    *,
+    marker_dir: Path,
+    repair_data_dir: Path,
+    watchdog_by_session: Mapping[str, Mapping[str, Any]],
+    watchdog_report_path: Path,
+    now: datetime,
+    liveness_probe: LivenessProbe,
+) -> dict[str, Any]:
+    session = str(marker.get("session") or "")
+    workspace = _as_path(marker.get("workspace"))
+    remote_spec = str(marker.get("remote_spec") or "")
+    run_kind = str(marker.get("run_kind") or "chain")
+    plan_name = str(marker.get("plan_name") or "")
+
+    marker_path = Path(marker.get("_marker_path") or (marker_dir / f"{session}.json"))
+    chain_health = _load_json(marker_dir / f"{session}.chain-health.progress.json")
+    repair_progress = _load_json(marker_dir / f"{session}.repair-progress.json")
+    needs_human = _load_json(repair_data_dir / f"{session}.needs-human.json")
+    watchdog_item = watchdog_by_session.get(session, {})
+
+    chain_complete = bool(chain_health.get("chain_complete")) if chain_health else False
+    completed_count = chain_health.get("completed_count") if chain_health else None
+    milestone_count = chain_health.get("milestone_count") if chain_health else None
+    current_plan = (
+        (chain_health.get("current_plan_name") if chain_health else None)
+        or plan_name
+        or None
+    )
+    latest_activity = _latest_activity(chain_health, marker)
+    liveness = _safe_liveness(liveness_probe, marker)
+    superseding_sibling = _find_superseding_sibling(
+        marker,
+        marker_dir=marker_dir,
+        liveness_probe=liveness_probe,
+    )
+
+    status, operator_next = _classify_session(
+        session=session,
+        workspace=workspace,
+        remote_spec=remote_spec,
+        chain_health=chain_health,
+        chain_complete=chain_complete,
+        needs_human=needs_human,
+        repair_progress=repair_progress,
+        watchdog_item=watchdog_item,
+        liveness=liveness,
+        superseding_sibling=superseding_sibling,
+        latest_activity_dt=_parse_iso(latest_activity),
+        repair_data_dir=repair_data_dir,
+        now=now,
+    )
+
+    return {
+        "session": session,
+        "display_name": session,
+        "workspace": str(workspace) if workspace else "",
+        "spec": remote_spec,
+        "run_kind": run_kind,
+        "status": status,
+        "should_run": status not in {"complete"},
+        "tmux": liveness.get("tmux", False),
+        "process": liveness.get("process", False),
+        "watchdog": _watchdog_status(watchdog_item, chain_complete),
+        "repairing": status == "repairing",
+        "current_plan": current_plan,
+        "completed_count": completed_count,
+        "milestone_count": milestone_count,
+        "pr_number": chain_health.get("pr_number") if chain_health else None,
+        "pr_state": chain_health.get("pr_state") if chain_health else None,
+        "latest_activity": latest_activity,
+        "operator_next": operator_next,
+        "evidence": {
+            "marker": str(marker_path),
+            "chain_health": str(marker_dir / f"{session}.chain-health.progress.json"),
+            "watchdog_report": str(watchdog_report_path),
+            "needs_human": (
+                str(repair_data_dir / f"{session}.needs-human.json") if needs_human else None
+            ),
+            "superseded_by": superseding_sibling,
+        },
+    }
+
+
+def _classify_session(
+    *,
+    session: str,
+    workspace: Path | None,
+    remote_spec: str,
+    chain_health: Mapping[str, Any],
+    chain_complete: bool,
+    needs_human: Mapping[str, Any],
+    repair_progress: Mapping[str, Any],
+    watchdog_item: Mapping[str, Any],
+    liveness: Mapping[str, bool],
+    superseding_sibling: str | None,
+    latest_activity_dt: datetime | None,
+    repair_data_dir: Path,
+    now: datetime,
+) -> tuple[SessionStatus, str]:
+    # Structural problems first: a session we cannot reason about is attention.
+    if not session:
+        return "attention", "marker has no session name"
+    if workspace is None or not workspace.exists():
+        return "attention", "workspace missing or unreadable"
+    if chain_health is None and not remote_spec and not _is_plan_kind_marker(workspace):
+        return "attention", "no chain-health snapshot and no remote spec"
+
+    # The watchdog report is the authority on runner truth: it reads the
+    # authoritative chain state every tick. The chain-health sidecar can freeze
+    # at the last non-complete snapshot for a finished chain (it stops being
+    # refreshed once the session goes idle), so defer to the watchdog's verdict
+    # when it has already classified the session. Without this the snapshot
+    # reports done chains as stalled attention, disagreeing with the watchdog.
+    wd_status = str(watchdog_item.get("status") or "").lower()
+    if wd_status in {"complete", "completed"}:
+        return "complete", "watchdog reports chain complete"
+
+    # Terminal success is the strongest signal and beats stale plan failures.
+    if chain_complete:
+        return "complete", "chain complete; no runner expected"
+
+    if superseding_sibling and not (liveness.get("tmux") or liveness.get("process")):
+        return (
+            "complete",
+            f"superseded by sibling session {superseding_sibling}; no runner expected",
+        )
+
+    # Awaiting human action blocks progress that automation should not touch.
+    if _is_needs_human(needs_human):
+        return "blocked", _needs_human_reason(needs_human)
+
+    # Active automated repair takes precedence over plain stalled/running when
+    # the chain is not advancing on its own.
+    if _is_repair_active(repair_progress, repair_data_dir, session, now):
+        return "repairing", "automated repair dispatched for this session"
+
+    if liveness.get("tmux") or liveness.get("process"):
+        return "running", "live runner process observed"
+
+    if latest_activity_dt is not None and (now - latest_activity_dt).total_seconds() <= STALE_ACTIVITY_S:
+        return "running", "recent plan/chain activity"
+
+    # Not complete, not blocked, not under repair, not live, not recent. That is
+    # exactly the "should be working but is not" case the watchdog escalates.
+    if latest_activity_dt is None:
+        return "attention", "no activity timestamp; cannot confirm liveness"
+    return "attention", f"stalled (no live process, last activity {_age_s(latest_activity_dt, now)}s ago)"
+
+
+# --- source file readers ---------------------------------------------------
+
+
+def _load_watchdog_report(
+    primary: Path, fallback: Path
+) -> tuple[dict[str, Any] | None, dict[str, dict[str, Any]], list[str]]:
+    path = primary if primary.exists() else (fallback if fallback.exists() else None)
+    if path is None:
+        return None, {}, [f"watchdog report missing (looked for {primary}, {fallback})"]
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, {}, [f"watchdog report unreadable at {path}: {exc.__class__.__name__}"]
+    if not isinstance(report, dict):
+        return None, {}, [f"watchdog report at {path} is not a JSON object"]
+    by_session: dict[str, dict[str, Any]] = {}
+    for section in ("items", "issues"):
+        items = report.get(section)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("session")
+            if isinstance(name, str) and name:
+                # Keep the most informative item per session.
+                existing = by_session.get(name)
+                if existing is None or _item_signal_rank(item) > _item_signal_rank(existing):
+                    by_session[name] = item
+    return report, by_session, []
+
+
+def _item_signal_rank(item: Mapping[str, Any]) -> int:
+    """Rank watchdog items so the most actionable one wins per session."""
+    status = str(item.get("status") or "")
+    order = [
+        "needs_human",
+        "restarted",
+        "reaped",
+        "sync_dirty",
+        "sync_failed",
+        "alive",
+        "skipped",
+        "synced",
+        "complete",
+        "completed",
+    ]
+    try:
+        return len(order) - order.index(status)
+    except ValueError:
+        return -1
+
+
+def _load_session_markers(marker_dir: Path) -> list[dict[str, Any]]:
+    if not marker_dir.exists():
+        return []
+    markers: list[dict[str, Any]] = []
+    for path in sorted(marker_dir.glob("*.json")):
+        if not is_canonical_session_marker_path(path):
+            continue
+        payload = _load_json(path)
+        if not isinstance(payload, dict) or not payload.get("session"):
+            continue
+        payload["_marker_path"] = str(path)
+        markers.append(payload)
+    return markers
+
+
+def _load_json(path: Path) -> dict[str, Any] | None:
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _find_superseding_sibling(
+    marker: Mapping[str, Any],
+    *,
+    marker_dir: Path,
+    liveness_probe: LivenessProbe,
+) -> str | None:
+    """Return sibling evidence that makes this stale marker non-actionable.
+
+    The watchdog wrapper has the same operational rule for stopped sessions:
+    when another canonical marker in the same workspace owns the live work, the
+    older marker is superseded rather than relaunched or escalated. The snapshot
+    needs that reconciliation too, otherwise stale needs-human sidecars from a
+    parent wrapper continue to appear as active blocked work after a child chain
+    has taken over or completed.
+    """
+
+    session = str(marker.get("session") or "")
+    workspace = str(marker.get("workspace") or "")
+    if not session or not workspace:
+        return None
+
+    for other in _load_session_markers(marker_dir):
+        other_session = str(other.get("session") or "")
+        other_workspace = str(other.get("workspace") or "")
+        if not other_session or other_session == session or other_workspace != workspace:
+            continue
+        other_remote_spec = str(other.get("remote_spec") or "")
+        if not other_remote_spec:
+            continue
+
+        other_health = _load_json(marker_dir / f"{other_session}.chain-health.progress.json")
+        if isinstance(other_health, Mapping) and bool(other_health.get("chain_complete")):
+            return f"{other_session}:complete"
+
+        other_liveness = _safe_liveness(liveness_probe, other)
+        if other_liveness.get("tmux") or other_liveness.get("process"):
+            return f"{other_session}:alive"
+
+    return None
+
+
+# --- classification helpers ------------------------------------------------
+
+
+def _is_needs_human(needs_human: Mapping[str, Any] | None) -> bool:
+    return bool(needs_human)
+
+
+def _needs_human_reason(needs_human: Mapping[str, Any]) -> str:
+    summary = needs_human.get("summary") if isinstance(needs_human, Mapping) else None
+    if isinstance(summary, str) and summary:
+        first = summary.splitlines()[0]
+        return f"awaiting human action: {first[:160]}"
+    return "awaiting human action"
+
+
+def _is_repair_active(
+    repair_progress: Mapping[str, Any] | None,
+    repair_data_dir: Path,
+    session: str,
+    now: datetime,
+) -> bool:
+    if not isinstance(repair_progress, Mapping) or not repair_progress:
+        return False
+    recorded_at = _parse_iso(repair_progress.get("updated_at") or repair_progress.get("ts"))
+    if recorded_at is None:
+        # A repair-progress marker without a timestamp still means a repair ran;
+        # treat it as active only if recent repair-data exists alongside.
+        repair_data = _load_json(repair_data_dir / f"{session}.repair-data.json")
+        return bool(repair_data)
+    age = (now - recorded_at).total_seconds()
+    return age <= REPAIR_FRESH_S
+
+
+def _watchdog_status(watchdog_item: Mapping[str, Any], chain_complete: bool) -> str:
+    if chain_complete:
+        return "complete"
+    status = str(watchdog_item.get("status") or "").strip().lower()
+    return status or "unknown"
+
+
+def _latest_activity(chain_health: Mapping[str, Any] | None, marker: Mapping[str, Any]) -> str:
+    candidates = []
+    if chain_health:
+        candidates.append(chain_health.get("updated_at"))
+        candidates.append(_iso_from_epoch(chain_health.get("events_mtime")))
+    candidates.append(marker.get("started_at"))
+    for value in candidates:
+        if isinstance(value, (int, float)) and value:
+            iso = _iso_from_epoch(value)
+            if iso:
+                return iso
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def _is_plan_kind_marker(workspace: Path | None) -> bool:
+    # Plan-kind sessions carry plan_name and need no remote_spec/chain-health.
+    return workspace is not None and workspace.exists()
+
+
+def _safe_liveness(probe: LivenessProbe, marker: Mapping[str, Any]) -> dict[str, bool]:
+    try:
+        result = probe(marker)
+    except Exception:
+        return {"tmux": False, "process": False}
+    if not isinstance(result, dict):
+        return {"tmux": False, "process": False}
+    return {
+        "tmux": bool(result.get("tmux")),
+        "process": bool(result.get("process")),
+    }
+
+
+def default_liveness_probe(marker: Mapping[str, Any]) -> dict[str, bool]:
+    """Best-effort tmux + process liveness from the current namespace.
+
+    Swallows all errors so a fixture directory without tmux/ps still classifies
+    sessions from file evidence alone. Returns ``{"tmux": bool, "process": bool}``.
+    """
+    session = str(marker.get("session") or "")
+    workspace = str(marker.get("workspace") or "")
+    remote_spec = str(marker.get("remote_spec") or "")
+    plan_name = str(marker.get("plan_name") or "")
+
+    tmux_alive = False
+    if session:
+        try:
+            proc = subprocess.run(
+                ["tmux", "has-session", "-t", session],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            tmux_alive = proc.returncode == 0
+        except (FileNotFoundError, subprocess.SubprocessError, OSError):
+            tmux_alive = False
+
+    process_alive = False
+    needles = [value for value in (remote_spec, workspace, plan_name) if value]
+    if needles:
+        try:
+            ps = subprocess.run(
+                ["ps", "-eww", "-o", "args="],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+        except (FileNotFoundError, subprocess.SubprocessError, OSError):
+            ps = None
+        if ps is not None and ps.returncode == 0:
+            for line in ps.stdout.splitlines():
+                if "arnold_pipelines.megaplan" not in line:
+                    continue
+                if needles[0] in line and (
+                    " chain start" in line or " epic-chain start" in line or " auto " in line
+                ):
+                    process_alive = True
+                    break
+
+    return {"tmux": tmux_alive, "process": process_alive}
+
+
+def _summarize(sessions: Iterable[Mapping[str, Any]]) -> dict[str, int]:
+    counts = {"running": 0, "blocked": 0, "repairing": 0, "complete": 0, "attention": 0}
+    for entry in sessions:
+        status = entry.get("status")
+        if status in counts:
+            counts[status] += 1
+    return counts
+
+
+# --- time helpers ----------------------------------------------------------
+
+
+def _utcnow() -> datetime:
+    # ``datetime.now(timezone.utc)`` with no arg is allowed here (this is the
+    # library, not a workflow script). Callers may inject ``now`` for tests.
+    return datetime.now(timezone.utc)
+
+
+def _isoformat(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _iso_from_epoch(value: object) -> str:
+    try:
+        epoch = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return ""
+    if epoch <= 0:
+        return ""
+    return _isoformat(datetime.fromtimestamp(epoch, timezone.utc))
+
+
+def _parse_iso(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _age_s(dt: datetime, now: datetime) -> int:
+    return max(0, int((now - dt).total_seconds()))
+
+
+def _as_path(value: object) -> Path | None:
+    if isinstance(value, str) and value.strip():
+        return Path(value.strip())
+    if isinstance(value, Path):
+        return value
+    return None

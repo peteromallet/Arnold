@@ -30,6 +30,8 @@ from arnold_pipelines.megaplan.cloud.providers.base import (
 )
 from arnold_pipelines.megaplan.cloud.redact import redact
 from arnold_pipelines.megaplan.cloud.spec import CloudSpec, apply_repo_overrides, load_spec as load_cloud_spec
+from arnold_pipelines.megaplan.cloud import status_format, status_snapshot
+from arnold_pipelines.megaplan.fallback_chains import decode_phase_model_value, encode_phase_model_value
 from arnold_pipelines.megaplan.cloud.template import materialize_deploy_dir, render_ensure_repos_block
 from arnold_pipelines.megaplan.layout import is_canonical_chain_spec
 from arnold_pipelines.megaplan.types import CliError
@@ -456,7 +458,7 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
 
         if action == "status":
             if bool(getattr(args, "all", False)):
-                return _run_cloud_chains(spec, provider, args=args)
+                return _run_status_all(spec, provider, args=args)
             if _status_should_use_chain(root, args, spec):
                 return _run_chain_status(root, args, spec, provider)
             payload = cloud_status_payload(args, spec, provider)
@@ -980,6 +982,7 @@ def _phase_model_by_label_from_preflight(preflight_summary: Mapping[str, Any]) -
         label = milestone.get("label")
         profile = milestone.get("profile")
         explicit = milestone.get("explicit_phase_model")
+        resolved_phase_chains = milestone.get("resolved_phase_chains")
         if isinstance(profile, str) and profile:
             if (
                 isinstance(label, str)
@@ -990,12 +993,28 @@ def _phase_model_by_label_from_preflight(preflight_summary: Mapping[str, Any]) -
                 phase_model_by_label[label] = list(explicit)
             continue
         resolved = milestone.get("resolved_phase_map")
-        if not isinstance(label, str) or not isinstance(resolved, Mapping):
+        if not isinstance(label, str):
             continue
         phase_models: list[str] = []
-        for phase, spec in resolved.items():
-            if isinstance(phase, str) and isinstance(spec, str) and phase and spec:
-                phase_models.append(f"{phase}={spec}")
+        explicit_steps: set[str] = set()
+        if isinstance(explicit, list) and all(isinstance(item, str) for item in explicit):
+            for entry in explicit:
+                if "=" not in entry:
+                    continue
+                phase, _chain = decode_phase_model_value(entry)
+                explicit_steps.add(phase)
+                phase_models.append(entry)
+        if isinstance(resolved_phase_chains, Mapping):
+            for phase, specs in resolved_phase_chains.items():
+                if not isinstance(phase, str) or phase in explicit_steps:
+                    continue
+                if not isinstance(specs, list) or not all(isinstance(item, str) for item in specs) or not specs:
+                    continue
+                phase_models.append(encode_phase_model_value(phase, specs))
+        elif isinstance(resolved, Mapping):
+            for phase, spec in resolved.items():
+                if isinstance(phase, str) and isinstance(spec, str) and phase and spec and phase not in explicit_steps:
+                    phase_models.append(f"{phase}={spec}")
         if phase_models:
             phase_model_by_label[label] = phase_models
     return phase_model_by_label
@@ -1919,9 +1938,13 @@ def _chain_start_command(
         f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
     )
     if engine_dir:
-        engine_path = shlex.quote(engine_dir)
         cwd = shlex.quote(project_dir or engine_dir)
-        prefix += f"cd {cwd} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
+        engine_path = shlex.quote(engine_dir)
+        prefix += (
+            'ENGINE_DIR="${MEGAPLAN_RUNTIME_SRC:-}"; '
+            f'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR={engine_path}; fi; '
+            f'cd {cwd} && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${{PYTHONPATH:-}}" '
+        )
     return (
         f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start {flags} "
         f">> {log_target} 2>&1"
@@ -1964,6 +1987,7 @@ def _megaplan_refresh_command(
     spec: CloudSpec | None = None,
     *,
     force_clean_editable_install: bool = False,
+    runtime_src_path: str | None = None,
 ) -> str:
     src = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     repo = (spec.megaplan.repo or "") if spec is not None else ""
@@ -1974,6 +1998,7 @@ def _megaplan_refresh_command(
         f"SRC={shlex.quote(src)}",
         f"REPO={shlex.quote(repo)}",
         f"REF={shlex.quote(ref)}",
+        f"RUNTIME_SRC={shlex.quote(runtime_src_path or '')}",
         'if [ -n "$REPO" ] && [ ! -d "$SRC/.git" ]; then',
         '  mkdir -p "$(dirname "$SRC")"',
         '  CLONE_URL="$REPO"',
@@ -1998,16 +2023,33 @@ def _megaplan_refresh_command(
             else []
         ),
         '  if [ -n "$(git -C "$SRC" status --porcelain --untracked-files=no)" ]; then',
-        '    echo "[megaplan-refresh] refusing editable install refresh: tracked changes in source checkout at $SRC"',
-        "    exit 19",
+        '    if [ -n "$RUNTIME_SRC" ]; then',
+        '      echo "[megaplan-refresh] source checkout dirty; using clean runtime mirror at $RUNTIME_SRC"',
+        '      rm -rf "$RUNTIME_SRC"',
+        '      mkdir -p "$(dirname "$RUNTIME_SRC")"',
+        '      git clone --shared --no-checkout "$SRC" "$RUNTIME_SRC"',
+        '      git -C "$RUNTIME_SRC" fetch origin "$REF"',
+        '      git -C "$RUNTIME_SRC" checkout --detach "origin/$REF"',
+        '      export MEGAPLAN_RUNTIME_SRC="$RUNTIME_SRC"',
+        "    else",
+        '      echo "[megaplan-refresh] refusing editable install refresh: tracked changes in source checkout at $SRC"',
+        "      exit 19",
+        "    fi",
+        "  else",
+        '    if ! git -C "$SRC" merge-base --is-ancestor HEAD "origin/$REF"; then',
+        '      echo "[megaplan-refresh] refusing editable install refresh: $SRC has local commits not contained in origin/$REF"',
+        '      git -C "$SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true',
+        "      exit 20",
+        "    fi",
+        '    git -C "$SRC" pull --ff-only origin "$REF"',
+        '    export MEGAPLAN_RUNTIME_SRC="$SRC"',
         "  fi",
-        '  if ! git -C "$SRC" merge-base --is-ancestor HEAD "origin/$REF"; then',
-        '    echo "[megaplan-refresh] refusing editable install refresh: $SRC has local commits not contained in origin/$REF"',
-        '    git -C "$SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true',
+        '  if ! git -C "$MEGAPLAN_RUNTIME_SRC" merge-base --is-ancestor HEAD "origin/$REF"; then',
+        '    echo "[megaplan-refresh] refusing editable install refresh: $MEGAPLAN_RUNTIME_SRC has local commits not contained in origin/$REF"',
+        '    git -C "$MEGAPLAN_RUNTIME_SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true',
         "    exit 20",
         "  fi",
-        '  git -C "$SRC" pull --ff-only origin "$REF"',
-        '  pip install -e "$SRC"',
+        '  pip install -e "$MEGAPLAN_RUNTIME_SRC"',
         "else",
         '  echo "[megaplan-refresh] source clone missing at $SRC; skipping editable install"',
         "fi",
@@ -2027,9 +2069,15 @@ def _refresh_then_chain_start_command(
     force_clean_editable_install: bool = False,
     log_relative: str = _CHAIN_LOG_RELATIVE,
 ) -> str:
+    runtime_src_path = (
+        str(PurePosixPath(project_dir) / ".megaplan" / "runtime" / "editable-engine")
+        if project_dir
+        else None
+    )
     refresh = _megaplan_refresh_command(
         spec,
         force_clean_editable_install=force_clean_editable_install,
+        runtime_src_path=runtime_src_path,
     )
     engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     return (
@@ -2174,7 +2222,11 @@ def _epic_chain_start_command(
     )
     if engine_dir:
         engine_path = shlex.quote(engine_dir)
-        prefix += f"cd {shlex.quote(workspace)} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
+        prefix += (
+            'ENGINE_DIR="${MEGAPLAN_RUNTIME_SRC:-}"; '
+            f'if [ -z "$ENGINE_DIR" ]; then ENGINE_DIR={engine_path}; fi; '
+            f'cd {shlex.quote(workspace)} && PYTHONSAFEPATH=1 PYTHONPATH="$ENGINE_DIR:${{PYTHONPATH:-}}" '
+        )
     return (
         f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan epic-chain start {flags} "
         f">> {log_target} 2>&1"
@@ -2189,7 +2241,10 @@ def _refresh_then_epic_chain_start_command(
     one_shot: bool = False,
     log_relative: str,
 ) -> str:
-    refresh = _megaplan_refresh_command(spec)
+    refresh = _megaplan_refresh_command(
+        spec,
+        runtime_src_path=str(PurePosixPath(workspace) / ".megaplan" / "runtime" / "editable-engine"),
+    )
     engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     log_target = str(PurePosixPath(workspace) / log_relative)
     return (
@@ -4413,6 +4468,64 @@ def _emit_cloud_sessions_human(payload: dict[str, Any], *, compact: bool) -> Non
         )
 
 
+def _in_trusted_container() -> bool:
+    """True when this process is the cloud worker itself (no SSH needed).
+
+    Delegates to :func:`status_snapshot.is_trusted_container` so the CLI and the
+    resident share one definition of "we are the box."
+    """
+    return status_snapshot.is_trusted_container()
+
+
+def _emit_cloud_status_human(snapshot: dict[str, Any] | None, *, compact: bool) -> None:
+    text = (
+        status_format.format_cloud_status_short(snapshot, max_chars=10**9)[0]
+        if compact
+        else status_format.format_cloud_status_detailed(snapshot)
+    )
+    if text:
+        sys.stderr.write(text + "\n")
+
+
+def _run_status_all(spec: CloudSpec, provider, *, args: argparse.Namespace | None = None) -> int:
+    """``cloud status --all`` against the canonical snapshot.
+
+    Inside the trusted container: read the snapshot the watchdog wrote, or
+    rebuild it locally from observation only — never SSH back to our own host.
+    From a laptop: fetch the same snapshot from the box; if the box has not
+    started producing one yet, fall back to the legacy remote listing so the
+    command never hard-fails during the rollout.
+    """
+    compact = bool(getattr(args, "compact", False)) if args is not None else False
+
+    if _in_trusted_container():
+        snapshot, _degraded = status_snapshot.load_cloud_status_snapshot(
+            status_snapshot.DEFAULT_SNAPSHOT_PATH, max_age_s=3600
+        )
+        if snapshot is None:
+            snapshot = status_snapshot.build_cloud_status_snapshot()
+        _emit_cloud_status_human(snapshot, compact=compact)
+        sys.stdout.write(json.dumps(snapshot, indent=2) + "\n")
+        return 0
+
+    # Laptop path: ask the box for the same snapshot its watchdog produced.
+    try:
+        raw = provider.read_remote_file(str(status_snapshot.DEFAULT_SNAPSHOT_PATH))
+        snapshot = json.loads(raw)
+    except (CliError, OSError, ValueError) as exc:
+        sys.stderr.write(
+            f"cloud status: snapshot unavailable on box ({exc.__class__.__name__}); "
+            "falling back to legacy remote listing\n"
+        )
+        return _run_cloud_chains(spec, provider, args=args)
+    if not isinstance(snapshot, dict):
+        sys.stderr.write("cloud status: box snapshot malformed; falling back to legacy remote listing\n")
+        return _run_cloud_chains(spec, provider, args=args)
+    _emit_cloud_status_human(snapshot, compact=compact)
+    sys.stdout.write(json.dumps(snapshot, indent=2) + "\n")
+    return 0
+
+
 def _run_cloud_chains(spec: CloudSpec, provider, *, args: argparse.Namespace | None = None) -> int:
     del spec
     result = provider.ssh_exec(_cloud_chains_command())
@@ -4806,6 +4919,12 @@ def _active_step_evidence_from_plan_status(plan_status: Mapping[str, Any]) -> di
         "attempt": active_step.get("attempt"),
         "worker_pid": active_step.get("worker_pid"),
         "last_activity_at": active_step.get("last_activity_at") or "",
+        "configured_specs": active_step.get("configured_specs") or [],
+        "attempted_specs": active_step.get("attempted_specs") or [],
+        "selected_spec_index": active_step.get("selected_spec_index", 0),
+        "selected_spec_total": active_step.get("selected_spec_total", 0),
+        "fallback_trigger": active_step.get("fallback_trigger"),
+        "failed_attempt_reasons": active_step.get("failed_attempt_reasons") or [],
     }
 
 
