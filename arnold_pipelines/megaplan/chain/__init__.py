@@ -5179,6 +5179,13 @@ def run_chain(
             raise
 
         def phase_callback(phase: str, _code: int, _out: str, _err: str) -> None:
+            nonlocal state
+            state = _sync_chain_last_state_from_plan(
+                root,
+                spec_path,
+                state,
+                writer=writer,
+            )
             if use_pr and milestone.branch:
                 _commit_and_push_phase(
                     root,
@@ -5197,7 +5204,7 @@ def run_chain(
             spec_path,
             plan_name,
             spec,
-            on_phase_complete=phase_callback if use_pr else None,
+            on_phase_complete=phase_callback,
             writer=writer,
         )
         if outcome.status == "stalled":
