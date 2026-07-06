@@ -77,6 +77,30 @@ def test_problem_signature_is_stable_across_message_drift() -> None:
     )
 
 
+def test_problem_signature_is_blank_for_mechanical_redrive_only_context() -> None:
+    context = {
+        "failure_classification": "timeout_or_hang",
+        "stale_state": {
+            "classification": "NO LATEST FAILURE",
+            "recommended_action": "mechanical re-drive only",
+        },
+        "plan_latest_failure": {
+            "plan_name": "demo-plan",
+            "current_state": "initialized",
+            "events_path": "/tmp/demo/events.ndjson",
+        },
+        "plan_runtime_state": {"current_state": "initialized"},
+        "chain_state_summary": {
+            "current_plan_name": "demo-plan",
+            "last_state": "initialized",
+        },
+    }
+
+    assert repair_recurrence.build_problem_signature(context) == {
+        field: "" for field in repair_recurrence.PROBLEM_SIGNATURE_FIELDS
+    }
+
+
 def test_advancement_window_fires_only_when_repairs_repeat_without_progress() -> None:
     snapshot = repair_recurrence.build_advancement_snapshot(_failure_context(), run_kind="chain")
     first = repair_recurrence.update_session_repair_snapshot(

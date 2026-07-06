@@ -1600,6 +1600,10 @@ def _interesting_log_lines(text: str, limit: int = 8) -> list[str]:
     picked: list[str] = []
     for line in text.splitlines():
         lower = line.lower()
+        if lower.startswith("state_written | state="):
+            # Full state snapshots routinely contain config keys like
+            # test_baseline_timeout that are not failure evidence.
+            continue
         if any(token in lower for token in patterns):
             picked.append(line.strip())
     return _unique_strings(picked)[-limit:]

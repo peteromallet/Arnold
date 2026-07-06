@@ -1205,6 +1205,51 @@ def test_repair_loop_prefers_awaiting_human_over_timeout_text_in_prep_clarificat
     assert "resume-clarify" in payload["stale_state"]["recommended_action"]
 
 
+def test_repair_loop_ignores_timeout_text_inside_state_written_snapshot_without_latest_failure(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workflow"
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo-plan",
+                "current_state": "initialized",
+                "latest_failure": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text(
+        json.dumps(
+            {
+                "kind": "state_written",
+                "payload": {
+                    "state": {
+                        "current_state": "initialized",
+                        "config": {"test_baseline_timeout": 900},
+                    }
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    program = _extract_repair_program(
+        "collect_failure_context_json",
+        "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(workspace), "demo", "plan", "demo-plan")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["stale_state"]["classification"] == "NO LATEST FAILURE"
+    assert payload["failure_classification"] != "timeout_or_hang"
+    assert payload["raw_failure_signals"] == []
+
+
 def test_repair_loop_clear_stale_state_trims_replay_tail_and_backs_up_phase_result(tmp_path: Path) -> None:
     plan_dir = tmp_path / "workflow" / ".megaplan" / "plans" / "demo-plan"
     plan_dir.mkdir(parents=True)

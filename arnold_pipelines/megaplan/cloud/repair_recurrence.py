@@ -281,10 +281,25 @@ def _history_last_step(execute_attempt_context: Mapping[str, Any]) -> str:
     return ""
 
 
+def _mechanical_redrive_only_context(context: Mapping[str, Any]) -> bool:
+    stale_state = _as_dict(context.get("stale_state"))
+    if _as_text(stale_state.get("classification")) != "NO LATEST FAILURE":
+        return False
+    if _as_text(stale_state.get("recommended_action")) != "mechanical re-drive only":
+        return False
+    plan_failure = _as_dict(context.get("plan_latest_failure"))
+    return not any(
+        _as_text(plan_failure.get(key))
+        for key in ("kind", "message", "state", "recorded_at", "phase")
+    )
+
+
 def build_problem_signature(failure_context: Mapping[str, Any]) -> dict[str, str]:
     """Return the controlled-field signature used for recurrence identity."""
 
     context = _as_dict(failure_context)
+    if _mechanical_redrive_only_context(context):
+        return {field: "" for field in PROBLEM_SIGNATURE_FIELDS}
     plan_failure = _as_dict(context.get("plan_latest_failure"))
     chain_state = _as_dict(context.get("chain_state_summary"))
     plan_runtime = _as_dict(context.get("plan_runtime_state"))
