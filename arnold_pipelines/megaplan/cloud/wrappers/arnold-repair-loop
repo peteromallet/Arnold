@@ -760,6 +760,33 @@ text = json.dumps(marker_payload, sort_keys=True)
 if "workspace_drift:" in text or "sandbox_refused_outside_project_root" in text:
     print("workspace_drift")
     raise SystemExit(0)
+workspace = pathlib.Path(str(marker_payload.get("workspace") or ""))
+if workspace.exists():
+    chain_files = sorted(
+        (workspace / ".megaplan" / "plans" / ".chains").glob("*.json"),
+        key=lambda path: path.stat().st_mtime if path.exists() else 0,
+        reverse=True,
+    )
+    for chain_path in chain_files[:3]:
+        chain_payload = load_json(str(chain_path))
+        current_plan_name = str(chain_payload.get("current_plan_name") or "").strip()
+        if not current_plan_name:
+            continue
+        state_path = workspace / ".megaplan" / "plans" / current_plan_name / "state.json"
+        plan_payload = load_json(str(state_path))
+        latest_failure = plan_payload.get("latest_failure")
+        if isinstance(latest_failure, dict) and latest_failure:
+            kind = str(latest_failure.get("kind") or "").strip()
+            state = str(
+                latest_failure.get("current_state")
+                or latest_failure.get("state")
+                or plan_payload.get("current_state")
+                or ""
+            ).strip()
+            phase = str(latest_failure.get("phase") or "").strip()
+            if kind or state:
+                print(f"live_plan_failure:{kind or 'unknown'}:{state or 'unknown'}:{phase or 'unknown'}")
+                raise SystemExit(0)
 current_signature = repair_payload.get("current_signature")
 if not isinstance(current_signature, dict):
     current_signature = {}
@@ -3541,6 +3568,7 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     load_json,
     save_repair_data,
 )
+from arnold_pipelines.megaplan.cloud.repair_contract import save_repair_data
 
 path, outcome = sys.argv[1:]
 payload = load_json(pathlib.Path(path), default={})
@@ -3857,7 +3885,6 @@ import pathlib
 import sys
 
 from arnold_pipelines.megaplan.cloud import repair_recurrence
-from arnold_pipelines.megaplan.cloud.repair_contract import save_repair_data
 
 (
     data_path_raw,
@@ -3925,7 +3952,7 @@ payload["current_recurrence"] = {
     "blocker_id": dispatch_blocker_id,
 }
 payload["run_recurrence_detected"] = bool(payload.get("run_recurrence_detected")) or bool(recurrence.get("detected"))
-save_repair_data(data_path, payload)
+repair_recurrence.atomic_write_json(data_path, payload)
 repair_recurrence.atomic_write_json(progress_path, session_snapshot)
 breaker = 1 if recurrence.get("deterministic_failure_breaker") else 0
 print(f"{attempt_id}\t{1 if recurrence.get('detected') else 0}\t{breaker}")
