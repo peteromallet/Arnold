@@ -1035,7 +1035,9 @@ emit_current_needs_human_sidecar() {
   local workspace="$3"
   local remote_spec="$4"
   local current_plan="$5"
-  local marker_path stale_marker_plans repair_summary
+  local current_target_observation="${6:-}"
+  local health="${7:-}"
+  local marker_path stale_marker_plans repair_summary meta_repair_trigger meta_dispatch_result
 
   marker_path="$(repair_needs_human_path "$session")"
   [[ -f "$marker_path" ]] || return 1
@@ -1050,6 +1052,20 @@ emit_current_needs_human_sidecar() {
     compare_needs_human_to_resolver "$session" "$current_plan" "true" "$stale_marker_plans"
   else
     compare_needs_human_to_resolver "$session" "$current_plan" "false" ""
+  fi
+
+  meta_repair_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation" "$health")"
+  if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
+    if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items" "${meta_repair_trigger#TRIGGER:}"; then
+      meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
+      if [[ "$meta_dispatch_result" == "dispatched" ]]; then
+        log "session has current needs-human marker but meta-repair trigger matched; background-dispatched meta-repair session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
+        return 0
+      fi
+      log "session has current needs-human marker and meta-repair trigger matched but stayed in observe path session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:} dispatch=${meta_dispatch_result:-unknown}"
+    else
+      log "session has current needs-human marker and meta-repair trigger matched but dispatch unavailable session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
+    fi
   fi
 
   repair_summary="$(repair_needs_human_summary "$session")"
@@ -6020,7 +6036,7 @@ PY
 
   local observed_current_plan
   observed_current_plan="$(current_target_plan_name_from_observation "$current_target_observation" 2>>"${LOG:-/dev/null}" || true)"
-  if emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${observed_current_plan:-$plan_name}"; then
+  if emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${observed_current_plan:-$plan_name}" "$current_target_observation" "$health"; then
     return 0
   fi
 
@@ -6231,7 +6247,7 @@ PY
     report_item "$report_items" "$session" "observe" "complete" "chain complete" "$workspace" "$remote_spec"
     return 0
   fi
-  if emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${PLAN_STATUS_PLAN_NAME:-$plan_name}"; then
+  if emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${PLAN_STATUS_PLAN_NAME:-$plan_name}" "$current_target_observation" "$health"; then
     return 0
   fi
   if [[ "$health" == "stopped" && "${PLAN_STATUS_ACTIVE_STEP_PRESENT:-0}" == "1" && "${PLAN_STATUS_ACTIVE_STEP_PID_ALIVE:-}" != "1" ]]; then

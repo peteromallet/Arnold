@@ -8333,6 +8333,102 @@ def test_launch_chain_tick_dispatches_meta_repair_on_recurring_retry_trigger(tmp
     assert "trigger=persistent_recurring_retry" in paths["log_path"].read_text(encoding="utf-8")
 
 
+def test_launch_chain_tick_dispatches_meta_repair_despite_current_needs_human_marker(
+    tmp_path: Path,
+) -> None:
+    paths = _prepare_meta_repair_launch_chain_tick_fixture(
+        tmp_path,
+        payload_overrides={
+            "outcome": "deterministic_failure",
+            "attempts": [
+                {"attempt_id": 1, "failure_classification": "timeout_or_hang"},
+                {"attempt_id": 2, "failure_classification": "timeout_or_hang"},
+                {"attempt_id": 3, "failure_classification": "timeout_or_hang"},
+            ],
+        },
+    )
+    plan_name = "demo-plan"
+    digest = hashlib.sha1(str(paths["spec_path"].resolve()).encode("utf-8")).hexdigest()[:12]
+    _write_chain_state(
+        paths["workspace"] / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json",
+        {"current_plan_name": plan_name, "last_state": "finalized"},
+    )
+    _write_plan(
+        paths["workspace"] / ".megaplan" / "plans" / plan_name,
+        {
+            "name": plan_name,
+            "current_state": "finalized",
+            "latest_failure": {
+                "kind": "phase_failed",
+                "message": "stalled at 'finalized' for 5 iterations",
+            },
+        },
+        events_body="{}\n",
+    )
+    (paths["repair_data_dir"] / "demo-session.needs-human.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "current_plan_name": plan_name,
+                "plan_name": plan_name,
+                "discord_status": "delivered",
+                "summary": "deterministic_failure breaker tripped",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    observation = json.dumps(
+        {
+            "authoritative_source": "chain_state",
+            "current_refs": {
+                "current_plan_name": plan_name,
+                "chain_current_plan_name": plan_name,
+                "plan_current_state": "finalized",
+                "chain_last_state": "finalized",
+            },
+            "plan_state": {"present": True, "current_state": "finalized"},
+            "chain_state": {"present": True, "last_state": "finalized"},
+            "active_step_heartbeat": {"active": False},
+        }
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("json_field"),
+            _extract_wrapper_function("repair_needs_human_path"),
+            _extract_wrapper_function("repair_needs_human_summary"),
+            _extract_wrapper_function("repair_needs_human_matches_current_plan"),
+            _extract_wrapper_function_until("compute_meta_repair_trigger", "dispatch_meta_repair"),
+            _extract_wrapper_function("emit_current_needs_human_sidecar"),
+            f"MARKER_DIR={str(paths['marker_dir'])!r}",
+            f"REPAIR_DATA_DIR={str(paths['repair_data_dir'])!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"LOG={str(paths['log_path'])!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+compare_needs_human_to_resolver() { :; }
+dispatch_meta_repair() { echo META_DISPATCH >&2; REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+""".strip(),
+            (
+                f"emit_current_needs_human_sidecar {str(paths['report_path'])!r} demo-session "
+                f"{str(paths['workspace'])!r} {str(paths['spec_path'])!r} {plan_name!r} "
+                f"{observation!r} stopped"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "META_DISPATCH" in result.stderr
+    assert "trigger=persistent_recurring_retry" in paths["log_path"].read_text(encoding="utf-8")
+    assert "session has current needs-human marker but meta-repair trigger matched" in paths["log_path"].read_text(
+        encoding="utf-8"
+    )
+
+
 def test_launch_chain_tick_dispatches_meta_repair_on_state_inspection_trigger(tmp_path: Path) -> None:
     paths = _prepare_meta_repair_launch_chain_tick_fixture(
         tmp_path,
