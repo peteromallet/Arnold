@@ -1,1 +1,1 @@
-/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/runtime/editable-engine/arnold_pipelines/megaplan/data/_composed/claude_skill.md
+/workspace/megaplan-native-parity-corrective/Arnold/arnold_pipelines/megaplan/data/_composed/claude_skill.md
