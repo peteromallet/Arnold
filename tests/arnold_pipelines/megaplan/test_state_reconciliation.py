@@ -167,6 +167,59 @@ def test_load_plan_reconciles_failed_no_next_step_after_finalize(tmp_path: Path)
     assert "resume_cursor" not in persisted
 
 
+def test_load_plan_reconciles_failed_finalize_state_after_failure_marker_clears(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "finalized-plan"
+    _write_plan_state(
+        plan_dir,
+        {
+            "name": "finalized-plan",
+            "current_state": "failed",
+            "iteration": 6,
+            "config": {},
+            "sessions": {},
+            "plan_versions": [],
+            "history": [{"step": "finalize", "result": "success"}],
+            "meta": {},
+            "last_gate": {},
+            "latest_failure": None,
+            "resume_cursor": {"phase": "status", "retry_strategy": "repair_state"},
+        },
+    )
+    (plan_dir / "phase_result.json").write_text(
+        json.dumps(
+            PhaseResult(
+                phase="finalize",
+                invocation_id="test-finalize-success",
+                exit_kind="success",
+                artifacts_written=("finalize.json",),
+            ).to_dict()
+        ),
+        encoding="utf-8",
+    )
+
+    _, state = load_plan_from_dir(plan_dir)
+    persisted = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+
+    assert state["current_state"] == "finalized"
+    assert persisted["current_state"] == "finalized"
+    assert persisted["latest_failure"] is None
+    assert "resume_cursor" not in persisted
+
+
+def test_extract_deviations_ignores_gate_warnings() -> None:
+    state = {
+        "last_gate": {
+            "warnings": [
+                "Criteria 8 and 10 require runtime observation and subjective human judgment during deployment phases (Steps 9-11).",
+            ]
+        }
+    }
+
+    assert shared._extract_deviations_from_state(state) == ()
+
+
 def test_save_state_merge_meta_phase_save_advances_state_by_default(tmp_path: Path) -> None:
     plan_dir = tmp_path / ".megaplan" / "plans" / "prep-plan"
     phase_state = {

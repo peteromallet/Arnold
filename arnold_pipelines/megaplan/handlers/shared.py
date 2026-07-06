@@ -368,21 +368,15 @@ def _derive_exit_kind_funneled(step: str, result: str, state: PlanState) -> str:
 
 
 def _extract_deviations_from_state(state: PlanState) -> tuple[Deviation, ...]:
-    """Extract quality-gate deviation objects from *state*.
+    """Return explicit blocker deviations carried by *state*.
 
-    Pulls from ``last_gate.warnings``; returns an empty tuple when there
-    is nothing to report.
+    ``last_gate.warnings`` are advisory operator notes, not execute blockers.
+    Serializing them as ``quality_gate`` deviations causes successful
+    ``finalize`` runs to strand themselves in status/repair loops before the
+    first execute step. Real quality blockers must be emitted explicitly by the
+    phase that discovered them.
     """
-    last_gate = state.get("last_gate")
-    if not isinstance(last_gate, dict):
-        return ()
-    warnings = last_gate.get("warnings")
-    if not isinstance(warnings, list) or not warnings:
-        return ()
-    return tuple(
-        Deviation(kind="quality_gate", message=str(w), task_id=None)
-        for w in warnings
-    )
+    return ()
 
 
 def _snapshot_cli_provenance(state: PlanState) -> dict[str, Any]:

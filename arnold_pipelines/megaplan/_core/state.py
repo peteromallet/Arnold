@@ -368,23 +368,33 @@ def _reconcile_failed_no_next_after_finalize(
 
     if state.get("current_state") != "failed":
         return state
-    latest_failure = state.get("latest_failure")
-    if not isinstance(latest_failure, dict) or latest_failure.get("kind") != "no_next_step":
-        return state
     resume_cursor = state.get("resume_cursor")
     if not isinstance(resume_cursor, dict):
         return state
     if resume_cursor.get("phase") != "status" or resume_cursor.get("retry_strategy") != "repair_state":
         return state
+    latest_failure = state.get("latest_failure")
+    if latest_failure is not None:
+        if not isinstance(latest_failure, dict) or latest_failure.get("kind") != "no_next_step":
+            return state
     if not _finalize_phase_completed_successfully(plan_dir, state):
         return state
 
     def _transition(current: dict[str, Any]) -> bool:
         if current.get("current_state") != "failed":
             return False
-        current_failure = current.get("latest_failure")
-        if not isinstance(current_failure, dict) or current_failure.get("kind") != "no_next_step":
+        current_resume = current.get("resume_cursor")
+        if not isinstance(current_resume, dict):
             return False
+        if (
+            current_resume.get("phase") != "status"
+            or current_resume.get("retry_strategy") != "repair_state"
+        ):
+            return False
+        current_failure = current.get("latest_failure")
+        if current_failure is not None:
+            if not isinstance(current_failure, dict) or current_failure.get("kind") != "no_next_step":
+                return False
         if not _finalize_phase_completed_successfully(plan_dir, current):
             return False
         current["current_state"] = STATE_FINALIZED
