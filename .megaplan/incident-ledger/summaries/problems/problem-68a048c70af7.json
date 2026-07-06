@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-06T01:28:46.157789+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "incident-42"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 19,
+  "owner_actor": "meta_repair",
+  "problem_id": "problem-68a048c70af7",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:09cc08fb2cd1b7e381ef91a89f63139a2c49dd7a000a3ccf74e3b285af6cecb5",
+    "last_seq": 148,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-68a048c70af7: repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project"
+}

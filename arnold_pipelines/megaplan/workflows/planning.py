@@ -40,6 +40,11 @@ from arnold_pipelines.megaplan.workflows.components import (
 AUTHORING_SOURCE_PATH = Path(__file__).with_name("workflow.pypeline")
 PYPELINE_AUTHORING_SOURCE_PATH = AUTHORING_SOURCE_PATH
 WORKFLOW_MODULE_PATH = Path(__file__).with_name("workflow.py")
+# Front-half step IDs used by boundary contracts and routing alike.
+# Boundary contracts reference these step IDs only to correlate durable
+# effects (receipts, findings) with implemented source rows.  They do
+# NOT own route topology — route selection is the exclusive province of
+# source-level Route declarations and runtime signal handlers.
 FRONT_HALF_ROUTING_STEP_IDS = frozenset(
     {
         "prep",
@@ -386,7 +391,15 @@ def build_pipeline(
 
 
 def lowered_workflow_topology() -> dict[str, Any]:
-    """Return a source-derived topology view for front-half boundary checks."""
+    """Return a source-derived topology view for front-half boundary checks.
+
+    The returned topology captures step IDs and route declarations from
+    the lowered workflow source.  Boundary contracts consume this topology
+    to correlate durable effects (receipts, findings) with implemented
+    source rows, but they do **not** own, alter, or substitute for product
+    route topology.  Route selection remains the exclusive province of
+    source-level ``Route`` declarations and runtime signal handlers.
+    """
 
     lowered = lower_workflow_file(AUTHORING_SOURCE_PATH)
     return {

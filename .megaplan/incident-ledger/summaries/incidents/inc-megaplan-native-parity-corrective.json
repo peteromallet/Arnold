@@ -1,0 +1,45 @@
+{
+  "deadline_ts": null,
+  "evidence_ref_count": 4,
+  "evidence_refs": [
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "stale_active_step"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "stale_active_step"
+    }
+  ],
+  "generated_at": "2026-07-06T01:28:46.155603+00:00",
+  "incident_id": "inc-megaplan-native-parity-corrective",
+  "kind": "incident_summary",
+  "latest_actor": "watchdog",
+  "next_expected_event": "immediate_repair.repair_attempt",
+  "outcome": "dispatched",
+  "placeholders": {
+    "install_freshness": "unknown",
+    "recurrence": "unknown",
+    "shipped_fix": "unknown"
+  },
+  "problem_ids": [
+    "problem-55b5ebf18290",
+    "problem-e20c45ae0eb0"
+  ],
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:09cc08fb2cd1b7e381ef91a89f63139a2c49dd7a000a3ccf74e3b285af6cecb5",
+    "last_seq": 158,
+    "projection": "incidents"
+  },
+  "state": "dispatch",
+  "summary_text": "inc-megaplan-native-parity-corrective: repair loop background-dispatched"
+}
