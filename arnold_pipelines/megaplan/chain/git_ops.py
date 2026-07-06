@@ -21,6 +21,14 @@ _MISSING_REMOTE_REF_MARKERS = (
     "remote ref does not exist",
 )
 
+_NON_FAST_FORWARD_PUSH_MARKERS = (
+    "non-fast-forward",
+    "[rejected]",
+    "fetch first",
+    "stale info",
+    "failed to push some refs",
+)
+
 _CHAIN_RUNTIME_JOURNAL_PATTERNS = (
     ".megaplan/epics/*/events.jsonl",
     ".megaplan/plans/*/events.ndjson",
@@ -511,7 +519,7 @@ def _run_git_push_command(
             writer=writer,
             timeout=_GIT_PUSH_TIMEOUT_SECONDS,
             error_code=error_code,
-            env=_compat()._git_push_env(cmd),
+            env=_git_push_env(cmd),
         )
     except CliError as exc:
         error = exc.extra.get("error") if isinstance(exc.extra, dict) else None
@@ -521,8 +529,51 @@ def _run_git_push_command(
             and _recover_timed_out_git_push(root, cmd, writer=writer)
         ):
             return subprocess.CompletedProcess(cmd, 0, "", "")
+        if _should_retry_force_with_lease_push(cmd, exc):
+            retry_cmd = _force_with_lease_variant(cmd)
+            if retry_cmd is not None:
+                writer(
+                    "[chain] git push rejected after local publish prep; "
+                    "retrying with --force-with-lease\n"
+                )
+                return _compat()._run_command(
+                    root,
+                    retry_cmd,
+                    writer=writer,
+                    timeout=_GIT_PUSH_TIMEOUT_SECONDS,
+                    error_code=error_code,
+                    env=_git_push_env(retry_cmd),
+                )
         raise
 
+
+def _should_retry_force_with_lease_push(cmd: list[str], exc: CliError) -> bool:
+    if cmd[:2] != ["git", "push"] or "--force-with-lease" in cmd:
+        return False
+    if not any(token.startswith("HEAD:") for token in cmd):
+        return False
+    detail_parts: list[str] = []
+    if exc.message:
+        detail_parts.append(exc.message)
+    if isinstance(exc.extra, dict):
+        for key in ("stderr", "stdout", "error"):
+            value = exc.extra.get(key)
+            if isinstance(value, str) and value:
+                detail_parts.append(value)
+    detail = "\n".join(detail_parts).lower()
+    return any(marker in detail for marker in _NON_FAST_FORWARD_PUSH_MARKERS)
+
+
+def _force_with_lease_variant(cmd: list[str]) -> list[str] | None:
+    if cmd[:2] != ["git", "push"] or "--force-with-lease" in cmd:
+        return None
+    retry_cmd = list(cmd)
+    try:
+        origin_index = retry_cmd.index("origin")
+    except ValueError:
+        return None
+    retry_cmd.insert(origin_index, "--force-with-lease")
+    return retry_cmd
 
 
 def _git_push_env(cmd: list[str]) -> dict[str, str] | None:

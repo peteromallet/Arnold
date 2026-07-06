@@ -991,6 +991,48 @@ def test_run_git_push_command_recovers_when_timeout_already_published_branch(
     assert any("timed out locally" in message for message in messages)
 
 
+def test_run_git_push_command_retries_non_fast_forward_with_force_with_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    messages: list[str] = []
+    calls: list[list[str]] = []
+
+    def fake_run_command(_root, cmd, **_kwargs):
+        calls.append(list(cmd))
+        if cmd == ["git", "push", "--no-verify", "origin", "HEAD:branch-x"]:
+            raise CliError(
+                "git_push_failed",
+                "git push failed",
+                extra={"stderr": "! [rejected] HEAD -> branch-x (non-fast-forward)"},
+            )
+        if cmd == ["git", "push", "--no-verify", "--force-with-lease", "origin", "HEAD:branch-x"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            _run_command=fake_run_command,
+        ),
+    )
+
+    proc = git_ops._run_git_push_command(
+        root,
+        ["git", "push", "--no-verify", "origin", "HEAD:branch-x"],
+        writer=messages.append,
+    )
+
+    assert proc.returncode == 0
+    assert calls == [
+        ["git", "push", "--no-verify", "origin", "HEAD:branch-x"],
+        ["git", "push", "--no-verify", "--force-with-lease", "origin", "HEAD:branch-x"],
+    ]
+    assert any("retrying with --force-with-lease" in message for message in messages)
+
+
 def test_run_git_push_command_recovers_when_timeout_already_published_branch_with_u_origin_branch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
