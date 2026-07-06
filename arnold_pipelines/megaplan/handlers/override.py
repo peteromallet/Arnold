@@ -1500,6 +1500,13 @@ def _override_set_profile(
             "reason": args.reason,
         },
     )
+    # A profile override is meant to change live phase routing. If a failed or
+    # in-flight phase keeps its previous active_step / resume cursor, the
+    # driver can replay the old provider chain and never realize the new
+    # profile should be selected on redispatch.
+    state.pop("active_step", None)
+    state.pop("latest_failure", None)
+    state.pop("resume_cursor", None)
     save_state_merge_meta(plan_dir, state)
     try:
         from arnold_pipelines.megaplan.observability.events import emit, EventKind
