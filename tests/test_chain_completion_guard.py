@@ -16,7 +16,7 @@ from arnold_pipelines.megaplan.chain import (
     run_chain,
     save_chain_state,
 )
-from arnold_pipelines.megaplan.chain.spec import ChainState, load_spec
+from arnold_pipelines.megaplan.chain.spec import ChainSpec, ChainState, load_spec
 from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_PR_MERGE
 
 
@@ -1342,6 +1342,98 @@ def test_latest_execution_batch_all_tasks_done_prefers_authoritative_batch_updat
 
     assert ok is True
     assert reason in {"execution_batch_2.json", "finalize.json"}
+
+
+def test_recover_blocked_execute_if_tasks_done_handles_failed_no_next_step_projection(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    head = _commit_semantic_change(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "name": "plan-m1",
+        "current_state": "failed",
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"execution_baseline": {"head": base}},
+        "history": [{"step": "execute", "result": "blocked"}],
+        "latest_failure": {
+            "kind": "no_next_step",
+            "message": "no next_step and no override available",
+        },
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state) + "\n", encoding="utf-8")
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "baseline_test_failures": None,
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "kind": "code",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": head,
+                    },
+                    {
+                        "id": "T2",
+                        "status": "skipped",
+                        "kind": "test",
+                        "reviewer_verdict": "deferred_baseline_unavailable",
+                        "executor_notes": (
+                            "Deferred by harness: baseline_test_failures is null, "
+                            "so this no-new-failures checkpoint cannot compare "
+                            "against a recorded baseline."
+                        ),
+                    },
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    writer = mock.Mock()
+    outcome = chain_module.DriverOutcome(
+        plan="plan-m1",
+        status="failed",
+        final_state="failed",
+        iterations=2,
+        reason="no next_step and no override available",
+        last_phase="status",
+    )
+
+    recovered = chain_module._recover_blocked_execute_if_tasks_done(
+        tmp_path,
+        tmp_path / "chain.yaml",
+        ChainSpec(milestones=[]),
+        outcome,
+        writer=writer,
+    )
+
+    assert recovered is True
+    saved = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert saved["current_state"] == "executed"
+    assert "latest_failure" not in saved
+    assert "resume_cursor" not in saved
+    writer.assert_called_once()
+    assert "continuing from executed state" in writer.call_args.args[0]
 
 
 def test_latest_execution_batch_all_tasks_done_ignores_stale_pending_finalize_rows(
