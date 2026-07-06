@@ -3204,8 +3204,6 @@ def _recover_blocked_execute_if_tasks_done(
     *,
     writer,
 ) -> bool:
-    if outcome.status not in BLOCKED_EXECUTE_OUTCOME_STATUSES:
-        return False
     try:
         plan_dir = resolve_plan_dir(root, outcome.plan)
     except CliError:
@@ -3217,6 +3215,18 @@ def _recover_blocked_execute_if_tasks_done(
         return False
     if _latest_execute_result(plan_dir) != "blocked":
         return False
+    if outcome.status not in BLOCKED_EXECUTE_OUTCOME_STATUSES:
+        if outcome.status != "failed":
+            return False
+        try:
+            state_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return False
+        if not isinstance(state_payload, dict):
+            return False
+        latest_failure = state_payload.get("latest_failure")
+        if not isinstance(latest_failure, dict) or latest_failure.get("kind") != "no_next_step":
+            return False
 
     all_done, reason = _latest_execution_batch_all_tasks_done(plan_dir)
     if not all_done:
