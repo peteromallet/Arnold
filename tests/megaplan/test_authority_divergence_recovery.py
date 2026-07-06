@@ -378,6 +378,44 @@ def test_status_hides_recovery_blockers_while_execute_step_is_live(
     assert "suggested_recovery_commands" not in response
 
 
+def test_status_ignores_non_blocking_gate_warnings_after_finalize(
+    local_plan_fixture: LocalPlanFixture,
+) -> None:
+    state = load_state(local_plan_fixture.plan_dir)
+    state["current_state"] = "finalized"
+    state["last_gate"] = {
+        "warnings": [
+            "The plan has one open question about Hetzner deployment/sync mechanics for cloud verification (Step 8). This is scoped as an integration check and does not block local implementation, but the implementation worker should resolve it before the cloud validation step.",
+            "The `_normalize_stage_metric_phase` garbling concern is noted but deferred: Step 1 says to treat it as a real defect only if the working tree confirms it. The implementation worker should inspect this early to avoid downstream rework.",
+        ]
+    }
+    write_plan_state(local_plan_fixture.plan_dir, mode="replace", state=state)
+    (local_plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps({"tasks": [{"id": "T1", "status": "pending"}]}) + "\n",
+        encoding="utf-8",
+    )
+    atomic_write_phase_result(
+        local_plan_fixture.plan_dir,
+        PhaseResult(
+            phase="finalize",
+            invocation_id="fixture-invocation",
+            exit_kind=ExitKind.success.value,
+        ),
+    )
+
+    response = handle_status(
+        local_plan_fixture.root,
+        argparse.Namespace(plan=local_plan_fixture.plan_name, pending_human=False),
+    )
+
+    assert response["state"] == "finalized"
+    assert response["next_step"] == "execute"
+    assert "execute" in response["valid_next"]
+    assert "step" in response["valid_next"]
+    assert response["progress"]["tasks_pending"] == 1
+    assert "blocker_recovery" not in response
+
+
 def test_progress_hides_recovery_blockers_while_execute_step_is_live(
     local_plan_fixture: LocalPlanFixture,
 ) -> None:
