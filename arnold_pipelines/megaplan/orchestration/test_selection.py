@@ -846,26 +846,6 @@ def resolve_baseline_test_selection(
             if isinstance(sel, dict) and sel.get("kind") != "path"
         }
     )
-    if non_path_kinds:
-        has_path_selector = any(
-            isinstance(sel, dict)
-            and sel.get("kind") == "path"
-            and isinstance(sel.get("value"), str)
-            and bool(sel.get("value", "").strip())
-            for sel in selectors
-        )
-        path_detail = "" if has_path_selector else " and no path selectors"
-        return {
-            "mode": "unresolved",
-            "reason": (
-                "test_blast_radius includes non-path selector kind(s) "
-                + ", ".join(non_path_kinds)
-                + path_detail
-                + "; scoped baseline selection is unresolved because pytest paths "
-                "cannot faithfully express the model's wider intent"
-            ),
-            "command_override": None,
-        }
 
     # 4. Build scoped pytest command from path selectors.
     path_values: list[str] = []
@@ -879,8 +859,15 @@ def resolve_baseline_test_selection(
         return {
             "mode": "unresolved",
             "reason": (
-                "test_blast_radius strategy is 'scoped' but no path selectors "
-                "with non-empty values; scoped baseline selection is unresolved"
+                "test_blast_radius includes non-path selector kind(s) "
+                + ", ".join(non_path_kinds)
+                + " and no path selectors; scoped baseline selection is unresolved "
+                "because pytest paths cannot faithfully express the model's wider intent"
+                if non_path_kinds
+                else (
+                    "test_blast_radius strategy is 'scoped' but no path selectors "
+                    "with non-empty values; scoped baseline selection is unresolved"
+                )
             ),
             "command_override": None,
         }
@@ -940,6 +927,12 @@ def resolve_baseline_test_selection(
     reason = f"Scoped to {len(unique_paths)} path selector(s) from plan metadata"
     if always_run_paths:
         reason += f"; folded in {len(always_run_paths)} always_run path(s)"
+    if non_path_kinds:
+        reason += (
+            "; ignored non-path selector kind(s) "
+            + ", ".join(non_path_kinds)
+            + " for baseline capture"
+        )
     return {
         "mode": "scoped",
         "reason": reason,
