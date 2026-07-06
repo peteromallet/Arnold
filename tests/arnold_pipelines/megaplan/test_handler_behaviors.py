@@ -1247,6 +1247,69 @@ class TestExecuteTimeoutHardening:
 
 
 class TestAutoExecuteRecovery:
+    def test_completed_gate_artifact_is_adopted_after_worker_failure(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.auto import (
+            _recover_completed_gate_artifact_after_failure,
+        )
+
+        plan_dir = tmp_path / ".megaplan" / "plans" / "p"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "current_state": "critiqued",
+                    "active_step": {"phase": "gate"},
+                    "meta": {},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (plan_dir / "gate.json").write_text(
+            json.dumps(
+                {
+                    "recommendation": "PROCEED",
+                    "passed": True,
+                    "unresolved_flags": [],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        assert _recover_completed_gate_artifact_after_failure(plan_dir) is True
+
+        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        assert state["current_state"] == "gated"
+        assert "active_step" not in state
+        assert state["meta"]["gate_artifact_recovery"]["gate_recommendation"] == "PROCEED"
+
+    def test_non_proceed_gate_artifact_is_not_adopted_after_worker_failure(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.auto import (
+            _recover_completed_gate_artifact_after_failure,
+        )
+
+        plan_dir = tmp_path / ".megaplan" / "plans" / "p"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"current_state": "critiqued", "active_step": {"phase": "gate"}})
+            + "\n",
+            encoding="utf-8",
+        )
+        (plan_dir / "gate.json").write_text(
+            json.dumps({"recommendation": "ITERATE", "passed": False}) + "\n",
+            encoding="utf-8",
+        )
+
+        assert _recover_completed_gate_artifact_after_failure(plan_dir) is False
+
+        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        assert state["current_state"] == "critiqued"
+
     def test_completed_execution_not_adopted_after_newer_needs_rework_review(
         self, tmp_path: Path
     ) -> None:
