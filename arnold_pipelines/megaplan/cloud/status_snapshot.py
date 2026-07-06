@@ -817,9 +817,16 @@ def _classify_session(
     if _canonical_spec_missing(workspace, remote_spec):
         return "attention", "spec missing or unreadable"
 
-    # A current needs-human sidecar is ground truth for active work. A complete
-    # chain with no active plan has no live repair target, so stale repair
-    # exhaustion markers from earlier ticks must not keep it blocked forever.
+    # Fresh repair custody is stronger than a needs-human sidecar. Repair loops
+    # can leave old needs-human markers in place while a higher layer is already
+    # working the case; status consumers should show that as repairing.
+    if _is_repair_active(repair_progress, repair_data_dir, session, now):
+        return "repairing", "automated repair dispatched for this session"
+
+    # A current needs-human sidecar is ground truth for non-repairing active
+    # work. A complete chain with no active plan has no live repair target, so
+    # stale repair exhaustion markers from earlier ticks must not keep it
+    # blocked forever.
     if _is_current_needs_human(
         session=session,
         needs_human=needs_human,
@@ -853,11 +860,6 @@ def _classify_session(
 
     if latest_activity_dt is not None and (now - latest_activity_dt).total_seconds() <= STALE_ACTIVITY_S:
         return "running", "recent plan/chain activity"
-
-    # Active automated repair only wins after live/recent activity has been
-    # ruled out. Stale repair markers must not mask a recovered chain.
-    if _is_repair_active(repair_progress, repair_data_dir, session, now):
-        return "repairing", "automated repair dispatched for this session"
 
     # Not complete, not blocked, not under repair, not live, not recent. That is
     # exactly the "should be working but is not" case the watchdog escalates.

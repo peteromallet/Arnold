@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -435,12 +436,15 @@ def _run_command(
     writer,
     timeout: float = _DEFAULT_COMMAND_TIMEOUT_SECONDS,
     error_code: str = "command_failed",
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a git/gh command and raise CliError with captured output on failure."""
+    command_env = env if env is not None else _compat()._command_env(cmd)
     try:
         proc = _compat().subprocess.run(
             cmd,
             cwd=str(root),
+            env=command_env,
             capture_output=True,
             text=True,
             check=False,
@@ -507,6 +511,7 @@ def _run_git_push_command(
             writer=writer,
             timeout=_GIT_PUSH_TIMEOUT_SECONDS,
             error_code=error_code,
+            env=_compat()._git_push_env(cmd),
         )
     except CliError as exc:
         error = exc.extra.get("error") if isinstance(exc.extra, dict) else None
@@ -518,6 +523,24 @@ def _run_git_push_command(
             return subprocess.CompletedProcess(cmd, 0, "", "")
         raise
 
+
+
+def _git_push_env(cmd: list[str]) -> dict[str, str] | None:
+    if len(cmd) < 2 or cmd[0] != "git" or cmd[1] != "push":
+        return None
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    token = env.get("GITHUB_TOKEN") or env.get("GH_TOKEN")
+    if token:
+        auth = base64.b64encode(f"x-access-token:{token}".encode("utf-8")).decode("ascii")
+        try:
+            count = int(env.get("GIT_CONFIG_COUNT") or "0")
+        except ValueError:
+            count = 0
+        env["GIT_CONFIG_COUNT"] = str(count + 1)
+        env[f"GIT_CONFIG_KEY_{count}"] = "http.https://github.com/.extraheader"
+        env[f"GIT_CONFIG_VALUE_{count}"] = f"AUTHORIZATION: basic {auth}"
+    return env
 
 def _recover_timed_out_git_push(root: Path, cmd: list[str], *, writer) -> bool:
     """Treat timed-out pushes as success when origin reached the expected sha."""
