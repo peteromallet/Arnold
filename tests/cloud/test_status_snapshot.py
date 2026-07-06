@@ -8,6 +8,7 @@ single source every status consumer reads.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -352,8 +353,8 @@ def test_live_process_beats_repair_marker(fx):
 
     snap = fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": True})
     entry = _by_session(snap, "live-repair")
-    assert entry["status"] == "running"
-    assert entry["repairing"] is False
+    assert entry["status"] == "repairing"
+    assert entry["repairing"] is True
 
 
 def test_active_plan_step_counts_as_live_process_and_latest_activity(fx, monkeypatch):
@@ -385,7 +386,7 @@ def test_active_plan_step_counts_as_live_process_and_latest_activity(fx, monkeyp
     assert entry["latest_activity"] == "2026-07-04T22:11:15Z"
 
 
-def test_plan_live_activity_sidecar_recovers_manual_execute_when_pid_probe_unavailable(fx):
+def test_plan_live_activity_sidecar_does_not_count_as_live_process_without_pid(fx):
     fx.add_session("manual", plan_name="planManual")
     fx.add_chain_health(
         "manual",
@@ -403,9 +404,60 @@ def test_plan_live_activity_sidecar_recovers_manual_execute_when_pid_probe_unava
     snap = fx.build()
     entry = _by_session(snap, "manual")
 
-    assert entry["status"] == "running"
-    assert entry["process"] is True
+    assert entry["status"] == "attention"
+    assert entry["process"] is False
+    assert "stalled" in entry["operator_next"]
 
+
+
+def test_live_activity_supersedes_stale_needs_human_and_chain_health_plan(fx):
+    spec = fx.root / "native" / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec.parent.mkdir(parents=True, exist_ok=True)
+    spec.write_text("milestones: []\n", encoding="utf-8")
+    workspace = fx.add_session("native", remote_spec=str(spec))
+    old_plan = "plan-old"
+    new_plan = "plan-new"
+    fx.add_chain_health(
+        "native",
+        current_plan_name=old_plan,
+        last_state="blocked",
+        updated_at=NOW - timedelta(hours=1),
+    )
+    chain_digest = hashlib.sha1(str(spec.resolve()).encode("utf-8")).hexdigest()[:12]
+    chain_state = workspace / ".megaplan" / "plans" / ".chains" / f"chain-{chain_digest}.json"
+    chain_state.parent.mkdir(parents=True, exist_ok=True)
+    chain_state.write_text(
+        json.dumps({"current_plan_name": new_plan, "last_state": "blocked"}),
+        encoding="utf-8",
+    )
+    fx.add_plan_state(
+        "native",
+        new_plan,
+        current_state="finalized",
+        active_step={
+            "phase": "execute",
+            "worker_pid": 4242,
+            "last_activity_at": (NOW - timedelta(minutes=1)).isoformat(),
+        },
+    )
+    (fx.repair_dir / "native.needs-human.json").write_text(
+        json.dumps(
+            {
+                "session": "native",
+                "summary": "old escalation",
+                "recorded_at": (NOW - timedelta(minutes=10)).isoformat(),
+                "current_plan_name": old_plan,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snap = fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": True})
+    entry = _by_session(snap, "native")
+
+    assert entry["status"] == "running"
+    assert entry["current_plan"] == new_plan
+    assert entry["operator_next"] == "live runner activity supersedes older needs-human marker"
 
 def test_blocked_session_when_needs_human_marker_present(fx):
     fx.add_session("gated", plan_name="planGated")

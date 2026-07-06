@@ -3343,13 +3343,8 @@ if [ -d "$SRC/.git" ]; then
   BRANCH="$(git -C "$SRC" branch --show-current)"
   if [ "$BRANCH" != "$REF" ]; then git -C "$SRC" checkout "$REF"; fi
   if [ -n "$(git -C "$SRC" status --porcelain --untracked-files=no)" ]; then
-    echo "[megaplan-refresh] source checkout dirty; using clean runtime mirror at $RUNTIME_SRC"
-    rm -rf "$RUNTIME_SRC"
-    mkdir -p "$(dirname "$RUNTIME_SRC")"
-    git clone --shared --no-checkout "$SRC" "$RUNTIME_SRC"
-    git -C "$RUNTIME_SRC" fetch origin "$REF"
-    git -C "$RUNTIME_SRC" checkout --detach "origin/$REF"
-    export MEGAPLAN_RUNTIME_SRC="$RUNTIME_SRC"
+    echo "[megaplan-refresh] source checkout dirty; using current source checkout at $SRC to avoid stale runtime mirror"
+    export MEGAPLAN_RUNTIME_SRC="$SRC"
   else
     if ! git -C "$SRC" merge-base --is-ancestor HEAD "origin/$REF"; then
       echo "[megaplan-refresh] refusing editable install refresh: $SRC has local commits not contained in origin/$REF"
@@ -4138,6 +4133,11 @@ if needs_human_path.exists():
             discord_escalation_is_true_blocker = blocker.is_true_blocker
         except Exception:
             discord_escalation_is_true_blocker = False
+
+active_step = resolver_record.get("active_step_heartbeat")
+if isinstance(active_step, dict) and active_step.get("active"):
+    print("NO_TRIGGER")
+    raise SystemExit(0)
 
 classification, _ = evaluate_meta_repair_triggers(
     session,
@@ -5996,6 +5996,27 @@ def current_target_marks_terminal_stale_chain() -> bool:
         for item in stale_evidence
     )
 
+def manifest_marks_chain_complete() -> bool:
+    manifest_path = remote_spec.parent / "completion-manifest.json"
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    if str(payload.get("schema") or "").strip() != "arnold.megaplan.chain_completion_manifest.v1":
+        return False
+    milestones = payload.get("milestones")
+    if not isinstance(milestones, list) or not milestones:
+        return False
+    terminal = {"done", "complete", "completed"}
+    statuses = [
+        str(item.get("status") or "").strip().lower()
+        for item in milestones
+        if isinstance(item, dict)
+    ]
+    return len(statuses) == len(milestones) and all(status in terminal for status in statuses)
+
 def chain_health_blocks_terminal_shortcut() -> bool:
     path = marker_dir / f"{session}.chain-health.progress.json"
     try:
@@ -6024,6 +6045,10 @@ def chain_health_blocks_terminal_shortcut() -> bool:
 
 if current_target_marks_terminal_stale_chain() and not chain_health_blocks_terminal_shortcut():
     print("complete\tterminal plan state supersedes stale chain state")
+    raise SystemExit(0)
+
+if manifest_marks_chain_complete():
+    print("complete\tcompletion manifest marks chain complete")
     raise SystemExit(0)
 
 

@@ -189,6 +189,73 @@ class TestClassifyPersistentRecurringRetry:
         assert result.should_dispatch is False
         assert "supersedes stale recurring repair evidence" in result.rationale[0]
 
+    def test_recurring_retry_skips_stale_repair_data_when_chain_spec_is_gone(self) -> None:
+        result = classify_repair_system_failure(
+            session="s7c",
+            evidence={
+                "repair_data": {
+                    "current_signature": {
+                        "milestone_or_plan": "demo-plan",
+                        "current_state": "blocked",
+                    }
+                }
+            },
+            current_target_observation={
+                "authoritative_source": "marker",
+                "current_refs": {
+                    "run_kind": "chain",
+                    "current_plan_name": "",
+                    "chain_current_plan_name": "",
+                    "plan_current_state": "",
+                    "chain_last_state": "",
+                },
+                "plan_state": {"present": False},
+                "chain_state": {"present": False},
+                "chain_log": {"present": False},
+                "active_step_heartbeat": {"active": False},
+                "stale_evidence": [{"kind": "spec_missing"}],
+            },
+            failure_kinds=["phase_failed", "phase_failed", "phase_failed"],
+            attempt_outcomes=[REPAIRING, REPAIRING, REPAIRING],
+        )
+        assert result.trigger is None
+        assert result.should_dispatch is False
+        assert "chain spec is missing" in result.rationale[0]
+
+    def test_recurring_retry_skips_stale_repair_data_when_only_chain_log_remains(self) -> None:
+        result = classify_repair_system_failure(
+            session="s7d",
+            evidence={
+                "repair_data": {
+                    "current_signature": {
+                        "milestone_or_plan": "demo-plan",
+                        "current_state": "blocked",
+                    }
+                }
+            },
+            current_target_observation={
+                "authoritative_source": "marker",
+                "current_refs": {
+                    "run_kind": "chain",
+                    "current_plan_name": "",
+                    "chain_current_plan_name": "",
+                    "plan_current_state": "",
+                    "chain_last_state": "",
+                },
+                "plan_state": {"present": False},
+                "chain_state": {"present": False},
+                "chain_log": {"present": True},
+                "active_step_heartbeat": {"active": False},
+                "tmux_process": {"live_status": "unknown"},
+                "stale_evidence": [{"kind": "spec_missing"}],
+            },
+            failure_kinds=["phase_failed", "phase_failed", "phase_failed"],
+            attempt_outcomes=[REPAIRING, REPAIRING, REPAIRING],
+        )
+        assert result.trigger is None
+        assert result.should_dispatch is False
+        assert "chain spec is missing" in result.rationale[0]
+
     def test_recurring_retry_skips_stale_execute_loop_when_live_status_has_no_retry_path(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -2160,3 +2227,50 @@ class TestPolicyEndToEnd:
         assert result.allowed is False, (
             "Commit gate must be off by default even when no recursion exists"
         )
+
+
+def test_repair_evidence_superseded_terminal_blocker_does_not_crash(tmp_path):
+    from arnold_pipelines.megaplan.cloud.meta_repair import (
+        _repair_evidence_superseded_by_current_target,
+    )
+
+    status_path = tmp_path / "state.json"
+    status_path.write_text(
+        json.dumps(
+            {
+                "current_state": "finalized",
+                "next_step": None,
+                "valid_next": [],
+                "blocker_recovery": {"has_terminal_blockers": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    evidence = {
+        "repair_data": {
+            "current_signature": {
+                "failure_kind": "blocked_state_or_recovery_error",
+                "phase_or_step": "execute",
+            },
+            "current_failure_context": {
+                "plan_runtime_state": {"current_state": "finalized"},
+            },
+        }
+    }
+    observation = {
+        "authoritative_source": "chain_state",
+        "current_refs": {
+            "current_plan_name": "plan-a",
+            "plan_current_state": "finalized",
+            "chain_last_state": "finalized",
+        },
+        "plan_state": {"path": str(status_path)},
+        "chain_state": {"present": True},
+    }
+
+    reason = _repair_evidence_superseded_by_current_target(
+        evidence=evidence,
+        current_target_observation=observation,
+    )
+
+    assert isinstance(reason, str)

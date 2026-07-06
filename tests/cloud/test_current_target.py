@@ -76,7 +76,7 @@ def test_resolve_current_target_prefers_live_child_session(tmp_path: Path) -> No
     assert record["stale_evidence"] == [
         {
             "kind": "missing_chain_state",
-            "path": str(_chain_state_path(workspace, parent_spec)),
+            "path": str(chain_spec._state_path_for(parent_spec)),
         },
         {
             "kind": "missing_plan_state",
@@ -417,6 +417,14 @@ def test_resolve_current_target_tolerates_partial_evidence_fixture(tmp_path: Pat
         {
             "kind": "invalid_needs_human_json",
             "path": str(repair_data_dir / "partial-session.needs-human.json"),
+        },
+        {
+            "kind": "spec_missing",
+            "path": "",
+        },
+        {
+            "kind": "workspace_missing",
+            "path": "",
         },
     ]
     assert record["rationale"] == [
@@ -821,7 +829,7 @@ def test_resolve_current_target_active_step_heartbeat_present(tmp_path: Path) ->
         encoding="utf-8",
     )
 
-    record = resolve_current_target("demo", marker_dir=marker_dir)
+    record = resolve_current_target("demo", marker_dir=marker_dir, pid_is_live=lambda pid: pid == 12345)
 
     hb = record["active_step_heartbeat"]
     assert hb["active"] is True
@@ -829,6 +837,7 @@ def test_resolve_current_target_active_step_heartbeat_present(tmp_path: Path) ->
     assert hb["attempt"] == 2
     assert hb["worker_pid"] == "12345"
     assert hb["started_at"] == "2025-07-01T12:00:00Z"
+    assert hb["pid_live"] is True
 
 
 def test_resolve_current_target_active_step_heartbeat_absent(tmp_path: Path) -> None:
@@ -957,6 +966,50 @@ def test_repair_progress_sidecar_includes_mtime(tmp_path: Path) -> None:
     assert len(items) == 1
     assert items[0]["status"] == "waiting"
     assert isinstance(items[0]["mtime"], float) and items[0]["mtime"] > 0
+
+def test_active_step_dead_pid_is_stale_not_live(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    _write_marker(
+        marker_dir / "demo-session.json",
+        {
+            "session": "demo-session",
+            "workspace": str(workspace),
+            "remote_spec": str(spec_path),
+            "run_kind": "chain",
+        },
+    )
+    _write_chain_state(
+        _chain_state_path(workspace, spec_path),
+        {"current_plan_name": "m1-plan", "last_state": "finalized"},
+    )
+    _write_plan(
+        workspace / ".megaplan" / "plans" / "m1-plan",
+        {
+            "name": "m1-plan",
+            "current_state": "finalized",
+            "active_step": {"phase": "execute", "worker_pid": 4242},
+        },
+    )
+
+    record = resolve_current_target(
+        "demo-session",
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+        pid_is_live=lambda pid: False,
+    )
+
+    assert record["active_step_heartbeat"]["active"] is False
+    assert record["active_step_heartbeat"]["pid_live"] is False
+    assert {item["kind"] for item in record["stale_evidence"]} >= {"stale_active_step_dead_pid"}
+    assert "active_step worker PID is not live" in record["rationale"]
+
 def _chain_state_path(workspace: Path, spec_path: Path) -> Path:
-    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
-    return workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+    return chain_spec._state_path_for(spec_path)

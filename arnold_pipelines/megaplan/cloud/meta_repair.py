@@ -672,19 +672,35 @@ def _repair_evidence_superseded_by_current_target(
     if isinstance(active_step, Mapping) and bool(active_step.get("active")):
         return ""
 
-    plan_state = current_target_observation.get("plan_state")
-    chain_state = current_target_observation.get("chain_state")
-    chain_log = current_target_observation.get("chain_log")
-    has_proof = any(
-        isinstance(record, Mapping) and bool(record.get("present"))
-        for record in (plan_state, chain_state, chain_log)
-    )
-    if not has_proof:
-        return ""
+    stale_evidence = current_target_observation.get("stale_evidence")
+    stale_kinds = {
+        _meta_safe_text(item.get("kind"))
+        for item in stale_evidence
+        if isinstance(item, Mapping)
+    } if isinstance(stale_evidence, Sequence) else set()
 
     current_refs = current_target_observation.get("current_refs")
     if not isinstance(current_refs, Mapping):
         current_refs = {}
+    current_run_kind = _meta_safe_text(current_refs.get("run_kind")).lower()
+
+    has_runtime_proof = _current_target_has_runtime_proof(current_target_observation)
+    if "workspace_missing" in stale_kinds:
+        return (
+            "current-target observation supersedes stale recurring repair evidence: "
+            "workspace is missing for the recorded repair target"
+        )
+    if (
+        "spec_missing" in stale_kinds
+        and current_run_kind in {"chain", "epic_chain"}
+        and not has_runtime_proof
+    ):
+        return (
+            "current-target observation supersedes stale recurring repair evidence: "
+            "chain spec is missing and no live chain/plan artifacts remain"
+        )
+    if not has_runtime_proof:
+        return ""
 
     current_plan_name = _meta_safe_text(
         current_refs.get("current_plan_name")
@@ -757,8 +773,11 @@ def _repair_evidence_superseded_by_current_target(
                 f"repair-data state={repair_state} but live chain state is {current_chain_state}"
             )
 
+    observation_plan_state = current_target_observation.get("plan_state")
     live_status = _load_current_target_status(
-        plan_state.get("path") if isinstance(plan_state, Mapping) else None
+        observation_plan_state.get("path")
+        if isinstance(observation_plan_state, Mapping)
+        else None
     )
     if (
         repair_kind == "blocked_state_or_recovery_error"
@@ -794,6 +813,38 @@ def _repair_evidence_superseded_by_current_target(
             )
 
     return ""
+
+
+def stale_repair_evidence_reason(
+    *,
+    evidence: Mapping[str, Any] | None,
+    current_target_observation: Mapping[str, Any] | None,
+) -> str:
+    """Return a rationale when current-target state makes repair evidence stale."""
+
+    return _repair_evidence_superseded_by_current_target(
+        evidence=evidence,
+        current_target_observation=current_target_observation,
+    )
+
+
+def _current_target_has_runtime_proof(current_target_observation: Mapping[str, Any]) -> bool:
+    active_step = current_target_observation.get("active_step_heartbeat")
+    if isinstance(active_step, Mapping) and bool(active_step.get("active")):
+        return True
+
+    tmux_process = current_target_observation.get("tmux_process")
+    if isinstance(tmux_process, Mapping) and _meta_safe_text(tmux_process.get("live_status")) == "alive":
+        return True
+
+    for key in ("plan_state", "chain_state"):
+        record = current_target_observation.get(key)
+        if isinstance(record, Mapping) and bool(record.get("present")):
+            return True
+
+    # Historical logs can survive after the target is gone; do not treat them
+    # as proof that another repair/meta-repair attempt is warranted.
+    return False
 
 
 def _meta_safe_text(value: Any) -> str:
@@ -1575,6 +1626,7 @@ __all__ = [
     "persist_meta_repair_record",
     "remaining_meta_budget_secs",
     "retrigger_ordinary_repair",
+    "stale_repair_evidence_reason",
     "trigger_priority",
     "verify_retrigger_success",
 ]

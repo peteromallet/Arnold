@@ -29,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
+from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
 from arnold_pipelines.megaplan.cloud.repair_contract import is_success_outcome
 from arnold_pipelines.megaplan.cloud.session_markers import (
@@ -696,6 +697,23 @@ def _build_session_entry(
         or plan_name
         or None
     )
+    try:
+        current_target_record = resolve_current_target(
+            session,
+            marker_dir=marker_dir,
+            repair_data_dir=repair_data_dir,
+        )
+    except Exception:
+        current_target_record = {}
+    current_refs = (
+        current_target_record.get("current_refs")
+        if isinstance(current_target_record, Mapping)
+        else None
+    )
+    if isinstance(current_refs, Mapping):
+        resolved_current_plan = current_refs.get("current_plan_name")
+        if isinstance(resolved_current_plan, str) and resolved_current_plan.strip():
+            current_plan = resolved_current_plan.strip()
     # Plan lifecycle state for the per-plan stage %. Prefer the plan's own
     # ``current_state`` (from state.json): the chain-health ``last_state`` can be
     # a transient execute sub-state (e.g. ``authority_divergence``, ``error``)
@@ -822,6 +840,16 @@ def _classify_session(
     # working the case; status consumers should show that as repairing.
     if _is_repair_active(repair_progress, repair_data_dir, session, now):
         return "repairing", "automated repair dispatched for this session"
+
+    # A live runner with activity newer than the needs-human marker means the
+    # target has moved since escalation. Do not let that stale marker mask the
+    # recovery/retry that is currently executing.
+    if _needs_human_superseded_by_live_activity(
+        needs_human=needs_human,
+        liveness=liveness,
+        latest_activity_dt=latest_activity_dt,
+    ):
+        return "running", "live runner activity supersedes older needs-human marker"
 
     # A current needs-human sidecar is ground truth for non-repairing active
     # work. A complete chain with no active plan has no live repair target, so
@@ -1015,6 +1043,21 @@ def _find_superseding_sibling(
 
 
 
+def _needs_human_superseded_by_live_activity(
+    *,
+    needs_human: Mapping[str, Any] | None,
+    liveness: Mapping[str, bool],
+    latest_activity_dt: datetime | None,
+) -> bool:
+    if not _is_needs_human(needs_human):
+        return False
+    if not (liveness.get("tmux") or liveness.get("process")):
+        return False
+    if latest_activity_dt is None:
+        return False
+    recorded_at = _parse_iso(str(needs_human.get("recorded_at") or ""))
+    return recorded_at is not None and latest_activity_dt > recorded_at
+
 def _is_current_needs_human(
     *,
     session: str,
@@ -1166,13 +1209,8 @@ def _augment_liveness_with_plan_state(
             augmented["process"] = True
             return augmented
 
-    # Watchdog chain-health is produced from the same local namespace and can
-    # observe an active step even when the generic ps matcher cannot identify a
-    # direct manual phase command (for example ``megaplan execute --plan ...``).
-    if chain_health and bool(chain_health.get("plan_has_active_step")) and bool(
-        chain_health.get("plan_has_live_activity")
-    ):
-        augmented["process"] = True
+    # Chain-health active-step flags are cached breadcrumbs. They can outlive
+    # the worker, so only a live PID or process probe may upgrade liveness.
     return augmented
 
 
