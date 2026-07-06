@@ -7,7 +7,7 @@ from typing import Any
 
 from arnold_pipelines.megaplan.anchors import anchor_summary
 from arnold_pipelines.megaplan.types import StepResponse
-from arnold_pipelines.megaplan.planning.state import STATE_BLOCKED
+from arnold_pipelines.megaplan.planning.state import STATE_BLOCKED, STATE_FINALIZED
 from arnold_pipelines.megaplan.user_actions import FALLBACK, OMIT
 from arnold_pipelines.megaplan._core import (
     active_phase_name,
@@ -1005,6 +1005,17 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
                 # explicitly records non-terminal resolutions. Advertising
                 # recover-blocked here only causes auto loops to dispatch a
                 # helper that must fail immediately.
+                response["next_step"] = None
+                response["valid_next"] = []
+            elif (
+                state.get("current_state") == STATE_FINALIZED
+                and response.get("next_step") == "execute"
+                and blocker_recovery.get("has_terminal_blockers") is True
+            ):
+                # Finalized plans can still accumulate execute-surface hard
+                # blockers (for example malformed / empty execution batch
+                # artifacts). In that state the next actionable move is to
+                # resolve the blocker, not to re-dispatch execute and spin.
                 response["next_step"] = None
                 response["valid_next"] = []
     external_resume_command = _external_error_resume_command(state)

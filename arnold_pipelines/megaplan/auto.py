@@ -2163,6 +2163,24 @@ def _clear_obsolete_failure_for_terminal_block(
         return
 
 
+def _terminal_blocker_recovery_context(
+    status: Mapping[str, Any],
+    *,
+    next_step: str | None,
+) -> dict[str, Any] | None:
+    blocker_recovery = status.get("blocker_recovery")
+    if not isinstance(blocker_recovery, dict):
+        return None
+    if blocker_recovery.get("has_terminal_blockers") is not True:
+        return None
+    state = status.get("state")
+    if state == STATE_BLOCKED and next_step is None and not (status.get("valid_next") or []):
+        return blocker_recovery
+    if state == STATE_FINALIZED and next_step == "execute":
+        return blocker_recovery
+    return None
+
+
 def _reconcile_latest_execution_batch(plan_dir: Path | None) -> dict[str, Any] | None:
     if plan_dir is None:
         return None
@@ -3473,6 +3491,10 @@ def drive(
 
         next_step = status.get("next_step")
         valid_next = status.get("valid_next") or []
+        terminal_blocker_recovery = _terminal_blocker_recovery_context(
+            status,
+            next_step=next_step if isinstance(next_step, str) else None,
+        )
 
         log(
             f"iter {iteration} state={state} next={next_step} valid_next={valid_next}",
@@ -4229,6 +4251,52 @@ def drive(
                     iterations=iteration,
                     reason="gate escalated and on_escalate=fail — human required",
                     last_phase=last_phase,
+                )
+            if terminal_blocker_recovery is not None:
+                blockers = terminal_blocker_recovery.get("blockers")
+                if not isinstance(blockers, list):
+                    blockers = []
+                blocking_reasons = [
+                    str(blocker.get("message") or blocker.get("blocker_id") or "terminal blocker")
+                    for blocker in blockers
+                    if isinstance(blocker, dict)
+                ]
+                suggested_commands = terminal_blocker_recovery.get("suggested_commands")
+                if not isinstance(suggested_commands, list):
+                    suggested_commands = []
+                reason = (
+                    "terminal blocker recovery requires operator action before execute can continue"
+                )
+                log(
+                    "terminal blocker recovery prevents further auto dispatch",
+                    blocker_count=len(blockers),
+                    blocking_reasons=blocking_reasons,
+                    suggested_commands=suggested_commands,
+                )
+                _record_failure(
+                    plan_dir=plan_dir,
+                    kind="terminal_blocker_recovery",
+                    message=reason,
+                    current_state=STATE_BLOCKED,
+                    phase=str(last_phase or next_step or "execute"),
+                    resume_cursor={"phase": "execute", "retry_strategy": "manual_review"},
+                    suggested_action=(
+                        "Resolve the recorded terminal blocker(s) before resuming automation."
+                    ),
+                    metadata={
+                        "blocking_reasons": blocking_reasons,
+                        "suggested_recovery_commands": suggested_commands,
+                        "iteration": iteration,
+                        "status_state": state,
+                    },
+                )
+                return _outcome(
+                    "blocked",
+                    final_state=STATE_BLOCKED,
+                    iterations=iteration,
+                    reason=reason,
+                    last_phase=last_phase,
+                    blocking_reasons=blocking_reasons,
                 )
             log(f"no next_step and no override available (valid_next={valid_next})")
             _record_failure(
