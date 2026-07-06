@@ -22,20 +22,39 @@
       "first_seen_seq": 156,
       "first_seen_ts": "2026-07-06T01:06:03.327729+00:00",
       "fix_commits": [],
-      "last_seen_seq": 157,
-      "last_seen_ts": "2026-07-06T01:06:03.975559+00:00",
+      "last_seen_seq": 161,
+      "last_seen_ts": "2026-07-06T01:55:28.639393+00:00",
       "linked_incident_ids": [
         "inc-megaplan-native-parity-corrective"
       ],
       "next_review_ts": null,
       "normalized_signature": "stale active step plan s tiebreaker and replan state initialized phase plan pid not live",
-      "occurrence_count": 2,
-      "owner_actor": "watchdog",
+      "occurrence_count": 4,
+      "owner_actor": "six_hour_auditor",
       "problem_id": "problem-55b5ebf18290",
       "recurred_after_fix": false,
       "scope": "repair_system",
       "status": "open",
       "title": "stale_active_step: plan=s3-tiebreaker-and-replan-20260706-0044; state=initialized; phase=plan; worker_pid=287069 not live"
+    },
+    {
+      "first_seen_seq": 159,
+      "first_seen_ts": "2026-07-06T01:52:10.049821+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 165,
+      "last_seen_ts": "2026-07-06T05:11:17.194179+00:00",
+      "linked_incident_ids": [
+        "inc-megaplan-native-parity-corrective"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "repair data outcome repairing kind chain workspace transient path",
+      "occurrence_count": 2,
+      "owner_actor": "immediate_repair",
+      "problem_id": "problem-67a765759422",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "repair-data outcome=repairing kind=chain workspace=/workspace/megaplan-native-parity-corrective/Arnold"
     },
     {
       "first_seen_seq": 1,
@@ -133,17 +152,74 @@
       "title": "repair-data outcome=repairing plan=demo-plan kind=plan workspace=/tmp/pytest-of-root/pytest-701/test_repair_loop_serializes_sa0/ws"
     },
     {
+      "first_seen_seq": 163,
+      "first_seen_ts": "2026-07-06T05:11:11.012816+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 163,
+      "last_seen_ts": "2026-07-06T05:11:11.012816+00:00",
+      "linked_incident_ids": [
+        "inc-megaplan-native-parity-corrective"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "phase failure s tiebreaker and replan recover blocked consecutive recorded t z state blocked active none started unknown pid none command recover blocked exited",
+      "occurrence_count": 1,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-ba6e85d2053d",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "phase_failure:s3-tiebreaker-and-replan-20260706-0044:recover-blocked:consecutive=0:recorded=2026-07-06T01:17:55Z:state=blocked:active=none:started=unknown:pid=none:command 'recover-blocked' exited 1"
+    },
+    {
+      "first_seen_seq": 162,
+      "first_seen_ts": "2026-07-06T05:11:02.606561+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 162,
+      "last_seen_ts": "2026-07-06T05:11:02.606561+00:00",
+      "linked_incident_ids": [
+        "inc-megaplan-native-parity-corrective"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "stopped and needs repair attention",
+      "occurrence_count": 1,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-bd43205325d0",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "session stopped and needs repair attention"
+    },
+    {
+      "first_seen_seq": 166,
+      "first_seen_ts": "2026-07-06T05:18:09.586858+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 166,
+      "last_seen_ts": "2026-07-06T05:18:09.586858+00:00",
+      "linked_incident_ids": [
+        "inc-megaplan-native-parity-corrective"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "repair data outcome live with fresh activity kind chain workspace transient path",
+      "occurrence_count": 1,
+      "owner_actor": "repair_system",
+      "problem_id": "problem-bef9405c197d",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "fixed",
+      "title": "repair-data outcome=live_with_fresh_activity kind=chain workspace=/workspace/megaplan-native-parity-corrective/Arnold"
+    },
+    {
       "first_seen_seq": 155,
       "first_seen_ts": "2026-07-05T23:34:02.322711+00:00",
       "fix_commits": [],
-      "last_seen_seq": 158,
-      "last_seen_ts": "2026-07-06T01:06:05.309505+00:00",
+      "last_seen_seq": 164,
+      "last_seen_ts": "2026-07-06T05:11:12.826464+00:00",
       "linked_incident_ids": [
         "inc-megaplan-native-parity-corrective"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair loop background dispatched",
-      "occurrence_count": 2,
+      "occurrence_count": 3,
       "owner_actor": "watchdog",
       "problem_id": "problem-e20c45ae0eb0",
       "recurred_after_fix": false,
@@ -155,10 +231,10 @@
   "projection": "problems",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:09cc08fb2cd1b7e381ef91a89f63139a2c49dd7a000a3ccf74e3b285af6cecb5",
-    "event_count": 158,
-    "journal_line_count": 158,
-    "last_seq": 158,
+    "digest": "sha256:ab09fc8081db4dfd6875417b107ce99b006e11418e5e6082e22a7b202593f8c9",
+    "event_count": 166,
+    "journal_line_count": 166,
+    "last_seq": 166,
     "malformed_line_count": 0
   }
 }

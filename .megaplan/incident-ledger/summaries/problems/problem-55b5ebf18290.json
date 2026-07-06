@@ -1,19 +1,19 @@
 {
   "fix_commits": [],
-  "generated_at": "2026-07-06T01:28:46.157456+00:00",
+  "generated_at": "2026-07-06T07:28:56.922364+00:00",
   "kind": "problem_summary",
   "linked_incident_ids": [
     "inc-megaplan-native-parity-corrective"
   ],
   "next_review_ts": null,
-  "occurrence_count": 2,
-  "owner_actor": "watchdog",
+  "occurrence_count": 4,
+  "owner_actor": "six_hour_auditor",
   "problem_id": "problem-55b5ebf18290",
   "recurred_after_fix": false,
   "schema_version": 1,
   "source": {
-    "digest": "sha256:09cc08fb2cd1b7e381ef91a89f63139a2c49dd7a000a3ccf74e3b285af6cecb5",
-    "last_seq": 157,
+    "digest": "sha256:ab09fc8081db4dfd6875417b107ce99b006e11418e5e6082e22a7b202593f8c9",
+    "last_seq": 161,
     "projection": "problems"
   },
   "status": "open",

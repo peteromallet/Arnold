@@ -195,7 +195,7 @@
       "kind": "verification_record"
     }
   ],
-  "generated_at": "2026-07-06T01:28:46.153636+00:00",
+  "generated_at": "2026-07-06T07:28:56.916678+00:00",
   "incident_id": "inc-demo-session",
   "kind": "incident_summary",
   "latest_actor": "immediate_repair",
@@ -215,7 +215,7 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:09cc08fb2cd1b7e381ef91a89f63139a2c49dd7a000a3ccf74e3b285af6cecb5",
+    "digest": "sha256:ab09fc8081db4dfd6875417b107ce99b006e11418e5e6082e22a7b202593f8c9",
     "last_seq": 154,
     "projection": "incidents"
   },

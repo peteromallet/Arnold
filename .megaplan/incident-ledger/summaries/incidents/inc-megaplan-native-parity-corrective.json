@@ -1,8 +1,51 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 4,
+  "evidence_ref_count": 22,
   "evidence_refs": [
     {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "megaplan-native-parity-corrective",
+      "status": "2026-07-06T01:06:05.309505+00:00"
+    },
+    {
+      "kind": "incident_brief",
+      "session_id": "megaplan-native-parity-corrective",
+      "status": "2026-07-06T01:06:05.309505+00:00"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-native-parity-corrective.json",
+      "session_id": "megaplan-native-parity-corrective"
+    },
+    {
+      "kind": "incident_summary",
+      "path": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-native-parity-corrective.json",
+      "session_id": "megaplan-native-parity-corrective"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/incident-ledger/summaries/problems/problem-55b5ebf18290.json",
+      "session_id": "megaplan-native-parity-corrective"
+    },
+    {
+      "kind": "problem_summary",
+      "path": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/incident-ledger/summaries/problems/problem-55b5ebf18290.json",
+      "session_id": "megaplan-native-parity-corrective"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
       "kind": "watchdog_observation",
       "status": "dispatched"
     },
@@ -17,14 +60,52 @@
     {
       "kind": "watchdog_observation",
       "status": "stale_active_step"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "stopped"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "unhealthy"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "megaplan-native-parity-corrective"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-report.json",
+      "session_id": "megaplan-native-parity-corrective"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260706T010640Z.json",
+      "session_id": "megaplan-native-parity-corrective"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260706T010640Z.json",
+      "session_id": "megaplan-native-parity-corrective"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260706T010642Z.json",
+      "session_id": "megaplan-native-parity-corrective"
+    },
+    {
+      "kind": "watchdog_report_path",
+      "path": "/workspace/watchdog-reports/20260706T010642Z.json",
+      "session_id": "megaplan-native-parity-corrective"
     }
   ],
-  "generated_at": "2026-07-06T01:28:46.155603+00:00",
+  "generated_at": "2026-07-06T07:28:56.919751+00:00",
   "incident_id": "inc-megaplan-native-parity-corrective",
   "kind": "incident_summary",
-  "latest_actor": "watchdog",
-  "next_expected_event": "immediate_repair.repair_attempt",
-  "outcome": "dispatched",
+  "latest_actor": "repair_system",
+  "next_expected_event": null,
+  "outcome": "recovered",
   "placeholders": {
     "install_freshness": "unknown",
     "recurrence": "unknown",
@@ -32,14 +113,18 @@
   },
   "problem_ids": [
     "problem-55b5ebf18290",
+    "problem-67a765759422",
+    "problem-ba6e85d2053d",
+    "problem-bd43205325d0",
+    "problem-bef9405c197d",
     "problem-e20c45ae0eb0"
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:09cc08fb2cd1b7e381ef91a89f63139a2c49dd7a000a3ccf74e3b285af6cecb5",
-    "last_seq": 158,
+    "digest": "sha256:ab09fc8081db4dfd6875417b107ce99b006e11418e5e6082e22a7b202593f8c9",
+    "last_seq": 166,
     "projection": "incidents"
   },
-  "state": "dispatch",
-  "summary_text": "inc-megaplan-native-parity-corrective: repair loop background-dispatched"
+  "state": "verified_recovered",
+  "summary_text": "inc-megaplan-native-parity-corrective: repair-data outcome=live_with_fresh_activity kind=chain workspace=/workspace/megaplan-native-parity-corrective/Arnold"
 }

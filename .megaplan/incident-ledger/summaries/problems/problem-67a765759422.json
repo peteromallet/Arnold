@@ -1,21 +1,21 @@
 {
   "fix_commits": [],
-  "generated_at": "2026-07-06T07:28:56.924477+00:00",
+  "generated_at": "2026-07-06T07:28:56.922726+00:00",
   "kind": "problem_summary",
   "linked_incident_ids": [
-    "inc-demo-session"
+    "inc-megaplan-native-parity-corrective"
   ],
   "next_review_ts": null,
-  "occurrence_count": 1,
+  "occurrence_count": 2,
   "owner_actor": "immediate_repair",
-  "problem_id": "problem-b3c4cc0b2599",
+  "problem_id": "problem-67a765759422",
   "recurred_after_fix": false,
   "schema_version": 1,
   "source": {
     "digest": "sha256:ab09fc8081db4dfd6875417b107ce99b006e11418e5e6082e22a7b202593f8c9",
-    "last_seq": 154,
+    "last_seq": 165,
     "projection": "problems"
   },
   "status": "open",
-  "summary_text": "problem-b3c4cc0b2599: repair-data outcome=repairing plan=demo-plan kind=plan workspace=/tmp/pytest-of-root/pytest-701/test_repair_loop_serializes_sa0/ws"
+  "summary_text": "problem-67a765759422: repair-data outcome=repairing kind=chain workspace=/workspace/megaplan-native-parity-corrective/Arnold"
 }
