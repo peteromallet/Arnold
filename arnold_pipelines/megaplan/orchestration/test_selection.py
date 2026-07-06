@@ -98,6 +98,8 @@ def _bounded_selector_candidates(repo_root: Path, stem: str) -> list[str]:
 
     matches: list[str] = []
     for path in sorted(tests_dir.rglob("*.py")):
+        if path.name.startswith(".") or any(part.startswith(".") for part in path.relative_to(repo_root).parts):
+            continue
         name = path.name
         if name == f"test_{stem}.py" or (
             name.endswith("_test.py") and stem in name[: -len("_test.py")]

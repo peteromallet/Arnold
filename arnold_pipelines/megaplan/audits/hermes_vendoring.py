@@ -111,6 +111,8 @@ def find_retention_import_sites(
     for py_file in sorted(agent_root.rglob("*.py")):
         relative = py_file.relative_to(agent_root)
         relative_parts = relative.parts
+        if py_file.name.startswith(".") or any(part.startswith(".") for part in relative_parts):
+            continue
         if any(part in CONDITIONAL_RETENTION_DIRS for part in relative_parts):
             continue
         if not include_tests and "tests" in relative_parts:
