@@ -154,6 +154,27 @@ def test_import_graph_syntax_error_degrades_without_losing_other_edges(
     assert resolution.unresolved == []
 
 
+def test_import_graph_ignores_hidden_and_non_importable_python_paths(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _write(repo, "pkg/util.py", "VALUE = 1\n")
+    _write(repo, "tests/test_feature.py", "import pkg.util\n")
+    _write(repo, "tests/cloud/._test_watchdog_wrappers.py", "import pkg.util\n")
+    _write(repo, "tools/subagent-launcher/helper.py", "import pkg.util\n")
+
+    graph = ImportGraph.build(repo)
+    resolution = graph.tests_importing(
+        ["pkg/util.py"],
+        is_test_file=lambda rel_path: rel_path.startswith("tests/test_"),
+    )
+
+    assert "tests/cloud/._test_watchdog_wrappers.py" not in graph._file_to_module
+    assert "tools/subagent-launcher/helper.py" not in graph._file_to_module
+    assert resolution.degraded is False
+    assert resolution.test_files == ["tests/test_feature.py"]
+
+
 def test_degraded_import_graph_caps_scoped_confidence_at_medium(
     tmp_path: Path,
 ) -> None:
