@@ -12,6 +12,7 @@ const PANEL_THREAD_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "we
 const PANEL_OVERLAY_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "panel_overlay.js");
 const PANEL_COMPOSER_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "panel_composer.js");
 const LIFECYCLE_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "agent_edit_lifecycle.js");
+const LIFECYCLE_COMMIT_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "agent_lifecycle_commit.js");
 const NODE_PACK_INSTALLER_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "agent_edit_node_pack_installer.js");
 const ADAPTER_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "comfy_adapter.js");
 const RESPONSE_CONTRACT_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "agent_edit_response_contract.js");
@@ -808,6 +809,7 @@ export async function createBrowserHarness({
   await writeFile(path.join(webRoot, "panel_overlay.js"), await readFile(PANEL_OVERLAY_SOURCE, "utf8"));
   await writeFile(path.join(webRoot, "panel_composer.js"), await readFile(PANEL_COMPOSER_SOURCE, "utf8"));
   await writeFile(path.join(webRoot, "agent_edit_lifecycle.js"), await readFile(LIFECYCLE_SOURCE, "utf8"));
+  await writeFile(path.join(webRoot, "agent_lifecycle_commit.js"), await readFile(LIFECYCLE_COMMIT_SOURCE, "utf8"));
   await writeFile(path.join(webRoot, "agent_edit_node_pack_installer.js"), await readFile(NODE_PACK_INSTALLER_SOURCE, "utf8"));
   await writeFile(path.join(webRoot, "comfy_adapter.js"), await readFile(ADAPTER_SOURCE, "utf8"));
   await writeFile(path.join(webRoot, "agent_edit_response_contract.js"), await readFile(RESPONSE_CONTRACT_SOURCE, "utf8"));
