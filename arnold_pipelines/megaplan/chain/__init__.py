@@ -915,6 +915,29 @@ def _current_git_head(root: Path) -> str | None:
     return proc.stdout.strip() or None
 
 
+def _origin_base_head(root: Path, base_branch: str) -> str | None:
+    proc = subprocess.run(
+        ["git", "rev-parse", f"origin/{base_branch}"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
+def _resume_needs_init_anchor(root: Path, *, base_branch: str, plan_state: Mapping[str, Any]) -> bool:
+    current_state = str(plan_state.get("current_state") or "").strip().lower()
+    if current_state != "initialized":
+        return False
+    head = _current_git_head(root)
+    base_head = _origin_base_head(root, base_branch)
+    return bool(head and base_head and head == base_head)
+
+
 def _require_validation_checkout_at_ref(
     *,
     root: Path,
@@ -5060,6 +5083,25 @@ def run_chain(
                         root, spec_path, branch=milestone.branch, pr_number=state.pr_number
                     )
                     if state.pr_number is None:
+                        if _resume_needs_init_anchor(
+                            root,
+                            base_branch=spec.base_branch,
+                            plan_state=plan_state,
+                        ):
+                            _commit_and_push_phase(
+                                root,
+                                milestone.branch or "",
+                                plan_name,
+                                "init",
+                                writer=writer,
+                                preexisting_dirty_paths=preexisting_dirty_paths,
+                            )
+                            _capture_sync_state(
+                                root,
+                                spec_path,
+                                branch=milestone.branch,
+                                pr_number=None,
+                            )
                         state = chain_spec.load_chain_state(spec_path)
                         state.pr_number = _ensure_milestone_pr(
                             root,
@@ -5199,6 +5241,15 @@ def run_chain(
                 _capture_sync_state(
                     root, spec_path, branch=milestone.branch, pr_number=state.pr_number
                 )
+                if state.pr_number is None:
+                    state.pr_number = _ensure_milestone_pr(
+                        root,
+                        milestone,
+                        base_branch=spec.base_branch,
+                        writer=writer,
+                    )
+                    state.pr_state = "open" if state.pr_number is not None else None
+                    chain_spec.save_chain_state(spec_path, state)
 
         outcome = _drive_plan_with_blocked_execute_recovery(
             root,
