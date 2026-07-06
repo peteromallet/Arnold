@@ -1971,7 +1971,23 @@ def _stale_state_analysis(
     elif latest_failure:
         classification = "LIVE FAILURE"
         summary_parts = ["latest_failure is recent; no successful event was found after it"]
-        recommended_action = "dispatch dev-fix to fix the Arnold source root cause"
+        failure_kind = str(latest_failure.get("kind") or "").strip().lower()
+        failure_phase = str(latest_failure.get("phase") or "").strip().lower()
+        failure_message = str(latest_failure.get("message") or "").strip().lower()
+        if (
+            failure_kind == "execution_blocked"
+            or failure_phase == "execute"
+            or "prerequisite-blocked tasks" in failure_message
+        ):
+            recommended_action = (
+                "investigate the blocked execute task; fix the task-level target code or "
+                "plan state when the blocker is not an Arnold engine bug"
+            )
+        else:
+            recommended_action = (
+                "investigate the live failure root cause; fix Arnold source only when "
+                "the evidence points to an Arnold engine bug"
+            )
     elif current_state == "awaiting_human_verify":
         classification = "NO LATEST FAILURE"
         if clarification_source == "prep":
@@ -2595,6 +2611,18 @@ stale_summary = stale_state.get("summary") or (
     else "no stale-state analysis captured"
 )
 stale_recommendation = stale_state.get("recommended_action") or ""
+kind_text = str(kind or "").strip().lower()
+phase_text = str(phase or "").strip().lower()
+message_text = str(message or "").strip().lower()
+if (
+    kind_text == "execution_blocked"
+    or phase_text == "execute"
+    or "prerequisite-blocked tasks" in message_text
+):
+    stale_recommendation = (
+        "investigate the blocked execute task; fix the task-level target code or "
+        "plan state when the blocker is not an Arnold engine bug"
+    )
 if state_mismatch.get("detected"):
     stale_summary = state_mismatch.get("summary") or stale_summary
     stale_recommendation = state_mismatch.get("recommended_action") or stale_recommendation
@@ -4242,7 +4270,7 @@ Task:
 1. Start from the inline incident snapshot above. Read the repair data JSON and pointed files only if you need deeper evidence.
    Read the LAST EXECUTE ATTEMPT summary first. The root cause might be in the Arnold SOURCE (a code bug) OR in the PLAN STATE (a deferred task, a missing baseline, stale tests for deleted modules). If a task was deferred or blocked rather than failed, investigate the task-level deferral reason; the fix might be to clear or resolve the deferral/state, not to change source code.
    Classification guide:
-   - LIVE FAILURE: The latest_failure is recent (no success since it was recorded). Fix the root cause in the Arnold source.
+   - LIVE FAILURE: The latest_failure is recent (no success since it was recorded). Fix the root cause at the level indicated by the evidence: Arnold source for engine bugs, target/workspace code for task implementation bugs, or plan state for deferrals/stale blocked tasks.
    - STALE STATE: The latest_failure predates a successful run or the current block is a 0ms same-hash replay. CLEAR latest_failure to null in the plan's state.json, clear stale blocks, and re-drive the run. Do NOT try to fix a source bug; the issue was already addressed.
    For run_kind=plan, use the named plan's state.json, events.ndjson, plan log, and user-action artifacts. Missing chain state, chain logs, chain.yaml, milestones, and base refs are expected and not evidence of a bug.
    For run_kind=chain, use chain state/logs/milestones when present.

@@ -49,3 +49,8 @@ def test_render_failure_summary_prefers_authoritative_live_plan_failure_shape(tm
     summary = result.stdout
     assert "- failure classification: blocked_state_or_recovery_error" in summary
     assert "- latest_failure: kind=execution_blocked recorded_at=2026-07-06T19:19:31Z" in summary
+    assert (
+        "- recommended repair action: investigate the blocked execute task; "
+        "fix the task-level target code or plan state when the blocker is not an Arnold engine bug"
+    ) in summary
+    assert "dispatch dev-fix to fix the Arnold source root cause" not in summary
