@@ -1053,6 +1053,11 @@ emit_current_needs_human_sidecar() {
   else
     compare_needs_human_to_resolver "$session" "$current_plan" "false" ""
   fi
+  if command -v repair_needs_human_should_remain_human >/dev/null 2>&1 && ! repair_needs_human_should_remain_human "$session" "$current_plan"; then
+    rm -f "$marker_path" 2>/dev/null || true
+    log "stale repair needs-human marker cleared; fresh classifier no longer requires human session=$session live_plan=${current_plan:-unknown}"
+    return 1
+  fi
 
   meta_repair_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation" "$health")"
   if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
@@ -2256,6 +2261,76 @@ if plans and current_plan not in plans:
     print(",".join(sorted(plans)))
     raise SystemExit(1)
 raise SystemExit(0)
+PY
+}
+
+repair_needs_human_should_remain_human() {
+  local session="$1"
+  local current_plan="${2:-}"
+  local needs_human_path
+  needs_human_path="$(repair_needs_human_path "$session")"
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - \
+    "$session" "$current_plan" "$MARKER_DIR" "$REPAIR_DATA_DIR" "$needs_human_path" "${current_target_observation:-}" <<'PY' 2>>"${LOG:-/dev/null}"
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.human_blockers import (
+    BlockerVerdict,
+    classify_needs_human_blocker,
+)
+
+session, current_plan, marker_dir, repair_data_dir, needs_human_path, resolver_json = sys.argv[1:7]
+path = pathlib.Path(needs_human_path)
+try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"needs_human_fresh_classifier verdict=AMBIGUOUS_BLOCKER error={type(exc).__name__}", file=sys.stderr)
+    raise SystemExit(0)
+
+resolver_record = None
+if resolver_json:
+    try:
+        resolver_record = json.loads(resolver_json)
+    except Exception:
+        resolver_record = None
+
+try:
+    classification = classify_needs_human_blocker(
+        session,
+        current_plan=current_plan,
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+        needs_human_path=path,
+        needs_human_payload=payload if isinstance(payload, dict) else None,
+        resolver_record=resolver_record if isinstance(resolver_record, dict) else None,
+    )
+except Exception as exc:
+    print(f"needs_human_fresh_classifier verdict=AMBIGUOUS_BLOCKER error={type(exc).__name__}", file=sys.stderr)
+    raise SystemExit(0)
+
+print(f"needs_human_fresh_classifier verdict={classification.verdict.name}", file=sys.stderr)
+plan_state_path = ""
+if isinstance(classification.resolver_record, dict):
+    plan_state = classification.resolver_record.get("plan_state")
+    if isinstance(plan_state, dict):
+        plan_state_path = str(plan_state.get("path") or "")
+if plan_state_path:
+    try:
+        plan_state_payload = json.loads(pathlib.Path(plan_state_path).read_text(encoding="utf-8"))
+    except Exception:
+        plan_state_payload = {}
+    if isinstance(plan_state_payload, dict):
+        latest_failure = plan_state_payload.get("latest_failure")
+        failure_kind = ""
+        if isinstance(latest_failure, dict):
+            failure_kind = str(latest_failure.get("kind") or "")
+        if failure_kind in {"execution_blocked", "blocked_recovery_not_resolved"}:
+            print(f"needs_human_fresh_classifier repairable_failure={failure_kind}", file=sys.stderr)
+            raise SystemExit(1)
+if classification.verdict in {BlockerVerdict.TRUE_BLOCKER, BlockerVerdict.AMBIGUOUS_BLOCKER}:
+    raise SystemExit(0)
+raise SystemExit(1)
 PY
 }
 
@@ -6034,6 +6109,9 @@ PY
     return 0
   fi
 
+  local health
+  health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"
+
   local observed_current_plan
   observed_current_plan="$(current_target_plan_name_from_observation "$current_target_observation" 2>>"${LOG:-/dev/null}" || true)"
   if emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${observed_current_plan:-$plan_name}" "$current_target_observation" "$health"; then
@@ -6309,6 +6387,10 @@ PY
       else
         compare_needs_human_to_resolver "$session" "${PLAN_STATUS_PLAN_NAME:-}" "false" ""
       fi
+      if [[ -f "$(repair_needs_human_path "$session")" ]] && command -v repair_needs_human_should_remain_human >/dev/null 2>&1 && ! repair_needs_human_should_remain_human "$session" "${PLAN_STATUS_PLAN_NAME:-}"; then
+        rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
+        log "stale repair needs-human marker cleared; fresh classifier no longer requires human session=$session live_plan=${PLAN_STATUS_PLAN_NAME:-unknown}"
+      fi
       if [[ -f "$(repair_needs_human_path "$session")" ]]; then
         repair_summary="$(repair_needs_human_summary "$session")"
         log "session awaits human action and repair loop already requested human session=$session summary=$repair_summary"
@@ -6401,6 +6483,10 @@ PY
         else
           compare_needs_human_to_resolver "$session" "${PLAN_STATUS_PLAN_NAME:-}" "false" ""
         fi
+        if [[ -f "$(repair_needs_human_path "$session")" ]] && command -v repair_needs_human_should_remain_human >/dev/null 2>&1 && ! repair_needs_human_should_remain_human "$session" "${PLAN_STATUS_PLAN_NAME:-}"; then
+          rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
+          log "stale repair needs-human marker cleared; fresh classifier no longer requires human session=$session live_plan=${PLAN_STATUS_PLAN_NAME:-unknown}"
+        fi
         if [[ -f "$(repair_needs_human_path "$session")" ]]; then
           repair_summary="$(repair_needs_human_summary "$session")"
           log "session auto-stalled into manual_review and repair loop already requested human session=$session summary=$repair_summary"
@@ -6457,6 +6543,10 @@ PY
     elif sibling_alive="$(workspace_has_other_alive_session "$session" "$workspace" 2>/dev/null)"; then
       rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
       log "stale repair needs-human marker cleared; sibling session is alive session=$session sibling=$sibling_alive"
+      compare_needs_human_to_resolver "$session" "${PLAN_STATUS_PLAN_NAME:-}" "false" ""
+    elif command -v repair_needs_human_should_remain_human >/dev/null 2>&1 && ! repair_needs_human_should_remain_human "$session" "${PLAN_STATUS_PLAN_NAME:-}"; then
+      rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
+      log "stale repair needs-human marker cleared; fresh classifier no longer requires human session=$session live_plan=${PLAN_STATUS_PLAN_NAME:-unknown}"
       compare_needs_human_to_resolver "$session" "${PLAN_STATUS_PLAN_NAME:-}" "false" ""
     else
       local repair_summary
