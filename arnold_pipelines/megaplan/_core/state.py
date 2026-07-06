@@ -331,6 +331,81 @@ def _reconcile_completed_review(plan_dir: Path, state: dict[str, Any]) -> dict[s
     return write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_transition)
 
 
+def _finalize_phase_completed_successfully(plan_dir: Path, state: dict[str, Any]) -> bool:
+    history = state.get("history")
+    if not isinstance(history, list) or not history:
+        return False
+    last_entry = history[-1]
+    if not isinstance(last_entry, dict):
+        return False
+    if last_entry.get("step") != "finalize" or last_entry.get("result") != "success":
+        return False
+
+    from arnold_pipelines.megaplan.orchestration.phase_result import read_phase_result
+
+    try:
+        phase_result = read_phase_result(plan_dir)
+    except Exception:
+        return False
+    return bool(
+        phase_result is not None
+        and getattr(phase_result, "phase", None) == "finalize"
+        and getattr(phase_result, "exit_kind", None) == "success"
+    )
+
+
+def _reconcile_failed_no_next_after_finalize(
+    plan_dir: Path,
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    """Recover failed status-projection loops after a successful finalize.
+
+    A live finalize can complete successfully, transition state to ``finalized``,
+    and then immediately hit the status route's ``no_next_step`` failure path.
+    That leaves ``state.json`` in ``failed`` even though the durable phase
+    evidence says finalize succeeded and execute should be next.
+    """
+
+    if state.get("current_state") != "failed":
+        return state
+    latest_failure = state.get("latest_failure")
+    if not isinstance(latest_failure, dict) or latest_failure.get("kind") != "no_next_step":
+        return state
+    resume_cursor = state.get("resume_cursor")
+    if not isinstance(resume_cursor, dict):
+        return state
+    if resume_cursor.get("phase") != "status" or resume_cursor.get("retry_strategy") != "repair_state":
+        return state
+    if not _finalize_phase_completed_successfully(plan_dir, state):
+        return state
+
+    def _transition(current: dict[str, Any]) -> bool:
+        if current.get("current_state") != "failed":
+            return False
+        current_failure = current.get("latest_failure")
+        if not isinstance(current_failure, dict) or current_failure.get("kind") != "no_next_step":
+            return False
+        if not _finalize_phase_completed_successfully(plan_dir, current):
+            return False
+        current["current_state"] = STATE_FINALIZED
+        current["latest_failure"] = None
+        current.pop("active_step", None)
+        current.pop("resume_cursor", None)
+        current.setdefault("meta", {})
+        if isinstance(current["meta"], dict):
+            current["meta"].setdefault("state_reconciliations", []).append(
+                {
+                    "kind": "failed_no_next_after_finalize",
+                    "from_state": state.get("current_state"),
+                    "to_state": STATE_FINALIZED,
+                    "timestamp": now_utc(),
+                }
+            )
+        return True
+
+    return write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_transition)
+
+
 def load_plan_from_dir(plan_dir: Path) -> tuple[Path, PlanState]:
     from arnold_pipelines.megaplan._core.io import read_plan_state_cached
     state = read_plan_state_cached(plan_dir, mode="authority")
@@ -343,6 +418,7 @@ def load_plan_from_dir(plan_dir: Path) -> tuple[Path, PlanState]:
     if isinstance(state, dict):
         state = _reconcile_satisfied_user_action_gate(plan_dir, state)
         state = _reconcile_completed_review(plan_dir, state)
+        state = _reconcile_failed_no_next_after_finalize(plan_dir, state)
     _validate_persisted_phase_models(plan_dir, state)
     return plan_dir, state
 
