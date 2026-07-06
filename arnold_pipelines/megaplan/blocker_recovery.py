@@ -213,7 +213,15 @@ def _is_informational_quality_deviation(message: str) -> bool:
         "Additional modules present in agent_edit/",
         "edit.py reduced from ",
     )
-    return message.startswith(informational_prefixes)
+    if message.startswith(informational_prefixes):
+        return True
+
+    lowered = message.lower()
+    informational_fragments = (
+        "does not block",
+        "noted but deferred",
+    )
+    return any(fragment in lowered for fragment in informational_fragments)
 
 
 _TEST_NODEID_RE = re.compile(
