@@ -4649,9 +4649,8 @@ def test_watchdog_stale_marker_relaunch_command_regenerates_clean_runtime_chain_
     )
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
-    assert "source checkout dirty; using clean runtime mirror at $RUNTIME_SRC" in result.stdout
+    assert "source checkout dirty; using current source checkout at $SRC to avoid stale runtime mirror" in result.stdout
     assert "MEGAPLAN_RUNTIME_SRC" in result.stdout
-    assert "/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/runtime/editable-engine" in result.stdout
     assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
     assert "refusing editable install refresh: tracked changes in source checkout" not in result.stdout
 
@@ -4702,11 +4701,78 @@ def test_repair_loop_stale_marker_relaunch_command_regenerates_clean_runtime_cha
     )
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
-    assert "source checkout dirty; using clean runtime mirror at $RUNTIME_SRC" in result.stdout
+    assert "source checkout dirty; using current source checkout at $SRC to avoid stale runtime mirror" in result.stdout
     assert "MEGAPLAN_RUNTIME_SRC" in result.stdout
-    assert "/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/runtime/editable-engine" in result.stdout
     assert "python3 -P -m arnold_pipelines.megaplan chain start" in result.stdout
     assert "refusing editable install refresh: tracked changes in source checkout" not in result.stdout
+
+
+def test_watchdog_ahead_commit_stale_marker_relaunch_command_regenerates_current_source_chain_command() -> None:
+    stale_command = (
+        "{ set -e\n"
+        "if ! git -C \"$SRC\" merge-base --is-ancestor HEAD \"origin/$REF\"; then\n"
+        "  echo \"[megaplan-refresh] refusing editable install refresh: $SRC has local commits not contained in origin/$REF\"\n"
+        "  git -C \"$SRC\" log --oneline --max-count=5 \"origin/$REF..HEAD\" || true\n"
+        "  exit 20\n"
+        "fi\n"
+        "} >> .megaplan/cloud-chain-progress-auditor-stage-metrics.log 2>&1 && "
+        "cd /workspace/progress-auditor-stage-metrics/Arnold && "
+        "PYTHONPATH=\"$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}\" python -P -m arnold_pipelines.megaplan chain start"
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("default_plan_relaunch_command"),
+            _extract_wrapper_function("stale_marker_relaunch_command"),
+            _extract_wrapper_function("default_chain_relaunch_command"),
+            _extract_wrapper_function("resolve_relaunch_command"),
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            "SYNC_BRANCH=editible-install",
+            (
+                "resolve_relaunch_command progress-auditor-stage-metrics "
+                "/workspace/progress-auditor-stage-metrics/Arnold "
+                "/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/initiatives/progress-auditor-stage-metrics/chain.yaml "
+                f"chain '' {shlex.quote(stale_command)}"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "source checkout ahead of origin/$REF; using current source checkout at $SRC for local repair runtime" in result.stdout
+    assert "refusing editable install refresh: $SRC has local commits not contained in origin/$REF" not in result.stdout
+
+
+def test_repair_loop_ahead_commit_stale_marker_relaunch_command_regenerates_current_source_chain_command() -> None:
+    stale_command = (
+        "{ set -e\n"
+        "if ! git -C \"$SRC\" merge-base --is-ancestor HEAD \"origin/$REF\"; then\n"
+        "  echo \"[megaplan-refresh] refusing editable install refresh: $SRC has local commits not contained in origin/$REF\"\n"
+        "  git -C \"$SRC\" log --oneline --max-count=5 \"origin/$REF..HEAD\" || true\n"
+        "  exit 20\n"
+        "fi\n"
+        "} >> .megaplan/cloud-chain-progress-auditor-stage-metrics.log 2>&1 && "
+        "cd /workspace/progress-auditor-stage-metrics/Arnold && "
+        "PYTHONPATH=\"$MEGAPLAN_RUNTIME_SRC:${PYTHONPATH:-}\" python -P -m arnold_pipelines.megaplan chain start"
+    )
+    script = "\n\n".join(
+        [
+            _extract_repair_function("default_plan_relaunch_command"),
+            _extract_repair_function("stale_marker_relaunch_command"),
+            _extract_repair_function("default_chain_relaunch_command"),
+            _extract_repair_function("resolve_relaunch_command"),
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            "SYNC_BRANCH=editible-install",
+            (
+                "resolve_relaunch_command progress-auditor-stage-metrics "
+                "/workspace/progress-auditor-stage-metrics/Arnold "
+                "/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/initiatives/progress-auditor-stage-metrics/chain.yaml "
+                f"chain '' {shlex.quote(stale_command)}"
+            ),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "source checkout ahead of origin/$REF; using current source checkout at $SRC for local repair runtime" in result.stdout
+    assert "refusing editable install refresh: $SRC has local commits not contained in origin/$REF" not in result.stdout
 
 
 def test_watchdog_done_plan_reports_complete_without_repair_or_relaunch(tmp_path: Path) -> None:

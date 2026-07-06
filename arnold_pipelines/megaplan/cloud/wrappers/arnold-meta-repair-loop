@@ -154,18 +154,20 @@ log "recursion guard: $RECURSION_OUTPUT"
 # ---- classify failure + build redacted prompt via Python handoff -------------
 classification_and_prompt() {
   local force_emergency="${1:-0}"
-  FORCE_EMERGENCY="$force_emergency" PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_DATA_DIR" "$REPAIR_DATA_PATH" "$META_REPAIR_ENABLED_VAR" "$WATCHDOG_TRIGGER" <<'PY'
+  FORCE_EMERGENCY="$force_emergency" PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_DATA_DIR" "$REPAIR_DATA_PATH" "$MARKER_DIR" "$META_REPAIR_ENABLED_VAR" "$WATCHDOG_TRIGGER" <<'PY'
 import json, os, sys
 
+from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.meta_repair import (
     MetaRepairClassification,
     MetaRepairTrigger,
     build_meta_repair_prompt,
     evaluate_meta_repair_triggers,
     load_redacted_evidence,
+    stale_repair_evidence_reason,
 )
 
-session, repair_data_dir, repair_data_path, enabled, watchdog_trigger = sys.argv[1:6]
+session, repair_data_dir, repair_data_path, marker_dir, enabled, watchdog_trigger = sys.argv[1:7]
 force_emergency = os.environ.get("FORCE_EMERGENCY") == "1"
 
 # Evaluate triggers without loading full evidence initially;
@@ -179,17 +181,34 @@ if watchdog_trigger:
 
 if trigger is not None:
     evidence = load_redacted_evidence(session, repair_data_dir=repair_data_dir)
-    classification = MetaRepairClassification(
-        session=session,
-        trigger=trigger,
-        rationale=(f"watchdog preclassified trigger={trigger.value}; meta loop must not reclassify stale evidence",),
-        evidence=evidence,
-    )
-    prompt = build_meta_repair_prompt(
-        classification,
+    current_target_observation = resolve_current_target(
+        session,
+        marker_dir=marker_dir,
         repair_data_dir=repair_data_dir,
-        force_emergency=force_emergency,
     )
+    stale_reason = stale_repair_evidence_reason(
+        evidence=evidence,
+        current_target_observation=current_target_observation,
+    )
+    if stale_reason:
+        classification = MetaRepairClassification(
+            session=session,
+            trigger=None,
+            rationale=(stale_reason,),
+            evidence=evidence,
+        )
+    else:
+        classification = MetaRepairClassification(
+            session=session,
+            trigger=trigger,
+            rationale=(f"watchdog preclassified trigger={trigger.value}; meta loop must not reclassify stale evidence",),
+            evidence=evidence,
+        )
+        prompt = build_meta_repair_prompt(
+            classification,
+            repair_data_dir=repair_data_dir,
+            force_emergency=force_emergency,
+        )
 else:
     classification, prompt = evaluate_meta_repair_triggers(
         session,

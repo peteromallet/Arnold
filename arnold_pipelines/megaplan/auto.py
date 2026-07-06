@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from arnold_pipelines.megaplan.drivers import Substrate
 
 from arnold_pipelines.megaplan._core import active_phase_name, find_plan_dir
-from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
+from arnold_pipelines.megaplan.fallback_chains import encode_phase_model_value, select_fallback_spec
 from arnold.runtime.envelope import (
     _envelope_ctx,
     write_envelope_in,
@@ -77,6 +77,7 @@ from arnold_pipelines.megaplan.planning.state import (
     STATE_EXECUTED,
     STATE_FAILED,
     STATE_FINALIZED,
+    STATE_GATED,
     STATE_PAUSED,
     STATE_PREPPED,
     STATE_TIEBREAKER_PENDING,
@@ -1091,7 +1092,7 @@ def _control_action_label(next_step: str) -> str:
 def _required_state_for_control_action(next_step: str) -> str | None:
     action = _control_action_label(next_step)
     if action == "resume-clarify":
-        return None
+        return STATE_AWAITING_HUMAN_VERIFY
     if action == "recover-blocked":
         return STATE_BLOCKED
     return None
@@ -1605,8 +1606,17 @@ def _auto_verify_deferred_must_criteria(plan_dir: Path | None, *, log) -> bool:
         return False
 
 
-def _read_execute_tier_ladder(plan_dir: Path | None) -> dict[int, str]:
-    """Return ``{tier_number: spec_string}`` for ``tier_models.execute``.
+TierSpecValue = str | list[str]
+
+
+def _primary_execute_tier_spec(spec: TierSpecValue) -> str:
+    if isinstance(spec, str):
+        return spec
+    return select_fallback_spec(spec, 0, path="tier_models.execute")
+
+
+def _read_execute_tier_ladder(plan_dir: Path | None) -> dict[int, TierSpecValue]:
+    """Return ``{tier_number: spec_or_fallback_chain}`` for ``tier_models.execute``.
 
     Read from the plan's persisted ``state.json`` config (written by init when
     a tier-routed profile is active). Returns an empty dict when the run is not
@@ -1628,7 +1638,7 @@ def _read_execute_tier_ladder(plan_dir: Path | None) -> dict[int, str]:
     max_execute_tier = config.get("max_execute_tier")
     if not isinstance(max_execute_tier, int) or not 1 <= max_execute_tier <= 5:
         max_execute_tier = None
-    ladder: dict[int, str] = {}
+    ladder: dict[int, TierSpecValue] = {}
     for raw_tier, spec in execute_tiers.items():
         try:
             tier_num = int(raw_tier)
@@ -1640,11 +1650,10 @@ def _read_execute_tier_ladder(plan_dir: Path | None) -> dict[int, str]:
             ladder[tier_num] = spec
             continue
         if isinstance(spec, list):
-            ladder[tier_num] = select_fallback_spec(
-                spec,
-                0,
-                path=f"tier_models.execute.{tier_num}",
-            )
+            primary = select_fallback_spec(spec, 0, path=f"tier_models.execute.{tier_num}")
+            ladder[tier_num] = [item for item in spec if isinstance(item, str) and item.strip()]
+            if not ladder[tier_num]:
+                ladder[tier_num] = primary
     return ladder
 
 
@@ -1680,10 +1689,10 @@ def _latest_execute_max_tier(plan_dir: Path | None) -> int | None:
 
 
 def _next_escalation_tier(
-    ladder: dict[int, str],
+    ladder: dict[int, TierSpecValue],
     *,
     current_tier: int | None,
-) -> tuple[int, str] | None:
+) -> tuple[int, TierSpecValue] | None:
     """Pick the next tier whose spec is a *distinct* model above ``current_tier``.
 
     "Escalate up" means moving toward the highest (most capable) tier number.
@@ -1706,13 +1715,18 @@ def _next_escalation_tier(
     if current_tier >= ceiling:
         return None
     current_spec = ladder.get(current_tier)
+    current_primary = (
+        _primary_execute_tier_spec(current_spec)
+        if current_spec is not None
+        else None
+    )
     for tier in sorted_tiers:
         if tier <= current_tier:
             continue
         spec = ladder[tier]
         # Skip same-model steps (no-op escalation) — keep climbing until a
         # genuinely more capable distinct model appears.
-        if current_spec is not None and spec == current_spec:
+        if current_primary is not None and _primary_execute_tier_spec(spec) == current_primary:
             continue
         return tier, spec
     return None
@@ -1887,8 +1901,8 @@ def _review_nonconvergence_escalation_plan(
     *,
     plan_dir: Path | None,
     task_id: str,
-    ladder: dict[int, str],
-) -> tuple[int | None, tuple[int, str] | None]:
+    ladder: dict[int, TierSpecValue],
+) -> tuple[int | None, tuple[int, TierSpecValue] | None]:
     baseline = _current_task_override(plan_dir, task_id)
     observed_tier = _latest_execute_max_tier(plan_dir)
     task_complexity = _task_complexity(plan_dir, task_id)
@@ -2161,24 +2175,6 @@ def _clear_obsolete_failure_for_terminal_block(
         write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_clear)
     except (CliError, OSError, RuntimeError, ValueError):
         return
-
-
-def _terminal_blocker_recovery_context(
-    status: Mapping[str, Any],
-    *,
-    next_step: str | None,
-) -> dict[str, Any] | None:
-    blocker_recovery = status.get("blocker_recovery")
-    if not isinstance(blocker_recovery, dict):
-        return None
-    if blocker_recovery.get("has_terminal_blockers") is not True:
-        return None
-    state = status.get("state")
-    if state == STATE_BLOCKED and next_step is None and not (status.get("valid_next") or []):
-        return blocker_recovery
-    if state == STATE_FINALIZED and next_step == "execute":
-        return blocker_recovery
-    return None
 
 
 def _reconcile_latest_execution_batch(plan_dir: Path | None) -> dict[str, Any] | None:
@@ -2472,6 +2468,8 @@ def _recover_completed_execute_artifacts_after_failure(plan_dir: Path | None) ->
             return False
     if not (plan_dir / "execution.json").exists():
         return False
+    if _latest_review_requires_rework_after_execution(plan_dir):
+        return False
     try:
         root = plan_dir.parents[2]
     except IndexError:
@@ -2482,6 +2480,75 @@ def _recover_completed_execute_artifacts_after_failure(plan_dir: Path | None) ->
         reason="megaplan auto: adopted complete execution artifact after worker failure",
     )
     return code == 0
+
+
+def _recover_completed_gate_artifact_after_failure(plan_dir: Path | None) -> bool:
+    """Advance a critiqued plan when a passing gate artifact was already written.
+
+    Gate can fail after writing the normalized ``gate.json`` but before
+    ``_finish_step`` persists ``current_state=gated``. Rerunning gate in that
+    shape burns model calls and can loop forever. Only adopt the artifact for
+    the unambiguous proceed case; iterate/escalate/tiebreaker recommendations
+    must continue through the normal handler because they carry routing side
+    effects.
+    """
+
+    if plan_dir is None:
+        return False
+    try:
+        state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        gate_data = json.loads((plan_dir / "gate.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(state_data, dict) or state_data.get("current_state") != STATE_CRITIQUED:
+        return False
+    active_step = state_data.get("active_step")
+    if isinstance(active_step, dict):
+        active_phase = active_phase_name(active_step)
+        if active_phase and active_phase != "gate":
+            return False
+    if not isinstance(gate_data, dict):
+        return False
+    if gate_data.get("recommendation") != "PROCEED" or gate_data.get("passed") is not True:
+        return False
+    if gate_data.get("unresolved_flags"):
+        return False
+
+    def _patch(current: dict[str, Any]) -> bool:
+        current["current_state"] = STATE_GATED
+        current.pop("active_step", None)
+        current.setdefault("meta", {})["gate_artifact_recovery"] = {
+            "reason": "adopted passing gate.json after worker failure",
+            "gate_recommendation": gate_data.get("recommendation"),
+        }
+        return True
+
+    write_plan_state(
+        plan_dir,
+        mode="patch-many",
+        patch={"current_state": STATE_GATED, "active_step": None},
+        mutation=_patch,
+    )
+    return True
+
+
+def _latest_review_requires_rework_after_execution(plan_dir: Path) -> bool:
+    """Return true when old execution evidence is stale behind rework review."""
+
+    review_path = plan_dir / "review.json"
+    execution_path = plan_dir / "execution.json"
+    try:
+        review_data = json.loads(review_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(review_data, dict):
+        return False
+    if review_data.get("review_verdict") != "needs_rework":
+        return False
+    try:
+        return review_path.stat().st_mtime >= execution_path.stat().st_mtime
+    except (OSError, FileNotFoundError):
+        return False
 
 
 def _finalize_tasks(plan_dir: Path | None) -> tuple[dict[str, Any], ...]:
@@ -2497,6 +2564,40 @@ def _finalize_tasks(plan_dir: Path | None) -> tuple[dict[str, Any], ...]:
     if not isinstance(tasks, list):
         return ()
     return tuple(dict(task) for task in tasks if isinstance(task, dict) and (task.get("id") or task.get("task_id")))
+
+
+def _execution_batch_completed_task_ids(
+    plan_dir: Path | None,
+    *,
+    project_dir: Path | None,
+    state_data: dict[str, Any] | None,
+) -> set[str]:
+    if plan_dir is None:
+        return set()
+    completed: set[str] = set()
+    for batch_path in sorted(plan_dir.glob("execution_batch_*.json")):
+        try:
+            payload = json.loads(batch_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        records = [
+            item
+            for item in payload.get("task_updates", []) or []
+            if isinstance(item, dict)
+        ]
+        if not records:
+            continue
+        completed.update(
+            effective_execute_completed_task_ids(
+                records,
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                state=state_data,
+            )
+        )
+    return completed
 
 
 def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str]]:
@@ -2520,10 +2621,23 @@ def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str
         state=state_data,
         decisions=decisions,
     )
+    batch_completed = _execution_batch_completed_task_ids(
+        plan_dir,
+        project_dir=project_dir,
+        state_data=state_data,
+    )
     missing: list[str] = []
     for task in tasks:
         task_id = str(task.get("id") or task.get("task_id") or "")
         raw_status = task.get("status")
+        if raw_status in {None, "", "pending", "todo", "in_progress"}:
+            if task_id in batch_completed:
+                continue
+            missing.append(
+                f"{task_id or '<missing-task-id>'}:"
+                f"not_executed:{raw_status or 'missing_status'}"
+            )
+            continue
         if raw_status in {"done", "completed", "skipped", "waived", "not_applicable"} and task_id not in completed:
             if (
                 raw_status == "skipped"
@@ -3243,7 +3357,7 @@ def drive(
     # The tier we have climbed the execute pin to (None = not yet escalated).
     escalation_tier_pin: int | None = None
     # The spec we are currently pinning execute to (None = configured routing).
-    escalation_pin_spec: str | None = None
+    escalation_pin_spec: TierSpecValue | None = None
     # Total escalations performed, surfaced in the run summary.
     tier_escalations_used = 0
 
@@ -3491,10 +3605,6 @@ def drive(
 
         next_step = status.get("next_step")
         valid_next = status.get("valid_next") or []
-        terminal_blocker_recovery = _terminal_blocker_recovery_context(
-            status,
-            next_step=next_step if isinstance(next_step, str) else None,
-        )
 
         log(
             f"iter {iteration} state={state} next={next_step} valid_next={valid_next}",
@@ -3590,6 +3700,15 @@ def drive(
                     "plan": plan,
                 }
             )
+        if (
+            state == STATE_CRITIQUED
+            and (next_step == "gate" or status_active_phase == "gate")
+            and _recover_completed_gate_artifact_after_failure(plan_dir)
+        ):
+            message = "reconciled passing gate.json after worker failure"
+            log("recovered completed gate artifact after worker failure; resuming from gated")
+            events.append({"msg": message, "phase": "gate", "plan": plan})
+            continue
 
         # Terminal: plan reached a final state (or automation-terminal).
         if state in AUTOMATION_TERMINAL_STATES and not (state == STATE_BLOCKED and valid_next):
@@ -4252,52 +4371,6 @@ def drive(
                     reason="gate escalated and on_escalate=fail — human required",
                     last_phase=last_phase,
                 )
-            if terminal_blocker_recovery is not None:
-                blockers = terminal_blocker_recovery.get("blockers")
-                if not isinstance(blockers, list):
-                    blockers = []
-                blocking_reasons = [
-                    str(blocker.get("message") or blocker.get("blocker_id") or "terminal blocker")
-                    for blocker in blockers
-                    if isinstance(blocker, dict)
-                ]
-                suggested_commands = terminal_blocker_recovery.get("suggested_commands")
-                if not isinstance(suggested_commands, list):
-                    suggested_commands = []
-                reason = (
-                    "terminal blocker recovery requires operator action before execute can continue"
-                )
-                log(
-                    "terminal blocker recovery prevents further auto dispatch",
-                    blocker_count=len(blockers),
-                    blocking_reasons=blocking_reasons,
-                    suggested_commands=suggested_commands,
-                )
-                _record_failure(
-                    plan_dir=plan_dir,
-                    kind="terminal_blocker_recovery",
-                    message=reason,
-                    current_state=STATE_BLOCKED,
-                    phase=str(last_phase or next_step or "execute"),
-                    resume_cursor={"phase": "execute", "retry_strategy": "manual_review"},
-                    suggested_action=(
-                        "Resolve the recorded terminal blocker(s) before resuming automation."
-                    ),
-                    metadata={
-                        "blocking_reasons": blocking_reasons,
-                        "suggested_recovery_commands": suggested_commands,
-                        "iteration": iteration,
-                        "status_state": state,
-                    },
-                )
-                return _outcome(
-                    "blocked",
-                    final_state=STATE_BLOCKED,
-                    iterations=iteration,
-                    reason=reason,
-                    last_phase=last_phase,
-                    blocking_reasons=blocking_reasons,
-                )
             log(f"no next_step and no override available (valid_next={valid_next})")
             _record_failure(
                 plan_dir=plan_dir,
@@ -4415,7 +4488,7 @@ def drive(
                 cmd = [
                     *cmd,
                     "--phase-model",
-                    f"execute={escalation_pin_spec}",
+                    encode_phase_model_value("execute", escalation_pin_spec),
                     "--fresh",
                 ]
         log(f"running: megaplan {' '.join(cmd)}", phase=next_step, timeout=phase_timeout)
@@ -5030,13 +5103,18 @@ def drive(
                         },
                         last_artifact=_latest_artifact_name(plan_dir),
                         suggested_action=(
-                            "Inspect the prerequisite evidence or resolve the blocked task "
-                            "dependency before rerunning execute."
+                            "Do not mechanically rerun execute. Replan the blocked execution "
+                            f"path with `override replan --plan {plan_dir.name} --reason <reason>` "
+                            "or fix the prerequisite evidence before resuming."
                         ),
                         metadata={
                             "blocked_retries_used": blocked_retry_count,
                             "max_blocked_retries": max_blocked_retries,
                             "blocking_reasons": blocking_reasons,
+                            "recommended_recovery": "replan_or_fix_prerequisite",
+                            "suggested_recovery_commands": [
+                                f"override replan --plan {plan_dir.name} --reason <reason>"
+                            ],
                         },
                     )
                     return _outcome(
