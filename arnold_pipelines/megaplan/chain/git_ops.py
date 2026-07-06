@@ -34,6 +34,7 @@ _CHAIN_INTERNAL_DIRTY_PATTERNS = (
 
 _DEFAULT_COMMAND_TIMEOUT_SECONDS = 120
 _GIT_PUSH_TIMEOUT_SECONDS = 600
+_GIT_PUSH_TIMEOUT_RECOVERY_WINDOW_SECONDS = 30
 
 
 @dataclass(frozen=True)
@@ -499,13 +500,79 @@ def _run_git_push_command(
     writer,
     error_code: str = "git_push_failed",
 ) -> subprocess.CompletedProcess[str]:
-    return _compat()._run_command(
-        root,
-        cmd,
-        writer=writer,
-        timeout=_GIT_PUSH_TIMEOUT_SECONDS,
-        error_code=error_code,
+    try:
+        return _compat()._run_command(
+            root,
+            cmd,
+            writer=writer,
+            timeout=_GIT_PUSH_TIMEOUT_SECONDS,
+            error_code=error_code,
+        )
+    except CliError as exc:
+        error = exc.extra.get("error") if isinstance(exc.extra, dict) else None
+        if (
+            isinstance(error, str)
+            and "timed out" in error.lower()
+            and _recover_timed_out_git_push(root, cmd, writer=writer)
+        ):
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        raise
+
+
+def _recover_timed_out_git_push(root: Path, cmd: list[str], *, writer) -> bool:
+    """Treat timed-out pushes as success when origin reached the expected sha."""
+    target = _expected_remote_push_target(root, cmd)
+    if target is None:
+        return False
+    branch, expected_sha = target
+    deadline = time.monotonic() + _GIT_PUSH_TIMEOUT_RECOVERY_WINDOW_SECONDS
+    while time.monotonic() < deadline:
+        remote_sha = _remote_branch_head(root, branch)
+        if remote_sha == expected_sha:
+            writer(
+                "[chain] git push timed out locally, but origin/"
+                f"{branch} now points at {expected_sha}; continuing\n"
+            )
+            return True
+        time.sleep(2)
+    writer(
+        "[chain] git push timed out and origin/"
+        f"{branch} did not reach expected sha {expected_sha} during recovery window\n"
     )
+    return False
+
+
+def _expected_remote_push_target(root: Path, cmd: list[str]) -> tuple[str, str] | None:
+    """Best-effort parse of the remote branch and source sha for a git push."""
+    if len(cmd) < 4 or cmd[0] != "git" or cmd[1] != "push":
+        return None
+    try:
+        origin_index = cmd.index("origin")
+    except ValueError:
+        return None
+    refspecs = [token for token in cmd[origin_index + 1 :] if not token.startswith("-")]
+    if not refspecs:
+        return None
+    branch: str | None = None
+    source_ref: str | None = None
+    first = refspecs[0]
+    if ":" in first:
+        source_ref, dest_ref = first.split(":", 1)
+        if dest_ref.startswith("refs/heads/"):
+            branch = dest_ref.removeprefix("refs/heads/")
+        else:
+            branch = dest_ref
+    else:
+        branch = first
+        source_ref = first
+    if not branch or not source_ref:
+        return None
+    expected_sha = _resolve_commitish(root, source_ref, writer=writer)
+    if expected_sha is None and source_ref == "HEAD":
+        expected_sha = _resolve_commitish(root, "HEAD", writer=writer)
+    if expected_sha is None:
+        return None
+    return branch, expected_sha
 
 
 def _should_retry_gh_without_env(cmd: list[str], proc: subprocess.CompletedProcess[str]) -> bool:
