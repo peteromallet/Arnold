@@ -25,7 +25,7 @@ import os
 import shutil
 import subprocess
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
@@ -43,7 +43,25 @@ DEFAULT_FALLBACK_WATCHDOG_REPORT = Path("/workspace/.megaplan/watchdog-report.js
 DEFAULT_STATUS_DIR = Path("/workspace/.megaplan/status")
 DEFAULT_SNAPSHOT_PATH = DEFAULT_STATUS_DIR / "cloud-status.json"
 DEFAULT_PREVIOUS_SNAPSHOT_PATH = DEFAULT_STATUS_DIR / "cloud-status.previous.json"
+DEFAULT_HISTORY_PATH = DEFAULT_STATUS_DIR / "progress-history.jsonl"
 DEFAULT_WORKSPACE_ROOT = Path("/workspace")
+
+# Progress-history rotation thresholds. The watchdog appends one compact row per
+# sweep; we keep the file bounded so multi-week chains do not grow it unbounded.
+HISTORY_TRIM_SIZE_BYTES = 512 * 1024
+HISTORY_KEEP_LINES = 2000
+
+STATE_INITIALIZED = "initialized"
+PLAN_PROGRESSION_RUNGS: tuple[str, ...] = (
+    "prepped",
+    "planned",
+    "critiqued",
+    "gated",
+    "finalized",
+    "executed",
+    "reviewed",
+    "done",
+)
 
 SNAPSHOT_SOURCE = "cloud-local-observer"
 
@@ -82,6 +100,7 @@ def build_cloud_status_snapshot(
     workspace_root: Path = DEFAULT_WORKSPACE_ROOT,
     now: datetime | None = None,
     liveness_probe: LivenessProbe | None = None,
+    history_path: Path | str | None = None,
 ) -> dict[str, Any]:
     """Build the canonical cloud status snapshot from local observation only.
 
@@ -117,6 +136,24 @@ def build_cloud_status_snapshot(
         )
 
     sessions.sort(key=lambda entry: (entry["session"] != "editable-install", entry["status"], entry["session"]))
+
+    # Enrich each session's progress block with time-series deltas (epic %
+    # gained over 1h/5h, epic/plan start times) from the sweep history. Best
+    # effort: missing/unreadable history just leaves the deltas absent.
+    hist_path = Path(history_path) if history_path else DEFAULT_HISTORY_PATH
+    for entry in sessions:
+        progress = entry.get("progress")
+        if not isinstance(progress, dict):
+            continue
+        deltas = compute_progress_deltas(
+            history_path=hist_path,
+            session=entry.get("session"),
+            now=now,
+            started_at=entry.get("started_at"),
+            now_percent=progress.get("percent"),
+        )
+        if deltas:
+            progress.update(deltas)
 
     summary = _summarize(sessions)
     snapshot: dict[str, Any] = {
@@ -180,19 +217,23 @@ def build_and_write_snapshot(
     watchdog_report_path: Path | None = None,
     path: Path | str = DEFAULT_SNAPSHOT_PATH,
     previous_path: Path | str | None = DEFAULT_PREVIOUS_SNAPSHOT_PATH,
+    history_path: Path | str | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Build the snapshot and atomically write it + the previous rotation.
 
     Convenience entrypoint for the watchdog: one call after each sweep keeps
-    ``cloud-status.json`` fresh. Returns the snapshot that was written.
+    ``cloud-status.json`` fresh and appends one row to the progress-history log
+    (sweep cadence, not per-resident-turn). Returns the snapshot that was written.
     """
     snapshot = build_cloud_status_snapshot(
         marker_dir=marker_dir,
         watchdog_report_path=watchdog_report_path,
         now=now,
+        history_path=history_path,
     )
     write_cloud_status_snapshot(snapshot, path=path, previous_path=previous_path)
+    append_progress_history(snapshot, history_path or DEFAULT_HISTORY_PATH, now=now)
     return snapshot
 
 
@@ -277,6 +318,185 @@ def plan_activity_summary(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def append_progress_history(
+    snapshot: Mapping[str, Any] | None,
+    path: Path | str = DEFAULT_HISTORY_PATH,
+    *,
+    now: datetime | None = None,
+) -> None:
+    """Append one compact progress row per sweep to the history log.
+
+    The watchdog calls this once per sweep (via :func:`build_and_write_snapshot`)
+    so the file grows on sweep cadence — not on every resident turn. Each row
+    records the epic %, in-flight plan %, plan state, and current plan for every
+    session carrying a progress block. The resident later reads this series to
+    answer "how much has the epic advanced in the past hour?".
+
+    Best-effort and never raises: a write failure simply means one missed
+    sample. The file is trimmed to ``HISTORY_KEEP_LINES`` once it exceeds
+    ``HISTORY_TRIM_SIZE_BYTES``.
+    """
+    if not snapshot or not isinstance(snapshot, Mapping):
+        return
+    now = now or _utcnow()
+    samples: list[dict[str, Any]] = []
+    for entry in snapshot.get("sessions") or []:
+        if not isinstance(entry, Mapping):
+            continue
+        progress = entry.get("progress")
+        if not isinstance(progress, Mapping):
+            continue
+        samples.append(
+            {
+                "session": entry.get("session"),
+                "epic_percent": progress.get("percent"),
+                "plan_percent": progress.get("plan_percent"),
+                "plan_state": progress.get("plan_state"),
+                "current_plan": progress.get("current_plan"),
+            }
+        )
+    if not samples:
+        return
+    path = Path(path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps({"ts": _isoformat(now), "sessions": samples}, separators=(",", ":")) + "\n"
+            )
+    except OSError:
+        return
+    _maybe_trim_history(path)
+
+
+def _maybe_trim_history(path: Path) -> None:
+    """Bound the history log: once it exceeds the size threshold, keep the tail."""
+    try:
+        if path.stat().st_size < HISTORY_TRIM_SIZE_BYTES:
+            return
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    if len(lines) <= HISTORY_KEEP_LINES:
+        return
+    tail = lines[-HISTORY_KEEP_LINES:]
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text("\n".join(tail) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
+def _load_progress_history(path: Path | str) -> list[dict[str, Any]]:
+    """Read the progress-history log as a list of parsed rows."""
+    path = Path(path)
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return rows
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def compute_progress_deltas(
+    *,
+    history_path: Path | str = DEFAULT_HISTORY_PATH,
+    session: str | None = None,
+    now: datetime | None = None,
+    started_at: str | None = None,
+    now_percent: Any = None,
+) -> dict[str, Any] | None:
+    """Compute time-series progress deltas for one session from sweep history.
+
+    Returns ``epic_delta_1h`` / ``epic_delta_5h`` (percentage points the epic
+    gained over the last 1h / 5h), plus ``epic_started_at`` and
+    ``plan_started_at``. Deltas are reported only when a history sample exists
+    from at least that far back — a young epic honestly shows ``None`` until the
+    window fills. Returns ``None`` when there is no history for the session.
+
+    ``epic_started_at`` prefers the session marker's ``started_at`` (true chain
+    start) and falls back to the first history sample. ``plan_started_at`` is the
+    timestamp of the most recent transition into the current plan.
+    """
+    if not session:
+        return None
+    now = now or _utcnow()
+    rows = _load_progress_history(history_path)
+    if not rows:
+        return None
+    # Sorted timeline of (ts, epic_percent, current_plan) for this session.
+    points: list[tuple[datetime, Any, Any]] = []
+    for row in rows:
+        row_dt = _parse_iso(row.get("ts"))
+        if row_dt is None:
+            continue
+        for sample in row.get("sessions") or []:
+            if not isinstance(sample, dict) or sample.get("session") != session:
+                continue
+            points.append((row_dt, sample.get("epic_percent"), sample.get("current_plan")))
+            break
+    if not points:
+        return None
+    points.sort(key=lambda item: item[0])
+
+    current_percent = now_percent
+    if current_percent is None:
+        current_percent = points[-1][1]
+
+    def _percent_at_or_before(target: datetime) -> int | None:
+        """Epic % at the latest sample at or before ``target`` (None if none)."""
+        best: int | None = None
+        for sample_dt, percent, _plan in points:
+            if sample_dt > target:
+                break
+            value = _as_int(percent)
+            if value is not None:
+                best = value
+        return best
+
+    def _delta(window_s: int) -> int | None:
+        if current_percent is None:
+            return None
+        reference = _percent_at_or_before(now - timedelta(seconds=window_s))
+        if reference is None:
+            return None
+        return _as_int(current_percent) - reference
+
+    # plan_started_at: most recent transition into the current plan.
+    current_plan = points[-1][2]
+    plan_started_at: str | None = None
+    prev_plan: Any = None
+    for sample_dt, _percent, plan in points:
+        if plan != prev_plan:
+            if plan is not None and plan == current_plan:
+                plan_started_at = _isoformat(sample_dt)
+            prev_plan = plan
+
+    epic_started_at = started_at or _isoformat(points[0][0])
+    return {
+        "epic_delta_1h": _delta(3600),
+        "epic_delta_5h": _delta(5 * 3600),
+        "epic_started_at": epic_started_at,
+        "plan_started_at": plan_started_at,
+    }
+
+
 def _as_int(value: Any) -> int | None:
     """Best-effort int coercion; ``None`` for non-numeric (or bool) values."""
     if isinstance(value, bool):
@@ -289,12 +509,35 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
+def _plan_stage_percent(plan_state: str) -> int | None:
+    """Estimate a coarse "% through the in-flight plan" from its lifecycle state.
+
+    A plan advances through a fixed ladder of stages (``PLAN_PROGRESSION_RUNGS``);
+    its recorded ``current_state`` (exposed via chain-health ``last_state``) tells
+    us how many it has completed. We map that to completed-stages / total-stages.
+    ``initialized`` is 0%; an off-ladder state (blocked / failed / awaiting_* /
+    tiebreaker_*) is not percentage-able, so we return ``None`` and let the caller
+    surface the raw state label instead. This is a deliberately coarse stage
+    estimate, not exact sub-plan progress — stages are treated as equal-weight.
+    """
+    if not plan_state:
+        return None
+    if plan_state == STATE_INITIALIZED:
+        return 0
+    try:
+        index = PLAN_PROGRESSION_RUNGS.index(plan_state)
+    except ValueError:
+        return None
+    return round((index + 1) / len(PLAN_PROGRESSION_RUNGS) * 100)
+
+
 def _session_progress(
     *,
     completed_count: Any,
     milestone_count: Any,
     current_plan: str | None,
     complete: bool,
+    plan_state: str | None = None,
 ) -> dict[str, Any] | None:
     """Pre-calculate epic/sprint progress for one snapshot session.
 
@@ -307,8 +550,18 @@ def _session_progress(
 
     The breakdown follows the chain's standard sequential progression: the first
     ``completed_count`` milestones are done, the next is the in-flight sprint
-    (carrying ``current_plan``), and the rest are pending. We report discrete
-    states rather than a false-precision sub-sprint percentage.
+    (carrying ``current_plan``), and the rest are pending.
+
+    For the in-flight sprint we additionally estimate a per-plan percent
+    (``plan_percent``) from ``plan_state`` via :func:`_plan_stage_percent`, plus
+    the raw ``plan_state`` label. Both are omitted when there is no in-flight
+    plan or no recorded state, so the progress block stays clean.
+
+    The headline ``percent`` is the epic progress **with the in-flight plan's
+    stage fraction folded in** — ``(completed + plan_percent/100) / total`` — so
+    it advances as the current plan progresses rather than freezing between
+    milestones. Without an in-flight plan-stage signal it falls back to plain
+    ``completed / total``.
     """
     total = _as_int(milestone_count)
     if total is None or total <= 0:
@@ -321,7 +574,24 @@ def _session_progress(
         done = total
     plan = current_plan or None
 
-    percent = 100 if complete else round(done / total * 100)
+    # The in-flight plan's stage estimate is only meaningful while a sprint is
+    # actually in progress (chain not complete, milestones remain).
+    has_in_flight = (not complete) and done < total
+    plan_state_norm = str(plan_state).strip().lower() if plan_state else ""
+    plan_percent = _plan_stage_percent(plan_state_norm) if has_in_flight else None
+
+    # Epic % folds the in-flight plan's stage fraction in, so the headline moves
+    # as the current plan advances instead of freezing between milestones. With
+    # no in-flight plan (complete) or no plan-stage signal, it is plain
+    # completed-milestones / total. The plan fraction counts as up to one
+    # milestone's worth of credit.
+    if complete:
+        percent = 100
+    elif plan_percent is not None:
+        percent = round((done + plan_percent / 100) / total * 100)
+    else:
+        percent = round(done / total * 100)
+
     sprints: list[dict[str, Any]] = []
     for index in range(1, total + 1):
         if complete or index <= done:
@@ -330,11 +600,15 @@ def _session_progress(
             sprint: dict[str, Any] = {"sprint": f"s{index}", "status": "in_progress"}
             if plan:
                 sprint["plan"] = plan
+            if plan_state_norm:
+                sprint["plan_state"] = plan_state_norm
+            if plan_percent is not None:
+                sprint["plan_percent"] = plan_percent
             sprints.append(sprint)
         else:
             sprints.append({"sprint": f"s{index}", "status": "pending"})
 
-    return {
+    progress: dict[str, Any] = {
         "completed_milestones": done,
         "total_milestones": total,
         "percent": percent,
@@ -342,6 +616,11 @@ def _session_progress(
         "current_plan": plan,
         "sprints": sprints,
     }
+    if has_in_flight and plan_state_norm:
+        progress["plan_state"] = plan_state_norm
+    if plan_percent is not None:
+        progress["plan_percent"] = plan_percent
+    return progress
 
 
 # --- per-session classification -------------------------------------------
@@ -377,8 +656,26 @@ def _build_session_entry(
         or plan_name
         or None
     )
-    latest_activity = _latest_activity(chain_health, marker)
-    liveness = _safe_liveness(liveness_probe, marker)
+    # Plan lifecycle state for the per-plan stage %. Prefer the plan's own
+    # ``current_state`` (from state.json): the chain-health ``last_state`` can be
+    # a transient execute sub-state (e.g. ``authority_divergence``, ``error``)
+    # that sits off the progression ladder and would under-report the plan's
+    # position. Fall back to last_state when state.json is unavailable.
+    plan_state_doc = _load_current_plan_state(workspace, str(current_plan or ""))
+    plan_current_state = (
+        str(plan_state_doc.get("current_state") or "").strip().lower()
+        if isinstance(plan_state_doc, Mapping)
+        else ""
+    )
+    plan_state_label = plan_current_state or (
+        chain_health.get("last_state") if chain_health else None
+    )
+    latest_activity = _latest_activity(chain_health, marker, plan_state_doc)
+    liveness = _augment_liveness_with_plan_state(
+        _safe_liveness(liveness_probe, marker),
+        chain_health=chain_health,
+        plan_state=plan_state_doc,
+    )
     superseding_sibling = _find_superseding_sibling(
         marker,
         marker_dir=marker_dir,
@@ -409,6 +706,7 @@ def _build_session_entry(
         "workspace": str(workspace) if workspace else "",
         "spec": remote_spec,
         "run_kind": run_kind,
+        "started_at": marker.get("started_at"),
         "status": status,
         "should_run": status not in {"complete"},
         "tmux": liveness.get("tmux", False),
@@ -424,6 +722,7 @@ def _build_session_entry(
             milestone_count=milestone_count,
             current_plan=current_plan,
             complete=chain_complete,
+            plan_state=plan_state_label,
         ),
         "pr_number": chain_health.get("pr_number") if chain_health else None,
         "pr_state": chain_health.get("pr_state") if chain_health else None,
@@ -720,20 +1019,85 @@ def _watchdog_status(watchdog_item: Mapping[str, Any], chain_complete: bool) -> 
     return status or "unknown"
 
 
-def _latest_activity(chain_health: Mapping[str, Any] | None, marker: Mapping[str, Any]) -> str:
-    candidates = []
+def _load_current_plan_state(workspace: Path | None, current_plan: str) -> dict[str, Any] | None:
+    if workspace is None or not current_plan:
+        return None
+    path = workspace / ".megaplan" / "plans" / current_plan / "state.json"
+    loaded = _load_json(path)
+    return dict(loaded) if isinstance(loaded, Mapping) and loaded else None
+
+
+def _latest_activity(
+    chain_health: Mapping[str, Any] | None,
+    marker: Mapping[str, Any],
+    plan_state: Mapping[str, Any] | None = None,
+) -> str:
+    candidates: list[datetime] = []
+    raw_candidates: list[Any] = []
     if chain_health:
-        candidates.append(chain_health.get("updated_at"))
-        candidates.append(_iso_from_epoch(chain_health.get("events_mtime")))
-    candidates.append(marker.get("started_at"))
-    for value in candidates:
+        raw_candidates.append(chain_health.get("updated_at"))
+        raw_candidates.append(_iso_from_epoch(chain_health.get("events_mtime")))
+    if plan_state:
+        active_step = plan_state.get("active_step")
+        if isinstance(active_step, Mapping):
+            raw_candidates.append(active_step.get("last_activity_at"))
+            raw_candidates.append(active_step.get("started_at"))
+        raw_candidates.append(plan_state.get("updated_at"))
+    raw_candidates.append(marker.get("updated_at"))
+    raw_candidates.append(marker.get("started_at"))
+    for value in raw_candidates:
         if isinstance(value, (int, float)) and value:
-            iso = _iso_from_epoch(value)
-            if iso:
-                return iso
+            parsed = _parse_iso(_iso_from_epoch(value))
+            if parsed is not None:
+                candidates.append(parsed)
         if isinstance(value, str) and value:
-            return value
+            parsed = _parse_iso(value)
+            if parsed is not None:
+                candidates.append(parsed)
+    if candidates:
+        return _isoformat(max(candidates))
     return ""
+
+
+def _augment_liveness_with_plan_state(
+    liveness: Mapping[str, bool],
+    *,
+    chain_health: Mapping[str, Any] | None,
+    plan_state: Mapping[str, Any] | None,
+) -> dict[str, bool]:
+    augmented = {"tmux": bool(liveness.get("tmux")), "process": bool(liveness.get("process"))}
+    if augmented["process"]:
+        return augmented
+
+    active_step = plan_state.get("active_step") if isinstance(plan_state, Mapping) else None
+    if isinstance(active_step, Mapping):
+        pid = _as_int(active_step.get("worker_pid"))
+        if pid is not None and _pid_is_live(pid):
+            augmented["process"] = True
+            return augmented
+
+    # Watchdog chain-health is produced from the same local namespace and can
+    # observe an active step even when the generic ps matcher cannot identify a
+    # direct manual phase command (for example ``megaplan execute --plan ...``).
+    if chain_health and bool(chain_health.get("plan_has_active_step")) and bool(
+        chain_health.get("plan_has_live_activity")
+    ):
+        augmented["process"] = True
+    return augmented
+
+
+def _pid_is_live(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def _is_plan_kind_marker(workspace: Path | None) -> bool:
@@ -764,6 +1128,7 @@ def default_liveness_probe(marker: Mapping[str, Any]) -> dict[str, bool]:
     workspace = str(marker.get("workspace") or "")
     remote_spec = str(marker.get("remote_spec") or "")
     plan_name = str(marker.get("plan_name") or "")
+    relaunch_command = str(marker.get("relaunch_command") or "")
 
     tmux_alive = False
     if session:
@@ -780,6 +1145,9 @@ def default_liveness_probe(marker: Mapping[str, Any]) -> dict[str, bool]:
             tmux_alive = False
 
     process_alive = False
+    marker_pid = _as_int(marker.get("pid"))
+    if marker_pid is not None and _pid_is_live(marker_pid):
+        process_alive = True
     needles = [value for value in (remote_spec, workspace, plan_name) if value]
     if needles:
         try:
@@ -794,10 +1162,18 @@ def default_liveness_probe(marker: Mapping[str, Any]) -> dict[str, bool]:
             ps = None
         if ps is not None and ps.returncode == 0:
             for line in ps.stdout.splitlines():
-                if "arnold_pipelines.megaplan" not in line:
-                    continue
-                if needles[0] in line and (
-                    " chain start" in line or " epic-chain start" in line or " auto " in line
+                if session and f"watchdog-{session}" in line:
+                    process_alive = True
+                    break
+                if relaunch_command and relaunch_command in line:
+                    process_alive = True
+                    break
+                if "arnold_pipelines.megaplan" in line and any(needle in line for needle in needles) and (
+                    " chain start" in line
+                    or " epic-chain start" in line
+                    or " auto " in line
+                    or " execute " in line
+                    or " resume " in line
                 ):
                     process_alive = True
                     break

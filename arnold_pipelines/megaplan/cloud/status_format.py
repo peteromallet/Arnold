@@ -115,11 +115,27 @@ def format_cloud_status_detailed(snapshot: Mapping[str, Any] | None) -> str:
     for entry in _ordered_sessions(snapshot):
         status = entry.get("status", "attention")
         progress = entry.get("progress")
-        progress_str = (
-            f"  progress={progress.get('percent')}%"
-            if isinstance(progress, Mapping) and progress.get("percent") is not None
-            else ""
-        )
+        progress_str = ""
+        if isinstance(progress, Mapping) and progress.get("percent") is not None:
+            progress_str = f"  progress={progress.get('percent')}%"
+            # In-flight plan stage estimate (completed lifecycle stages / total),
+            # or the raw plan state when it is not percentage-able (e.g. blocked).
+            plan_percent = progress.get("plan_percent")
+            plan_state = progress.get("plan_state")
+            if plan_percent is not None:
+                progress_str += f"  plan={plan_percent}%"
+                if plan_state:
+                    progress_str += f" ({plan_state})"
+            elif plan_state:
+                progress_str += f"  plan={plan_state}"
+            # Epic % gained over the last 1h / 5h, from sweep history.
+            delta_parts = []
+            for window, key in (("1h", "epic_delta_1h"), ("5h", "epic_delta_5h")):
+                delta = progress.get(key)
+                if isinstance(delta, int):
+                    delta_parts.append(f"{delta:+d}%/{window}")
+            if delta_parts:
+                progress_str += "  (" + ", ".join(delta_parts) + ")"
         out.append(
             f"[{status}] {entry.get('session', '?')}  "
             f"plan={entry.get('current_plan') or '-'}  "
