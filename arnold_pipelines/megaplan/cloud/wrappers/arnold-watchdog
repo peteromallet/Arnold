@@ -1053,11 +1053,6 @@ emit_current_needs_human_sidecar() {
   else
     compare_needs_human_to_resolver "$session" "$current_plan" "false" ""
   fi
-  if command -v repair_needs_human_should_remain_human >/dev/null 2>&1 && ! repair_needs_human_should_remain_human "$session" "$current_plan"; then
-    rm -f "$marker_path" 2>/dev/null || true
-    log "stale repair needs-human marker cleared; fresh classifier no longer requires human session=$session live_plan=${current_plan:-unknown}"
-    return 1
-  fi
 
   meta_repair_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation" "$health")"
   if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
@@ -1071,6 +1066,11 @@ emit_current_needs_human_sidecar() {
     else
       log "session has current needs-human marker and meta-repair trigger matched but dispatch unavailable session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
     fi
+  fi
+  if command -v repair_needs_human_should_remain_human >/dev/null 2>&1 && ! repair_needs_human_should_remain_human "$session" "$current_plan"; then
+    rm -f "$marker_path" 2>/dev/null || true
+    log "stale repair needs-human marker cleared; fresh classifier no longer requires human session=$session live_plan=${current_plan:-unknown}"
+    return 1
   fi
 
   repair_summary="$(repair_needs_human_summary "$session")"
