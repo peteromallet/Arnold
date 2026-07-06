@@ -361,6 +361,143 @@ def test_run_chain_pr_merge_resume_blocks_non_terminal_plan(tmp_path: Path) -> N
     assert "current_state='gated'" in result["reason"]
 
 
+def test_stale_merged_pr_recovery_accepts_failed_no_next_step_blocked_execute(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    spec_path = _write_chain_spec(tmp_path)
+    _git(tmp_path, "add", "chain.yaml", "idea.md", "NORTHSTAR.md")
+    _git(tmp_path, "commit", "-m", "track chain inputs")
+    head = _commit_semantic_change(tmp_path)
+    spec = load_spec(spec_path)
+    milestone = spec.milestones[0]
+    plan_dir = _write_plan(
+        tmp_path,
+        current_state="failed",
+        base_sha=base,
+        finalize_tasks=[
+            {
+                "id": "T1",
+                "status": "done",
+                "kind": "code",
+                "files_changed": ["src/app.py"],
+                "head_sha": head,
+            },
+            {
+                "id": "T2",
+                "status": "skipped",
+                "kind": "test",
+                "reviewer_verdict": "deferred_baseline_unavailable",
+                "executor_notes": (
+                    "Deferred by harness: baseline_test_failures is null, so this "
+                    "no-new-failures checkpoint cannot compare against a recorded baseline."
+                ),
+            },
+        ],
+        execution_batch=False,
+        latest_failure={
+            "kind": "no_next_step",
+            "message": "no next_step and no override available",
+        },
+    )
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "plan-m1",
+                "current_state": "failed",
+                "config": {"project_dir": str(tmp_path)},
+                "meta": {
+                    "chain_policy": {"milestone_base_sha": base},
+                    "execution_baseline": {"head": base},
+                },
+                "history": [{"step": "execute", "result": "blocked"}],
+                "latest_failure": {
+                    "kind": "no_next_step",
+                    "message": "no next_step and no override available",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "baseline_test_failures": None,
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "kind": "code",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": head,
+                    },
+                    {
+                        "id": "T2",
+                        "status": "skipped",
+                        "kind": "test",
+                        "reviewer_verdict": "deferred_baseline_unavailable",
+                        "executor_notes": (
+                            "Deferred by harness: baseline_test_failures is null, "
+                            "so this no-new-failures checkpoint cannot compare "
+                            "against a recorded baseline."
+                        ),
+                    },
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=0,
+            current_plan_name="plan-m1",
+            last_state=STATE_AWAITING_PR_MERGE,
+            pr_number=99,
+            pr_state="awaiting_merge",
+        ),
+    )
+    state = load_chain_state(spec_path)
+
+    recovered_state, reason = chain_module._recover_stale_merged_pr_for_unfinished_plan(
+        tmp_path,
+        spec_path,
+        state,
+        milestone,
+        json.loads((plan_dir / "state.json").read_text(encoding="utf-8")),
+        writer=lambda _msg: None,
+    )
+
+    assert recovered_state is not None
+    assert "cleared stale PR cursor" in reason
+    assert recovered_state.last_state == "executed"
+    assert recovered_state.pr_number is None
+    assert recovered_state.pr_state is None
+    assert recovered_state.metadata["stale_merged_pr_recovery"]["plan_current_state"] == "failed"
+    assert (
+        recovered_state.metadata["stale_merged_pr_recovery"]["canonical_plan_current_state"]
+        == "executed"
+    )
+
+
 def test_run_chain_stops_when_resumed_pr_is_closed(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     spec_path = _write_chain_spec(tmp_path)

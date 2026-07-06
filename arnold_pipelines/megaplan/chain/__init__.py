@@ -2739,11 +2739,23 @@ def _recover_stale_merged_pr_for_unfinished_plan(
         return None, "missing active plan or milestone branch for stale merged PR recovery"
 
     current_state = plan_state.get("current_state")
+    canonical_state = current_state
+    if current_state == "failed":
+        latest_failure = plan_state.get("latest_failure")
+        if isinstance(latest_failure, dict) and latest_failure.get("kind") == "no_next_step":
+            try:
+                plan_dir = resolve_plan_dir(root, plan_name)
+            except CliError:
+                plan_dir = None
+            if plan_dir is not None and _latest_execute_result(plan_dir) == "blocked":
+                all_done, _reason = _latest_execution_batch_all_tasks_done(plan_dir)
+                if all_done:
+                    canonical_state = STATE_EXECUTED
     if current_state == STATE_DONE:
         return None, f"plan {plan_name} is already {STATE_DONE!r}"
-    if not isinstance(current_state, str) or not current_state:
+    if not isinstance(canonical_state, str) or not canonical_state:
         return None, f"plan {plan_name} has no usable current_state for stale merged PR recovery"
-    if current_state not in {STATE_PREPPED, STATE_FINALIZED, STATE_EXECUTED}:
+    if canonical_state not in {STATE_PREPPED, STATE_FINALIZED, STATE_EXECUTED}:
         return (
             None,
             f"plan {plan_name} current_state={current_state!r} is not recoverable "
@@ -2804,13 +2816,14 @@ def _recover_stale_merged_pr_for_unfinished_plan(
 
     state.pr_number = None
     state.pr_state = None
-    state.last_state = current_state
+    state.last_state = canonical_state
     state.metadata["stale_merged_pr_recovery"] = {
         "recovered_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "milestone": milestone.label,
         "plan": plan_name,
         "stale_pr_number": old_pr_number,
         "plan_current_state": current_state,
+        "canonical_plan_current_state": canonical_state,
         "dirty_claimed_paths": dirty_claimed,
         "unclaimed_execute_dirty_paths": unrelated_dirty,
     }
