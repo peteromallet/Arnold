@@ -1855,6 +1855,36 @@ def flow(brief):
     assert _diagnostic_payloads(result)[0]["message"] == expected_message
 
 
+def test_source_compiler_m3_accepts_imported_strenum_branch_targets() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from project.workflow_components import execute, route
+from arnold_pipelines.megaplan.outcomes import GateOutcome
+
+@workflow(id="enum-branch")
+def flow(brief):
+    decision = route(id="route", brief=brief)
+    if decision == GateOutcome.PROCEED:
+        execute(id="execute", plan=decision)
+    else:
+        execute(id="fallback", plan=decision)
+"""
+
+    resolver = _Resolver(
+        {
+            "project.workflow_components:route": _step_component("route"),
+            "project.workflow_components:execute": _step_component("execute"),
+        }
+    )
+    result = workflow.check_workflow_source(
+        source,
+        source_path="enum_branch.py",
+        resolver=resolver,
+    )
+
+    assert result.diagnostics == ()
+
+
 def test_source_compiler_m3_rejects_repeated_branch_conditions() -> None:
     source = """
 from arnold.workflow.authoring import workflow

@@ -21,6 +21,7 @@ Ownership:
 from __future__ import annotations
 
 import ast
+import importlib
 import hashlib
 import re
 import sys
@@ -798,6 +799,15 @@ def _parse_imports(
                     continue
                 component = resolver.resolve(import_ref)
                 if component is None:
+                    static_value = _resolve_imported_python_symbol(import_ref)
+                    if static_value is not None:
+                        imports[local_name] = ImportBinding(
+                            local_name=local_name,
+                            import_ref=import_ref,
+                            kind="python-value",
+                            source_span=source_span_for_node(source_path, statement),
+                        )
+                        continue
                     diagnostics.append(
                         _diagnostic(
                             DiagnosticCode.UNKNOWN_COMPONENT,
@@ -1722,6 +1732,7 @@ def _parse_branch_block(
             condition = _parse_branch_condition(
                 test,
                 source_path,
+                imports,
                 local_outputs,
                 diagnostics,
             )
@@ -2102,6 +2113,7 @@ def _branch_arms(statement: ast.If) -> tuple[tuple[ast.AST | None, Sequence[ast.
 def _parse_branch_condition(
     test: ast.AST,
     source_path: str,
+    imports: Mapping[str, ImportBinding],
     local_outputs: Mapping[str, SourceSpan],
     diagnostics: list[AuthoringDiagnostic],
 ) -> ParsedBranchCondition | None:
@@ -2122,7 +2134,8 @@ def _parse_branch_condition(
         return None
 
     comparator = test.comparators[0]
-    if not isinstance(comparator, ast.Constant) or not isinstance(comparator.value, str):
+    literal_target = _static_branch_target_literal(comparator, imports)
+    if literal_target is None:
         diagnostics.append(
             _diagnostic(
                 DiagnosticCode.DYNAMIC_ROUTING_CONDITION,
@@ -2146,9 +2159,42 @@ def _parse_branch_condition(
 
     return ParsedBranchCondition(
         decision_output=decision_output,
-        literal=comparator.value,
+        literal=literal_target,
         source_span=source_span_for_node(source_path, test),
     )
+
+
+def _static_branch_target_literal(
+    comparator: ast.AST,
+    imports: Mapping[str, ImportBinding],
+) -> str | None:
+    if isinstance(comparator, ast.Constant) and isinstance(comparator.value, str):
+        return comparator.value
+    if (
+        isinstance(comparator, ast.Attribute)
+        and isinstance(comparator.value, ast.Name)
+        and comparator.value.id in imports
+    ):
+        binding = imports[comparator.value.id]
+        owner = _resolve_imported_python_symbol(binding.import_ref)
+        if owner is None:
+            return None
+        try:
+            value = getattr(owner, comparator.attr)
+        except Exception:
+            return None
+        return value if isinstance(value, str) else None
+    return None
+
+
+def _resolve_imported_python_symbol(import_ref: ImportRef) -> object | None:
+    try:
+        target: object = importlib.import_module(import_ref.module)
+        for segment in import_ref.qualname.split("."):
+            target = getattr(target, segment)
+    except Exception:
+        return None
+    return target
 
 
 def _assignment_output_bindings(
