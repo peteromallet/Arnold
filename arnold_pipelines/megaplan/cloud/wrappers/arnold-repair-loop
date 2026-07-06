@@ -1115,7 +1115,7 @@ repair_target_completion_status() {
   local workspace="$1"
   local run_kind="$2"
   local plan_name="${3:-}"
-  python3 - "$workspace" "$run_kind" "$plan_name" "$REMOTE_SPEC" "$SESSION" "${MARKER_DIR:-/workspace/.megaplan/cloud-sessions}" "$ARNOLD_SRC" <<'PY'
+  PYTHONPATH="${WRAPPER_REPO_ROOT:-$ARNOLD_SRC}:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$workspace" "$run_kind" "$plan_name" "$REMOTE_SPEC" "$SESSION" "${MARKER_DIR:-/workspace/.megaplan/cloud-sessions}" "$ARNOLD_SRC" <<'PY'
 import hashlib
 import json
 import pathlib
