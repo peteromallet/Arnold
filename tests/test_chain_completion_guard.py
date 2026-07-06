@@ -498,6 +498,91 @@ def test_stale_merged_pr_recovery_accepts_failed_no_next_step_blocked_execute(
     )
 
 
+def test_completion_guard_accepts_merged_pr_failed_no_next_step_blocked_execute(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    head = _commit_semantic_change(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "plan-m1",
+                "current_state": "failed",
+                "meta": {"chain_policy": {"milestone_base_sha": base}},
+                "history": [{"step": "execute", "result": "blocked"}],
+                "latest_failure": {
+                    "kind": "no_next_step",
+                    "message": "no next_step and no override available",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "baseline_test_failures": None,
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "kind": "code",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": head,
+                    },
+                    {
+                        "id": "T2",
+                        "status": "skipped",
+                        "kind": "test",
+                        "reviewer_verdict": "deferred_baseline_unavailable",
+                        "executor_notes": (
+                            "Deferred by harness: baseline_test_failures is null, "
+                            "so this no-new-failures checkpoint cannot compare "
+                            "against a recorded baseline."
+                        ),
+                    },
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ok, reason = _chain_completion_guard(
+        tmp_path,
+        {
+            "label": "m1",
+            "plan": "plan-m1",
+            "status": "done",
+            "pr_state": "merged",
+            "pr_head_sha": head,
+        },
+        implementation_milestone=True,
+    )
+
+    assert ok is True
+    assert "no_next_step after blocked execute was canonicalized" in reason
+
+
 def test_run_chain_stops_when_resumed_pr_is_closed(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     spec_path = _write_chain_spec(tmp_path)

@@ -2449,6 +2449,17 @@ def _chain_completion_guard(
         STATE_BLOCKED,
         STATE_FINALIZED,
     }
+    failed_no_next_step_blocked_execute = False
+    if is_merged_pr and current_state == "failed":
+        latest_failure = plan_state.get("latest_failure")
+        if (
+            isinstance(latest_failure, dict)
+            and latest_failure.get("kind") == "no_next_step"
+            and _latest_execute_result(plan_dir) == "blocked"
+        ):
+            all_done, _all_done_reason = _latest_execution_batch_all_tasks_done(plan_dir)
+            failed_no_next_step_blocked_execute = all_done
+            merged_pr_internal_state_bypass = all_done
     merged_pr_state_bypass_reason = ""
     if (
         implementation_milestone
@@ -2461,10 +2472,17 @@ def _chain_completion_guard(
             f"{STATE_DONE!r}",
         )
     if implementation_milestone and current_state != STATE_DONE and merged_pr_internal_state_bypass:
-        merged_pr_state_bypass_reason = (
-            f"merged PR milestone; internal plan state {current_state!r} bypassed "
-            "because PR is merged"
-        )
+        if failed_no_next_step_blocked_execute:
+            merged_pr_state_bypass_reason = (
+                "merged PR milestone; internal plan state 'failed' with "
+                "no_next_step after blocked execute was canonicalized because "
+                "execution authority has all tasks done"
+            )
+        else:
+            merged_pr_state_bypass_reason = (
+                f"merged PR milestone; internal plan state {current_state!r} bypassed "
+                "because PR is merged"
+            )
 
     if not implementation_milestone:
         return True, "non-implementation completion guard passed"
