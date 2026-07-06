@@ -211,6 +211,37 @@ workflow(id="custom-resolver", steps=[plan(id="plan")])
     assert resolver.resolved == (ImportRef("project.workflow_components", "plan"),)
 
 
+def test_source_compiler_normalizes_relative_import_modules_for_absolute_hyphenated_paths() -> None:
+    source = """
+from __future__ import annotations
+
+from .workflow_components import plan
+from arnold.workflow.authoring import workflow
+
+workflow(id="relative-import", steps=[plan(id="plan")])
+"""
+    resolver = _Resolver(
+        {
+            "_.tmp.hyphenated_root.pkg.workflow_components:plan": authoring.StepComponent(
+                id="plan",
+                provenance=authoring.ComponentProvenance(
+                    module="_.tmp.hyphenated_root.pkg.workflow_components",
+                    qualname="plan",
+                    export_name="plan",
+                ),
+            )
+        }
+    )
+    source_path = Path("/tmp/hyphenated-root/pkg/relative_import.pypeline")
+
+    pipeline = workflow.lower_workflow_source(source, source_path=source_path, resolver=resolver)
+
+    assert pipeline.steps[0].metadata["component_ref"] == (
+        "_.tmp.hyphenated_root.pkg.workflow_components:plan"
+    )
+    assert resolver.resolved == (ImportRef("_.tmp.hyphenated_root.pkg.workflow_components", "plan"),)
+
+
 def test_source_compiler_lowers_direct_form_to_linear_pipeline_with_call_site_spans() -> None:
     source_path = Path("tests/fixtures/workflow_authoring/valid_direct_linear.py")
     source = source_path.read_text(encoding="utf-8")

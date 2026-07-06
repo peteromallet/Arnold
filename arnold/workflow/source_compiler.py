@@ -4710,7 +4710,7 @@ def _absolute_module_name(statement: ast.ImportFrom, source_path: str) -> str:
 def _package_parts_for_source_path(source_path: str) -> tuple[str, ...]:
     path = Path(source_path)
     if not path.is_absolute():
-        return path.with_suffix("").parts[:-1]
+        return _normalized_package_parts(path.with_suffix("").parts[:-1])
     resolved = path.resolve()
     search_roots = [Path.cwd(), *(Path(entry or ".") for entry in sys.path)]
     for root in search_roots:
@@ -4718,8 +4718,12 @@ def _package_parts_for_source_path(source_path: str) -> tuple[str, ...]:
             relative = resolved.with_suffix("").relative_to(root.resolve())
         except ValueError:
             continue
-        return relative.parts[:-1]
-    return resolved.with_suffix("").parts[:-1]
+        return _normalized_package_parts(relative.parts[:-1])
+    return _normalized_package_parts(resolved.with_suffix("").parts[:-1])
+
+
+def _normalized_package_parts(parts: Sequence[str]) -> tuple[str, ...]:
+    return tuple(_normalize_module_segment(part) for part in parts if part not in {"", "."})
 
 
 def _coerce_source_path(source_path: str | Path | None) -> str:
