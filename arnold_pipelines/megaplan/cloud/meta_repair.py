@@ -725,6 +725,16 @@ def _repair_evidence_superseded_by_current_target(
         plan_runtime_state.get("current_state")
     )
     repair_state = repair_state.lower()
+    repair_kind = _meta_safe_text(
+        current_signature.get("failure_kind")
+    ) or _meta_safe_text(
+        failure_context.get("failure_classification")
+    )
+    repair_phase = _meta_safe_text(
+        current_signature.get("phase_or_step")
+    ) or _meta_safe_text(
+        latest_failure.get("phase")
+    )
 
     if repair_plan_name and current_plan_name and repair_plan_name != current_plan_name:
         return (
@@ -746,6 +756,21 @@ def _repair_evidence_superseded_by_current_target(
                 "current-target observation supersedes stale recurring repair evidence: "
                 f"repair-data state={repair_state} but live chain state is {current_chain_state}"
             )
+
+    live_status = _load_current_target_status(
+        plan_state.get("path") if isinstance(plan_state, Mapping) else None
+    )
+    if (
+        repair_kind == "blocked_state_or_recovery_error"
+        and repair_phase == "execute"
+        and repair_state == "finalized"
+        and current_plan_state == "finalized"
+        and _status_proves_terminal_blocker_without_retry(live_status)
+    ):
+        return (
+            "current-target observation supersedes stale recurring repair evidence: "
+            "live status is finalized with terminal blockers and no execute retry path"
+        )
 
     repair_outcome = _meta_safe_text(repair_data.get("outcome")).lower()
     running_outcomes = {"running", "repairing", "recurring_retry_pending"}
@@ -847,6 +872,42 @@ def _latest_current_target_epoch(current_target_observation: Mapping[str, Any]) 
             if latest is None or mtime > latest:
                 latest = mtime
     return latest
+
+
+def _load_current_target_status(plan_state_path: str | Path | None) -> Mapping[str, Any] | None:
+    if not isinstance(plan_state_path, (str, Path)) or not str(plan_state_path):
+        return None
+    try:
+        state_path = Path(plan_state_path)
+        from arnold_pipelines.megaplan._core import read_json
+        from arnold_pipelines.megaplan.cli.status_view import _build_status_payload
+
+        state = read_json(state_path)
+        if not isinstance(state, dict):
+            return None
+        status = _build_status_payload(state_path.parent, state)
+        return status if isinstance(status, Mapping) else None
+    except Exception:
+        return None
+
+
+def _status_proves_terminal_blocker_without_retry(status: Mapping[str, Any] | None) -> bool:
+    if not isinstance(status, Mapping):
+        return False
+    if status.get("next_step") is not None:
+        return False
+    valid_next = status.get("valid_next")
+    if isinstance(valid_next, Sequence) and any(str(item).strip() for item in valid_next):
+        return False
+    blocker_recovery = status.get("blocker_recovery")
+    if not isinstance(blocker_recovery, Mapping):
+        return False
+    if blocker_recovery.get("has_terminal_blockers") is not True:
+        return False
+    active_step = status.get("active_step")
+    if isinstance(active_step, Mapping) and bool(active_step.get("active")):
+        return False
+    return True
 
 
 def _truncate_prompt_text(text: str, *, max_chars: int) -> str:
