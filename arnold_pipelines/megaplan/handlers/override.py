@@ -1426,11 +1426,8 @@ def _override_set_profile(
     root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
 ) -> StepResponse:
     from arnold_pipelines.megaplan.profiles import (
-        apply_depth_rewrite,
-        apply_vendor_rewrite,
-        load_profiles,
-        resolve_profile,
-        profile_to_phase_models,
+        _canonicalize_tier_models_for_json,
+        apply_profile_expansion,
     )
 
     new_profile = getattr(args, "profile", None)
@@ -1442,19 +1439,41 @@ def _override_set_profile(
             f"set-profile cannot be applied to a plan in terminal state '{state['current_state']}'",
         )
     project_dir = Path(state["config"].get("project_dir", str(root)))
-    profiles = load_profiles(project_dir=project_dir)
-    resolved = resolve_profile(new_profile, profiles)
     vendor = effective_premium_vendor(config=state.get("config", {}))
-    resolved = apply_vendor_rewrite(resolved, vendor)
-    depth = state["config"].get("depth")
-    if depth is not None:
-        resolved = apply_depth_rewrite(resolved, depth)
-    phase_models = profile_to_phase_models(resolved)
+    profile_args = argparse.Namespace(
+        profile=new_profile,
+        phase_model=[],
+        tier_models=None,
+        vendor=vendor,
+        critic=state["config"].get("critic"),
+        depth=state["config"].get("depth"),
+        deepseek_provider=state["config"].get("deepseek_provider"),
+        agent=None,
+        hermes=None,
+        _profile_applied=False,
+    )
+    apply_profile_expansion(profile_args, project_dir)
+    phase_models = list(profile_args.phase_model or [])
+    tier_models = getattr(profile_args, "tier_models", None)
 
     previous_profile = state["config"].get("profile")
     state["config"]["profile"] = new_profile
     state["config"]["phase_model"] = phase_models
     state["config"]["vendor"] = vendor
+    if tier_models:
+        state["config"]["tier_models"] = _canonicalize_tier_models_for_json(tier_models)
+    else:
+        state["config"].pop("tier_models", None)
+    prep_models = getattr(profile_args, "prep_models", None)
+    prep_trace = getattr(profile_args, "prep_model_resolver_trace", None)
+    if prep_models:
+        state["config"]["prep_models"] = prep_models
+    else:
+        state["config"].pop("prep_models", None)
+    if prep_trace:
+        state["config"]["prep_model_resolver_trace"] = prep_trace
+    else:
+        state["config"].pop("prep_model_resolver_trace", None)
     exec_spec = next(
         (phase_model.split("=", 1)[1] for phase_model in phase_models if phase_model.startswith("execute=")),
         "",
