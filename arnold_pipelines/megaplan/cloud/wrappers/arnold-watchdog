@@ -6615,6 +6615,20 @@ PY
       fi
     fi
   else
+    local meta_repair_trigger meta_dispatch_result
+    meta_repair_trigger="$(compute_meta_repair_trigger "$session" "$current_target_observation" "$health")"
+    if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
+      if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items" "${meta_repair_trigger#TRIGGER:}"; then
+        meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
+        if [[ "$meta_dispatch_result" == "dispatched" ]]; then
+          log "session stopped after repair failure; meta-repair background-dispatched session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
+          return 0
+        fi
+        log "session stopped after repair failure; meta-repair trigger matched but fell through to direct relaunch session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:} dispatch=${meta_dispatch_result:-unknown}"
+      else
+        log "session stopped after repair failure; meta-repair trigger matched but dispatch unavailable session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
+      fi
+    fi
     if mechanical_relaunch_attempted_previously "$session"; then
       if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
         if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
