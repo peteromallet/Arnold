@@ -178,6 +178,54 @@ def test_problem_signature_includes_event_signature_field(tmp_path: Path) -> Non
     assert signature["event_signature"] == "authority_divergence/head_mismatch"
 
 
+def test_problem_signature_prefers_phase_result_over_noisy_event_signature(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "demo-plan"
+    plan_dir.mkdir()
+    events_path = plan_dir / "events.ndjson"
+    events_path.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "seq": index,
+                    "ts_utc": f"2026-07-05T00:00:{index:02d}+00:00",
+                    "kind": "llm_token_heartbeat",
+                    "payload": {},
+                }
+            )
+            for index in range(3)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "state.json").write_text("{}", encoding="utf-8")
+    (plan_dir / "phase_result.json").write_text(
+        json.dumps(
+            {
+                "phase": "execute",
+                "exit_kind": "blocked_by_quality",
+                "blocked_tasks": [],
+                "deviations": [
+                    {
+                        "kind": "quality_gate",
+                        "message": "Focused probe still reports AWF245_ROW_EVIDENCE_INSUFFICIENCY.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    ctx = _failure_context(phase="execute")
+    ctx["workspace"] = str(tmp_path)
+    ctx["plan_latest_failure"]["state_path"] = str(plan_dir / "state.json")
+    ctx["plan_latest_failure"]["events_path"] = str(events_path)
+
+    signature = repair_recurrence.build_problem_signature(ctx)
+
+    assert signature["event_signature"] == (
+        "phase_result/execute/blocked_by_quality/quality_gate:AWF245_ROW_EVIDENCE_INSUFFICIENCY"
+    )
+
+
 def test_problem_signature_event_signature_empty_when_no_events() -> None:
     signature = repair_recurrence.build_problem_signature(_failure_context())
     assert signature["event_signature"] == ""
