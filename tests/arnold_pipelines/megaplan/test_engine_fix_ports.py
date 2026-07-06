@@ -457,6 +457,62 @@ def test_execute_completion_authority_prefers_fresh_execution_evidence_over_stal
     assert missing == []
 
 
+def test_validate_execution_evidence_ignores_stale_pending_finalize_rows(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    subprocess.run(["git", "init"], cwd=project_dir, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=project_dir, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=project_dir, check=True)
+    (project_dir / "file.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "file.txt"], cwd=project_dir, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=project_dir, check=True, capture_output=True)
+    current_head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=project_dir, text=True
+    ).strip()
+
+    plan_dir = project_dir / ".megaplan" / "plans" / "plan-stale-finalize-audit"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T11",
+                        "status": "done",
+                        "kind": "code",
+                        "files_changed": ["file.txt"],
+                        "head_sha": current_head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    audit = validate_execution_evidence(
+        {
+            "tasks": [
+                {
+                    "id": "T11",
+                    "status": "pending",
+                    "kind": "code",
+                    "executor_notes": "Stale finalize snapshot before execute batch reconciliation.",
+                }
+            ],
+            "sense_checks": [],
+        },
+        project_dir,
+        plan_dir=plan_dir,
+    )
+
+    assert not any(
+        "Tasks left pending after execute" in finding for finding in audit["findings"]
+    )
+
+
 def test_execute_completion_authority_accepts_explained_noop_done_task(
     tmp_path: Path,
 ) -> None:
