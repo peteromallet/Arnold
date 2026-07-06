@@ -31,6 +31,7 @@ from arnold_pipelines.megaplan.blocker_recovery import (
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,
+    ExitKind,
     read_phase_result,
 )
 from arnold_pipelines.megaplan.orchestration.plan_structure import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE
@@ -243,6 +244,8 @@ def _phase_result_recovery_inputs(
     except Exception:
         return (), ()
     if phase_result is None:
+        return (), ()
+    if phase_result.exit_kind == ExitKind.success.value:
         return (), ()
     return phase_result.blocked_tasks, phase_result.deviations
 
