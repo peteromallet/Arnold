@@ -1426,8 +1426,11 @@ def _override_set_profile(
     root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
 ) -> StepResponse:
     from arnold_pipelines.megaplan.profiles import (
+        _canonicalize_tier_models_for_json,
+        _resolve_tier_models_with_inheritance,
         apply_depth_rewrite,
         apply_vendor_rewrite,
+        load_profile_metadata,
         load_profiles,
         resolve_profile,
         profile_to_phase_models,
@@ -1443,7 +1446,18 @@ def _override_set_profile(
         )
     project_dir = Path(state["config"].get("project_dir", str(root)))
     profiles = load_profiles(project_dir=project_dir)
+    metadata = load_profile_metadata(project_dir=project_dir)
     resolved = resolve_profile(new_profile, profiles)
+    try:
+        tier_models = _resolve_tier_models_with_inheritance(
+            new_profile,
+            system_profiles=profiles,
+            system_metadata=metadata,
+            pipeline_local_profiles={},
+            pipeline_local_metadata={},
+        )
+    except CliError:
+        tier_models = {}
     vendor = effective_premium_vendor(config=state.get("config", {}))
     resolved = apply_vendor_rewrite(resolved, vendor)
     depth = state["config"].get("depth")
@@ -1455,6 +1469,10 @@ def _override_set_profile(
     state["config"]["profile"] = new_profile
     state["config"]["phase_model"] = phase_models
     state["config"]["vendor"] = vendor
+    if tier_models:
+        state["config"]["tier_models"] = _canonicalize_tier_models_for_json(tier_models)
+    else:
+        state["config"].pop("tier_models", None)
     exec_spec = next(
         (phase_model.split("=", 1)[1] for phase_model in phase_models if phase_model.startswith("execute=")),
         "",

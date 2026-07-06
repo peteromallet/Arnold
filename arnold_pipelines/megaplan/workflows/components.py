@@ -952,6 +952,10 @@ REVISE_LOOP_POLICY = _policy(
         },
     },
 )
+
+REVISE_LOOP_TERMINATION_POLICY = MappingProxyType(
+    REVISE_LOOP_POLICY.metadata["loop_surface"]["termination_policy"]
+)
 TIEBREAKER_POLICY = _policy(
     export_name="TIEBREAKER_POLICY",
     policy_id="megaplan:tiebreaker",
@@ -2284,6 +2288,7 @@ __all__ = [
     "REVISE",
     "REVISE_INPUT_SCHEMA",
     "REVISE_LOOP_POLICY",
+    "REVISE_LOOP_TERMINATION_POLICY",
     "REVISE_OUTPUT_SCHEMA",
     "REVISE_PROMPT",
     "ROBUSTNESS_POLICY",

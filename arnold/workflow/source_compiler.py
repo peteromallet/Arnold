@@ -574,7 +574,7 @@ def check_workflow_file(
     source_path: str | Path,
     *,
     resolver: ComponentResolver | None = None,
-    evidence: Sequence[SemanticEvidence] = (),
+    evidence: Sequence[SemanticEvidence] | None = None,
     boundary_contracts: Sequence[BoundaryContract] = (),
     boundary_evidence: Sequence[BoundaryReceipt | SemanticFinding] = (),
 ) -> CheckWorkflowSourceResult:
@@ -594,7 +594,7 @@ def check_workflow_source(
     *,
     source_path: str | Path | None = None,
     resolver: ComponentResolver | None = None,
-    evidence: Sequence[SemanticEvidence] = (),
+    evidence: Sequence[SemanticEvidence] | None = (),
     boundary_contracts: Sequence[BoundaryContract] = (),
     boundary_evidence: Sequence[BoundaryReceipt | SemanticFinding] = (),
 ) -> CheckWorkflowSourceResult:
@@ -610,8 +610,10 @@ def check_workflow_source(
     resolver:
         Optional component resolver.
     evidence:
-        Row-level ``SemanticEvidence`` records.  Missing evidence for an
-        implemented front-half row produces AWF245.
+        Optional row-level ``SemanticEvidence`` records.  The source-checking API
+        is strict by default and emits AWF245 for implemented front-half rows
+        missing matching evidence.  ``check_workflow_file`` passes ``None`` by
+        default to preserve legacy source-only validation for file callers.
     boundary_contracts:
         ``BoundaryContract`` records describing expected durable side effects
         for each front-half row.  Missing contracts produce AWF246.
@@ -629,10 +631,14 @@ def check_workflow_source(
     source-level route declarations and runtime handlers.
     """
     parsed_source = parse_workflow_source(source, source_path=source_path, resolver=resolver)
-    evidence_records = tuple(evidence)
+    evidence_records = tuple(evidence or ())
     boundary_contract_records = tuple(boundary_contracts)
     boundary_evidence_records = tuple(boundary_evidence)
-    row_evidence_diagnostics = _row_evidence_diagnostics(parsed_source, evidence_records)
+    row_evidence_diagnostics = (
+        _row_evidence_diagnostics(parsed_source, evidence_records)
+        if evidence is not None
+        else ()
+    )
     boundary_diagnostics = _boundary_evidence_diagnostics(
         parsed_source,
         boundary_contract_records,

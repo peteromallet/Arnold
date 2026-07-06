@@ -1442,8 +1442,6 @@ def _require_explicit_finalize_baseline_selection(test_selection: dict[str, Any]
     mode = test_selection.get("mode")
     if mode == "full":
         return
-    if mode == "none":
-        return
     if mode == "scoped" and test_selection.get("command_override"):
         return
     raise FinalizeBaselineSelectionError(test_selection)
