@@ -2460,6 +2460,16 @@ state_classification = stale_state.get("classification") or (
     )
 )
 signals = list(latest_context.get("raw_failure_signals") or [])
+authoritative_plan_kind = str(plan_failure.get("kind") or "").strip().lower()
+authoritative_plan_state = str(plan_failure.get("current_state") or chain_state.get("current_state") or "").strip().lower()
+
+# The attempt record can carry a stale classifier from an earlier repair pass.
+# When the embedded plan failure shape is authoritative, prefer it over the
+# stored classification so the next dev-fix turn sees the live blocker.
+if authoritative_plan_state == "awaiting_human_verify":
+    classification = "awaiting_human_user_action_gate"
+elif authoritative_plan_kind in {"execution_blocked", "iteration_cap", "repeated_failure_signature"}:
+    classification = "blocked_state_or_recovery_error"
 
 def _summary_chain_complete(summary: dict[str, object]) -> bool:
     try:
