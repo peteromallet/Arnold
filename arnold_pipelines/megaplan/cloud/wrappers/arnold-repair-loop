@@ -2716,6 +2716,15 @@ metadata = plan_failure.get("metadata") or {}
 classification = latest_context.get("failure_classification") or "unknown_failure_mode"
 stale_state = latest_context.get("stale_state") or {}
 state_mismatch = latest_context.get("state_mismatch") or {}
+resolver_output = (
+    latest_context.get("resolver_output")
+    if isinstance(latest_context.get("resolver_output"), dict)
+    else failure_context.get("resolver_output")
+    if isinstance(failure_context.get("resolver_output"), dict)
+    else initial.get("resolver_output")
+    if isinstance(initial.get("resolver_output"), dict)
+    else {}
+)
 state_classification = stale_state.get("classification") or (
     "STATE MISMATCH" if classification == "plan_chain_state_mismatch" else (
         "STALE STATE" if classification == "stale_state" else "LIVE FAILURE"
@@ -2807,6 +2816,25 @@ if (
 
 if classification == "unknown_failure_mode":
     combined_signals = "\n".join(str(item) for item in signals).lower()
+    stale_kinds = {
+        str(item.get("kind") or "").strip()
+        for item in resolver_output.get("stale_evidence", [])
+        if isinstance(item, dict)
+    }
+    live_artifact_keys = ("plan_state", "chain_state", "chain_log")
+    has_live_artifacts = any(
+        isinstance(resolver_output.get(key), dict) and bool(resolver_output.get(key, {}).get("present"))
+        for key in live_artifact_keys
+    ) or (
+        isinstance(resolver_output.get("active_step_heartbeat"), dict)
+        and bool(resolver_output.get("active_step_heartbeat", {}).get("active"))
+    )
+    if (
+        state_classification == "NO LATEST FAILURE"
+        and stale_kinds.intersection({"workspace_missing", "spec_missing"})
+        and not has_live_artifacts
+    ):
+        classification = "stale_marker"
     if "unrecognized arguments" in combined_signals or "usage:" in combined_signals:
         classification = "cli_or_argument_error"
     elif "couldn't find remote ref" in combined_signals or "missing_base_ref" in combined_signals:
@@ -2872,6 +2900,15 @@ if (
 if state_mismatch.get("detected"):
     stale_summary = state_mismatch.get("summary") or stale_summary
     stale_recommendation = state_mismatch.get("recommended_action") or stale_recommendation
+elif classification == "stale_marker":
+    stale_summary = (
+        "resolver evidence shows a missing workspace/spec marker with no live "
+        "plan/chain artifacts; this is stale session state, not a live execution failure"
+    )
+    stale_recommendation = (
+        "retire or clear the stale marker mechanically; do not dispatch dev-fix "
+        "for an Arnold source bug"
+    )
 exit_code = metadata.get("exit_code")
 exit_code_text = str(exit_code) if exit_code not in (None, "") else "unknown"
 chain_last_state = chain_state.get("last_state") or "unknown"

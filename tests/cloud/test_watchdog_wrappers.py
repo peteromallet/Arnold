@@ -887,6 +887,49 @@ def test_repair_loop_summary_prefers_pending_execute_tasks_over_baseline_deferra
     assert "Blocked/deferred task: T1" not in summary
 
 
+def test_repair_loop_summary_classifies_missing_spec_without_live_artifacts_as_stale_marker(
+    tmp_path: Path,
+) -> None:
+    data_path = tmp_path / "repair-data.json"
+    payload = {
+        "run_kind": "chain",
+        "initial_facts": {
+            "failure_classification": "unknown_failure_mode",
+            "stale_state": {
+                "classification": "NO LATEST FAILURE",
+                "summary": "no latest_failure is set",
+            },
+            "resolver_output": {
+                "stale_evidence": [
+                    {"kind": "missing_chain_state", "path": "/tmp/ws/.megaplan/plans/.chains/chain-demo.json"},
+                    {"kind": "spec_missing", "path": "/tmp/ws/.megaplan/initiatives/demo/chain.yaml"},
+                ],
+                "plan_state": {"present": False},
+                "chain_state": {"present": False},
+                "chain_log": {"present": False},
+                "active_step_heartbeat": {"active": False},
+            },
+            "plan_latest_failure": {},
+            "chain_state_summary": {},
+            "run_kind": "chain",
+        },
+        "iterations": [],
+    }
+    data_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    summary_program = _extract_repair_program(
+        "render_failure_summary",
+        "python3 - \"$data_path\" <<'PY'",
+    )
+    result = _run_embedded_python(summary_program, str(data_path))
+
+    assert result.returncode == 0, result.stderr
+    summary = result.stdout
+    assert "- failure classification: stale_marker" in summary
+    assert "missing workspace/spec marker with no live plan/chain artifacts" in summary
+    assert "retire or clear the stale marker mechanically" in summary
+
+
 def test_repair_loop_collects_stale_state_classification(tmp_path: Path) -> None:
     workspace = tmp_path / "workflow"
     plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
