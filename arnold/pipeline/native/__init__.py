@@ -3,6 +3,12 @@
 Native execution is canonical by default.  The public surface here focuses on
 native program compilation, graph projection, runtime execution, and explicit
 legacy fallback helpers.
+
+Ownership:
+    Native ``.pypeline`` modules and named native subworkflows own the
+    source-visible product topology.  Boundary contracts and boundary
+    receipts declare and check durable effects only — they do not define,
+    route, or own workflow topology.
 """
 
 from __future__ import annotations

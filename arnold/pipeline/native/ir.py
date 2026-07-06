@@ -23,6 +23,13 @@ separated by ``/``:
 where ``root`` is the default root path, ``validate`` is a child-workflow
 call site, ``sub_0`` is a nested child, and ``item_2`` is a dynamic-map
 item index.
+
+Ownership:
+    The IR types represent structure only.  Native ``.pypeline`` modules
+    and named native subworkflows own the source-visible product topology.
+    Boundary contracts and boundary receipts declare and check durable
+    effects — they are not topology-bearing and do not influence the IR
+    shape.
 """
 
 from __future__ import annotations

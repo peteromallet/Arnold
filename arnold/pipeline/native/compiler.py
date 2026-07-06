@@ -7,6 +7,14 @@ program counters and branch labels.
 
 Unsupported Python constructs are rejected with :class:`NativeCompileError`
 naming the offending AST node type.
+
+Ownership:
+    The compiler lowers ``.pypeline`` source topology into a
+    :class:`NativeProgram`; the topology itself is owned by the
+    ``.pypeline`` module and its named subworkflows.  Boundary contracts
+    and boundary receipts are durable-effect declarations and checks — they
+    are consumed by the compiler for evidence alignment but do not define
+    or alter the program shape.
 """
 
 from __future__ import annotations

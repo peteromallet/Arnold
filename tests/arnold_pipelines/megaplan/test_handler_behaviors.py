@@ -830,6 +830,107 @@ class TestReviewPayloadDefaults:
         assert payload["raw_review_verdict_preserved"] is True
         assert any("review_output.json returned needs_rework" in issue for issue in issues)
 
+    def test_newly_failing_deterministic_check_is_blocking(self) -> None:
+        from arnold_pipelines.megaplan.handlers.review import (
+            _has_grounded_deterministic_failure,
+        )
+
+        assert _has_grounded_deterministic_failure(
+            {
+                "deterministic_check": {
+                    "command": "python -m pytest tests/example.py -q",
+                    "baseline_status": "passed at base (2 passed)",
+                    "post_status": "failed at current HEAD (2 failed)",
+                }
+            }
+        )
+
+    def test_promoted_raw_needs_rework_not_demoted_by_normalizer(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.handlers.review import (
+            _normalize_review_blockers,
+            _promote_authoritative_review_output,
+        )
+
+        (tmp_path / "review_output.json").write_text(
+            json.dumps(
+                {
+                    "review_verdict": "needs_rework",
+                    "review_completion_status": "complete",
+                    "issues": ["regression"],
+                    "rework_items": [
+                        {
+                            "task_id": "T2",
+                            "issue": "new regression",
+                            "deterministic_check": {
+                                "command": "python -m pytest tests/example.py -q",
+                                "baseline_status": "passed at base",
+                                "post_status": "failed at current",
+                            },
+                        }
+                    ],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        payload = {"review_verdict": "approved", "rework_items": []}
+        promoted = _promote_authoritative_review_output(
+            plan_dir=tmp_path,
+            payload=payload,
+        )
+        issues = list(payload.get("issues", []))
+        if not (promoted and payload.get("review_verdict") == "needs_rework"):
+            _normalize_review_blockers(payload, issues)
+
+        assert promoted is True
+        assert payload["review_verdict"] == "needs_rework"
+        assert payload["rework_items"]
+
+    def test_review_approval_fails_when_finalize_tasks_lack_execute_authority(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.handlers.review import (
+            _enforce_review_execute_authority,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        finalize_data = {
+            "tasks": [
+                {
+                    "id": "T1",
+                    "status": "pending",
+                    "description": "Implement the required checker hook.",
+                }
+            ]
+        }
+        payload = {
+            "review_verdict": "approved",
+            "review_completion_status": "complete",
+            "issues": [],
+            "rework_items": [],
+            "criteria": [],
+        }
+        state: dict[str, Any] = {"config": {"project_dir": str(tmp_path)}}
+        issues: list[str] = []
+
+        changed = _enforce_review_execute_authority(
+            payload=payload,
+            finalize_data=finalize_data,
+            plan_dir=plan_dir,
+            project_dir=tmp_path,
+            state=state,
+            issues=issues,
+        )
+
+        assert changed is True
+        assert payload["review_verdict"] == "needs_rework"
+        assert payload["execute_authority_missing"] == ["T1:not_executed:pending"]
+        assert payload["rework_items"][0]["source"] == "execute_authority"
+        assert payload["criteria"][0]["pass"] is False
+
 
 class TestTaskSatisfactionStaleHead:
     def test_is_task_satisfied_flags_stale_ancestor_head(self) -> None:
