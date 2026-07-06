@@ -12,6 +12,12 @@ plausible.
 - Absorbs `m4-front-half-source-extraction.md`.
 - Uses the typed boundary and builder slice from S1.
 
+## Post-Completion Alignment Note
+
+S2 is already complete. Do not restart or revert it by default. Boundary
+evidence for the completed front-half surface is audited and retrofitted in
+S2.5, then enforced as an invariant for S3-S7.
+
 ## Scope
 
 In scope:
@@ -23,6 +29,10 @@ In scope:
 - bounded critique/gate/revise loop with typed outcomes;
 - severity-as-data plus severity-threshold routing as source/policy visible
   topology;
+- (S2.5 retrofit) boundary contracts and receipts for prep/plan/critique/gate/revise artifact
+  promotion, phase results, state/history effects, gate authority decisions,
+  debt effects, and revise-loop re-entry — S2 delivered the source topology;
+  S2.5 audits and retrofits the durable boundary evidence;
 - quarantine or deletion of replaced front-half component/handler carriers.
 
 Out of scope:
@@ -36,6 +46,10 @@ Out of scope:
 
 - Replace front-half component calls as proof carriers with source-visible
   branch, loop, fanout, gate, and policy constructs.
+- (S2.5 retrofit) For each moved front-half boundary, S2.5 will declare the
+  durable effects and emit/check receipts proving canonical artifacts,
+  state/history updates, phase results, and authority records are coherent.
+  This work is scoped to S2.5, not S2.
 - Ensure critique lens selection may remain phase-local only if resulting
   fanout cardinality is visible to the workflow.
 - Keep gate signal building and payload normalization in handlers only when the
@@ -56,9 +70,14 @@ Out of scope:
   row.
 - Component carriers for implemented front-half rows are deleted or fenced so
   they cannot route corrected behavior.
+- (S2.5 retrofit) Semantic-health fixtures fail when front-half source topology
+  exists but matching artifact/state/history/receipt/authority evidence is
+  missing or stale — this criterion is verified in S2.5, not S2.
 
 ## Do Not Close If
 
 - Gate/revise exit conditions remain hidden in handlers or auto-drive.
 - The visible source shows a bare call where the report requires branch, loop,
   fanout, or gate structure.
+- Boundary receipts or semantic findings can decide the next front-half route
+  without source/policy-visible support.
