@@ -3857,6 +3857,7 @@ import pathlib
 import sys
 
 from arnold_pipelines.megaplan.cloud import repair_recurrence
+from arnold_pipelines.megaplan.cloud.repair_contract import save_repair_data
 
 (
     data_path_raw,
@@ -3924,7 +3925,7 @@ payload["current_recurrence"] = {
     "blocker_id": dispatch_blocker_id,
 }
 payload["run_recurrence_detected"] = bool(payload.get("run_recurrence_detected")) or bool(recurrence.get("detected"))
-repair_recurrence.atomic_write_json(data_path, payload)
+save_repair_data(data_path, payload)
 repair_recurrence.atomic_write_json(progress_path, session_snapshot)
 breaker = 1 if recurrence.get("deterministic_failure_breaker") else 0
 print(f"{attempt_id}\t{1 if recurrence.get('detected') else 0}\t{breaker}")
