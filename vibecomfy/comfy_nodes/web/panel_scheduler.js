@@ -150,17 +150,24 @@ export function ensureScheduledAgentPanelDirtyFlush(panel, reason = "dirty-secti
 }
 
 export function scheduleRenderAgentPanel(reason = "scheduled", panel = currentAgentPanel(), fallbackSections = undefined, options = {}) {
+  // Validate dirty sections before any early-return so unknown
+  // sections (including RENDER_SECTIONS.CANDIDATE if ever introduced)
+  // are rejected even when the panel root is disconnected.
+  const safeFallback = fallbackSections !== undefined
+    ? normalizeDirtySectionList(fallbackSections)
+    : undefined;
+
   if (!isAgentPanelRootConnected(panel)) {
     return;
   }
   const runtime = getAgentPanelRuntime();
-  if (fallbackSections !== undefined) {
-    markAgentPanelDirty(panel, fallbackSections, { schedule: false });
+  if (safeFallback !== undefined) {
+    markAgentPanelDirty(panel, safeFallback, { schedule: false });
   }
   const nextScheduled = {
     panel,
     reason,
-    fallbackSections,
+    fallbackSections: safeFallback,
     dirtyOnly: Boolean(options.dirtyOnly),
   };
   const scheduledBatch = Array.isArray(runtime._scheduledAgentPanelRenders)

@@ -72,6 +72,10 @@ import {
   transition,
 } from "./agent_edit_lifecycle.js";
 import {
+  commitOptimisticSubmit,
+  commitTerminalResponse,
+} from "./agent_lifecycle_commit.js";
+import {
   normalizeAgentEditResponse,
   outcomeRequiresCustomNodes,
   readApplyCandidate,
@@ -851,7 +855,6 @@ function normalizeLiveExecNodesForSerialization() {
 function captureSerializedGraphForAgent() {
   normalizeForSerialize(null, { live: true });
   const graph = app.canvas.graph.serialize();
-  applyRenderedNodeSizesToSerializedGraph(graph);
   normalizeForSerialize(graph);
   return graph;
 }
@@ -9647,9 +9650,9 @@ function handleRequiresCustomNodesSubmitResponse(panel, context = {}) {
 	        ? result.reply.trim()
 	        : "VibeComfy could not confirm automatic installation for this edit.";
   const customNodeResolution = readCustomNodeResolution(result, { endpoint: "submit:custom-nodes" });
-  const obligations = transition(panel, "REQUIRES_CUSTOM_NODES_RESPONSE", {
-    result: result.raw || result,
-    sessionId: resultSessionId,
+  const obligations = commitTerminalResponse(panel, {
+    result,
+    outcome,
     turnId: resultTurnId,
     baselineTurnId: resultBaselineTurnId,
     auditRef: result.auditRef || null,
@@ -9833,7 +9836,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
     // The user just sent a message — always jump the thread to the newest
     // content regardless of where they had scrolled.
     ensureThreadRenderState(panel).forceScrollOnNextRender = true;
-    const startObligations = transition(panel, "SUBMIT_START", {
+    const startObligations = commitOptimisticSubmit(panel, {
       lastSubmit: null,
       debugPayload: {
         task,
@@ -9868,7 +9871,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       return;
     }
 
-    const submitStartObligations = transition(panel, "SUBMIT_START", {
+    const submitStartObligations = commitOptimisticSubmit(panel, {
       submitEpoch,
       lastSubmit: {
         task,
@@ -10031,13 +10034,9 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       }
       const failure = normalizeSubmitFailure(e);
       clearPendingResponseMessages(panel);
-      const obligations = transition(panel, "SUBMIT_NETWORK_FAILURE", {
+      const obligations = commitTerminalResponse(panel, {
         failure,
         syntheticAgentMessage: syntheticFailureAgentMessage(panel, failure, "frontend"),
-        debugPayload: {
-          ...failure,
-          last_submit: panel.state.lastSubmit,
-        },
       });
       fulfillLifecycleTransitionObligations(panel, obligations);
       pushHistory(panel, "failure", failure.kind || "NetworkError");
@@ -10095,9 +10094,12 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
         turn_id: resultTurnId,
         session_id: resultSessionId,
       };
-      const obligations = transition(panel, "CLARIFY_ONLY_RESPONSE", {
-        result: result.raw || result,
-        sessionId: resultSessionId,
+      const obligations = commitTerminalResponse(panel, {
+        result,
+        outcome,
+        candidateGraph: null,
+        turnId: resultTurnId,
+        baselineTurnId: resultBaselineTurnId,
         turnId: resultTurnId,
         baselineTurnId: resultBaselineTurnId,
         auditRef: result.auditRef || null,
@@ -10158,9 +10160,12 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       const changeDetails = result.raw?.change_details && typeof result.raw.change_details === "object"
         ? clonePlainData(result.raw.change_details)
         : null;
-      const obligations = transition(panel, "NOOP_RESPONSE", {
-        result: result.raw || result,
-        sessionId: resultSessionId,
+      const obligations = commitTerminalResponse(panel, {
+        result,
+        outcome,
+        candidateGraph: null,
+        turnId: resultTurnId,
+        baselineTurnId: resultBaselineTurnId,
         turnId: resultTurnId,
         baselineTurnId: resultBaselineTurnId,
         auditRef: result.auditRef || null,
@@ -10260,13 +10265,10 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       arrival_client_graph_hash: arrivalSnapshot.graphHash,
       arrival_client_structural_graph_hash: arrivalSnapshot.structuralHash,
     });
-    const candidateObligations = transition(panel,
-      outcomeHasClarificationPrompt(outcome) ? "EDIT_CLARIFY_RESPONSE" : "OK_CANDIDATE_RESPONSE",
+    const candidateObligations = commitTerminalResponse(panel,
       {
-        result: result.raw || result,
-        sessionId: resultSessionId,
-        turnId: resultTurnId,
-        baselineTurnId: resultBaselineTurnId,
+        result,
+        outcome,
         candidateGraph,
         candidateGraphHash,
         serverSubmitGraphHash: applyCandidate?.submitGraphHash || null,
