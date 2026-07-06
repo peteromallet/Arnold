@@ -1070,9 +1070,14 @@ if [ -d "$SRC/.git" ]; then
     export MEGAPLAN_RUNTIME_SRC="$SRC"
   else
     if ! git -C "$SRC" merge-base --is-ancestor HEAD "origin/$REF"; then
-      echo "[megaplan-refresh] refusing editable install refresh: $SRC has local commits not contained in origin/$REF"
+      echo "[megaplan-refresh] source checkout has local commits not contained in origin/$REF; attempting push"
       git -C "$SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true
-      exit 20
+      if git -C "$SRC" push origin "$REF"; then
+        git -C "$SRC" fetch origin "$REF"
+      else
+        echo "[megaplan-refresh] refusing editable install refresh: $SRC has unpushed local commits not contained in origin/$REF"
+        exit 20
+      fi
     fi
     git -C "$SRC" pull --ff-only origin "$REF"
     export MEGAPLAN_RUNTIME_SRC="$SRC"
@@ -2372,6 +2377,13 @@ def _classify_failure(
         return "chain_completed"
     if plan_current_state == "awaiting_human_verify":
         return "awaiting_human_user_action_gate"
+    if (
+        "no_next_step" in combined
+        or "no next_step" in combined
+        or "no next step" in combined
+        or kind == "no_next_step"
+    ):
+        return "no_next_step_state_mapping_failure"
     if "unrecognized arguments" in combined or "usage:" in combined:
         return "cli_or_argument_error"
     if "couldn't find remote ref" in combined or "missing_base_ref" in combined or last_state == "missing_base_ref":

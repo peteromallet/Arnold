@@ -44,7 +44,9 @@ def test_cloud_refresh_uses_editible_install_branch() -> None:
     assert 'git -C "$SRC" checkout "$REF"' in command
     assert 'refusing editable install refresh: tracked changes in source checkout' in command
     assert 'merge-base --is-ancestor HEAD "origin/$REF"' in command
-    assert 'refusing editable install refresh: $SRC has local commits' in command
+    assert 'source checkout has local commits not contained in origin/$REF; attempting push' in command
+    assert 'git -C "$SRC" push origin "$REF"' in command
+    assert 'refusing editable install refresh: $SRC has unpushed local commits' in command
     assert 'git -C "$SRC" pull --ff-only origin "$REF"' in command
 
 

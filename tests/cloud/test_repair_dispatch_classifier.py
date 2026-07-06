@@ -117,6 +117,59 @@ def test_classifier_dispatches_exact_manual_review_repairable_shape(tmp_path: Pa
     )
 
 
+def test_classifier_dispatches_failed_no_next_step_repair_state(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    state = _plan_state(
+        current_state="failed",
+        resume_cursor={"retry_strategy": "repair_state"},
+        latest_failure={
+            "kind": "no_next_step",
+            "phase": "",
+            "metadata": {"iteration": 4, "valid_next": []},
+        },
+    )
+    target = _current_target(
+        current_refs={
+            "current_plan_name": "agentic-replay-viewer",
+            "plan_current_state": "failed",
+        },
+        plan_state={"present": True, "fingerprint": "sha256:no-next-proof"},
+    )
+    queued = enqueue_repair_request(
+        marker_dir=marker_dir,
+        session="demo-session",
+        source="watchdog",
+        problem_signature={
+            "failure_kind": "no_next_step",
+            "current_state": "failed",
+            "phase_or_step": "status",
+            "milestone_or_plan": "agentic-replay-viewer",
+        },
+        root_cause_hint="state-machine transition gap after finalize",
+    )
+
+    projection = project_repair_custody(
+        plan_state=state,
+        current_target=target,
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+    decision = classify_repair_dispatch(
+        plan_state=state,
+        current_target=target,
+        custody_projection=projection,
+    )
+
+    assert decision.decision == DISPATCH_DECISION_L1
+    assert decision.request_id == queued["request"]["request_id"]
+    assert decision.current_state == "failed"
+    assert decision.retry_strategy == "repair_state"
+    assert decision.failure_kind == "no_next_step"
+
+
 def test_projection_ignores_stale_cross_session_custody_for_execution_blocked(
     tmp_path: Path,
 ) -> None:
