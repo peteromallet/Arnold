@@ -343,6 +343,7 @@ from .git_ops import (
     _enable_auto_merge,
     _ensure_milestone_pr,
     _fetch_base_branch,
+    _git_push_env,
     _is_transient_gh_error,
     _is_worktree_dirty,
     _list_open_pr_for_branch,

@@ -125,6 +125,30 @@ def test_chain_facade_reexports_git_push_helper() -> None:
     )
 
 
+
+def test_git_push_helper_uses_noninteractive_github_token(monkeypatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setenv("GITHUB_TOKEN", "gho_testtoken")
+    monkeypatch.setattr(git_ops.subprocess, "run", fake_run)
+
+    git_ops._run_git_push_command(
+        tmp_path,
+        ["git", "push", "--no-verify", "-u", "origin", "demo-branch"],
+        writer=lambda _msg: None,
+    )
+
+    env = seen["env"]
+    assert isinstance(env, dict)
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
+    assert env["GIT_CONFIG_VALUE_0"].startswith("AUTHORIZATION: basic ")
+
 def test_chain_fresh_refuses_to_delete_unregistered_spec_directory(tmp_path: Path) -> None:
     invoking_repo = tmp_path / "app"
     _init_repo(invoking_repo)

@@ -191,6 +191,28 @@ def test_two_running_plus_one_repairing(fx):
     assert snap["summary"]["repairing"] == 1
 
 
+
+def test_active_repair_overrides_stale_needs_human_marker(fx):
+    fx.add_session("repairing", plan_name="planR")
+    fx.add_chain_health(
+        "repairing",
+        current_plan_name="planR",
+        last_state="blocked",
+        updated_at=NOW - timedelta(hours=3),
+    )
+    fx.add_needs_human("repairing", summary="old deterministic failure")
+    fx.add_repair_progress("repairing", updated_at=NOW - timedelta(minutes=2))
+    fx.add_repair_data("repairing", outcome="repairing")
+
+    snap = fx.build()
+    entry = _by_session(snap, "repairing")
+
+    assert entry["status"] == "repairing"
+    assert entry["repairing"] is True
+    assert entry["operator_next"] == "automated repair dispatched for this session"
+    assert snap["summary"]["repairing"] == 1
+    assert snap["summary"]["blocked"] == 0
+
 def test_completed_not_counted_as_active_even_with_stale_failure(fx):
     fx.add_session("done", plan_name="planDone")
     fx.add_chain_health(
