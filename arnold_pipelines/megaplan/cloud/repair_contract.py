@@ -797,11 +797,13 @@ def save_repair_data(
 ) -> dict[str, Any]:
     """Validate, optionally redact, and atomically persist repair-data JSON.
 
-    When the repair-data outcome has changed meaningfully (or this is the
-    first write), an incident-ledger event is appended via
+    When the repair-data event signature has changed meaningfully (or this is
+    the first write), an incident-ledger event is appended via
     :mod:`arnold_pipelines.megaplan.cloud.incident_bridge`.  No-op saves
-    (same outcome as the previous payload) do **not** produce duplicate
-    events.
+    do **not** produce duplicate events. Repeated repair attempts with the
+    same outcome still emit a fresh ledger event when their attempt identity
+    changes. When *root* is omitted, the payload workspace is used as the
+    incident-ledger root before falling back to the current working directory.
     """
 
     prepared = redact_repair_data(payload, redactor=redactor)
@@ -811,15 +813,18 @@ def save_repair_data(
     # Snapshot the previous payload *before* overwriting so we can
     # decide whether this is a meaningful transition.
     # ------------------------------------------------------------------
-    previous_outcome = _read_previous_outcome(target)
+    previous_event_signature = _read_previous_event_signature(target)
 
     atomic_write_json(target, prepared)
     _update_session_index_from_repair_data(target, prepared, redactor=redactor)
 
-    # Only emit an incident event when the outcome actually changed.
-    current_outcome = str(prepared.get("outcome") or REPAIRING).strip() or REPAIRING
-    if previous_outcome is None or previous_outcome != current_outcome:
-        _emit_incident_bridge_event(prepared, root=root)
+    current_event_signature = _event_signature(prepared)
+    if previous_event_signature is None or previous_event_signature != current_event_signature:
+        workspace_root = root
+        if workspace_root is None:
+            candidate_root = str(prepared.get("workspace") or "").strip()
+            workspace_root = candidate_root or None
+        _emit_incident_bridge_event(prepared, root=workspace_root)
 
     return prepared
 
@@ -1636,8 +1641,8 @@ def _active_sessions_from_index(index_payload: Mapping[str, Any]) -> set[str]:
     return active
 
 
-def _read_previous_outcome(target: Path) -> str | None:
-    """Return the outcome string from a previous repair-data file, or *None*."""
+def _read_previous_payload(target: Path) -> dict[str, Any] | None:
+    """Return the previous repair-data payload, or *None* when unavailable."""
     try:
         if not target.exists():
             return None
@@ -1646,10 +1651,61 @@ def _read_previous_outcome(target: Path) -> str | None:
         return None
     if not isinstance(previous, dict):
         return None
-    outcome = previous.get("outcome")
-    if isinstance(outcome, str) and outcome.strip():
-        return outcome.strip()
-    return None
+    return previous
+
+
+def _repair_attempt_marker(payload: Mapping[str, Any]) -> str:
+    """Return a stable marker for distinguishing repeated repair attempts."""
+
+    for key in ("current_attempt_id", "repair_run_count"):
+        value = payload.get(key)
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            continue
+        marker = str(value).strip()
+        if marker:
+            return marker
+
+    attempt_ids = payload.get("attempt_ids")
+    if isinstance(attempt_ids, list) and attempt_ids:
+        marker = "|".join(str(item).strip() for item in attempt_ids if str(item).strip())
+        if marker:
+            return marker
+    return ""
+
+
+def _event_signature(payload: Mapping[str, Any]) -> tuple[str, str, str]:
+    """Return the dedupe signature for repair-data incident emission."""
+
+    outcome = str(payload.get("outcome") or REPAIRING).strip() or REPAIRING
+    if is_success_outcome(outcome):
+        return ("verified_recovered", outcome, "")
+    marker = _repair_attempt_marker(payload)
+    if outcome == REPAIRING:
+        return ("repair_attempt", "attempted", marker)
+    return ("repair_attempt", outcome, marker)
+
+
+def _repair_attempt_event_id(payload: Mapping[str, Any], *, session_id: str | None) -> str:
+    """Return the incident-bridge attempt_id for repair attempt events."""
+
+    outcome = str(payload.get("outcome") or REPAIRING).strip() or REPAIRING
+    normalized_outcome = "attempted" if outcome == REPAIRING else outcome
+    marker = _repair_attempt_marker(payload)
+    base = f"{session_id or 'unknown'}-{normalized_outcome}"
+    if marker:
+        return f"{base}-{marker}"
+    return base
+
+
+def _read_previous_event_signature(target: Path) -> tuple[str, str, str] | None:
+    """Return the previous incident-event signature, or *None* if unavailable."""
+
+    previous = _read_previous_payload(target)
+    if previous is None:
+        return None
+    return _event_signature(previous)
 
 
 def _emit_incident_bridge_event(
@@ -1699,7 +1755,7 @@ def _emit_incident_bridge_event(
             append_immediate_repair_attempt(
                 incident_id=incident_id,
                 summary=summary,
-                attempt_id=f"{session_id or 'unknown'}-{outcome}",
+                attempt_id=_repair_attempt_event_id(payload, session_id=session_id),
                 outcome="attempted",
                 evidence=evidence,
                 session_id=session_id,
@@ -1719,7 +1775,7 @@ def _emit_incident_bridge_event(
             append_immediate_repair_attempt(
                 incident_id=incident_id,
                 summary=summary,
-                attempt_id=f"{session_id or 'unknown'}-{outcome}",
+                attempt_id=_repair_attempt_event_id(payload, session_id=session_id),
                 outcome=outcome,
                 evidence=evidence,
                 session_id=session_id,

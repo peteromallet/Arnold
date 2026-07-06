@@ -696,6 +696,68 @@ def test_save_repair_data_emits_immediate_repair_attempt_for_terminal_non_succes
     assert ledger_payload["outcome"] == repair_contract.REPAIR_TIMEOUT
 
 
+def test_save_repair_data_emits_new_repair_attempt_when_attempt_identity_changes(
+    tmp_path: Path,
+) -> None:
+    repair_dir = tmp_path / "repair-data"
+    repair_dir.mkdir()
+    path = repair_dir / "demo-session.repair-data.json"
+    first_payload = repair_contract.merge_additive_fields(
+        {
+            **_legacy_payload(),
+            "current_attempt_id": 1,
+            "repair_run_count": 1,
+        },
+        incident_id="incident-42",
+        attempt_ids=["attempt-demo-0001"],
+    )
+    second_payload = repair_contract.merge_additive_fields(
+        {
+            **_legacy_payload(),
+            "current_attempt_id": 2,
+            "repair_run_count": 2,
+        },
+        incident_id="incident-42",
+        attempt_ids=["attempt-demo-0002"],
+    )
+
+    repair_contract.save_repair_data(path, first_payload, root=tmp_path)
+    repair_contract.save_repair_data(path, second_payload, root=tmp_path)
+
+    events = _read_ledger_events(tmp_path)
+    assert len(events) == 2
+    assert events[0]["payload"]["attempt_id"] == "demo-session-attempted-1"
+    assert events[1]["payload"]["attempt_id"] == "demo-session-attempted-2"
+
+
+def test_save_repair_data_defaults_incident_root_to_payload_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repair_dir = tmp_path / "repair-data"
+    workspace_root = tmp_path / "workspace"
+    other_root = tmp_path / "elsewhere"
+    repair_dir.mkdir()
+    workspace_root.mkdir()
+    other_root.mkdir()
+    path = repair_dir / "demo-session.repair-data.json"
+    payload = repair_contract.merge_additive_fields(
+        {**_legacy_payload(), "workspace": str(workspace_root)},
+        incident_id="incident-42",
+        attempt_ids=["attempt-demo-0001"],
+        verification={"recorded_at": "2026-07-02T20:00:00+00:00"},
+    )
+
+    monkeypatch.chdir(other_root)
+    repair_contract.save_repair_data(path, payload)
+
+    events = _read_ledger_events(workspace_root)
+    assert len(events) == 1
+    assert _read_ledger_events(other_root) == []
+    ledger_payload = events[0]["payload"]
+    assert ledger_payload["incident_id"] == "incident-42"
+    assert ledger_payload["session_id"] == "demo-session"
+
+
 def test_retention_cleanup_preserves_protected_artifacts_and_records_cleanup_event(
     tmp_path: Path,
 ) -> None:

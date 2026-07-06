@@ -7146,7 +7146,8 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert '"workspace": str(workspace)' in text
     assert "workspace=str(payload.get(\"workspace\") or failure_context.get(\"workspace\") or \"\")" in text
     assert 'logger=lambda message: print(f"repair_recurrence: {message}", file=sys.stderr)' in text
-    assert "repair_recurrence.atomic_write_json(data_path, payload)" in text
+    assert "from arnold_pipelines.megaplan.cloud.repair_contract import save_repair_data" in text
+    assert "save_repair_data(data_path, payload)" in text
     assert "repair_recurrence.atomic_write_json(progress_path, session_snapshot)" in text
     assert "save_repair_data(pathlib.Path(path), payload)" in text
     assert "atomic_write_json(state_path, state)" in text
