@@ -582,10 +582,16 @@ def classify_repair_dispatch(
     terminal_outcomes = [
         value for value in (_as_list(custody.get("terminal_outcomes")) if custody else []) if _as_text(value)
     ]
+    known_repairable = _is_known_repairable_shape(
+        current_state=current_state,
+        retry_strategy=normalized_retry_strategy,
+        failure_kind=failure_kind,
+        current_target=target_payload,
+    )
 
     rationale: list[str] = []
 
-    if _is_terminal_dispatch_state(current_state, terminal_outcomes):
+    if _is_terminal_dispatch_state(current_state, terminal_outcomes) and not known_repairable:
         rationale.append("plan or repair evidence is terminal")
         return RepairDispatchDecision(
             decision=DISPATCH_DECISION_TERMINAL,
@@ -641,12 +647,7 @@ def classify_repair_dispatch(
             failure_kind=failure_kind,
         )
 
-    if _is_known_repairable_shape(
-        current_state=current_state,
-        retry_strategy=normalized_retry_strategy,
-        failure_kind=failure_kind,
-        current_target=target_payload,
-    ):
+    if known_repairable:
         if request_id:
             rationale.append("known repairable blocker has active custody and no competing owner")
             return RepairDispatchDecision(
@@ -2369,11 +2370,17 @@ def _is_known_repairable_shape(
     failure_kind: str,
     current_target: Mapping[str, Any],
 ) -> bool:
+    if current_state == "failed" and retry_strategy == "repair_state" and failure_kind == "no_next_step":
+        return _has_current_target_evidence(current_target)
     if current_state != "blocked":
         return False
     if retry_strategy != "manual_review":
         return False
-    if failure_kind not in {"blocked_recovery_not_resolved", "execution_blocked"}:
+    if failure_kind not in {
+        "blocked_recovery_not_resolved",
+        "execution_blocked",
+        "no_next_step_state_mapping_failure",
+    }:
         return False
     return _has_current_target_evidence(current_target)
 

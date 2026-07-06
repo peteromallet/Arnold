@@ -341,6 +341,35 @@ def test_live_process_with_current_phase_failure_is_attention(fx):
     assert "alive_but_failed" in entry["operator_next"]
 
 
+def test_live_process_with_failed_no_next_step_is_attention(fx):
+    fx.add_session("alive-no-next", plan_name="planStuck")
+    fx.add_chain_health(
+        "alive-no-next",
+        current_plan_name="planStuck",
+        last_state="failed",
+        updated_at=NOW - timedelta(minutes=5),
+    )
+    fx.add_plan_state(
+        "alive-no-next",
+        "planStuck",
+        current_state="failed",
+    )
+    state_path = fx.root / "alive-no-next" / ".megaplan" / "plans" / "planStuck" / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["latest_failure"] = {
+        "kind": "no_next_step",
+        "phase": "",
+        "message": "no next_step and no override available",
+    }
+    state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    snap = fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": True})
+    entry = _by_session(snap, "alive-no-next")
+    assert entry["status"] == "attention"
+    assert entry["repairing"] is False
+    assert "alive_but_failed" in entry["operator_next"]
+
+
 def test_live_process_beats_repair_marker(fx):
     fx.add_session("live-repair", plan_name="planLive")
     fx.add_chain_health(
