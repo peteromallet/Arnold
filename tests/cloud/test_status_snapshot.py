@@ -281,12 +281,41 @@ def test_successful_repair_data_suppresses_stale_repair_marker(fx):
         updated_at=NOW - timedelta(hours=4),
     )
     fx.add_repair_progress("recovered")
-    fx.add_repair_data("recovered", outcome="live_with_fresh_activity")
+    fx.add_repair_data("recovered", outcome="complete")
 
     snap = fx.build()
     entry = _by_session(snap, "recovered")
     assert entry["status"] == "attention"
     assert entry["repairing"] is False
+
+
+def test_live_process_with_current_phase_failure_is_attention(fx):
+    fx.add_session("alive-failed", plan_name="planFailed")
+    fx.add_chain_health(
+        "alive-failed",
+        current_plan_name="planFailed",
+        last_state="finalized",
+        updated_at=NOW - timedelta(minutes=5),
+    )
+    fx.add_plan_state(
+        "alive-failed",
+        "planFailed",
+        current_state="finalized",
+    )
+    state_path = fx.root / "alive-failed" / ".megaplan" / "plans" / "planFailed" / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["latest_failure"] = {
+        "kind": "phase_failed",
+        "phase": "execute",
+        "message": "ValueError: module must be a Python identifier",
+    }
+    state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    snap = fx.build(liveness_probe=lambda _marker: {"tmux": False, "process": True})
+    entry = _by_session(snap, "alive-failed")
+    assert entry["status"] == "attention"
+    assert entry["repairing"] is False
+    assert "alive_but_failed" in entry["operator_next"]
 
 
 def test_live_process_beats_repair_marker(fx):
@@ -963,3 +992,80 @@ def test_detailed_renders_epic_deltas(fx, tmp_path):
     snap = fx.build(history_path=history, watchdog_report_path=fx.root / "absent.json")
     detailed = sf.format_cloud_status_detailed(snap)
     assert "(+20%/1h)" in detailed  # 44 now - 24 an hour ago
+
+
+def test_compute_progress_deltas_stage_changes(tmp_path):
+    history = tmp_path / "ph.jsonl"
+    base = datetime(2026, 7, 6, 14, 0, 0, tzinfo=timezone.utc)
+    # t-90m: planned · t-40m: gated · now: finalized
+    for offset_min, plan_state in ((90, "planned"), (40, "gated"), (0, "finalized")):
+        ss.append_progress_history(
+            {
+                "sessions": [
+                    {"session": "s1", "progress": {"percent": 10, "current_plan": "p", "plan_state": plan_state}}
+                ]
+            },
+            history,
+            now=base - timedelta(minutes=offset_min),
+        )
+    deltas = ss.compute_progress_deltas(history_path=history, session="s1", now=base, now_percent=10)
+    # prior (>=1h old) = planned; window newly reached gated then finalized
+    assert deltas["stage_changes_1h"] == ["gated", "finalized"]
+
+
+def test_compute_progress_deltas_stage_changes_empty_when_static(tmp_path):
+    history = tmp_path / "ph.jsonl"
+    base = datetime(2026, 7, 6, 14, 0, 0, tzinfo=timezone.utc)
+    for offset_min in (90, 40, 0):
+        ss.append_progress_history(
+            {
+                "sessions": [
+                    {"session": "s1", "progress": {"percent": 10, "current_plan": "p", "plan_state": "finalized"}}
+                ]
+            },
+            history,
+            now=base - timedelta(minutes=offset_min),
+        )
+    deltas = ss.compute_progress_deltas(history_path=history, session="s1", now=base, now_percent=10)
+    # held finalized the whole window -> no new stages
+    assert deltas["stage_changes_1h"] == []
+
+
+def test_compute_progress_deltas_stage_changes_skips_off_ladder(tmp_path):
+    history = tmp_path / "ph.jsonl"
+    base = datetime(2026, 7, 6, 14, 0, 0, tzinfo=timezone.utc)
+    # prior: planned; window: authority_divergence (off-ladder, ignored) then finalized
+    for offset_min, plan_state in ((90, "planned"), (40, "authority_divergence"), (0, "finalized")):
+        ss.append_progress_history(
+            {
+                "sessions": [
+                    {"session": "s1", "progress": {"percent": 10, "current_plan": "p", "plan_state": plan_state}}
+                ]
+            },
+            history,
+            now=base - timedelta(minutes=offset_min),
+        )
+    deltas = ss.compute_progress_deltas(history_path=history, session="s1", now=base, now_percent=10)
+    assert deltas["stage_changes_1h"] == ["finalized"]  # authority_divergence skipped
+
+
+def test_detailed_renders_stage_changes(fx, tmp_path):
+    history = tmp_path / "ph.jsonl"
+    base = NOW
+    for offset_min, plan_state in ((90, "planned"), (0, "gated")):
+        ss.append_progress_history(
+            {
+                "sessions": [
+                    {"session": "epic-run", "progress": {"percent": 20, "current_plan": "s2-loop", "plan_state": plan_state}}
+                ]
+            },
+            history,
+            now=base - timedelta(minutes=offset_min),
+        )
+    fx.add_session("epic-run", plan_name="s2-loop")
+    fx.add_chain_health(
+        "epic-run", current_plan_name="s2-loop", completed_count=0, milestone_count=4, last_state="gated"
+    )
+    snap = fx.build(history_path=history, watchdog_report_path=fx.root / "absent.json")
+    detailed = sf.format_cloud_status_detailed(snap)
+    assert "stages1h:gated" in detailed

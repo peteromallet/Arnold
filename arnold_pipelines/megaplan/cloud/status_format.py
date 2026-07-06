@@ -136,6 +136,10 @@ def format_cloud_status_detailed(snapshot: Mapping[str, Any] | None) -> str:
                     delta_parts.append(f"{delta:+d}%/{window}")
             if delta_parts:
                 progress_str += "  (" + ", ".join(delta_parts) + ")"
+            # Ladder stages the plan newly reached in the past hour.
+            stage_changes = progress.get("stage_changes_1h") or []
+            if stage_changes:
+                progress_str += "  stages1h:" + "→".join(stage_changes)
         out.append(
             f"[{status}] {entry.get('session', '?')}  "
             f"plan={entry.get('current_plan') or '-'}  "
