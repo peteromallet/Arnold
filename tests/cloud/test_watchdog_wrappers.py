@@ -1110,6 +1110,44 @@ def test_repair_loop_classifies_repeated_failure_signature_as_repairable(
     assert payload["plan_latest_failure"]["kind"] == "repeated_failure_signature"
 
 
+def test_repair_loop_prefers_live_execution_block_over_stale_credential_warnings(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workflow"
+    plan_dir = workspace / ".megaplan" / "plans" / "target-plan"
+    _write_plan(
+        plan_dir,
+        {
+            "name": "target-plan",
+            "current_state": "blocked",
+            "latest_failure": {
+                "kind": "execution_blocked",
+                "phase": "execute",
+                "message": "execute reported prerequisite-blocked tasks: T4",
+            },
+            "history": [],
+        },
+        plan_v_bodies={"plan_v1.md": "target"},
+    )
+    chain_log = workspace / ".megaplan" / "cloud-chain-single-session.log"
+    chain_log.parent.mkdir(parents=True, exist_ok=True)
+    chain_log.write_text(
+        "[megaplan] WARNING: critique degraded: missing credentials for verifier\n",
+        encoding="utf-8",
+    )
+
+    program = _extract_repair_program(
+        "collect_failure_context_json",
+        "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(workspace), "single-session", "plan", "target-plan")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["failure_classification"] == "blocked_state_or_recovery_error"
+    assert payload["plan_latest_failure"]["kind"] == "execution_blocked"
+
+
 def test_repair_loop_prefers_awaiting_human_over_timeout_text_in_prep_clarification(tmp_path: Path) -> None:
     workspace = tmp_path / "workflow"
     plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"

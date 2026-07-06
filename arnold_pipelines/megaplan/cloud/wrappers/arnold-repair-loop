@@ -2114,6 +2114,15 @@ def _classify_failure(
         return "cli_or_argument_error"
     if "couldn't find remote ref" in combined or "missing_base_ref" in combined or last_state == "missing_base_ref":
         return "git_or_branch_resolution_error"
+    # Prefer the authoritative live failure shape over stale ambient log text.
+    # Older critique warnings can mention missing credentials long after a later
+    # execute step has blocked for an unrelated reason.
+    if "awaiting_human" in combined or last_state == "awaiting_human":
+        return "awaiting_human_user_action_gate"
+    if "blocked" in combined or phase == "recover-blocked" or kind in {"execution_blocked", "iteration_cap", "repeated_failure_signature"}:
+        return "blocked_state_or_recovery_error"
+    if "timeout" in combined or "stall" in combined or kind == "stalled":
+        return "timeout_or_hang"
     if (
         "git push" in combined
         and (
@@ -2129,12 +2138,6 @@ def _classify_failure(
         return "authentication_or_credentials_error"
     if "credit balance is too low" in combined or "insufficient credits" in combined or "quota" in combined:
         return "billing_or_quota_error"
-    if "timeout" in combined or "stall" in combined or kind == "stalled":
-        return "timeout_or_hang"
-    if "awaiting_human" in combined or last_state == "awaiting_human":
-        return "awaiting_human_user_action_gate"
-    if "blocked" in combined or phase == "recover-blocked" or kind in {"execution_blocked", "iteration_cap", "repeated_failure_signature"}:
-        return "blocked_state_or_recovery_error"
     if "external_error" in kind:
         return "external_dependency_error"
     if "phase_callback_failed" in kind:
