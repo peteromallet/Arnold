@@ -824,6 +824,89 @@ def test_commit_and_push_phase_uses_extended_timeout_for_push(
     assert push_timeouts == [git_ops._GIT_PUSH_TIMEOUT_SECONDS]
 
 
+def test_run_git_push_command_recovers_when_timeout_already_published_branch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    messages: list[str] = []
+
+    def fake_run_command(_root, cmd, **_kwargs):
+        raise CliError(
+            "git_push_failed",
+            "git push failed with timeout",
+            extra={"command": cmd, "error": "Command timed out after 600 seconds"},
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            _run_command=fake_run_command,
+        ),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._expected_remote_push_target",
+        lambda *_args, **_kwargs: ("branch-x", "abc123"),
+    )
+    remote_heads = iter([None, "abc123"])
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._remote_branch_head",
+        lambda *_args, **_kwargs: next(remote_heads),
+    )
+    monkeypatch.setattr("arnold_pipelines.megaplan.chain.git_ops.time.sleep", lambda _seconds: None)
+
+    proc = git_ops._run_git_push_command(
+        root,
+        ["git", "push", "--no-verify", "origin", "HEAD:branch-x"],
+        writer=messages.append,
+    )
+
+    assert proc.returncode == 0
+    assert any("timed out locally" in message for message in messages)
+
+
+def test_run_git_push_command_raises_when_timeout_not_published(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    def fake_run_command(_root, cmd, **_kwargs):
+        raise CliError(
+            "git_push_failed",
+            "git push failed with timeout",
+            extra={"command": cmd, "error": "Command timed out after 600 seconds"},
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            _run_command=fake_run_command,
+        ),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._expected_remote_push_target",
+        lambda *_args, **_kwargs: ("branch-x", "abc123"),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._remote_branch_head",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops.time.monotonic",
+        iter([0.0, 31.0]).__next__,
+    )
+
+    with pytest.raises(CliError, match="git push failed with timeout"):
+        git_ops._run_git_push_command(
+            root,
+            ["git", "push", "--no-verify", "origin", "HEAD:branch-x"],
+            writer=lambda _msg: None,
+        )
+
+
 def test_run_chain_resume_refreshes_milestone_branch_and_pr_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
