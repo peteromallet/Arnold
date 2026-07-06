@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+import arnold_pipelines.megaplan.cloud.meta_repair as meta_repair_module
 from arnold_pipelines.megaplan.cloud.meta_repair import (
     META_REPAIR_BUDGET_SECS,
     MetaRepairClassification,
@@ -187,6 +188,58 @@ class TestClassifyPersistentRecurringRetry:
         assert result.trigger is None
         assert result.should_dispatch is False
         assert "supersedes stale recurring repair evidence" in result.rationale[0]
+
+    def test_recurring_retry_skips_stale_execute_loop_when_live_status_has_no_retry_path(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            meta_repair_module,
+            "_load_current_target_status",
+            lambda _path: {
+                "state": "finalized",
+                "next_step": None,
+                "valid_next": [],
+                "active_step": None,
+                "blocker_recovery": {
+                    "has_terminal_blockers": True,
+                },
+            },
+        )
+
+        result = classify_repair_system_failure(
+            session="s7d",
+            evidence={
+                "repair_data": {
+                    "current_signature": {
+                        "milestone_or_plan": "demo-plan",
+                        "current_state": "finalized",
+                        "failure_kind": "blocked_state_or_recovery_error",
+                        "phase_or_step": "execute",
+                    }
+                }
+            },
+            current_target_observation={
+                "authoritative_source": "chain_state",
+                "current_refs": {
+                    "current_plan_name": "demo-plan",
+                    "plan_current_state": "finalized",
+                    "chain_last_state": "finalized",
+                },
+                "plan_state": {"present": True, "path": "/tmp/demo/state.json"},
+                "chain_state": {"present": True},
+                "active_step_heartbeat": {"active": False},
+            },
+            failure_kinds=[
+                "blocked_state_or_recovery_error",
+                "blocked_state_or_recovery_error",
+                "blocked_state_or_recovery_error",
+            ],
+            attempt_outcomes=[REPAIRING, REPAIRING, REPAIRING],
+        )
+        assert result.trigger is None
+        assert result.should_dispatch is False
+        assert "no execute retry path" in result.rationale[0]
 
 
 class TestClassifyStateInspectionFailure:
