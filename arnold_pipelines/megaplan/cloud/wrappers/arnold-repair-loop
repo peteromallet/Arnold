@@ -3784,6 +3784,36 @@ exit_if_repair_target_complete() {
   exit 0
 }
 
+# Mirror of the pre-loop INITIAL_HEALTH=="alive" bail (see ~4673), but callable
+# at iteration boundaries and post-loop. If the target is currently alive AND no
+# marker forces repair-despite-alive, the original blocker is cleared: declare
+# live_with_fresh_activity (the SUCCESS outcome the pre-loop bail and the auditor
+# both use) and exit 0 instead of burning more iterations or escalating to
+# Discord. Closes the gap where a repair that revived the chain mid-loop (e.g. an
+# iteration-1 re-drive whose 30s verify window closed before the cold plan
+# finished re-initializing, or recovery via the plan's own critique/revise loop)
+# could not be recognized as success and fell through to discord_escalated.
+# Reuses live_with_fresh_activity — no new outcome vocabulary, no reader
+# token-drift, and it counts as success so the recurrence/auditor layer treats it
+# as a genuine recovery rather than a non-success partial_liveness.
+exit_if_repair_target_recovered() {
+  local phase="$1"
+  local health forced_reason
+  health="$(session_health_status "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME")"
+  if [[ "$health" != "alive" ]]; then
+    return 0
+  fi
+  forced_reason="$(marker_requires_repair_despite_alive || true)"
+  if [[ -n "$forced_reason" ]]; then
+    log "repair target alive at $phase but marker requires repair session=$SESSION reason=$forced_reason"
+    return 0
+  fi
+  repair_data_set_outcome "live_with_fresh_activity"
+  clear_repair_markers
+  log "repair target recovered (alive) at $phase; exiting without escalation session=$SESSION"
+  exit 0
+}
+
 verify_started_and_holding() {
   local session="$1"
   local workspace="$2"
@@ -4748,6 +4778,7 @@ for iteration in 1 2 3; do
   fi
   BREAKER_TRIPPED="${BREAKER_TRIPPED:-0}"
   exit_if_repair_target_complete "iteration-$iteration-start"
+  exit_if_repair_target_recovered "iteration-$iteration-start"
   case "$iteration" in
     1)
       DEV_REQUESTED_MODEL="glm-5.2"
@@ -4817,6 +4848,7 @@ for iteration in 1 2 3; do
 done
 
 exit_if_repair_target_complete "post-iterations"
+exit_if_repair_target_recovered "post-iterations"
 
 if [[ "${BREAKER_TRIPPED:-0}" == "1" ]]; then
   discord_status="$(send_discord_escalation)"

@@ -2325,6 +2325,59 @@ def test_repair_loop_exits_immediately_for_completed_chain(tmp_path: Path) -> No
     assert not (marker_dir / "demo-session.repair-loop.pid").exists()
 
 
+def test_repair_loop_recovered_gate_exits_when_target_is_alive(tmp_path: Path) -> None:
+    # Regression for the agent-ui-lifecycle-parity false-escalation: a target
+    # that revived mid-loop (after the single pre-loop INITIAL_HEALTH check ran
+    # while it was still down) must be recognized as recovered at the iteration
+    # / post-iterations gates and exit live_with_fresh_activity — NOT escalate.
+    gate = _extract_repair_function("exit_if_repair_target_recovered")
+    outcome_log = tmp_path / "outcome.log"
+    probe_a = tmp_path / "a.out"
+    script = "\n\n".join(
+        [
+            "set -u",
+            "SESSION=demo-session",
+            "WORKSPACE=/ws",
+            "REMOTE_SPEC=/ws/chain.yaml",
+            "RUN_KIND=chain",
+            "PLAN_NAME=demo-plan",
+            gate,
+            f"""
+log() {{ :; }}
+repair_data_set_outcome() {{ printf '%s\\n' "$1" > {str(outcome_log)!r}; }}
+clear_repair_markers() {{ :; }}
+
+# Case A: alive + no forcing marker -> must exit 0 with live_with_fresh_activity (SUCCESS)
+session_health_status() {{ echo alive; }}
+marker_requires_repair_despite_alive() {{ :; }}
+( exit_if_repair_target_recovered "iteration-2-start"; echo DID_NOT_EXIT_A ) > {str(probe_a)!r} 2>&1
+rcA=$?
+
+# Case B: not alive -> must RETURN (not exit) so the loop can keep working
+session_health_status() {{ echo stopped; }}
+exit_if_repair_target_recovered "probe-stopped"
+echo "RETURNED_B"
+
+# Case C: alive but marker forces repair-despite-alive -> must RETURN (not exit)
+session_health_status() {{ echo alive; }}
+marker_requires_repair_despite_alive() {{ echo live_plan_failure:kind:state:phase; }}
+exit_if_repair_target_recovered "probe-forced"
+echo "RETURNED_C"
+
+echo "RESULT rcA=$rcA outcomeA=$(cat {str(outcome_log)!r} 2>/dev/null) probeA=$(cat {str(probe_a)!r} 2>/dev/null)"
+""".strip(),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert "rcA=0" in result.stdout
+    assert "outcomeA=live_with_fresh_activity" in result.stdout
+    assert "DID_NOT_EXIT_A" not in result.stdout  # Case A must have exit 0'd
+    assert "RETURNED_B" in result.stdout           # Case B must not have exited
+    assert "RETURNED_C" in result.stdout           # Case C must not have exited
+
+
 def test_repair_loop_exits_for_terminal_plan_with_stale_chain_state(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     repair_root = tmp_path / "repair-root"
