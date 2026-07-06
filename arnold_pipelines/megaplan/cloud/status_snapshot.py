@@ -440,8 +440,8 @@ def compute_progress_deltas(
     rows = _load_progress_history(history_path)
     if not rows:
         return None
-    # Sorted timeline of (ts, epic_percent, current_plan) for this session.
-    points: list[tuple[datetime, Any, Any]] = []
+    # Sorted timeline of (ts, epic_percent, current_plan, plan_state) for this session.
+    points: list[tuple[datetime, Any, Any, Any]] = []
     for row in rows:
         row_dt = _parse_iso(row.get("ts"))
         if row_dt is None:
@@ -449,7 +449,9 @@ def compute_progress_deltas(
         for sample in row.get("sessions") or []:
             if not isinstance(sample, dict) or sample.get("session") != session:
                 continue
-            points.append((row_dt, sample.get("epic_percent"), sample.get("current_plan")))
+            points.append(
+                (row_dt, sample.get("epic_percent"), sample.get("current_plan"), sample.get("plan_state"))
+            )
             break
     if not points:
         return None
@@ -462,7 +464,7 @@ def compute_progress_deltas(
     def _percent_at_or_before(target: datetime) -> int | None:
         """Epic % at the latest sample at or before ``target`` (None if none)."""
         best: int | None = None
-        for sample_dt, percent, _plan in points:
+        for sample_dt, percent, _plan, _state in points:
             if sample_dt > target:
                 break
             value = _as_int(percent)
@@ -478,11 +480,38 @@ def compute_progress_deltas(
             return None
         return _as_int(current_percent) - reference
 
+    def _stages_advanced(window_s: int) -> list[str]:
+        """Ladder rungs newly reached in the window, for "advanced N stages" color.
+
+        Compares the highest ladder rung held at/before the window start against
+        rungs first seen inside the window. Off-ladder states (authority_divergence,
+        blocked, …) are skipped so transient sub-states don't masquerade as progress.
+        """
+        window_start = now - timedelta(seconds=window_s)
+        prior_idx = -1
+        for sample_dt, _pct, _plan, state in points:
+            if sample_dt > window_start:
+                break
+            idx = _ladder_index(state)
+            if idx >= 0:
+                prior_idx = idx
+        reached: list[str] = []
+        seen: set[int] = set()
+        for sample_dt, _pct, _plan, state in points:
+            if sample_dt <= window_start:
+                continue
+            idx = _ladder_index(state)
+            if idx < 0 or idx <= prior_idx or idx in seen:
+                continue
+            reached.append(PLAN_PROGRESSION_RUNGS[idx])
+            seen.add(idx)
+        return reached
+
     # plan_started_at: most recent transition into the current plan.
     current_plan = points[-1][2]
     plan_started_at: str | None = None
     prev_plan: Any = None
-    for sample_dt, _percent, plan in points:
+    for sample_dt, _percent, plan, _state in points:
         if plan != prev_plan:
             if plan is not None and plan == current_plan:
                 plan_started_at = _isoformat(sample_dt)
@@ -492,9 +521,20 @@ def compute_progress_deltas(
     return {
         "epic_delta_1h": _delta(3600),
         "epic_delta_5h": _delta(5 * 3600),
+        "stage_changes_1h": _stages_advanced(3600),
         "epic_started_at": epic_started_at,
         "plan_started_at": plan_started_at,
     }
+
+
+def _ladder_index(plan_state: Any) -> int:
+    """Index of a state in PLAN_PROGRESSION_RUNGS, or -1 if off-ladder/empty."""
+    if not plan_state:
+        return -1
+    try:
+        return PLAN_PROGRESSION_RUNGS.index(str(plan_state).strip().lower())
+    except ValueError:
+        return -1
 
 
 def _as_int(value: Any) -> int | None:
@@ -697,6 +737,7 @@ def _build_session_entry(
         marker_dir=marker_dir,
         repair_data_dir=repair_data_dir,
         current_plan=str(current_plan or ""),
+        plan_state=plan_state_doc,
         now=now,
     )
 
@@ -756,6 +797,7 @@ def _classify_session(
     marker_dir: Path,
     repair_data_dir: Path,
     current_plan: str,
+    plan_state: Mapping[str, Any] | None,
     now: datetime,
 ) -> tuple[SessionStatus, str]:
     # Structural problems first: a session we cannot reason about is attention.
@@ -799,6 +841,9 @@ def _classify_session(
     # Terminal success is the strongest signal and beats stale plan failures.
     if chain_complete:
         return "complete", "chain complete; no runner expected"
+
+    if _has_current_repairable_failure(plan_state):
+        return "attention", "alive_but_failed: current repairable failure receipt remains"
 
     if liveness.get("tmux") or liveness.get("process"):
         return "running", "live runner process observed"
@@ -1025,6 +1070,24 @@ def _load_current_plan_state(workspace: Path | None, current_plan: str) -> dict[
     path = workspace / ".megaplan" / "plans" / current_plan / "state.json"
     loaded = _load_json(path)
     return dict(loaded) if isinstance(loaded, Mapping) and loaded else None
+
+
+def _has_current_repairable_failure(plan_state: Mapping[str, Any] | None) -> bool:
+    if not isinstance(plan_state, Mapping) or not plan_state:
+        return False
+    latest_failure = plan_state.get("latest_failure")
+    if not isinstance(latest_failure, Mapping) or not latest_failure:
+        return False
+    kind = str(latest_failure.get("kind") or "").strip().lower()
+    phase = str(latest_failure.get("phase") or "").strip().lower()
+    current_state = str(plan_state.get("current_state") or "").strip().lower()
+    if kind == "phase_failed" and phase in {"", "execute"}:
+        return True
+    return current_state in {"blocked", "manual_review", "finalized"} and kind in {
+        "phase_failed",
+        "step_failed",
+        "handler_failed",
+    }
 
 
 def _latest_activity(
