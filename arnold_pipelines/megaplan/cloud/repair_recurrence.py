@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -321,6 +322,9 @@ def build_problem_signature(failure_context: Mapping[str, Any]) -> dict[str, str
 
 
 def _event_signature_field(context: Mapping[str, Any], plan_failure: Mapping[str, Any]) -> str:
+    phase_result_signature = _phase_result_signature_field(context, plan_failure)
+    if phase_result_signature:
+        return phase_result_signature
     events_path = _as_text(
         plan_failure.get("events_path")
         or plan_failure.get("plan_events_path")
@@ -342,6 +346,52 @@ def _event_signature_field(context: Mapping[str, Any], plan_failure: Mapping[str
     kind = _as_text(first.get("kind"))
     reason = _as_text(first.get("reason"))
     return f"{kind}/{reason}" if kind else ""
+
+
+def _phase_result_signature_field(
+    context: Mapping[str, Any],
+    plan_failure: Mapping[str, Any],
+) -> str:
+    phase_result = _as_dict(_as_dict(context.get("execute_attempt_context")).get("phase_result"))
+    if not phase_result:
+        plan_dir = _resolve_plan_dir(context, workspace=_as_path(context.get("workspace")))
+        if plan_dir is not None:
+            phase_result_path = plan_dir / "phase_result.json"
+            try:
+                loaded = json.loads(phase_result_path.read_text(encoding="utf-8"))
+            except Exception:
+                loaded = {}
+            phase_result = _as_dict(loaded)
+    if not phase_result:
+        return ""
+    exit_kind = _as_text(phase_result.get("exit_kind"))
+    phase = _as_text(phase_result.get("phase")) or _as_text(plan_failure.get("phase"))
+    if not exit_kind:
+        return ""
+    blocked_tasks = [
+        _as_text(_as_dict(item).get("task_id") or _as_dict(item).get("id"))
+        for item in _as_list(phase_result.get("blocked_tasks"))
+    ]
+    blocked_tasks = [item for item in blocked_tasks if item]
+    if blocked_tasks:
+        detail = blocked_tasks[0]
+    else:
+        detail = _phase_result_deviation_token(_as_list(phase_result.get("deviations")))
+    parts = ["phase_result", phase, exit_kind, detail]
+    return "/".join(part for part in parts if part)
+
+
+def _phase_result_deviation_token(deviations: list[Any]) -> str:
+    for item in deviations:
+        deviation = _as_dict(item)
+        kind = _as_text(deviation.get("kind"))
+        message = _as_text(deviation.get("message"))
+        code_match = re.search(r"\bAWF\d{3}(?:_[A-Z0-9_]+)?\b", message)
+        if code_match:
+            return f"{kind}:{code_match.group(0)}" if kind else code_match.group(0)
+        if kind:
+            return kind
+    return ""
 
 
 def signature_tuple(signature: Mapping[str, Any]) -> tuple[str, ...]:
