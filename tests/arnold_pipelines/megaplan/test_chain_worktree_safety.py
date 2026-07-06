@@ -367,6 +367,53 @@ def test_ensure_milestone_pr_skips_when_gh_missing(monkeypatch) -> None:
     assert any("gh executable not found" in message for message in messages)
 
 
+def test_ensure_milestone_pr_defers_when_branch_has_no_commits_ahead(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[str] = []
+    milestone = MilestoneSpec(
+        label="m1",
+        idea=Path("m1.md"),
+        branch="test/m1",
+    )
+
+    def fail_run_command(_root, _argv, **_kwargs):
+        raise CliError(
+            "gh_pr_create_failed",
+            "gh pr create failed",
+            extra={
+                "stderr": (
+                    "pull request create failed: GraphQL: "
+                    "No commits between main and test/m1 (createPullRequest)"
+                )
+            },
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops.shutil.which",
+        lambda name: "/usr/bin/gh" if name == "gh" else "/bin/other",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            _list_open_pr_for_branch=lambda *_args, **_kwargs: None,
+            _run_command=fail_run_command,
+            _parse_pr_number_from_url=lambda _output: None,
+        ),
+    )
+
+    assert (
+        _ensure_milestone_pr(
+            Path.cwd(),
+            milestone,
+            base_branch="main",
+            writer=messages.append,
+        )
+        is None
+    )
+    assert any("deferring PR creation" in message for message in messages)
+
+
 def test_checkout_existing_milestone_reconciles_with_refreshed_base(
     tmp_path: Path,
 ) -> None:
@@ -1005,6 +1052,178 @@ def test_run_chain_resume_refreshes_milestone_branch_and_pr_context(
     saved = load_chain_state(spec_path)
     assert saved.pr_number == 118
     assert saved.pr_state == "merged"
+
+
+def test_run_chain_resume_without_pr_creates_init_anchor_before_pr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    _init_repo(root)
+    spec_path = _write_chain_spec(root)
+    plan_dir = root / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        '{"name":"plan-m1","current_state":"initialized"}\n',
+        encoding="utf-8",
+    )
+    save_chain_state(
+        spec_path,
+        chain_module.ChainState(
+            current_milestone_index=0,
+            current_plan_name="plan-m1",
+            last_state="initialized",
+            pr_number=None,
+            pr_state=None,
+        ),
+    )
+
+    commit_calls: list[tuple[str, str, str]] = []
+    ensure_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._preflight_agent_backends",
+        lambda spec, *, writer: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.resolve_execution_environment",
+        lambda **_kwargs: SimpleNamespace(to_dict=lambda: {}),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._plan_state",
+        lambda *_args, **_kwargs: "initialized",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._capture_sync_state",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._resume_needs_init_anchor",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._commit_and_push_phase",
+        lambda _root, branch, plan, phase, **_kwargs: commit_calls.append((branch, plan, phase)),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._ensure_milestone_pr",
+        lambda _root, milestone, *, base_branch, writer: ensure_calls.append(milestone.label) or 81,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+        lambda *args, **kwargs: SimpleNamespace(status="blocked", reason="stop"),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._handle_outcome",
+        lambda *args, **kwargs: "stop",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._pr_state",
+        lambda *args, **kwargs: "open",
+    )
+
+    result = run_chain(spec_path, root, writer=lambda _message: None)
+
+    assert result["status"] == "stopped"
+    assert commit_calls == [("test/m1", "plan-m1", "init")]
+    assert ensure_calls == ["m1"]
+    saved = load_chain_state(spec_path)
+    assert saved.pr_number == 81
+    assert saved.pr_state == "open"
+
+
+def test_run_chain_retries_deferred_pr_creation_after_phase_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    _init_repo(root)
+    spec_path = _write_chain_spec(root)
+    _git(root, "add", "NORTHSTAR.md", "chain.yaml", "idea.md")
+    _git(root, "commit", "-m", "add chain spec")
+
+    ensure_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._preflight_agent_backends",
+        lambda spec, *, writer: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.resolve_execution_environment",
+        lambda **_kwargs: SimpleNamespace(to_dict=lambda: {}),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._refresh_base_branch",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._init_plan",
+        lambda *args, **kwargs: "plan-m1",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._write_chain_policy_into_plan_meta",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._attach_chain_anchors_to_plan",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._commit_and_push_phase",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._capture_sync_state",
+        lambda *args, **kwargs: None,
+    )
+
+    def fake_ensure(*_args, **_kwargs):
+        ensure_calls.append("ensure")
+        return None if len(ensure_calls) == 1 else 80
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._ensure_milestone_pr",
+        fake_ensure,
+    )
+
+    def fake_drive_plan(*_args, on_phase_complete=None, **_kwargs):
+        assert on_phase_complete is not None
+        on_phase_complete("plan", 0, "", "")
+        return DriverOutcome(
+            status="done",
+            plan="plan-m1",
+            final_state="done",
+            iterations=1,
+            reason="ok",
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+        fake_drive_plan,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._record_chain_last_state_after_plan_run",
+        lambda _root, _spec_path, state, outcome, *, writer: state,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._handle_outcome",
+        lambda *args, **kwargs: "stop",
+    )
+
+    run_chain(spec_path, root, writer=lambda _message: None)
+
+    saved = load_chain_state(spec_path)
+    assert ensure_calls == ["ensure", "ensure"]
+    assert saved.pr_number == 80
+    assert saved.pr_state == "open"
 
 
 def test_drive_plan_restores_process_cwd_after_auto_driver(tmp_path: Path, monkeypatch) -> None:

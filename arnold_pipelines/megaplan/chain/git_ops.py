@@ -466,7 +466,7 @@ def _run_command(
             proc = _compat().subprocess.run(
                 cmd,
                 cwd=str(root),
-                env=_compat()._command_env(cmd),
+                env=_compat()._command_env_without_gh_tokens(cmd),
                 capture_output=True,
                 text=True,
                 check=False,
@@ -618,15 +618,23 @@ def _should_retry_gh_without_env(cmd: list[str], proc: subprocess.CompletedProce
 
 
 def _command_env(cmd: list[str]) -> dict[str, str] | None:
-    """Return a subprocess env for commands whose auth can be poisoned by env.
+    """Return a subprocess env for commands whose auth may need a retry policy.
 
-    gh gives GH_TOKEN/GITHUB_TOKEN precedence over the logged-in keychain auth.
-    In long agent sessions those variables are often stale or scoped for a
-    different identity, so chain-managed gh calls should prefer gh's own auth.
+    ``gh`` gives ``GH_TOKEN``/``GITHUB_TOKEN`` precedence over any logged-in
+    keychain auth. The first attempt must still preserve those variables so
+    token-only cloud runtimes can authenticate; if the provided token is stale,
+    ``_run_command`` retries with those variables cleared.
     """
     if not cmd or cmd[0] != "gh":
         return None
-    env = os.environ.copy()
+    return os.environ.copy()
+
+
+def _command_env_without_gh_tokens(cmd: list[str]) -> dict[str, str] | None:
+    """Return a ``gh`` env with token overrides cleared for auth fallback."""
+    env = _command_env(cmd)
+    if env is None:
+        return None
     env.pop("GH_TOKEN", None)
     env.pop("GITHUB_TOKEN", None)
     return env
@@ -947,26 +955,41 @@ def _ensure_milestone_pr(root: Path, milestone: MilestoneSpec, *, base_branch: s
         f"Automated megaplan chain milestone `{milestone.label}`.\n\n"
         f"Idea file: `{milestone.idea}`\n"
     )
-    proc = _compat()._run_command(
-        root,
-        [
-            "gh",
-            "pr",
-            "create",
-            "--draft",
-            "--base",
-            base_branch,
-            "--head",
-            milestone.branch,
-            "--title",
-            title,
-            "--body",
-            body,
-        ],
-        writer=writer,
-        timeout=120,
-        error_code="gh_pr_create_failed",
-    )
+    try:
+        proc = _compat()._run_command(
+            root,
+            [
+                "gh",
+                "pr",
+                "create",
+                "--draft",
+                "--base",
+                base_branch,
+                "--head",
+                milestone.branch,
+                "--title",
+                title,
+                "--body",
+                body,
+            ],
+            writer=writer,
+            timeout=120,
+            error_code="gh_pr_create_failed",
+        )
+    except CliError as exc:
+        extra = exc.extra if isinstance(exc.extra, dict) else {}
+        detail = "\n".join(
+            str(part).strip()
+            for part in (exc.message, extra.get("stderr"), extra.get("stdout"))
+            if isinstance(part, str) and part.strip()
+        ).lower()
+        if "no commits between" in detail:
+            writer(
+                f"[chain] deferring PR creation for {milestone.branch}: "
+                f"no commits are ahead of {base_branch} yet\n"
+            )
+            return None
+        raise
     number = _compat()._parse_pr_number_from_url(proc.stdout.strip())
     if number is not None:
         return number
