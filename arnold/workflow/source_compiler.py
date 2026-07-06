@@ -65,8 +65,14 @@ from arnold.workflow.diagnostics import (
     RESERVED_AUTHORING_INTRINSICS,
     diagnostic_spec,
 )
+from arnold.workflow.boundary_evidence import (
+    BoundaryContract,
+    BoundaryReceipt,
+    SemanticFinding,
+)
 from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
 from arnold.workflow.refs import is_manifest_hash, is_ref
+from arnold.workflow.semantic_evidence import SemanticEvidence
 
 _DEFAULT_SOURCE_PATH = "<workflow-source>"
 _SUPPORTED_SOURCE_SUFFIXES = frozenset({".py", ".pypeline"})
@@ -469,9 +475,24 @@ class ParsedWorkflowSource:
 
 @dataclass(frozen=True)
 class CheckWorkflowSourceResult:
-    """Result carrier for source validation."""
+    """Result carrier for source validation.
+
+    Boundary contracts and evidence fields (`boundary_evidence`) are
+    observability-only: they report whether durable side effects exist for
+    implemented front-half rows, but they never own, alter, or substitute
+    for product route topology.  Route selection remains the exclusive
+    province of source-level route declarations and runtime signal handlers;
+    boundary evidence cannot create, satisfy, or mask the absence of a
+    source-level row.
+    """
 
     parsed_source: ParsedWorkflowSource
+    evidence: tuple[SemanticEvidence, ...] = ()
+    boundary_evidence: tuple[BoundaryReceipt | SemanticFinding, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "evidence", tuple(self.evidence))
+        object.__setattr__(self, "boundary_evidence", tuple(self.boundary_evidence))
 
     @property
     def diagnostics(self) -> tuple[AuthoringDiagnostic, ...]:
@@ -516,6 +537,14 @@ class _LoopBackedgeBinding:
 
 
 @dataclass(frozen=True)
+class _ImplementedFrontHalfRow:
+    row_id: str
+    phase: str
+    source_span: SourceSpan
+    component_ref: str
+
+
+@dataclass(frozen=True)
 class StaticComponentResolver:
     """Concrete resolver that imports module-level authoring component exports."""
 
@@ -545,9 +574,19 @@ def check_workflow_file(
     source_path: str | Path,
     *,
     resolver: ComponentResolver | None = None,
+    evidence: Sequence[SemanticEvidence] = (),
+    boundary_contracts: Sequence[BoundaryContract] = (),
+    boundary_evidence: Sequence[BoundaryReceipt | SemanticFinding] = (),
 ) -> CheckWorkflowSourceResult:
     path = Path(source_path)
-    return check_workflow_source(path.read_text(encoding="utf-8"), source_path=path, resolver=resolver)
+    return check_workflow_source(
+        path.read_text(encoding="utf-8"),
+        source_path=path,
+        resolver=resolver,
+        evidence=evidence,
+        boundary_contracts=boundary_contracts,
+        boundary_evidence=boundary_evidence,
+    )
 
 
 def check_workflow_source(
@@ -555,10 +594,516 @@ def check_workflow_source(
     *,
     source_path: str | Path | None = None,
     resolver: ComponentResolver | None = None,
+    evidence: Sequence[SemanticEvidence] = (),
+    boundary_contracts: Sequence[BoundaryContract] = (),
+    boundary_evidence: Sequence[BoundaryReceipt | SemanticFinding] = (),
 ) -> CheckWorkflowSourceResult:
-    return CheckWorkflowSourceResult(
-        parsed_source=parse_workflow_source(source, source_path=source_path, resolver=resolver)
+    """Validate workflow source and optionally check boundary contracts/evidence.
+
+    Parameters
+    ----------
+    source:
+        Workflow source text (Python-shaped AST).
+    source_path:
+        Optional path for diagnostic source spans.  When omitted diagnostics
+        reference ``<workflow-source>``.
+    resolver:
+        Optional component resolver.
+    evidence:
+        Row-level ``SemanticEvidence`` records.  Missing evidence for an
+        implemented front-half row produces AWF245.
+    boundary_contracts:
+        ``BoundaryContract`` records describing expected durable side effects
+        for each front-half row.  Missing contracts produce AWF246.
+    boundary_evidence:
+        ``BoundaryReceipt`` or ``SemanticFinding`` records carrying durable
+        side-effect observations.  Missing evidence produces AWF247; orphan
+        evidence (no matching source row) produces AWF248; stale/incoherent
+        evidence produces AWF249.
+
+    Notes
+    -----
+    Boundary contracts and evidence are **observability-only**: they report
+    whether durable effects exist but never own, alter, or substitute for
+    product route topology.  Route selection is the exclusive province of
+    source-level route declarations and runtime handlers.
+    """
+    parsed_source = parse_workflow_source(source, source_path=source_path, resolver=resolver)
+    evidence_records = tuple(evidence)
+    boundary_contract_records = tuple(boundary_contracts)
+    boundary_evidence_records = tuple(boundary_evidence)
+    row_evidence_diagnostics = _row_evidence_diagnostics(parsed_source, evidence_records)
+    boundary_diagnostics = _boundary_evidence_diagnostics(
+        parsed_source,
+        boundary_contract_records,
+        boundary_evidence_records,
     )
+    if row_evidence_diagnostics or boundary_diagnostics:
+        parsed_source = replace(
+            parsed_source,
+            diagnostics=(
+                *parsed_source.diagnostics,
+                *row_evidence_diagnostics,
+                *boundary_diagnostics,
+            ),
+        )
+    return CheckWorkflowSourceResult(
+        parsed_source=parsed_source,
+        evidence=evidence_records,
+        boundary_evidence=boundary_evidence_records,
+    )
+
+
+def _row_evidence_diagnostics(
+    parsed_source: ParsedWorkflowSource,
+    evidence: Sequence[SemanticEvidence],
+) -> tuple[AuthoringDiagnostic, ...]:
+    implemented_rows = _implemented_front_half_rows(parsed_source.workflow)
+    if not implemented_rows:
+        return ()
+    evidenced_row_ids = {record.row_id for record in evidence if record.row_id}
+    diagnostics: list[AuthoringDiagnostic] = []
+    for row in implemented_rows:
+        if row.row_id in evidenced_row_ids:
+            continue
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.ROW_EVIDENCE_INSUFFICIENCY,
+                (
+                    f"implemented front-half row {row.row_id!r} lacks matching SemanticEvidence "
+                    f"for phase {row.phase!r}"
+                ),
+                source_span=row.source_span,
+                component_ref=row.component_ref,
+                details={
+                    "row_id": row.row_id,
+                    "phase": row.phase,
+                },
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _boundary_evidence_diagnostics(
+    parsed_source: ParsedWorkflowSource,
+    boundary_contracts: Sequence[BoundaryContract],
+    boundary_evidence: Sequence[BoundaryReceipt | SemanticFinding],
+) -> tuple[AuthoringDiagnostic, ...]:
+    """Check implemented front-half rows against boundary contracts and evidence.
+
+    This function is a **read-only observer**: it inspects whether durable
+    side effects (receipts, semantic-health findings, contracts) exist for
+    each implemented front-half row, but it never owns, produces, or modifies
+    product route topology.  A missing contract produces AWF246, missing
+    evidence produces AWF247, orphan evidence (no matching source row)
+    produces AWF248, and stale/incoherent evidence produces AWF249 — none
+    of these diagnostics create or substitute for a source-level row.
+    """
+    if not boundary_contracts and not boundary_evidence:
+        return ()
+
+    implemented_rows = _implemented_front_half_rows(parsed_source.workflow)
+    implemented_by_row_id = {row.row_id: row for row in implemented_rows}
+    contracts_by_row_id = {
+        contract.row_id: contract
+        for contract in boundary_contracts
+        if contract.row_id
+    }
+    contracts_by_boundary_id = {
+        contract.boundary_id: contract for contract in boundary_contracts
+    }
+
+    receipt_index: dict[str, list[BoundaryReceipt]] = {}
+    finding_index: dict[str, list[SemanticFinding]] = {}
+    orphan_boundary_evidence: list[BoundaryReceipt | SemanticFinding] = []
+
+    for record in boundary_evidence:
+        contract = _boundary_contract_for_record(
+            record,
+            contracts_by_boundary_id=contracts_by_boundary_id,
+            contracts_by_row_id=contracts_by_row_id,
+        )
+        if contract is None or contract.row_id not in implemented_by_row_id:
+            orphan_boundary_evidence.append(record)
+            continue
+        if isinstance(record, BoundaryReceipt):
+            receipt_index.setdefault(contract.boundary_id, []).append(record)
+        else:
+            finding_index.setdefault(contract.boundary_id, []).append(record)
+
+    diagnostics: list[AuthoringDiagnostic] = []
+    for row in implemented_rows:
+        contract = contracts_by_row_id.get(row.row_id)
+        if contract is None:
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.BOUNDARY_CONTRACT_MISSING,
+                    (
+                        f"implemented front-half row {row.row_id!r} lacks a matching "
+                        f"BoundaryContract for phase {row.phase!r}"
+                    ),
+                    source_span=row.source_span,
+                    component_ref=row.component_ref,
+                    details={
+                        "row_id": row.row_id,
+                        "phase": row.phase,
+                    },
+                )
+            )
+            continue
+
+        boundary_findings = tuple(finding_index.get(contract.boundary_id, ()))
+        if boundary_findings:
+            diagnostics.extend(
+                _boundary_finding_diagnostics(
+                    row=row,
+                    contract=contract,
+                    findings=boundary_findings,
+                )
+            )
+            continue
+
+        boundary_receipts = tuple(receipt_index.get(contract.boundary_id, ()))
+        if not boundary_receipts:
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                    (
+                        f"implemented front-half row {row.row_id!r} requires durable boundary "
+                        f"evidence for contract {contract.boundary_id!r}"
+                    ),
+                    source_span=row.source_span,
+                    component_ref=row.component_ref,
+                    details={
+                        "boundary_id": contract.boundary_id,
+                        "row_id": row.row_id,
+                        "phase": row.phase,
+                    },
+                )
+            )
+            continue
+
+        receipt_issues = _boundary_receipt_issues(
+            contract=contract,
+            row=row,
+            receipts=boundary_receipts,
+        )
+        if receipt_issues:
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+                    (
+                        f"durable boundary evidence for contract {contract.boundary_id!r} is "
+                        f"stale or incoherent with implemented row {row.row_id!r}"
+                    ),
+                    source_span=row.source_span,
+                    component_ref=row.component_ref,
+                    details={
+                        "boundary_id": contract.boundary_id,
+                        "row_id": row.row_id,
+                        "phase": row.phase,
+                        "receipt_issues": tuple(receipt_issues),
+                    },
+                )
+            )
+
+    for record in orphan_boundary_evidence:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+                _boundary_orphan_message(record),
+                source_span=_boundary_anchor_source_span(parsed_source),
+                details=_boundary_orphan_details(record),
+            )
+        )
+
+    return tuple(diagnostics)
+
+
+def _boundary_contract_for_record(
+    record: BoundaryReceipt | SemanticFinding,
+    *,
+    contracts_by_boundary_id: Mapping[str, BoundaryContract],
+    contracts_by_row_id: Mapping[str, BoundaryContract],
+) -> BoundaryContract | None:
+    if isinstance(record, SemanticFinding):
+        return contracts_by_boundary_id.get(record.boundary_id)
+    contract = contracts_by_boundary_id.get(record.boundary_id)
+    if contract is not None:
+        return contract
+    if record.row_id is None:
+        return None
+    return contracts_by_row_id.get(record.row_id)
+
+
+def _boundary_finding_diagnostics(
+    *,
+    row: _ImplementedFrontHalfRow,
+    contract: BoundaryContract,
+    findings: Sequence[SemanticFinding],
+) -> tuple[AuthoringDiagnostic, ...]:
+    diagnostics: list[AuthoringDiagnostic] = []
+    findings_by_code: dict[DiagnosticCode, list[SemanticFinding]] = {}
+    for finding in findings:
+        if finding.diagnostic_code is None:
+            continue
+        if finding.diagnostic_code not in {
+            DiagnosticCode.BOUNDARY_CONTRACT_MISSING,
+            DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+            DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+            DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+        }:
+            continue
+        findings_by_code.setdefault(finding.diagnostic_code, []).append(finding)
+
+    for code in (
+        DiagnosticCode.BOUNDARY_CONTRACT_MISSING,
+        DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+        DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+        DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+    ):
+        code_findings = findings_by_code.get(code)
+        if not code_findings:
+            continue
+        diagnostics.append(
+            _diagnostic(
+                code,
+                (
+                    f"boundary finding(s) for contract {contract.boundary_id!r} report "
+                    f"{code.value}"
+                ),
+                source_span=row.source_span,
+                component_ref=row.component_ref,
+                details={
+                    "boundary_id": contract.boundary_id,
+                    "row_id": row.row_id,
+                    "phase": row.phase,
+                    "finding_ids": tuple(finding.finding_id for finding in code_findings),
+                    "finding_descriptions": tuple(
+                        finding.description for finding in code_findings
+                    ),
+                },
+            )
+        )
+    return tuple(diagnostics)
+
+
+def _boundary_receipt_issues(
+    *,
+    contract: BoundaryContract,
+    row: _ImplementedFrontHalfRow,
+    receipts: Sequence[BoundaryReceipt],
+) -> tuple[str, ...]:
+    issues: list[str] = []
+    required_artifacts = set(contract.required_artifacts)
+    expected_state_delta = dict(contract.expected_state_delta)
+    expected_history_entry = contract.expected_history_entry
+
+    for receipt in receipts:
+        if receipt.workflow_id != contract.workflow_id:
+            issues.append(
+                f"workflow_id mismatch: expected {contract.workflow_id!r}, got {receipt.workflow_id!r}"
+            )
+        if receipt.row_id not in (None, row.row_id):
+            issues.append(
+                f"row_id mismatch: expected {row.row_id!r}, got {receipt.row_id!r}"
+            )
+        missing_artifacts = sorted(required_artifacts.difference(receipt.artifact_refs))
+        if missing_artifacts:
+            issues.append(
+                f"missing artifacts: {', '.join(repr(artifact) for artifact in missing_artifacts)}"
+            )
+        for key, expected_value in expected_state_delta.items():
+            observed_value = receipt.state_observation.get(key)
+            if observed_value != expected_value:
+                issues.append(
+                    f"state mismatch for {key!r}: expected {expected_value!r}, got {observed_value!r}"
+                )
+        if expected_history_entry is not None and receipt.history_ref != expected_history_entry:
+            issues.append(
+                f"history mismatch: expected {expected_history_entry!r}, got {receipt.history_ref!r}"
+            )
+        if contract.phase_result_required and not receipt.phase_result_ref:
+            issues.append("missing phase_result_ref")
+        if contract.authority_required and not receipt.authority_records:
+            issues.append("missing authority_records")
+        if _boundary_details_mark_stale(receipt.details):
+            issues.append("receipt details report stale or expired observations")
+
+    return tuple(dict.fromkeys(issues))
+
+
+def _boundary_details_mark_stale(details: Mapping[str, Any]) -> bool:
+    stale_strings = {
+        "expired",
+        "false",
+        "invalid",
+        "missing",
+        "old",
+        "outdated",
+        "stale",
+    }
+    fresh_strings = {"current", "fresh", "ok", "pass", "passed", "true", "valid"}
+    for key, value in details.items():
+        lowered_key = str(key).lower()
+        if isinstance(value, Mapping):
+            if _boundary_details_mark_stale(value):
+                return True
+            continue
+        if isinstance(value, (list, tuple)):
+            if any(
+                _boundary_details_mark_stale({"value": item})
+                if isinstance(item, Mapping)
+                else _boundary_scalar_marks_stale(lowered_key, item, stale_strings, fresh_strings)
+                for item in value
+            ):
+                return True
+            continue
+        if _boundary_scalar_marks_stale(lowered_key, value, stale_strings, fresh_strings):
+            return True
+    return False
+
+
+def _boundary_scalar_marks_stale(
+    key: str,
+    value: Any,
+    stale_strings: set[str],
+    fresh_strings: set[str],
+) -> bool:
+    if "stale" in key or "expired" in key:
+        return bool(value)
+    if "fresh" in key:
+        if isinstance(value, bool):
+            return not value
+        if isinstance(value, str):
+            lowered = value.lower()
+            if lowered in fresh_strings:
+                return False
+            if lowered in stale_strings:
+                return True
+    if "freshness" in key and isinstance(value, str):
+        lowered = value.lower()
+        if lowered in fresh_strings:
+            return False
+        if lowered in stale_strings:
+            return True
+    return False
+
+
+def _boundary_anchor_source_span(parsed_source: ParsedWorkflowSource) -> SourceSpan:
+    workflow = parsed_source.workflow
+    if workflow is not None:
+        return workflow.source_span
+    return SourceSpan(
+        path=parsed_source.source_path,
+        start_line=1,
+        start_column=1,
+        end_line=1,
+        end_column=1,
+    )
+
+
+def _boundary_orphan_message(record: BoundaryReceipt | SemanticFinding) -> str:
+    if isinstance(record, BoundaryReceipt):
+        return (
+            f"boundary receipt for {record.boundary_id!r} does not have matching "
+            "source topology in the supplied workflow"
+        )
+    return (
+        f"boundary finding for {record.boundary_id!r} does not have matching "
+        "source topology in the supplied workflow"
+    )
+
+
+def _boundary_orphan_details(
+    record: BoundaryReceipt | SemanticFinding,
+) -> Mapping[str, Any]:
+    if isinstance(record, BoundaryReceipt):
+        return {
+            "boundary_id": record.boundary_id,
+            "row_id": record.row_id,
+            "evidence_kind": "boundary_receipt",
+        }
+    return {
+        "boundary_id": record.boundary_id,
+        "finding_id": record.finding_id,
+        "diagnostic_code": (
+            record.diagnostic_code.value
+            if record.diagnostic_code is not None
+            else None
+        ),
+        "evidence_kind": "semantic_finding",
+    }
+
+
+def _implemented_front_half_rows(
+    workflow: WorkflowDeclaration | None,
+) -> tuple[_ImplementedFrontHalfRow, ...]:
+    if workflow is None:
+        return ()
+    row_specs = _front_half_row_specs()
+    if not row_specs:
+        return ()
+    implemented_by_row_id: dict[str, _ImplementedFrontHalfRow] = {}
+    _collect_front_half_rows(workflow.source_block, row_specs, implemented_by_row_id)
+    return tuple(implemented_by_row_id.values())
+
+
+def _collect_front_half_rows(
+    block: ParsedSourceBlock,
+    row_specs: Mapping[str, tuple[str, str]],
+    implemented_by_row_id: dict[str, _ImplementedFrontHalfRow],
+) -> None:
+    for statement in block.statements:
+        if isinstance(statement, ParsedStepCall):
+            row_spec = row_specs.get(statement.component_ref)
+            if row_spec is not None:
+                row_id, phase = row_spec
+                implemented_by_row_id.setdefault(
+                    row_id,
+                    _ImplementedFrontHalfRow(
+                        row_id=row_id,
+                        phase=phase,
+                        source_span=statement.source_span,
+                        component_ref=statement.component_ref,
+                    ),
+                )
+        elif isinstance(statement, ParsedParallelMapCall):
+            row_spec = row_specs.get(statement.reducer_ref)
+            if row_spec is not None:
+                row_id, phase = row_spec
+                implemented_by_row_id.setdefault(
+                    row_id,
+                    _ImplementedFrontHalfRow(
+                        row_id=row_id,
+                        phase=phase,
+                        source_span=statement.source_span,
+                        component_ref=statement.reducer_ref,
+                    ),
+                )
+        elif isinstance(statement, ParsedBranchBlock):
+            for arm in statement.arms:
+                _collect_front_half_rows(arm.body, row_specs, implemented_by_row_id)
+        elif isinstance(statement, ParsedLoopBlock):
+            _collect_front_half_rows(statement.body, row_specs, implemented_by_row_id)
+
+
+def _front_half_row_specs() -> Mapping[str, tuple[str, str]]:
+    try:
+        from arnold_pipelines.megaplan.workflows.boundary_contracts import BOUNDARY_CONTRACTS
+    except ImportError:
+        return MappingProxyType({})
+
+    row_specs: dict[str, tuple[str, str]] = {}
+    for contract in BOUNDARY_CONTRACTS:
+        if contract.phase is None or contract.row_id is None:
+            continue
+        phase_name = contract.phase.value.upper()
+        for export_name in (f"SOURCE_{phase_name}", f"AUTHORING_{phase_name}"):
+            row_specs[
+                f"arnold_pipelines.megaplan.workflows.components:{export_name}"
+            ] = (contract.row_id, contract.phase.value)
+    return MappingProxyType(row_specs)
 
 
 def lower_workflow_file(

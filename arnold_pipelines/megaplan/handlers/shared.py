@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import arnold_pipelines.megaplan.workers as worker_module
+from arnold.workflow.boundary_evidence import AuthorityRecord, BoundaryOutcome, BoundaryReceipt
 from arnold_pipelines.megaplan.execute.batch import build_monitor_hint
 from arnold_pipelines.megaplan.fallback_chains import (
     configured_fallback_chain_for_phase,
@@ -19,7 +20,7 @@ from arnold_pipelines.megaplan.observability.routing_ledger import format_select
 from arnold_pipelines.megaplan.profiles import apply_profile_expansion
 from arnold_pipelines.megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
 from arnold_pipelines.megaplan.receipts import build_receipt
-from arnold_pipelines.megaplan.receipts.writer import write_receipt
+from arnold_pipelines.megaplan.receipts.writer import write_boundary_receipt, write_receipt
 from arnold_pipelines.megaplan.execute.step_edit import next_plan_artifact_name
 from arnold_pipelines.megaplan.types import AgentMode, CliError, MOCK_ENV_VAR, PlanState, StepResponse
 from arnold_pipelines.megaplan.orchestration.phase_result import (
@@ -59,6 +60,14 @@ from arnold_pipelines.megaplan.route_dispatch import resolve_route_target_for_si
 from arnold_pipelines.megaplan.workers import WorkerResult
 
 log = logging.getLogger("megaplan")
+
+_BOUNDARY_EXPECTED_NEXT_STEP_BY_ID = {
+    "prep_to_plan": "plan",
+    "plan_to_critique": "critique",
+    "critique_to_gate": "gate",
+    "gate_to_revise": "revise",
+    "revise_to_critique": "critique",
+}
 
 
 def _agent_mode_parts(resolved: AgentMode | tuple[str, str, bool, str | None]) -> tuple[str, str, bool, str | None]:
@@ -441,6 +450,221 @@ def _emit_receipt(
         log.warning("Receipt emission failed for step %s", phase, exc_info=True)
 
 
+def _boundary_contract_by_phase(step: str):
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import BOUNDARY_CONTRACTS
+
+    for contract in BOUNDARY_CONTRACTS:
+        if contract.phase.value == step:
+            return contract
+    return None
+
+
+def _boundary_contract_for_response(
+    step: str,
+    response: StepResponse,
+):
+    contract = _boundary_contract_by_phase(step)
+    if contract is None:
+        return None
+    expected_next_step = _BOUNDARY_EXPECTED_NEXT_STEP_BY_ID.get(contract.boundary_id)
+    if expected_next_step is not None and response.get("next_step") != expected_next_step:
+        return None
+    return contract
+
+
+def _boundary_history_snapshot(state: PlanState) -> dict[str, Any]:
+    history = state.get("history")
+    if not isinstance(history, list) or not history:
+        return {}
+    entry = history[-1]
+    return dict(entry) if isinstance(entry, dict) else {}
+
+
+def _boundary_session_snapshot(
+    state: PlanState,
+    *,
+    session_id: str | None,
+) -> dict[str, Any]:
+    if not session_id:
+        return {}
+    sessions = state.get("sessions")
+    if not isinstance(sessions, dict):
+        return {}
+    for session_key, session in sessions.items():
+        if not isinstance(session, dict) or session.get("id") != session_id:
+            continue
+        snapshot = dict(session)
+        snapshot["session_key"] = session_key
+        return snapshot
+    return {"id": session_id}
+
+
+def _boundary_artifact_refs(
+    *,
+    plan_dir: Path,
+    contract: Any,
+    artifacts: list[str],
+    output_file: str,
+) -> tuple[str, ...]:
+    refs: list[str] = []
+    for ref in [*artifacts, output_file]:
+        if isinstance(ref, str) and ref and ref not in refs:
+            refs.append(ref)
+    if contract.phase_result_required and "phase_result.json" not in refs:
+        refs.append("phase_result.json")
+    for required_artifact in contract.required_artifacts:
+        if (
+            isinstance(required_artifact, str)
+            and required_artifact
+            and (plan_dir / required_artifact).exists()
+            and required_artifact not in refs
+        ):
+            refs.append(required_artifact)
+    return tuple(refs)
+
+
+def _boundary_authority_records(
+    *,
+    plan_dir: Path,
+    contract: Any,
+    worker: WorkerResult,
+    agent: str,
+    response: StepResponse,
+) -> tuple[AuthorityRecord, ...]:
+    if not contract.authority_required:
+        return ()
+    auth_metadata = worker.auth_metadata if isinstance(worker.auth_metadata, dict) else {}
+    actor = str(auth_metadata.get("actor") or auth_metadata.get("authority_id") or worker.auth_channel or agent)
+    role = str(auth_metadata.get("role") or auth_metadata.get("authority_role") or "boundary_observer")
+    recommendation = response.get("recommendation")
+    decision = str(recommendation) if isinstance(recommendation, str) and recommendation else None
+    debt_payload = response.get("debt_payload")
+    debt_entries_added = None
+    if isinstance(debt_payload, dict):
+        debt_entries_added = debt_payload.get("debt_entries_added")
+    evidence_refs = tuple(
+        ref
+        for ref in ("gate.json", "gate_carry.json", "phase_result.json")
+        if ref == "phase_result.json" or (plan_dir / ref).exists()
+    )
+    return (
+        AuthorityRecord(
+            actor=actor,
+            role=role,
+            decision=decision,
+            scope=contract.boundary_id,
+            evidence_refs=evidence_refs,
+            details={
+                "passed": response.get("passed"),
+                "rationale": response.get("rationale"),
+                "warnings": response.get("warnings"),
+                "settled_decisions": response.get("settled_decisions"),
+                "debt_entries_added": debt_entries_added,
+                "auth_channel": worker.auth_channel,
+                "auth_metadata": auth_metadata,
+                "worker_channel": worker.worker_channel,
+            },
+        ),
+    )
+
+
+def _emit_boundary_receipt(
+    *,
+    plan_dir: Path,
+    state: PlanState,
+    step: str,
+    worker: WorkerResult,
+    agent: str,
+    mode: str,
+    artifacts: list[str],
+    output_file: str,
+    artifact_hash: str,
+    response: StepResponse,
+    run_id: str | None = None,
+    gate_summary: dict[str, Any] | None = None,
+) -> None:
+    contract = _boundary_contract_for_response(step, response)
+    if contract is None:
+        return
+    try:
+        project_dir = Path(state["config"]["project_dir"])
+        history_entry = _boundary_history_snapshot(state)
+        session_entry = _boundary_session_snapshot(state, session_id=worker.session_id)
+        details_dict: dict[str, Any] = {
+            "artifact_hash": artifact_hash,
+            "artifacts_written": list(artifacts),
+            "history": {
+                "step": history_entry.get("step"),
+                "result": history_entry.get("result"),
+                "timestamp": history_entry.get("timestamp"),
+                "output_file": history_entry.get("output_file"),
+            },
+            "session": {
+                "id": session_entry.get("id"),
+                "session_key": session_entry.get("session_key"),
+                "mode": mode,
+                "worker_channel": session_entry.get("worker_channel") or worker.worker_channel,
+                "auth_channel": session_entry.get("auth_channel") or worker.auth_channel,
+            },
+        }
+        if run_id:
+            details_dict["run_id"] = run_id
+        # For gate_to_revise boundary, include gate_summary authority data
+        # as receipt metadata so downstream consumers can cross-reference
+        # gate decisions with boundary evidence without re-reading gate.json.
+        if (
+            gate_summary is not None
+            and isinstance(gate_summary, dict)
+            and contract.boundary_id == "gate_to_revise"
+        ):
+            details_dict["gate_authority"] = {
+                "recommendation": gate_summary.get("recommendation"),
+                "passed": gate_summary.get("passed"),
+                "rationale": gate_summary.get("rationale"),
+                "warnings": gate_summary.get("warnings"),
+                "settled_decisions": gate_summary.get("settled_decisions"),
+                "reprompted": gate_summary.get("reprompted"),
+            }
+        receipt = BoundaryReceipt(
+            boundary_id=contract.boundary_id,
+            workflow_id=contract.workflow_id,
+            row_id=contract.row_id,
+            invocation_id=(state.get("meta") or {}).get("current_invocation_id"),
+            artifact_refs=_boundary_artifact_refs(
+                plan_dir=plan_dir,
+                contract=contract,
+                artifacts=artifacts,
+                output_file=output_file,
+            ),
+            state_observation={
+                "current_phase": step,
+                "current_state": state.get("current_state"),
+                "iteration": state.get("iteration"),
+                "next_step": response.get("next_step"),
+            },
+            history_ref=contract.expected_history_entry,
+            phase_result_ref="phase_result.json" if contract.phase_result_required else None,
+            outcome=BoundaryOutcome.COMPLETE,
+            authority_records=_boundary_authority_records(
+                plan_dir=plan_dir,
+                contract=contract,
+                worker=worker,
+                agent=agent,
+                response=response,
+            ),
+            details=details_dict,
+        )
+        write_boundary_receipt(plan_dir, receipt, project_dir=project_dir)
+    except Exception:
+        _warn_best_effort_emit_failure(
+            "M3A_WARN_EMIT_BOUNDARY_RECEIPT",
+            action="boundary-receipt",
+            plan_dir=plan_dir,
+            phase=step,
+            context={"boundary_id": contract.boundary_id},
+        )
+
+
 def _finish_step(
     plan_dir: Path,
     state: PlanState,
@@ -461,7 +685,18 @@ def _finish_step(
     response_fields: dict[str, Any] | None = None,
     history_fields: dict[str, Any] | None = None,
     run_id: str | None = None,
+    gate_summary: dict[str, Any] | None = None,
 ) -> StepResponse:
+    # Capture run_id from state before clearing the active step.
+    # Handlers that call _run_worker already have run_id stored in
+    # state["active_step"]["run_id"]; extract it as a fallback so
+    # boundary receipts carry the correct run_id for audit cross-
+    # referencing without requiring every caller to plumb it explicitly.
+    effective_run_id = run_id
+    if effective_run_id is None:
+        active = state.get("active_step")
+        if isinstance(active, dict):
+            effective_run_id = active.get("run_id")
     clear_active_step(state, run_id=run_id)
     if success and result == "success":
         state["latest_failure"] = None
@@ -539,6 +774,20 @@ def _finish_step(
         deviations=_extract_deviations_from_state(state),
         artifacts_written=tuple(artifacts),
         cli_provenance=_snapshot_cli_provenance(state),
+    )
+    _emit_boundary_receipt(
+        plan_dir=plan_dir,
+        state=state,
+        step=step,
+        worker=worker,
+        agent=agent,
+        mode=mode,
+        artifacts=artifacts,
+        output_file=output_file,
+        artifact_hash=artifact_hash,
+        response=response,
+        run_id=effective_run_id,
+        gate_summary=gate_summary,
     )
     return response
 

@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-06T01:28:46.159416+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-megaplan-native-parity-corrective"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 2,
+  "owner_actor": "watchdog",
+  "problem_id": "problem-e20c45ae0eb0",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:09cc08fb2cd1b7e381ef91a89f63139a2c49dd7a000a3ccf74e3b285af6cecb5",
+    "last_seq": 158,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-e20c45ae0eb0: repair loop background-dispatched"
+}

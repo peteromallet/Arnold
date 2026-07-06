@@ -8,11 +8,6 @@ evidence, and that the API / serialization contracts hold.
 
 from __future__ import annotations
 
-from dataclasses import replace
-from pathlib import Path
-
-import pytest
-
 from arnold.manifest.refs import SourceSpan
 from arnold.workflow import check_workflow_source
 from arnold.workflow.diagnostics import DiagnosticCode
@@ -25,6 +20,7 @@ from arnold.workflow.semantic_evidence import (
     S2_REVISE_ROW_ID,
     SemanticEvidence,
 )
+from arnold_pipelines.megaplan.workflows import planning
 
 # ── minimal source templates ────────────────────────────────────────────────
 
@@ -135,6 +131,64 @@ def plain_flow(brief: str) -> None:
 """
     result = check_workflow_source(source, source_path="plain.pypeline")
     assert result.ok
+
+
+def test_evidence_alone_cannot_create_missing_front_half_rows() -> None:
+    """Supplying row evidence for an unrelated source must not create
+    AWF245 rows that are absent from parsed topology."""
+    source = """\
+from __future__ import annotations
+
+from arnold.workflow.authoring import workflow
+from arnold_pipelines.megaplan.workflows.components import SOURCE_EXECUTE
+
+@workflow(id="plain", version="s2")
+def plain_flow(brief: str) -> None:
+    SOURCE_EXECUTE(id="run", brief=brief)
+"""
+    evidence = (
+        _evidence_for(S2_PREP_ROW_ID),
+        _evidence_for(S2_PLAN_ROW_ID),
+        _evidence_for(S2_CRITIQUE_ROW_ID),
+        _evidence_for(S2_GATE_ROW_ID),
+        _evidence_for(S2_REVISE_ROW_ID),
+    )
+
+    result = check_workflow_source(
+        source,
+        source_path="plain.pypeline",
+        evidence=evidence,
+    )
+
+    assert result.ok
+    assert result.evidence == evidence
+
+
+def test_canonical_authoring_components_emit_awf245_for_unique_front_half_rows() -> None:
+    """The canonical AUTHORING_* source must detect prep/plan/critique/gate/revise
+    exactly once each, including critique via the reducer call and repeated revise call sites."""
+    result = check_workflow_source(
+        planning.AUTHORING_SOURCE_PATH.read_text(encoding="utf-8"),
+        source_path=planning.AUTHORING_SOURCE_PATH,
+    )
+
+    awf245_diags = [
+        d for d in result.diagnostics
+        if d.code is DiagnosticCode.ROW_EVIDENCE_INSUFFICIENCY
+    ]
+
+    assert len(awf245_diags) == 5
+    assert {
+        diag.details["row_id"] for diag in awf245_diags
+    } == {
+        S2_PREP_ROW_ID,
+        S2_PLAN_ROW_ID,
+        S2_CRITIQUE_ROW_ID,
+        S2_GATE_ROW_ID,
+        S2_REVISE_ROW_ID,
+    }
+    assert any(diag.component_ref and "AUTHORING_CRITIQUE" in diag.component_ref for diag in awf245_diags)
+    assert any(diag.component_ref and "AUTHORING_REVISE" in diag.component_ref for diag in awf245_diags)
 
 
 # ── API / serialization behaviour ───────────────────────────────────────────

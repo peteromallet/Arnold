@@ -1195,6 +1195,7 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             artifact_hash=gate_hash,
             result=result,
             success=gate_summary["recommendation"] != "PROCEED" or gate_summary["passed"],
+            gate_summary=gate_summary,
             response_fields={
                 **_gate_response_fields(state, gate_summary, debt_entries_added),
                 "route_signal": route_signal.get("route_signal"),
