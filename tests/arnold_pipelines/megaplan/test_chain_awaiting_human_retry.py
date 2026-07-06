@@ -495,6 +495,69 @@ def test_record_chain_last_state_after_plan_run_prefers_live_plan_state(
     assert any("awaiting_human -> finalized" in message for message in messages)
 
 
+def test_run_chain_syncs_last_state_after_each_child_phase(tmp_path: Path) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    _write_plan_state(tmp_path, current_state="initialized")
+    messages: list[str] = []
+
+    def fake_drive(
+        root: Path,
+        spec_path_arg: Path,
+        plan_name: str,
+        spec: ChainSpec,
+        *,
+        on_phase_complete,
+        writer,
+    ) -> DriverOutcome:
+        assert spec_path_arg == spec_path
+        _write_plan_state(root, plan_name=plan_name, current_state="planned")
+        on_phase_complete("plan", 0, "", "")
+        assert load_chain_state(spec_path).last_state == "planned"
+        return DriverOutcome(
+            status="stalled",
+            plan=plan_name,
+            final_state="stalled",
+            iterations=1,
+            reason="stop after phase callback",
+        )
+
+    with (
+        patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
+        patch("arnold_pipelines.megaplan.chain._dirty_worktree_paths", return_value=[]),
+        patch(
+            "arnold_pipelines.megaplan.chain._refresh_base_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch("arnold_pipelines.megaplan.chain._capture_sync_state"),
+        patch("arnold_pipelines.megaplan.chain._pr_state", return_value="open"),
+        patch("arnold_pipelines.megaplan.chain._ensure_milestone_pr", return_value=122),
+        patch("arnold_pipelines.megaplan.chain._commit_and_push_phase"),
+        patch("arnold_pipelines.megaplan.chain._init_plan", return_value="m7-plan"),
+        patch("arnold_pipelines.megaplan.chain._write_chain_policy_into_plan_meta"),
+        patch("arnold_pipelines.megaplan.chain._attach_chain_anchors_to_plan"),
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+            fake_drive,
+        ),
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            writer=messages.append,
+            require_anchor_override=False,
+            missing_anchor_ack_override="unit test uses a minimal chain spec",
+        )
+
+    assert result["status"] == "stopped"
+    saved = load_chain_state(spec_path)
+    assert saved.last_state == "planned"
+    assert any("initialized -> planned" in message for message in messages)
+
+
 def test_reconcile_leaves_finalized_open_pr_for_execute_resume(
     tmp_path: Path,
 ) -> None:
