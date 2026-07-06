@@ -2454,6 +2454,8 @@ def _recover_completed_execute_artifacts_after_failure(plan_dir: Path | None) ->
             return False
     if not (plan_dir / "execution.json").exists():
         return False
+    if _latest_review_requires_rework_after_execution(plan_dir):
+        return False
     try:
         root = plan_dir.parents[2]
     except IndexError:
@@ -2464,6 +2466,25 @@ def _recover_completed_execute_artifacts_after_failure(plan_dir: Path | None) ->
         reason="megaplan auto: adopted complete execution artifact after worker failure",
     )
     return code == 0
+
+
+def _latest_review_requires_rework_after_execution(plan_dir: Path) -> bool:
+    """Return true when old execution evidence is stale behind rework review."""
+
+    review_path = plan_dir / "review.json"
+    execution_path = plan_dir / "execution.json"
+    try:
+        review_data = json.loads(review_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(review_data, dict):
+        return False
+    if review_data.get("review_verdict") != "needs_rework":
+        return False
+    try:
+        return review_path.stat().st_mtime >= execution_path.stat().st_mtime
+    except (OSError, FileNotFoundError):
+        return False
 
 
 def _finalize_tasks(plan_dir: Path | None) -> tuple[dict[str, Any], ...]:

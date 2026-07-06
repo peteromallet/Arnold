@@ -1,21 +1,21 @@
 {
   "fix_commits": [],
-  "generated_at": "2026-07-06T07:28:56.925932+00:00",
+  "generated_at": "2026-07-06T07:28:56.924897+00:00",
   "kind": "problem_summary",
   "linked_incident_ids": [
     "inc-megaplan-native-parity-corrective"
   ],
   "next_review_ts": null,
-  "occurrence_count": 3,
+  "occurrence_count": 1,
   "owner_actor": "watchdog",
-  "problem_id": "problem-e20c45ae0eb0",
+  "problem_id": "problem-ba6e85d2053d",
   "recurred_after_fix": false,
   "schema_version": 1,
   "source": {
     "digest": "sha256:ab09fc8081db4dfd6875417b107ce99b006e11418e5e6082e22a7b202593f8c9",
-    "last_seq": 164,
+    "last_seq": 163,
     "projection": "problems"
   },
   "status": "open",
-  "summary_text": "problem-e20c45ae0eb0: repair loop background-dispatched"
+  "summary_text": "problem-ba6e85d2053d: phase_failure:s3-tiebreaker-and-replan-20260706-0044:recover-blocked:consecutive=0:recorded=2026-07-06T01:17:55Z:state=blocked:active=none:started=unknown:pid=none:command 'recover-blocked' exited 1"
 }

@@ -1143,3 +1143,38 @@ class TestExecuteTimeoutHardening:
         assert "T1" in reset
         assert finalize_data["tasks"][0]["status"] == "pending"
         assert "Timeout recovery" in finalize_data["tasks"][0]["executor_notes"]
+
+
+class TestAutoExecuteRecovery:
+    def test_completed_execution_not_adopted_after_newer_needs_rework_review(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.auto import (
+            _recover_completed_execute_artifacts_after_failure,
+        )
+
+        plan_dir = tmp_path / "plans" / "example-plan"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"current_state": "finalized"}) + "\n",
+            encoding="utf-8",
+        )
+        execution_path = plan_dir / "execution.json"
+        execution_path.write_text(
+            json.dumps({"output": "old complete execution"}) + "\n",
+            encoding="utf-8",
+        )
+        review_path = plan_dir / "review.json"
+        review_path.write_text(
+            json.dumps(
+                {
+                    "review_verdict": "needs_rework",
+                    "rework_items": [{"task_id": "T2", "issue": "fix this"}],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        assert review_path.stat().st_mtime >= execution_path.stat().st_mtime
+        assert _recover_completed_execute_artifacts_after_failure(plan_dir) is False
