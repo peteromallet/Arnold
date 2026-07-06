@@ -43,7 +43,7 @@ milestones:
   - m1-checker-outcomes-builder-slice
 - label: m3-tiebreaker-replan-native
   idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s3-tiebreaker-replan-native.md
-  profile: partnered-4
+  profile: partnered-5
   robustness: full
   depth: medium
   depends_on:
@@ -57,7 +57,7 @@ milestones:
   - m3-tiebreaker-replan-native
 - label: m5-review-rework-finalize
   idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s5-review-rework-finalize.md
-  profile: partnered-4
+  profile: partnered-5
   robustness: full
   depth: medium
   depends_on:
