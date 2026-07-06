@@ -2853,6 +2853,34 @@ workflow(id="no-exec-file", steps=[plan(id="plan")])
     assert manifest.id == "no-exec-file"
 
 
+def test_source_compiler_file_apis_accept_absolute_paths_with_non_identifier_dirs(
+    tmp_path: Path,
+) -> None:
+    source_dir = tmp_path / "megaplan-native-parity-corrective"
+    source_dir.mkdir()
+    source_path = source_dir / "local_workflow.py"
+    source_path.write_text(
+        """
+from arnold.pipeline import step, workflow
+
+@step(id="local-step")
+def local_step():
+    return {}
+
+workflow(id="absolute-path-ok", steps=[local_step(id="s1")])
+""",
+        encoding="utf-8",
+    )
+
+    check_result = workflow.check_workflow_file(source_path)
+    pipeline = workflow.lower_workflow_file(source_path)
+    manifest = workflow.compile_workflow_file(source_path)
+
+    assert check_result.ok
+    assert pipeline.id == "absolute-path-ok"
+    assert manifest.id == "absolute-path-ok"
+
+
 def _codes(result: workflow.CheckWorkflowSourceResult) -> set[diagnostics.DiagnosticCode]:
     return {diagnostic.code for diagnostic in result.diagnostics}
 

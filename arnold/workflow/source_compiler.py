@@ -65,6 +65,7 @@ from arnold.workflow.diagnostics import (
 )
 from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
 from arnold.workflow.refs import is_manifest_hash, is_ref
+from arnold.workflow.semantic_evidence import SemanticEvidence
 
 _DEFAULT_SOURCE_PATH = "<workflow-source>"
 _SUPPORTED_SOURCE_SUFFIXES = frozenset({".py", ".pypeline"})
@@ -465,9 +466,22 @@ class ParsedWorkflowSource:
 
 @dataclass(frozen=True)
 class CheckWorkflowSourceResult:
-    """Result carrier for source validation."""
+    """Result carrier for source validation.
+
+    In addition to the parsed source and its diagnostics this carrier now
+    exposes structured semantic evidence records -- one per front-half
+    construct (prep/plan/critique/gate/revise) that was checked.  Each
+    evidence record carries a stable ``row_id``, ``source_span``,
+    ``construct_type``, and ``diagnostic_code`` so downstream consumers
+    (manifests, conformance tests, quarantine inventory) can reason about
+    front-half provenance without consulting ``components.py``.
+    """
 
     parsed_source: ParsedWorkflowSource
+    evidence: tuple[SemanticEvidence, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "evidence", tuple(self.evidence))
 
     @property
     def diagnostics(self) -> tuple[AuthoringDiagnostic, ...]:
@@ -541,9 +555,12 @@ def check_workflow_file(
     source_path: str | Path,
     *,
     resolver: ComponentResolver | None = None,
+    evidence: tuple[SemanticEvidence, ...] = (),
 ) -> CheckWorkflowSourceResult:
     path = Path(source_path)
-    return check_workflow_source(path.read_text(encoding="utf-8"), source_path=path, resolver=resolver)
+    return check_workflow_source(
+        path.read_text(encoding="utf-8"), source_path=path, resolver=resolver, evidence=evidence,
+    )
 
 
 def check_workflow_source(
@@ -551,9 +568,11 @@ def check_workflow_source(
     *,
     source_path: str | Path | None = None,
     resolver: ComponentResolver | None = None,
+    evidence: tuple[SemanticEvidence, ...] = (),
 ) -> CheckWorkflowSourceResult:
     return CheckWorkflowSourceResult(
-        parsed_source=parse_workflow_source(source, source_path=source_path, resolver=resolver)
+        parsed_source=parse_workflow_source(source, source_path=source_path, resolver=resolver),
+        evidence=evidence,
     )
 
 
@@ -974,7 +993,21 @@ def _literal_string_set_keyword(call: ast.Call, name: str) -> tuple[str, ...]:
 
 
 def _source_module_for_local_component(source_path: str) -> str:
-    return Path(source_path).with_suffix("").as_posix().replace("/", ".").replace("-", "_")
+    parts = _package_parts_for_source_path(source_path)
+    stem = Path(source_path).with_suffix("").name
+    normalized = tuple(_normalize_module_segment(part) for part in (*parts, stem))
+    if not normalized:
+        return "_workflow_source"
+    return ".".join(normalized)
+
+
+def _normalize_module_segment(segment: str) -> str:
+    normalized = re.sub(r"\W", "_", segment.replace("-", "_"))
+    if not normalized:
+        return "_"
+    if normalized[0].isdigit():
+        return f"_{normalized}"
+    return normalized
 
 
 def _parse_workflow_declaration(
