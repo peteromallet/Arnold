@@ -41,13 +41,20 @@ milestones:
   depth: high
   depends_on:
   - m1-checker-outcomes-builder-slice
+- label: m2-5-boundary-evidence-alignment
+  idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s2-5-boundary-evidence-alignment.md
+  profile: partnered-5
+  robustness: thorough
+  depth: high
+  depends_on:
+  - m2-front-half-native-loop
 - label: m3-tiebreaker-replan-native
   idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s3-tiebreaker-replan-native.md
   profile: partnered-5
   robustness: full
   depth: medium
   depends_on:
-  - m2-front-half-native-loop
+  - m2-5-boundary-evidence-alignment
 - label: m4-execute-dag-approval-resume
   idea: .megaplan/initiatives/megaplan-native-parity-corrective/briefs/s4-execute-dag-approval-resume.md
   profile: partnered-5
