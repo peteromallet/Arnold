@@ -13,6 +13,22 @@ Coverage targets:
 - stale boundary evidence (AWF249)
 - smuggling invariant: boundary evidence cannot satisfy or create an
   absent ``.pypeline`` source row
+
+A2 failing-fixture scenario locators (reviewer-visible without
+structural-audit output):
+
+- **AWF247 (no-durable-evidence fixture):**
+  ``test_source_with_contracts_but_no_evidence_produces_awf247`` —
+  source topology present, boundary contracts supplied, but no durable
+  boundary evidence (receipts/findings).
+
+- **AWF248 / smuggling fixture:**
+  ``test_boundary_receipt_without_source_topology_produces_awf248`` —
+  boundary evidence whose row_id has no match in parsed topology.
+  ``test_boundary_evidence_cannot_create_absent_source_row`` —
+  boundary evidence for rows absent from source must not create
+  source rows; orphan evidence produces AWF248 and AWF245 only fires
+  for implemented rows.
 """
 
 from __future__ import annotations
@@ -157,7 +173,10 @@ def test_source_without_boundary_contracts_produces_awf246() -> None:
 
 
 def test_source_with_contracts_but_no_evidence_produces_awf247() -> None:
-    """Supplying boundary contracts but no boundary evidence must produce
+    """Canonical A2 AWF247 fixture: source topology plus contracts without
+    durable boundary evidence.
+
+    Supplying boundary contracts but no boundary evidence must produce
     AWF247 for each implemented row that has a contract but no receipts/findings."""
     contracts = (
         _bc(S2_PREP_ROW_ID, "prep_to_plan", BoundaryPhase.PREP),
@@ -246,7 +265,10 @@ def test_valid_receipts_suppress_awf247() -> None:
 
 
 def test_boundary_receipt_without_source_topology_produces_awf248() -> None:
-    """A BoundaryReceipt whose row_id has no match in parsed topology must
+    """Canonical A2 AWF248 fixture: boundary evidence absent from parsed
+    source topology.
+
+    A BoundaryReceipt whose row_id has no match in parsed topology must
     produce AWF248."""
     receipt = _receipt("gate_to_revise", S2_GATE_ROW_ID)
     result = check_workflow_source(
@@ -647,9 +669,11 @@ def test_boundary_evidence_cannot_satisfy_awf245() -> None:
 
 
 def test_boundary_evidence_cannot_create_absent_source_row() -> None:
-    """Supplying boundary evidence for rows not in the parsed topology must
-    not create source rows. The evidence is orphaned (AWF248) and no AWF245
-    is emitted for the absent row because it was never implemented."""
+    """Canonical A2 smuggling invariant: boundary evidence for rows absent
+    from parsed source topology must not create source rows.
+
+    The evidence is orphaned (AWF248) and no AWF245 is emitted for the
+    absent row because it was never implemented."""
     contracts = (
         _bc(S2_PREP_ROW_ID, "prep_to_plan", BoundaryPhase.PREP),
         _bc(S2_PLAN_ROW_ID, "plan_to_critique", BoundaryPhase.PLAN),
