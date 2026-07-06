@@ -1,0 +1,8 @@
+[Unit]
+Description=Ensure Megaplan Discord resident tmux session is running
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ensure-megaplan-resident
