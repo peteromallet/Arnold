@@ -193,7 +193,15 @@ def _write_execute_authority_plan(root: Path, *, base_sha: str) -> Path:
                             "pytest -q tests/arnold/workflow/test_source_compiler_api.py -q"
                         ],
                         "head_sha": base_sha,
-                    }
+                    },
+                    {
+                        "task_id": "v3_api_tests",
+                        "status": "done",
+                        "commands_run": [
+                            "pytest -q tests/arnold/workflow/test_source_compiler_api.py -q"
+                        ],
+                        "head_sha": base_sha,
+                    },
                 ]
             }
         )
@@ -1156,7 +1164,33 @@ def test_latest_execution_batch_all_tasks_done_accepts_execution_window_authorit
     ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
 
     assert ok is True
-    assert reason == "execution_batch_1.json"
+    assert reason == "finalize.json"
+
+
+def test_latest_execution_batch_all_tasks_done_blocks_uncovered_pending_finalize_tasks(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    _commit_semantic_change(tmp_path)
+    plan_dir = _write_execute_authority_plan(tmp_path, base_sha=base)
+    batch = json.loads((plan_dir / "execution_batch_1.json").read_text(encoding="utf-8"))
+    batch["task_updates"] = [
+        update
+        for update in batch["task_updates"]
+        if update.get("task_id") != "v3_api_tests"
+    ]
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(batch) + "\n",
+        encoding="utf-8",
+    )
+
+    ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
+
+    assert ok is False
+    assert (
+        "finalize.json has pending tasks without authoritative execution updates: "
+        "v3_api_tests"
+    ) in reason
 
 
 def test_latest_execution_batch_all_tasks_done_uses_persisted_execute_baseline_head(
@@ -1172,7 +1206,7 @@ def test_latest_execution_batch_all_tasks_done_uses_persisted_execute_baseline_h
     ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
 
     assert ok is True
-    assert reason == "execution_batch_1.json"
+    assert reason == "finalize.json"
 
 
 def test_latest_execution_batch_all_tasks_done_ignores_deferred_baseline_batch(
@@ -1344,7 +1378,7 @@ def test_latest_execution_batch_all_tasks_done_prefers_authoritative_batch_updat
     assert reason in {"execution_batch_2.json", "finalize.json"}
 
 
-def test_latest_execution_batch_all_tasks_done_ignores_stale_pending_finalize_rows(
+def test_latest_execution_batch_all_tasks_done_blocks_stale_pending_finalize_rows(
     tmp_path: Path,
 ) -> None:
     base = _init_repo(tmp_path)
@@ -1400,8 +1434,8 @@ def test_latest_execution_batch_all_tasks_done_ignores_stale_pending_finalize_ro
 
     ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
 
-    assert ok is True
-    assert reason == "execution_batch_1.json"
+    assert ok is False
+    assert "pending tasks without authoritative execution updates: T2" in reason
 
 
 def test_latest_execution_batch_all_tasks_done_accepts_explained_noop_finalize_rows(

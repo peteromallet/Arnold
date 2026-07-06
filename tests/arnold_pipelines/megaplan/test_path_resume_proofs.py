@@ -15,6 +15,12 @@ from arnold.pipeline.types import (
     Suspension,
 )
 from arnold_pipelines.megaplan.blocker_recovery import find_synthetic_before_execute_gate
+from arnold_pipelines.megaplan.outcomes import (
+    GateOutcome,
+    OverrideOutcome,
+    ReviewOutcome,
+    TiebreakerOutcome,
+)
 from arnold_pipelines.megaplan.workflows import planning
 from arnold_pipelines.megaplan.workflows.components import (
     SOURCE_EXECUTE_BATCH_WORKFLOW,
@@ -48,6 +54,10 @@ def _call_ids(call_name: str) -> set[str]:
 
 
 def _branch_literals(name: str) -> set[str]:
+    outcome_types = {
+        cls.__name__: cls
+        for cls in (GateOutcome, OverrideOutcome, ReviewOutcome, TiebreakerOutcome)
+    }
     values: set[str] = set()
     for node in ast.walk(_planning_function()):
         if not isinstance(node, ast.Compare) or not isinstance(node.left, ast.Name):
@@ -57,6 +67,10 @@ def _branch_literals(name: str) -> set[str]:
         for comparator in node.comparators:
             if isinstance(comparator, ast.Constant):
                 values.add(str(comparator.value))
+            elif isinstance(comparator, ast.Attribute) and isinstance(comparator.value, ast.Name):
+                outcome_type = outcome_types.get(comparator.value.id)
+                if outcome_type is not None and comparator.attr in outcome_type.__members__:
+                    values.add(str(outcome_type[comparator.attr].value))
     return values
 
 
@@ -73,13 +87,13 @@ def test_megaplan_resume_paths_are_visible_in_authored_workflow() -> None:
     }
     assert _branch_literals("decision") >= {"proceed", "escalate"}
     assert _branch_literals("review_route_signal") >= {"pass", "rework"}
-    assert _call_ids("SOURCE_REVISE") >= {"revise", "review_revise", "override_revise"}
-    assert _call_ids("SOURCE_EXECUTE") >= {
+    assert _call_ids("AUTHORING_REVISE") >= {"revise", "review_revise", "override_revise"}
+    assert _call_ids("AUTHORING_EXECUTE") >= {
         "override_execute",
         "force_execute",
         "fallback_execute",
     }
-    assert _call_ids("SOURCE_HALT") >= {
+    assert _call_ids("AUTHORING_HALT") >= {
         "halt",
         "review_halt",
         "gate_abort",

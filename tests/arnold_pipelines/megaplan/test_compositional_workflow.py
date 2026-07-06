@@ -8,6 +8,7 @@ from typing import Any
 
 from arnold.execution import ExecutionRegistries, ExecutionState, run
 from arnold.execution.backend import NodeOutcome, NodeState
+from arnold.execution.registries import EffectRegistry
 from arnold.kernel import read_event_journal
 from arnold.workflow.compiler import compile_pipeline
 from arnold.workflow.source_compiler import lower_workflow_file
@@ -33,6 +34,41 @@ class _BranchSequenceBackend(FakeBackend):
         if sequence:
             return sequence.pop(0)
         return super()._select_branch(coordinate, node, edges, context)
+
+
+class _NoopEffectHandler:
+    def execute(
+        self,
+        effect_id: str,
+        *,
+        route: str,
+        payload: dict[str, Any],
+        idempotency_key: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "effect_id": effect_id,
+            "route": route,
+            "idempotency_key": idempotency_key,
+        }
+
+
+def _registries() -> ExecutionRegistries:
+    effects = EffectRegistry()
+    handler = _NoopEffectHandler()
+    for effect_id in (
+        "artifact.execute.checkpoint",
+        "artifact.execute.receipt",
+        "artifact.review.output",
+        "artifact.review.receipt",
+        "override.add_note",
+        "override.set_model",
+        "override.set_profile",
+        "override.set_robustness",
+        "override.set_vendor",
+    ):
+        effects.register(effect_id, handler)
+    return ExecutionRegistries(effects=effects)
 
 
 def _manifest():
@@ -68,7 +104,7 @@ class TestCompositionalWorkflowScenarios:
         result = run(
             _manifest(),
             artifact_root=tmp_path,
-            registries=ExecutionRegistries(),
+            registries=_registries(),
             backend=backend,
         )
 
@@ -95,7 +131,7 @@ class TestCompositionalWorkflowScenarios:
         result = run(
             _manifest(),
             artifact_root=tmp_path,
-            registries=ExecutionRegistries(),
+            registries=_registries(),
             backend=backend,
         )
 
@@ -114,7 +150,7 @@ class TestCompositionalWorkflowScenarios:
         result = run(
             _manifest(),
             artifact_root=tmp_path,
-            registries=ExecutionRegistries(),
+            registries=_registries(),
             backend=backend,
         )
 
@@ -143,7 +179,7 @@ class TestCompositionalWorkflowScenarios:
         result = run(
             _manifest(),
             artifact_root=tmp_path,
-            registries=ExecutionRegistries(),
+            registries=_registries(),
             backend=backend,
         )
 
@@ -172,7 +208,7 @@ class TestCompositionalWorkflowScenarios:
         result = run(
             _manifest(),
             artifact_root=tmp_path,
-            registries=ExecutionRegistries(),
+            registries=_registries(),
             backend=backend,
         )
 
@@ -200,7 +236,7 @@ class TestCompositionalWorkflowScenarios:
         first = run(
             _manifest(),
             artifact_root=tmp_path,
-            registries=ExecutionRegistries(),
+            registries=_registries(),
             backend=suspend_backend,
         )
 
@@ -215,7 +251,7 @@ class TestCompositionalWorkflowScenarios:
         second = run(
             _manifest(),
             artifact_root=tmp_path,
-            registries=ExecutionRegistries(),
+            registries=_registries(),
             backend=resume_backend,
             resume_cursor=first.resume_cursor,
         )
@@ -230,7 +266,7 @@ class TestCompositionalWorkflowScenarios:
         result = run(
             _manifest(),
             artifact_root=tmp_path,
-            registries=ExecutionRegistries(),
+            registries=_registries(),
             backend=backend,
         )
 

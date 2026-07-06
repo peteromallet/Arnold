@@ -1875,25 +1875,24 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                         overlaid_finalize_records.append(merged)
                     authoritative_finalize_records = overlaid_finalize_records
 
-    # finalize.json is only authoritative when EVERY non-baseline-unavailable
-    # task is genuinely complete. When we have a valid execution window
-    # (``current_head`` is known), a ``pending`` finalize row that no
-    # authoritative execution-batch update corroborates is a stale finalize
-    # snapshot — defer to the execution-batch authority path below instead of
-    # evaluating finalize and rejecting the whole milestone.
-    #
-    # When ``current_head`` is unavailable (e.g. rev-parse failed), there is no
-    # execution-window authority to defer to, so finalize MUST be evaluated
-    # directly and the milestone rejected on its own evidence (see
-    # test_latest_execution_batch_all_tasks_done_prefers_latest_recorded_head_over_stale_baseline).
+    # finalize.json defines the required task universe. A later execution batch
+    # may override stale finalize rows for individual tasks, but it may not
+    # shrink the universe to just the latest touched task. This is the incident
+    # class where T1/T2/T6 completed, T3+ stayed pending, and the chain accepted
+    # the latest execution_batch_N.json anyway.
     if authoritative_finalize_records and batches and execution_window_available:
-        has_pending_without_batch_override = any(
-            _optional_finalize_status(task) == "pending"
-            and str(task.get("id") or "") not in authoritative_batch_overrides
+        pending_without_batch_override = [
+            str(task.get("id") or "")
             for task in authoritative_finalize_records
-        )
-        if has_pending_without_batch_override:
-            authoritative_finalize_records = None
+            if _optional_finalize_status(task) == "pending"
+            and str(task.get("id") or "") not in authoritative_batch_overrides
+        ]
+        if pending_without_batch_override:
+            return (
+                False,
+                "finalize.json has pending tasks without authoritative execution "
+                f"updates: {', '.join(pending_without_batch_override)}",
+            )
 
     if authoritative_finalize_records:
         finalize_decisions: dict[str, AuthorityDecision] = {}

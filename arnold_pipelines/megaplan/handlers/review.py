@@ -415,6 +415,59 @@ def _backfill_empty_approved_review_from_execution(
     return True
 
 
+def _preserve_raw_review_rework_verdict(
+    *,
+    plan_dir: Path,
+    payload: dict[str, Any],
+    issues: list[str],
+) -> bool:
+    """Fail closed when the raw review artifact disagrees with the normalized payload.
+
+    The model seam writes ``review_output.json`` before the handler persists the
+    normalized ``review.json``. If the raw artifact says ``needs_rework``, no
+    later wrapper/backfill payload may turn that into ``approved``. Review may
+    still demote unsupported advisory rework through the normal blocker
+    normalizer, but only from the raw review content itself.
+    """
+
+    if payload.get("review_verdict") == "needs_rework":
+        return False
+    raw_path = plan_dir / "review_output.json"
+    if not raw_path.exists():
+        return False
+    try:
+        raw = read_json(raw_path)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(raw, dict) or raw.get("review_verdict") != "needs_rework":
+        return False
+
+    payload["review_verdict"] = "needs_rework"
+    payload["review_completion_status"] = raw.get("review_completion_status") or payload.get(
+        "review_completion_status"
+    )
+    for key in (
+        "summary",
+        "issues",
+        "task_verdicts",
+        "sense_check_verdicts",
+        "rework_items",
+        "criteria",
+        "blocking_rework_items",
+    ):
+        value = raw.get(key)
+        if value:
+            payload[key] = value
+    issues[:] = [issue for issue in payload.get("issues", []) if isinstance(issue, str)]
+    issues.append(
+        "Raw review_output.json returned needs_rework; normalized review payload "
+        "was forced back to rework."
+    )
+    payload["issues"] = issues
+    payload["raw_review_verdict_preserved"] = True
+    return True
+
+
 def _audit_review_payload_or_raise(
     *,
     plan_dir: Path,
@@ -1060,6 +1113,13 @@ def _finalize_review_outcome(
         review_verdict = "needs_rework"
         invalid_review_verdict = True
         worker.payload["review_verdict"] = review_verdict
+
+    if _preserve_raw_review_rework_verdict(
+        plan_dir=plan_dir,
+        payload=worker.payload,
+        issues=issues,
+    ):
+        review_verdict = worker.payload.get("review_verdict")
 
     if not invalid_review_verdict:
         _normalize_review_blockers(worker.payload, issues)
