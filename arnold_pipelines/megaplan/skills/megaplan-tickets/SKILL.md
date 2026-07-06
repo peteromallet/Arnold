@@ -1,1 +1,1 @@
-/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/runtime/editable-engine/arnold_pipelines/megaplan/data/tickets_skill.md
+/workspace/megaplan-native-parity-corrective/Arnold/arnold_pipelines/megaplan/data/tickets_skill.md
