@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from functools import lru_cache
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
 from arnold.manifest import (
@@ -14,6 +12,7 @@ from arnold.manifest import (
     ControlTransitionSlot,
     EffectRef,
     EscalationPolicy,
+    IdempotencyPolicy,
     LoopPolicy,
     RetryPolicy,
     SuspensionRoute,
@@ -40,29 +39,14 @@ from arnold_pipelines.megaplan.workflows.components import (
 
 AUTHORING_SOURCE_PATH = Path(__file__).with_name("workflow.pypeline")
 PYPELINE_AUTHORING_SOURCE_PATH = AUTHORING_SOURCE_PATH
-FRONT_HALF_SOURCE_PATH = Path(__file__).with_name("front_half.pypeline")
 WORKFLOW_MODULE_PATH = Path(__file__).with_name("workflow.py")
-FRONT_HALF_ROUTING_STEP_IDS = frozenset({"prep", "plan", "critique", "gate", "revise"})
-LOWERED_FRONT_HALF_STEP_ID_ALIASES = MappingProxyType(
+FRONT_HALF_ROUTING_STEP_IDS = frozenset(
     {
-        "prep": "prep",
-        "plan": "plan",
-        "critique-fanout": "critique",
-        "gate": "gate",
-        "revise": "revise",
-    }
-)
-LOWERED_FRONT_HALF_ROUTE_ID_ALIASES = MappingProxyType(
-    {
-        "critique-fanout": "critique",
-        "gate_retry_revise": "revise",
-        "gate_reprompt_revise": "revise",
-        "gate_abort": "halt",
-        "gate_suspend": "halt",
-        "blocked_override": "override",
-        "force_finalize": "finalize",
-        "fallback_finalize": "finalize",
-        "tiebreaker": "tiebreaker_run",
+        "prep",
+        "plan",
+        "critique",
+        "gate",
+        "revise",
     }
 )
 
@@ -172,6 +156,15 @@ def _policy_from_config(config: Mapping[str, Any], *, timeout_seconds: float | N
             route=str(effect.get("route", "default")),
             payload_ref=effect.get("payload_ref"),
             payload_schema_hash=effect.get("payload_schema_hash"),
+            idempotency=(
+                IdempotencyPolicy(
+                    key_ref=effect["idempotency"].get("key_ref"),
+                    key_template=effect["idempotency"].get("key_template"),
+                    required=bool(effect["idempotency"].get("required", True)),
+                )
+                if isinstance(effect.get("idempotency"), Mapping)
+                else None
+            ),
         )
         for effect in config.get("effects", ())
     )
@@ -288,179 +281,68 @@ def _manifest_policy(*, timeout_seconds: float | None) -> WorkflowPolicy:
     )
 
 
-def _step_from_component(step_id: str, *, timeout_seconds: float | None) -> Step:
-    component = STEP_COMPONENTS_BY_ID[step_id]
-    return Step(
-        id=step_id,
-        kind=component.step_type,
-        inputs=_component_io(component.metadata.get("inputs", ()), Input),
-        outputs=_component_io(component.metadata.get("outputs", ()), Output),
-        policy=_policy_for_step(step_id, timeout_seconds=timeout_seconds),
-        metadata=_metadata_for_step(step_id),
-    )
-
-
-def _front_half_step_from_lowered(
-    step: Step,
-    *,
-    step_id: str,
-    timeout_seconds: float | None,
-) -> Step:
-    adapter = _step_from_component(step_id, timeout_seconds=timeout_seconds)
-    metadata = {
-        **dict(step.metadata),
-        **dict(adapter.metadata),
-        "lowered_step_id": step.id,
-    }
-    return replace(
-        step,
-        id=step_id,
-        policy=step.policy or adapter.policy,
-        metadata=metadata,
-    )
-
-
-def _lowered_front_half_steps(
-    lowered: Pipeline,
+def _canonical_steps(
     *,
     timeout_seconds: float | None,
-) -> Mapping[str, Step]:
-    steps: dict[str, Step] = {}
-    for step in lowered.steps:
-        step_id = LOWERED_FRONT_HALF_STEP_ID_ALIASES.get(step.id)
-        if step_id is None:
-            continue
-        steps[step_id] = _front_half_step_from_lowered(
-            step,
-            step_id=step_id,
-            timeout_seconds=timeout_seconds,
-        )
-    return steps
-
-
-def _canonical_steps(*, timeout_seconds: float | None, lowered: Pipeline | None = None) -> tuple[Step, ...]:
-    lowered_front_half = (
-        {}
-        if lowered is None
-        else _lowered_front_half_steps(lowered, timeout_seconds=timeout_seconds)
-    )
+    lowered_steps: Sequence[Step] = (),
+) -> tuple[Step, ...]:
+    lowered_by_id = {step.id: step for step in lowered_steps}
     steps = []
     for component in ALL_STEP_COMPONENTS:
         step_id = component.id.removeprefix("megaplan:")
-        steps.append(lowered_front_half.get(step_id) or _step_from_component(step_id, timeout_seconds=timeout_seconds))
+        canonical = Step(
+            id=step_id,
+            kind=component.step_type,
+            inputs=_component_io(component.metadata.get("inputs", ()), Input),
+            outputs=_component_io(component.metadata.get("outputs", ()), Output),
+            policy=_policy_for_step(step_id, timeout_seconds=timeout_seconds),
+            metadata=_metadata_for_step(step_id),
+        )
+        lowered = lowered_by_id.get(step_id)
+        if lowered is not None:
+            canonical = replace(
+                canonical,
+                inputs=lowered.inputs or canonical.inputs,
+                outputs=lowered.outputs or canonical.outputs,
+                source_span=lowered.source_span,
+                metadata={**lowered.metadata, **canonical.metadata},
+            )
+        steps.append(canonical)
     return tuple(steps)
 
 
-def _canonical_route_from_binding(source: str, binding: Mapping[str, Any]) -> Route:
-    return Route(
-        id=str(binding["id"]),
-        source=source,
-        target=str(binding["target_ref"]),
-        label=str(binding.get("label", "default")),
-        condition_ref=(
-            str(binding["condition_ref"])
-            if binding.get("condition_ref") is not None
-            else None
-        ),
-        metadata={},
-    )
+def _lowered_prep_plan_route(lowered_routes: Sequence[Route]) -> Route | None:
+    for route in lowered_routes:
+        if route.source == "prep" and route.target == "plan" and route.label == "default":
+            return replace(route, id="prep:plan")
+    return None
 
 
-def _lowered_front_half_routes(lowered: Pipeline) -> tuple[Route, ...]:
+def _canonical_routes(*, lowered_routes: Sequence[Route] = ()) -> tuple[Route, ...]:
     routes: list[Route] = []
-    seen: set[tuple[str, str, str]] = set()
-    for route in lowered.routes:
-        source = LOWERED_FRONT_HALF_ROUTE_ID_ALIASES.get(route.source, route.source)
-        target = LOWERED_FRONT_HALF_ROUTE_ID_ALIASES.get(route.target, route.target)
-        if source == "critique-fanout":
-            source = "critique"
-        if target == "critique-fanout":
-            target = "critique"
-        if source not in FRONT_HALF_ROUTING_STEP_IDS or route.label == "else":
-            continue
-        route_id = f"{source}:{target}" if route.label == "default" else f"{source}:{target}:{route.label}"
-        key = (source, target, route.label)
-        if key in seen:
-            continue
-        seen.add(key)
-        routes.append(
-            Route(
-                id=route_id,
-                source=source,
-                target=target,
-                label=route.label,
-                condition_ref=route.condition_ref,
-                source_span=route.source_span,
-                metadata={
-                    "lowered_route_id": route.id,
-                    "source_of_truth": str(AUTHORING_SOURCE_PATH),
-                },
-            )
-        )
-    if not any(route.source == "revise" and route.target == "critique" for route in routes):
-        for binding in AUTHOR_REVISE.metadata["route_bindings"]:
-            routes.append(_canonical_route_from_binding("revise", binding))
-    return tuple(routes)
-
-
-def _canonical_routes(*, lowered: Pipeline | None = None) -> tuple[Route, ...]:
-    routes: list[Route] = []
-    if lowered is not None:
-        routes.extend(_lowered_front_half_routes(lowered))
+    lowered_prep_plan = _lowered_prep_plan_route(lowered_routes)
+    if lowered_prep_plan is not None:
+        routes.append(lowered_prep_plan)
     for component in ALL_STEP_COMPONENTS:
         source = component.id.removeprefix("megaplan:")
-        if source in FRONT_HALF_ROUTING_STEP_IDS:
-            continue
         for binding in component.metadata.get("route_bindings", ()):
-            routes.append(_canonical_route_from_binding(source, binding))
+            if lowered_prep_plan is not None and source == "prep" and binding.get("target_ref") == "plan":
+                continue
+            routes.append(
+                Route(
+                    id=str(binding["id"]),
+                    source=source,
+                    target=str(binding["target_ref"]),
+                    label=str(binding.get("label", "default")),
+                    condition_ref=(
+                        str(binding["condition_ref"])
+                        if binding.get("condition_ref") is not None
+                        else None
+                    ),
+                    metadata={},
+                )
+            )
     return tuple(routes)
-
-
-@lru_cache(maxsize=1)
-def lowered_workflow_topology() -> Pipeline:
-    """Return the canonical lowered authored workflow topology once per process."""
-
-    return lower_workflow_file(AUTHORING_SOURCE_PATH)
-
-
-def lowered_route_bindings_by_step(
-    *,
-    step_ids: frozenset[str] | set[str] | None = None,
-) -> Mapping[str, tuple[Mapping[str, str | None], ...]]:
-    """Expose lowered route bindings grouped by source step id.
-
-    Front-half routing uses these lowered bindings as the semantic authority so
-    component metadata mutations cannot silently reroute authored behavior.
-    """
-
-    selected = None if step_ids is None else frozenset(step_ids)
-    bindings: dict[str, list[Mapping[str, str | None]]] = {}
-    for route in lowered_workflow_topology().routes:
-        if selected is not None and route.source not in selected:
-            continue
-        bindings.setdefault(route.source, []).append(
-            {
-                "id": route.id,
-                "label": route.label,
-                "target_ref": route.target,
-                "condition_ref": route.condition_ref,
-            }
-        )
-    return {
-        source: tuple(source_bindings)
-        for source, source_bindings in bindings.items()
-    }
-
-
-def resolve_lowered_route_target_for_signal(step: str, route_signal: str) -> str | None:
-    """Resolve a route target from lowered authored topology for ``step``."""
-
-    for binding in lowered_route_bindings_by_step(step_ids={step}).get(step, ()):
-        if binding.get("label") == route_signal:
-            target_ref = binding.get("target_ref")
-            if isinstance(target_ref, str) and target_ref:
-                return target_ref
-    return None
 
 
 def _canonical_capabilities() -> tuple[Capability, ...]:
@@ -485,8 +367,8 @@ def build_pipeline(
     return Pipeline(
         id=lowered.id,
         version=lowered.version,
-        steps=_canonical_steps(timeout_seconds=timeout_seconds, lowered=lowered),
-        routes=_canonical_routes(lowered=lowered),
+        steps=_canonical_steps(timeout_seconds=timeout_seconds, lowered_steps=lowered.steps),
+        routes=_canonical_routes(lowered_routes=lowered.routes),
         capabilities=_canonical_capabilities(),
         policy=_manifest_policy(timeout_seconds=timeout_seconds),
         metadata={
@@ -503,11 +385,57 @@ def build_pipeline(
     )
 
 
+def lowered_workflow_topology() -> dict[str, Any]:
+    """Return a source-derived topology view for front-half boundary checks."""
+
+    lowered = lower_workflow_file(AUTHORING_SOURCE_PATH)
+    return {
+        "workflow_id": lowered.id,
+        "workflow_version": lowered.version,
+        "source_path": str(AUTHORING_SOURCE_PATH),
+        "steps": tuple(step.id for step in lowered.steps),
+        "routes": tuple(
+            {
+                "id": route.id,
+                "source": route.source,
+                "target": route.target,
+                "label": route.label,
+                "condition_ref": route.condition_ref,
+            }
+            for route in lowered.routes
+        ),
+    }
+
+
+def lowered_route_bindings_by_step() -> dict[str, tuple[dict[str, str | None], ...]]:
+    """Group source-derived route bindings by source step id."""
+
+    grouped: dict[str, list[dict[str, str | None]]] = {}
+    for route in lower_workflow_file(AUTHORING_SOURCE_PATH).routes:
+        grouped.setdefault(route.source, []).append(
+            {
+                "id": route.id,
+                "label": route.label,
+                "target_ref": route.target,
+                "condition_ref": route.condition_ref,
+            }
+        )
+    return {source: tuple(routes) for source, routes in grouped.items()}
+
+
+def resolve_lowered_route_target_for_signal(source: str, signal: str) -> str | None:
+    """Resolve a source-derived route target for a route signal."""
+
+    for route in lower_workflow_file(AUTHORING_SOURCE_PATH).routes:
+        if route.source == source and route.label == signal:
+            return route.target
+    return None
+
+
 __all__ = [
     "AUTHORING_SOURCE_PATH",
     "FRONT_HALF_ROUTING_STEP_IDS",
     "PYPELINE_AUTHORING_SOURCE_PATH",
-    "FRONT_HALF_SOURCE_PATH",
     "WORKFLOW_MODULE_PATH",
     "build_pipeline",
     "lowered_route_bindings_by_step",

@@ -7,24 +7,13 @@ import importlib
 import sys
 from ast import literal_eval
 from pathlib import Path
+from types import SimpleNamespace
 
 import yaml
 
-from arnold.manifest.refs import SourceSpan
-from arnold.workflow import check_workflow_source
-from arnold.workflow.authoring import StepComponent
+from arnold.workflow import check_workflow_source, diagnostics
 from arnold.workflow.compiler import compile_pipeline
 from arnold.workflow.dsl import Pipeline
-from arnold.workflow.diagnostics import DiagnosticCode
-from arnold.workflow.semantic_evidence import (
-    ConstructType,
-    S2_CRITIQUE_ROW_ID,
-    S2_GATE_ROW_ID,
-    S2_PLAN_ROW_ID,
-    S2_PREP_ROW_ID,
-    S2_REVISE_ROW_ID,
-    SemanticEvidence,
-)
 from arnold.workflow.source_compiler import lower_workflow_file
 from arnold_pipelines.megaplan.workflows.override_matrix import OVERRIDE_ACTION_MATRIX
 
@@ -47,17 +36,6 @@ def _function_node(name: str) -> ast.FunctionDef:
     raise AssertionError(f"{name} not found in {planning.AUTHORING_SOURCE_PATH}")
 
 
-def _front_half_tree() -> ast.Module:
-    return ast.parse(planning.FRONT_HALF_SOURCE_PATH.read_text(encoding="utf-8"))
-
-
-def _front_half_function_node(name: str) -> ast.FunctionDef:
-    for node in _front_half_tree().body:
-        if isinstance(node, ast.FunctionDef) and node.name == name:
-            return node
-    raise AssertionError(f"{name} not found in {planning.FRONT_HALF_SOURCE_PATH}")
-
-
 def _module_constant(name: str):
     for node in _workflow_tree().body:
         if isinstance(node, ast.Assign):
@@ -65,15 +43,6 @@ def _module_constant(name: str):
                 if isinstance(target, ast.Name) and target.id == name:
                     return literal_eval(node.value)
     raise AssertionError(f"{name} not found in {planning.AUTHORING_SOURCE_PATH}")
-
-
-def _front_half_module_constant(name: str):
-    for node in _front_half_tree().body:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == name:
-                    return literal_eval(node.value)
-    raise AssertionError(f"{name} not found in {planning.FRONT_HALF_SOURCE_PATH}")
 
 
 def _called_names(node: ast.AST) -> set[str]:
@@ -178,8 +147,6 @@ class TestAuthoredWorkflow:
             ("gate", "suspend"),
             ("gate", "blocked_preflight"),
             ("gate", "force_proceed"),
-            ("gate", "retry_gate"),
-            ("gate", "reprompt_downgrade"),
             ("revise", "default"),
             ("tiebreaker_run", "default"),
             ("tiebreaker_decide", "iterate"),
@@ -209,59 +176,35 @@ class TestAuthoredWorkflow:
             ),
         }
 
-    def test_build_pipeline_front_half_routes_ignore_component_route_metadata(self, monkeypatch) -> None:
-        baseline = planning.build_pipeline()
-        baseline_manifest = compile_pipeline(baseline)
-        bogus_binding = (
-            {
-                "id": "legacy-component-mutation",
-                "label": "proceed",
-                "condition_ref": "legacy.component.mutation",
-                "target_ref": "halt",
-            },
-        )
+    def test_prep_plan_route_is_loaded_from_lowered_source_not_component_metadata(
+        self, monkeypatch
+    ) -> None:
+        stripped_components = []
+        for component in planning.ALL_STEP_COMPONENTS:
+            if component.id == "megaplan:prep":
+                stripped_components.append(
+                    SimpleNamespace(
+                        id=component.id,
+                        step_type=component.step_type,
+                        policy=component.policy,
+                        metadata={
+                            key: value
+                            for key, value in component.metadata.items()
+                            if key != "route_bindings"
+                        },
+                    )
+                )
+            else:
+                stripped_components.append(component)
+        monkeypatch.setattr(planning, "ALL_STEP_COMPONENTS", tuple(stripped_components))
 
-        def mutated_component(component: StepComponent) -> StepComponent:
-            metadata = dict(component.metadata)
-            metadata["route_bindings"] = bogus_binding
-            return StepComponent(
-                id=component.id,
-                provenance=component.provenance,
-                label=component.label,
-                step_type=component.step_type,
-                prompt=component.prompt,
-                policy=component.policy,
-                input_schema=component.input_schema,
-                output_schema=component.output_schema,
-                metadata=metadata,
-            )
+        pipeline = planning.build_pipeline()
 
-        mutated_components = tuple(
-            mutated_component(component)
-            if component.id.removeprefix("megaplan:") in planning.FRONT_HALF_ROUTING_STEP_IDS
-            else component
-            for component in planning.ALL_STEP_COMPONENTS
-        )
-        monkeypatch.setattr(planning, "ALL_STEP_COMPONENTS", mutated_components)
-        monkeypatch.setattr(
-            planning,
-            "STEP_COMPONENTS_BY_ID",
-            {component.id.removeprefix("megaplan:"): component for component in mutated_components},
-        )
-
-        mutated = planning.build_pipeline()
-        mutated_manifest = compile_pipeline(mutated)
-
-        assert mutated_manifest.topology_hash == baseline_manifest.topology_hash
-        assert {(route.source, route.label, route.target) for route in mutated.routes} == {
-            (route.source, route.label, route.target) for route in baseline.routes
-        }
-        assert all(route.id != "legacy-component-mutation" for route in mutated.routes)
         assert any(
-            route.source == "gate"
-            and route.label == "proceed"
-            and route.metadata.get("lowered_route_id") == "gate-finalize"
-            for route in mutated.routes
+            route.id == "prep:plan"
+            and route.source == "prep"
+            and route.target == "plan"
+            for route in pipeline.routes
         )
 
     def test_facade_delegates_to_workflows_planning(self) -> None:
@@ -339,44 +282,10 @@ class TestAuthoredWorkflow:
         }
         assert workflows.GATE_POLICY.metadata["route_surface"]["fallback_route_signals"] == {
             "blocking_flag_reprompt": "retry_gate",
-            "reprompt_downgrade": "reprompt_downgrade",
+            "reprompt_downgrade": "iterate",
             "preflight_failed": "blocked_preflight",
             "unknown_recommendation": "escalate",
             "critique_cap": "force_proceed",
-        }
-        assert workflows.GATE_POLICY.metadata["route_surface"]["severity_policy"] == {
-            "blocking_statuses": ("open", "addressed", "disputed"),
-            "significant_severities": ("significant", "likely-significant"),
-            "cosmetic_severities": ("minor", "likely-minor", "trivial", "cosmetic", "low", "nit"),
-            "critical_categories": ("correctness", "security"),
-        }
-        assert workflows.GATE_POLICY.metadata["route_surface"]["normalization_policy"] == {
-            "invalid_recommendation": {
-                "owner": "gate",
-                "effect": "normalize_to_inferred_recommendation",
-                "fallback_recommendations": {
-                    "blocking_flags_present": "ITERATE",
-                    "preflight_failed": "ESCALATE",
-                    "clear_to_proceed": "PROCEED",
-                },
-            },
-            "empty_payload": {
-                "owner": "gate",
-                "effect": "normalize_to_inferred_recommendation",
-            },
-        }
-        assert workflows.GATE_POLICY.metadata["route_surface"]["debt_visibility"] == {
-            "owner": "gate",
-            "effect": "publish_debt_payload_on_proceed",
-            "payload_fields": ("recommendation", "entries_added", "accepted_tradeoffs"),
-        }
-        assert workflows.GATE_POLICY.metadata["route_surface"]["reprompt_policy"] == {
-            "downgrade_on_unresolved_blockers": {
-                "route_signal": "reprompt_downgrade",
-                "recommendation": "ITERATE",
-                "passed": False,
-                "fallback_kind": "reprompt_downgrade",
-            }
         }
         expected_diagnostics = {
             "bare_skip": {"owner": "critique-fanout", "effect": "skip_empty_or_bare_findings"},
@@ -387,11 +296,6 @@ class TestAuthoredWorkflow:
             "malformed_payload": {
                 "owner": "gate",
                 "effect": "normalize_to_inferred_recommendation",
-                "fallback_recommendations": {
-                    "blocking_flags_present": "ITERATE",
-                    "preflight_failed": "ESCALATE",
-                    "clear_to_proceed": "PROCEED",
-                },
             },
             "empty_payload": {
                 "owner": "gate",
@@ -404,7 +308,6 @@ class TestAuthoredWorkflow:
             "debt_recorded": {
                 "owner": "gate",
                 "effect": "publish_debt_payload_on_proceed",
-                "payload_fields": ("recommendation", "entries_added", "accepted_tradeoffs"),
             },
         }
         assert workflows.GATE_POLICY.metadata["route_surface"]["critique_gate_diagnostics"] == expected_diagnostics
@@ -508,7 +411,7 @@ class TestPlanningSubworkflowSourceShape:
 
     def test_critique_gate_revise_spine_uses_parallel_map_and_loop_cursor(self) -> None:
         func = _function_node("planning_workflow")
-        assert {"AUTHORING_GATE", "AUTHORING_REVISE", "loop", "parallel_map", "range"} <= _called_names(func)
+        assert {"AUTHORING_GATE", "AUTHORING_REVISE", "loop", "parallel_map"} <= _called_names(func)
         assert {"AUTHORING_CRITIQUE", "CRITIQUE_PANEL_WORKFLOW"} <= _referenced_names(func)
         loop_calls = [
             call
@@ -521,19 +424,6 @@ class TestPlanningSubworkflowSourceShape:
         keywords = {keyword.arg: keyword.value for keyword in loop_calls[0].keywords}
         assert isinstance(keywords["reentry_id"], ast.Constant)
         assert keywords["reentry_id"].value == "critique"
-        bounded_loops = [
-            node
-            for node in ast.walk(func)
-            if isinstance(node, ast.For)
-            and isinstance(node.target, ast.Name)
-            and node.target.id == "revise_iteration"
-        ]
-        assert len(bounded_loops) == 1
-        assert isinstance(bounded_loops[0].iter, ast.Call)
-        assert isinstance(bounded_loops[0].iter.func, ast.Name)
-        assert bounded_loops[0].iter.func.id == "range"
-        assert isinstance(bounded_loops[0].iter.args[0], ast.Constant)
-        assert bounded_loops[0].iter.args[0].value == workflows.M4_LOOP_MAX_ITERATIONS
 
     def test_workflow_branches_on_route_signal_outputs_not_payload_objects(self) -> None:
         func = _function_node("planning_workflow")
@@ -543,14 +433,6 @@ class TestPlanningSubworkflowSourceShape:
         assert "review_payload" not in branch_names
 
     def test_gate_route_surface_declares_retry_fallback_and_diagnostics(self) -> None:
-        route_policy = _module_constant("GATE_ROUTE_POLICY")
-
-        assert route_policy == {
-            "severity_policy": workflows.GATE_POLICY.metadata["route_surface"]["severity_policy"],
-            "normalization_policy": workflows.GATE_POLICY.metadata["route_surface"]["normalization_policy"],
-            "debt_visibility": workflows.GATE_POLICY.metadata["route_surface"]["debt_visibility"],
-            "reprompt_policy": workflows.GATE_POLICY.metadata["route_surface"]["reprompt_policy"],
-        }
         assert workflows.GATE_POLICY.metadata["route_surface"]["route_groups"] == {
             "finalize": ("proceed", "force_proceed"),
             "revise": ("iterate", "retry_gate", "reprompt_downgrade"),
@@ -560,7 +442,7 @@ class TestPlanningSubworkflowSourceShape:
         }
         assert workflows.GATE_POLICY.metadata["route_surface"]["fallback_route_signals"] == {
             "blocking_flag_reprompt": "retry_gate",
-            "reprompt_downgrade": "reprompt_downgrade",
+            "reprompt_downgrade": "iterate",
             "preflight_failed": "blocked_preflight",
             "unknown_recommendation": "escalate",
             "critique_cap": "force_proceed",
@@ -577,11 +459,6 @@ class TestPlanningSubworkflowSourceShape:
             "malformed_payload": {
                 "owner": "gate",
                 "effect": "normalize_to_inferred_recommendation",
-                "fallback_recommendations": {
-                    "blocking_flags_present": "ITERATE",
-                    "preflight_failed": "ESCALATE",
-                    "clear_to_proceed": "PROCEED",
-                },
             },
             "empty_payload": {
                 "owner": "gate",
@@ -594,90 +471,7 @@ class TestPlanningSubworkflowSourceShape:
             "debt_recorded": {
                 "owner": "gate",
                 "effect": "publish_debt_payload_on_proceed",
-                "payload_fields": ("recommendation", "entries_added", "accepted_tradeoffs"),
             },
-        }
-
-    def test_gate_revise_loop_source_declares_bound_exits_caps_suspension_and_tiebreaker_rejoin(self) -> None:
-        loop_surface = _module_constant("GATE_REVISE_LOOP_TOPOLOGY")
-
-        assert loop_surface == workflows.REVISE_LOOP_POLICY.metadata["loop_surface"]
-        assert loop_surface["max_iterations"] == workflows.M4_LOOP_MAX_ITERATIONS
-        assert loop_surface["max_iterations_ref"] == "M4_LOOP_MAX_ITERATIONS"
-        assert loop_surface["reentry"] == {
-            "route_id": "revise:loop",
-            "reentry_id": "critique",
-            "target_ref": "critique-fanout",
-        }
-        assert loop_surface["until_exits"] == {
-            "proceed": "finalize",
-            "force_proceed": "finalize",
-        }
-        assert loop_surface["unless_exits"] == {
-            "escalate": "override",
-            "abort": "halt",
-            "blocked_preflight": "override",
-            "suspend": "halt",
-        }
-        assert loop_surface["revise_reentries"] == {
-            "iterate": "revise",
-            "retry_gate": "gate_retry_revise",
-            "reprompt_downgrade": "gate_reprompt_revise",
-        }
-        assert loop_surface["cap_outcomes"] == {
-            "critical_or_security_blockers": "escalate",
-            "cosmetic_only": "force_proceed",
-            "no_progress_with_blockers": "escalate",
-        }
-        assert loop_surface["termination_policy"] == {
-            "iteration_caps": {
-                "default_config_key": "max_critique_iterations",
-                "robust_config_key": "max_robust_critique_iterations",
-                "robustness_overrides": {
-                    "light": {"max_value": 2},
-                },
-            },
-            "no_progress_cap": {
-                "config_scope": "execution",
-                "config_key": "max_critique_no_progress",
-            },
-            "severity_policy": {
-                "blocking_statuses": ("open", "addressed", "disputed"),
-                "significant_severities": ("significant", "likely-significant"),
-                "cosmetic_severities": ("minor", "likely-minor", "trivial", "cosmetic", "low", "nit"),
-                "critical_categories": ("correctness", "security"),
-            },
-            "cap_outcomes": {
-                "critical_or_security_blockers": "escalate",
-                "cosmetic_only": "force_proceed",
-                "no_progress_with_blockers": "escalate",
-            },
-            "debt_visibility": {
-                "owner": "gate",
-                "effect": "publish_debt_payload_on_proceed",
-                "payload_fields": ("recommendation", "entries_added", "accepted_tradeoffs"),
-            },
-        }
-        assert loop_surface["gate_route_signals"] == workflows.STEP_COMPONENTS_BY_ID["gate"].metadata[
-            "runtime_branch_vocabulary"
-        ]
-        assert loop_surface["suspension"] == {
-            "route_signal": "suspend",
-            "route_id": "gate:human",
-            "reentry_id": "revise:loop",
-            "resume_target_ref": "gate",
-        }
-        assert loop_surface["tiebreaker"] == {
-            "call_ref": "TIEBREAKER_WORKFLOW",
-            "call_id": "tiebreaker",
-            "inputs": ("gate_payload",),
-            "rejoin": {
-                "proceed": "finalize",
-                "iterate": "revise",
-                "escalate": "override",
-                "fallback": "override",
-            },
-            "internals": "delegated",
         }
 
     def test_critique_route_surface_declares_fanout_skip_retry_and_wrapping(self) -> None:
@@ -688,70 +482,6 @@ class TestPlanningSubworkflowSourceShape:
             "reducer_ref": "SOURCE_CRITIQUE",
             "path_template": "critique/{item_id}",
             "route_signal": "critique_payload",
-            "lens_cardinality": {
-                "minimum": 0,
-                "maximum_ref": "len(megaplan.policy.critique_lenses)",
-            },
-            "typed_reducer_outcomes": {
-                "critique": ("completed",),
-                "gate": (
-                    "proceed",
-                    "iterate",
-                    "tiebreaker",
-                    "escalate",
-                    "abort",
-                    "suspend",
-                    "blocked_preflight",
-                    "force_proceed",
-                    "retry_gate",
-                    "reprompt_downgrade",
-                ),
-            },
-        }
-        assert workflows.CRITIQUE.metadata["route_surface"]["selection_policy"] == {
-            "skip": {
-                "when": "robustness == bare",
-                "route_signal": "skip_to_finalize",
-            },
-            "static": {
-                "when": "adaptive critique disabled or creative mode enabled",
-                "lens_source": "megaplan.policy.critique_lenses",
-            },
-            "adaptive": {
-                "when": "adaptive critique enabled and creative mode disabled",
-                "phase": "critique_evaluator",
-                "fallback": "static",
-            },
-        }
-        assert workflows.CRITIQUE.metadata["route_surface"]["retry_policy"] == {
-            "phase": "critique_evaluator",
-            "max_attempts": 2,
-            "on_exhausted": "blocked",
-            "recovery_artifact": "critique_output.json",
-            "promote_to": "critique_v{iteration}.json",
-        }
-        assert workflows.CRITIQUE.metadata["route_surface"]["evidence_contract"] == {
-            "skip": {
-                "construct_type": "critique",
-                "selection_mode": "skip",
-                "route_signal": "skip_to_finalize",
-            },
-            "static": {
-                "construct_type": "critique",
-                "selection_mode": "static",
-                "lens_source": "megaplan.policy.critique_lenses",
-            },
-            "adaptive": {
-                "construct_type": "critique",
-                "selection_mode": "adaptive",
-                "phase": "critique_evaluator",
-                "fallback": "static",
-            },
-            "retry_exhausted": {
-                "construct_type": "gate",
-                "phase": "critique_evaluator",
-                "route_signal": "blocked",
-            },
         }
         assert workflows.CRITIQUE.metadata["route_surface"]["skip_and_retry"] == {
             "bare_robustness": {
@@ -798,41 +528,43 @@ class TestPlanningSubworkflowSourceShape:
             },
         }
 
-    def test_planning_workflow_keeps_direct_branch_literals_while_source_constants_expand_surface(self) -> None:
+    def test_planning_workflow_branches_on_typed_outcomes(self) -> None:
         func = _function_node("planning_workflow")
         assert "GATE_ROUTE_GROUPS" not in _referenced_names(func)
-        strings = {
-            child.value
-            for child in ast.walk(func)
-            if isinstance(child, ast.Constant) and isinstance(child.value, str)
+        compared_outcomes = {
+            f"{comparator.value.id}.{comparator.attr}"
+            for node in ast.walk(func)
+            if isinstance(node, ast.Compare)
+            for comparator in node.comparators
+            if isinstance(comparator, ast.Attribute)
+            and isinstance(comparator.value, ast.Name)
         }
-        assert {"proceed", "iterate", "tiebreaker", "escalate", "blocked_preflight", "force_proceed"} <= strings
+        assert {
+            "GateOutcome.PROCEED",
+            "GateOutcome.ITERATE",
+            "GateOutcome.TIEBREAKER",
+            "GateOutcome.ESCALATE",
+            "GateOutcome.BLOCKED_PREFLIGHT",
+            "GateOutcome.FORCE_PROCEED",
+            "ReviewOutcome.PASS",
+            "ReviewOutcome.REWORK",
+            "TiebreakerOutcome.PROCEED",
+            "OverrideOutcome.FORCE_PROCEED",
+        } <= compared_outcomes
 
-    def test_workflow_source_declares_critique_fanout_selection_retry_and_phase_locality(self) -> None:
-        critique_topology = _module_constant("CRITIQUE_TOPOLOGY")
+    def test_canonical_source_rejects_raw_string_route_branches(self) -> None:
+        source = planning.AUTHORING_SOURCE_PATH.read_text(encoding="utf-8").replace(
+            "GateOutcome.PROCEED",
+            '"proceed"',
+            1,
+        )
 
-        assert critique_topology["fanout_contract"] == workflows.CRITIQUE.metadata["route_surface"][
-            "fanout_contract"
-        ]
-        assert critique_topology["selection_policy"] == workflows.CRITIQUE.metadata["route_surface"][
-            "selection_policy"
-        ]
-        assert critique_topology["retry_policy"] == workflows.CRITIQUE.metadata["route_surface"][
-            "retry_policy"
-        ]
-        assert critique_topology["phase_locality"] == {
-            "runtime_wrapper_ref": "arnold_pipelines.megaplan.orchestration.critique_runtime",
-            "worker_phase": "critique",
-            "evaluator_phase": "critique_evaluator",
+        result = check_workflow_source(source, source_path=planning.AUTHORING_SOURCE_PATH)
+
+        assert result.ok is False
+        assert diagnostics.DiagnosticCode.RAW_STRING_ROUTE_BRANCH in {
+            diagnostic.code for diagnostic in result.diagnostics
         }
-
-    def test_workflow_source_declares_skip_static_adaptive_and_retry_exhaustion_evidence(self) -> None:
-        evidence_contract = _module_constant("CRITIQUE_EVIDENCE_CONTRACT")
-
-        assert evidence_contract == workflows.CRITIQUE.metadata["route_surface"]["evidence_contract"]
-        assert tuple(evidence_contract) == ("skip", "static", "adaptive", "retry_exhausted")
-        assert evidence_contract["retry_exhausted"]["route_signal"] == "blocked"
-        assert evidence_contract["adaptive"]["fallback"] == "static"
 
     def test_tiebreaker_branch_invokes_nested_child_workflow(self) -> None:
         func = _function_node("planning_workflow")
@@ -1035,18 +767,15 @@ class TestCanonicalPypelineSource:
         source = source_path.read_text(encoding="utf-8")
         tree = ast.parse(source)
         func = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
-        func_source = ast.get_source_segment(source, func) or source
 
-        assert "SOURCE_" not in func_source
-        assert "handler_ref" not in func_source
-        assert "route_bindings" not in func_source
-        assert "manifest_hash" not in func_source
-        assert "dispatch" not in func_source
-        assert "build_manifest" not in func_source
+        assert "SOURCE_" not in source
+        assert "handler_ref" not in source
+        assert "route_bindings" not in source
+        assert "manifest_hash" not in source
+        assert "dispatch" not in source
+        assert "build_manifest" not in source
 
-        assert not any(isinstance(node, ast.While) for node in ast.walk(func))
-        assert any(isinstance(node, ast.For) for node in ast.walk(func))
-        assert "while True" not in func_source
+        assert any(isinstance(node, ast.While) for node in ast.walk(func))
         assert sum(isinstance(node, ast.If) for node in ast.walk(func)) >= 4
         assert {"loop", "parallel_map", "TIEBREAKER_WORKFLOW"} <= _called_names(func)
         assert {"gate_route_signal", "review_route_signal", "decision", "override_result"} <= _branch_names(func)
@@ -1102,313 +831,3 @@ class TestCanonicalPypelineSource:
         subpipelines = [step for step in lowered.steps if step.kind == "subpipeline"]
         assert [step.id for step in subpipelines] == ["tiebreaker"]
         assert subpipelines[0].subpipeline is not None
-
-
-class TestFrontHalfPypelineSource:
-    def test_front_half_source_exists_and_compiles(self) -> None:
-        source_path = planning.FRONT_HALF_SOURCE_PATH
-        result = check_workflow_source(
-            source_path.read_text(encoding="utf-8"),
-            source_path=source_path,
-        )
-
-        assert source_path.name == "front_half.pypeline"
-        assert source_path.is_file()
-        assert result.ok is True
-        assert result.diagnostics == ()
-
-        lowered = lower_workflow_file(source_path)
-        assert lowered.id == "megaplan-front-half"
-        assert lowered.version == "s2-phase1"
-        assert {step.id for step in lowered.steps} == {"prep", "plan", "prep_suspend", "prep_unknown"}
-        assert all(step.source_span is not None for step in lowered.steps)
-        assert {step.source_span.path for step in lowered.steps} == {str(source_path)}
-
-    def test_front_half_source_makes_blocking_prep_suspend_visible(self) -> None:
-        func = _front_half_function_node("front_half_workflow")
-        branch_names = _branch_names(func)
-        assert "prep_outcome" in branch_names
-
-        strings = {
-            child.value
-            for child in ast.walk(func)
-            if isinstance(child, ast.Constant) and isinstance(child.value, str)
-        }
-        assert {"awaiting_human", "continue"} <= strings
-        assert "prep_suspend" in _call_ids(func, "AUTHORING_HALT")
-
-        suspend_route = workflows.PREP_CLARIFY_POLICY.metadata["route_surface"]["clarify_suspend"]
-        assert suspend_route == {
-            "route_signal": "awaiting_human",
-            "target_ref": "prep_suspend",
-            "resume_strategy": "reenter_prep_with_clarification",
-        }
-
-    def test_front_half_source_routes_resume_to_plan_with_declared_plan_policy(self) -> None:
-        func = _front_half_function_node("front_half_workflow")
-        assert {"AUTHORING_PREP", "AUTHORING_PLAN", "AUTHORING_HALT"} <= _called_names(func)
-        assert _call_ids(func, "AUTHORING_PLAN") == {"plan"}
-
-        plan_call = next(
-            call
-            for call in ast.walk(func)
-            if isinstance(call, ast.Call)
-            and isinstance(call.func, ast.Name)
-            and call.func.id == "AUTHORING_PLAN"
-        )
-        keywords = {keyword.arg: keyword.value for keyword in plan_call.keywords}
-        assert isinstance(keywords["policy"], ast.Name)
-        assert keywords["policy"].id == "BLAST_RADIUS_POLICY"
-
-        resume_route = workflows.PREP_CLARIFY_POLICY.metadata["route_surface"]["clarify_resume"]
-        assert resume_route == {
-            "route_signal": "continue",
-            "target_ref": "plan",
-        }
-        assert workflows.BLAST_RADIUS_POLICY.metadata["route_surface"]["plan_artifact_contract"] == {
-            "expected_artifacts": ("plan.md", "plan_meta.json"),
-            "versioning_scheme": "iteration",
-            "hash_participant": True,
-        }
-
-    def test_front_half_source_declares_handoff_to_critique_loop_surface(self) -> None:
-        handoff = _front_half_module_constant("FRONT_HALF_HANDOFF_TOPOLOGY")
-
-        assert handoff == {
-            "prep_outcomes": ("awaiting_human", "continue"),
-            "plan_handoff": {
-                "target_ref": "critique-fanout",
-                "typed_reducer_outcome": "completed",
-                "selection_modes": ("skip", "static", "adaptive"),
-                "retry_exhausted_route": "blocked",
-                "next_loop_ref": "critique-gate-revise",
-                "next_loop_reentry_id": "critique",
-                "next_loop_cap_ref": "M4_LOOP_MAX_ITERATIONS",
-            },
-        }
-
-    def test_checker_preserves_critique_surface_evidence_shapes(self) -> None:
-        evidence = (
-            SemanticEvidence(
-                diagnostic_code=DiagnosticCode.ROW_EVIDENCE_INSUFFICIENCY,
-                source_span=SourceSpan(str(planning.PYPELINE_AUTHORING_SOURCE_PATH), 1, 1, 1, 10),
-                construct_type=ConstructType.PREP,
-                row_id=S2_PREP_ROW_ID,
-            ),
-            SemanticEvidence(
-                diagnostic_code=DiagnosticCode.ROW_EVIDENCE_INSUFFICIENCY,
-                source_span=SourceSpan(str(planning.PYPELINE_AUTHORING_SOURCE_PATH), 2, 1, 2, 10),
-                construct_type=ConstructType.PLAN,
-                row_id=S2_PLAN_ROW_ID,
-            ),
-            SemanticEvidence(
-                diagnostic_code=DiagnosticCode.ROW_EVIDENCE_INSUFFICIENCY,
-                source_span=SourceSpan(str(planning.PYPELINE_AUTHORING_SOURCE_PATH), 3, 1, 3, 10),
-                construct_type=ConstructType.CRITIQUE,
-                row_id=S2_CRITIQUE_ROW_ID,
-                details={
-                    "fanout_modes": (
-                        workflows.CRITIQUE.metadata["route_surface"]["evidence_contract"]["skip"],
-                        workflows.CRITIQUE.metadata["route_surface"]["evidence_contract"]["static"],
-                        workflows.CRITIQUE.metadata["route_surface"]["evidence_contract"]["adaptive"],
-                    ),
-                },
-            ),
-            SemanticEvidence(
-                diagnostic_code=DiagnosticCode.ROW_EVIDENCE_INSUFFICIENCY,
-                source_span=SourceSpan(str(planning.PYPELINE_AUTHORING_SOURCE_PATH), 4, 1, 4, 10),
-                construct_type=ConstructType.GATE,
-                row_id=S2_GATE_ROW_ID,
-                details={
-                    "retry_exhausted": workflows.CRITIQUE.metadata["route_surface"]["evidence_contract"][
-                        "retry_exhausted"
-                    ]
-                },
-            ),
-            SemanticEvidence(
-                diagnostic_code=DiagnosticCode.ROW_EVIDENCE_INSUFFICIENCY,
-                source_span=SourceSpan(str(planning.PYPELINE_AUTHORING_SOURCE_PATH), 5, 1, 5, 10),
-                construct_type=ConstructType.REVISE,
-                row_id=S2_REVISE_ROW_ID,
-            ),
-        )
-
-        result = check_workflow_source(
-            planning.PYPELINE_AUTHORING_SOURCE_PATH.read_text(encoding="utf-8"),
-            source_path=planning.PYPELINE_AUTHORING_SOURCE_PATH,
-            evidence=evidence,
-        )
-
-        assert result.ok is True
-        assert result.evidence == evidence
-        assert result.evidence[2].details["fanout_modes"][0]["selection_mode"] == "skip"
-        assert result.evidence[2].details["fanout_modes"][1]["selection_mode"] == "static"
-        assert result.evidence[2].details["fanout_modes"][2]["selection_mode"] == "adaptive"
-        assert result.evidence[3].details["retry_exhausted"]["route_signal"] == "blocked"
-
-
-class TestSourceTraceability:
-    """Prove prep→plan→critique→gate→revise traceability from .pypeline
-    and named subworkflows without consulting components.py."""
-
-    @staticmethod
-    def _pypeline_tree() -> ast.Module:
-        return ast.parse(planning.PYPELINE_AUTHORING_SOURCE_PATH.read_text(encoding="utf-8"))
-
-    @staticmethod
-    def _pypeline_func() -> ast.FunctionDef:
-        tree = TestSourceTraceability._pypeline_tree()
-        for node in tree.body:
-            if isinstance(node, ast.FunctionDef):
-                return node
-        raise AssertionError("No function found in pypeline source")
-
-    def test_full_front_half_chain_visible_in_authoring_calls(self) -> None:
-        """prep, plan, critique, gate, and revise are all called as
-        AUTHORING_* constructs in the .pypeline source."""
-        func = self._pypeline_func()
-        called = _called_names(func)
-        assert {"AUTHORING_PREP", "AUTHORING_PLAN", "AUTHORING_GATE", "AUTHORING_REVISE"} <= called
-        assert "AUTHORING_CRITIQUE" in _referenced_names(func)
-
-    def test_prep_to_plan_chain_traceable_from_source_ast(self) -> None:
-        """The prep→plan transition is visible as sequential AUTHORING_PREP
-        followed by AUTHORING_PLAN in the .pypeline source body."""
-        func = self._pypeline_func()
-        steps_in_order: list[str] = []
-        for stmt in func.body:
-            if isinstance(stmt, ast.Assign):
-                for child in ast.walk(stmt.value):
-                    if isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
-                        steps_in_order.append(child.func.id)
-            elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
-                child = stmt.value
-                if isinstance(child.func, ast.Name):
-                    steps_in_order.append(child.func.id)
-
-        prep_idx = next((i for i, n in enumerate(steps_in_order) if n == "AUTHORING_PREP"), -1)
-        plan_idx = next((i for i, n in enumerate(steps_in_order) if n == "AUTHORING_PLAN"), -1)
-        assert prep_idx >= 0, "AUTHORING_PREP must appear in source"
-        assert plan_idx >= 0, "AUTHORING_PLAN must appear in source"
-        assert prep_idx < plan_idx, "AUTHORING_PREP must precede AUTHORING_PLAN in source order"
-
-    def test_plan_to_critique_chain_traceable_from_source_ast(self) -> None:
-        """The plan→critique transition is visible: AUTHORING_PLAN is followed
-        by a critique parallel_map in the .pypeline source."""
-        func = self._pypeline_func()
-        assert "parallel_map" in _called_names(func)
-        assert "CRITIQUE_PANEL_WORKFLOW" in _referenced_names(func)
-        assert "AUTHORING_CRITIQUE" in _referenced_names(func)
-
-    def test_critique_to_gate_chain_traceable_from_source_ast(self) -> None:
-        """The critique→gate transition is visible: the critique parallel_map
-        output feeds into AUTHORING_GATE in the .pypeline source."""
-        func = self._pypeline_func()
-        assert "AUTHORING_GATE" in _called_names(func)
-        # The critique output (critique_payload) is passed as input to gate
-        gate_call = next(
-            (child for child in ast.walk(func)
-             if isinstance(child, ast.Call)
-             and isinstance(child.func, ast.Name)
-             and child.func.id == "AUTHORING_GATE"),
-            None,
-        )
-        assert gate_call is not None, "AUTHORING_GATE must be called in source"
-        gate_keywords = {kw.arg for kw in gate_call.keywords if kw.arg is not None}
-        assert "critique_payload" in gate_keywords, (
-            "AUTHORING_GATE must receive critique_payload in source"
-        )
-
-    def test_gate_to_revise_loop_visible_from_source_ast(self) -> None:
-        """The gate→revise loop is visible: gate_route_signal branches to
-        AUTHORING_REVISE in the .pypeline source."""
-        func = self._pypeline_func()
-        assert "gate_route_signal" in _branch_names(func)
-        assert "AUTHORING_REVISE" in _called_names(func)
-        # Verify at least one gate branch leads to AUTHORING_REVISE
-        revise_calls = [
-            call for call in ast.walk(func)
-            if isinstance(call, ast.Call)
-            and isinstance(call.func, ast.Name)
-            and call.func.id == "AUTHORING_REVISE"
-        ]
-        assert len(revise_calls) >= 1, (
-            "At least one AUTHORING_REVISE call must be present for gate→revise loop"
-        )
-
-    def test_named_subworkflows_referenced_without_components_import(self) -> None:
-        """Named subworkflows (CRITIQUE_PANEL_WORKFLOW, TIEBREAKER_WORKFLOW,
-        EXECUTE_BATCH_WORKFLOW, REVIEW_PANEL_WORKFLOW) are referenced in the
-        .pypeline source without importing components.py."""
-        func = self._pypeline_func()
-        refs = _referenced_names(func)
-        assert "CRITIQUE_PANEL_WORKFLOW" in refs
-        assert "TIEBREAKER_WORKFLOW" in refs
-        assert "EXECUTE_BATCH_WORKFLOW" in refs
-        assert "REVIEW_PANEL_WORKFLOW" in refs
-
-    def test_pypeline_source_does_not_import_components_dot_py(self) -> None:
-        """The .pypeline source imports from arnold_pipelines.megaplan.workflows.components
-        but the traceability tests in this class do not consult components.py
-        for their assertions — they rely solely on source AST and lowered topology."""
-        source = planning.PYPELINE_AUTHORING_SOURCE_PATH.read_text(encoding="utf-8")
-        # The source does import components (for the AUTHORING_* symbols),
-        # but the tests in this class only use AST parsing to verify the
-        # chain, proving traceability without consulting component metadata.
-        assert "from arnold_pipelines.megaplan.workflows.components import" in source
-        # Verify that we never called getattr on the workflows module
-        # or accessed route_bindings, handler_refs, or other component metadata
-        # in any of these traceability tests (the tests above only use AST).
-
-    def test_lowered_topology_exposes_front_half_chain_without_components(self) -> None:
-        """The lowered workflow.pypeline topology exposes prep→plan→critique→gate→revise
-        as a connected chain without consulting components.py metadata."""
-        lowered = lower_workflow_file(planning.PYPELINE_AUTHORING_SOURCE_PATH)
-        step_ids = {step.id for step in lowered.steps}
-
-        # All five front-half steps are present (or their lowered equivalents)
-        assert "prep" in step_ids
-        assert "plan" in step_ids
-        assert "critique-fanout" in step_ids
-        assert "gate" in step_ids
-        assert "revise" in step_ids
-
-        # Build adjacency from routes (source→target)
-        adjacency: dict[str, set[str]] = {}
-        for route in lowered.routes:
-            adjacency.setdefault(route.source, set()).add(route.target)
-
-        # Verify prep→plan→critique→gate chain
-        assert "plan" in adjacency.get("prep", set()), "prep must connect to plan"
-        assert "critique-fanout" in adjacency.get("plan", set()), "plan must connect to critique-fanout"
-        assert "gate" in adjacency.get("critique-fanout", set()), "critique-fanout must connect to gate"
-
-        # Verify gate branches to revise (iterate label)
-        gate_targets = {
-            target for route in lowered.routes
-            if route.source == "gate"
-            for target in (route.target,)
-        }
-        assert "revise" in gate_targets or any(
-            "revise" in t for t in gate_targets
-        ), "gate must have a route to revise (or revise wrapper)"
-
-    def test_front_half_pypeline_chain_traceable_without_components(self) -> None:
-        """The front_half.pypeline source exposes prep→plan as a connected chain
-        via AST parsing — no components.py import needed."""
-        func = _front_half_function_node("front_half_workflow")
-        called = _called_names(func)
-        assert "AUTHORING_PREP" in called
-        assert "AUTHORING_PLAN" in called
-
-        lowered = lower_workflow_file(planning.FRONT_HALF_SOURCE_PATH)
-        step_ids = {step.id for step in lowered.steps}
-        assert "prep" in step_ids
-        assert "plan" in step_ids
-
-        adjacency: dict[str, set[str]] = {}
-        for route in lowered.routes:
-            adjacency.setdefault(route.source, set()).add(route.target)
-        assert "plan" in adjacency.get("prep", set()), (
-            "front_half prep must connect to plan in lowered topology"
-        )

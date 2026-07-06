@@ -291,6 +291,81 @@ def test_megaplan_code_specs_use_v2_spec_helper() -> None:
             assert len(spec.remediation) > 0
 
 
+# ── AWF246+ S2.5 boundary evidence diagnostics ──────────────────────────────
+
+
+def test_boundary_evidence_codes_exist_and_are_classified() -> None:
+    """AWF246-AWF249 codes must be present in DiagnosticCode, DiagnosticFamily,
+    DIAGNOSTIC_CODE_SPECS, and all derived lookup maps."""
+    boundary_codes = [
+        diagnostics.DiagnosticCode.BOUNDARY_CONTRACT_MISSING,
+        diagnostics.DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+        diagnostics.DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+        diagnostics.DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+    ]
+    for code in boundary_codes:
+        assert code in diagnostics.DIAGNOSTIC_SPEC_BY_CODE, f"{code.value} missing from DIAGNOSTIC_SPEC_BY_CODE"
+        spec = diagnostics.DIAGNOSTIC_SPEC_BY_CODE[code]
+        assert spec.code is code
+        assert spec.family in diagnostics.DiagnosticFamily.__members__.values()
+        assert spec.severity is diagnostics.DiagnosticSeverity.ERROR
+        assert spec.message_template, f"{code.value} missing message_template"
+        assert spec.remediation, f"{code.value} missing remediation"
+
+
+def test_boundary_evidence_codes_flow_through_authoring_diagnostic() -> None:
+    """Each AWF246+ code must be usable with AuthoringDiagnostic and survive
+    a to_dict() round-trip with the correct code string."""
+    boundary_codes = [
+        diagnostics.DiagnosticCode.BOUNDARY_CONTRACT_MISSING,
+        diagnostics.DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+        diagnostics.DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+        diagnostics.DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+    ]
+    for code in boundary_codes:
+        diag = diagnostics.AuthoringDiagnostic(
+            code=code,
+            message=f"test diagnostic for {code.value}",
+            source_span=SourceSpan("test.py", 1, 1, 1, 10),
+        )
+        assert diag.code is code
+        payload = diag.to_dict()
+        assert payload["code"] == code.value
+        assert payload["severity"] == "error"
+        assert payload["grammar_version"] == "arnold.workflow.authoring.v2"
+        # Verify round-trip lookup
+        spec = diagnostics.diagnostic_spec(code)
+        assert spec.code is code
+
+
+def test_boundary_evidence_code_specs_use_v2_spec_helper() -> None:
+    """All AWF246+ specs must be error severity with non-empty message and remediation."""
+    boundary_codes = {
+        diagnostics.DiagnosticCode.BOUNDARY_CONTRACT_MISSING,
+        diagnostics.DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+        diagnostics.DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+        diagnostics.DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+    }
+    for spec in diagnostics.DIAGNOSTIC_CODE_SPECS:
+        if spec.code in boundary_codes:
+            assert spec.severity is diagnostics.DiagnosticSeverity.ERROR
+            assert len(spec.message_template) > 0
+            assert len(spec.remediation) > 0
+
+
+def test_boundary_evidence_diagnostic_families_match_codes() -> None:
+    """AWF246-AWF249 DiagnosticFamily members must map back to the correct
+    DiagnosticCode via DIAGNOSTIC_CODE_BY_FAMILY."""
+    family_to_expected_code = {
+        diagnostics.DiagnosticFamily.BOUNDARY_CONTRACT_MISSING: diagnostics.DiagnosticCode.BOUNDARY_CONTRACT_MISSING,
+        diagnostics.DiagnosticFamily.BOUNDARY_EVIDENCE_MISSING: diagnostics.DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+        diagnostics.DiagnosticFamily.BOUNDARY_EVIDENCE_WITHOUT_SOURCE: diagnostics.DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+        diagnostics.DiagnosticFamily.BOUNDARY_EVIDENCE_STALE: diagnostics.DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+    }
+    for family, expected_code in family_to_expected_code.items():
+        assert diagnostics.DIAGNOSTIC_CODE_BY_FAMILY[family] is expected_code
+
+
 # ── Semantic evidence carrier tests ────────────────────────────────────────
 
 

@@ -2481,6 +2481,40 @@ def _finalize_tasks(plan_dir: Path | None) -> tuple[dict[str, Any], ...]:
     return tuple(dict(task) for task in tasks if isinstance(task, dict) and (task.get("id") or task.get("task_id")))
 
 
+def _execution_batch_completed_task_ids(
+    plan_dir: Path | None,
+    *,
+    project_dir: Path | None,
+    state_data: dict[str, Any] | None,
+) -> set[str]:
+    if plan_dir is None:
+        return set()
+    completed: set[str] = set()
+    for batch_path in sorted(plan_dir.glob("execution_batch_*.json")):
+        try:
+            payload = json.loads(batch_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        records = [
+            item
+            for item in payload.get("task_updates", []) or []
+            if isinstance(item, dict)
+        ]
+        if not records:
+            continue
+        completed.update(
+            effective_execute_completed_task_ids(
+                records,
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                state=state_data,
+            )
+        )
+    return completed
+
+
 def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str]]:
     """Return whether execute terminal success is corroborated by task evidence."""
 
@@ -2502,10 +2536,23 @@ def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str
         state=state_data,
         decisions=decisions,
     )
+    batch_completed = _execution_batch_completed_task_ids(
+        plan_dir,
+        project_dir=project_dir,
+        state_data=state_data,
+    )
     missing: list[str] = []
     for task in tasks:
         task_id = str(task.get("id") or task.get("task_id") or "")
         raw_status = task.get("status")
+        if raw_status in {None, "", "pending", "todo", "in_progress"}:
+            if task_id in batch_completed:
+                continue
+            missing.append(
+                f"{task_id or '<missing-task-id>'}:"
+                f"not_executed:{raw_status or 'missing_status'}"
+            )
+            continue
         if raw_status in {"done", "completed", "skipped", "waived", "not_applicable"} and task_id not in completed:
             if (
                 raw_status == "skipped"
