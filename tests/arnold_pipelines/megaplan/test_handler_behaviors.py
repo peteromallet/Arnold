@@ -726,6 +726,8 @@ class TestReviewPayloadDefaults:
         self, tmp_path: Path
     ) -> None:
         from arnold_pipelines.megaplan.handlers.review import (
+            _normalize_review_blockers,
+            _promote_authoritative_review_output,
             _preserve_raw_review_rework_verdict,
         )
 
@@ -759,6 +761,10 @@ class TestReviewPayloadDefaults:
             "task_verdicts": [],
             "sense_check_verdicts": [],
         }
+        assert _promote_authoritative_review_output(
+            plan_dir=tmp_path,
+            payload=payload,
+        )
         issues: list[str] = []
 
         changed = _preserve_raw_review_rework_verdict(
@@ -766,10 +772,61 @@ class TestReviewPayloadDefaults:
             payload=payload,
             issues=issues,
         )
+        raw_rework_preserved = changed
 
-        assert changed is True
+        if not raw_rework_preserved:
+            _normalize_review_blockers(payload, issues)
+
         assert payload["review_verdict"] == "needs_rework"
         assert payload["task_verdicts"][0]["task_id"] == "T3"
+        assert payload["raw_review_output_promoted"] is True
+
+    def test_raw_review_rework_preservation_skips_blocker_demotion(
+        self, tmp_path: Path
+    ) -> None:
+        from arnold_pipelines.megaplan.handlers.review import (
+            _normalize_review_blockers,
+            _preserve_raw_review_rework_verdict,
+        )
+
+        (tmp_path / "review_output.json").write_text(
+            json.dumps(
+                {
+                    "review_verdict": "needs_rework",
+                    "review_completion_status": "complete",
+                    "issues": ["must rework"],
+                    "rework_items": [
+                        {
+                            "task_id": "T3",
+                            "issue": "Reviewer found incomplete work.",
+                            "source": "review_success_criterion",
+                        }
+                    ],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        payload = {
+            "review_verdict": "approved",
+            "review_completion_status": "complete",
+            "issues": [],
+            "rework_items": [],
+            "task_verdicts": [],
+            "sense_check_verdicts": [],
+        }
+        issues: list[str] = []
+
+        raw_rework_preserved = _preserve_raw_review_rework_verdict(
+            plan_dir=tmp_path,
+            payload=payload,
+            issues=issues,
+        )
+        if not raw_rework_preserved:
+            _normalize_review_blockers(payload, issues)
+
+        assert raw_rework_preserved is True
+        assert payload["review_verdict"] == "needs_rework"
         assert payload["raw_review_verdict_preserved"] is True
         assert any("review_output.json returned needs_rework" in issue for issue in issues)
 

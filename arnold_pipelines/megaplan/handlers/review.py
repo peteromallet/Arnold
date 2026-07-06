@@ -468,6 +468,39 @@ def _preserve_raw_review_rework_verdict(
     return True
 
 
+def _promote_authoritative_review_output(
+    *,
+    plan_dir: Path,
+    payload: dict[str, Any],
+) -> bool:
+    """Promote a filled raw review artifact over wrapper/inline payload.
+
+    Scratch promotion normally compares ``review_output.json`` to the seed
+    written before worker execution. A stale or late seed read can make the
+    final filled file look "unmodified", falling back to an inline wrapper
+    payload. At review-finalization time, a valid raw review artifact with a
+    concrete verdict is the authoritative reviewer output.
+    """
+
+    raw_path = plan_dir / "review_output.json"
+    if not raw_path.exists():
+        return False
+    try:
+        raw = read_json(raw_path)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(raw, dict):
+        return False
+    if raw.get("review_verdict") not in {"approved", "needs_rework"}:
+        return False
+
+    promoted = {key: raw[key] for key in _REVIEW_SCRATCH_KNOWN_KEYS if key in raw}
+    payload.clear()
+    payload.update(promoted)
+    payload["raw_review_output_promoted"] = True
+    return True
+
+
 def _audit_review_payload_or_raise(
     *,
     plan_dir: Path,
@@ -1088,6 +1121,7 @@ def _finalize_review_outcome(
     verdict-merging, state advancement, receipt emission, and response
     construction. This helper is the single owner of that flow.
     """
+    _promote_authoritative_review_output(plan_dir=plan_dir, payload=worker.payload)
     issues = list(worker.payload.get("issues", []))
     finalize_data = read_json(plan_dir / "finalize.json")
     review_projection = deepcopy(finalize_data)
@@ -1114,14 +1148,15 @@ def _finalize_review_outcome(
         invalid_review_verdict = True
         worker.payload["review_verdict"] = review_verdict
 
-    if _preserve_raw_review_rework_verdict(
+    raw_rework_preserved = _preserve_raw_review_rework_verdict(
         plan_dir=plan_dir,
         payload=worker.payload,
         issues=issues,
-    ):
+    )
+    if raw_rework_preserved:
         review_verdict = worker.payload.get("review_verdict")
 
-    if not invalid_review_verdict:
+    if not invalid_review_verdict and not raw_rework_preserved:
         _normalize_review_blockers(worker.payload, issues)
         review_verdict = worker.payload.get("review_verdict")
 
