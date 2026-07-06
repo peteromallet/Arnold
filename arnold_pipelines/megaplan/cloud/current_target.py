@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -20,6 +21,21 @@ _TERMINAL_PLAN_STATES = {"done", "aborted", "cancelled"}
 
 SessionLiveProbe = Callable[[str], bool | None]
 PidLiveProbe = Callable[[int], bool | None]
+
+def _pid_is_live(pid: int, probe: PidLiveProbe | None = None) -> bool:
+    if pid <= 0:
+        return False
+    if probe is not None:
+        return bool(probe(pid))
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 def _fingerprint(path: Path) -> str:
     """Return hex digest of file content, or empty string when unavailable."""
@@ -111,7 +127,7 @@ def resolve_current_target(
     )
     event_cursors = _collect_event_cursors(plan_state_path, plan_state)
     chain_log = _collect_chain_log_evidence(workspace, session, run_kind)
-    active_step_heartbeat = _collect_active_step_heartbeat(plan_state)
+    active_step_heartbeat = _collect_active_step_heartbeat(plan_state, pid_is_live=pid_is_live)
 
     stale_evidence: list[dict[str, Any]] = []
     rationale: list[str] = []
@@ -160,6 +176,17 @@ def resolve_current_target(
             )
         )
         rationale.append("needs-human sidecar references an older plan")
+
+    if active_step_heartbeat.get("worker_pid") and not active_step_heartbeat.get("active"):
+        stale_evidence.append(
+            _artifact(
+                kind="stale_active_step_dead_pid",
+                path=plan_state_path,
+                plan_name=plan_name,
+                worker_pid=active_step_heartbeat.get("worker_pid"),
+            )
+        )
+        rationale.append("active_step worker PID is not live")
 
     plan_current_state = _safe_text(plan_state.get("current_state"))
     chain_last_state = _safe_text(chain_state.get("last_state"))
@@ -407,7 +434,7 @@ def _collect_tmux_process_evidence(
     pid = marker.get("pid")
     if not isinstance(pid, int):
         pid = marker.get("pane_pid")
-    pid_live = pid_is_live(pid) if isinstance(pid, int) and pid_is_live is not None else None
+    pid_live = _pid_is_live(pid, pid_is_live) if isinstance(pid, int) else None
     session_live = session_is_live(session) if session_is_live is not None else None
     if session_live is True or pid_live is True:
         live_status = "alive"
@@ -617,6 +644,8 @@ def _collect_chain_log_evidence(
 
 def _collect_active_step_heartbeat(
     plan_state: Mapping[str, Any],
+    *,
+    pid_is_live: PidLiveProbe | None = None,
 ) -> dict[str, Any]:
     """Extract active-step heartbeat evidence from plan state.
 
@@ -625,15 +654,25 @@ def _collect_active_step_heartbeat(
     """
     active_step = plan_state.get("active_step")
     if not isinstance(active_step, dict):
-        return {"active": False, "phase": "", "attempt": 0, "worker_pid": "", "started_at": ""}
+        return {"active": False, "phase": "", "attempt": 0, "worker_pid": "", "started_at": "", "pid_live": None}
+    raw_worker_pid = active_step.get("worker_pid")
+    worker_pid = _safe_text(raw_worker_pid)
+    if not worker_pid and isinstance(raw_worker_pid, int):
+        worker_pid = str(raw_worker_pid)
+    pid_live: bool | None = None
+    if worker_pid:
+        try:
+            pid_live = _pid_is_live(int(worker_pid), pid_is_live)
+        except (TypeError, ValueError):
+            pid_live = False
     return {
-        "active": bool(active_step.get("phase") or active_step.get("worker_pid")),
+        "active": bool(pid_live),
         "phase": _safe_text(active_step.get("phase")),
         "attempt": int(active_step.get("attempt") or 0),
-        "worker_pid": _safe_text(active_step.get("worker_pid")),
+        "worker_pid": worker_pid,
         "started_at": _safe_text(active_step.get("started_at")),
+        "pid_live": pid_live,
     }
-
 
 def _artifact_sort_key(item: Mapping[str, Any]) -> tuple[str, str, str]:
     return (

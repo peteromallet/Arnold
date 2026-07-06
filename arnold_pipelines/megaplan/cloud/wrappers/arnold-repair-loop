@@ -141,6 +141,92 @@ prepare_repair_agent_exec_env() {
   export -n failure_summary chain_health_block recurrence_block mode_tasks relaunch_command 2>/dev/null || true
 }
 
+entry_target_missing_reason() {
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$MARKER_DIR" "$DATA_DIR" "$ARNOLD_SRC" <<'PY'
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+from arnold_pipelines.megaplan.cloud.source_initiative_repair import source_initiative_restore_available
+
+session, marker_dir, repair_data_dir, arnold_src = sys.argv[1:]
+record = resolve_current_target(
+    session,
+    marker_dir=marker_dir,
+    repair_data_dir=repair_data_dir,
+)
+active_step = record.get("active_step_heartbeat")
+if isinstance(active_step, dict) and active_step.get("active"):
+    raise SystemExit(0)
+if str(record.get("authoritative_source") or "").strip() == "live_sibling_session":
+    raise SystemExit(0)
+sibling_sessions = record.get("sibling_sessions") if isinstance(record.get("sibling_sessions"), list) else []
+if any(
+    isinstance(item, dict) and str(item.get("live_status") or "").strip() == "alive"
+    for item in sibling_sessions
+):
+    raise SystemExit(0)
+current_refs = record.get("current_refs") if isinstance(record.get("current_refs"), dict) else {}
+run_kind = str(current_refs.get("run_kind") or "").strip().lower()
+workspace = str(current_refs.get("workspace") or "").strip()
+remote_spec = str(current_refs.get("remote_spec") or "").strip()
+stale_evidence = record.get("stale_evidence") if isinstance(record.get("stale_evidence"), list) else []
+stale_kinds = {
+    str(item.get("kind") or "").strip()
+    for item in stale_evidence
+    if isinstance(item, dict)
+}
+plan_state = record.get("plan_state") if isinstance(record.get("plan_state"), dict) else {}
+chain_state = record.get("chain_state") if isinstance(record.get("chain_state"), dict) else {}
+chain_log = record.get("chain_log") if isinstance(record.get("chain_log"), dict) else {}
+has_live_artifacts = (
+    bool(plan_state.get("present"))
+    or bool(chain_state.get("present"))
+    or bool(chain_log.get("present"))
+)
+can_restore_source_initiative = (
+    workspace
+    and remote_spec
+    and not has_live_artifacts
+    and source_initiative_restore_available(
+        workspace=pathlib.Path(workspace),
+        remote_spec=pathlib.Path(remote_spec),
+        arnold_src=pathlib.Path(arnold_src),
+    )
+)
+if "workspace_missing" in stale_kinds:
+    if can_restore_source_initiative:
+        raise SystemExit(0)
+    print("workspace_missing")
+elif (
+    "spec_missing" in stale_kinds
+    and run_kind in {"chain", "epic_chain"}
+    and not has_live_artifacts
+):
+    if can_restore_source_initiative:
+        raise SystemExit(0)
+    print("stale_marker")
+PY
+}
+
+entry_workspace_restore_available() {
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$WORKSPACE" "$REMOTE_SPEC" "$ARNOLD_SRC" <<'PY'
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.source_initiative_repair import source_initiative_restore_available
+
+workspace, remote_spec, arnold_src = sys.argv[1:]
+if source_initiative_restore_available(
+    workspace=pathlib.Path(workspace),
+    remote_spec=pathlib.Path(remote_spec),
+    arnold_src=pathlib.Path(arnold_src),
+):
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 clear_session_repair_markers_now() {
   require_repair_lock_held
   rm -f "$NEEDS_HUMAN_FILE" "$MARKER_DIR/$SESSION.kimi-dispatch" "$MARKER_DIR/$SESSION.kimi-pgid" 2>/dev/null || true
@@ -655,6 +741,26 @@ chain_process_is_alive() {
   return 1
 }
 
+resolver_active_step_is_alive() {
+  local session="$1"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$session" "$MARKER_DIR" "$DATA_DIR" <<'PY' 2>/dev/null
+import sys
+
+from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+
+session, marker_dir, repair_data_dir = sys.argv[1:]
+record = resolve_current_target(
+    session,
+    marker_dir=marker_dir,
+    repair_data_dir=repair_data_dir,
+)
+active_step = record.get("active_step_heartbeat")
+if isinstance(active_step, dict) and active_step.get("active"):
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 kill_matching_runner_processes() {
   require_repair_lock_held
   local session="$1"
@@ -743,6 +849,8 @@ import json
 import pathlib
 import sys
 
+from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+
 def load_json(path_text: str) -> dict:
     try:
         payload = json.loads(pathlib.Path(path_text).read_text(encoding="utf-8"))
@@ -756,6 +864,29 @@ try:
 except Exception:
     marker_payload = {}
     repair_payload = {}
+marker_path = pathlib.Path(sys.argv[1])
+data_path = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else None
+session = str(marker_payload.get("session") or "").strip()
+if session:
+    record = resolve_current_target(
+        session,
+        marker_dir=str(marker_path.parent),
+        repair_data_dir=str(data_path.parent) if data_path is not None else "",
+    )
+    active_step = record.get("active_step_heartbeat")
+    if isinstance(active_step, dict) and active_step.get("active"):
+        failure_context = repair_payload.get("current_failure_context")
+        if not isinstance(failure_context, dict):
+            failure_context = {}
+        latest_failure = (
+            failure_context.get("plan_latest_failure")
+            if isinstance(failure_context.get("plan_latest_failure"), dict)
+            else {}
+        )
+        failure_kind = str(latest_failure.get("kind") or "").strip()
+        failure_state = str(latest_failure.get("current_state") or "").strip().lower()
+        if not failure_kind and failure_state in {"", "initialized"}:
+            raise SystemExit(1)
 text = json.dumps(marker_payload, sort_keys=True)
 if "workspace_drift:" in text or "sandbox_refused_outside_project_root" in text:
     print("workspace_drift")
@@ -784,7 +915,7 @@ if workspace.exists():
                 or ""
             ).strip()
             phase = str(latest_failure.get("phase") or "").strip()
-            if kind or state:
+            if kind or state.lower() not in {"", "initialized"}:
                 print(f"live_plan_failure:{kind or 'unknown'}:{state or 'unknown'}:{phase or 'unknown'}")
                 raise SystemExit(0)
 current_signature = repair_payload.get("current_signature")
@@ -808,7 +939,7 @@ if isinstance(failure_context, dict):
         state = str(latest_failure.get("current_state") or "").strip()
         if state in {"finalized", "awaiting_pr_merge", "done", "complete", "completed"}:
             raise SystemExit(1)
-        if kind or state:
+        if kind or state.lower() not in {"", "initialized"}:
             print(f"live_plan_failure:{kind or 'unknown'}:{state or 'unknown'}")
             raise SystemExit(0)
     state_mismatch = failure_context.get("state_mismatch")
@@ -828,7 +959,7 @@ session_health_status() {
   local wait_status
   if ! tmux has-session -t "$session" 2>/dev/null; then
     if [[ "$run_kind" == "chain" ]]; then
-      if chain_process_is_alive "$remote_spec" || plan_process_is_alive "$plan_name"; then
+      if chain_process_is_alive "$remote_spec" || plan_process_is_alive "$plan_name" || resolver_active_step_is_alive "$session"; then
         echo "alive"
         return 0
       fi
@@ -837,7 +968,7 @@ session_health_status() {
         echo "$wait_status"
         return 0
       fi
-    elif [[ -n "$plan_name" ]] && plan_process_is_alive "$plan_name"; then
+    elif [[ -n "$plan_name" ]] && { plan_process_is_alive "$plan_name" || resolver_active_step_is_alive "$session"; }; then
       echo "alive"
       return 0
     fi
@@ -866,7 +997,7 @@ session_health_status() {
       echo "alive"
       return 0
     fi
-    if plan_process_is_alive "$plan_name"; then
+    if plan_process_is_alive "$plan_name" || resolver_active_step_is_alive "$session"; then
       echo "alive"
       return 0
     fi
@@ -876,7 +1007,7 @@ session_health_status() {
       return 0
     fi
   elif [[ -n "$plan_name" ]]; then
-    if plan_process_is_alive "$plan_name"; then
+    if plan_process_is_alive "$plan_name" || resolver_active_step_is_alive "$session"; then
       echo "alive"
       return 0
     fi
@@ -935,13 +1066,8 @@ if [ -d "$SRC/.git" ]; then
   BRANCH="$(git -C "$SRC" branch --show-current)"
   if [ "$BRANCH" != "$REF" ]; then git -C "$SRC" checkout "$REF"; fi
   if [ -n "$(git -C "$SRC" status --porcelain --untracked-files=no)" ]; then
-    echo "[megaplan-refresh] source checkout dirty; using clean runtime mirror at $RUNTIME_SRC"
-    rm -rf "$RUNTIME_SRC"
-    mkdir -p "$(dirname "$RUNTIME_SRC")"
-    git clone --shared --no-checkout "$SRC" "$RUNTIME_SRC"
-    git -C "$RUNTIME_SRC" fetch origin "$REF"
-    git -C "$RUNTIME_SRC" checkout --detach "origin/$REF"
-    export MEGAPLAN_RUNTIME_SRC="$RUNTIME_SRC"
+    echo "[megaplan-refresh] source checkout dirty; using current source checkout at $SRC to avoid stale runtime mirror"
+    export MEGAPLAN_RUNTIME_SRC="$SRC"
   else
     if ! git -C "$SRC" merge-base --is-ancestor HEAD "origin/$REF"; then
       echo "[megaplan-refresh] refusing editable install refresh: $SRC has local commits not contained in origin/$REF"
@@ -989,7 +1115,7 @@ repair_target_completion_status() {
   local workspace="$1"
   local run_kind="$2"
   local plan_name="${3:-}"
-  python3 - "$workspace" "$run_kind" "$plan_name" "$REMOTE_SPEC" "$SESSION" "${MARKER_DIR:-/workspace/.megaplan/cloud-sessions}" <<'PY'
+  python3 - "$workspace" "$run_kind" "$plan_name" "$REMOTE_SPEC" "$SESSION" "${MARKER_DIR:-/workspace/.megaplan/cloud-sessions}" "$ARNOLD_SRC" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -1001,6 +1127,7 @@ plan_name = sys.argv[3]
 remote_spec = pathlib.Path(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] else None
 session = sys.argv[5] if len(sys.argv) > 5 else ""
 marker_dir = pathlib.Path(sys.argv[6]) if len(sys.argv) > 6 and sys.argv[6] else pathlib.Path("/workspace/.megaplan/cloud-sessions")
+arnold_src = pathlib.Path(sys.argv[7]) if len(sys.argv) > 7 and sys.argv[7] else pathlib.Path("/workspace/arnold")
 
 def load_json(path: pathlib.Path | None) -> dict[str, object]:
     if path is None:
@@ -1138,6 +1265,27 @@ def chain_completion_reason(chain_state: dict[str, object]) -> str:
         return ""
     return ""
 
+def manifest_completion_reason(root: pathlib.Path, spec_path: pathlib.Path | None) -> tuple[str, pathlib.Path | None]:
+    resolved_spec = _resolve_remote_spec(root, spec_path)
+    if resolved_spec is None:
+        return "", None
+    manifest_path = resolved_spec.parent / "completion-manifest.json"
+    manifest = load_json(manifest_path)
+    if str(manifest.get("schema") or "").strip() != "arnold.megaplan.chain_completion_manifest.v1":
+        return "", manifest_path
+    milestones = manifest.get("milestones")
+    if not isinstance(milestones, list) or not milestones:
+        return "", manifest_path
+    terminal = {"done", "complete", "completed"}
+    statuses = [
+        str(item.get("status") or "").strip().lower()
+        for item in milestones
+        if isinstance(item, dict)
+    ]
+    if len(statuses) != len(milestones) or any(status not in terminal for status in statuses):
+        return "", manifest_path
+    return f"completion_manifest_all_milestones_done={len(statuses)}/{len(milestones)}", manifest_path
+
 def chain_health_blocks_terminal_shortcut() -> bool:
     if not session:
         return False
@@ -1159,6 +1307,72 @@ def chain_health_blocks_terminal_shortcut() -> bool:
         return True
     return True
 
+def stale_marker_completion_reason() -> str:
+    try:
+        from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+        from arnold_pipelines.megaplan.cloud.source_initiative_repair import (
+            source_initiative_restore_available,
+        )
+    except Exception:
+        return ""
+
+    try:
+        target = resolve_current_target(
+            session,
+            marker_dir=marker_dir,
+            repair_data_dir=marker_dir / "repair-data",
+        )
+    except Exception:
+        return ""
+
+    stale_kinds = {
+        str(item.get("kind") or "").strip()
+        for item in target.get("stale_evidence", [])
+        if isinstance(item, dict)
+    }
+    if not stale_kinds.intersection({"workspace_missing", "spec_missing"}):
+        return ""
+
+    if str(target.get("authoritative_source") or "").strip() == "live_sibling_session":
+        return ""
+
+    tmux_process = target.get("tmux_process")
+    if isinstance(tmux_process, dict) and str(tmux_process.get("live_status") or "").strip() == "alive":
+        return ""
+
+    sibling_sessions = target.get("sibling_sessions")
+    if isinstance(sibling_sessions, list):
+        for item in sibling_sessions:
+            if isinstance(item, dict) and str(item.get("live_status") or "").strip() == "alive":
+                return ""
+
+    plan_state = target.get("plan_state")
+    chain_state = target.get("chain_state")
+    chain_log = target.get("chain_log")
+    active_step = target.get("active_step_heartbeat")
+    has_current_target_proof = any(
+        isinstance(record, dict) and bool(record.get("present"))
+        for record in (plan_state, chain_state, chain_log)
+    ) or (isinstance(active_step, dict) and bool(active_step.get("active")))
+    if has_current_target_proof:
+        return ""
+
+    current_refs = target.get("current_refs") if isinstance(target.get("current_refs"), dict) else {}
+    workspace_ref = str(current_refs.get("workspace") or "").strip()
+    remote_spec_ref = str(current_refs.get("remote_spec") or "").strip()
+    if (
+        workspace_ref
+        and remote_spec_ref
+        and source_initiative_restore_available(
+            workspace=pathlib.Path(workspace_ref),
+            remote_spec=pathlib.Path(remote_spec_ref),
+            arnold_src=arnold_src,
+        )
+    ):
+        return ""
+
+    return "stale marker points at missing workspace/spec with no current-target proof"
+
 
 chain_path = latest_chain_state(workspace) if run_kind == "chain" else None
 chain_state = load_json(chain_path)
@@ -1167,7 +1381,9 @@ plan_path = resolve_plan_state(workspace, preferred_plan_name)
 plan_state = load_json(plan_path)
 plan_complete, plan_reason = is_terminal_plan(plan_state)
 chain_reason = chain_completion_reason(chain_state) if run_kind == "chain" else ""
+manifest_reason, manifest_path = manifest_completion_reason(workspace, remote_spec) if run_kind == "chain" else ("", None)
 chain_last_state = str(chain_state.get("last_state") or "").strip().lower()
+stale_marker_reason = stale_marker_completion_reason()
 
 if run_kind == "chain" and chain_reason:
     print(
@@ -1179,6 +1395,19 @@ if run_kind == "chain" and chain_reason:
                 str(chain_path or ""),
                 str(plan_path or ""),
                 str(plan_state.get("current_state") or plan_state.get("state") or ""),
+            ]
+        )
+    )
+elif run_kind == "chain" and manifest_reason:
+    print(
+        "\t".join(
+            [
+                "1",
+                "chain",
+                manifest_reason,
+                str(chain_path or ""),
+                str(manifest_path or ""),
+                "done",
             ]
         )
     )
@@ -1196,6 +1425,19 @@ elif (
                 "1",
                 "chain",
                 "terminal plan state supersedes stale chain state",
+                str(chain_path or ""),
+                str(plan_path or ""),
+                str(plan_state.get("current_state") or plan_state.get("state") or ""),
+            ]
+        )
+    )
+elif stale_marker_reason:
+    print(
+        "\t".join(
+            [
+                "1",
+                "stale_marker",
+                stale_marker_reason,
                 str(chain_path or ""),
                 str(plan_path or ""),
                 str(plan_state.get("current_state") or plan_state.get("state") or ""),
@@ -3821,7 +4063,10 @@ exit_if_repair_target_complete() {
     repair_data_set_outcome "complete"
   fi
   clear_repair_markers
-  if [[ "$scope" == "chain" ]]; then
+  if [[ "$scope" == "stale_marker" ]]; then
+    rm -f "$MARKER_PATH" 2>/dev/null || true
+    log "stale marker retired; no repair needed session=$SESSION phase=$phase reason=$reason marker_path=${MARKER_PATH:-n/a}"
+  elif [[ "$scope" == "chain" ]]; then
     log "chain already complete; no repair needed session=$SESSION phase=$phase reason=$reason chain_state_path=${chain_path:-n/a} plan_state=${plan_state:-unknown} plan_state_path=${plan_path:-n/a}"
   else
     log "plan already complete; no repair needed session=$SESSION phase=$phase reason=$reason plan_state_path=${plan_path:-n/a}"
@@ -4687,49 +4932,6 @@ PY
 }
 
 log "starting session=$SESSION workspace=$WORKSPACE spec=$REMOTE_SPEC source=$ARNOLD_SRC branch=$SYNC_BRANCH"
-guard_against_recursive_repair_loop || exit 0
-
-# Environment-gone backstop: if the workspace dir is gone the repair loop has
-# nothing to repair (it is a code-fixer, not a provisioner — it cannot recreate
-# a wiped workspace). Persist an environment_gone outcome for audit and exit 0
-# so we do not burn iterations or escalate to Discord. The watchdog primary
-# gate retires the session cleanly on its next tick (with its strikes safety
-# margin, which also covers a missing spec file). This guard keys on the
-# workspace alone: a present workspace with a missing spec is a transient
-# concern the watchdog gate handles with tolerance, not a hard no-op here.
-# This guard runs BEFORE acquire_repair_lock, so it writes repair-data via
-# save_repair_data directly rather than repair_data_set_outcome (which requires
-# the lock). Best-effort: a failed write must not block the no-op exit.
-if [[ ! -d "$WORKSPACE" ]]; then
-  log "environment gone at entry; exiting without repair session=$SESSION workspace=$WORKSPACE spec=$REMOTE_SPEC"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" <<'PY' || true
-import pathlib
-import sys
-
-from arnold_pipelines.megaplan.cloud.repair_contract import (
-    ENVIRONMENT_GONE,
-    load_json,
-    save_repair_data,
-)
-
-data_path_raw, session, workspace, remote_spec = sys.argv[1:]
-data_path = pathlib.Path(data_path_raw)
-payload = load_json(data_path, default={})
-if not isinstance(payload, dict):
-    payload = {}
-payload.setdefault("session", session)
-payload.setdefault("workspace", workspace)
-payload["workspace"] = workspace
-payload["outcome"] = ENVIRONMENT_GONE
-save_repair_data(data_path, payload)
-PY
-  exit 0
-fi
-
-acquire_repair_lock || exit 75
-export CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE=1
-export CLOUD_WATCHDOG_REPAIR_LOOP_SESSION="$SESSION"
-export CLOUD_WATCHDOG_REPAIR_LOOP_PID="$$"
 
 RUN_KIND="$(json_field "$MARKER_PATH" run_kind 2>/dev/null || true)"
 PLAN_NAME="$(json_field "$MARKER_PATH" plan_name 2>/dev/null || true)"
@@ -4741,6 +4943,79 @@ if [[ -z "$RUN_KIND" ]]; then
     RUN_KIND="chain"
   fi
 fi
+
+# Environment-gone backstop: if the workspace dir is gone the repair loop has
+# nothing to repair (it is a code-fixer, not a provisioner — it cannot recreate
+# a wiped workspace). Persist an environment_gone outcome for audit and exit 0
+# so we do not burn iterations or escalate to Discord. The watchdog primary
+# gate retires the session cleanly on its next tick. A direct repair-loop
+# entry can bypass that watchdog tolerance, so we also consult the resolver:
+# when the workspace is missing, or when a chain/epic-chain marker points at a
+# missing spec AND there are no live chain/plan artifacts left, this session is
+# stale rather than repairable. This guard runs BEFORE acquire_repair_lock, so
+# it writes repair-data via save_repair_data directly rather than
+# repair_data_set_outcome (which requires the lock). Best-effort: a failed
+# write must not block the no-op exit.
+ENTRY_TARGET_MISSING_REASON=""
+ENTRY_TARGET_MISSING_REASON="$(entry_target_missing_reason 2>>"$LOG" || true)"
+if [[ -z "$ENTRY_TARGET_MISSING_REASON" && ! -d "$WORKSPACE" ]]; then
+  if ! entry_workspace_restore_available 2>>"$LOG"; then
+    ENTRY_TARGET_MISSING_REASON="workspace_missing"
+  fi
+fi
+if [[ -n "$ENTRY_TARGET_MISSING_REASON" ]]; then
+  log "environment gone at entry; exiting without repair session=$SESSION workspace=$WORKSPACE spec=$REMOTE_SPEC reason=$ENTRY_TARGET_MISSING_REASON"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$ENTRY_TARGET_MISSING_REASON" "$MARKER_PATH" "$PROGRESS_FILE" "$NEEDS_HUMAN_FILE" <<'PY' || true
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.repair_contract import (
+    COMPLETE,
+    ENVIRONMENT_GONE,
+    load_json,
+    save_repair_data,
+)
+
+(
+    data_path_raw,
+    session,
+    workspace,
+    remote_spec,
+    entry_reason,
+    marker_path_raw,
+    progress_path_raw,
+    needs_human_path_raw,
+) = sys.argv[1:]
+data_path = pathlib.Path(data_path_raw)
+marker_path = pathlib.Path(marker_path_raw)
+progress_path = pathlib.Path(progress_path_raw)
+needs_human_path = pathlib.Path(needs_human_path_raw)
+payload = load_json(data_path, default={})
+if not isinstance(payload, dict):
+    payload = {}
+payload.setdefault("session", session)
+payload.setdefault("workspace", workspace)
+payload["workspace"] = workspace
+payload["outcome"] = COMPLETE if entry_reason == "stale_marker" else ENVIRONMENT_GONE
+save_repair_data(data_path, payload)
+if entry_reason == "stale_marker":
+    for path in (marker_path, progress_path, needs_human_path):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+PY
+  exit 0
+fi
+
+guard_against_recursive_repair_loop || exit 0
+
+acquire_repair_lock || exit 75
+export CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE=1
+export CLOUD_WATCHDOG_REPAIR_LOOP_SESSION="$SESSION"
+export CLOUD_WATCHDOG_REPAIR_LOOP_PID="$$"
 exit_if_repair_target_complete "start"
 
 INITIAL_HEALTH="$(session_health_status "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME")"
@@ -4761,7 +5036,7 @@ fi
 repair_dependency_manifests_if_possible() {
   require_repair_lock_held
   ensure_repair_budget_available "dependency-manifest-repair"
-  local result_path status
+  local result_path="" status=0
   result_path="$RUN_DIR/dependency-manifest-repair.json"
   PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 -m arnold_pipelines.megaplan.cloud.dependency_manifest_repair \
     --workspace "$WORKSPACE" \
@@ -4775,6 +5050,152 @@ repair_dependency_manifests_if_possible() {
   log "dependency manifest repair not applicable status=$status result=$result_path"
   return 1
 }
+
+repair_source_initiative_if_possible() {
+  require_repair_lock_held
+  ensure_repair_budget_available "source-initiative-repair"
+  local result_path="" status=0
+  result_path="$RUN_DIR/source-initiative-repair.json"
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 -m arnold_pipelines.megaplan.cloud.source_initiative_repair \
+    --workspace "$WORKSPACE" \
+    --remote-spec "$REMOTE_SPEC" \
+    --arnold-src "$ARNOLD_SRC" >"$result_path" 2>>"$LOG"
+  status=$?
+  if [[ "$status" == "0" ]]; then
+    log "source initiative repair succeeded result=$result_path"
+    return 0
+  fi
+  log "source initiative repair not applicable status=$status result=$result_path"
+  return 1
+}
+
+repair_source_workspace_if_possible() {
+  require_repair_lock_held
+  ensure_repair_budget_available "source-workspace-repair"
+  local result_path="" tmp_root="" tmp_clone="" status=1 entry base source_origin="" workspace_origin=""
+  result_path="$RUN_DIR/source-workspace-repair.json"
+  if [[ ! -d "$ARNOLD_SRC/.git" ]]; then
+    printf '%s\n' '{"repaired": false, "reason": "source_git_missing", "details": {}}' >"$result_path"
+    log "source workspace repair not applicable status=2 result=$result_path"
+    return 1
+  fi
+  source_origin="$(git -C "$ARNOLD_SRC" remote get-url origin 2>/dev/null || true)"
+  if [[ -d "$WORKSPACE/.git" ]] || git -C "$WORKSPACE" rev-parse --show-toplevel >/dev/null 2>&1; then
+    workspace_origin="$(git -C "$WORKSPACE" remote get-url origin 2>/dev/null || true)"
+    if [[ -n "$source_origin" && "$workspace_origin" != "$source_origin" ]]; then
+      git -C "$WORKSPACE" remote set-url origin "$source_origin" >>"$LOG" 2>&1
+      python3 - "$result_path" "$WORKSPACE" "$source_origin" <<'PY'
+import json
+import pathlib
+import sys
+
+result_path, workspace, source_origin = sys.argv[1:]
+pathlib.Path(result_path).write_text(
+    json.dumps(
+        {
+            "repaired": True,
+            "reason": "source_workspace_remote_repaired",
+            "details": {
+                "workspace": workspace,
+                "origin": source_origin,
+            },
+        },
+        indent=2,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+PY
+      log "source workspace repair succeeded result=$result_path"
+      return 0
+    fi
+    printf '%s\n' '{"repaired": false, "reason": "workspace_git_present", "details": {}}' >"$result_path"
+    log "source workspace repair not applicable status=2 result=$result_path"
+    return 1
+  fi
+
+  tmp_root="$(mktemp -d)"
+  tmp_clone="$tmp_root/repo"
+  mkdir -p "$WORKSPACE"
+  if ! git clone --shared --branch "$SYNC_BRANCH" "$ARNOLD_SRC" "$tmp_clone" >>"$LOG" 2>&1; then
+    printf '%s\n' '{"repaired": false, "reason": "clone_failed", "details": {}}' >"$result_path"
+    rm -rf "$tmp_root"
+    log "source workspace repair not applicable status=2 result=$result_path"
+    return 1
+  fi
+  if [[ -n "$source_origin" ]]; then
+    git -C "$tmp_clone" remote set-url origin "$source_origin" >>"$LOG" 2>&1 || true
+  fi
+
+  shopt -s dotglob nullglob
+  for entry in "$tmp_clone"/* "$tmp_clone"/.[!.]* "$tmp_clone"/..?*; do
+    [[ -e "$entry" ]] || continue
+    base="$(basename "$entry")"
+    if [[ "$base" == ".git" || "$base" == ".megaplan" ]]; then
+      continue
+    fi
+    rm -rf "$WORKSPACE/$base"
+    cp -a "$entry" "$WORKSPACE/$base"
+  done
+  shopt -u dotglob nullglob
+  rm -rf "$WORKSPACE/.git"
+  cp -a "$tmp_clone/.git" "$WORKSPACE/.git"
+  rm -rf "$tmp_root"
+
+  python3 - "$result_path" "$WORKSPACE" "$ARNOLD_SRC" "$SYNC_BRANCH" <<'PY'
+import json
+import pathlib
+import sys
+
+result_path, workspace, source_root, branch = sys.argv[1:]
+pathlib.Path(result_path).write_text(
+    json.dumps(
+        {
+            "repaired": True,
+            "reason": "source_workspace_restored",
+            "details": {
+                "workspace": workspace,
+                "source_root": source_root,
+                "branch": branch,
+            },
+        },
+        indent=2,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+PY
+  log "source workspace repair succeeded result=$result_path"
+  return 0
+}
+
+if repair_source_initiative_if_possible; then
+  exit_if_repair_target_complete "post-source-initiative-repair"
+  mechanical_status="$(mechanical_launch_step "1" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
+    repair_data_record_mechanical "1" "0" "$mechanical_status" "after source initiative repair: $mechanical_status"
+  }
+  if [[ "${mechanical_status:-}" == "running" ]]; then
+    repair_data_record_mechanical "1" "0" "running" "source initiative restored; mechanical launch came up and held"
+    repair_data_set_outcome "live_with_fresh_activity"
+    clear_repair_markers
+    log "repair loop succeeded after source initiative repair"
+    exit 0
+  fi
+fi
+
+if repair_source_workspace_if_possible; then
+  exit_if_repair_target_complete "post-source-workspace-repair"
+  mechanical_status="$(mechanical_launch_step "0" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
+    repair_data_record_mechanical "0" "0" "$mechanical_status" "after source workspace repair: $mechanical_status"
+  }
+  if [[ "${mechanical_status:-}" == "running" ]]; then
+    repair_data_record_mechanical "0" "0" "running" "source workspace restored; mechanical launch came up and held"
+    repair_data_set_outcome "live_with_fresh_activity"
+    clear_repair_markers
+    log "repair loop succeeded after source workspace repair"
+    exit 0
+  fi
+fi
 
 if repair_dependency_manifests_if_possible; then
   mechanical_status="$(mechanical_launch_step "1" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
@@ -4802,6 +5223,17 @@ if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
     log "repair loop succeeded after stale-state clear"
     exit 0
   fi
+fi
+
+mechanical_status="$(mechanical_launch_step "0" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
+  repair_data_record_mechanical "0" "0" "$mechanical_status" "baseline mechanical relaunch: $mechanical_status"
+}
+if [[ "${mechanical_status:-}" == "running" ]]; then
+  repair_data_record_mechanical "0" "0" "running" "baseline mechanical relaunch came up and held"
+  repair_data_set_outcome "live_with_fresh_activity"
+  clear_repair_markers
+  log "repair loop succeeded via baseline mechanical relaunch"
+  exit 0
 fi
 
 GLM_MODEL=""
@@ -4898,7 +5330,7 @@ exit_if_repair_target_recovered "post-iterations"
 if [[ "${BREAKER_TRIPPED:-0}" == "1" ]]; then
   discord_status="$(send_discord_escalation)"
   if [[ "$discord_status" == "delivered" ]]; then
-    write_needs_human_marker "$discord_status" "deterministic_failure — breaker tripped before another iteration (same unresolved signature)"
+    write_needs_human_marker "$discord_status" "deterministic_failure - breaker tripped before another iteration (same unresolved signature)"
   fi
   log "deterministic-failure breaker session=$SESSION discord=$discord_status data=$DATA_FILE"
   exit 1

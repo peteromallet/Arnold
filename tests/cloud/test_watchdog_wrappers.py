@@ -2579,6 +2579,17 @@ def test_repair_loop_terminal_plan_is_not_complete_when_chain_health_is_incomple
         ),
         encoding="utf-8",
     )
+    (marker_dir / "demo-session.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
 
     script = "\n\n".join(
         [
@@ -2593,6 +2604,44 @@ def test_repair_loop_terminal_plan_is_not_complete_when_chain_health_is_incomple
     assert result.returncode == 0, result.stderr
     fields = result.stdout.strip().split("\t")
     assert fields[0] == "0"
+
+
+def test_repair_target_completion_status_retires_stale_marker_without_current_target_proof(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    (marker_dir / "demo-session.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_repair_function("repair_target_completion_status"),
+            f"PYTHONPATH={str(REPO_ROOT)!r}",
+            f"REMOTE_SPEC={str(spec_path)!r}",
+            "SESSION=demo-session",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"repair_target_completion_status {str(workspace)!r} chain ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    fields = result.stdout.strip().split("\t")
+    assert fields[0] == "1"
+    assert fields[1] == "stale_marker"
+    assert fields[2] == "stale marker points at missing workspace/spec with no current-target proof"
 
 def test_watchdog_liveness_is_scoped_to_marked_chain_spec() -> None:
     text = _wrapper("arnold-watchdog")
@@ -4026,6 +4075,38 @@ def test_watchdog_terminal_status_accepts_label_only_completed_chain(tmp_path: P
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "complete\tchain complete"
+
+
+def test_watchdog_terminal_status_accepts_completion_manifest_without_chain_state(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("milestones:\n  - label: m1\n", encoding="utf-8")
+    (spec_path.parent / "completion-manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "arnold.megaplan.chain_completion_manifest.v1",
+                "chain": {"path": ".megaplan/initiatives/demo-chain/chain.yaml", "sha256": "unused"},
+                "milestones": [{"label": "m1", "status": "done", "plan": "m1-demo"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    repair_dir = tmp_path / "repair-data"
+    repair_dir.mkdir()
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("session_terminal_status"),
+            f"MARKER_DIR={str(tmp_path / 'markers')!r}",
+            f"REPAIR_DATA_DIR={str(repair_dir)!r}",
+            f"session_terminal_status demo-session {str(workspace)!r} {str(spec_path)!r} chain",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "complete\tcompletion manifest marks chain complete"
 
 
 def test_watchdog_terminal_status_reads_spec_local_chain_state(tmp_path: Path) -> None:
@@ -6571,6 +6652,243 @@ def test_repair_loop_env_gone_at_entry_exits_zero_without_iteration(tmp_path: Pa
     assert persisted["outcome"] == "environment_gone"
 
 
+def test_repair_loop_missing_spec_retires_stale_marker_as_complete(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    data_file = repair_data_dir / "demo-session.repair-data.json"
+    data_file.write_text(json.dumps({"session": "demo-session", "outcome": "repairing"}), encoding="utf-8")
+    (marker_dir / "demo-session.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (marker_dir / "demo-session.repair-progress.json").write_text(
+        json.dumps({"status": ""}),
+        encoding="utf-8",
+    )
+    (repair_data_dir / "demo-session.needs-human.json").write_text(
+        json.dumps({"summary": "stale escalation"}),
+        encoding="utf-8",
+    )
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
+    env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
+    env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(repair_data_dir)
+    env["CLOUD_WATCHDOG_ARNOLD_SRC"] = str(REPO_ROOT)
+    result = subprocess.run(
+        [
+            "bash",
+            str(WRAPPER_DIR / "arnold-repair-loop"),
+            "demo-session",
+            str(workspace),
+            str(spec_path),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    combined = f"{result.stdout}\n{result.stderr}"
+    assert "reason=stale_marker" in combined
+    assert "iteration" not in result.stderr.lower()
+    persisted = json.loads(data_file.read_text(encoding="utf-8"))
+    assert persisted["outcome"] == "complete"
+    assert not (marker_dir / "demo-session.json").exists()
+    assert not (marker_dir / "demo-session.repair-progress.json").exists()
+    assert not (repair_data_dir / "demo-session.needs-human.json").exists()
+
+
+def test_repair_loop_missing_chain_spec_at_entry_retires_stale_marker_as_complete(tmp_path: Path) -> None:
+    """Resolver-backed entry guard: a stale chain session with no spec and no
+    live artifacts retires the marker as a terminal complete outcome."""
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "stale-ws"
+    workspace.mkdir()
+    missing_spec = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    (marker_dir / "demo-chain.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-chain",
+                "workspace": str(workspace),
+                "remote_spec": str(missing_spec),
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+    data_file = repair_data_dir / "demo-chain.repair-data.json"
+    data_file.write_text(json.dumps({"session": "demo-chain", "outcome": "repairing"}), encoding="utf-8")
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
+    env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
+    env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(repair_data_dir)
+    env["CLOUD_WATCHDOG_ARNOLD_SRC"] = str(REPO_ROOT)
+    result = subprocess.run(
+        [
+            "bash",
+            str(WRAPPER_DIR / "arnold-repair-loop"),
+            "demo-chain",
+            str(workspace),
+            str(missing_spec),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "iteration" not in result.stderr.lower()
+    assert "invalid_spec" not in result.stderr
+    persisted = json.loads(data_file.read_text(encoding="utf-8"))
+    assert persisted["outcome"] == "complete"
+    assert not (marker_dir / "demo-chain.json").exists()
+
+
+def test_repair_loop_source_initiative_helper_restores_missing_workspace_spec(tmp_path: Path) -> None:
+    source_root = tmp_path / "arnold-src"
+    workspace = tmp_path / "workspace"
+    run_dir = tmp_path / "run"
+    source_dir = source_root / ".megaplan" / "initiatives" / "demo"
+    source_dir.mkdir(parents=True)
+    (source_dir / "chain.yaml").write_text(
+        "milestones:\n  - label: m1\n    idea: .megaplan/initiatives/demo/briefs/m1.md\n",
+        encoding="utf-8",
+    )
+    briefs = source_dir / "briefs"
+    briefs.mkdir()
+    (briefs / "m1.md").write_text("# Demo\n", encoding="utf-8")
+    run_dir.mkdir()
+
+    remote_spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    wrapper_log = tmp_path / "repair.log"
+    script = "\n\n".join(
+        [
+            _extract_repair_function("repair_source_initiative_if_possible"),
+            'require_repair_lock_held() { :; }',
+            'ensure_repair_budget_available() { :; }',
+            'log() { :; }',
+            f"RUN_DIR={str(run_dir)!r}",
+            f"WORKSPACE={str(workspace)!r}",
+            f"REMOTE_SPEC={str(remote_spec)!r}",
+            f"ARNOLD_SRC={str(source_root)!r}",
+            f"LOG={str(wrapper_log)!r}",
+            "repair_source_initiative_if_possible",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert remote_spec.exists()
+    assert (workspace / ".megaplan" / "initiatives" / "demo" / "briefs" / "m1.md").exists()
+    result_path = run_dir / "source-initiative-repair.json"
+    assert result_path.exists()
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+    assert payload["reason"] == "source_initiative_restored"
+
+
+def test_entry_target_missing_reason_ignores_source_backed_missing_spec(tmp_path: Path) -> None:
+    source_root = tmp_path / "arnold-src"
+    workspace = tmp_path / "workspace"
+    marker_dir = tmp_path / "markers"
+    repair_dir = marker_dir / "repair-data"
+    source_dir = source_root / ".megaplan" / "initiatives" / "demo"
+    source_dir.mkdir(parents=True)
+    workspace.mkdir()
+    (source_dir / "chain.yaml").write_text("milestones: []\n", encoding="utf-8")
+    marker_dir.mkdir()
+    repair_dir.mkdir()
+    remote_spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    (marker_dir / "demo-session.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "workspace": str(workspace),
+                "remote_spec": str(remote_spec),
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+    wrapper_text = _repair_wrapper()
+    start = wrapper_text.index("entry_target_missing_reason() {")
+    end = wrapper_text.index("\nclear_session_repair_markers_now() {", start)
+    function_text = wrapper_text[start:end]
+    script = "\n\n".join(
+        [
+            function_text,
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"ARNOLD_SRC={str(source_root)!r}",
+            "SESSION='demo-session'",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"DATA_DIR={str(repair_dir)!r}",
+            "entry_target_missing_reason",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == ""
+
+
+def test_repair_target_completion_status_skips_stale_marker_when_source_can_restore(tmp_path: Path) -> None:
+    source_root = tmp_path / "arnold-src"
+    workspace = tmp_path / "workspace"
+    marker_dir = tmp_path / "markers"
+    repair_dir = marker_dir / "repair-data"
+    source_dir = source_root / ".megaplan" / "initiatives" / "demo"
+    source_dir.mkdir(parents=True)
+    workspace.mkdir()
+    marker_dir.mkdir()
+    repair_dir.mkdir()
+    (source_dir / "chain.yaml").write_text("milestones: []\n", encoding="utf-8")
+    remote_spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    (marker_dir / "demo-session.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "workspace": str(workspace),
+                "remote_spec": str(remote_spec),
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+    wrapper_text = _repair_wrapper()
+    start = wrapper_text.index("repair_target_completion_status() {")
+    end = wrapper_text.index("\nrepair_clear_stale_state_if_needed() {", start)
+    function_text = wrapper_text[start:end]
+    script = "\n\n".join(
+        [
+            function_text,
+            f"REMOTE_SPEC={str(remote_spec)!r}",
+            "SESSION='demo-session'",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"ARNOLD_SRC={str(source_root)!r}",
+            f"repair_target_completion_status {shlex.quote(str(workspace))} chain ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "stale_marker" not in result.stdout
+
+
 def test_watchdog_missing_base_ref_chain_state_reports_needs_human_without_plan_state(
     tmp_path: Path,
 ) -> None:
@@ -7381,6 +7699,79 @@ ps() {{
 python3 -P -m arnold_pipelines.megaplan chain start --spec {spec_path} --project-dir {workspace}
 EOF
 }}
+session_health_status demo-session {workspace} {spec_path} chain ""
+""",
+        ]
+    )
+    result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "alive"
+
+
+def test_repair_loop_health_treats_resolver_active_step_as_alive_without_tmux(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    (marker_dir / "demo-session.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    chain_state_path = workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+    chain_state_path.parent.mkdir(parents=True, exist_ok=True)
+    chain_state_path.write_text(
+        json.dumps({"current_plan_name": "demo-plan", "last_state": "initialized"}),
+        encoding="utf-8",
+    )
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo-plan",
+                "current_state": "initialized",
+                "active_step": {
+                    "phase": "prep",
+                    "worker_pid": 12345,
+                    "started_at": "2026-07-06T20:44:13Z",
+                    "last_activity_at": "2026-07-06T20:44:46Z",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_repair_function("chain_wait_status"),
+            _extract_repair_function("plan_process_is_alive"),
+            _extract_repair_function("chain_process_is_alive"),
+            _extract_repair_function("resolver_active_step_is_alive"),
+            _extract_repair_function("session_health_status"),
+            f"""
+WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}
+ARNOLD_SRC={str(REPO_ROOT)!r}
+MARKER_DIR={str(marker_dir)!r}
+DATA_DIR={str(repair_data_dir)!r}
+tmux() {{ return 1; }}
+ps() {{ :; }}
+chain_wait_status() {{ echo none; }}
 session_health_status demo-session {workspace} {spec_path} chain ""
 """,
         ]
@@ -8901,6 +9292,84 @@ def test_marker_requires_repair_despite_alive_ignores_stale_failure_after_finali
         ]
     )
     result = _run_watchdog_shell(script, path_prefix=None)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == ""
+
+
+def test_marker_requires_repair_despite_alive_ignores_live_initialized_heartbeat(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    marker_path = marker_dir / "demo-session.json"
+    marker_path.write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+    data_path = repair_data_dir / "demo-session.repair-data.json"
+    data_path.write_text(
+        json.dumps(
+            {
+                "current_failure_context": {
+                    "plan_latest_failure": {
+                        "current_state": "initialized",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    chain_state_path = workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+    chain_state_path.parent.mkdir(parents=True, exist_ok=True)
+    chain_state_path.write_text(
+        json.dumps({"current_plan_name": "demo-plan", "last_state": "initialized"}),
+        encoding="utf-8",
+    )
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo-plan",
+                "current_state": "initialized",
+                "latest_failure": None,
+                "active_step": {
+                    "phase": "prep",
+                    "worker_pid": 12345,
+                    "started_at": "2026-07-06T20:50:13Z",
+                    "last_activity_at": "2026-07-06T20:50:48Z",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = "\n".join(
+        [
+            _extract_repair_function("marker_requires_repair_despite_alive"),
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            f"MARKER_PATH={str(marker_path)!r}",
+            f"DATA_FILE={str(data_path)!r}",
+            "marker_requires_repair_despite_alive || true",
+        ]
+    )
+    result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == ""
 
@@ -12503,7 +12972,7 @@ def test_meta_repair_classification_embedded_python_matches_contract(
 ) -> None:
     """The classification_and_prompt embedded Python must call evaluate_meta_repair_triggers."""
     marker = (
-        'python3 - "$SESSION" "$REPAIR_DATA_DIR" "$REPAIR_DATA_PATH" '
+        'python3 - "$SESSION" "$REPAIR_DATA_DIR" "$REPAIR_DATA_PATH" "$MARKER_DIR" '
         '"$META_REPAIR_ENABLED_VAR" "$WATCHDOG_TRIGGER" <<'
     )
     text = _meta_repair_wrapper()
@@ -12529,9 +12998,74 @@ def test_meta_repair_classification_embedded_python_matches_contract(
     assert "evaluate_meta_repair_triggers" in program
     assert "MetaRepairClassification" in program
     assert "watchdog preclassified trigger" in program
+    assert "resolve_current_target" in program
+    assert "stale_repair_evidence_reason" in program
     assert "NO_TRIGGER" in program
     assert "PROMPT_START" in program
     assert "PROMPT_END" in program
+
+
+def test_meta_repair_preclassified_trigger_suppresses_stale_missing_spec_session(
+    tmp_path: Path,
+) -> None:
+    marker = (
+        'python3 - "$SESSION" "$REPAIR_DATA_DIR" "$REPAIR_DATA_PATH" "$MARKER_DIR" '
+        '"$META_REPAIR_ENABLED_VAR" "$WATCHDOG_TRIGGER" <<'
+    )
+    program = _extract_meta_repair_embedded_python(marker)
+
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    chain_log = workspace / ".megaplan" / "cloud-chain-demo-session.log"
+    chain_log.parent.mkdir(parents=True, exist_ok=True)
+    chain_log.write_text("old log\n", encoding="utf-8")
+
+    (marker_dir / "demo-session.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "outcome": "repairing",
+                "current_signature": {
+                    "milestone_or_plan": "demo-plan",
+                    "current_state": "blocked",
+                },
+                "attempts": [
+                    {"failure_classification": "unknown_failure_mode", "outcome": "repairing"},
+                    {"failure_classification": "unknown_failure_mode", "outcome": "repairing"},
+                    {"failure_classification": "unknown_failure_mode", "outcome": "repairing"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_meta_embedded_python(
+        program,
+        "demo-session",
+        str(repair_data_dir),
+        str(repair_data_dir / "demo-session.repair-data.json"),
+        str(marker_dir),
+        "1",
+        "persistent_recurring_retry",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "NO_TRIGGER"
 
 
 def test_meta_repair_commit_gate_embedded_python_matches_contract(
