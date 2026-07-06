@@ -149,6 +149,60 @@ def test_git_push_helper_uses_noninteractive_github_token(monkeypatch, tmp_path:
     assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
     assert env["GIT_CONFIG_VALUE_0"].startswith("AUTHORIZATION: basic ")
 
+
+def test_gh_command_env_preserves_token_auth_for_first_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GH_TOKEN", "gho_testtoken")
+    env = git_ops._command_env(["gh", "pr", "list"])
+
+    assert isinstance(env, dict)
+    assert env["GH_TOKEN"] == "gho_testtoken"
+
+
+def test_run_command_retries_gh_without_env_on_bad_token(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_run(cmd, **kwargs):
+        env = kwargs.get("env")
+        calls.append({"cmd": list(cmd), "env": dict(env) if isinstance(env, dict) else env})
+        if len(calls) == 1:
+            return subprocess.CompletedProcess(
+                cmd,
+                1,
+                stdout="",
+                stderr="authentication failed",
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setenv("GH_TOKEN", "gho_badtoken")
+    monkeypatch.setattr(git_ops.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        git_ops,
+        "_compat",
+        lambda: SimpleNamespace(
+            subprocess=git_ops.subprocess,
+            _command_env=git_ops._command_env,
+            _command_env_without_gh_tokens=git_ops._command_env_without_gh_tokens,
+            _should_retry_gh_without_env=git_ops._should_retry_gh_without_env,
+        ),
+    )
+
+    proc = git_ops._run_command(
+        tmp_path,
+        ["gh", "pr", "list", "--json", "number"],
+        writer=lambda _message: None,
+        error_code="gh_pr_lookup_failed",
+    )
+
+    assert proc.returncode == 0
+    assert len(calls) == 2
+    assert calls[0]["env"]["GH_TOKEN"] == "gho_badtoken"
+    assert "GH_TOKEN" not in calls[1]["env"]
+
 def test_chain_fresh_refuses_to_delete_unregistered_spec_directory(tmp_path: Path) -> None:
     invoking_repo = tmp_path / "app"
     _init_repo(invoking_repo)
@@ -930,6 +984,48 @@ def test_run_git_push_command_recovers_when_timeout_already_published_branch(
     proc = git_ops._run_git_push_command(
         root,
         ["git", "push", "--no-verify", "origin", "HEAD:branch-x"],
+        writer=messages.append,
+    )
+
+    assert proc.returncode == 0
+    assert any("timed out locally" in message for message in messages)
+
+
+def test_run_git_push_command_recovers_when_timeout_already_published_branch_with_u_origin_branch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    messages: list[str] = []
+
+    def fake_run_command(_root, cmd, **_kwargs):
+        raise CliError(
+            "git_push_failed",
+            "git push failed with timeout",
+            extra={"command": cmd, "error": "Command timed out after 600 seconds"},
+        )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            _run_command=fake_run_command,
+        ),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._expected_remote_push_target",
+        lambda *_args, **_kwargs: ("branch-x", "abc123"),
+    )
+    remote_heads = iter([None, "abc123"])
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._remote_branch_head",
+        lambda *_args, **_kwargs: next(remote_heads),
+    )
+    monkeypatch.setattr("arnold_pipelines.megaplan.chain.git_ops.time.sleep", lambda _seconds: None)
+
+    proc = git_ops._run_git_push_command(
+        root,
+        ["git", "push", "--no-verify", "-u", "origin", "branch-x"],
         writer=messages.append,
     )
 
