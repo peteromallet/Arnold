@@ -77,6 +77,7 @@ from arnold_pipelines.megaplan.planning.state import (
     STATE_EXECUTED,
     STATE_FAILED,
     STATE_FINALIZED,
+    STATE_GATED,
     STATE_PAUSED,
     STATE_PREPPED,
     STATE_TIEBREAKER_PENDING,
@@ -2468,6 +2469,56 @@ def _recover_completed_execute_artifacts_after_failure(plan_dir: Path | None) ->
     return code == 0
 
 
+def _recover_completed_gate_artifact_after_failure(plan_dir: Path | None) -> bool:
+    """Advance a critiqued plan when a passing gate artifact was already written.
+
+    Gate can fail after writing the normalized ``gate.json`` but before
+    ``_finish_step`` persists ``current_state=gated``. Rerunning gate in that
+    shape burns model calls and can loop forever. Only adopt the artifact for
+    the unambiguous proceed case; iterate/escalate/tiebreaker recommendations
+    must continue through the normal handler because they carry routing side
+    effects.
+    """
+
+    if plan_dir is None:
+        return False
+    try:
+        state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        gate_data = json.loads((plan_dir / "gate.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(state_data, dict) or state_data.get("current_state") != STATE_CRITIQUED:
+        return False
+    active_step = state_data.get("active_step")
+    if isinstance(active_step, dict):
+        active_phase = active_phase_name(active_step)
+        if active_phase and active_phase != "gate":
+            return False
+    if not isinstance(gate_data, dict):
+        return False
+    if gate_data.get("recommendation") != "PROCEED" or gate_data.get("passed") is not True:
+        return False
+    if gate_data.get("unresolved_flags"):
+        return False
+
+    def _patch(current: dict[str, Any]) -> bool:
+        current["current_state"] = STATE_GATED
+        current.pop("active_step", None)
+        current.setdefault("meta", {})["gate_artifact_recovery"] = {
+            "reason": "adopted passing gate.json after worker failure",
+            "gate_recommendation": gate_data.get("recommendation"),
+        }
+        return True
+
+    write_plan_state(
+        plan_dir,
+        mode="patch-many",
+        patch={"current_state": STATE_GATED, "active_step": None},
+        mutation=_patch,
+    )
+    return True
+
+
 def _latest_review_requires_rework_after_execution(plan_dir: Path) -> bool:
     """Return true when old execution evidence is stale behind rework review."""
 
@@ -3636,6 +3687,15 @@ def drive(
                     "plan": plan,
                 }
             )
+        if (
+            state == STATE_CRITIQUED
+            and (next_step == "gate" or status_active_phase == "gate")
+            and _recover_completed_gate_artifact_after_failure(plan_dir)
+        ):
+            message = "reconciled passing gate.json after worker failure"
+            log("recovered completed gate artifact after worker failure; resuming from gated")
+            events.append({"msg": message, "phase": "gate", "plan": plan})
+            continue
 
         # Terminal: plan reached a final state (or automation-terminal).
         if state in AUTOMATION_TERMINAL_STATES and not (state == STATE_BLOCKED and valid_next):
