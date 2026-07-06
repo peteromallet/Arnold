@@ -814,6 +814,9 @@ def _classify_session(
             f"superseded by sibling session {superseding_sibling}; no runner expected",
         )
 
+    if _canonical_spec_missing(workspace, remote_spec):
+        return "attention", "spec missing or unreadable"
+
     # A current needs-human sidecar is ground truth for active work. A complete
     # chain with no active plan has no live repair target, so stale repair
     # exhaustion markers from earlier ticks must not keep it blocked forever.
@@ -861,6 +864,28 @@ def _classify_session(
     if latest_activity_dt is None:
         return "attention", "no activity timestamp; cannot confirm liveness"
     return "attention", f"stalled (no live process, last activity {_age_s(latest_activity_dt, now)}s ago)"
+
+
+def _canonical_spec_missing(workspace: Path, remote_spec: str) -> bool:
+    """True when a chain marker points at a spec that should exist locally.
+
+    Many tests and some legacy markers carry placeholder specs outside the
+    workspace. Those are not enough to invalidate a session. A spec inside the
+    session workspace is canonical durable input, though; if that file is gone,
+    old chain-health and needs-human sidecars are stale evidence and must not
+    keep the session classified as a live blocker.
+    """
+    if not remote_spec:
+        return False
+    try:
+        spec_path = Path(remote_spec)
+        workspace_resolved = workspace.resolve()
+        spec_resolved = spec_path.resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if spec_resolved != workspace_resolved and workspace_resolved not in spec_resolved.parents:
+        return False
+    return not spec_path.exists()
 
 
 # --- source file readers ---------------------------------------------------

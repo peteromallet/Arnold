@@ -7,7 +7,7 @@ from typing import Any
 
 from arnold_pipelines.megaplan.anchors import anchor_summary
 from arnold_pipelines.megaplan.types import StepResponse
-from arnold_pipelines.megaplan.planning.state import STATE_BLOCKED, STATE_FINALIZED
+from arnold_pipelines.megaplan.planning.state import STATE_BLOCKED
 from arnold_pipelines.megaplan.user_actions import FALLBACK, OMIT
 from arnold_pipelines.megaplan._core import (
     active_phase_name,
@@ -997,27 +997,23 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
                 "suggested_commands"
             ]
             if (
-                state.get("current_state") == STATE_BLOCKED
-                and response.get("next_step") == "recover-blocked"
+                state.get("current_state") in {STATE_BLOCKED, "finalized"}
                 and blocker_recovery.get("has_terminal_blockers") is True
             ):
-                # Keep status pinned on the blocked state until an operator
-                # explicitly records non-terminal resolutions. Advertising
-                # recover-blocked here only causes auto loops to dispatch a
-                # helper that must fail immediately.
+                # Keep status pinned until an operator/repairer chooses a real
+                # recovery action. Advertising recover-blocked or execute here
+                # only causes auto loops to spend budget on a command that must
+                # return to the same terminal blocker.
                 response["next_step"] = None
                 response["valid_next"] = []
-            elif (
-                state.get("current_state") == STATE_FINALIZED
-                and response.get("next_step") == "execute"
-                and blocker_recovery.get("has_terminal_blockers") is True
-            ):
-                # Finalized plans can still accumulate execute-surface hard
-                # blockers (for example malformed / empty execution batch
-                # artifacts). In that state the next actionable move is to
-                # resolve the blocker, not to re-dispatch execute and spin.
-                response["next_step"] = None
-                response["valid_next"] = []
+                plan_name = state.get("name")
+                if isinstance(plan_name, str) and plan_name:
+                    response["suggested_recovery_commands"] = _unique_strings(
+                        [
+                            *response.get("suggested_recovery_commands", []),
+                            f"override replan --plan {plan_name} --reason <reason>",
+                        ]
+                    )
     external_resume_command = _external_error_resume_command(state)
     if external_resume_command is not None:
         response["external_error_recovery"] = {
