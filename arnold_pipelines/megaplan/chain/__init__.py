@@ -2105,6 +2105,31 @@ def _plan_terminal_completion_is_authoritative(
     return _latest_execution_batch_all_tasks_done(plan_dir)
 
 
+def _finalized_plan_has_successful_review(plan_state: dict[str, Any]) -> bool:
+    """Return true when a finalized plan has already completed review successfully."""
+
+    if plan_state.get("current_state") != STATE_FINALIZED:
+        return False
+    if plan_state.get("latest_failure"):
+        return False
+    if plan_state.get("active_step"):
+        return False
+    history = plan_state.get("history")
+    if not isinstance(history, list):
+        return False
+    saw_execute = False
+    for entry in history:
+        if not isinstance(entry, dict):
+            continue
+        step = str(entry.get("step") or "").strip().lower()
+        result = str(entry.get("result") or "").strip().lower()
+        if step == "execute":
+            saw_execute = True
+        if saw_execute and step == "review" and result == "success":
+            return True
+    return False
+
+
 def _read_typed_noop_completion_waiver(
     plan_dir: Path,
     *,
@@ -2995,6 +3020,39 @@ def _append_completed_with_guard(
         return False, reason
     state.completed.append(record)
     return True, reason
+
+
+def _append_reconciled_completed_record(
+    root: Path,
+    state: ChainState,
+    *,
+    plan_name: str,
+    milestone: MilestoneSpec,
+    pr_number: int | None,
+    pr_state: str | None,
+    completion_reason: str,
+    writer,
+) -> None:
+    state.completed.append(
+        {
+            "label": milestone.label,
+            "plan": plan_name,
+            "status": STATE_DONE,
+            "pr_number": pr_number,
+            "pr_state": pr_state,
+        }
+    )
+    _mark_plan_completed_by_chain(
+        root,
+        plan_name,
+        milestone_label=milestone.label,
+        completion_reason=completion_reason,
+        writer=writer,
+    )
+    writer(
+        f"[chain] reconciled terminal plan {plan_name} into completed "
+        f"milestone {milestone.label}\n"
+    )
 
 
 def _handle_completion_guard_failure(
@@ -4157,6 +4215,68 @@ def _reconcile_chain_from_ground_truth(
 
     current_plan_state = plan_state.get("current_state") if plan_state else None
     if (
+        bool(plan_name)
+        and active_milestone is not None
+        and current_plan_state == STATE_DONE
+        and active_milestone.label not in completed_labels
+        and (
+            not active_uses_pr
+            or (state.pr_number is not None and live_active_pr_state == "merged")
+        )
+    ):
+        _append_reconciled_completed_record(
+            root,
+            state,
+            plan_name=plan_name,
+            milestone=active_milestone,
+            pr_number=state.pr_number if active_uses_pr else None,
+            pr_state="merged" if active_uses_pr else None,
+            completion_reason="terminal plan state reconciled from ground truth",
+            writer=writer,
+        )
+        completed_labels.add(active_milestone.label)
+
+    reviewed_finalized_plan = (
+        bool(plan_name)
+        and bool(plan_state)
+        and _finalized_plan_has_successful_review(plan_state)
+    )
+    if reviewed_finalized_plan and active_milestone is not None:
+        if active_uses_pr and state.pr_number is not None:
+            if live_active_pr_state == "open" and state.last_state != STATE_AWAITING_PR_MERGE:
+                writer(
+                    f"[chain] plan {plan_name} is finalized with successful review but PR "
+                    f"#{state.pr_number} is open; waiting for merge\n"
+                )
+                state.last_state = STATE_AWAITING_PR_MERGE
+            elif (
+                live_active_pr_state == "merged"
+                and active_milestone.label not in completed_labels
+            ):
+                _append_reconciled_completed_record(
+                    root,
+                    state,
+                    plan_name=plan_name,
+                    milestone=active_milestone,
+                    pr_number=state.pr_number,
+                    pr_state="merged",
+                    completion_reason="reviewed finalized plan with merged PR",
+                    writer=writer,
+                )
+                completed_labels.add(active_milestone.label)
+        elif not active_uses_pr and active_milestone.label not in completed_labels:
+            _append_reconciled_completed_record(
+                root,
+                state,
+                plan_name=plan_name,
+                milestone=active_milestone,
+                pr_number=None,
+                pr_state=None,
+                completion_reason="reviewed finalized local plan",
+                writer=writer,
+            )
+            completed_labels.add(active_milestone.label)
+    if (
         active_uses_pr
         and state.pr_number is not None
         and current_plan_state == STATE_DONE
@@ -4209,10 +4329,11 @@ def _reconcile_chain_from_ground_truth(
                 f"-> {next_index}\n"
             )
             state.current_milestone_index = next_index
-            if next_index < len(spec.milestones):
-                state.current_plan_name = None
-                state.pr_number = None
-                state.pr_state = None
+            state.current_plan_name = None
+            state.pr_number = None
+            state.pr_state = None
+            if next_index >= len(spec.milestones):
+                state.last_state = "done"
 
     _append_reconciliation_audit(
         state,
