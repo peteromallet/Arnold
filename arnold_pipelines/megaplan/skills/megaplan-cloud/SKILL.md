@@ -1,1 +1,1 @@
-/workspace/agent-ui-lifecycle-parity-a06c9bd9/vibecomfy/.megaplan/runtime/editable-engine/arnold_pipelines/megaplan/data/cloud_skill.md
+/workspace/megaplan-native-parity-corrective/Arnold/arnold_pipelines/megaplan/data/cloud_skill.md
