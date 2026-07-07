@@ -3632,6 +3632,73 @@ def _rearm_fresh_session_execute_block(
     return True
 
 
+def _quarantine_authority_divergence_execute_artifacts(plan_dir: Path) -> list[str]:
+    """Move stale execute retry artifacts aside before an authority rerun.
+
+    Authority-divergence blocks are created when execute claims terminal
+    success but the latest task evidence does not corroborate completion. A
+    later chain relaunch must retry execute from the plan state, not let the
+    execute worker recover the same malformed scratch/checkpoint files.
+    """
+
+    quarantined: list[str] = []
+
+    def _move_aside(path: Path) -> None:
+        if not path.exists():
+            return
+        target = path.with_name(f"{path.name}.authority-divergence")
+        suffix = 1
+        while target.exists():
+            target = path.with_name(
+                f"{path.name}.authority-divergence.{suffix}"
+            )
+            suffix += 1
+        try:
+            path.replace(target)
+        except OSError:
+            return
+        quarantined.append(path.name)
+
+    for pattern in ("execute_output.json", "execute_batch_*_output.json"):
+        for path in sorted(plan_dir.glob(pattern)):
+            _move_aside(path)
+
+    batches = sorted(
+        plan_dir.glob("execution_batch_*.json"),
+        key=_execution_batch_sort_key,
+    )
+    if batches:
+        latest = batches[-1]
+        try:
+            payload = json.loads(latest.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            payload = None
+        records: list[dict[str, Any]] = []
+        if isinstance(payload, dict):
+            for key in ("task_updates", "tasks"):
+                raw_records = payload.get(key)
+                if isinstance(raw_records, list):
+                    records.extend(
+                        item for item in raw_records if isinstance(item, dict)
+                    )
+        completed_statuses = {
+            "done",
+            "completed",
+            "complete",
+            "passed",
+            "success",
+            "ok",
+        }
+        if not any(
+            str(record.get("status") or "").strip().casefold()
+            in completed_statuses
+            for record in records
+        ):
+            _move_aside(latest)
+
+    return quarantined
+
+
 def _rearm_rerun_phase_execute_authority_block(
     plan_dir: Path,
     *,
@@ -3677,6 +3744,7 @@ def _rearm_rerun_phase_execute_authority_block(
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "reason": "chain relaunch honored execute rerun_phase authority-divergence cursor",
     }
+    quarantined = _quarantine_authority_divergence_execute_artifacts(plan_dir)
 
     def _patch_blocked_execute(current: dict[str, Any]) -> bool:
         current.pop("latest_failure", None)
@@ -3686,7 +3754,10 @@ def _rearm_rerun_phase_execute_authority_block(
         if isinstance(meta, dict):
             entries = meta.setdefault("rerun_phase_execute_recoveries", [])
             if isinstance(entries, list):
-                entries.append(recovery_event)
+                event = dict(recovery_event)
+                if quarantined:
+                    event["quarantined_artifacts"] = list(quarantined)
+                entries.append(event)
         return True
 
     write_plan_state(
@@ -3699,6 +3770,11 @@ def _rearm_rerun_phase_execute_authority_block(
         "[chain] execute authority-divergence recorded a rerun-phase retry; reset "
         "blocked plan back to finalized so execute can re-run\n"
     )
+    if quarantined:
+        writer(
+            "[chain] quarantined stale execute retry artifacts: "
+            f"{', '.join(quarantined)}\n"
+        )
     return True
 
 
