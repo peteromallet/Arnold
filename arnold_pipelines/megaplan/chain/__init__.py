@@ -1955,10 +1955,12 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
     if not task_records:
         return False, f"{latest.name} has no task records"
 
+    completed_statuses = {"done", "completed", "complete", "passed", "success", "ok"}
     authoritative_task_records = [
         task
         for task in task_records
-        if str(task.get("task_id") or task.get("id") or "")
+        if str(task.get("status") or "").strip().casefold() in completed_statuses
+        and str(task.get("task_id") or task.get("id") or "")
         not in baseline_unavailable_task_ids
     ]
     if authoritative_task_records:

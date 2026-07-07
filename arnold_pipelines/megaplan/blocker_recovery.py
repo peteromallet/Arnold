@@ -518,6 +518,8 @@ def evaluate_prerequisite_blockers(
         blocked = _coerce_blocked_task(raw_blocked)
         if blocked is None:
             continue
+        if _is_harness_generated_blocked_task(blocked):
+            continue
         if blocked.blocking_action_ids:
             matching_scopes = [
                 scopes[action_id]
@@ -747,3 +749,9 @@ def _string_tuple(value: Any) -> tuple[str, ...]:
     if isinstance(value, (list, tuple)):
         return tuple(item for item in value if isinstance(item, str))
     return ()
+
+
+def _is_harness_generated_blocked_task(blocked: BlockedTask) -> bool:
+    if blocked.reason != "blocked_by_prereq":
+        return False
+    return "[harness]" in blocked.notes
