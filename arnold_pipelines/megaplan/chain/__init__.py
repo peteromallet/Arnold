@@ -1786,6 +1786,17 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
     actual_git_head = _best_effort_git_head(project_dir) if project_dir is not None else None
     execution_window_available = actual_git_head is not None
     evidence_nucleus = load_evidence_nucleus(plan_dir, default_head=current_head)
+    resume_cursor = state_payload.get("resume_cursor") if isinstance(state_payload, dict) else None
+    latest_failure = state_payload.get("latest_failure") if isinstance(state_payload, dict) else None
+    blocked_authority_rerun = (
+        state_payload.get("current_state") == STATE_BLOCKED
+        and isinstance(resume_cursor, dict)
+        and resume_cursor.get("phase") == "execute"
+        and resume_cursor.get("retry_strategy") == "rerun_phase"
+        and isinstance(latest_failure, dict)
+        and latest_failure.get("phase") == "execute"
+        and latest_failure.get("kind") == "authority_divergence"
+    )
 
     def _authoritative_batch_task_overrides() -> dict[str, dict[str, Any]]:
         overrides: dict[str, dict[str, Any]] = {}
@@ -1920,6 +1931,12 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
             for task in authoritative_finalize_records
         )
         if has_pending_without_batch_override:
+            if blocked_authority_rerun:
+                return (
+                    False,
+                    "finalize.json retains unresolved pending tasks during "
+                    "authority-divergence execute rerun",
+                )
             authoritative_finalize_records = None
 
     if authoritative_finalize_records:
