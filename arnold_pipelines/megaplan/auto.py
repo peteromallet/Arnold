@@ -37,8 +37,12 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping
 if TYPE_CHECKING:
     from arnold_pipelines.megaplan.drivers import Substrate
 
-from arnold_pipelines.megaplan._core import active_phase_name, find_plan_dir
-from arnold_pipelines.megaplan.fallback_chains import encode_phase_model_value, select_fallback_spec
+from arnold_pipelines.megaplan._core import (
+    active_phase_name,
+    find_plan_dir,
+    list_batch_artifacts,
+)
+from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
 from arnold.runtime.envelope import (
     _envelope_ctx,
     write_envelope_in,
@@ -980,7 +984,7 @@ def _plan_liveness_mtime(plan_dir: Path | None) -> float | None:
     # dormant-path: subprocess seam, retired at M6
     candidates = [plan_dir / "state.json"]
     try:
-        candidates.extend(plan_dir.glob("execution_batch_*.json"))
+        candidates.extend(list_batch_artifacts(plan_dir))
     except OSError:
         pass
     newest: float | None = None
@@ -1444,20 +1448,16 @@ def _sum_history_cost_usd(plan_dir: Path | None) -> float:
 
 
 def _read_state_data(plan_dir: Path | None) -> dict[str, Any] | None:
-    """Best-effort read of canonical plan state (None on any failure).
-
-    Use the shared loader so status/repair loops observe the same reconciled
-    state that the CLI and chain drivers do. This avoids raw ``state.json``
-    reads preserving transient ``failed/no_next_step`` status after a
-    successful finalize or authoritative blocked execute reconciliation.
-    """
+    """Best-effort read of ``state.json`` as a dict (None on any failure)."""
     if plan_dir is None:
         return None
     try:
-        from arnold_pipelines.megaplan._core.state import load_plan_from_dir
-
-        _resolved_plan_dir, data = load_plan_from_dir(plan_dir)
-    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
+        # dormant-path: subprocess seam, retired at M6
+        with (plan_dir / "state.json").open(encoding="utf-8") as handle:
+            data = json.load(handle)
+    except FileNotFoundError:
+        return None
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return None
     return data if isinstance(data, dict) else None
 
@@ -1610,17 +1610,8 @@ def _auto_verify_deferred_must_criteria(plan_dir: Path | None, *, log) -> bool:
         return False
 
 
-TierSpecValue = str | list[str]
-
-
-def _primary_execute_tier_spec(spec: TierSpecValue) -> str:
-    if isinstance(spec, str):
-        return spec
-    return select_fallback_spec(spec, 0, path="tier_models.execute")
-
-
-def _read_execute_tier_ladder(plan_dir: Path | None) -> dict[int, TierSpecValue]:
-    """Return ``{tier_number: spec_or_fallback_chain}`` for ``tier_models.execute``.
+def _read_execute_tier_ladder(plan_dir: Path | None) -> dict[int, str]:
+    """Return ``{tier_number: spec_string}`` for ``tier_models.execute``.
 
     Read from the plan's persisted ``state.json`` config (written by init when
     a tier-routed profile is active). Returns an empty dict when the run is not
@@ -1642,7 +1633,7 @@ def _read_execute_tier_ladder(plan_dir: Path | None) -> dict[int, TierSpecValue]
     max_execute_tier = config.get("max_execute_tier")
     if not isinstance(max_execute_tier, int) or not 1 <= max_execute_tier <= 5:
         max_execute_tier = None
-    ladder: dict[int, TierSpecValue] = {}
+    ladder: dict[int, str] = {}
     for raw_tier, spec in execute_tiers.items():
         try:
             tier_num = int(raw_tier)
@@ -1654,10 +1645,11 @@ def _read_execute_tier_ladder(plan_dir: Path | None) -> dict[int, TierSpecValue]
             ladder[tier_num] = spec
             continue
         if isinstance(spec, list):
-            primary = select_fallback_spec(spec, 0, path=f"tier_models.execute.{tier_num}")
-            ladder[tier_num] = [item for item in spec if isinstance(item, str) and item.strip()]
-            if not ladder[tier_num]:
-                ladder[tier_num] = primary
+            ladder[tier_num] = select_fallback_spec(
+                spec,
+                0,
+                path=f"tier_models.execute.{tier_num}",
+            )
     return ladder
 
 
@@ -1693,10 +1685,10 @@ def _latest_execute_max_tier(plan_dir: Path | None) -> int | None:
 
 
 def _next_escalation_tier(
-    ladder: dict[int, TierSpecValue],
+    ladder: dict[int, str],
     *,
     current_tier: int | None,
-) -> tuple[int, TierSpecValue] | None:
+) -> tuple[int, str] | None:
     """Pick the next tier whose spec is a *distinct* model above ``current_tier``.
 
     "Escalate up" means moving toward the highest (most capable) tier number.
@@ -1719,18 +1711,13 @@ def _next_escalation_tier(
     if current_tier >= ceiling:
         return None
     current_spec = ladder.get(current_tier)
-    current_primary = (
-        _primary_execute_tier_spec(current_spec)
-        if current_spec is not None
-        else None
-    )
     for tier in sorted_tiers:
         if tier <= current_tier:
             continue
         spec = ladder[tier]
         # Skip same-model steps (no-op escalation) — keep climbing until a
         # genuinely more capable distinct model appears.
-        if current_primary is not None and _primary_execute_tier_spec(spec) == current_primary:
+        if current_spec is not None and spec == current_spec:
             continue
         return tier, spec
     return None
@@ -1905,8 +1892,8 @@ def _review_nonconvergence_escalation_plan(
     *,
     plan_dir: Path | None,
     task_id: str,
-    ladder: dict[int, TierSpecValue],
-) -> tuple[int | None, tuple[int, TierSpecValue] | None]:
+    ladder: dict[int, str],
+) -> tuple[int | None, tuple[int, str] | None]:
     baseline = _current_task_override(plan_dir, task_id)
     observed_tier = _latest_execute_max_tier(plan_dir)
     task_complexity = _task_complexity(plan_dir, task_id)
@@ -2575,11 +2562,12 @@ def _execution_batch_completed_task_ids(
     *,
     project_dir: Path | None,
     state_data: dict[str, Any] | None,
+    current_head: str | None = None,
 ) -> set[str]:
     if plan_dir is None:
         return set()
     completed: set[str] = set()
-    for batch_path in sorted(plan_dir.glob("execution_batch_*.json")):
+    for batch_path in list_batch_artifacts(plan_dir):
         try:
             payload = json.loads(batch_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
@@ -2599,9 +2587,33 @@ def _execution_batch_completed_task_ids(
                 plan_dir=plan_dir,
                 project_dir=project_dir,
                 state=state_data,
+                current_head=current_head,
             )
         )
     return completed
+
+
+def _latest_recorded_execute_head(plan_dir: Path | None) -> str | None:
+    if plan_dir is None:
+        return None
+    for batch_path in reversed(list_batch_artifacts(plan_dir)):
+        try:
+            payload = json.loads(batch_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        task_updates = payload.get("task_updates")
+        if not isinstance(task_updates, list):
+            continue
+        for record in reversed(task_updates):
+            if not isinstance(record, dict):
+                continue
+            for key in ("head_sha", "head"):
+                value = record.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    return None
 
 
 def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str]]:
@@ -2617,18 +2629,21 @@ def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str
         raw_project_dir = config.get("project_dir") if isinstance(config, dict) else None
         if isinstance(raw_project_dir, str) and raw_project_dir:
             project_dir = Path(raw_project_dir)
+    recorded_execute_head = _latest_recorded_execute_head(plan_dir)
     decisions: dict[str, AuthorityDecision] = {}
     completed = effective_execute_completed_task_ids(
         tasks,
         plan_dir=plan_dir,
         project_dir=project_dir,
         state=state_data,
+        current_head=recorded_execute_head,
         decisions=decisions,
     )
     batch_completed = _execution_batch_completed_task_ids(
         plan_dir,
         project_dir=project_dir,
         state_data=state_data,
+        current_head=recorded_execute_head,
     )
     missing: list[str] = []
     for task in tasks:
@@ -2642,7 +2657,9 @@ def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str
                 f"not_executed:{raw_status or 'missing_status'}"
             )
             continue
-        if raw_status in {"done", "completed", "skipped", "waived", "not_applicable"} and task_id not in completed:
+        if raw_status in {"done", "completed", "skipped", "waived", "not_applicable"}:
+            if task_id in completed or task_id in batch_completed:
+                continue
             if (
                 raw_status == "skipped"
                 and task.get("reviewer_verdict") == "deferred_baseline_unavailable"
@@ -3177,23 +3194,14 @@ def _auto_publish_branch_name(plan: str) -> str:
 
 
 def _git_text(root: Path, argv: list[str], *, timeout: int = 120) -> str:
-    try:
-        result = subprocess.run(
-            argv,
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout
-        stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr
-        raise CliError(
-            "git_publish_timeout",
-            f"{shlex.join(argv)} timed out after {timeout} seconds",
-            extra={"argv": argv, "stdout": stdout, "stderr": stderr, "timeout": timeout},
-        ) from exc
+    result = subprocess.run(
+        argv,
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout,
+    )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         raise CliError(
@@ -3266,20 +3274,15 @@ def _publish_done_plan(
     remote_url = ""
     push_result = None
     if status == "pushed":
+        push_result = _git_text(
+            root,
+            ["git", "push", "--no-verify", "-u", "origin", f"HEAD:{target_branch}"],
+            timeout=180,
+        )
         try:
-            push_result = _git_text(
-                root,
-                ["git", "push", "--no-verify", "-u", "origin", f"HEAD:{target_branch}"],
-                timeout=180,
-            )
-            try:
-                remote_url = _git_text(root, ["git", "remote", "get-url", "origin"])
-            except CliError:
-                remote_url = ""
-        except CliError as error:
-            status = "publish_failed"
-            reason = error.code
-            push_result = error.message
+            remote_url = _git_text(root, ["git", "remote", "get-url", "origin"])
+        except CliError:
+            remote_url = ""
     payload = {
         "schema": "megaplan.auto_publish",
         "schema_version": 1,
@@ -3299,8 +3302,7 @@ def _publish_done_plan(
     _atomic_write_text(plan_dir / "publish.json", json.dumps(payload, indent=2) + "\n")
     writer(
         f"[auto {plan}] publish {payload['status']}: "
-        f"branch={target_branch} commit={commit_sha[:12]}"
-        f"{(' reason=' + reason) if reason else ''}\n"
+        f"branch={target_branch} commit={commit_sha[:12]}\n"
     )
     return payload
 
@@ -3376,7 +3378,7 @@ def drive(
     # The tier we have climbed the execute pin to (None = not yet escalated).
     escalation_tier_pin: int | None = None
     # The spec we are currently pinning execute to (None = configured routing).
-    escalation_pin_spec: TierSpecValue | None = None
+    escalation_pin_spec: str | None = None
     # Total escalations performed, surfaced in the run summary.
     tier_escalations_used = 0
 
@@ -4507,7 +4509,7 @@ def drive(
                 cmd = [
                     *cmd,
                     "--phase-model",
-                    encode_phase_model_value("execute", escalation_pin_spec),
+                    f"execute={escalation_pin_spec}",
                     "--fresh",
                 ]
         log(f"running: megaplan {' '.join(cmd)}", phase=next_step, timeout=phase_timeout)
@@ -5122,18 +5124,13 @@ def drive(
                         },
                         last_artifact=_latest_artifact_name(plan_dir),
                         suggested_action=(
-                            "Do not mechanically rerun execute. Replan the blocked execution "
-                            f"path with `override replan --plan {plan_dir.name} --reason <reason>` "
-                            "or fix the prerequisite evidence before resuming."
+                            "Inspect the prerequisite evidence or resolve the blocked task "
+                            "dependency before rerunning execute."
                         ),
                         metadata={
                             "blocked_retries_used": blocked_retry_count,
                             "max_blocked_retries": max_blocked_retries,
                             "blocking_reasons": blocking_reasons,
-                            "recommended_recovery": "replan_or_fix_prerequisite",
-                            "suggested_recovery_commands": [
-                                f"override replan --plan {plan_dir.name} --reason <reason>"
-                            ],
                         },
                     )
                     return _outcome(
