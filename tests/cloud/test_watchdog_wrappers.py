@@ -42,6 +42,12 @@ def _repair_wrapper() -> str:
     return _wrapper("arnold-repair-loop")
 
 
+def _clear_repair_loop_recursion_env(env: dict[str, str]) -> None:
+    env.pop("CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE", None)
+    env.pop("CLOUD_WATCHDOG_REPAIR_LOOP_SESSION", None)
+    env.pop("CLOUD_WATCHDOG_REPAIR_LOOP_PID", None)
+
+
 def _extract_repair_function(name: str) -> str:
     text = _repair_wrapper()
     start = text.index(f"{name}() {{")
@@ -3456,6 +3462,7 @@ def test_repair_loop_serializes_same_session_invocations_and_cleans_pidfile_on_t
     launcher_path.write_text("import time\n\ntime.sleep(5)\n", encoding="utf-8")
 
     env = dict(os.environ)
+    _clear_repair_loop_recursion_env(env)
     env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
     env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
@@ -3533,6 +3540,7 @@ def test_repair_loop_reclaims_stale_pidfile_on_start(tmp_path: Path) -> None:
     launcher_path.write_text("import time\n\ntime.sleep(5)\n", encoding="utf-8")
 
     env = dict(os.environ)
+    _clear_repair_loop_recursion_env(env)
     env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
     env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
@@ -3611,6 +3619,7 @@ def test_repair_loop_reclaims_pidfile_after_kill9_with_child_alive(tmp_path: Pat
     launcher_path.write_text("import time\n\ntime.sleep(30)\n", encoding="utf-8")
 
     env = dict(os.environ)
+    _clear_repair_loop_recursion_env(env)
     env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
     env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
     env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
@@ -3691,6 +3700,7 @@ def test_repair_loop_busy_directory_lock_exits_without_mutating_repair_data(tmp_
         assert acquired.acquired
 
         env = dict(os.environ)
+        _clear_repair_loop_recursion_env(env)
         env["CLOUD_WATCHDOG_ARNOLD_SRC"] = str(REPO_ROOT)
         env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
         env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
