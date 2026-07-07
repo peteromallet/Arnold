@@ -595,6 +595,55 @@ def test_reconcile_leaves_finalized_open_pr_for_execute_resume(
     assert not any("waiting for merge" in message for message in messages)
 
 
+def test_reconcile_reviewed_finalized_plan_waits_for_open_pr_merge(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    spec = load_spec(spec_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "m7-plan"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "m7-plan",
+                "current_state": "finalized",
+                "latest_failure": None,
+                "active_step": None,
+                "meta": {"chain_policy": {"milestone_label": "m7"}},
+                "history": [
+                    {"step": "execute", "result": "blocked"},
+                    {"step": "review", "result": "success"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="m7-plan",
+        last_state="finalized",
+        pr_number=122,
+        pr_state="open",
+    )
+
+    with patch("arnold_pipelines.megaplan.chain._pr_state", return_value="open"):
+        reconciled = _reconcile_chain_from_ground_truth(
+            tmp_path,
+            spec_path,
+            spec,
+            state,
+            writer=lambda _message: None,
+            push_enabled=True,
+        )
+
+    saved = load_chain_state(spec_path)
+    assert reconciled.current_plan_name == "m7-plan"
+    assert reconciled.current_milestone_index == 0
+    assert reconciled.completed == []
+    assert reconciled.last_state == STATE_AWAITING_PR_MERGE
+    assert saved.last_state == STATE_AWAITING_PR_MERGE
+
+
 def test_reconcile_revalidates_completed_prs_from_live_github(
     tmp_path: Path,
 ) -> None:
