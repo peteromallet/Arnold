@@ -74,6 +74,7 @@ def resolve_current_target(
             "repair_progress": {"present": False, "items": []},
             "chain_log": {},
             "active_step_heartbeat": {},
+            "read_snapshot": {},
             "sibling_sessions": [],
             "ignored_artifacts": [],
             "stale_evidence": [],
@@ -84,23 +85,41 @@ def resolve_current_target(
     markers_root = Path(marker_dir)
     data_root = Path(repair_data_dir) if repair_data_dir is not None else markers_root / "repair-data"
     marker_path = markers_root / f"{session}.json"
-    marker = _safe_load_dict(marker_path)
+    marker_probe = _safe_load_dict(marker_path)
+    workspace = _safe_path(marker_probe.get("workspace"))
+    remote_spec = _resolve_remote_spec(workspace, marker_probe.get("remote_spec"))
+    run_kind = _resolve_run_kind(marker_probe.get("run_kind"), remote_spec)
+    marker_plan_name = _safe_plan_name(marker_probe.get("plan_name"))
+
+    chain_state_path = _chain_state_path(workspace, remote_spec, run_kind)
+    chain_state_probe = _safe_load_dict(chain_state_path)
+    chain_current_plan = _safe_plan_name(chain_state_probe.get("current_plan_name"))
+
+    resolved_plan_name = chain_current_plan or marker_plan_name
+    plan_state_path = _plan_state_path(workspace, resolved_plan_name, run_kind)
+    needs_human_path = data_root / f"{session}.needs-human.json"
+    snapshot = _collect_read_coherent_snapshot(
+        marker_path=marker_path,
+        chain_state_path=chain_state_path,
+        plan_state_path=plan_state_path,
+        needs_human_path=needs_human_path,
+        chain_log_path=_chain_log_source_path(workspace, session),
+    )
+    marker = snapshot["marker"]
+    chain_state = snapshot["chain_state"]
+    plan_state = snapshot["plan_state"]
+    needs_human = snapshot["needs_human"]
+    event_cursors = snapshot["event_cursors"]
+    chain_log = snapshot["chain_log"]
+    read_snapshot = snapshot["read_snapshot"]
+
     workspace = _safe_path(marker.get("workspace"))
     remote_spec = _resolve_remote_spec(workspace, marker.get("remote_spec"))
     run_kind = _resolve_run_kind(marker.get("run_kind"), remote_spec)
     marker_plan_name = _safe_plan_name(marker.get("plan_name"))
-
-    chain_state_path = _chain_state_path(workspace, remote_spec, run_kind)
-    chain_state = _safe_load_dict(chain_state_path)
     chain_current_plan = _safe_plan_name(chain_state.get("current_plan_name"))
-
     resolved_plan_name = chain_current_plan or marker_plan_name
-    plan_state_path = _plan_state_path(workspace, resolved_plan_name, run_kind)
-    plan_state = _safe_load_dict(plan_state_path)
     plan_name = _safe_plan_name(plan_state.get("name")) or resolved_plan_name
-
-    needs_human_path = data_root / f"{session}.needs-human.json"
-    needs_human = _safe_load_dict(needs_human_path)
     needs_human_plans = _collect_needs_human_plan_refs(needs_human)
     repair_progress = _collect_sidecar_status(markers_root, session)
     tmux_process = _collect_tmux_process_evidence(marker, session, session_is_live, pid_is_live)
@@ -110,8 +129,6 @@ def resolve_current_target(
         workspace=workspace,
         session_is_live=session_is_live,
     )
-    event_cursors = _collect_event_cursors(plan_state_path, plan_state)
-    chain_log = _collect_chain_log_evidence(workspace, session, run_kind)
     active_step_heartbeat = _collect_active_step_heartbeat(plan_state)
     diagnostic_codes = _collect_diagnostic_codes(needs_human, event_cursors, plan_state)
 
@@ -129,7 +146,35 @@ def resolve_current_target(
     if remote_spec is None:
         rationale.append("marker did not provide a usable remote spec")
     if workspace is None:
+        stale_evidence.append(_artifact(kind="missing_workspace", path=marker_path, workspace=""))
         rationale.append("marker did not provide a usable workspace")
+    elif not workspace.is_dir():
+        stale_evidence.append(
+            _artifact(
+                kind="missing_workspace",
+                path=workspace,
+                marker_path=str(marker_path),
+                workspace=str(workspace),
+            )
+        )
+        rationale.append("marker workspace path does not name an existing directory")
+
+    if read_snapshot.get("incoherent") is True:
+        torn_path = _safe_path(read_snapshot.get("events_path")) or marker_path
+        stale_evidence.append(
+            _artifact(
+                kind="torn_read_snapshot",
+                path=torn_path,
+                changed_tokens=list(read_snapshot.get("changed_tokens", [])),
+                changed_fingerprints=list(read_snapshot.get("changed_fingerprints", [])),
+                partial_events_read=bool(read_snapshot.get("partial_events_read")),
+                snapshot={
+                    "before": dict(read_snapshot.get("before", {})),
+                    "after": dict(read_snapshot.get("after", {})),
+                },
+            )
+        )
+        rationale.append("bounded read snapshot observed concurrent source drift")
 
     if chain_state_path is not None and not chain_state_path.exists():
         stale_evidence.append(_artifact(kind="missing_chain_state", path=chain_state_path))
@@ -278,6 +323,7 @@ def resolve_current_target(
         "repair_progress": repair_progress,
         "chain_log": chain_log,
         "active_step_heartbeat": active_step_heartbeat,
+        "read_snapshot": read_snapshot,
         "sibling_sessions": siblings,
         "ignored_artifacts": sorted(ignored_artifacts, key=_artifact_sort_key),
         "stale_evidence": sorted(stale_evidence, key=_artifact_sort_key),
@@ -356,21 +402,165 @@ def _plan_state_path(workspace: Path | None, plan_name: str, run_kind: str) -> P
     return state_paths[0] if state_paths else None
 
 
+def _collect_read_coherent_snapshot(
+    *,
+    marker_path: Path,
+    chain_state_path: Path | None,
+    plan_state_path: Path | None,
+    needs_human_path: Path,
+    chain_log_path: Path | None,
+) -> dict[str, Any]:
+    events_path = plan_state_path.parent / "events.ndjson" if plan_state_path is not None else None
+    events_seq_path = plan_state_path.parent / ".events.seq" if plan_state_path is not None else None
+    source_paths = {
+        "marker": {"path": marker_path},
+        "chain_state": {"path": chain_state_path},
+        "plan_state": {"path": plan_state_path},
+        "needs_human": {"path": needs_human_path},
+        "events": {"path": events_path, "seq_path": events_seq_path},
+        "chain_log": {"path": chain_log_path},
+    }
+    before = _capture_source_versions(source_paths)
+    marker = _safe_load_dict(marker_path)
+    chain_state = _safe_load_dict(chain_state_path)
+    plan_state = _safe_load_dict(plan_state_path)
+    needs_human = _safe_load_dict(needs_human_path)
+    event_cursors, events_diag = _read_event_cursors(plan_state_path, plan_state)
+    chain_log = _chain_log_evidence_for_path(chain_log_path)
+    after = _capture_source_versions(source_paths)
+    read_snapshot = _build_read_snapshot(before, after, events_diag)
+    return {
+        "marker": marker,
+        "chain_state": chain_state,
+        "plan_state": plan_state,
+        "needs_human": needs_human,
+        "event_cursors": event_cursors,
+        "chain_log": chain_log,
+        "read_snapshot": read_snapshot,
+    }
+
+
+def _capture_source_versions(source_paths: Mapping[str, Mapping[str, Path | None]]) -> dict[str, dict[str, Any]]:
+    captured: dict[str, dict[str, Any]] = {}
+    for name, spec in source_paths.items():
+        path = spec.get("path")
+        seq_path = spec.get("seq_path")
+        captured[name] = _source_version(path, seq_path=seq_path)
+    return captured
+
+
+def _source_version(path: Path | None, *, seq_path: Path | None = None) -> dict[str, Any]:
+    fingerprint = _fingerprint(path) if path is not None else ""
+    mtime = _mtime(path) if path is not None else 0.0
+    present = bool(path and path.exists())
+    seq_token = _read_version_token(seq_path)
+    version_token = seq_token or _fallback_version_token(fingerprint, mtime)
+    version_token_source = "events_seq" if seq_token else "fingerprint_mtime" if present else "absent"
+    payload = {
+        "path": str(path) if path is not None else "",
+        "present": present,
+        "mtime": mtime,
+        "fingerprint": fingerprint,
+        "version_token": version_token,
+        "version_token_source": version_token_source,
+    }
+    if seq_path is not None:
+        payload["seq_path"] = str(seq_path)
+        payload["seq"] = seq_token
+    return payload
+
+
+def _fallback_version_token(fingerprint: str, mtime: float) -> str:
+    if not fingerprint and not mtime:
+        return ""
+    return f"{mtime:.9f}:{fingerprint}"
+
+
+def _read_version_token(path: Path | None) -> str:
+    if path is None:
+        return ""
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _build_read_snapshot(
+    before: Mapping[str, Mapping[str, Any]],
+    after: Mapping[str, Mapping[str, Any]],
+    events_diag: Mapping[str, Any],
+) -> dict[str, Any]:
+    changed_tokens: list[str] = []
+    changed_fingerprints: list[str] = []
+    for source_name in before:
+        before_meta = before.get(source_name, {})
+        after_meta = after.get(source_name, {})
+        if _safe_text(before_meta.get("version_token")) != _safe_text(after_meta.get("version_token")):
+            changed_tokens.append(source_name)
+        if _safe_text(before_meta.get("fingerprint")) != _safe_text(after_meta.get("fingerprint")):
+            changed_fingerprints.append(source_name)
+    partial_events_read = bool(events_diag.get("partial_torn_read"))
+    incoherent = bool(changed_tokens or changed_fingerprints or partial_events_read)
+    reasons: list[str] = []
+    if changed_tokens:
+        reasons.append("changed_version_tokens")
+    if changed_fingerprints:
+        reasons.append("changed_fingerprints")
+    if partial_events_read:
+        reasons.append("partial_events_read")
+    return {
+        "bounded": True,
+        "incoherent": incoherent,
+        "reasons": reasons,
+        "changed_tokens": sorted(changed_tokens),
+        "changed_fingerprints": sorted(changed_fingerprints),
+        "partial_events_read": partial_events_read,
+        "events_path": _safe_text(events_diag.get("events_path")),
+        "before": {name: dict(meta) for name, meta in before.items()},
+        "after": {name: dict(meta) for name, meta in after.items()},
+    }
+
+
 def _collect_event_cursors(plan_state_path: Path | None, plan_state: Mapping[str, Any]) -> dict[str, Any]:
+    cursors, _ = _read_event_cursors(plan_state_path, plan_state)
+    return cursors
+
+
+def _read_event_cursors(
+    plan_state_path: Path | None, plan_state: Mapping[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
     if plan_state_path is None:
-        return {"events_path": "", "events_present": False, "line_count": 0, "latest_gate_kind": "", "resume_retry_strategy": "", "mtime": 0.0}
+        empty = {
+            "events_path": "",
+            "events_present": False,
+            "line_count": 0,
+            "latest_gate_kind": "",
+            "resume_retry_strategy": "",
+            "mtime": 0.0,
+        }
+        return empty, {"events_path": "", "partial_torn_read": False}
     events_path = plan_state_path.parent / "events.ndjson"
     line_count = 0
     latest_gate_kind = ""
+    invalid_json_lines = 0
+    last_nonempty_invalid = False
+    text = ""
     if events_path.exists():
-        for line in events_path.read_text(encoding="utf-8").splitlines():
+        try:
+            text = events_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            text = ""
+        for line in text.splitlines():
             if not line.strip():
                 continue
             line_count += 1
             try:
                 payload = json.loads(line)
             except json.JSONDecodeError:
+                invalid_json_lines += 1
+                last_nonempty_invalid = True
                 continue
+            last_nonempty_invalid = False
             if not isinstance(payload, dict):
                 continue
             kind = _safe_text(payload.get("kind"))
@@ -380,7 +570,7 @@ def _collect_event_cursors(plan_state_path: Path | None, plan_state: Mapping[str
     retry_strategy = ""
     if isinstance(resume_cursor, Mapping):
         retry_strategy = _safe_text(resume_cursor.get("retry_strategy"))
-    return {
+    public = {
         "events_path": str(events_path),
         "events_present": events_path.exists(),
         "line_count": line_count,
@@ -388,6 +578,12 @@ def _collect_event_cursors(plan_state_path: Path | None, plan_state: Mapping[str
         "resume_retry_strategy": retry_strategy,
         "mtime": _mtime(events_path),
     }
+    diag = {
+        "events_path": str(events_path),
+        "partial_torn_read": bool(text) and not text.endswith("\n") and last_nonempty_invalid,
+        "invalid_json_lines": invalid_json_lines,
+    }
+    return public, diag
 
 
 def _collect_tmux_process_evidence(
@@ -582,28 +778,32 @@ def _collect_chain_log_evidence(
     The canonical chain log lives at ``.megaplan/cloud-chain.log``; per-session
     variants (``cloud-chain-{session}.log``) are also inspected when available.
     """
+    del run_kind
+    return _chain_log_evidence_for_path(_chain_log_source_path(workspace, session))
+
+
+def _chain_log_source_path(workspace: Path | None, session: str) -> Path | None:
     if workspace is None:
-        return {"path": "", "present": False, "mtime": 0.0, "size": 0, "fingerprint": ""}
+        return None
     candidates: list[Path] = []
     if session:
         candidates.append(workspace / ".megaplan" / f"cloud-chain-{session}.log")
     candidates.append(workspace / ".megaplan" / "cloud-chain.log")
     for path in candidates:
         if path.exists():
-            return {
-                "path": str(path),
-                "present": True,
-                "mtime": _mtime(path),
-                "size": path.stat().st_size if path.exists() else 0,
-                "fingerprint": _fingerprint(path),
-            }
-    # No chain log found — return a stable empty record
+            return path
+    return candidates[-1] if candidates else None
+
+
+def _chain_log_evidence_for_path(path: Path | None) -> dict[str, Any]:
+    if path is None:
+        return {"path": "", "present": False, "mtime": 0.0, "size": 0, "fingerprint": ""}
     return {
-        "path": str(candidates[-1]) if candidates else "",
-        "present": False,
-        "mtime": 0.0,
-        "size": 0,
-        "fingerprint": "",
+        "path": str(path),
+        "present": path.exists(),
+        "mtime": _mtime(path),
+        "size": path.stat().st_size if path.exists() else 0,
+        "fingerprint": _fingerprint(path),
     }
 
 
