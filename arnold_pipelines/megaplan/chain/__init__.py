@@ -1825,20 +1825,6 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
         return overrides
 
     authoritative_batch_overrides = _authoritative_batch_task_overrides()
-    batches = sorted(
-        plan_dir.glob("execution_batch_*.json"),
-        key=_execution_batch_sort_key,
-    )
-    if not batches:
-        return False, "no execution_batch_*.json artifact found"
-    latest = batches[-1]
-    try:
-        payload = json.loads(latest.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        return False, f"{latest.name} could not be read: {error}"
-    if not isinstance(payload, dict):
-        return False, f"{latest.name} payload is not an object"
-
     finalize_path = plan_dir / "finalize.json"
     finalize_payload: dict[str, Any] | None = None
     authoritative_finalize_records: list[dict[str, Any]] | None = None
@@ -1899,6 +1885,23 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                         overlaid_finalize_records.append(merged)
                     authoritative_finalize_records = overlaid_finalize_records
 
+    batches = sorted(
+        plan_dir.glob("execution_batch_*.json"),
+        key=_execution_batch_sort_key,
+    )
+    if not batches and not authoritative_finalize_records:
+        return False, "no execution_batch_*.json artifact found"
+    latest = batches[-1] if batches else None
+    payload: dict[str, Any] | None = None
+    if latest is not None:
+        try:
+            loaded_payload = json.loads(latest.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            return False, f"{latest.name} could not be read: {error}"
+        if not isinstance(loaded_payload, dict):
+            return False, f"{latest.name} payload is not an object"
+        payload = loaded_payload
+
     # finalize.json is only authoritative when EVERY non-baseline-unavailable
     # task is genuinely complete. When we have a valid execution window
     # (``current_head`` is known), a ``pending`` finalize row that no
@@ -1948,6 +1951,9 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
         return True, "finalize.json"
 
     task_records: list[dict[str, Any]] = []
+    if payload is None or latest is None:
+        return False, "no execution_batch_*.json artifact found"
+
     for key in ("task_updates", "tasks"):
         raw_records = payload.get(key)
         if isinstance(raw_records, list):

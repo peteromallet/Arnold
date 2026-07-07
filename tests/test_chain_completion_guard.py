@@ -1531,6 +1531,61 @@ def test_latest_execution_batch_all_tasks_done_ignores_deferred_baseline_batch(
     assert reason in {"execution_batch_2.json", "finalize.json"}
 
 
+def test_latest_execution_batch_all_tasks_done_accepts_authoritative_finalize_without_batches(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    head = _commit_semantic_change(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "name": "plan-m1",
+        "current_state": "failed",
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"execution_baseline": {"head": base}},
+        "history": [{"step": "execute", "result": "blocked"}],
+        "latest_failure": {
+            "kind": "no_next_step",
+            "message": "no next_step and no override available",
+        },
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state) + "\n", encoding="utf-8")
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "baseline_test_failures": None,
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "kind": "code",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": head,
+                    },
+                    {
+                        "id": "T2",
+                        "status": "skipped",
+                        "kind": "test",
+                        "reviewer_verdict": "deferred_baseline_unavailable",
+                        "executor_notes": (
+                            "Deferred by harness: baseline_test_failures is null, "
+                            "so this no-new-failures checkpoint cannot compare "
+                            "against a recorded baseline."
+                        ),
+                    },
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
+
+    assert ok is True
+    assert reason == "finalize.json"
+
+
 def test_latest_execution_batch_all_tasks_done_prefers_authoritative_batch_update_over_stale_finalize(
     tmp_path: Path,
 ) -> None:
