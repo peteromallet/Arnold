@@ -1,1 +1,1 @@
-/workspace/arnold/arnold_pipelines/megaplan/data/observe_skill.md
+/workspace/canonical-run-state-control-plane/arnold/.megaplan/runtime/editable-engine/arnold_pipelines/megaplan/data/observe_skill.md
