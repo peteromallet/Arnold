@@ -78,6 +78,7 @@ def resolve_current_target(
             "ignored_artifacts": [],
             "stale_evidence": [],
             "rationale": ["resolver observe disabled via ARNOLD_RESOLVER_OBSERVE"],
+            "diagnostic_codes": _empty_diagnostic_codes(),
         }
 
     markers_root = Path(marker_dir)
@@ -112,6 +113,7 @@ def resolve_current_target(
     event_cursors = _collect_event_cursors(plan_state_path, plan_state)
     chain_log = _collect_chain_log_evidence(workspace, session, run_kind)
     active_step_heartbeat = _collect_active_step_heartbeat(plan_state)
+    diagnostic_codes = _collect_diagnostic_codes(needs_human, event_cursors, plan_state)
 
     stale_evidence: list[dict[str, Any]] = []
     rationale: list[str] = []
@@ -271,6 +273,7 @@ def resolve_current_target(
             "summary": _safe_text(needs_human.get("summary")),
             "plan_refs": needs_human_plans,
             "recorded_at": _safe_text(needs_human.get("recorded_at")),
+            "blocked_task_id": _extract_blocked_task_id(needs_human),
         },
         "repair_progress": repair_progress,
         "chain_log": chain_log,
@@ -279,6 +282,7 @@ def resolve_current_target(
         "ignored_artifacts": sorted(ignored_artifacts, key=_artifact_sort_key),
         "stale_evidence": sorted(stale_evidence, key=_artifact_sort_key),
         "rationale": sorted(set(rationale)),
+        "diagnostic_codes": diagnostic_codes,
     }
 
 
@@ -621,6 +625,85 @@ def _collect_active_step_heartbeat(
         "worker_pid": _safe_text(active_step.get("worker_pid")),
         "started_at": _safe_text(active_step.get("started_at")),
     }
+
+
+def _collect_diagnostic_codes(
+    needs_human: Mapping[str, Any],
+    event_cursors: Mapping[str, Any],
+    plan_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Extract structured diagnostic codes from already-gathered artifacts.
+
+    Does NOT scan artifacts for keyword-based blocker heuristics — it only
+    surfaces fields that are already present in the loaded payloads.
+    """
+    codes: list[str] = []
+
+    # Escalation label from needs-human sidecar (e.g. "BROKEN_STATE_MACHINE")
+    escalation_label = _safe_text(needs_human.get("escalation_label"))
+    if escalation_label:
+        codes.append(escalation_label)
+
+    # Event signatures from needs-human sidecar (e.g. "authority_divergence/head_mismatch x293")
+    event_signatures = needs_human.get("event_signatures")
+    if isinstance(event_signatures, list):
+        for sig in event_signatures:
+            if isinstance(sig, dict):
+                kind = _safe_text(sig.get("kind"))
+                count = sig.get("count")
+                if kind:
+                    label = f"{kind} x{count}" if isinstance(count, int) and count > 1 else kind
+                    codes.append(label)
+
+    # Latest gate kind from event cursors
+    latest_gate_kind = _safe_text(event_cursors.get("latest_gate_kind"))
+    if latest_gate_kind and latest_gate_kind not in codes:
+        codes.append(latest_gate_kind)
+
+    # Retry strategy from event cursors / plan state resume_cursor
+    retry_strategy = _safe_text(event_cursors.get("resume_retry_strategy"))
+    if not retry_strategy:
+        resume_cursor = plan_state.get("resume_cursor")
+        if isinstance(resume_cursor, Mapping):
+            retry_strategy = _safe_text(resume_cursor.get("retry_strategy"))
+    if retry_strategy and retry_strategy not in codes:
+        codes.append(retry_strategy)
+
+    # Discord status (can indicate pending/failed delivery)
+    discord_status = _safe_text(needs_human.get("discord_status"))
+
+    return {
+        "escalation_label": escalation_label,
+        "event_signature_labels": codes,
+        "discord_status": discord_status,
+        "latest_gate_kind": latest_gate_kind,
+        "retry_strategy": retry_strategy,
+    }
+
+
+def _empty_diagnostic_codes() -> dict[str, Any]:
+    return {
+        "escalation_label": "",
+        "event_signature_labels": [],
+        "discord_status": "",
+        "latest_gate_kind": "",
+        "retry_strategy": "",
+    }
+
+
+def _extract_blocked_task_id(needs_human: Mapping[str, Any]) -> str:
+    """Extract blocked_task_id from needs-human payload's current pointer.
+
+    The ``current`` sub-dict carries a ``blocked_task_id`` field populated
+    by the repair loop from the latest failure context.  This accessor
+    avoids importing the full repair_contract module.
+    """
+    current = needs_human.get("current")
+    if isinstance(current, Mapping):
+        task_id = current.get("blocked_task_id")
+        if isinstance(task_id, str) and task_id.strip():
+            return task_id.strip()
+    return ""
 
 
 def _artifact_sort_key(item: Mapping[str, Any]) -> tuple[str, str, str]:

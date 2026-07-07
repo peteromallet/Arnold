@@ -12821,3 +12821,644 @@ def test_partial_liveness_three_ticks_triggers_condition_5() -> None:
     )
     assert classification.should_dispatch
     assert classification.trigger == MetaRepairTrigger.PARTIAL_LIVENESS_RECURRENCE
+
+
+# ---------------------------------------------------------------------------
+# T10: ARNOLD_RESOLVER_ENFORCEMENT gating for watchdog needs-human escalation
+# ---------------------------------------------------------------------------
+#
+# Both watchdog needs-human escalation paths (awaiting-human and manual-review)
+# must suppress user-facing human gates for machine-actionable canonical states
+# under enforcement, while preserving typed human gates, the UNKNOWN fallback,
+# and enforcement-off legacy behavior.
+
+
+def _extract_resolver_verdict_program() -> str:
+    """Extract the embedded Python from ``resolver_needs_human_verdict``."""
+    text = _wrapper("arnold-watchdog")
+    start = text.index("resolver_needs_human_verdict() {")
+    marker = 'python3 - "$current_target_observation" <<\'PY\''
+    py_start = text.index(marker, start)
+    py_start = text.index("\n", py_start) + 1
+    py_end = text.index("\nPY\n", py_start)
+    return text[py_start:py_end]
+
+
+def _run_resolver_verdict(tmp_path: Path, evidence_json: str, enforcement: object) -> "subprocess.CompletedProcess[str]":
+    """Run the extracted verdict program with controlled env."""
+    program = _extract_resolver_verdict_program()
+    prog_path = tmp_path / "_resolver_verdict_prog.py"
+    prog_path.write_text(program, encoding="utf-8")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
+    if enforcement is _UNSET_TOKEN:
+        env.pop("ARNOLD_RESOLVER_ENFORCEMENT", None)
+    else:
+        env["ARNOLD_RESOLVER_ENFORCEMENT"] = str(enforcement)
+    return subprocess.run(
+        [sys.executable, str(prog_path), evidence_json],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+_UNSET_TOKEN = object()
+
+
+_AWF018_EVIDENCE = {
+    "tmux_process": {"live_status": "stopped"},
+    "plan_state": {
+        "current_state": "executing",
+        "resume_cursor": {"changed_file_count": 0},
+        "fingerprint": "plan-awf018",
+        "mtime": 1.0,
+    },
+    "chain_state": {"last_state": "running", "fingerprint": "chain-awf018", "mtime": 1.0},
+    "diagnostic_codes": {
+        "escalation_label": "AWF018",
+        "event_signature_labels": ["authority_divergence/route_metadata_mismatch x293"],
+    },
+    "needs_human": {"present": True, "summary": "AWF018 route metadata mismatch", "gate_type": "approval"},
+}
+
+_BUDGET_EVIDENCE = {
+    "tmux_process": {"live_status": "stopped"},
+    "plan_state": {
+        "current_state": "executing",
+        "resume_cursor": {"changed_file_count": 0},
+        "fingerprint": "plan-budget",
+        "mtime": 1.0,
+    },
+    "chain_state": {"last_state": "running", "fingerprint": "chain-budget", "mtime": 1.0},
+    "diagnostic_codes": {"retry_strategy": "budget_exhausted"},
+    "needs_human": {"present": True, "summary": "budget exhausted"},
+}
+
+_BROKEN_EVIDENCE = {
+    "tmux_process": {"live_status": "stopped"},
+    "plan_state": {
+        "current_state": "executing",
+        "resume_cursor": {"changed_file_count": 0},
+        "fingerprint": "plan-broken",
+        "mtime": 1.0,
+    },
+    "chain_state": {"last_state": "running", "fingerprint": "chain-broken", "mtime": 1.0},
+    "repair_progress": {"present": True, "items": [{"status": "failed"}]},
+    "needs_human": {"present": True, "summary": "same blocker", "repeated_attempts": 3},
+}
+
+_QUOTA_GATE_EVIDENCE = {
+    "tmux_process": {"live_status": "stopped"},
+    "plan_state": {
+        "current_state": "executing",
+        "resume_cursor": {"changed_file_count": 0},
+        "fingerprint": "plan-quota",
+        "mtime": 1.0,
+    },
+    "chain_state": {"last_state": "awaiting_human", "fingerprint": "chain-quota", "mtime": 1.0},
+    "needs_human": {"present": True, "summary": "API rate limit exceeded", "gate_type": "quota"},
+}
+
+_APPROVAL_GATE_EVIDENCE = {
+    "tmux_process": {"live_status": "stopped"},
+    "plan_state": {
+        "current_state": "executing",
+        "resume_cursor": {"changed_file_count": 0},
+        "fingerprint": "plan-approval-wd",
+        "mtime": 1.0,
+    },
+    "chain_state": {"last_state": "awaiting_human", "fingerprint": "chain-approval-wd", "mtime": 1.0},
+    "needs_human": {
+        "present": True,
+        "summary": "operator approval required",
+        "gate_type": "approval",
+        "blocked_task_id": "T9",
+    },
+}
+
+_CREDENTIAL_GATE_EVIDENCE = {
+    "tmux_process": {"live_status": "stopped"},
+    "plan_state": {
+        "current_state": "executing",
+        "resume_cursor": {"changed_file_count": 0},
+        "fingerprint": "plan-credential-wd",
+        "mtime": 1.0,
+    },
+    "chain_state": {"last_state": "awaiting_human", "fingerprint": "chain-credential-wd", "mtime": 1.0},
+    "needs_human": {
+        "present": True,
+        "summary": "missing external API credential",
+        "gate_type": "credential_account",
+    },
+}
+
+
+def test_resolver_needs_human_verdict_and_route_helpers_are_defined() -> None:
+    """Both enforcement helpers must be present and well-formed."""
+    text = _wrapper("arnold-watchdog")
+    assert "resolver_needs_human_verdict() {" in text
+    assert "route_resolver_machine_repair() {" in text
+    # The verdict helper must consult canonical state before returning.
+    verdict = _extract_wrapper_function("resolver_needs_human_verdict")
+    assert "resolver_enforcement_enabled" in verdict
+    assert "resolve_run_state" in verdict
+    assert "REAL_IMPLEMENTATION_BLOCK" in verdict
+    assert "RETRYABLE_EXECUTION_BLOCK" in verdict
+    assert "BROKEN_STATE_MACHINE" in verdict
+    # The route helper must dispatch through the existing machine repair path.
+    route = _extract_wrapper_function("route_resolver_machine_repair")
+    assert "dispatch_kimi_repair" in route
+    assert "repair_loop_busy_state" in route
+    assert "REPAIR_DISPATCH_RESULT" in route
+
+
+def test_resolver_enforcement_gates_both_watchdog_escalation_branches() -> None:
+    """Both awaiting-human and manual-review branches route to machine repair under suppression."""
+    tick = _extract_wrapper_function("launch_chain_tick")
+    # The verdict is computed once at the top of the tick.
+    assert 'resolver_human_verdict="$(resolver_needs_human_verdict' in tick
+    assert 'local resolver_human_verdict' in tick
+    # Exactly two suppression gates (one per escalation branch).
+    assert tick.count('if [[ "$resolver_human_verdict" == suppress:* ]]; then') == 2, (
+        "expected exactly two resolver-enforcement suppression gates in launch_chain_tick "
+        "(awaiting-human + manual-review)"
+    )
+    assert tick.count('route_resolver_machine_repair "$report_items"') == 2
+
+
+def test_resolver_enforcement_suppresses_machine_actionable_states(tmp_path: Path) -> None:
+    """Under enforcement, machine-actionable blocks without a typed gate are suppressed."""
+    for evidence, expected in (
+        (_AWF018_EVIDENCE, "suppress:REAL_IMPLEMENTATION_BLOCK"),
+        (_BUDGET_EVIDENCE, "suppress:RETRYABLE_EXECUTION_BLOCK"),
+        (_BROKEN_EVIDENCE, "suppress:BROKEN_STATE_MACHINE"),
+    ):
+        result = _run_resolver_verdict(tmp_path, json.dumps(evidence), "1")
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == expected, (
+            f"expected {expected!r} for evidence, got {result.stdout.strip()!r}"
+        )
+
+
+def test_resolver_enforcement_preserves_typed_human_gate(tmp_path: Path) -> None:
+    """Under enforcement, a typed human gate (quota) must NOT be suppressed."""
+    result = _run_resolver_verdict(tmp_path, json.dumps(_QUOTA_GATE_EVIDENCE), "1")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "", (
+        f"typed human gate must preserve legacy notify path, got {result.stdout.strip()!r}"
+    )
+
+
+def test_resolver_enforcement_preserves_unknown_fallback(tmp_path: Path) -> None:
+    """Under enforcement, empty/UNKNOWN evidence must preserve legacy behavior."""
+    result = _run_resolver_verdict(tmp_path, "{}", "1")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == ""
+
+
+def test_resolver_enforcement_off_preserves_legacy_for_all_states(tmp_path: Path) -> None:
+    """When enforcement is OFF (default unset), every shape preserves the legacy path."""
+    for evidence in (_AWF018_EVIDENCE, _BUDGET_EVIDENCE, _BROKEN_EVIDENCE, _QUOTA_GATE_EVIDENCE, {}):
+        result = _run_resolver_verdict(tmp_path, json.dumps(evidence), _UNSET_TOKEN)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "", (
+            f"enforcement OFF must preserve legacy, got {result.stdout.strip()!r}"
+        )
+    # Explicit "0" disable value also preserves legacy.
+    result = _run_resolver_verdict(tmp_path, json.dumps(_AWF018_EVIDENCE), "0")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == ""
+
+
+def test_resolver_enforcement_degrades_safely_on_bad_evidence(tmp_path: Path) -> None:
+    """Unparseable evidence under enforcement must degrade to the legacy (empty) verdict."""
+    result = _run_resolver_verdict(tmp_path, "not-valid-json{", "1")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == ""
+
+
+def test_resolver_enforcement_preserves_explicit_approval_gate(tmp_path: Path) -> None:
+    """Under enforcement, an explicit operator-approval gate must NOT be suppressed."""
+    result = _run_resolver_verdict(tmp_path, json.dumps(_APPROVAL_GATE_EVIDENCE), "1")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "", (
+        f"explicit approval gate must preserve legacy notify path, got {result.stdout.strip()!r}"
+    )
+
+
+def test_resolver_enforcement_preserves_credential_account_gate(tmp_path: Path) -> None:
+    """Under enforcement, a missing credential/account gate must NOT be suppressed."""
+    result = _run_resolver_verdict(tmp_path, json.dumps(_CREDENTIAL_GATE_EVIDENCE), "1")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "", (
+        f"credential/account gate must preserve legacy notify path, got {result.stdout.strip()!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# repair-loop canonical block rendering (observe-only prompt enrichment)
+# ---------------------------------------------------------------------------
+
+
+def _extract_canonical_block_program() -> str:
+    """Extract the embedded Python from ``render_canonical_block`` in arnold-repair-loop."""
+    text = _repair_wrapper()
+    start = text.index("render_canonical_block() {")
+    marker = 'python3 - "$SNAPSHOT_PATH" "$SESSION" "$ARNOLD_SRC" <<\'PY\''
+    py_start = text.index(marker, start)
+    py_start = text.index("\n", py_start) + 1
+    py_end = text.index("\nPY\n", py_start)
+    return text[py_start:py_end]
+
+
+def _run_canonical_block(
+    tmp_path: Path,
+    snapshot: dict,
+    session: str = "s1",
+    observe: str = "1",
+) -> "subprocess.CompletedProcess[str]":
+    """Run the extracted render_canonical_block Python program with a controlled snapshot."""
+    program = _extract_canonical_block_program()
+    prog_path = tmp_path / "_canonical_block_prog.py"
+    prog_path.write_text(program, encoding="utf-8")
+    snapshot_path = tmp_path / "_canonical_snapshot.json"
+    snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
+    env["ARNOLD_RESOLVER_OBSERVE"] = observe
+    return subprocess.run(
+        [sys.executable, str(prog_path), str(snapshot_path), session, str(REPO_ROOT)],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def _canonical_snapshot(session="s1", canonical_state="REAL_IMPLEMENTATION_BLOCK",
+                        stale_sources=None, fingerprint="fp-001",
+                        next_action="verify route metadata", status="repairing",
+                        operator_next="route mismatch detected",
+                        plan_state=None, canonical_resolver_overrides=None,
+                        ) -> dict:
+    """Build a minimal status snapshot with canonical resolver fields injected."""
+    stale = stale_sources if stale_sources is not None else ["chain_health", "needs_human"]
+    resolver = {
+        "canonical_state": canonical_state,
+        "confidence": "high",
+        "source_of_truth": ["chain_health", "watchdog"],
+        "stale_sources": stale,
+        "human_required": False,
+        "human_gate": None,
+        "repairable": True,
+        "running": False,
+        "next_action": next_action,
+        "reason": f"{canonical_state} detected via resolver",
+        "evidence": [
+            {"key": "root_cause_fingerprint", "value": fingerprint, "kind": "root_cause_fingerprint"},
+        ],
+    }
+    if canonical_resolver_overrides:
+        resolver.update(canonical_resolver_overrides)
+    return {
+        "sessions": [
+            {
+                "session": session,
+                "status": status,
+                "operator_next": operator_next,
+                "plan_state": plan_state or {},
+                "canonical_state": canonical_state,
+                "canonical_reason": resolver["reason"],
+                "canonical_human_required": resolver["human_required"],
+                "canonical_human_gate": resolver["human_gate"],
+                "canonical_resolver": resolver,
+            }
+        ]
+    }
+
+
+def test_canonical_block_includes_canonical_state(tmp_path: Path) -> None:
+    """The rendered canonical block must include the canonical_state value."""
+    snap = _canonical_snapshot(canonical_state="REAL_IMPLEMENTATION_BLOCK")
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    assert "## CANONICAL STATE (observe-only resolver)" in result.stdout
+    assert "- canonical_state: REAL_IMPLEMENTATION_BLOCK" in result.stdout
+
+
+def test_canonical_block_includes_stale_sources(tmp_path: Path) -> None:
+    """The rendered canonical block must include stale_sources warning."""
+    snap = _canonical_snapshot(
+        canonical_state="STALE_DERIVED_STATE",
+        stale_sources=["chain_health", "needs_human"],
+    )
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    assert "stale_sources (do NOT trust):" in result.stdout
+    assert "chain_health" in result.stdout
+    assert "needs_human" in result.stdout
+
+
+def test_canonical_block_includes_root_cause_fingerprint(tmp_path: Path) -> None:
+    """The rendered canonical block must include the root_cause_fingerprint."""
+    snap = _canonical_snapshot(
+        canonical_state="BROKEN_STATE_MACHINE",
+        fingerprint="repeated-blocker:blk-001 x3",
+    )
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    assert "root_cause_fingerprint: repeated-blocker:blk-001 x3" in result.stdout
+
+
+def test_canonical_block_includes_next_action(tmp_path: Path) -> None:
+    """The rendered canonical block must include the next_action hint."""
+    snap = _canonical_snapshot(
+        canonical_state="RETRYABLE_EXECUTION_BLOCK",
+        next_action="retry with fresh budget after cooldown",
+    )
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    assert "next_action: retry with fresh budget after cooldown" in result.stdout
+
+
+def test_canonical_block_includes_confidence(tmp_path: Path) -> None:
+    """The rendered canonical block must include the confidence level."""
+    snap = _canonical_snapshot(canonical_state="RUNNING")
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    assert "- confidence: high" in result.stdout
+
+
+def test_canonical_block_includes_source_of_truth(tmp_path: Path) -> None:
+    """The rendered canonical block must include source_of_truth fields."""
+    snap = _canonical_snapshot(canonical_state="RUNNING")
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    assert "source_of_truth: chain_health, watchdog" in result.stdout
+
+
+def test_canonical_block_includes_reason(tmp_path: Path) -> None:
+    """The rendered canonical block must include the reason."""
+    snap = _canonical_snapshot(canonical_state="REAL_IMPLEMENTATION_BLOCK")
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    assert "- reason: REAL_IMPLEMENTATION_BLOCK detected via resolver" in result.stdout
+
+
+def test_canonical_block_outputs_running_flag(tmp_path: Path) -> None:
+    """When running=True, the block must include the live-worker warning."""
+    snap = _canonical_snapshot(
+        canonical_state="RUNNING",
+        canonical_resolver_overrides={"running": True, "repairable": False},
+    )
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    assert "running: true" in result.stdout
+    assert "do NOT kill or restart" in result.stdout
+
+
+def test_canonical_block_outputs_repairable_flag(tmp_path: Path) -> None:
+    """When repairable=True, the block must indicate it."""
+    snap = _canonical_snapshot(
+        canonical_state="BROKEN_STATE_MACHINE",
+        canonical_resolver_overrides={"repairable": True},
+    )
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    assert "repairable: true" in result.stdout
+    assert "automated repair is indicated" in result.stdout
+
+
+def test_canonical_block_outputs_human_required_with_gate(tmp_path: Path) -> None:
+    """When human_required=True, the block must show the gate type."""
+    snap = _canonical_snapshot(
+        canonical_state="HUMAN_ACTION_REQUIRED",
+        canonical_resolver_overrides={"human_required": True, "human_gate": "EXPLICIT_APPROVAL"},
+    )
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    assert "human_required: true" in result.stdout
+    assert "gate: EXPLICIT_APPROVAL" in result.stdout
+    assert "human intervention is required" in result.stdout
+
+
+def test_canonical_block_empty_without_canonical_fields(tmp_path: Path) -> None:
+    """When the session entry has no canonical fields, the block must be empty."""
+    snap = {
+        "sessions": [
+            {"session": "s1", "status": "running", "operator_next": ""}
+        ]
+    }
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == ""
+
+
+def test_canonical_block_empty_when_observe_disabled(tmp_path: Path) -> None:
+    """When ARNOLD_RESOLVER_OBSERVE is off, the block must be empty."""
+    snap = _canonical_snapshot(canonical_state="REAL_IMPLEMENTATION_BLOCK")
+    result = _run_canonical_block(tmp_path, snap, observe="0")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == ""
+
+
+def test_canonical_block_empty_when_session_not_found(tmp_path: Path) -> None:
+    """When the requested session is not in the snapshot, the block must be empty."""
+    snap = _canonical_snapshot(session="s1")
+    result = _run_canonical_block(tmp_path, snap, session="nonexistent")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == ""
+
+
+def test_canonical_block_empty_when_snapshot_missing(tmp_path: Path) -> None:
+    """When the snapshot file does not exist, the block must exit cleanly with no output."""
+    program = _extract_canonical_block_program()
+    prog_path = tmp_path / "_canonical_block_prog.py"
+    prog_path.write_text(program, encoding="utf-8")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
+    env["ARNOLD_RESOLVER_OBSERVE"] = "1"
+    result = subprocess.run(
+        [sys.executable, str(prog_path), str(tmp_path / "nonexistent.json"), "s1", str(REPO_ROOT)],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == ""
+
+
+def test_canonical_block_context_unattempted_target_work(tmp_path: Path) -> None:
+    """When canonical_state is REAL_IMPLEMENTATION_BLOCK with inactive step and incomplete tasks,
+    the block must include the unattempted-target-work context section."""
+    snap = _canonical_snapshot(
+        canonical_state="REAL_IMPLEMENTATION_BLOCK",
+        plan_state={"deferred": [{"id": "t1"}], "pending": [{"id": "t2"}], "active_step": None},
+        next_action="fix route metadata mismatch",
+    )
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    assert "### CONTEXT: Unattempted Target Implementation Work" in result.stdout
+    assert "unattempted tasks" in result.stdout
+    assert "Do NOT patch engine code" in result.stdout
+
+
+def test_canonical_block_context_unattempted_no_tasks(tmp_path: Path) -> None:
+    """When REAL_IMPLEMENTATION_BLOCK has no incomplete tasks, the context section is skipped."""
+    snap = _canonical_snapshot(
+        canonical_state="REAL_IMPLEMENTATION_BLOCK",
+        plan_state={"deferred": [], "pending": [], "active_step": None},
+    )
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    assert "### CONTEXT:" not in result.stdout
+
+
+def test_canonical_block_context_engine_repair_broken(tmp_path: Path) -> None:
+    """When canonical_state is BROKEN_STATE_MACHINE, the block must include engine-repair context."""
+    snap = _canonical_snapshot(
+        canonical_state="BROKEN_STATE_MACHINE",
+        fingerprint="repeated-failure-pattern-1",
+    )
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    assert "### CONTEXT: Engine Repair Required" in result.stdout
+    assert "Focus on finding and fixing the root cause" in result.stdout
+    assert "repeated-failure-pattern-1" in result.stdout
+
+
+def test_canonical_block_context_engine_repair_retryable(tmp_path: Path) -> None:
+    """When canonical_state is RETRYABLE_EXECUTION_BLOCK, the block must include engine-repair context."""
+    snap = _canonical_snapshot(
+        canonical_state="RETRYABLE_EXECUTION_BLOCK",
+        fingerprint="budget-exhausted-no-changes",
+    )
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    assert "### CONTEXT: Engine Repair Required" in result.stdout
+    assert "Focus on finding and fixing the root cause" in result.stdout
+
+
+def test_canonical_block_empty_on_bad_snapshot_json(tmp_path: Path) -> None:
+    """When the snapshot file contains invalid JSON, the block must exit cleanly."""
+    program = _extract_canonical_block_program()
+    prog_path = tmp_path / "_canonical_block_prog.py"
+    prog_path.write_text(program, encoding="utf-8")
+    snapshot_path = tmp_path / "_bad_snapshot.json"
+    snapshot_path.write_text("invalid json {{{{{{{{", encoding="utf-8")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
+    env["ARNOLD_RESOLVER_OBSERVE"] = "1"
+    result = subprocess.run(
+        [sys.executable, str(prog_path), str(snapshot_path), "s1", str(REPO_ROOT)],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == ""
+
+
+def test_canonical_block_no_fingerprint_line_when_absent(tmp_path: Path) -> None:
+    """When no root_cause_fingerprint is in evidence, it must not appear in output."""
+    snap = _canonical_snapshot(
+        canonical_state="RUNNING",
+        fingerprint="",
+        stale_sources=None,
+    )
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    assert "root_cause_fingerprint" not in result.stdout
+
+
+def test_canonical_block_no_stale_line_when_empty(tmp_path: Path) -> None:
+    """When stale_sources is empty, it must not appear in output."""
+    snap = _canonical_snapshot(
+        canonical_state="RUNNING",
+        stale_sources=[],
+    )
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    assert "stale_sources" not in result.stdout
+
+
+def test_canonical_block_no_next_action_line_when_empty(tmp_path: Path) -> None:
+    """When next_action is empty, it must not appear in output."""
+    snap = _canonical_snapshot(
+        canonical_state="RUNNING",
+        next_action="",
+        stale_sources=None,
+    )
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    assert "next_action:" not in result.stdout
+
+
+def test_canonical_block_resolver_dict_fallback_to_flat_reason(tmp_path: Path) -> None:
+    """When canonical_resolver has no reason, the block falls back to canonical_reason."""
+    snap = {
+        "sessions": [
+            {
+                "session": "s1",
+                "status": "repairing",
+                "operator_next": "investigate",
+                "plan_state": {},
+                "canonical_state": "UNKNOWN",
+                "canonical_reason": "flat reason fallback",
+                "canonical_human_required": False,
+                "canonical_human_gate": None,
+                "canonical_resolver": {
+                    "canonical_state": "UNKNOWN",
+                    "confidence": "low",
+                    "source_of_truth": [],
+                    "stale_sources": [],
+                    "human_required": False,
+                    "human_gate": None,
+                    "repairable": False,
+                    "running": False,
+                    "next_action": "",
+                    "reason": "",
+                    "evidence": [],
+                },
+            }
+        ]
+    }
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    # The fallback to flat canonical_reason should be visible.
+    assert "- reason: flat reason fallback" in result.stdout
+
+
+def test_canonical_block_human_required_honors_flat_fields(tmp_path: Path) -> None:
+    """canonical_human_required from flat entry field takes precedence over resolver dict."""
+    snap = {
+        "sessions": [
+            {
+                "session": "s1",
+                "status": "blocked",
+                "operator_next": "approve PR",
+                "plan_state": {},
+                "canonical_state": "HUMAN_ACTION_REQUIRED",
+                "canonical_reason": "needs approval",
+                "canonical_human_required": True,
+                "canonical_human_gate": "EXPLICIT_APPROVAL",
+                "canonical_resolver": {
+                    "canonical_state": "HUMAN_ACTION_REQUIRED",
+                    "confidence": "high",
+                    "source_of_truth": [],
+                    "stale_sources": [],
+                    "human_required": False,
+                    "human_gate": None,
+                    "repairable": False,
+                    "running": False,
+                    "next_action": "get approval",
+                    "reason": "needs approval",
+                    "evidence": [],
+                },
+            }
+        ]
+    }
+    result = _run_canonical_block(tmp_path, snap)
+    assert result.returncode == 0, result.stderr
+    assert "human_required: true" in result.stdout
+    assert "gate: EXPLICIT_APPROVAL" in result.stdout
