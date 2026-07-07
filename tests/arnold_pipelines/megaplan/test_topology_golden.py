@@ -76,6 +76,16 @@ def _capability_contract(capability: Any) -> dict[str, Any]:
     }
 
 
+def _json_contract_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _json_contract_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_json_contract_value(item) for item in value]
+    if isinstance(value, list):
+        return [_json_contract_value(item) for item in value]
+    return value
+
+
 def _policy_contract(policy: Any | None) -> dict[str, Any] | None:
     if policy is None:
         return None
@@ -129,7 +139,7 @@ def _normalized_pipeline_contract(pipeline: Any) -> dict[str, Any]:
         "pipeline": {
             "id": pipeline.id,
             "version": pipeline.version,
-            "metadata": dict(pipeline.metadata),
+            "metadata": _json_contract_value(dict(pipeline.metadata)),
             "policy": _policy_contract(pipeline.policy),
         },
         "counts": {
@@ -149,7 +159,7 @@ def _normalized_pipeline_contract(pipeline: Any) -> dict[str, Any]:
                 "handler_ref": step.metadata.get("handler_ref"),
                 "terminal": bool(step.metadata.get("terminal", False)),
                 "subpipeline": _subpipeline_contract(step.subpipeline),
-                "metadata": dict(step.metadata),
+                "metadata": _json_contract_value(dict(step.metadata)),
             }
             for step in pipeline.steps
         ],

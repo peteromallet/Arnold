@@ -462,6 +462,79 @@ REVIEW_PROMPT = _prompt("review")
 TIEBREAKER_RESEARCHER_PROMPT = _prompt("tiebreaker_researcher")
 TIEBREAKER_CHALLENGER_PROMPT = _prompt("tiebreaker_challenger")
 
+CRITIQUE_ROUTE_SURFACE = {
+    "fanout_contract": {
+        "parallel_map_id": "critique-fanout",
+        "fanout_ref": "megaplan.policy.critique_lenses",
+        "step_ref": "SOURCE_CRITIQUE_PANEL_WORKFLOW",
+        "reducer_ref": "SOURCE_CRITIQUE",
+        "path_template": "critique/{item_id}",
+        "route_signal": "critique_payload",
+    },
+    "selection_policy": {
+        "selection_mode_ref": "megaplan.config.adaptive_critique",
+        "bare_robustness": {
+            "construct_type": "gate",
+            "route_signal": "skip_to_finalize",
+        },
+        "static": {
+            "construct_type": "critique",
+            "selection_mode": "static",
+            "lens_source": "megaplan.policy.critique_lenses",
+        },
+        "adaptive": {
+            "construct_type": "critique",
+            "selection_mode": "adaptive",
+            "phase": "critique_evaluator",
+            "fallback": "static",
+        },
+        "retry_exhausted": {
+            "construct_type": "gate",
+            "phase": "critique_evaluator",
+            "route_signal": "blocked",
+        },
+    },
+    "retry_policy": {
+        "evaluator_phase": "critique_evaluator",
+        "retryable_conditions": (
+            "high_complexity_unverifiable",
+            "no_primary_source",
+            "model_unavailable",
+        ),
+        "max_attempts": 2,
+    },
+    "evidence_contract": {
+        "authority": {
+            "selection": "critique selection policy owns lens fanout",
+            "reducer": "SOURCE_CRITIQUE owns parent-visible critique payload",
+            "topology": "SOURCE_CRITIQUE_PANEL_WORKFLOW declares critique child paths",
+        },
+        "required_receipts": ("critique_output.json", "critique_v{iteration}.json"),
+        "typed_reducer_outcomes": ("pass", "fail", "blocked"),
+    },
+    "skip_and_retry": {
+        "bare_robustness": {
+            "route_signal": "skip_to_finalize",
+            "effect": "workflow_handles_plan_to_finalize_without_handler_fanout",
+        },
+        "evaluator_retry": {
+            "phase": "critique_evaluator",
+            "max_attempts": 2,
+            "on_exhausted": "blocked",
+        },
+        "payload_recovery": {
+            "scratch_ref": "critique_output.json",
+            "promote_to": "critique_v{iteration}.json",
+        },
+    },
+    "external_call_surface": {
+        "runtime_wrapper_ref": "arnold_pipelines.megaplan.orchestration.critique_runtime",
+        "retained_handler_ref": "arnold_pipelines.megaplan.handlers.critique:handle_critique",
+        "worker_phase": "critique",
+        "evaluator_phase": "critique_evaluator",
+    },
+}
+
 DEFAULT_POLICY = _policy(
     export_name="DEFAULT_POLICY",
     policy_id="megaplan:default",
@@ -1145,6 +1218,7 @@ CRITIQUE = _step(
     route_bindings=({"id": "critique:gate", "label": "default", "target_ref": "gate"},),
     input_schema=CRITIQUE_INPUT_SCHEMA,
     output_schema=CRITIQUE_OUTPUT_SCHEMA,
+    metadata={"route_surface": CRITIQUE_ROUTE_SURFACE},
 )
 GATE = _step(
     export_name="GATE",
