@@ -983,3 +983,14 @@ Captured execution baseline: 0 pre-existing uncommitted paths. Unchanged paths w
 [megaplan] Fresh codex execute requested; invalidating prior codex_executor_2a7b79b0 session 019f3e37-5613-7ad3-9cbf-a8e898dd7fa1
 [megaplan] Fresh codex execute requested; invalidating prior codex_executor_2a7b79b0 session 019f3e3b-5038-7953-914b-d0852273e051
 [megaplan] Fresh codex execute requested; invalidating prior codex_executor_2a7b79b0 session 019f3e41-9314-7ba3-b4f0-8fadeb194d14
+[chain] git add -A -> rc=0
+[chain] git reset -- .megaplan/cloud-chain-custody-control-plane.log .megaplan/initiatives/custody-control-plane/NORTHSTAR.md .megaplan/initiatives/custody-control-plane/briefs/m1.md .megaplan/initiatives/custody-control-plane/briefs/m2.md .megaplan/initiatives/custody-control-plane/briefs/m3.md .megaplan/initiatives/custody-control-plane/briefs/m4.md .megaplan/initiatives/custody-control-plane/chain.yaml -> rc=0
+[chain] no changes to commit after execute
+[chain] git add -A -> rc=0
+[chain] git commit --no-verify -m megaplan: resolver-foundation-read-20260707-1939 execute-cleanup -> rc=0
+[chain] git fetch origin megaplan/custody-control-plane/m1 -> rc=0
+[chain] git rebase origin/megaplan/custody-control-plane/m1 -> rc=0
+[chain] git push --no-verify origin HEAD:megaplan/custody-control-plane/m1 -> rc=0
+[auto resolver-foundation-read-20260707-1939] iter 7 state=executed next=review valid_next=['review']
+[auto resolver-foundation-read-20260707-1939] running: megaplan review --plan resolver-foundation-read-20260707-1939
+[megaplan] Could not locate codex rollout for session 019f3e49-fc73-7831-aa5f-e38d2d58b5bf; step cost will be recorded as $0.00
