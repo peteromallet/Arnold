@@ -1,16 +1,29 @@
 """Override-action authority matrix.
 
-The matrix is generated from the canonical ``_OVERRIDE_ACTIONS`` keys in
-``arnold_pipelines.megaplan.handlers.override`` and records, for each action,
-whether the action is a terminal route-affecting action or an additive/config
-effect, plus the workflow/policy surface that owns its dispatch.
+The matrix records each canonical override action and whether it is a
+terminal route-affecting action or an additive/config effect, plus the
+workflow/policy surface that owns its dispatch.
 """
 
 from __future__ import annotations
 
 from typing import Mapping, NamedTuple
 
-from arnold_pipelines.megaplan.handlers.override import _OVERRIDE_ACTIONS
+_OVERRIDE_ACTION_KEYS: frozenset[str] = frozenset(
+    {
+        "abort",
+        "add-note",
+        "adopt-execution",
+        "force-proceed",
+        "recover-blocked",
+        "replan",
+        "resume-clarify",
+        "set-model",
+        "set-profile",
+        "set-robustness",
+        "set-vendor",
+    }
+)
 
 
 class OverrideActionClassificationError(ValueError):
@@ -129,7 +142,7 @@ _DECLARED_OVERRIDE_AUTHORITY: Mapping[str, Mapping[str, object]] = {
 
 def _build_matrix() -> tuple[OverrideActionEntry, ...]:
     entries: list[OverrideActionEntry] = []
-    for action in sorted(_OVERRIDE_ACTIONS):
+    for action in sorted(_OVERRIDE_ACTION_KEYS):
         declared = _DECLARED_OVERRIDE_AUTHORITY.get(action)
         if declared is None:
             raise OverrideActionClassificationError(action)

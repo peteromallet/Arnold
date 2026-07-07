@@ -44,6 +44,20 @@ _PHASE_TO_EXPECTED_STATE: dict[str, str] = {
     "revise": "planned",  # revise completes → returns to plan/critique loop
 }
 
+# Execute is a multi-state phase: mid-flight boundaries (checkpoint, blocked,
+# partial failure) keep ``current_phase == "execute"`` while terminal boundaries
+# (no-review terminal) land in ``done`` or ``awaiting_human_verify``. A single
+# post-phase ``current_state`` value is therefore not meaningful, so execute is
+# intentionally absent from ``_PHASE_TO_EXPECTED_STATE``; the execute-specific
+# terminal check (``_check_execute_terminal_state``) validates the accepted
+# terminal set instead.
+_EXECUTE_PHASE = "execute"
+_EXECUTE_TERMINAL_STATES = {"done", "awaiting_human_verify"}
+_EXECUTE_TERMINAL_BOUNDARY_IDS = {"execute_no_review_terminal"}
+_EXECUTE_APPROVAL_BOUNDARY_IDS = {"execute_approval"}
+_EXECUTE_AGGREGATE_BOUNDARY_IDS = {"execute_aggregate_promotion"}
+_EXECUTE_CHECKPOINT_BOUNDARY_IDS = {"execute_batch_checkpoint", "execute_partial_failure"}
+
 # ── public API ─────────────────────────────────────────────────────────
 
 
@@ -120,6 +134,9 @@ def _inspect_contract(
 
     # --- missing authority records ---
     findings.extend(_check_authority_records(plan_dir, contract))
+
+    # --- execute-phase read-only semantics (S4) ---
+    findings.extend(_check_execute_semantics(plan_dir=plan_dir, contract=contract, state=state))
 
     return findings
 
@@ -514,6 +531,251 @@ def _check_authority_records(
         # Already reported by _check_boundary_receipt
         pass
 
+    return findings
+
+
+# ── execute-phase read-only semantics (S4) ─────────────────────────────
+
+
+def _check_execute_semantics(
+    *,
+    plan_dir: Path,
+    contract: Any,
+    state: dict[str, Any] | None,
+) -> list[SemanticFinding]:
+    """Read-only execute-phase boundary checks (S4).
+
+    Observational only — never routes execution. Each finding fires only when
+    its trigger evidence is present, so a plan that has not reached execute
+    (or a clean execute plan) produces no spurious findings.
+    """
+    phase = contract.phase.value if contract.phase else None
+    if phase != _EXECUTE_PHASE:
+        return []
+    bid = contract.boundary_id
+    findings: list[SemanticFinding] = []
+
+    if bid in _EXECUTE_CHECKPOINT_BOUNDARY_IDS:
+        findings.extend(_check_execute_checkpoint(plan_dir, contract))
+    if bid in _EXECUTE_APPROVAL_BOUNDARY_IDS:
+        findings.extend(_check_execute_approval_authority(plan_dir, contract, state))
+    if bid in _EXECUTE_AGGREGATE_BOUNDARY_IDS:
+        findings.extend(_check_execute_aggregate_promotion(plan_dir, contract))
+    if bid in _EXECUTE_TERMINAL_BOUNDARY_IDS:
+        findings.extend(_check_execute_terminal_state(contract, state))
+
+    return findings
+
+
+def _load_receipt(plan_dir: Path, bid: str) -> dict[str, Any] | None:
+    """Load a boundary receipt JSON, returning None when absent/unreadable."""
+    receipt_path = plan_dir / "boundary_receipts" / f"{bid}.json"
+    if not receipt_path.is_file():
+        return None
+    try:
+        raw = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def _check_execute_checkpoint(
+    plan_dir: Path,
+    contract: Any,
+) -> list[SemanticFinding]:
+    """Stale-checkpoint and missing side-effect ref checks (read-only).
+
+    A checkpoint-family receipt is stale when it records a ``batch_index`` for
+    which no corresponding batch artifact exists on disk, or references a
+    ``child_trace_path``/side-effect ref that is missing.
+    """
+    findings: list[SemanticFinding] = []
+    bid = contract.boundary_id
+    receipt = _load_receipt(plan_dir, bid)
+    if receipt is None:
+        return findings
+
+    from arnold_pipelines.megaplan._core import batch_artifact_index, list_batch_artifacts
+
+    on_disk = {batch_artifact_index(p) for p in list_batch_artifacts(plan_dir)}
+    on_disk.discard(None)
+
+    recorded_index = receipt.get("batch_index")
+    if isinstance(recorded_index, int) and on_disk and recorded_index not in on_disk:
+        findings.append(
+            SemanticFinding(
+                finding_id=f"SH-{bid}-stale-checkpoint",
+                boundary_id=bid,
+                description=(
+                    f"execute boundary '{bid}' records batch_index "
+                    f"{recorded_index} but no batch artifact for that index "
+                    f"exists on disk (found indices: {sorted(on_disk)})"
+                ),
+                severity=FindingSeverity.WARNING,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+                contract_ref=bid,
+                details={
+                    "recorded_batch_index": recorded_index,
+                    "on_disk_indices": sorted(i for i in on_disk if i is not None),
+                },
+            )
+        )
+
+    child_ref = receipt.get("child_trace_path")
+    if isinstance(child_ref, str) and child_ref:
+        if not (plan_dir / child_ref).exists():
+            findings.append(
+                SemanticFinding(
+                    finding_id=f"SH-{bid}-missing-side-effect-ref",
+                    boundary_id=bid,
+                    description=(
+                        f"execute boundary '{bid}' references side-effect "
+                        f"ref '{child_ref}' which is missing from the plan dir"
+                    ),
+                    severity=FindingSeverity.WARNING,
+                    diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                    contract_ref=bid,
+                    details={"missing_side_effect_ref": child_ref},
+                )
+            )
+
+    return findings
+
+
+def _check_execute_approval_authority(
+    plan_dir: Path,
+    contract: Any,
+    state: dict[str, Any] | None,
+) -> list[SemanticFinding]:
+    """Missing/stale approval authority vs ``state.meta.current_invocation_id``."""
+    findings: list[SemanticFinding] = []
+    bid = contract.boundary_id
+    receipt = _load_receipt(plan_dir, bid)
+    if receipt is None:
+        return findings
+
+    meta = state.get("meta") if isinstance(state, dict) else None
+    current_invocation = (
+        meta.get("current_invocation_id") if isinstance(meta, dict) else None
+    )
+    receipt_invocation = receipt.get("invocation_id")
+
+    if current_invocation and receipt_invocation and receipt_invocation != current_invocation:
+        findings.append(
+            SemanticFinding(
+                finding_id=f"SH-{bid}-stale-approval-authority",
+                boundary_id=bid,
+                description=(
+                    f"approval authority for '{bid}' records invocation_id "
+                    f"'{receipt_invocation}' but state.meta.current_invocation_id "
+                    f"is '{current_invocation}' (stale approval)"
+                ),
+                severity=FindingSeverity.WARNING,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+                contract_ref=bid,
+                details={
+                    "receipt_invocation_id": receipt_invocation,
+                    "current_invocation_id": current_invocation,
+                },
+            )
+        )
+    elif current_invocation and not receipt_invocation:
+        findings.append(
+            SemanticFinding(
+                finding_id=f"SH-{bid}-missing-approval-authority",
+                boundary_id=bid,
+                description=(
+                    f"approval receipt for '{bid}' is missing invocation_id "
+                    f"authority while state.meta.current_invocation_id is set"
+                ),
+                severity=FindingSeverity.WARNING,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                contract_ref=bid,
+                details={"current_invocation_id": current_invocation},
+            )
+        )
+
+    return findings
+
+
+def _check_execute_aggregate_promotion(
+    plan_dir: Path,
+    contract: Any,
+) -> list[SemanticFinding]:
+    """Child output without reducer promotion / promotion without child evidence."""
+    findings: list[SemanticFinding] = []
+    bid = contract.boundary_id
+    receipt = _load_receipt(plan_dir, bid)
+
+    from arnold_pipelines.megaplan._core import list_batch_artifacts
+
+    child_artifacts = list_batch_artifacts(plan_dir)
+    has_child_evidence = bool(child_artifacts)
+    promotion_present = bool(receipt and receipt.get("reducer_promotion"))
+
+    if has_child_evidence and not promotion_present:
+        findings.append(
+            SemanticFinding(
+                finding_id=f"SH-{bid}-child-output-without-promotion",
+                boundary_id=bid,
+                description=(
+                    f"execute child batch outputs exist for '{bid}' but no "
+                    f"reducer promotion receipt is present"
+                ),
+                severity=FindingSeverity.WARNING,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                contract_ref=bid,
+                details={"child_batch_count": len(child_artifacts)},
+            )
+        )
+    elif promotion_present and not has_child_evidence:
+        findings.append(
+            SemanticFinding(
+                finding_id=f"SH-{bid}-promotion-without-child-evidence",
+                boundary_id=bid,
+                description=(
+                    f"execute boundary '{bid}' records reducer promotion but "
+                    f"no child batch artifacts exist to support it"
+                ),
+                severity=FindingSeverity.WARNING,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+                contract_ref=bid,
+                details={"child_batch_count": 0},
+            )
+        )
+
+    return findings
+
+
+def _check_execute_terminal_state(
+    contract: Any,
+    state: dict[str, Any] | None,
+) -> list[SemanticFinding]:
+    """Validate no-review terminal lands in an accepted execute terminal state."""
+    findings: list[SemanticFinding] = []
+    bid = contract.boundary_id
+    if state is None:
+        return findings
+    actual_cs = state.get("current_state")
+    if actual_cs is not None and actual_cs not in _EXECUTE_TERMINAL_STATES:
+        findings.append(
+            SemanticFinding(
+                finding_id=f"SH-{bid}-terminal-state",
+                boundary_id=bid,
+                description=(
+                    f"execute no-review terminal boundary '{bid}' expects "
+                    f"current_state in {sorted(_EXECUTE_TERMINAL_STATES)} but "
+                    f"got '{actual_cs}'"
+                ),
+                severity=FindingSeverity.WARNING,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+                contract_ref=bid,
+                details={
+                    "accepted_terminal_states": sorted(_EXECUTE_TERMINAL_STATES),
+                    "actual_current_state": actual_cs,
+                },
+            )
+        )
     return findings
 
 

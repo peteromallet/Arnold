@@ -39,6 +39,8 @@ class ConstructType(StrEnum):
     TIEBREAKER_DECISION = "tiebreaker_decision"
     REPLAN_AUTHORITY = "replan_authority"
     PARENT_REJOIN = "parent_rejoin"
+    # ── S4 execute construct types ─────────────────────────────────────────
+    EXECUTE = "execute"
 
 
 # ── S2 front-half stable row ID namespace ──────────────────────────────────
@@ -63,6 +65,13 @@ S3_TIEBREAKER_SYNTHESIS_ROW_ID = "s3.tiebreaker_synthesis.1"
 S3_TIEBREAKER_DECISION_ROW_ID = "s3.tiebreaker_decision.1"
 S3_REPLAN_AUTHORITY_ROW_ID = "s3.replan_authority.1"
 S3_PARENT_REJOIN_ROW_ID = "s3.parent_rejoin.1"
+
+# ── S4 execute stable row ID namespace ──────────────────────────────────────
+# Row IDs are versioned under 's4.' to avoid collision with the S2/S3 namespaces.
+# The plan defers mapping these IDs to a traceability artifact; S4 introduces
+# the namespace and uses it in boundary contracts and tests.
+
+S4_EXECUTE_ROW_ID = "s4.execute.1"
 
 
 class CompatibilityQuarantineCategory(StrEnum):
@@ -251,6 +260,7 @@ __all__ = [
     "S3_TIEBREAKER_DECISION_ROW_ID",
     "S3_TIEBREAKER_RESEARCHER_ROW_ID",
     "S3_TIEBREAKER_SYNTHESIS_ROW_ID",
+    "S4_EXECUTE_ROW_ID",
     "SemanticEvidence",
     "SemanticFailure",
 ]

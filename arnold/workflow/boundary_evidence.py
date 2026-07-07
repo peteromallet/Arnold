@@ -38,12 +38,15 @@ class BoundaryPhase(StrEnum):
     TIEBREAKER_DECISION = "tiebreaker_decision"
     REPLAN_AUTHORITY = "replan_authority"
     PARENT_REJOIN = "parent_rejoin"
+    # ── S4 execute phase ──────────────────────────────────────────────────
+    EXECUTE = "execute"
 
 
 class BoundaryOutcome(StrEnum):
     """Stable boundary outcome codes."""
 
     COMPLETE = "complete"
+    SUCCEEDED = "succeeded"
     INCOMPLETE = "incomplete"
     PARTIAL = "partial"
     TIER_ACCEPTED = "tier_accepted"
