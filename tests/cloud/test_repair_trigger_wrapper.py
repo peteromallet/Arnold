@@ -135,6 +135,110 @@ def _read_json_eventually(path: Path, *, timeout_s: float = 2.0) -> dict[str, An
     raise FileNotFoundError(path)
 
 
+def _patched_dispatch_env(tmp_path: Path, *, mode: str) -> tuple[dict[str, str], Path]:
+    patch_dir = tmp_path / f"py-patches-{mode}"
+    patch_dir.mkdir()
+    capture_path = tmp_path / f"dispatch-capture-{mode}.json"
+    (patch_dir / "sitecustomize.py").write_text(
+        """
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from types import SimpleNamespace
+
+from arnold_pipelines.megaplan.cloud import repair_contract as _repair_contract
+from arnold_pipelines.megaplan.run_state import resolver as _resolver
+
+capture_path = Path(os.environ["ARNOLD_TEST_CAPTURE"])
+mode = os.environ["ARNOLD_TEST_MODE"]
+
+
+def _target_summary(target):
+    refs = target.get("current_refs") if isinstance(target.get("current_refs"), dict) else {}
+    plan = target.get("plan_state") if isinstance(target.get("plan_state"), dict) else {}
+    return {
+        "authoritative_source": str(target.get("authoritative_source") or ""),
+        "target_session": str(target.get("target_session") or ""),
+        "workspace": str(refs.get("workspace") or ""),
+        "current_plan_name": str(refs.get("current_plan_name") or ""),
+        "plan_name": str(plan.get("name") or ""),
+        "plan_present": bool(plan.get("present")),
+    }
+
+
+calls = {}
+sentinel = SimpleNamespace(
+    kind="sentinel",
+    canonical_state=SimpleNamespace(name="RUNNING"),
+    reason="patched",
+    human_required=False,
+    human_gate=None,
+    stale_sources=(),
+)
+
+
+def _write_capture():
+    capture_path.write_text(json.dumps(calls, sort_keys=True), encoding="utf-8")
+
+
+def _resolve_run_state(evidence):
+    calls["resolve_input"] = _target_summary(evidence if isinstance(evidence, dict) else {})
+    if mode == "raise":
+        calls["resolve_raised"] = True
+        _write_capture()
+        raise RuntimeError("resolver boom")
+    calls["resolve_raised"] = False
+    _write_capture()
+    return sentinel
+
+
+def _project_repair_custody(*, plan_state, current_target, canonical_run_state=None, marker_dir=None, repair_data_dir=None, **_kwargs):
+    calls["project"] = {
+        "canonical_kind": getattr(canonical_run_state, "kind", None),
+        "target": _target_summary(current_target if isinstance(current_target, dict) else {}),
+        "marker_dir": str(marker_dir) if marker_dir is not None else "",
+    }
+    _write_capture()
+    return {"blocker_id": "bid-1", "blocker_fingerprint": {}, "active_request_ids": ["req-1"]}
+
+
+def _classify_repair_dispatch(*, canonical_run_state=None, event_plan_dir=None, current_target=None, custody_projection=None, **_kwargs):
+    decision = "broken_superfixer" if canonical_run_state is None else "dispatch_l1_repair"
+    dispatch_intent = "broken_superfixer" if canonical_run_state is None else "dispatch_l1"
+    calls["dispatch"] = {
+        "canonical_kind": getattr(canonical_run_state, "kind", None),
+        "decision": decision,
+        "event_plan_dir": str(event_plan_dir) if event_plan_dir is not None else "",
+        "target": _target_summary(current_target if isinstance(current_target, dict) else {}),
+        "active_request_ids": list((custody_projection or {}).get("active_request_ids") or []),
+    }
+    _write_capture()
+    return SimpleNamespace(
+        decision=decision,
+        dispatch_intent=dispatch_intent,
+        custody_bucket="repairable_not_repairing" if canonical_run_state is not None else "human_required",
+        rationale=("patched",) if canonical_run_state is not None else ("canonical provenance missing",),
+        blocker_id="bid-1",
+        request_id="req-1",
+    )
+
+
+_resolver.resolve_run_state = _resolve_run_state
+_repair_contract.project_repair_custody = _project_repair_custody
+_repair_contract.classify_repair_dispatch = _classify_repair_dispatch
+""",
+        encoding="utf-8",
+    )
+    env = {
+        "ARNOLD_TEST_CAPTURE": str(capture_path),
+        "ARNOLD_TEST_MODE": mode,
+        "PYTHONPATH": f"{patch_dir}{os.pathsep}{REPO_ROOT}{os.pathsep}{os.environ.get('PYTHONPATH', '')}",
+    }
+    return env, capture_path
+
+
 def _project_request_custody(marker_dir: Path, request: dict[str, object]) -> dict[str, Any]:
     request_payload = request["request"]
     assert isinstance(request_payload, dict)
@@ -201,7 +305,7 @@ def test_trigger_observes_without_dispatch_when_disabled(tmp_path: Path) -> None
     assert "dispatched" not in {item["decision"] for item in _decisions(marker_dir)}
     assert str(spec) in result.stdout
     observe = next(event for event in _events(result) if event["event"] == "repair_trigger_observe")
-    assert observe["dispatch_decision"] == "dispatch_l1_repair"
+    assert observe["dispatch_decision"] == "broken_superfixer"
     assert observe["custody_bucket"] == "repairable_not_repairing"
 
 
@@ -228,7 +332,7 @@ def test_trigger_reports_current_target_resolution_evidence(tmp_path: Path) -> N
     assert observe["target"]["authoritative_source"] == "chain_state"
     assert observe["target"]["target_session"] == "demo"
     assert observe["target"]["current_refs"]["remote_spec"] == str(spec)
-    assert observe["dispatch_decision"] == "dispatch_l1_repair"
+    assert observe["dispatch_decision"] == "broken_superfixer"
 
 
 def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) -> None:
@@ -237,8 +341,9 @@ def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) ->
     spec = _write_marker(marker_dir, workspace)
     queued = _enqueue(marker_dir, workspace)
     repair_bin = _repair_stub(tmp_path)
+    env_overrides, _capture_path = _patched_dispatch_env(tmp_path, mode="capture")
 
-    result = _run_trigger(marker_dir, repair_bin, enabled=True)
+    result = _run_trigger(marker_dir, repair_bin, enabled=True, env_overrides=env_overrides)
 
     assert result.returncode == 0, result.stderr
     assert "repair_trigger_dispatch" in result.stdout
@@ -249,26 +354,77 @@ def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) ->
     assert payload["request_id"] == queued["request"]["request_id"]
 
 
+def test_trigger_passes_canonical_provenance_into_custody_and_dispatch(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    _write_marker(marker_dir, workspace)
+    _enqueue(marker_dir, workspace)
+
+    env_overrides, capture_path = _patched_dispatch_env(tmp_path, mode="capture")
+    result = _run_trigger(marker_dir, _repair_stub(tmp_path), enabled=False, env_overrides=env_overrides)
+
+    assert result.returncode == 0, result.stderr
+    capture = json.loads(capture_path.read_text(encoding="utf-8"))
+    observe = next(event for event in _events(result) if event["event"] == "repair_trigger_observe")
+
+    assert capture["resolve_input"] == {
+        "authoritative_source": "marker",
+        "target_session": "demo",
+        "workspace": str(workspace),
+        "current_plan_name": "m3",
+        "plan_name": "m3",
+        "plan_present": True,
+    }
+    assert capture["project"]["canonical_kind"] == "sentinel"
+    assert capture["project"]["target"] == capture["resolve_input"]
+    assert capture["dispatch"]["canonical_kind"] == "sentinel"
+    assert capture["dispatch"]["target"] == capture["resolve_input"]
+    assert capture["dispatch"]["event_plan_dir"] == str(workspace / ".megaplan" / "plans" / "m3")
+    assert observe["dispatch_decision"] == "dispatch_l1_repair"
+
+
+def test_trigger_resolver_exception_fails_closed_without_legacy_dispatch(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    _write_marker(marker_dir, workspace)
+    _enqueue(marker_dir, workspace)
+    env_overrides, capture_path = _patched_dispatch_env(tmp_path, mode="raise")
+    result = _run_trigger(
+        marker_dir,
+        _repair_stub(tmp_path),
+        enabled=True,
+        env_overrides=env_overrides,
+    )
+
+    assert result.returncode == 0, result.stderr
+    capture = json.loads(capture_path.read_text(encoding="utf-8"))
+    observe = next(event for event in _events(result) if event["event"] == "repair_trigger_observe")
+    assert capture["dispatch"]["canonical_kind"] is None
+    assert observe["dispatch_decision"] == "broken_superfixer"
+    assert observe["dispatch_intent"] == "broken_superfixer"
+    assert not (tmp_path / "repair-args.json").exists()
+    assert "repair_trigger_dispatch" not in result.stdout
+    assert {item["decision"] for item in _decisions(marker_dir)} == {"accepted"}
+
+
 def test_trigger_does_not_launch_when_request_claim_is_already_held(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     workspace = tmp_path / "workspace"
     _write_marker(marker_dir, workspace)
     queued = _enqueue(marker_dir, workspace)
     repair_bin = _repair_stub(tmp_path)
-    projection = _project_request_custody(marker_dir, queued)
-    blocker_id = projection["blocker_id"]
-    assert blocker_id
     claim = repair_requests.claim_active_repair_request(
         repair_requests.repair_queue_dir(marker_dir),
-        blocker_id=blocker_id,
+        blocker_id="bid-1",
         request_id=queued["request"]["request_id"],
         actor="other-trigger",
         session="demo",
         pid=os.getpid(),
     )
     assert claim.claimed
+    env_overrides, _capture_path = _patched_dispatch_env(tmp_path, mode="capture")
 
-    result = _run_trigger(marker_dir, repair_bin, enabled=True)
+    result = _run_trigger(marker_dir, repair_bin, enabled=True, env_overrides=env_overrides)
 
     assert result.returncode == 0, result.stderr
     assert not (tmp_path / "repair-args.json").exists()
@@ -282,8 +438,9 @@ def test_trigger_keeps_accepted_request_visible_until_dispatchable(tmp_path: Pat
     workspace = tmp_path / "workspace"
     _write_marker(marker_dir, workspace)
     queued = _enqueue(marker_dir, workspace)
+    env_overrides, _capture_path = _patched_dispatch_env(tmp_path, mode="capture")
 
-    result = _run_trigger(marker_dir, _repair_stub(tmp_path), enabled=False)
+    result = _run_trigger(marker_dir, _repair_stub(tmp_path), enabled=False, env_overrides=env_overrides)
 
     assert result.returncode == 0, result.stderr
     observe = next(event for event in _events(result) if event["event"] == "repair_trigger_observe")
@@ -300,12 +457,14 @@ def test_trigger_loads_hot_env_for_systemd_latency_path(tmp_path: Path) -> None:
     repair_bin = _repair_stub(tmp_path)
     hot_env = tmp_path / "cloud-hot-env"
     hot_env.write_text("ARNOLD_REPAIR_TRIGGER_ENABLED=1\n", encoding="utf-8")
+    env_overrides, _capture_path = _patched_dispatch_env(tmp_path, mode="capture")
+    env_overrides["ARNOLD_CLOUD_HOT_ENV"] = str(hot_env)
 
     result = _run_trigger(
         marker_dir,
         repair_bin,
         enabled=False,
-        env_overrides={"ARNOLD_CLOUD_HOT_ENV": str(hot_env)},
+        env_overrides=env_overrides,
     )
 
     assert result.returncode == 0, result.stderr

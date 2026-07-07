@@ -4938,6 +4938,7 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
         CUSTODY_BUCKET_REPAIRING,
         project_repair_custody,
     )
+    from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
 
     remote_spec = _resolve_remote_chain_spec(root, args, spec)
     marker = _load_marker(root, args)
@@ -5128,9 +5129,11 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
                 marker_dir=marker_dir,
                 repair_data_dir=repair_data_dir,
             )
+            canonical_run_state = resolve_run_state(current_target)
             projection = project_repair_custody(
                 plan_state=plan_status,
                 current_target=current_target,
+                canonical_run_state=canonical_run_state,
                 marker_dir=marker_dir,
                 repair_data_dir=repair_data_dir,
             )

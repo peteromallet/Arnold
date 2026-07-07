@@ -15,6 +15,8 @@ from typing import Any, Callable, Literal, Mapping, TypeAlias, TypedDict, cast
 
 from arnold.runtime.state_persistence import atomic_write_json as _atomic_write_json
 from arnold_pipelines.megaplan.cloud.redact import redact_payload as canonical_redact_payload
+from arnold_pipelines.megaplan.observability.events import EventKind, emit
+from arnold_pipelines.megaplan.run_state.model import CanonicalRunState, CanonicalState
 
 CURRENT_SCHEMA_VERSION = 1
 
@@ -321,6 +323,31 @@ class RepairDispatchDecision:
     failure_kind: str = ""
 
 
+def _make_dispatch_decision(
+    *,
+    decision: RepairDispatchDecisionKind,
+    dispatch_intent: RepairDispatchIntent,
+    rationale: tuple[str, ...],
+    blocker_id: str,
+    request_id: str,
+    custody_bucket: str,
+    current_state: str,
+    retry_strategy: str,
+    failure_kind: str,
+) -> RepairDispatchDecision:
+    return RepairDispatchDecision(
+        decision=decision,
+        dispatch_intent=dispatch_intent,
+        rationale=rationale,
+        blocker_id=blocker_id,
+        request_id=request_id,
+        custody_bucket=custody_bucket,
+        current_state=current_state,
+        retry_strategy=retry_strategy,
+        failure_kind=failure_kind,
+    )
+
+
 def blocker_fingerprint_from_evidence(
     *,
     plan_state: Mapping[str, Any] | None = None,
@@ -410,6 +437,7 @@ def project_repair_custody(
     *,
     plan_state: Mapping[str, Any] | None = None,
     current_target: Mapping[str, Any] | None = None,
+    canonical_run_state: CanonicalRunState | None = None,
     marker_dir: str | Path | None = None,
     queue_dir: str | Path | None = None,
     repair_data_dir: str | Path | None = None,
@@ -514,6 +542,8 @@ def project_repair_custody(
         bucket = CUSTODY_BUCKET_REPAIRING
     elif active_request_ids:
         bucket = CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING
+    elif canonical_run_state is not None:
+        bucket = _custody_bucket_from_canonical_state(canonical_run_state)
     else:
         current_state = _as_text(plan_payload.get("current_state"))
         retry_strategy = _as_text(_as_mapping(plan_payload.get("resume_cursor")).get("retry_strategy"))
@@ -538,8 +568,11 @@ def project_repair_custody(
         "current_target": dict(target_payload),
     }
 
-    if resolver_observe_enabled() and target_payload:
-        canonical = resolve_run_state(target_payload)
+    observed_canonical = canonical_run_state
+    if observed_canonical is None and resolver_observe_enabled() and target_payload:
+        observed_canonical = resolve_run_state(target_payload)
+    if resolver_observe_enabled() and observed_canonical is not None:
+        canonical = observed_canonical
         projection["canonical_state"] = canonical.canonical_state.name
         projection["canonical_reason"] = canonical.reason
         projection["canonical_human_required"] = canonical.human_required
@@ -551,8 +584,26 @@ def project_repair_custody(
     return projection
 
 
+def _custody_bucket_from_canonical_state(
+    canonical_run_state: CanonicalRunState,
+) -> RepairCustodyBucket:
+    state = canonical_run_state.canonical_state
+    if state is CanonicalState.REPAIRING:
+        return CUSTODY_BUCKET_REPAIRING
+    if state in {
+        CanonicalState.REAL_IMPLEMENTATION_BLOCK,
+        CanonicalState.RETRYABLE_EXECUTION_BLOCK,
+    }:
+        return CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING
+    if state is CanonicalState.HUMAN_ACTION_REQUIRED:
+        return CUSTODY_BUCKET_HUMAN_REQUIRED
+    return CUSTODY_BUCKET_BROKEN_SUPERFIXER
+
+
 def classify_repair_dispatch(
     *,
+    canonical_run_state: CanonicalRunState | None,
+    event_plan_dir: Path,
     plan_state: Mapping[str, Any] | None = None,
     retry_strategy: str = "",
     latest_failure: Mapping[str, Any] | None = None,
@@ -597,118 +648,11 @@ def classify_repair_dispatch(
         value for value in (_as_list(custody.get("terminal_outcomes")) if custody else []) if _as_text(value)
     ]
 
-    rationale: list[str] = []
-
-    if target_payload:
-        from arnold_pipelines.megaplan.cloud.feature_flags import resolver_enforcement_enabled
-        from arnold_pipelines.megaplan.run_state.model import CanonicalState
-        from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
-
-        if resolver_enforcement_enabled():
-            canonical = resolve_run_state(target_payload)
-            if canonical.canonical_state is CanonicalState.HUMAN_ACTION_REQUIRED:
-                rationale.append("resolver enforcement: typed human-action-required gate")
-                return RepairDispatchDecision(
-                    decision=DISPATCH_DECISION_HUMAN_REQUIRED,
-                    dispatch_intent=DISPATCH_INTENT_HUMAN_REQUIRED,
-                    rationale=tuple(rationale),
-                    blocker_id=blocker_id,
-                    request_id=request_id,
-                    custody_bucket=custody_bucket,
-                    current_state=current_state,
-                    retry_strategy=normalized_retry_strategy,
-                    failure_kind=failure_kind,
-                )
-            if canonical.canonical_state is CanonicalState.BROKEN_STATE_MACHINE:
-                rationale.append("resolver enforcement: broken-state-machine escalation")
-                return RepairDispatchDecision(
-                    decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
-                    dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
-                    rationale=tuple(rationale),
-                    blocker_id=blocker_id,
-                    request_id=request_id,
-                    custody_bucket=custody_bucket,
-                    current_state=current_state,
-                    retry_strategy=normalized_retry_strategy,
-                    failure_kind=failure_kind,
-                )
-            if canonical.canonical_state in {
-                CanonicalState.REAL_IMPLEMENTATION_BLOCK,
-                CanonicalState.RETRYABLE_EXECUTION_BLOCK,
-            }:
-                if _has_active_repair(lock_evidence=lock_evidence, process_evidence=process_evidence, custody=custody):
-                    rationale.append("active repair ownership or runtime evidence already exists")
-                    return RepairDispatchDecision(
-                        decision=DISPATCH_DECISION_REPAIRING,
-                        dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
-                        rationale=tuple(rationale),
-                        blocker_id=blocker_id,
-                        request_id=request_id,
-                        custody_bucket=custody_bucket,
-                        current_state=current_state,
-                        retry_strategy=normalized_retry_strategy,
-                        failure_kind=failure_kind,
-                    )
-                if request_id:
-                    rationale.append("resolver enforcement: canonical machine-actionable block")
-                    return RepairDispatchDecision(
-                        decision=DISPATCH_DECISION_L1,
-                        dispatch_intent=DISPATCH_INTENT_L1,
-                        rationale=tuple(rationale),
-                        blocker_id=blocker_id,
-                        request_id=request_id,
-                        custody_bucket=custody_bucket,
-                        current_state=current_state,
-                        retry_strategy=normalized_retry_strategy,
-                        failure_kind=failure_kind,
-                    )
-                rationale.append("resolver enforcement: canonical machine-actionable block without active request")
-                return RepairDispatchDecision(
-                    decision=DISPATCH_DECISION_NO_ACTION,
-                    dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
-                    rationale=tuple(rationale),
-                    blocker_id=blocker_id,
-                    request_id="",
-                    custody_bucket=custody_bucket,
-                    current_state=current_state,
-                    retry_strategy=normalized_retry_strategy,
-                    failure_kind=failure_kind,
-                )
-
-    if _is_terminal_dispatch_state(current_state, terminal_outcomes):
-        rationale.append("plan or repair evidence is terminal")
-        return RepairDispatchDecision(
-            decision=DISPATCH_DECISION_TERMINAL,
-            dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
-            rationale=tuple(rationale),
-            blocker_id=blocker_id,
-            request_id=request_id,
-            custody_bucket=custody_bucket,
-            current_state=current_state,
-            retry_strategy=normalized_retry_strategy,
-            failure_kind=failure_kind,
-        )
-
-    human_gate = _human_blocker_dispatch_gate(human_blocker_classification)
-    if human_gate == DISPATCH_INTENT_HUMAN_REQUIRED:
-        rationale.append("human-blocker classification gates repair dispatch")
-        return RepairDispatchDecision(
-            decision=DISPATCH_DECISION_HUMAN_REQUIRED,
-            dispatch_intent=DISPATCH_INTENT_HUMAN_REQUIRED,
-            rationale=tuple(rationale),
-            blocker_id=blocker_id,
-            request_id=request_id,
-            custody_bucket=custody_bucket,
-            current_state=current_state,
-            retry_strategy=normalized_retry_strategy,
-            failure_kind=failure_kind,
-        )
-    if human_gate == DISPATCH_INTENT_BROKEN_SUPERFIXER:
-        rationale.append("mechanical or contradictory needs-human evidence blocks dispatch")
-        return RepairDispatchDecision(
+    if canonical_run_state is None:
+        return _make_dispatch_decision(
             decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
             dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
-            rationale=tuple(rationale),
+            rationale=("canonical provenance missing; refusing legacy dispatch fallback",),
             blocker_id=blocker_id,
             request_id=request_id,
             custody_bucket=custody_bucket,
@@ -717,78 +661,321 @@ def classify_repair_dispatch(
             failure_kind=failure_kind,
         )
 
-    if _has_active_repair(lock_evidence=lock_evidence, process_evidence=process_evidence, custody=custody):
-        rationale.append("active repair ownership or runtime evidence already exists")
-        return RepairDispatchDecision(
-            decision=DISPATCH_DECISION_REPAIRING,
-            dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
-            rationale=tuple(rationale),
-            blocker_id=blocker_id,
-            request_id=request_id,
-            custody_bucket=custody_bucket,
-            current_state=current_state,
-            retry_strategy=normalized_retry_strategy,
-            failure_kind=failure_kind,
-        )
-
-    if _is_known_repairable_shape(
-        current_state=current_state,
-        retry_strategy=normalized_retry_strategy,
-        failure_kind=failure_kind,
-        current_target=target_payload,
-    ):
-        if request_id:
-            rationale.append("known repairable blocker has active custody and no competing owner")
-            return RepairDispatchDecision(
-                decision=DISPATCH_DECISION_L1,
-                dispatch_intent=DISPATCH_INTENT_L1,
-                rationale=tuple(rationale),
-                blocker_id=blocker_id,
-                request_id=request_id,
-                custody_bucket=custody_bucket,
-                current_state=current_state,
-                retry_strategy=normalized_retry_strategy,
-                failure_kind=failure_kind,
-            )
-        rationale.append("known repairable blocker lacks an active request to dispatch")
-        return RepairDispatchDecision(
-            decision=DISPATCH_DECISION_NO_ACTION,
-            dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
-            rationale=tuple(rationale),
-            blocker_id=blocker_id,
-            request_id="",
-            custody_bucket=custody_bucket,
-            current_state=current_state,
-            retry_strategy=normalized_retry_strategy,
-            failure_kind=failure_kind,
-        )
-
-    if current_state == "blocked" or normalized_retry_strategy == "manual_review":
-        rationale.append("blocked or manual-review state is not a whitelisted repairable shape")
-        return RepairDispatchDecision(
-            decision=DISPATCH_DECISION_HUMAN_REQUIRED,
-            dispatch_intent=DISPATCH_INTENT_HUMAN_REQUIRED,
-            rationale=tuple(rationale),
-            blocker_id=blocker_id,
-            request_id=request_id,
-            custody_bucket=custody_bucket,
-            current_state=current_state,
-            retry_strategy=normalized_retry_strategy,
-            failure_kind=failure_kind,
-        )
-
-    rationale.append("state and evidence do not map to a safe repair dispatch policy")
-    return RepairDispatchDecision(
-        decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
-        dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
-        rationale=tuple(rationale),
+    canonical_decision = _classify_repair_dispatch_canonical(
+        canonical_run_state=canonical_run_state,
         blocker_id=blocker_id,
         request_id=request_id,
         custody_bucket=custody_bucket,
         current_state=current_state,
         retry_strategy=normalized_retry_strategy,
         failure_kind=failure_kind,
+        lock_evidence=lock_evidence,
+        process_evidence=process_evidence,
+        custody=custody,
     )
+    legacy_decision = _classify_repair_dispatch_legacy(
+        blocker_id=blocker_id,
+        request_id=request_id,
+        custody_bucket=custody_bucket,
+        current_state=current_state,
+        retry_strategy=normalized_retry_strategy,
+        failure_kind=failure_kind,
+        current_target=target_payload,
+        human_blocker_classification=human_blocker_classification,
+        lock_evidence=lock_evidence,
+        process_evidence=process_evidence,
+        custody=custody,
+        terminal_outcomes=terminal_outcomes,
+    )
+    _emit_dispatch_drift_detected(
+        event_plan_dir=event_plan_dir,
+        canonical_run_state=canonical_run_state,
+        canonical_decision=canonical_decision,
+        legacy_decision=legacy_decision,
+    )
+    return canonical_decision
+
+
+def _classify_repair_dispatch_canonical(
+    *,
+    canonical_run_state: CanonicalRunState,
+    blocker_id: str,
+    request_id: str,
+    custody_bucket: str,
+    current_state: str,
+    retry_strategy: str,
+    failure_kind: str,
+    lock_evidence: Any,
+    process_evidence: Mapping[str, Any] | None,
+    custody: Mapping[str, Any],
+) -> RepairDispatchDecision:
+    state = canonical_run_state.canonical_state
+    if state is CanonicalState.COMPLETED:
+        return _make_dispatch_decision(
+            decision=DISPATCH_DECISION_TERMINAL,
+            dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+            rationale=("resolver enforcement: canonical completed state",),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+        )
+    if state is CanonicalState.RUNNING:
+        return _make_dispatch_decision(
+            decision=DISPATCH_DECISION_NO_ACTION,
+            dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+            rationale=("resolver enforcement: canonical running state",),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+        )
+    if state is CanonicalState.REPAIRING:
+        return _make_dispatch_decision(
+            decision=DISPATCH_DECISION_REPAIRING,
+            dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+            rationale=("resolver enforcement: canonical repairing state",),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+        )
+    if state is CanonicalState.HUMAN_ACTION_REQUIRED:
+        return _make_dispatch_decision(
+            decision=DISPATCH_DECISION_HUMAN_REQUIRED,
+            dispatch_intent=DISPATCH_INTENT_HUMAN_REQUIRED,
+            rationale=("resolver enforcement: typed human-action-required gate",),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+        )
+    if state in {
+        CanonicalState.REAL_IMPLEMENTATION_BLOCK,
+        CanonicalState.RETRYABLE_EXECUTION_BLOCK,
+    }:
+        if _has_active_repair(lock_evidence=lock_evidence, process_evidence=process_evidence, custody=custody):
+            return _make_dispatch_decision(
+                decision=DISPATCH_DECISION_REPAIRING,
+                dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+                rationale=("active repair ownership or runtime evidence already exists",),
+                blocker_id=blocker_id,
+                request_id=request_id,
+                custody_bucket=custody_bucket,
+                current_state=current_state,
+                retry_strategy=retry_strategy,
+                failure_kind=failure_kind,
+            )
+        if request_id:
+            return _make_dispatch_decision(
+                decision=DISPATCH_DECISION_L1,
+                dispatch_intent=DISPATCH_INTENT_L1,
+                rationale=("resolver enforcement: canonical machine-actionable block",),
+                blocker_id=blocker_id,
+                request_id=request_id,
+                custody_bucket=custody_bucket,
+                current_state=current_state,
+                retry_strategy=retry_strategy,
+                failure_kind=failure_kind,
+            )
+        return _make_dispatch_decision(
+            decision=DISPATCH_DECISION_NO_ACTION,
+            dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+            rationale=("resolver enforcement: canonical machine-actionable block without active request",),
+            blocker_id=blocker_id,
+            request_id="",
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+        )
+    if state in {
+        CanonicalState.BROKEN_STATE_MACHINE,
+        CanonicalState.STALE_DERIVED_STATE,
+        CanonicalState.UNKNOWN,
+    }:
+        state_label = state.name.lower().replace("_", "-")
+        return _make_dispatch_decision(
+            decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
+            dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
+            rationale=(f"resolver enforcement: canonical {state_label} escalation",),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+        )
+    return _make_dispatch_decision(
+        decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
+        dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
+        rationale=("resolver enforcement: unrecognized canonical state",),
+        blocker_id=blocker_id,
+        request_id=request_id,
+        custody_bucket=custody_bucket,
+        current_state=current_state,
+        retry_strategy=retry_strategy,
+        failure_kind=failure_kind,
+    )
+
+
+def _classify_repair_dispatch_legacy(
+    *,
+    blocker_id: str,
+    request_id: str,
+    custody_bucket: str,
+    current_state: str,
+    retry_strategy: str,
+    failure_kind: str,
+    current_target: Mapping[str, Any],
+    human_blocker_classification: Any,
+    lock_evidence: Any,
+    process_evidence: Mapping[str, Any] | None,
+    custody: Mapping[str, Any],
+    terminal_outcomes: list[Any],
+) -> RepairDispatchDecision:
+    if _is_terminal_dispatch_state(current_state, terminal_outcomes):
+        return _make_dispatch_decision(
+            decision=DISPATCH_DECISION_TERMINAL,
+            dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+            rationale=("plan or repair evidence is terminal",),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+        )
+
+    human_gate = _human_blocker_dispatch_gate(human_blocker_classification)
+    if human_gate == DISPATCH_INTENT_HUMAN_REQUIRED:
+        return _make_dispatch_decision(
+            decision=DISPATCH_DECISION_HUMAN_REQUIRED,
+            dispatch_intent=DISPATCH_INTENT_HUMAN_REQUIRED,
+            rationale=("human-blocker classification gates repair dispatch",),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+        )
+    if human_gate == DISPATCH_INTENT_BROKEN_SUPERFIXER:
+        return _make_dispatch_decision(
+            decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
+            dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
+            rationale=("mechanical or contradictory needs-human evidence blocks dispatch",),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+        )
+
+    if _has_active_repair(lock_evidence=lock_evidence, process_evidence=process_evidence, custody=custody):
+        return _make_dispatch_decision(
+            decision=DISPATCH_DECISION_REPAIRING,
+            dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+            rationale=("active repair ownership or runtime evidence already exists",),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+        )
+
+    if _is_known_repairable_shape(
+        current_state=current_state,
+        retry_strategy=retry_strategy,
+        failure_kind=failure_kind,
+        current_target=current_target,
+    ):
+        if request_id:
+            return _make_dispatch_decision(
+                decision=DISPATCH_DECISION_L1,
+                dispatch_intent=DISPATCH_INTENT_L1,
+                rationale=("known repairable blocker has active custody and no competing owner",),
+                blocker_id=blocker_id,
+                request_id=request_id,
+                custody_bucket=custody_bucket,
+                current_state=current_state,
+                retry_strategy=retry_strategy,
+                failure_kind=failure_kind,
+            )
+        return _make_dispatch_decision(
+            decision=DISPATCH_DECISION_NO_ACTION,
+            dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+            rationale=("known repairable blocker lacks an active request to dispatch",),
+            blocker_id=blocker_id,
+            request_id="",
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+        )
+
+    if current_state == "blocked" or retry_strategy == "manual_review":
+        return _make_dispatch_decision(
+            decision=DISPATCH_DECISION_HUMAN_REQUIRED,
+            dispatch_intent=DISPATCH_INTENT_HUMAN_REQUIRED,
+            rationale=("blocked or manual-review state is not a whitelisted repairable shape",),
+            blocker_id=blocker_id,
+            request_id=request_id,
+            custody_bucket=custody_bucket,
+            current_state=current_state,
+            retry_strategy=retry_strategy,
+            failure_kind=failure_kind,
+        )
+
+    return _make_dispatch_decision(
+        decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
+        dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
+        rationale=("state and evidence do not map to a safe repair dispatch policy",),
+        blocker_id=blocker_id,
+        request_id=request_id,
+        custody_bucket=custody_bucket,
+        current_state=current_state,
+        retry_strategy=retry_strategy,
+        failure_kind=failure_kind,
+    )
+
+
+def _emit_dispatch_drift_detected(
+    *,
+    event_plan_dir: Path,
+    canonical_run_state: CanonicalRunState,
+    canonical_decision: RepairDispatchDecision,
+    legacy_decision: RepairDispatchDecision,
+) -> None:
+    if (
+        canonical_decision.decision == legacy_decision.decision
+        and canonical_decision.dispatch_intent == legacy_decision.dispatch_intent
+    ):
+        return
+    payload = {
+        "what": "repair_contract.dispatch_decision",
+        "expected": canonical_decision.decision,
+        "actual": legacy_decision.decision,
+        "canonical_state": canonical_run_state.canonical_state.name,
+        "legacy_label": legacy_decision.decision,
+        "canonical_dispatch_intent": canonical_decision.dispatch_intent,
+        "legacy_dispatch_intent": legacy_decision.dispatch_intent,
+        "stale_sources": list(canonical_run_state.stale_sources),
+    }
+    try:
+        emit(EventKind.DRIFT_DETECTED, event_plan_dir, payload=payload)
+    except Exception:
+        return
 
 
 def load_json(path: str | Path, *, default: Any | None = None) -> Any:

@@ -34,6 +34,8 @@ from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_
 from arnold_pipelines.megaplan.cloud.session_markers import (
     is_canonical_session_marker_path,
 )
+from arnold_pipelines.megaplan.observability.events import EventKind, emit
+from arnold_pipelines.megaplan.run_state.model import CanonicalRunState, CanonicalState
 from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
 
 # --- canonical paths -------------------------------------------------------
@@ -70,6 +72,18 @@ REPAIR_FRESH_S = 6 * 60 * 60
 
 SessionStatus = str  # one of: running | repairing | blocked | complete | attention
 LivenessProbe = Callable[[Mapping[str, Any]], dict[str, bool]]
+
+_CANONICAL_STATUS_MAP: dict[CanonicalState, SessionStatus | None] = {
+    CanonicalState.RUNNING: "running",
+    CanonicalState.REPAIRING: "repairing",
+    CanonicalState.RETRYABLE_EXECUTION_BLOCK: "attention",
+    CanonicalState.REAL_IMPLEMENTATION_BLOCK: "attention",
+    CanonicalState.HUMAN_ACTION_REQUIRED: "blocked",
+    CanonicalState.COMPLETED: "complete",
+    CanonicalState.STALE_DERIVED_STATE: "attention",
+    CanonicalState.BROKEN_STATE_MACHINE: "attention",
+    CanonicalState.UNKNOWN: None,
+}
 
 
 # --- public API ------------------------------------------------------------
@@ -290,6 +304,58 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
+def _normalize_gh_pr_state(payload: Mapping[str, Any]) -> str:
+    merged_at = str(payload.get("mergedAt") or "").strip()
+    if merged_at:
+        return "merged"
+    state = str(payload.get("state") or "").strip().lower()
+    if state == "open" and bool(payload.get("isDraft")):
+        return "draft"
+    if state in {"open", "closed", "merged", "draft"}:
+        return state
+    return ""
+
+
+def _probe_live_pr_state(workspace: Path | None, pr_number: object) -> dict[str, Any]:
+    pr = _as_int(pr_number)
+    if pr is None:
+        return {"available": False, "reason": "no_pr_number"}
+    if workspace is None:
+        return {"available": False, "pr_number": pr, "reason": "no_workspace"}
+    try:
+        proc = subprocess.run(
+            ["gh", "pr", "view", str(pr), "--json", "number,state,isDraft,mergedAt"],
+            cwd=str(workspace),
+            text=True,
+            capture_output=True,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"available": False, "pr_number": pr, "reason": type(exc).__name__}
+    if proc.returncode != 0:
+        return {
+            "available": False,
+            "pr_number": pr,
+            "reason": "gh_pr_view_failed",
+            "stderr": str(proc.stderr or "").strip()[-500:],
+        }
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        return {"available": False, "pr_number": pr, "reason": "invalid_gh_json"}
+    if not isinstance(payload, Mapping):
+        return {"available": False, "pr_number": pr, "reason": "invalid_gh_payload"}
+    state = _normalize_gh_pr_state(payload)
+    if not state:
+        return {"available": False, "pr_number": pr, "reason": "missing_gh_state"}
+    return {
+        "available": True,
+        "pr_number": _as_int(payload.get("number")) or pr,
+        "state": state,
+    }
+
+
 def _session_progress(
     *,
     completed_count: Any,
@@ -489,6 +555,47 @@ def _build_session_entry(
         liveness_probe=liveness_probe,
     )
 
+    canonical_run_state: CanonicalRunState | None = None
+    canonical_state: str | None = None
+    canonical_reason: str | None = None
+    canonical_human_required: bool | None = None
+    canonical_human_gate: str | None = None
+    canonical_resolver_dict: dict[str, Any] | None = None
+    try:
+        resolver_evidence = _build_resolver_evidence(
+            chain_health=chain_health,
+            needs_human=needs_human,
+            repair_progress=repair_progress,
+            watchdog_item=watchdog_item,
+            liveness=liveness,
+            chain_complete=chain_complete,
+        )
+        canonical_run_state = resolve_run_state(resolver_evidence)
+        if resolver_observe_enabled():
+            canonical_state = canonical_run_state.canonical_state.name
+            canonical_reason = canonical_run_state.reason
+            canonical_human_required = canonical_run_state.human_required
+            canonical_human_gate = (
+                canonical_run_state.human_gate.name if canonical_run_state.human_gate else None
+            )
+            canonical_resolver_dict = canonical_run_state.to_dict()
+    except Exception:
+        # Resolver failure must never affect the legacy snapshot output.
+        canonical_run_state = None
+        canonical_resolver_dict = None
+
+    event_plan_dir = _derive_status_event_plan_dir(
+        workspace=workspace,
+        current_plan=str(current_plan or ""),
+        marker_dir=marker_dir,
+        session=session,
+    )
+    stored_pr_number = chain_health.get("pr_number") if chain_health else None
+    stored_pr_state = chain_health.get("pr_state") if chain_health else None
+    live_pr_state = _probe_live_pr_state(workspace, stored_pr_number)
+    pr_number = live_pr_state.get("pr_number") if live_pr_state.get("available") else stored_pr_number
+    pr_state = live_pr_state.get("state") if live_pr_state.get("available") else stored_pr_state
+
     status, operator_next = _classify_session(
         session=session,
         workspace=workspace,
@@ -506,33 +613,9 @@ def _build_session_entry(
         current_plan=str(current_plan or ""),
         plan_state=plan_state,
         now=now,
+        canonical_run_state=canonical_run_state,
+        event_plan_dir=event_plan_dir,
     )
-
-    # --- observe-only canonical resolver fields (additive, never mutates legacy) ---
-    canonical_state: str | None = None
-    canonical_reason: str | None = None
-    canonical_human_required: bool | None = None
-    canonical_human_gate: str | None = None
-    canonical_resolver_dict: dict[str, Any] | None = None
-    if resolver_observe_enabled():
-        try:
-            resolver_evidence = _build_resolver_evidence(
-                chain_health=chain_health,
-                needs_human=needs_human,
-                repair_progress=repair_progress,
-                watchdog_item=watchdog_item,
-                liveness=liveness,
-                chain_complete=chain_complete,
-            )
-            result = resolve_run_state(resolver_evidence)
-            canonical_state = result.canonical_state.name
-            canonical_reason = result.reason
-            canonical_human_required = result.human_required
-            canonical_human_gate = result.human_gate.name if result.human_gate else None
-            canonical_resolver_dict = result.to_dict()
-        except Exception:
-            # Resolver failure must never affect the legacy snapshot output.
-            canonical_resolver_dict = None
 
     entry: dict[str, Any] = {
         "session": session,
@@ -556,8 +639,8 @@ def _build_session_entry(
             current_plan=current_plan,
             complete=chain_complete,
         ),
-        "pr_number": chain_health.get("pr_number") if chain_health else None,
-        "pr_state": chain_health.get("pr_state") if chain_health else None,
+        "pr_number": pr_number,
+        "pr_state": pr_state,
         "latest_activity": latest_activity,
         "operator_next": operator_next,
         "evidence": {
@@ -586,6 +669,61 @@ def _build_session_entry(
 
 
 def _classify_session(
+    *,
+    session: str,
+    workspace: Path | None,
+    remote_spec: str,
+    chain_health: Mapping[str, Any],
+    chain_complete: bool,
+    needs_human: Mapping[str, Any],
+    repair_progress: Mapping[str, Any],
+    watchdog_item: Mapping[str, Any],
+    liveness: Mapping[str, bool],
+    superseding_sibling: str | None,
+    latest_activity_dt: datetime | None,
+    marker_dir: Path,
+    repair_data_dir: Path,
+    current_plan: str,
+    plan_state: Mapping[str, Any] | None,
+    now: datetime,
+    canonical_run_state: CanonicalRunState | None,
+    event_plan_dir: Path,
+) -> tuple[SessionStatus, str]:
+    legacy_status, legacy_reason = _classify_session_legacy(
+        session=session,
+        workspace=workspace,
+        remote_spec=remote_spec,
+        chain_health=chain_health,
+        chain_complete=chain_complete,
+        needs_human=needs_human,
+        repair_progress=repair_progress,
+        watchdog_item=watchdog_item,
+        liveness=liveness,
+        superseding_sibling=superseding_sibling,
+        latest_activity_dt=latest_activity_dt,
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+        current_plan=current_plan,
+        plan_state=plan_state,
+        now=now,
+    )
+    canonical_status = _canonical_session_status(canonical_run_state)
+    if canonical_status is not None:
+        if canonical_status != legacy_status:
+            _emit_status_drift_detected(
+                event_plan_dir=event_plan_dir,
+                canonical_run_state=canonical_run_state,
+                canonical_status=canonical_status,
+                legacy_status=legacy_status,
+                session=session,
+                workspace=workspace,
+                current_plan=current_plan,
+            )
+        return canonical_status, legacy_reason
+    return legacy_status, legacy_reason
+
+
+def _classify_session_legacy(
     *,
     session: str,
     workspace: Path | None,
@@ -676,6 +814,54 @@ def _classify_session(
     if latest_activity_dt is None:
         return "attention", "no activity timestamp; cannot confirm liveness"
     return "attention", f"stalled (no live process, last activity {_age_s(latest_activity_dt, now)}s ago)"
+
+
+def _canonical_session_status(canonical_run_state: CanonicalRunState | None) -> SessionStatus | None:
+    if canonical_run_state is None:
+        return None
+    return _CANONICAL_STATUS_MAP.get(canonical_run_state.canonical_state)
+
+
+def _derive_status_event_plan_dir(
+    *,
+    workspace: Path | None,
+    current_plan: str,
+    marker_dir: Path,
+    session: str,
+) -> Path:
+    plan_name = current_plan.strip()
+    if workspace is not None and plan_name:
+        return workspace / ".megaplan" / "plans" / plan_name
+    return marker_dir / ".status-events" / (session or "_unknown-session")
+
+
+def _emit_status_drift_detected(
+    *,
+    event_plan_dir: Path,
+    canonical_run_state: CanonicalRunState | None,
+    canonical_status: SessionStatus,
+    legacy_status: SessionStatus,
+    session: str,
+    workspace: Path | None,
+    current_plan: str,
+) -> None:
+    if canonical_run_state is None:
+        return
+    payload = {
+        "what": "status_snapshot.session_status",
+        "expected": canonical_status,
+        "actual": legacy_status,
+        "canonical_state": canonical_run_state.canonical_state.name,
+        "legacy_label": legacy_status,
+        "stale_sources": list(canonical_run_state.stale_sources),
+        "session": session,
+        "workspace": str(workspace) if workspace is not None else "",
+        "current_plan": current_plan,
+    }
+    try:
+        emit(EventKind.DRIFT_DETECTED, event_plan_dir, payload=payload)
+    except Exception:
+        return
 
 
 def _canonical_spec_missing(workspace: Path | None, remote_spec: str) -> bool:

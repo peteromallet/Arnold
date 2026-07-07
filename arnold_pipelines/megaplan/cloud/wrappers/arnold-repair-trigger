@@ -18,6 +18,7 @@ from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_
 from arnold_pipelines.megaplan.cloud.redact import redact_payload
 from arnold_pipelines.megaplan.cloud.repair_contract import classify_repair_dispatch, project_repair_custody
 from arnold_pipelines.megaplan.cloud.repair_lock import acquire_repair_lock, release_repair_lock
+from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
 
 TERMINAL_DECISIONS = {"coalesced", "stale", "superseded", "dispatched"}
 STALE_EVIDENCE_KINDS = {
@@ -367,9 +368,18 @@ def _classify_request(
             "metadata": {"blocked_task_id": str(signature.get("blocked_task_id") or "")},
         },
     }
+    workspace_raw = str(current_refs.get("workspace") or "")
+    event_plan_dir = marker_dir / ".dispatch-events" / (session or "_unknown-session")
+    if workspace_raw and current_plan_name:
+        event_plan_dir = Path(workspace_raw) / ".megaplan" / "plans" / current_plan_name
+    try:
+        canonical_run_state = resolve_run_state(normalized_target or {})
+    except Exception:
+        canonical_run_state = None
     projection = project_repair_custody(
         plan_state=plan_state,
         current_target=normalized_target,
+        canonical_run_state=canonical_run_state,
         marker_dir=marker_dir,
         repair_data_dir=repair_data_dir,
     )
@@ -384,6 +394,8 @@ def _classify_request(
             resolver_record=normalized_target,
         )
     decision = classify_repair_dispatch(
+        canonical_run_state=canonical_run_state,
+        event_plan_dir=event_plan_dir,
         plan_state=plan_state,
         current_target=normalized_target,
         human_blocker_classification=human_blocker,
