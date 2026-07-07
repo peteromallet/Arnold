@@ -20,6 +20,13 @@ import { applyGraphCandidateInPlace } from "./comfy_adapter.js";
 import { scheduleRenderAgentPanel } from "./panel_scheduler.js";
 import { currentAgentPanel } from "./panel_runtime.js";
 import { PANEL_STATE, RENDER_SECTIONS } from "./agent_edit_lifecycle.js";
+import {
+  commitApplyResolved,
+  commitLifecycleReset,
+  commitOptimisticSubmit,
+  commitTerminalResponse,
+  commitTranscriptRehydrate,
+} from "./agent_lifecycle_commit.js";
 
 const LS_DEMO_PICKER_ENABLED = "vibecomfy_demo_picker_enabled";
 const SCENARIOS_ENDPOINT = "/vibecomfy/demo/scenarios";
@@ -345,22 +352,17 @@ export function installPreviewPicker(panel, options = {}) {
   }
 
   function clearCandidateState(currentPanel) {
-    Object.assign(currentPanel.state, {
-      candidateGraph: null,
-      candidateGraphHash: null,
-      candidateReport: null,
-      serverSubmitGraphHash: null,
-      applyEligibility: null,
-      applyAllowed: false,
-      canvasApplyAllowed: false,
-      queueAllowed: false,
-      applyEligibilityWarning: null,
-      applyEligibilityWarningKey: null,
-      changeDetails: null,
-      deltaOps: null,
-    });
     delete currentPanel.state._previewDiff;
     delete currentPanel.state._previewDiffGraphHash;
+  }
+
+  function commitDemoTranscript(currentPanel, payload, messages, latestCandidate = null) {
+    commitTranscriptRehydrate(currentPanel, {
+      messages,
+      sessionId: payload.sessionId,
+      latestTurnId: payload.turnId,
+      latestCandidate,
+    });
   }
 
   function applyOriginalGraph(payload) {
@@ -397,76 +399,74 @@ export function installPreviewPicker(panel, options = {}) {
     currentPanel.state.__demoMode = true;
     currentPanel.state.__demoStage = stage;
     currentPanel.state.__demoStageIndex = stageIndex;
-    currentPanel.state.sessionId = payload.sessionId;
-    currentPanel.state.turnId = payload.turnId;
-    currentPanel.state.baselineTurnId = null;
-    currentPanel.state.message = null;
-    currentPanel.state.failure = null;
-    currentPanel.state.clarification = null;
-    currentPanel.state.lastSubmitFieldChanges = null;
 
     if (stage === "before_send") {
       applyOriginalGraph(payload);
-      currentPanel.state.phase = helpers.PANEL_STATE.IDLE;
-      currentPanel.state.chatMessages = [];
-      currentPanel.state.transcriptMessages = [];
-      currentPanel.state.lastAppliedChanges = null;
+      commitLifecycleReset(currentPanel, {
+        rejected: {},
+        message: null,
+        debugPayload: { source: "demo", stage },
+      });
+      commitDemoTranscript(currentPanel, payload, [], null);
       clearCandidateState(currentPanel);
     } else if (stage === "sent_loading") {
       applyOriginalGraph(payload);
-      currentPanel.state.phase = helpers.PANEL_STATE.SUBMITTING;
-      currentPanel.state.chatMessages = [payload.userMessage];
-      currentPanel.state.transcriptMessages = currentPanel.state.chatMessages.slice();
-      currentPanel.state.lastAppliedChanges = null;
+      commitLifecycleReset(currentPanel, {
+        rejected: {},
+        message: null,
+        debugPayload: { source: "demo", stage, reset: true },
+      });
+      commitOptimisticSubmit(currentPanel, {
+        lastSubmit: { prompt: payload.query, source: "demo" },
+        debugPayload: { source: "demo", stage },
+      });
+      commitDemoTranscript(currentPanel, payload, [payload.userMessage], null);
       clearCandidateState(currentPanel);
-      currentPanel.state.message = "Demo request sent. Waiting for agent response...";
     } else if (stage === "ready_to_apply") {
       if (isLayoutPreviewScenario()) {
         applyCandidateGraph(payload);
       } else {
         applyOriginalGraph(payload);
       }
-      const candidateActionAllowed = Boolean(payload.candidateGraph && payload.eligibility.applyable === true);
-      currentPanel.state.phase = helpers.PANEL_STATE.AWAITING_REVIEW;
-      currentPanel.state.chatMessages = [payload.userMessage, payload.agentMessage];
-      currentPanel.state.transcriptMessages = currentPanel.state.chatMessages.slice();
-      Object.assign(currentPanel.state, {
+      const terminalResult = {
+        ok: true,
+        session_id: payload.sessionId,
+        turn_id: payload.turnId,
+        baseline_turn_id: null,
+        message: payload.agentReply || null,
+        outcome: { kind: "candidate" },
+        eligibility: payload.eligibility,
+        report: loadedScenario.report || {},
+      };
+      commitTerminalResponse(currentPanel, {
+        result: terminalResult,
+        outcome: { kind: "candidate" },
         candidateGraph: payload.candidateGraph,
         candidateGraphHash: payload.candidateGraphHash,
-        candidateReport: loadedScenario.report || {},
-        serverSubmitGraphHash: null,
         applyEligibility: payload.eligibility,
-        applyAllowed: candidateActionAllowed,
-        canvasApplyAllowed: candidateActionAllowed,
         queueAllowed: false,
-        applyEligibilityWarning: null,
-        applyEligibilityWarningKey: null,
         changeDetails: payload.changeDetails,
-        lastAppliedChanges: null,
-        deltaOps: null,
+        debugPayload: {
+          source: "demo",
+          stage,
+          scenarioId: loadedScenario?.scenario?.id || loadedScenario?.id || null,
+        },
       });
+      commitDemoTranscript(currentPanel, payload, [payload.userMessage, payload.agentMessage], terminalResult);
     } else if (stage === "applied") {
       if (!options.alreadyApplied) {
         applyCandidateGraph(payload);
       }
-      currentPanel.state.phase = helpers.PANEL_STATE.IDLE;
-      currentPanel.state.chatMessages = [payload.userMessage, payload.agentMessage];
-      currentPanel.state.transcriptMessages = currentPanel.state.chatMessages.slice();
+      commitApplyResolved(currentPanel, {
+        accepted: { ok: true, session_id: payload.sessionId, turn_id: payload.turnId },
+        lastAppliedChanges: options.lastAppliedChanges || payload.changeDetails || {
+          summary: "Demo candidate applied.",
+        },
+        debugPayload: { source: "demo", stage },
+      });
+      commitDemoTranscript(currentPanel, payload, [payload.userMessage, payload.agentMessage], null);
       clearCandidateState(currentPanel);
-      currentPanel.state.lastAppliedChanges = options.lastAppliedChanges || payload.changeDetails || {
-        summary: "Demo candidate applied.",
-      };
-      currentPanel.state.message = "Demo candidate applied.";
       currentPanel.state.__demoMode = false;
-    }
-
-    const detailTurnKey = `turn:${payload.turnId}`;
-    currentPanel.state.expandedBubbleTurnKeys = {
-      ...(currentPanel.state.expandedBubbleTurnKeys || {}),
-      [detailTurnKey]: stage === "ready_to_apply" || stage === "applied",
-    };
-    if (currentPanel.state.responseDetails && typeof currentPanel.state.responseDetails === "object") {
-      delete currentPanel.state.responseDetails[payload.turnId];
     }
 
     updateStageButtons();
