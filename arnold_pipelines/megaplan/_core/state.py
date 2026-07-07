@@ -43,6 +43,7 @@ from arnold_pipelines.megaplan.types import (
 from arnold_pipelines.megaplan.planning.state import (
     CANONICAL_PLAN_STATES,
     STATE_CRITIQUED,
+    STATE_EXECUTED,
     STATE_FINALIZED,
     STATE_INITIALIZED,
     STATE_AWAITING_HUMAN,
@@ -416,6 +417,74 @@ def _reconcile_failed_no_next_after_finalize(
     return write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_transition)
 
 
+def _reconcile_failed_no_next_after_blocked_execute(
+    plan_dir: Path,
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    """Recover failed status-repair loops after authoritative blocked execute.
+
+    Execute can finish all authoritative task work, defer only the synthetic
+    baseline checkpoint, and still fall through the status route's
+    ``no_next_step`` failure path. When durable execute authority confirms the
+    batch is complete, canonicalize the plan back to ``executed`` so review can
+    proceed.
+    """
+
+    if state.get("current_state") != "failed":
+        return state
+    resume_cursor = state.get("resume_cursor")
+    if not isinstance(resume_cursor, dict):
+        return state
+    if resume_cursor.get("phase") != "status" or resume_cursor.get("retry_strategy") != "repair_state":
+        return state
+    latest_failure = state.get("latest_failure")
+    if latest_failure is not None:
+        if not isinstance(latest_failure, dict) or latest_failure.get("kind") != "no_next_step":
+            return state
+
+    from arnold_pipelines.megaplan.chain import _latest_execution_batch_all_tasks_done
+
+    all_done, _reason = _latest_execution_batch_all_tasks_done(plan_dir)
+    if not all_done:
+        return state
+
+    def _transition(current: dict[str, Any]) -> bool:
+        if current.get("current_state") != "failed":
+            return False
+        current_resume = current.get("resume_cursor")
+        if not isinstance(current_resume, dict):
+            return False
+        if (
+            current_resume.get("phase") != "status"
+            or current_resume.get("retry_strategy") != "repair_state"
+        ):
+            return False
+        current_failure = current.get("latest_failure")
+        if current_failure is not None:
+            if not isinstance(current_failure, dict) or current_failure.get("kind") != "no_next_step":
+                return False
+        refreshed_all_done, _refreshed_reason = _latest_execution_batch_all_tasks_done(plan_dir)
+        if not refreshed_all_done:
+            return False
+        current["current_state"] = STATE_EXECUTED
+        current["latest_failure"] = None
+        current.pop("active_step", None)
+        current.pop("resume_cursor", None)
+        current.setdefault("meta", {})
+        if isinstance(current["meta"], dict):
+            current["meta"].setdefault("state_reconciliations", []).append(
+                {
+                    "kind": "failed_no_next_after_blocked_execute",
+                    "from_state": state.get("current_state"),
+                    "to_state": STATE_EXECUTED,
+                    "timestamp": now_utc(),
+                }
+            )
+        return True
+
+    return write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_transition)
+
+
 def load_plan_from_dir(plan_dir: Path) -> tuple[Path, PlanState]:
     from arnold_pipelines.megaplan._core.io import read_plan_state_cached
     state = read_plan_state_cached(plan_dir, mode="authority")
@@ -429,6 +498,7 @@ def load_plan_from_dir(plan_dir: Path) -> tuple[Path, PlanState]:
         state = _reconcile_satisfied_user_action_gate(plan_dir, state)
         state = _reconcile_completed_review(plan_dir, state)
         state = _reconcile_failed_no_next_after_finalize(plan_dir, state)
+        state = _reconcile_failed_no_next_after_blocked_execute(plan_dir, state)
     _validate_persisted_phase_models(plan_dir, state)
     return plan_dir, state
 
