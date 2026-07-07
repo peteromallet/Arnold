@@ -942,3 +942,4 @@ WARNING:root:Failed to generate context summary: Error code: 401 - {'error': {'m
   [tool] ♪(´ε` ) ✍️ /workspace/custody-control-...
   [done] ┊ ✍️  write     ...d-20260707-1939/gate_output.json  1.2s (1.6s)
 [hermes-worker] Read JSON from template file: /workspace/custody-control-plane-240c2cca/arnold/.megaplan/plans/resolver-foundation-read-20260707-1939/gate_output.json
+Captured execution baseline: 0 pre-existing uncommitted paths. Unchanged paths will be excluded from ownership audits.
