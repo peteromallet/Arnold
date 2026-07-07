@@ -25,6 +25,7 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     MetaRepairClassification,
     MetaRepairRecord,
     MetaRepairTrigger,
+    RetriggerExecutionResult,
     build_meta_repair_prompt,
     classify_repair_system_failure,
     compute_meta_deadline,
@@ -36,6 +37,7 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     persist_meta_repair_record,
     remaining_meta_budget_secs,
     trigger_priority,
+    verify_retrigger_success,
 )
 from arnold_pipelines.megaplan.cloud.redact import REDACTION
 from arnold_pipelines.megaplan.cloud.repair_contract import (
@@ -1777,6 +1779,42 @@ class TestMetaRepairTimeout:
         assert loaded.outcome == "meta_repair_timeout"
         assert loaded.subagent_results["codex"]["analysis"] == "budget_exhausted"
         assert loaded.tests[0]["result"] == "skipped"
+
+
+class TestRetriggerVerification:
+    def test_live_with_fresh_activity_is_accepted_success(self) -> None:
+        result = verify_retrigger_success(
+            retriggered=True,
+            retrigger_result=RetriggerExecutionResult(
+                command=("arnold-repair-loop", "demo-session"),
+                returncode=0,
+                stdout="ok",
+                stderr="",
+                lock_released=True,
+            ),
+            post_retrigger_verification={"outcome": LIVE_WITH_FRESH_ACTIVITY},
+        )
+
+        assert result["accepted"] is True
+        assert result["outcome"] == LIVE_WITH_FRESH_ACTIVITY
+        assert result["rejection_reason"] == ""
+
+    def test_partial_liveness_remains_rejected(self) -> None:
+        result = verify_retrigger_success(
+            retriggered=True,
+            retrigger_result=RetriggerExecutionResult(
+                command=("arnold-repair-loop", "demo-session"),
+                returncode=0,
+                stdout="ok",
+                stderr="",
+                lock_released=True,
+            ),
+            post_retrigger_verification={"outcome": PARTIAL_LIVENESS},
+        )
+
+        assert result["accepted"] is False
+        assert result["outcome"] == PARTIAL_LIVENESS
+        assert "not a terminal success" in result["rejection_reason"]
 
 
 # ---------------------------------------------------------------------------

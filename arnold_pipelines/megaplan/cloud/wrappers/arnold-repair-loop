@@ -4140,11 +4140,8 @@ exit_if_repair_target_complete() {
 }
 
 # Mirror of the pre-loop INITIAL_HEALTH=="alive" bail (see ~4673), but callable
-# at iteration boundaries and post-loop. Liveness alone is not proof that the
-# original blocker cleared: a plan can heartbeat while still terminally blocked.
-# Record partial_liveness and leave repair markers in place so the watchdog/meta
-# layers can keep supervising until completion, progress, or a true human blocker
-# is proven.
+# at iteration boundaries and post-loop. Once the target is back and emitting
+# fresh activity, ordinary repair should treat that as terminal success.
 exit_if_repair_target_recovered() {
   local phase="$1"
   local health forced_reason
@@ -4157,8 +4154,8 @@ exit_if_repair_target_recovered() {
     log "repair target alive at $phase but marker requires repair session=$SESSION reason=$forced_reason"
     return 0
   fi
-  repair_data_set_outcome "partial_liveness"
-  log "repair target has partial liveness at $phase; blocker clearance not verified session=$SESSION"
+  repair_data_set_outcome "live_with_fresh_activity"
+  log "repair target has fresh activity at $phase; verified recovery session=$SESSION"
   exit 0
 }
 
@@ -5101,8 +5098,8 @@ if [[ "$INITIAL_HEALTH" == "alive" ]]; then
   if [[ -n "$forced_repair_reason" ]]; then
     log "repair target is alive but marker requires repair session=$SESSION reason=$forced_repair_reason"
   else
-  repair_data_set_outcome "partial_liveness"
-  log "repair target already running; blocker clearance not verified session=$SESSION"
+  repair_data_set_outcome "live_with_fresh_activity"
+  log "repair target already running; verified recovery session=$SESSION"
   exit 0
   fi
 fi
@@ -5251,8 +5248,8 @@ if repair_source_initiative_if_possible; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "source initiative restored; mechanical launch came up and held"
-    repair_data_set_outcome "partial_liveness"
-    log "repair loop reached partial liveness after source initiative repair"
+    repair_data_set_outcome "live_with_fresh_activity"
+    log "repair loop reached live_with_fresh_activity after source initiative repair"
     exit 0
   fi
 fi
@@ -5264,8 +5261,8 @@ if repair_source_workspace_if_possible; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "0" "0" "running" "source workspace restored; mechanical launch came up and held"
-    repair_data_set_outcome "partial_liveness"
-    log "repair loop reached partial liveness after source workspace repair"
+    repair_data_set_outcome "live_with_fresh_activity"
+    log "repair loop reached live_with_fresh_activity after source workspace repair"
     exit 0
   fi
 fi
@@ -5276,8 +5273,8 @@ if repair_dependency_manifests_if_possible; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "dependency manifest repaired; mechanical launch came up and held"
-    repair_data_set_outcome "partial_liveness"
-    log "repair loop reached partial liveness after dependency manifest repair"
+    repair_data_set_outcome "live_with_fresh_activity"
+    log "repair loop reached live_with_fresh_activity after dependency manifest repair"
     exit 0
   fi
 fi
@@ -5290,8 +5287,8 @@ if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "stale state cleared; mechanical launch came up and held"
-    repair_data_set_outcome "partial_liveness"
-    log "repair loop reached partial liveness after stale-state clear"
+    repair_data_set_outcome "live_with_fresh_activity"
+    log "repair loop reached live_with_fresh_activity after stale-state clear"
     exit 0
   fi
 fi
@@ -5301,8 +5298,8 @@ mechanical_status="$(mechanical_launch_step "0" "$SESSION" "$WORKSPACE" "$REMOTE
 }
 if [[ "${mechanical_status:-}" == "running" ]]; then
   repair_data_record_mechanical "0" "0" "running" "baseline mechanical relaunch came up and held"
-  repair_data_set_outcome "partial_liveness"
-  log "repair loop reached partial liveness via baseline mechanical relaunch"
+  repair_data_set_outcome "live_with_fresh_activity"
+  log "repair loop reached live_with_fresh_activity via baseline mechanical relaunch"
   exit 0
 fi
 
@@ -5372,8 +5369,8 @@ for iteration in 1 2 3; do
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "$iteration" "$CURRENT_ATTEMPT_ID" "running" "mechanical launch came up and held"
-    repair_data_set_outcome "partial_liveness"
-    log "repair loop reached partial liveness mechanically iteration=$iteration"
+    repair_data_set_outcome "live_with_fresh_activity"
+    log "repair loop reached live_with_fresh_activity mechanically iteration=$iteration"
     exit 0
   fi
 
@@ -5385,8 +5382,8 @@ for iteration in 1 2 3; do
   exit_if_repair_target_complete "iteration-$iteration-pre-kimi"
   resolved_relaunch_command="$(resolve_relaunch_command "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" 2>/dev/null || true)"
   if run_kimi_launch_turn "$iteration" "$RUN_KIND" "$PLAN_NAME" "$resolved_relaunch_command"; then
-    repair_data_set_outcome "partial_liveness"
-    log "repair loop reached partial liveness via Kimi iteration=$iteration"
+    repair_data_set_outcome "live_with_fresh_activity"
+    log "repair loop reached live_with_fresh_activity via Kimi iteration=$iteration"
     exit 0
   fi
   exit_if_repair_target_complete "iteration-$iteration-post-kimi"
