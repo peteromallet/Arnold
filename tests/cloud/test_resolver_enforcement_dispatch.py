@@ -47,6 +47,7 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     project_repair_custody,
 )
 from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
+from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +254,12 @@ def _custody(
     }
 
 
+def _event_plan_dir(tmp_path: Path) -> Path:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    return plan_dir
+
+
 # ===========================================================================
 # AWF018 (REAL_IMPLEMENTATION_BLOCK) enforcement dispatch
 # ===========================================================================
@@ -261,9 +268,10 @@ def _custody(
 class TestAwf018EnforcementDispatch:
     """AWF018 evidence dispatches L1 repair under enforcement."""
 
-    def test_dispatches_l1_with_active_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ARNOLD_RESOLVER_ENFORCEMENT", "1")
+    def test_dispatches_l1_with_active_request(self, tmp_path: Path) -> None:
         decision = classify_repair_dispatch(
+            canonical_run_state=resolve_run_state(_awf018_target()),
+            event_plan_dir=_event_plan_dir(tmp_path),
             plan_state=_plan_state(failure_kind="route_metadata_mismatch"),
             current_target=_awf018_target(),
             custody_projection=_custody(request_id="req-awf018-001"),
@@ -273,9 +281,10 @@ class TestAwf018EnforcementDispatch:
         assert decision.request_id == "req-awf018-001"
         assert "resolver enforcement" in decision.rationale[0]
 
-    def test_returns_no_action_without_active_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ARNOLD_RESOLVER_ENFORCEMENT", "1")
+    def test_returns_no_action_without_active_request(self, tmp_path: Path) -> None:
         decision = classify_repair_dispatch(
+            canonical_run_state=resolve_run_state(_awf018_target()),
+            event_plan_dir=_event_plan_dir(tmp_path),
             plan_state=_plan_state(failure_kind="route_metadata_mismatch"),
             current_target=_awf018_target(),
             custody_projection=_custody(request_id=""),
@@ -284,10 +293,11 @@ class TestAwf018EnforcementDispatch:
         assert decision.dispatch_intent == DISPATCH_INTENT_QUEUE_ONLY
         assert decision.request_id == ""
 
-    def test_defers_to_active_repair(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_defers_to_active_repair(self, tmp_path: Path) -> None:
         """An active repair must suppress enforcement L1 to avoid double-dispatch."""
-        monkeypatch.setenv("ARNOLD_RESOLVER_ENFORCEMENT", "1")
         decision = classify_repair_dispatch(
+            canonical_run_state=resolve_run_state(_awf018_target()),
+            event_plan_dir=_event_plan_dir(tmp_path),
             plan_state=_plan_state(failure_kind="route_metadata_mismatch"),
             current_target=_awf018_target(),
             custody_projection=_custody(request_id="req-awf018-002", active_repair=True),
@@ -304,9 +314,10 @@ class TestAwf018EnforcementDispatch:
 class TestRetryableEnforcementDispatch:
     """Budget-exhaustion evidence dispatches L1 repair under enforcement."""
 
-    def test_dispatches_l1_with_active_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ARNOLD_RESOLVER_ENFORCEMENT", "1")
+    def test_dispatches_l1_with_active_request(self, tmp_path: Path) -> None:
         decision = classify_repair_dispatch(
+            canonical_run_state=resolve_run_state(_budget_target()),
+            event_plan_dir=_event_plan_dir(tmp_path),
             plan_state=_plan_state(failure_kind="budget_exhausted"),
             current_target=_budget_target(),
             custody_projection=_custody(request_id="req-budget-001"),
@@ -315,9 +326,10 @@ class TestRetryableEnforcementDispatch:
         assert decision.dispatch_intent == DISPATCH_INTENT_L1
         assert decision.request_id == "req-budget-001"
 
-    def test_returns_no_action_without_active_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ARNOLD_RESOLVER_ENFORCEMENT", "1")
+    def test_returns_no_action_without_active_request(self, tmp_path: Path) -> None:
         decision = classify_repair_dispatch(
+            canonical_run_state=resolve_run_state(_budget_target()),
+            event_plan_dir=_event_plan_dir(tmp_path),
             plan_state=_plan_state(failure_kind="budget_exhausted"),
             current_target=_budget_target(),
             custody_projection=_custody(request_id=""),
@@ -334,9 +346,10 @@ class TestRetryableEnforcementDispatch:
 class TestBrokenStateMachineEnforcementDispatch:
     """Broken-state-machine evidence routes to broken-superfixer / replan."""
 
-    def test_routes_to_broken_superfixer(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ARNOLD_RESOLVER_ENFORCEMENT", "1")
+    def test_routes_to_broken_superfixer(self, tmp_path: Path) -> None:
         decision = classify_repair_dispatch(
+            canonical_run_state=resolve_run_state(_broken_target()),
+            event_plan_dir=_event_plan_dir(tmp_path),
             plan_state=_plan_state(failure_kind="repeated_blocker"),
             current_target=_broken_target(),
             custody_projection=_custody(request_id="req-broken-001"),
@@ -345,10 +358,11 @@ class TestBrokenStateMachineEnforcementDispatch:
         assert decision.dispatch_intent == DISPATCH_INTENT_BROKEN_SUPERFIXER
         assert "broken-state-machine" in decision.rationale[0]
 
-    def test_broken_superfixer_even_with_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_broken_superfixer_even_with_request(self, tmp_path: Path) -> None:
         """BROKEN_STATE_MACHINE never dispatches L1, even with an active request."""
-        monkeypatch.setenv("ARNOLD_RESOLVER_ENFORCEMENT", "1")
         decision = classify_repair_dispatch(
+            canonical_run_state=resolve_run_state(_broken_target()),
+            event_plan_dir=_event_plan_dir(tmp_path),
             plan_state=_plan_state(failure_kind="repeated_blocker"),
             current_target=_broken_target(),
             custody_projection=_custody(request_id="req-broken-002"),
@@ -366,10 +380,11 @@ class TestTypedHumanGateEnforcementDispatch:
     """Typed human gates route to human_required even under enforcement (SD3)."""
 
     def test_explicit_approval_gate_routes_to_human_required(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path
     ) -> None:
-        monkeypatch.setenv("ARNOLD_RESOLVER_ENFORCEMENT", "1")
         decision = classify_repair_dispatch(
+            canonical_run_state=resolve_run_state(_approval_gate_target()),
+            event_plan_dir=_event_plan_dir(tmp_path),
             plan_state=_plan_state(failure_kind="approval_needed"),
             current_target=_approval_gate_target(),
             custody_projection=_custody(request_id="req-approval-001"),
@@ -379,10 +394,11 @@ class TestTypedHumanGateEnforcementDispatch:
         assert "typed human-action-required gate" in decision.rationale[0]
 
     def test_missing_credential_gate_routes_to_human_required(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path
     ) -> None:
-        monkeypatch.setenv("ARNOLD_RESOLVER_ENFORCEMENT", "1")
         decision = classify_repair_dispatch(
+            canonical_run_state=resolve_run_state(_credential_gate_target()),
+            event_plan_dir=_event_plan_dir(tmp_path),
             plan_state=_plan_state(failure_kind="missing_credential"),
             current_target=_credential_gate_target(),
             custody_projection=_custody(request_id="req-credential-001"),
@@ -397,8 +413,8 @@ class TestTypedHumanGateEnforcementDispatch:
 # ===========================================================================
 
 
-class TestEnforcementOffLegacyCompatibility:
-    """With enforcement OFF (default), every shape uses the legacy whitelist path."""
+class TestMissingCanonicalProvenance:
+    """Dispatch fails closed when canonical provenance is absent."""
 
     @pytest.mark.parametrize(
         "label,target,failure_kind,request_id",
@@ -410,37 +426,36 @@ class TestEnforcementOffLegacyCompatibility:
             ("credential", _credential_gate_target(), "missing_credential", "req-x"),
         ],
     )
-    def test_enforcement_off_never_dispatches_l1_via_resolver(
+    def test_missing_canonical_provenance_never_dispatches_l1(
         self,
-        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
         label: str,
         target: dict[str, Any],
         failure_kind: str,
         request_id: str,
     ) -> None:
-        monkeypatch.delenv("ARNOLD_RESOLVER_ENFORCEMENT", raising=False)
         decision = classify_repair_dispatch(
+            canonical_run_state=None,
+            event_plan_dir=_event_plan_dir(tmp_path),
             plan_state=_plan_state(failure_kind=failure_kind),
             current_target=target,
             custody_projection=_custody(request_id=request_id),
         )
-        # Enforcement OFF: resolver must NOT be the decision source.
-        # None of these failure_kinds are in the legacy whitelist, so the
-        # legacy path routes blocked/manual_review shapes to HUMAN_REQUIRED.
         assert decision.decision != DISPATCH_DECISION_L1
-        assert "resolver enforcement" not in (decision.rationale[0] if decision.rationale else "")
+        assert decision.decision == DISPATCH_DECISION_BROKEN_SUPERFIXER
 
-    def test_explicit_disable_value_preserves_legacy(
-        self, monkeypatch: pytest.MonkeyPatch
+    def test_missing_canonical_provenance_is_independent_of_env(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """ARNOLD_RESOLVER_ENFORCEMENT=0 must preserve legacy behavior."""
         monkeypatch.setenv("ARNOLD_RESOLVER_ENFORCEMENT", "0")
         decision = classify_repair_dispatch(
+            canonical_run_state=None,
+            event_plan_dir=_event_plan_dir(tmp_path),
             plan_state=_plan_state(failure_kind="route_metadata_mismatch"),
             current_target=_awf018_target(),
             custody_projection=_custody(request_id="req-x"),
         )
-        assert decision.decision != DISPATCH_DECISION_L1
+        assert decision.decision == DISPATCH_DECISION_BROKEN_SUPERFIXER
 
 
 # ===========================================================================
@@ -464,39 +479,39 @@ class TestCanonicalDispatchBeyondLegacyWhitelist:
     ]
 
     @pytest.mark.parametrize("failure_kind", NON_WHITELISTED_KINDS)
-    def test_non_whitelisted_kind_is_human_required_without_enforcement(
+    def test_non_whitelisted_kind_still_dispatches_l1_with_canonical_state(
         self,
-        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
         failure_kind: str,
     ) -> None:
-        """Legacy path routes non-whitelisted blocked/manual_review to human_required."""
-        monkeypatch.delenv("ARNOLD_RESOLVER_ENFORCEMENT", raising=False)
         decision = classify_repair_dispatch(
-            plan_state=_plan_state(failure_kind=failure_kind),
-            current_target=_awf018_target(),
-            custody_projection=_custody(request_id="req-x"),
-        )
-        assert decision.decision == DISPATCH_DECISION_HUMAN_REQUIRED, (
-            f"failure_kind={failure_kind!r} must be HUMAN_REQUIRED under legacy "
-            f"(not in whitelist), got {decision.decision!r}"
-        )
-
-    @pytest.mark.parametrize("failure_kind", NON_WHITELISTED_KINDS)
-    def test_non_whitelisted_kind_dispatches_l1_under_enforcement(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        failure_kind: str,
-    ) -> None:
-        """Under enforcement, the same non-whitelisted kind dispatches L1 via canonical state."""
-        monkeypatch.setenv("ARNOLD_RESOLVER_ENFORCEMENT", "1")
-        decision = classify_repair_dispatch(
+            canonical_run_state=resolve_run_state(_awf018_target()),
+            event_plan_dir=_event_plan_dir(tmp_path),
             plan_state=_plan_state(failure_kind=failure_kind),
             current_target=_awf018_target(),
             custody_projection=_custody(request_id="req-x"),
         )
         assert decision.decision == DISPATCH_DECISION_L1, (
-            f"failure_kind={failure_kind!r} must dispatch L1 under enforcement "
-            f"(canonical state unlocks it), got {decision.decision!r}"
+            f"failure_kind={failure_kind!r} must dispatch L1 under canonical "
+            f"classification, got {decision.decision!r}"
+        )
+
+    @pytest.mark.parametrize("failure_kind", NON_WHITELISTED_KINDS)
+    def test_non_whitelisted_kind_fails_closed_without_canonical_provenance(
+        self,
+        tmp_path: Path,
+        failure_kind: str,
+    ) -> None:
+        decision = classify_repair_dispatch(
+            canonical_run_state=None,
+            event_plan_dir=_event_plan_dir(tmp_path),
+            plan_state=_plan_state(failure_kind=failure_kind),
+            current_target=_awf018_target(),
+            custody_projection=_custody(request_id="req-x"),
+        )
+        assert decision.decision == DISPATCH_DECISION_BROKEN_SUPERFIXER, (
+            f"failure_kind={failure_kind!r} must fail closed without canonical "
+            f"provenance, got {decision.decision!r}"
         )
 
 

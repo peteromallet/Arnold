@@ -9,6 +9,7 @@ from arnold_pipelines.megaplan.cloud import repair_contract, repair_requests
 from arnold_pipelines.megaplan.cloud.repair_contract import (
     ATTEMPT_STATE_RUNNING,
     BLOCKER_FINGERPRINT_V1_PREFIX,
+    CUSTODY_BUCKET_HUMAN_REQUIRED,
     CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING,
     CUSTODY_BUCKET_REPAIRING,
     BlockerFingerprintV1,
@@ -16,6 +17,7 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     normalize_blocker_fingerprint_v1,
     project_repair_custody,
 )
+from arnold_pipelines.megaplan.run_state.model import CanonicalRunState, CanonicalState
 
 
 def _fingerprint(**overrides: str) -> BlockerFingerprintV1:
@@ -118,6 +120,19 @@ def _current_target() -> dict[str, object]:
         "event_cursors": {"resume_retry_strategy": "manual_review"},
         "plan_state": {"fingerprint": "sha256:target-proof"},
     }
+
+
+def _canonical(state: CanonicalState, **overrides: object) -> CanonicalRunState:
+    payload = {
+        "canonical_state": state,
+        "reason": f"{state.name} test state",
+        "repairable": state
+        in {CanonicalState.REAL_IMPLEMENTATION_BLOCK, CanonicalState.RETRYABLE_EXECUTION_BLOCK},
+        "running": state is CanonicalState.RUNNING,
+        "human_required": state is CanonicalState.HUMAN_ACTION_REQUIRED,
+    }
+    payload.update(overrides)
+    return CanonicalRunState(**payload)
 
 
 def test_custody_projection_reads_plan_state_and_accepted_request_without_migration(
@@ -235,3 +250,40 @@ def test_custody_projection_keeps_request_decisions_separate_from_attempt_outcom
     assert projection["attempts"][0]["request_id"] == queued["request"]["request_id"]
     assert projection["attempts"][0]["state"] == ATTEMPT_STATE_RUNNING
     assert projection["attempts"][0]["terminal"] is False
+
+
+def test_custody_projection_uses_canonical_machine_actionable_bucket_when_supplied(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+
+    projection = project_repair_custody(
+        plan_state=_plan_state(),
+        current_target=_current_target(),
+        canonical_run_state=_canonical(CanonicalState.REAL_IMPLEMENTATION_BLOCK),
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+
+    assert projection["custody_bucket"] == CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING
+
+
+def test_custody_projection_preserves_legacy_manual_review_bucket_without_canonical(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+
+    projection = project_repair_custody(
+        plan_state=_plan_state(),
+        current_target=_current_target(),
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+
+    assert projection["custody_bucket"] == CUSTODY_BUCKET_HUMAN_REQUIRED
