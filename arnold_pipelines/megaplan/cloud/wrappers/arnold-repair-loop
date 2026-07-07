@@ -2230,10 +2230,17 @@ def _stale_state_analysis(
             or failure_phase == "execute"
             or "prerequisite-blocked tasks" in failure_message
         ):
-            recommended_action = (
-                "investigate the blocked execute task; fix the task-level target code or "
-                "plan state when the blocker is not an Arnold engine bug"
-            )
+            if "no files modified" in failure_message and "budget exhausted" in failure_message:
+                recommended_action = (
+                    "implement or requeue the blocked target task, then recover plan state; "
+                    "do not patch Arnold source unless the engine itself prevented the task "
+                    "from being retried"
+                )
+            else:
+                recommended_action = (
+                    "investigate the blocked execute task; fix the task-level target code or "
+                    "plan state when the blocker is not an Arnold engine bug"
+                )
         else:
             recommended_action = (
                 "investigate the live failure root cause; fix Arnold source only when "
@@ -3094,10 +3101,19 @@ def _render_last_execute_attempt(context: object, plan_failure: dict[str, object
             if len(blocked_tasks) > 5:
                 blocked_ids += f", +{len(blocked_tasks) - 5} more"
             lines.append(f"- Blocked/deferred task: {blocked_ids}")
-            lines.append(f"- Block reason: {_task_reason(first)}")
+            reason = _task_reason(first)
+            lines.append(f"- Block reason: {reason}")
             notes = str(first.get("executor_notes") or "").strip()
             if notes:
                 lines.append(f"  -> {notes}")
+            lowered_block = f"{reason}\n{notes}".lower()
+            if "no files modified" in lowered_block and "budget exhausted" in lowered_block:
+                lines.append(
+                    "- Repair directive: this is target-task budget exhaustion with no "
+                    "implementation. Implement/requeue the target task and recover the plan "
+                    "state; do not count an Arnold harness/classification patch as success "
+                    "unless it directly enables that task to run again."
+                )
         else:
             lines.append("- Blocked/deferred task: none found in execute/finalize artifacts")
             pending_tasks = _pending_task_candidates(context)
@@ -4569,6 +4585,7 @@ Task:
    Read the LAST EXECUTE ATTEMPT summary first. The root cause might be in the Arnold SOURCE (a code bug) OR in the PLAN STATE (a deferred task, a missing baseline, stale tests for deleted modules). If a task was deferred or blocked rather than failed, investigate the task-level deferral reason; the fix might be to clear or resolve the deferral/state, not to change source code.
    Classification guide:
    - LIVE FAILURE: The latest_failure is recent (no success since it was recorded). Fix the root cause at the level indicated by the evidence: Arnold source for engine bugs, target/workspace code for task implementation bugs, or plan state for deferrals/stale blocked tasks.
+     If the blocked execute task says the executor exhausted its budget, made no file changes, or must be re-queued from scratch, the primary repair is target-task implementation/requeue plus plan-state recovery. Do not report success from an Arnold source/harness patch unless you also prove the target task was implemented or the plan was recovered so that the task is being retried.
    - STALE STATE: The latest_failure predates a successful run or the current block is a 0ms same-hash replay. CLEAR latest_failure to null in the plan's state.json, clear stale blocks, and re-drive the run. Do NOT try to fix a source bug; the issue was already addressed.
    For run_kind=plan, use the named plan's state.json, events.ndjson, plan log, and user-action artifacts. Missing chain state, chain logs, chain.yaml, milestones, and base refs are expected and not evidence of a bug.
    For run_kind=chain, use chain state/logs/milestones when present.

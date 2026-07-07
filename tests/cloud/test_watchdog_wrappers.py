@@ -887,6 +887,98 @@ def test_repair_loop_summary_prefers_pending_execute_tasks_over_baseline_deferra
     assert "Blocked/deferred task: T1" not in summary
 
 
+def test_repair_loop_summary_marks_budget_exhausted_block_as_target_task_requeue(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workflow"
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+
+    notes = (
+        "BLOCKED - did not complete. Spent the full iteration budget on exploration. "
+        "No files modified. Re-queue from scratch.\n"
+        "[harness] status auto-downgraded: deviation contains budget exhausted"
+    )
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo-plan",
+                "current_state": "blocked",
+                "latest_failure": {
+                    "kind": "execution_blocked",
+                    "phase": "execute",
+                    "message": f"execute reported prerequisite-blocked tasks: T7 ({notes})",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+    (plan_dir / "execution_batch_7.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T7",
+                        "status": "blocked",
+                        "executor_notes": notes,
+                        "files_changed": [],
+                        "commands_run": [],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T7",
+                        "status": "blocked",
+                        "executor_notes": notes,
+                        "files_changed": [],
+                        "commands_run": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (chain_dir / "chain-demo.json").write_text(
+        json.dumps({"current_plan_name": "demo-plan", "last_state": "blocked"}),
+        encoding="utf-8",
+    )
+
+    collect_program = _extract_repair_program(
+        "collect_failure_context_json",
+        "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" <<'PY'",
+    )
+    result = _run_embedded_python(collect_program, str(workspace), "demo", "chain", "")
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(
+        json.dumps({"initial_facts": {}, "iterations": [payload]}),
+        encoding="utf-8",
+    )
+    summary_program = _extract_repair_program(
+        "render_failure_summary",
+        "python3 - \"$data_path\" <<'PY'",
+    )
+    summary_result = _run_embedded_python(summary_program, str(data_path))
+
+    assert summary_result.returncode == 0, summary_result.stderr
+    summary = summary_result.stdout
+    assert "Blocked/deferred task: T7" in summary
+    assert "Repair directive: this is target-task budget exhaustion" in summary
+    assert "do not count an Arnold harness/classification patch as success" in summary
+
+
 def test_repair_loop_summary_classifies_missing_spec_without_live_artifacts_as_stale_marker(
     tmp_path: Path,
 ) -> None:
