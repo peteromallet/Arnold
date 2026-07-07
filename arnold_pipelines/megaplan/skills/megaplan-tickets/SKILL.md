@@ -1,1 +1,1 @@
-/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/runtime/editable-engine/arnold_pipelines/megaplan/data/tickets_skill.md
+/workspace/arnold/arnold_pipelines/megaplan/data/tickets_skill.md
