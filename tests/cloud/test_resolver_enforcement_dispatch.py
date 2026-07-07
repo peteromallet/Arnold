@@ -574,9 +574,9 @@ class TestCustodyCanonicalMetadata:
     ) -> None:
         """Legacy custody keys must be byte-identical regardless of observe flag."""
         monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "1")
-        on = _custody_projection(tmp_path, target=_awf018_target())
+        on = _custody_projection(tmp_path / "observe-on", target=_awf018_target())
         monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "0")
-        off = _custody_projection(tmp_path, target=_awf018_target())
+        off = _custody_projection(tmp_path / "observe-off", target=_awf018_target())
         legacy_keys = {
             "custody_bucket",
             "active_request_ids",
