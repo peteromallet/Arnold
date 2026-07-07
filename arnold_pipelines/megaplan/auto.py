@@ -1444,16 +1444,20 @@ def _sum_history_cost_usd(plan_dir: Path | None) -> float:
 
 
 def _read_state_data(plan_dir: Path | None) -> dict[str, Any] | None:
-    """Best-effort read of ``state.json`` as a dict (None on any failure)."""
+    """Best-effort read of canonical plan state (None on any failure).
+
+    Use the shared loader so status/repair loops observe the same reconciled
+    state that the CLI and chain drivers do. This avoids raw ``state.json``
+    reads preserving transient ``failed/no_next_step`` status after a
+    successful finalize or authoritative blocked execute reconciliation.
+    """
     if plan_dir is None:
         return None
     try:
-        # dormant-path: subprocess seam, retired at M6
-        with (plan_dir / "state.json").open(encoding="utf-8") as handle:
-            data = json.load(handle)
-    except FileNotFoundError:
-        return None
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        from arnold_pipelines.megaplan._core.state import load_plan_from_dir
+
+        _resolved_plan_dir, data = load_plan_from_dir(plan_dir)
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
         return None
     return data if isinstance(data, dict) else None
 

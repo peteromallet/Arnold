@@ -14,6 +14,47 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
 )
 
 
+def test_read_state_data_reconciles_failed_no_next_after_finalize(tmp_path: Path) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "demo"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "failed",
+                "iteration": 1,
+                "config": {},
+                "sessions": {},
+                "plan_versions": [],
+                "history": [{"step": "finalize", "result": "success"}],
+                "meta": {},
+                "last_gate": {},
+                "latest_failure": {"kind": "no_next_step"},
+                "resume_cursor": {"phase": "status", "retry_strategy": "repair_state"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "phase_result.json").write_text(
+        json.dumps(
+            PhaseResult(
+                phase="finalize",
+                invocation_id="test-finalize-success",
+                exit_kind="success",
+                artifacts_written=("finalize.json",),
+            ).to_dict()
+        ),
+        encoding="utf-8",
+    )
+
+    state = auto._read_state_data(plan_dir)
+
+    assert state is not None
+    assert state["current_state"] == "finalized"
+    assert state["latest_failure"] is None
+    assert "resume_cursor" not in state
+
+
 def test_git_text_normalizes_timeout_as_cli_error(monkeypatch, tmp_path: Path) -> None:
     def fake_run(*args, **kwargs):
         raise subprocess.TimeoutExpired(
