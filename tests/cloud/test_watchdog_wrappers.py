@@ -13093,6 +13093,39 @@ def test_meta_repair_wrapper_has_record_persistence() -> None:
     assert 'Codex meta-repair prompt exceeded input limit; see meta-repair log.' in text
 
 
+def test_meta_repair_wrapper_uses_arnold_src_when_installed_path_has_no_repo() -> None:
+    """Installed wrappers must fall back to ARNOLD_SRC for retrigger paths."""
+    text = _meta_repair_wrapper()
+    start = text.index('MARKER_DIR="${MEGAPLAN_META_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"')
+    end = text.index('REPAIR_DATA_PATH="$REPAIR_DATA_DIR/${SESSION}.repair-data.json"')
+    prolog = text[start:end]
+
+    script = "\n".join(
+        [
+            "set -eu",
+            "SESSION=demo-session",
+            f"MEGAPLAN_META_ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
+            "MEGAPLAN_META_SELF_PATH=/usr/local/bin/arnold-meta-repair-loop",
+            prolog,
+            'printf "WRAPPER_REPO_ROOT=%s\\n" "$WRAPPER_REPO_ROOT"',
+            'printf "REPAIR_LOOP_BIN=%s\\n" "$REPAIR_LOOP_BIN"',
+        ]
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"WRAPPER_REPO_ROOT={REPO_ROOT}" in result.stdout
+    assert (
+        f"REPAIR_LOOP_BIN={REPO_ROOT}/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop"
+        in result.stdout
+    )
+
+
 def test_meta_repair_wrapper_accepts_valid_verdict_before_launch_failure_grep() -> None:
     """A valid verdict on stdout must not be discarded because stderr is noisy."""
     text = _meta_repair_wrapper()
