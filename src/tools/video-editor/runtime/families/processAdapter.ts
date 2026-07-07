@@ -36,7 +36,12 @@ const MANIFEST: HostAdapterManifest = Object.freeze({
     'Normalizes process contributions into VideoEditorProcessDescriptor ' +
     'records for the runtime.  Owns spec/operation projection, capability ' +
     'enumeration, route scoping, and host-supplied ProcessStatus overlay.',
-  metadata: Object.freeze({ classification: 'real' }),
+  metadata: Object.freeze({
+    classification: 'real',
+    owner: 'video-editor-runtime',
+    reason: 'Process execution remains delegated until the trusted local process lifecycle is fully release-gated.',
+    expiration: 'M12',
+  }),
 });
 
 // ---------------------------------------------------------------------------
