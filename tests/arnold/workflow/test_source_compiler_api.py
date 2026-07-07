@@ -1821,6 +1821,43 @@ def flow() -> None:
     assert _diagnostic_payloads(source_error.value)[0]["message"] == expected_message
 
 
+def test_source_compiler_m3_accepts_unique_branch_local_target_for_route_metadata() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from project.workflow_components import decide, finalize
+
+@workflow(id="branch-local-route-binding")
+def flow() -> None:
+    decision = decide(id="decide")
+    if decision == "approve":
+        finalize(id="approve_finalize")
+    else:
+        finalize(id="reject_finalize")
+"""
+    resolver = _Resolver(
+        {
+            "project.workflow_components:decide": _step_component(
+                "decide",
+                route_bindings=(
+                    {"id": "decide:finalize", "label": "approve", "target_ref": "finalize"},
+                ),
+            ),
+            "project.workflow_components:finalize": _step_component("finalize"),
+        }
+    )
+
+    lowered = workflow.lower_workflow_source(
+        source,
+        source_path="branch_local_route_binding.py",
+        resolver=resolver,
+    )
+
+    assert tuple((route.id, route.source, route.target, route.label) for route in lowered.routes) == (
+        ("decide:finalize", "decide", "approve_finalize", "approve"),
+        ("decide-reject_finalize", "decide", "reject_finalize", "else"),
+    )
+
+
 @pytest.mark.parametrize(
     ("condition", "expected_message"),
     [
