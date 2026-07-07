@@ -206,6 +206,65 @@ def test_two_repeated_attempts_do_not_trigger_broken() -> None:
     assert result.canonical_state is not CanonicalState.BROKEN_STATE_MACHINE
 
 
+def test_missing_workspace_resolves_broken_state_machine() -> None:
+    """Missing workspace is detect-only evidence, but it classifies as BROKEN when not live or done."""
+    evidence = {
+        "tmux_process": {"live_status": "stopped"},
+        "plan_state": {"current_state": "executing", "fingerprint": "plan-mw", "mtime": 1.0},
+        "chain_state": {"last_state": "running", "fingerprint": "chain-mw", "mtime": 1.0},
+        "stale_evidence": [
+            {
+                "kind": "missing_workspace",
+                "path": "/srv/workspaces/missing",
+                "workspace": "/srv/workspaces/missing",
+            }
+        ],
+    }
+    result = resolve_run_state(evidence)
+    assert_contract_invariants(result)
+
+    assert result.canonical_state is CanonicalState.BROKEN_STATE_MACHINE
+    assert result.human_required is False
+    assert result.confidence == "high"
+    assert result.next_action == "escalate_broken_state_machine"
+    assert result.source_of_truth == ("stale_evidence",)
+    assert "missing_workspace" in result.stale_sources
+    assert _evi_evidence_value(result, "missing_workspace") == "present"
+
+
+def test_live_worker_overrides_missing_workspace_and_resolves_running() -> None:
+    """Live evidence still wins over missing-workspace stale evidence."""
+    evidence = {
+        "tmux_process": {"live_status": "alive"},
+        "plan_state": {"current_state": "executing", "fingerprint": "plan-mw-live", "mtime": 1.0},
+        "chain_state": {"last_state": "running", "fingerprint": "chain-mw-live", "mtime": 1.0},
+        "stale_evidence": [{"kind": "missing_workspace", "path": "/srv/workspaces/missing"}],
+    }
+    result = resolve_run_state(evidence)
+    assert_contract_invariants(result)
+
+    assert result.canonical_state is CanonicalState.RUNNING
+    assert result.running is True
+    assert result.human_required is False
+
+
+def test_terminal_done_overrides_missing_workspace_and_resolves_completed() -> None:
+    """Authority completion still wins when missing-workspace evidence lingers."""
+    evidence = {
+        "tmux_process": {"live_status": "stopped"},
+        "plan_state": {"current_state": "done", "fingerprint": "plan-mw-done", "mtime": 1.0},
+        "chain_state": {"last_state": "failed", "fingerprint": "chain-mw-done", "mtime": 1.0},
+        "stale_evidence": [{"kind": "missing_workspace", "path": "/srv/workspaces/missing"}],
+    }
+    result = resolve_run_state(evidence)
+    assert_contract_invariants(result)
+
+    assert result.canonical_state is CanonicalState.COMPLETED
+    assert result.human_required is False
+    assert result.next_action == "no_action_run_complete"
+    assert "missing_workspace" in result.stale_sources
+
+
 # ---------------------------------------------------------------------------
 # Shape 4: AWF018 route-metadata mismatch using structured diagnostic evidence
 #           -> REAL_IMPLEMENTATION_BLOCK  (human_required=False per SD3)

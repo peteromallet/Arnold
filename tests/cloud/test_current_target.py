@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from pathlib import Path
 
 from arnold_pipelines.megaplan.chain import spec as chain_spec
+from arnold_pipelines.megaplan.cloud import current_target as current_target_module
 from arnold_pipelines.megaplan.cloud.current_target import (
     _collect_sibling_sessions,
     compare_needs_human_diagnostic,
@@ -418,12 +420,45 @@ def test_resolve_current_target_tolerates_partial_evidence_fixture(tmp_path: Pat
             "kind": "invalid_needs_human_json",
             "path": str(repair_data_dir / "partial-session.needs-human.json"),
         },
+        {
+            "kind": "missing_workspace",
+            "path": str(marker_dir / "partial-session.json"),
+            "workspace": "",
+        },
     ]
     assert record["rationale"] == [
         "marker JSON was unreadable; continuing with partial evidence",
         "marker did not provide a usable remote spec",
         "marker did not provide a usable workspace",
     ]
+
+
+def test_resolve_current_target_reports_missing_workspace_directory(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    missing_workspace = tmp_path / "missing-ws"
+    spec_path = missing_workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    _write_marker(
+        marker_dir / "ghost.json",
+        {
+            "session": "ghost",
+            "workspace": str(missing_workspace),
+            "remote_spec": str(spec_path),
+            "run_kind": "chain",
+        },
+    )
+
+    record = resolve_current_target("ghost", marker_dir=marker_dir, repair_data_dir=repair_data_dir)
+
+    assert {
+        "kind": "missing_workspace",
+        "path": str(missing_workspace),
+        "marker_path": str(marker_dir / "ghost.json"),
+        "workspace": str(missing_workspace),
+    } in record["stale_evidence"]
+    assert "marker workspace path does not name an existing directory" in record["rationale"]
 
 
 def _write_marker(path: Path, payload: dict[str, object]) -> None:
@@ -857,6 +892,203 @@ def test_resolve_current_target_active_step_heartbeat_absent(tmp_path: Path) -> 
     assert hb["attempt"] == 0
 
 
+def test_resolve_current_target_captures_bounded_snapshot_metadata(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plan_name = "snapshot-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan_name, "current_state": "running"}),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text('{"kind":"gate_entered"}\n', encoding="utf-8")
+    (plan_dir / ".events.seq").write_text("41\n", encoding="utf-8")
+    chain_log = workspace / ".megaplan" / "cloud-chain.log"
+    chain_log.write_text("hello\n", encoding="utf-8")
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "demo.json").write_text(
+        json.dumps({"session": "demo", "workspace": str(workspace), "plan_name": plan_name}),
+        encoding="utf-8",
+    )
+
+    record = resolve_current_target("demo", marker_dir=marker_dir)
+
+    snapshot = record["read_snapshot"]
+    assert snapshot["bounded"] is True
+    assert snapshot["incoherent"] is False
+    assert snapshot["changed_tokens"] == []
+    assert snapshot["changed_fingerprints"] == []
+    assert snapshot["partial_events_read"] is False
+    assert set(snapshot["before"]) == {
+        "marker",
+        "chain_state",
+        "plan_state",
+        "needs_human",
+        "events",
+        "chain_log",
+    }
+    assert snapshot["before"]["events"]["seq"] == "41"
+    assert snapshot["before"]["events"]["version_token_source"] == "events_seq"
+    assert snapshot["before"]["events"]["path"] == str(plan_dir / "events.ndjson")
+    assert not any(item["kind"] == "torn_read_snapshot" for item in record["stale_evidence"])
+
+
+def test_resolve_current_target_surfaces_torn_snapshot_on_version_drift(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plan_name = "drift-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan_name, "current_state": "running"}),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text('{"kind":"gate_entered"}\n', encoding="utf-8")
+    (plan_dir / ".events.seq").write_text("7\n", encoding="utf-8")
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "demo.json").write_text(
+        json.dumps({"session": "demo", "workspace": str(workspace), "plan_name": plan_name}),
+        encoding="utf-8",
+    )
+
+    original_capture = current_target_module._capture_source_versions
+    call_count = 0
+
+    def fake_capture(source_paths):
+        nonlocal call_count
+        snap = original_capture(source_paths)
+        call_count += 1
+        if call_count == 2:
+            snap["events"]["seq"] = "8"
+            snap["events"]["version_token"] = "8"
+            snap["plan_state"]["fingerprint"] = "changed-plan-fingerprint"
+            snap["plan_state"]["version_token"] = (
+                snap["plan_state"]["version_token"] + ":changed"
+            )
+        return snap
+
+    monkeypatch.setattr(current_target_module, "_capture_source_versions", fake_capture)
+
+    record = resolve_current_target("demo", marker_dir=marker_dir)
+
+    snapshot = record["read_snapshot"]
+    assert snapshot["incoherent"] is True
+    assert "events" in snapshot["changed_tokens"]
+    assert "plan_state" in snapshot["changed_fingerprints"]
+    torn = next(item for item in record["stale_evidence"] if item["kind"] == "torn_read_snapshot")
+    assert "events" in torn["changed_tokens"]
+    assert "plan_state" in torn["changed_fingerprints"]
+    assert torn["partial_events_read"] is False
+
+
+def test_resolve_current_target_surfaces_torn_snapshot_on_partial_events_read(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plan_name = "partial-events-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan_name, "current_state": "running"}),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text(
+        '{"kind":"gate_entered"}\n{"kind":"gate_passed"',
+        encoding="utf-8",
+    )
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "demo.json").write_text(
+        json.dumps({"session": "demo", "workspace": str(workspace), "plan_name": plan_name}),
+        encoding="utf-8",
+    )
+
+    record = resolve_current_target("demo", marker_dir=marker_dir)
+
+    snapshot = record["read_snapshot"]
+    assert snapshot["incoherent"] is True
+    assert snapshot["partial_events_read"] is True
+    torn = next(item for item in record["stale_evidence"] if item["kind"] == "torn_read_snapshot")
+    assert torn["partial_events_read"] is True
+
+
+def test_resolve_current_target_surfaces_actual_concurrent_writes(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plan_name = "concurrent-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    state_path = plan_dir / "state.json"
+    state_path.write_text(
+        json.dumps({"name": plan_name, "current_state": "executing"}),
+        encoding="utf-8",
+    )
+    events_path = plan_dir / "events.ndjson"
+    events_path.write_text('{"kind":"gate_entered"}\n', encoding="utf-8")
+    (plan_dir / ".events.seq").write_text("1\n", encoding="utf-8")
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "demo.json").write_text(
+        json.dumps({"session": "demo", "workspace": str(workspace), "plan_name": plan_name}),
+        encoding="utf-8",
+    )
+
+    writer_started = threading.Event()
+    writer_finished = threading.Event()
+    original_read_event_cursors = current_target_module._read_event_cursors
+
+    def writer() -> None:
+        assert writer_started.wait(timeout=5)
+        tmp_state_path = plan_dir / "state.json.tmp"
+        tmp_state_path.write_text(
+            json.dumps(
+                {
+                    "name": plan_name,
+                    "current_state": "done",
+                    "resume_cursor": {"changed_file_count": 3},
+                }
+            ),
+            encoding="utf-8",
+        )
+        tmp_state_path.replace(state_path)
+        with events_path.open("a", encoding="utf-8") as handle:
+            handle.write('{"kind":"gate_passed"}\n')
+        (plan_dir / ".events.seq").write_text("2\n", encoding="utf-8")
+        writer_finished.set()
+
+    writer_thread = threading.Thread(target=writer)
+    writer_thread.start()
+
+    def synchronized_read_event_cursors(plan_state_path, plan_state):
+        writer_started.set()
+        assert writer_finished.wait(timeout=5)
+        return original_read_event_cursors(plan_state_path, plan_state)
+
+    monkeypatch.setattr(current_target_module, "_read_event_cursors", synchronized_read_event_cursors)
+
+    torn_record = resolve_current_target("demo", marker_dir=marker_dir)
+    writer_thread.join(timeout=5)
+    assert not writer_thread.is_alive()
+
+    torn_snapshot = torn_record["read_snapshot"]
+    assert torn_snapshot["incoherent"] is True
+    assert "events" in torn_snapshot["changed_tokens"]
+    assert "plan_state" in torn_snapshot["changed_tokens"]
+    assert "plan_state" in torn_snapshot["changed_fingerprints"]
+    torn = next(item for item in torn_record["stale_evidence"] if item["kind"] == "torn_read_snapshot")
+    assert "events" in torn["changed_tokens"]
+    assert "plan_state" in torn["changed_tokens"]
+    assert "plan_state" in torn["changed_fingerprints"]
+
+    stable_record = resolve_current_target("demo", marker_dir=marker_dir)
+    assert stable_record["read_snapshot"]["incoherent"] is False
+    assert stable_record["plan_state"]["current_state"] == "done"
+    assert stable_record["event_cursors"]["line_count"] == 2
+    assert stable_record["read_snapshot"]["before"]["events"]["seq"] == "2"
+
+
 def test_snapshots_distinguish_unchanged_live_from_fresh_activity(tmp_path: Path) -> None:
     """Two snapshots taken at different times expose evidence deltas.
 
@@ -957,5 +1189,7 @@ def test_repair_progress_sidecar_includes_mtime(tmp_path: Path) -> None:
     assert len(items) == 1
     assert items[0]["status"] == "waiting"
     assert isinstance(items[0]["mtime"], float) and items[0]["mtime"] > 0
+
+
 def _chain_state_path(workspace: Path, spec_path: Path) -> Path:
     return chain_spec._state_path_for(spec_path)
