@@ -79,6 +79,7 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
     atomic_write_phase_result,
     read_phase_result,
 )
+from arnold_pipelines.megaplan.replan_state import reset_replan_loop_state
 from .shared import _append_to_meta, _attach_next_step_runtime, _warn_best_effort_emit_failure, _write_gate_json
 
 
@@ -1080,23 +1081,30 @@ def _override_replan(
     root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
 ) -> StepResponse:
     allowed = {STATE_GATED, STATE_FINALIZED, STATE_CRITIQUED, STATE_FAILED}
-    if state["current_state"] not in allowed:
+    previous_state = state["current_state"]
+    if previous_state not in allowed:
         raise CliError(
             "invalid_transition",
-            f"replan requires state {', '.join(sorted(allowed))}, got '{state['current_state']}'",
+            f"replan requires state {', '.join(sorted(allowed))}, got '{previous_state}'",
             valid_next=infer_next_steps(state),
         )
     reason = args.reason or args.note or "Re-entering planning loop"
     plan_file = latest_plan_path(plan_dir, state)
-    state["current_state"] = STATE_PLANNED
-    state["last_gate"] = {}
+    timestamp = now_utc()
     _append_to_meta(
         state,
         "overrides",
-        {"action": "replan", "timestamp": now_utc(), "reason": reason},
+        {
+            "action": "replan",
+            "timestamp": timestamp,
+            "reason": reason,
+            "from_state": previous_state,
+            "plan_file": plan_file.name,
+        },
     )
     if args.note:
-        _append_to_meta(state, "notes", {"timestamp": now_utc(), "note": args.note})
+        _append_to_meta(state, "notes", {"timestamp": timestamp, "note": args.note})
+    reset_replan_loop_state(state, target_state=STATE_PLANNED)
     save_state_merge_meta(plan_dir, state)
     try:
         from arnold_pipelines.megaplan.observability.events import emit, EventKind

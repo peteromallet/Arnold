@@ -18,6 +18,10 @@ from arnold.workflow.semantic_evidence import (
     S2_PLAN_ROW_ID,
     S2_PREP_ROW_ID,
     S2_REVISE_ROW_ID,
+    S3_TIEBREAKER_RESEARCHER_ROW_ID,
+    S3_TIEBREAKER_CHALLENGER_ROW_ID,
+    S3_TIEBREAKER_SYNTHESIS_ROW_ID,
+    S3_TIEBREAKER_DECISION_ROW_ID,
     SemanticEvidence,
 )
 from arnold_pipelines.megaplan.workflows import planning
@@ -166,7 +170,8 @@ def plain_flow(brief: str) -> None:
 
 def test_canonical_authoring_components_emit_awf245_for_unique_front_half_rows() -> None:
     """The canonical AUTHORING_* source must detect prep/plan/critique/gate/revise
-    exactly once each, including critique via the reducer call and repeated revise call sites."""
+    plus the four S3 tiebreaker phases exactly once each, including critique via the
+    reducer call and repeated revise call sites."""
     result = check_workflow_source(
         planning.AUTHORING_SOURCE_PATH.read_text(encoding="utf-8"),
         source_path=planning.AUTHORING_SOURCE_PATH,
@@ -177,7 +182,7 @@ def test_canonical_authoring_components_emit_awf245_for_unique_front_half_rows()
         if d.code is DiagnosticCode.ROW_EVIDENCE_INSUFFICIENCY
     ]
 
-    assert len(awf245_diags) == 5
+    assert len(awf245_diags) == 9  # 5 S2 + 4 S3
     assert {
         diag.details["row_id"] for diag in awf245_diags
     } == {
@@ -186,9 +191,15 @@ def test_canonical_authoring_components_emit_awf245_for_unique_front_half_rows()
         S2_CRITIQUE_ROW_ID,
         S2_GATE_ROW_ID,
         S2_REVISE_ROW_ID,
+        S3_TIEBREAKER_RESEARCHER_ROW_ID,
+        S3_TIEBREAKER_CHALLENGER_ROW_ID,
+        S3_TIEBREAKER_SYNTHESIS_ROW_ID,
+        S3_TIEBREAKER_DECISION_ROW_ID,
     }
     assert any(diag.component_ref and "AUTHORING_CRITIQUE" in diag.component_ref for diag in awf245_diags)
     assert any(diag.component_ref and "AUTHORING_REVISE" in diag.component_ref for diag in awf245_diags)
+    assert any(diag.component_ref and "TIEBREAKER_RESEARCHER" in diag.component_ref for diag in awf245_diags)
+    assert any(diag.component_ref and "TIEBREAKER_DECISION" in diag.component_ref for diag in awf245_diags)
 
 
 # ── API / serialization behaviour ───────────────────────────────────────────
@@ -288,3 +299,454 @@ def test_check_workflow_file_passes_evidence_through() -> None:
         assert result.evidence == evidence
     finally:
         os.unlink(tmp_path)
+
+
+# ── S3 tiebreaker shape violation tests ──────────────────────────────────────
+
+_TIEBREAKER_SOURCE_TEMPLATE = """\
+from __future__ import annotations
+
+from arnold.workflow.authoring import workflow
+from arnold_pipelines.megaplan.workflows.components import (
+    TIEBREAKER_RESEARCHER,
+    TIEBREAKER_CHALLENGER,
+    TIEBREAKER_SYNTHESIS,
+    TIEBREAKER_DECISION,
+)
+
+@workflow(id="test", version="s3")
+def test_flow(brief: str) -> None:
+    research_findings = TIEBREAKER_RESEARCHER(
+        id="tiebreaker_researcher",
+        gate_payload=brief,
+    )
+    challenge_findings = TIEBREAKER_CHALLENGER(
+        id="tiebreaker_challenger",
+        research_findings=research_findings,
+    )
+    tiebreaker_payload = TIEBREAKER_SYNTHESIS(
+        id="tiebreaker_synthesis",
+        research_findings=research_findings,
+        challenge_findings=challenge_findings,
+    )
+    decision = TIEBREAKER_DECISION(
+        id="tiebreaker_decision",
+        tiebreaker_payload=tiebreaker_payload,
+    )
+"""
+
+
+def test_full_tiebreaker_shape_passes_without_awf252() -> None:
+    """A source with all four tiebreaker phases visible must not emit AWF252."""
+    result = check_workflow_source(
+        _TIEBREAKER_SOURCE_TEMPLATE, source_path="test_full_tb.pypeline",
+    )
+
+    awf252_diags = [
+        d for d in result.diagnostics
+        if d.code is DiagnosticCode.TIEBREAKER_SHAPE_VIOLATION
+    ]
+    assert len(awf252_diags) == 0, (
+        f"expected 0 AWF252 diagnostics, got {len(awf252_diags)}"
+    )
+
+
+def test_partial_tiebreaker_shape_produces_awf252() -> None:
+    """A source with only some tiebreaker phases must emit AWF252 for each
+    missing phase."""
+    source = """\
+from __future__ import annotations
+
+from arnold.workflow.authoring import workflow
+from arnold_pipelines.megaplan.workflows.components import (
+    TIEBREAKER_RESEARCHER,
+    TIEBREAKER_DECISION,
+)
+
+@workflow(id="test", version="s3")
+def test_flow(brief: str) -> None:
+    research_findings = TIEBREAKER_RESEARCHER(
+        id="tiebreaker_researcher",
+        gate_payload=brief,
+    )
+    decision = TIEBREAKER_DECISION(
+        id="tiebreaker_decision",
+        tiebreaker_payload=research_findings,
+    )
+"""
+    result = check_workflow_source(source, source_path="test_partial_tb.pypeline")
+
+    awf252_diags = [
+        d for d in result.diagnostics
+        if d.code is DiagnosticCode.TIEBREAKER_SHAPE_VIOLATION
+    ]
+    assert len(awf252_diags) == 2, (
+        f"expected 2 AWF252 diagnostics (missing challenger + synthesis), "
+        f"got {len(awf252_diags)}"
+    )
+    missing_phases = {d.details.get("missing_phase") for d in awf252_diags}
+    assert missing_phases == {"tiebreaker_challenger", "tiebreaker_synthesis"}, (
+        f"unexpected missing phases: {missing_phases}"
+    )
+
+
+def test_no_tiebreaker_phases_produces_no_awf252() -> None:
+    """A source with no tiebreaker phases at all must not emit AWF252."""
+    source = """\
+from __future__ import annotations
+
+from arnold.workflow.authoring import workflow
+from arnold_pipelines.megaplan.workflows.components import (
+    SOURCE_PREP,
+)
+
+@workflow(id="test", version="s3")
+def test_flow(brief: str) -> None:
+    prep_signal = SOURCE_PREP(id="prep", brief=brief)
+"""
+    result = check_workflow_source(source, source_path="test_no_tb.pypeline")
+
+    awf252_diags = [
+        d for d in result.diagnostics
+        if d.code is DiagnosticCode.TIEBREAKER_SHAPE_VIOLATION
+    ]
+    assert len(awf252_diags) == 0, (
+        f"expected 0 AWF252 diagnostics, got {len(awf252_diags)}"
+    )
+
+
+def test_awf252_diagnostic_carries_missing_phase_details() -> None:
+    """AWF252 diagnostics must carry missing_row_id, missing_phase, and
+    implemented_s3_rows in details."""
+    source = """\
+from __future__ import annotations
+
+from arnold.workflow.authoring import workflow
+from arnold_pipelines.megaplan.workflows.components import (
+    TIEBREAKER_RESEARCHER,
+)
+
+@workflow(id="test", version="s3")
+def test_flow(brief: str) -> None:
+    research_findings = TIEBREAKER_RESEARCHER(
+        id="tiebreaker_researcher",
+        gate_payload=brief,
+    )
+"""
+    result = check_workflow_source(source, source_path="test_one_tb.pypeline")
+
+    awf252_diags = [
+        d for d in result.diagnostics
+        if d.code is DiagnosticCode.TIEBREAKER_SHAPE_VIOLATION
+    ]
+    assert len(awf252_diags) == 3  # missing challenger, synthesis, decision
+
+    for diag in awf252_diags:
+        assert "missing_row_id" in diag.details
+        assert "missing_phase" in diag.details
+        assert "implemented_s3_rows" in diag.details
+        assert diag.details["missing_row_id"].startswith("s3.")
+        assert diag.details["missing_phase"].startswith("tiebreaker_")
+        assert "s3.tiebreaker_researcher.1" in diag.details["implemented_s3_rows"]
+
+
+# ── S3 negative tests: old single-call wrapper ───────────────────────────────
+# Prove that boundary receipts and semantic-health findings cannot compensate
+# for missing source-visible tiebreaker topology.
+
+
+# Old-wrapper source: uses SOURCE_TIEBREAKER_WORKFLOW as a single subworkflow
+# call instead of four individually authored step calls.
+_OLD_WRAPPER_SOURCE = """\
+from __future__ import annotations
+
+from arnold.workflow.authoring import workflow
+from arnold_pipelines.megaplan.workflows.components import (
+    SOURCE_TIEBREAKER_WORKFLOW,
+)
+
+@workflow(id="test", version="s3")
+def test_flow(brief: str) -> None:
+    decision = SOURCE_TIEBREAKER_WORKFLOW(
+        id="tiebreaker_child",
+        gate_payload=brief,
+    )
+"""
+
+
+def _make_boundary_receipt(boundary_id: str, row_id: str) -> "BoundaryReceipt":
+    """Construct a minimal valid boundary receipt for a single S3 tiebreaker phase."""
+    from arnold.workflow.boundary_evidence import (
+        BoundaryOutcome,
+        BoundaryReceipt,
+    )
+    return BoundaryReceipt(
+        boundary_id=boundary_id,
+        workflow_id="megaplan-review",
+        row_id=row_id,
+        invocation_id=f"inv-{boundary_id}",
+        artifact_refs=(f"{boundary_id}_artifact.json",),
+        phase_result_ref=f"phase_result_{boundary_id}",
+        outcome=BoundaryOutcome.COMPLETE,
+    )
+
+
+def _make_semantic_finding(
+    finding_id: str,
+    boundary_id: str,
+    description: str,
+) -> "SemanticFinding":
+    """Construct a minimal semantic-health finding."""
+    from arnold.workflow.boundary_evidence import (
+        FindingSeverity,
+        SemanticFinding,
+    )
+    return SemanticFinding(
+        finding_id=finding_id,
+        boundary_id=boundary_id,
+        description=description,
+        severity=FindingSeverity.INFO,
+    )
+
+
+# Boundary receipts for all four S3 tiebreaker phases.
+_S3_BOUNDARY_RECEIPTS = (
+    _make_boundary_receipt(
+        "tiebreaker_researcher_to_challenger",
+        S3_TIEBREAKER_RESEARCHER_ROW_ID,
+    ),
+    _make_boundary_receipt(
+        "tiebreaker_challenger_to_synthesis",
+        S3_TIEBREAKER_CHALLENGER_ROW_ID,
+    ),
+    _make_boundary_receipt(
+        "tiebreaker_synthesis_to_decision",
+        S3_TIEBREAKER_SYNTHESIS_ROW_ID,
+    ),
+    _make_boundary_receipt(
+        "tiebreaker_decision_to_parent",
+        S3_TIEBREAKER_DECISION_ROW_ID,
+    ),
+)
+
+# Semantic-health findings for all four S3 tiebreaker phases.
+_S3_SEMANTIC_FINDINGS = (
+    _make_semantic_finding(
+        "find-researcher",
+        "tiebreaker_researcher_to_challenger",
+        "Researcher boundary healthy: research_findings.json present and coherent",
+    ),
+    _make_semantic_finding(
+        "find-challenger",
+        "tiebreaker_challenger_to_synthesis",
+        "Challenger boundary healthy: challenge_findings.json present and coherent",
+    ),
+    _make_semantic_finding(
+        "find-synthesis",
+        "tiebreaker_synthesis_to_decision",
+        "Synthesis boundary healthy: tiebreaker_payload.json present and coherent",
+    ),
+    _make_semantic_finding(
+        "find-decision",
+        "tiebreaker_decision_to_parent",
+        "Decision boundary healthy: tiebreaker_decisions.json present and coherent",
+    ),
+)
+
+
+def test_old_wrapper_fails_even_with_boundary_receipts() -> None:
+    """A source using SOURCE_TIEBREAKER_WORKFLOW as a single-call wrapper must
+    emit AWF252 even when boundary receipts exist for all four S3 tiebreaker
+    phases.  Boundary evidence cannot create or substitute for source-visible
+    step topology."""
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+        BOUNDARY_CONTRACTS as _ALL_CONTRACTS,
+    )
+    # Only S3 contracts so we don't trigger unrelated boundary diagnostics.
+    s3_contracts = tuple(
+        c for c in _ALL_CONTRACTS
+        if c.row_id and c.row_id.startswith("s3.")
+    )
+
+    result = check_workflow_source(
+        _OLD_WRAPPER_SOURCE,
+        source_path="test_old_wrapper.pypeline",
+        boundary_contracts=s3_contracts,
+        boundary_evidence=_S3_BOUNDARY_RECEIPTS,
+    )
+
+    # Must not be OK — the old wrapper is a shape violation.
+    assert not result.ok, (
+        "expected failure for old single-call wrapper, but result.ok is True"
+    )
+
+    awf252_diags = [
+        d for d in result.diagnostics
+        if d.code is DiagnosticCode.TIEBREAKER_SHAPE_VIOLATION
+    ]
+    assert len(awf252_diags) >= 1, (
+        "expected at least 1 AWF252 diagnostic for old single-call wrapper, "
+        f"got {len(awf252_diags)}"
+    )
+
+    # The diagnostic must reference the old wrapper component.
+    wrapper_diag = awf252_diags[0]
+    assert "SOURCE_TIEBREAKER_WORKFLOW" in (wrapper_diag.component_ref or ""), (
+        f"expected AWF252 to reference SOURCE_TIEBREAKER_WORKFLOW, "
+        f"got {wrapper_diag.component_ref!r}"
+    )
+    assert "missing_phases" in wrapper_diag.details, (
+        "expected 'missing_phases' in AWF252 details"
+    )
+    assert len(wrapper_diag.details["missing_phases"]) == 4, (
+        "expected all 4 S3 phases listed as missing"
+    )
+
+
+def test_old_wrapper_fails_even_with_semantic_findings() -> None:
+    """A source using SOURCE_TIEBREAKER_WORKFLOW as a single-call wrapper must
+    emit AWF252 even when semantic-health findings claim all four S3 boundaries
+    are healthy.  Semantic findings cannot create or substitute for source-visible
+    step topology."""
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+        BOUNDARY_CONTRACTS as _ALL_CONTRACTS,
+    )
+    s3_contracts = tuple(
+        c for c in _ALL_CONTRACTS
+        if c.row_id and c.row_id.startswith("s3.")
+    )
+
+    result = check_workflow_source(
+        _OLD_WRAPPER_SOURCE,
+        source_path="test_old_wrapper.pypeline",
+        boundary_contracts=s3_contracts,
+        boundary_evidence=_S3_SEMANTIC_FINDINGS,
+    )
+
+    assert not result.ok, (
+        "expected failure for old single-call wrapper, but result.ok is True"
+    )
+
+    awf252_diags = [
+        d for d in result.diagnostics
+        if d.code is DiagnosticCode.TIEBREAKER_SHAPE_VIOLATION
+    ]
+    assert len(awf252_diags) >= 1, (
+        "expected at least 1 AWF252 diagnostic for old single-call wrapper "
+        "with semantic findings, got 0"
+    )
+    assert "SOURCE_TIEBREAKER_WORKFLOW" in (awf252_diags[0].component_ref or "")
+
+
+def test_old_wrapper_fails_even_with_both_receipts_and_findings() -> None:
+    """Even when both boundary receipts AND semantic-health findings are present
+    for every S3 tiebreaker phase, the old SOURCE_TIEBREAKER_WORKFLOW single-call
+    wrapper must still emit AWF252.  No combination of boundary/semantic evidence
+    can compensate for missing source-visible topology."""
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+        BOUNDARY_CONTRACTS as _ALL_CONTRACTS,
+    )
+    s3_contracts = tuple(
+        c for c in _ALL_CONTRACTS
+        if c.row_id and c.row_id.startswith("s3.")
+    )
+
+    # Combine receipts and findings.
+    combined_evidence = (*_S3_BOUNDARY_RECEIPTS, *_S3_SEMANTIC_FINDINGS)
+
+    result = check_workflow_source(
+        _OLD_WRAPPER_SOURCE,
+        source_path="test_old_wrapper.pypeline",
+        boundary_contracts=s3_contracts,
+        boundary_evidence=combined_evidence,
+    )
+
+    assert not result.ok, (
+        "expected failure for old single-call wrapper even with full boundary "
+        "receipts + semantic findings, but result.ok is True"
+    )
+
+    awf252_diags = [
+        d for d in result.diagnostics
+        if d.code is DiagnosticCode.TIEBREAKER_SHAPE_VIOLATION
+    ]
+    assert len(awf252_diags) >= 1, (
+        "expected at least 1 AWF252 diagnostic for old single-call wrapper "
+        "with full boundary receipts + semantic findings, got 0"
+    )
+    assert "SOURCE_TIEBREAKER_WORKFLOW" in (awf252_diags[0].component_ref or "")
+
+    # Confirm the boundary evidence is still preserved in the result carrier.
+    assert result.boundary_evidence == combined_evidence, (
+        "boundary evidence must be preserved in result"
+    )
+
+
+def test_old_wrapper_awf252_not_silenced_by_row_evidence() -> None:
+    """Supplying SemanticEvidence covering the four S3 tiebreaker row-IDs
+    must NOT silence AWF252 when the source uses the old single-call wrapper.
+    Row-level SemanticEvidence also cannot compensate for missing source-visible
+    topology."""
+    # Row evidence for all four S3 phases.
+    row_evidence = (
+        SemanticEvidence(
+            diagnostic_code=DiagnosticCode.ROW_EVIDENCE_INSUFFICIENCY,
+            source_span=SourceSpan("test.pypeline", 1, 1, 1, 10),
+            construct_type=ConstructType.TIEBREAKER_RESEARCHER,
+            row_id=S3_TIEBREAKER_RESEARCHER_ROW_ID,
+        ),
+        SemanticEvidence(
+            diagnostic_code=DiagnosticCode.ROW_EVIDENCE_INSUFFICIENCY,
+            source_span=SourceSpan("test.pypeline", 2, 1, 2, 10),
+            construct_type=ConstructType.TIEBREAKER_CHALLENGER,
+            row_id=S3_TIEBREAKER_CHALLENGER_ROW_ID,
+        ),
+        SemanticEvidence(
+            diagnostic_code=DiagnosticCode.ROW_EVIDENCE_INSUFFICIENCY,
+            source_span=SourceSpan("test.pypeline", 3, 1, 3, 10),
+            construct_type=ConstructType.TIEBREAKER_SYNTHESIS,
+            row_id=S3_TIEBREAKER_SYNTHESIS_ROW_ID,
+        ),
+        SemanticEvidence(
+            diagnostic_code=DiagnosticCode.ROW_EVIDENCE_INSUFFICIENCY,
+            source_span=SourceSpan("test.pypeline", 4, 1, 4, 10),
+            construct_type=ConstructType.TIEBREAKER_DECISION,
+            row_id=S3_TIEBREAKER_DECISION_ROW_ID,
+        ),
+    )
+
+    result = check_workflow_source(
+        _OLD_WRAPPER_SOURCE,
+        source_path="test_old_wrapper.pypeline",
+        evidence=row_evidence,
+    )
+
+    assert not result.ok, (
+        "expected failure for old single-call wrapper with row evidence, "
+        "but result.ok is True"
+    )
+
+    awf252_diags = [
+        d for d in result.diagnostics
+        if d.code is DiagnosticCode.TIEBREAKER_SHAPE_VIOLATION
+    ]
+    assert len(awf252_diags) >= 1, (
+        "expected AWF252 even when SemanticEvidence covers all S3 row IDs, "
+        f"got {len(awf252_diags)}"
+    )
+
+    # No AWF245 should be emitted for S3 rows — the old wrapper doesn't
+    # produce _ImplementedFrontHalfRow entries for these phases, so row-evidence
+    # checking doesn't flag them as missing.
+    awf245_diags = [
+        d for d in result.diagnostics
+        if d.code is DiagnosticCode.ROW_EVIDENCE_INSUFFICIENCY
+    ]
+    s3_awf245 = [
+        d for d in awf245_diags
+        if d.details.get("row_id", "").startswith("s3.")
+    ]
+    assert len(s3_awf245) == 0, (
+        "old wrapper must not produce AWF245 for S3 phases "
+        "(they are not source-visible as individual steps)"
+    )

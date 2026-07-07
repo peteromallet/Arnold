@@ -6,8 +6,6 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from arnold.execution.backend import ExecutionContext, NodeState
 from arnold.execution.registries import ExecutionRegistries
 from arnold.execution.state import RouteCoordinate
@@ -104,6 +102,27 @@ class TestManifestBackendDispatch:
         signal = outcome.control_signals[0]
         assert signal.target.node_ref == "revise"
 
+    def test_canonical_tiebreaker_decision_dispatches_through_handler_nodes(
+        self,
+        tmp_path: Path,
+        monkeypatch: Any,
+    ) -> None:
+        from arnold_pipelines.megaplan.runtime.manifest_backend import MegaplanManifestBackend
+
+        plan_dir = tmp_path / "plans" / "test"
+        plan_dir.mkdir(parents=True)
+        fake = FakeHandler(response={"success": True, "route_signal": "proceed", "decision": "proceed"})
+        backend = MegaplanManifestBackend(plan_dir=plan_dir)
+        monkeypatch.setattr(backend, "_resolve_handler", lambda _node_id: fake)
+
+        node = make_node("tiebreaker_decision")
+        ctx = make_context("tiebreaker_decision")
+        outcome = backend._execute_node_payload(ctx.coordinate, node, ctx)
+
+        assert outcome.state == NodeState.COMPLETED
+        assert outcome.branch_edge_id == "tiebreaker_decision:finalize"
+        assert fake.calls[0][1].node_id == "tiebreaker_decision"
+
     def test_build_megaplan_registries(self) -> None:
         from arnold_pipelines.megaplan.runtime.manifest_backend import build_megaplan_registries
 
@@ -134,9 +153,34 @@ class TestBackendBranchSelection:
         from arnold_pipelines.megaplan.runtime.manifest_backend import MegaplanManifestBackend
 
         backend = MegaplanManifestBackend(plan_dir=tmp_path / "plan")
-        assert backend._branch_edge_id("tiebreaker_decide", {"route_signal": "proceed"}) == "tiebreaker_decide:finalize"
-        assert backend._branch_edge_id("tiebreaker_decide", {"route_signal": "iterate"}) == "tiebreaker_decide:critique"
-        assert backend._branch_edge_id("tiebreaker_decide", {"route_signal": "escalate"}) == "tiebreaker_decide:override"
+        assert backend._branch_edge_id("tiebreaker_decision", {"route_signal": "proceed"}) == "tiebreaker_decision:finalize"
+        assert backend._branch_edge_id("tiebreaker_decision", {"route_signal": "iterate"}) == "tiebreaker_decision:critique"
+        assert backend._branch_edge_id("tiebreaker_decision", {"route_signal": "escalate"}) == "tiebreaker_decision:override"
+
+    def test_legacy_tiebreaker_alias_uses_canonical_source_routes(self, tmp_path: Path, monkeypatch: Any) -> None:
+        from arnold_pipelines.megaplan.runtime.manifest_backend import MegaplanManifestBackend
+
+        backend = MegaplanManifestBackend(plan_dir=tmp_path / "plan")
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.route_dispatch._component_route_bindings_for_step",
+            lambda step: (
+                (
+                    {
+                        "id": "tiebreaker_decide:proceed",
+                        "label": "proceed",
+                        "target_ref": "halt",
+                        "condition_ref": "mutated",
+                    },
+                )
+                if step == "tiebreaker_decide"
+                else ()
+            ),
+        )
+
+        assert backend._branch_edge_id("tiebreaker_decide", {"route_signal": "proceed"}) == "tiebreaker_decision:finalize"
+        control_signals = backend._build_control_signals("tiebreaker_decide", {"route_signal": "proceed"})
+        assert len(control_signals) == 1
+        assert control_signals[0].target.node_ref == "finalize"
 
     def test_suspension_route_for_human_state(self, tmp_path: Path) -> None:
         from arnold_pipelines.megaplan.runtime.manifest_backend import MegaplanManifestBackend

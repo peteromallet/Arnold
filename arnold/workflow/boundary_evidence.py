@@ -31,6 +31,13 @@ class BoundaryPhase(StrEnum):
     CRITIQUE = "critique"
     GATE = "gate"
     REVISE = "revise"
+    # ── S3 tiebreaker/replan phases ──────────────────────────────────────
+    TIEBREAKER_RESEARCHER = "tiebreaker_researcher"
+    TIEBREAKER_CHALLENGER = "tiebreaker_challenger"
+    TIEBREAKER_SYNTHESIS = "tiebreaker_synthesis"
+    TIEBREAKER_DECISION = "tiebreaker_decision"
+    REPLAN_AUTHORITY = "replan_authority"
+    PARENT_REJOIN = "parent_rejoin"
 
 
 class BoundaryOutcome(StrEnum):

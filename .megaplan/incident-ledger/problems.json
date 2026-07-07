@@ -1,6 +1,24 @@
 {
   "integrity": [
     {
+      "actual": "sha256:5d63df306a7cb80039a2b6544c81e20892277c2ed731ef4745036dd00317217e",
+      "code": "index_divergence",
+      "expected": "sha256:a7650ef18c56f97a9a28b12bf8db9e78b0a932348ada68efbf4699e99e83f9d3",
+      "message": "incidents projection source metadata diverged for digest: 'sha256:5d63df306a7cb80039a2b6544c81e20892277c2ed731ef4745036dd00317217e' != 'sha256:a7650ef18c56f97a9a28b12bf8db9e78b0a932348ada68efbf4699e99e83f9d3'",
+      "projection": "incidents",
+      "recommendation": "system.integrity_repair",
+      "severity": "error"
+    },
+    {
+      "actual": "sha256:5d63df306a7cb80039a2b6544c81e20892277c2ed731ef4745036dd00317217e",
+      "code": "index_divergence",
+      "expected": "sha256:a7650ef18c56f97a9a28b12bf8db9e78b0a932348ada68efbf4699e99e83f9d3",
+      "message": "problems projection source metadata diverged for digest: 'sha256:5d63df306a7cb80039a2b6544c81e20892277c2ed731ef4745036dd00317217e' != 'sha256:a7650ef18c56f97a9a28b12bf8db9e78b0a932348ada68efbf4699e99e83f9d3'",
+      "projection": "problems",
+      "recommendation": "system.integrity_repair",
+      "severity": "error"
+    },
+    {
       "code": "loop_break_repeated_attempt_no_new_evidence",
       "incident_id": "inc-demo-session",
       "message": "Repeated repair_attempt events did not add a new hypothesis or state change",
@@ -18,6 +36,25 @@
     }
   ],
   "problems": [
+    {
+      "first_seen_seq": 167,
+      "first_seen_ts": "2026-07-06T20:53:23.823473+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 198,
+      "last_seen_ts": "2026-07-07T02:34:56.122211+00:00",
+      "linked_incident_ids": [
+        "inc-megaplan-native-parity-corrective"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "repair data outcome discord escalated kind chain workspace transient path",
+      "occurrence_count": 4,
+      "owner_actor": "six_hour_auditor",
+      "problem_id": "problem-3b7df8021d2b",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "repair-data outcome=discord_escalated kind=chain workspace=/workspace/megaplan-native-parity-corrective/Arnold"
+    },
     {
       "first_seen_seq": 156,
       "first_seen_ts": "2026-07-06T01:06:03.327729+00:00",
@@ -41,14 +78,14 @@
       "first_seen_seq": 159,
       "first_seen_ts": "2026-07-06T01:52:10.049821+00:00",
       "fix_commits": [],
-      "last_seen_seq": 165,
-      "last_seen_ts": "2026-07-06T05:11:17.194179+00:00",
+      "last_seen_seq": 196,
+      "last_seen_ts": "2026-07-07T02:33:23.522922+00:00",
       "linked_incident_ids": [
         "inc-megaplan-native-parity-corrective"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repairing kind chain workspace transient path",
-      "occurrence_count": 2,
+      "occurrence_count": 5,
       "owner_actor": "immediate_repair",
       "problem_id": "problem-67a765759422",
       "recurred_after_fix": false,
@@ -60,15 +97,15 @@
       "first_seen_seq": 1,
       "first_seen_ts": "2026-07-03T20:59:15.263244+00:00",
       "fix_commits": [],
-      "last_seen_seq": 148,
-      "last_seen_ts": "2026-07-05T02:26:40.559591+00:00",
+      "last_seen_seq": 188,
+      "last_seen_ts": "2026-07-07T02:26:19.115159+00:00",
       "linked_incident_ids": [
         "incident-42"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repairing plan m plan kind chain workspace transient path",
-      "occurrence_count": 19,
-      "owner_actor": "meta_repair",
+      "occurrence_count": 22,
+      "owner_actor": "immediate_repair",
       "problem_id": "problem-68a048c70af7",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -79,15 +116,15 @@
       "first_seen_seq": 5,
       "first_seen_ts": "2026-07-03T21:24:24.562997+00:00",
       "fix_commits": [],
-      "last_seen_seq": 152,
-      "last_seen_ts": "2026-07-05T02:27:07.042669+00:00",
+      "last_seen_seq": 192,
+      "last_seen_ts": "2026-07-07T02:26:42.016641+00:00",
       "linked_incident_ids": [
         "inc-demo-session"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repairing plan demo plan kind chain workspace transient path",
-      "occurrence_count": 106,
-      "owner_actor": "meta_repair",
+      "occurrence_count": 118,
+      "owner_actor": "immediate_repair",
       "problem_id": "problem-6e386e382223",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -117,20 +154,39 @@
       "first_seen_seq": 9,
       "first_seen_ts": "2026-07-03T21:24:28.137736+00:00",
       "fix_commits": [],
-      "last_seen_seq": 153,
-      "last_seen_ts": "2026-07-05T02:27:08.197168+00:00",
+      "last_seen_seq": 193,
+      "last_seen_ts": "2026-07-07T02:26:43.093500+00:00",
       "linked_incident_ids": [
         "inc-demo-session"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome discord escalated plan demo plan kind chain workspace transient path",
-      "occurrence_count": 25,
-      "owner_actor": "meta_repair",
+      "occurrence_count": 28,
+      "owner_actor": "immediate_repair",
       "problem_id": "problem-9e338df241c5",
       "recurred_after_fix": false,
       "scope": "repair_system",
       "status": "open",
       "title": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace"
+    },
+    {
+      "first_seen_seq": 194,
+      "first_seen_ts": "2026-07-07T02:33:10.287019+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 194,
+      "last_seen_ts": "2026-07-07T02:33:10.287019+00:00",
+      "linked_incident_ids": [
+        "inc-megaplan-native-parity-corrective"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "unhealthy and needs repair attention retrying failure",
+      "occurrence_count": 1,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-9eb61fd41e68",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "session unhealthy and needs repair attention: retrying_failure"
     },
     {
       "first_seen_seq": 154,
@@ -174,14 +230,14 @@
       "first_seen_seq": 162,
       "first_seen_ts": "2026-07-06T05:11:02.606561+00:00",
       "fix_commits": [],
-      "last_seen_seq": 162,
-      "last_seen_ts": "2026-07-06T05:11:02.606561+00:00",
+      "last_seen_seq": 172,
+      "last_seen_ts": "2026-07-07T01:34:57.132274+00:00",
       "linked_incident_ids": [
         "inc-megaplan-native-parity-corrective"
       ],
       "next_review_ts": null,
       "normalized_signature": "stopped and needs repair attention",
-      "occurrence_count": 1,
+      "occurrence_count": 2,
       "owner_actor": "watchdog",
       "problem_id": "problem-bd43205325d0",
       "recurred_after_fix": false,
@@ -193,14 +249,14 @@
       "first_seen_seq": 166,
       "first_seen_ts": "2026-07-06T05:18:09.586858+00:00",
       "fix_commits": [],
-      "last_seen_seq": 166,
-      "last_seen_ts": "2026-07-06T05:18:09.586858+00:00",
+      "last_seen_seq": 175,
+      "last_seen_ts": "2026-07-07T01:45:07.883491+00:00",
       "linked_incident_ids": [
         "inc-megaplan-native-parity-corrective"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome live with fresh activity kind chain workspace transient path",
-      "occurrence_count": 1,
+      "occurrence_count": 2,
       "owner_actor": "repair_system",
       "problem_id": "problem-bef9405c197d",
       "recurred_after_fix": false,
@@ -212,29 +268,48 @@
       "first_seen_seq": 155,
       "first_seen_ts": "2026-07-05T23:34:02.322711+00:00",
       "fix_commits": [],
-      "last_seen_seq": 164,
-      "last_seen_ts": "2026-07-06T05:11:12.826464+00:00",
+      "last_seen_seq": 195,
+      "last_seen_ts": "2026-07-07T02:33:11.730468+00:00",
       "linked_incident_ids": [
         "inc-megaplan-native-parity-corrective"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair loop background dispatched",
-      "occurrence_count": 3,
+      "occurrence_count": 5,
       "owner_actor": "watchdog",
       "problem_id": "problem-e20c45ae0eb0",
       "recurred_after_fix": false,
       "scope": "repair_system",
       "status": "open",
       "title": "repair loop background-dispatched"
+    },
+    {
+      "first_seen_seq": 168,
+      "first_seen_ts": "2026-07-06T21:33:47.276842+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 173,
+      "last_seen_ts": "2026-07-07T01:35:12.891885+00:00",
+      "linked_incident_ids": [
+        "inc-megaplan-native-parity-corrective"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "meta repair background dispatched",
+      "occurrence_count": 2,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-fc037a661409",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "meta-repair background-dispatched"
     }
   ],
   "projection": "problems",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:ab09fc8081db4dfd6875417b107ce99b006e11418e5e6082e22a7b202593f8c9",
-    "event_count": 166,
-    "journal_line_count": 166,
-    "last_seq": 166,
+    "digest": "sha256:a7650ef18c56f97a9a28b12bf8db9e78b0a932348ada68efbf4699e99e83f9d3",
+    "event_count": 198,
+    "journal_line_count": 198,
+    "last_seq": 198,
     "malformed_line_count": 0
   }
 }

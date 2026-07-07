@@ -563,13 +563,13 @@ def test_all_boundaries_inspected_present(tmp_path: Path) -> None:
 
 
 def test_cross_boundary_multiple_findings(tmp_path: Path) -> None:
-    """Empty plan dir yields findings for all 5 contracts."""
+    """Empty plan dir yields findings for all 11 contracts."""
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
     findings = inspect_semantic_health(plan_dir)
-    # Should have state-missing for each of 5 contracts = 5 findings
+    # Should have state-missing for each of 11 contracts = 11 findings
     state_missing = [f for f in findings if f.finding_id.endswith("-state-missing")]
-    assert len(state_missing) == 5
+    assert len(state_missing) == 11
 
     # Should have required-artifact findings for prep (research.md, brief.md)
     prep_artifact_findings = [
@@ -578,17 +578,19 @@ def test_cross_boundary_multiple_findings(tmp_path: Path) -> None:
     ]
     assert len(prep_artifact_findings) == 2
 
-    # Should have receipt-missing for all 5
+    # Should have receipt-missing for contracts with receipt_required=True
+    # 10 out of 11 contracts require receipts (replan_authority does not)
     receipt_missing = [
         f for f in findings if f.finding_id.endswith("-receipt-missing")
     ]
-    assert len(receipt_missing) == 5
+    assert len(receipt_missing) == 10
 
-    # Should have phase-result-missing for all 5
+    # Should have phase-result-missing for contracts with phase_result_required=True
+    # 10 out of 11 contracts require phase results (parent_rejoin_promotion does not)
     pr_missing = [
         f for f in findings if f.finding_id.endswith("-phase-result-missing")
     ]
-    assert len(pr_missing) == 5
+    assert len(pr_missing) == 10
 
 
 # ── revise_to_critique specific ─────────────────────────────────────────
@@ -834,7 +836,7 @@ def test_missing_receipt_findings_produce_awf247(tmp_path: Path) -> None:
     _write_artifact(plan_dir, "brief.md")
 
     findings = inspect_semantic_health(plan_dir)
-    # Should have receipt-missing for all 5 contracts
+    # Should have receipt-missing for contracts with receipt_required=True
     receipt_missing = [
         f for f in findings if f.finding_id.endswith("-receipt-missing")
     ]
@@ -850,13 +852,21 @@ def test_missing_receipt_findings_produce_awf247(tmp_path: Path) -> None:
     diag_codes = _checker_diag_codes(result)
     assert DiagnosticCode.BOUNDARY_EVIDENCE_MISSING in diag_codes
 
-    # Each receipt-missing finding should produce an AWF247 diagnostic
+    # Each receipt-missing finding should produce an AWF247 diagnostic.
+    # But only for the five S2 source rows (SOURCE_PREP..SOURCE_REVISE).
+    # S3 contracts do not have corresponding source rows in _SOURCE_ALL_FIVE,
+    # so their findings are forwarded as AWF248 (orphan evidence) instead.
     awf247_diags = [
         d for d in result.diagnostics
         if d.code is DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
     ]
-    # At least the 5 receipt-missing findings → 5 AWF247 diagnostics
-    assert len(awf247_diags) >= len(receipt_missing)
+    # At least the S2 receipt-missing findings → AWF247 diagnostics
+    s2_receipt_missing = [
+        f for f in receipt_missing
+        if f.boundary_id in {"prep_to_plan", "plan_to_critique", "critique_to_gate",
+                              "gate_to_revise", "revise_to_critique"}
+    ]
+    assert len(awf247_diags) >= len(s2_receipt_missing)
 
 
 # ── state delta mismatch → boundary diagnostics ─────────────────────────
@@ -1303,13 +1313,25 @@ def test_healthy_plan_produces_no_boundary_diagnostics(tmp_path: Path) -> None:
 
     # Run semantic health — should produce minimal findings
     findings = inspect_semantic_health(plan_dir)
+    # Filter findings to only S2 boundaries — S3 contracts have no
+    # corresponding source rows in _SOURCE_ALL_FIVE, so their evidence
+    # would incorrectly fire AWF248 (orphan evidence).
+    s2_boundary_ids = {
+        "prep_to_plan", "plan_to_critique", "critique_to_gate",
+        "gate_to_revise", "revise_to_critique",
+    }
+    s2_findings = [f for f in findings if f.boundary_id in s2_boundary_ids]
+    s2_receipts = [r for r in receipts if r.boundary_id in s2_boundary_ids]
+    s2_contracts = tuple(
+        c for c in BOUNDARY_CONTRACTS if c.boundary_id in s2_boundary_ids
+    )
 
     # Supply both findings and receipts to the checker
     result = check_workflow_source(
         _SOURCE_ALL_FIVE,
         source_path="test.pypeline",
-        boundary_contracts=BOUNDARY_CONTRACTS,
-        boundary_evidence=(*findings, *receipts),
+        boundary_contracts=s2_contracts,
+        boundary_evidence=(*s2_findings, *s2_receipts),
     )
 
     # Structural boundary diagnostics (AWF246/AWF247/AWF248) must not fire
@@ -1327,3 +1349,209 @@ def test_healthy_plan_produces_no_boundary_diagnostics(tmp_path: Path) -> None:
     assert DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE not in diag_codes, (
         "healthy plan must not produce AWF248 (no orphan evidence)"
     )
+
+
+# ── S3 tiebreaker/replan evidence failure tests ─────────────────────────
+
+
+def test_missing_child_receipt_generates_finding(tmp_path: Path) -> None:
+    """Missing researcher→challenger child receipt must produce an ERROR finding."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="critiqued"))
+    # No boundary receipt written → researcher_to_challenger should be missing
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+    fid = "SH-tiebreaker_researcher_to_challenger-receipt-missing"
+    assert fid in by_id, f"missing child receipt finding {fid}"
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+
+
+def test_missing_synthesis_reducer_receipt_generates_finding(tmp_path: Path) -> None:
+    """Missing synthesis→decision reducer receipt must produce an ERROR finding."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="critiqued"))
+    # No boundary receipt for synthesis_to_decision
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+    fid = "SH-tiebreaker_synthesis_to_decision-receipt-missing"
+    assert fid in by_id, (
+        f"missing reducer/decision receipt finding {fid}"
+    )
+    assert by_id[fid].severity == FindingSeverity.ERROR
+
+
+def test_missing_decision_parent_receipt_generates_finding(tmp_path: Path) -> None:
+    """Missing decision→parent receipt must produce an ERROR finding."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="critiqued"))
+    # No boundary receipt for decision_to_parent
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+    fid = "SH-tiebreaker_decision_to_parent-receipt-missing"
+    assert fid in by_id, (
+        f"missing decision receipt finding {fid}"
+    )
+    assert by_id[fid].severity == FindingSeverity.ERROR
+
+
+def test_missing_replan_authority_generates_finding(tmp_path: Path) -> None:
+    """Missing replan authority records must produce an ERROR finding."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="critiqued"))
+    # Write receipt without authority records
+    receipt_dir = plan_dir / "boundary_receipts"
+    receipt_dir.mkdir(parents=True)
+    receipt_no_auth = {
+        "boundary_id": "replan_authority",
+        "workflow_id": "megaplan-review",
+        "row_id": "s3.replan_authority.1",
+    }
+    (receipt_dir / "replan_authority.json").write_text(
+        json.dumps(receipt_no_auth), encoding="utf-8"
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+    fid = "SH-replan_authority-authority-missing"
+    assert fid in by_id, f"missing replan authority finding {fid}"
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+
+
+def test_missing_parent_rejoin_promotion_receipt_generates_finding(
+    tmp_path: Path,
+) -> None:
+    """Missing parent_rejoin_promotion receipt must produce an ERROR finding."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="critiqued"))
+    # No receipt for parent_rejoin_promotion
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+    fid = "SH-parent_rejoin_promotion-receipt-missing"
+    assert fid in by_id, (
+        f"missing parent rejoin receipt finding {fid}"
+    )
+    assert by_id[fid].severity == FindingSeverity.ERROR
+
+
+def test_all_tiebreaker_child_receipts_individually_required(
+    tmp_path: Path,
+) -> None:
+    """Each of the four tiebreaker child boundaries requires an individual receipt."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="critiqued"))
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    child_boundary_ids = [
+        "tiebreaker_researcher_to_challenger",
+        "tiebreaker_challenger_to_synthesis",
+        "tiebreaker_synthesis_to_decision",
+        "tiebreaker_decision_to_parent",
+    ]
+    for bid in child_boundary_ids:
+        fid = f"SH-{bid}-receipt-missing"
+        assert fid in by_id, (
+            f"missing receipt finding for child boundary '{bid}'"
+        )
+        assert by_id[fid].severity == FindingSeverity.ERROR
+
+
+def test_s3_contracts_without_source_rows_produce_awf248(tmp_path: Path) -> None:
+    """When S3 contracts are supplied to the checker but no S3 source rows
+    exist, S3 findings must produce AWF248 (BOUNDARY_EVIDENCE_WITHOUT_SOURCE)."""
+    from arnold.workflow import check_workflow_source
+
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="critiqued"))
+
+    findings = inspect_semantic_health(plan_dir)
+
+    result = check_workflow_source(
+        _SOURCE_ALL_FIVE,  # S2-only source, no tiebreaker rows
+        source_path="test.pypeline",
+        boundary_contracts=BOUNDARY_CONTRACTS,  # includes S3 contracts
+        boundary_evidence=tuple(findings),
+    )
+
+    diag_codes = {d.code for d in result.diagnostics}
+    # S3 findings have no matching source rows → AWF248
+    assert DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE in diag_codes, (
+        "S3 evidence without S3 source rows must produce AWF248"
+    )
+
+
+def test_missing_replan_authority_artifact_generates_finding(
+    tmp_path: Path,
+) -> None:
+    """replan_authority requires replan_decision.json artifact."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="critiqued"))
+    # No replan_decision.json written
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+    fid = "SH-replan_authority-missing-artifact-replan_decision.json"
+    assert fid in by_id, (
+        f"missing replan_decision.json artifact finding {fid}"
+    )
+    assert by_id[fid].severity == FindingSeverity.ERROR
+
+
+def test_replan_authority_no_receipt_required_is_correct(tmp_path: Path) -> None:
+    """replan_authority has receipt_required=False, so no receipt-missing
+    finding should appear for it."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="critiqued"))
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+    assert "SH-replan_authority-receipt-missing" not in by_id, (
+        "replan_authority must not produce receipt-missing finding"
+    )
+
+
+def test_parent_rejoin_promotion_no_phase_result_required_is_correct(
+    tmp_path: Path,
+) -> None:
+    """parent_rejoin_promotion has phase_result_required=False, so no
+    phase-result-missing finding should appear for it."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="critiqued"))
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+    assert "SH-parent_rejoin_promotion-phase-result-missing" not in by_id, (
+        "parent_rejoin_promotion must not produce phase-result-missing finding"
+    )
+
+
+def test_s3_child_boundary_missing_phase_result_generates_finding(
+    tmp_path: Path,
+) -> None:
+    """S3 child boundaries require phase_result.json — missing it must
+    produce an ERROR finding."""
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="critiqued"))
+    # No phase_result.json written
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    for bid in [
+        "tiebreaker_researcher_to_challenger",
+        "tiebreaker_challenger_to_synthesis",
+        "tiebreaker_synthesis_to_decision",
+        "tiebreaker_decision_to_parent",
+    ]:
+        fid = f"SH-{bid}-phase-result-missing"
+        assert fid in by_id, (
+            f"missing phase-result finding for S3 child boundary '{bid}'"
+        )
+        assert by_id[fid].severity == FindingSeverity.ERROR

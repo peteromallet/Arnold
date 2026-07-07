@@ -644,13 +644,15 @@ def check_workflow_source(
         boundary_contract_records,
         boundary_evidence_records,
     )
-    if row_evidence_diagnostics or boundary_diagnostics:
+    tiebreaker_shape_diagnostics = _tiebreaker_shape_diagnostics(parsed_source)
+    if row_evidence_diagnostics or boundary_diagnostics or tiebreaker_shape_diagnostics:
         parsed_source = replace(
             parsed_source,
             diagnostics=(
                 *parsed_source.diagnostics,
                 *row_evidence_diagnostics,
                 *boundary_diagnostics,
+                *tiebreaker_shape_diagnostics,
             ),
         )
     return CheckWorkflowSourceResult(
@@ -684,6 +686,121 @@ def _row_evidence_diagnostics(
                 details={
                     "row_id": row.row_id,
                     "phase": row.phase,
+                },
+            )
+        )
+    return tuple(diagnostics)
+
+
+# ── S3 tiebreaker row IDs ──────────────────────────────────────────────────
+# These are the four tiebreaker phases that must all be source-visible
+# when any tiebreaker is present in the workflow source.
+
+_S3_TIEBREAKER_REQUIRED_ROW_IDS: tuple[str, ...] = (
+    "s3.tiebreaker_researcher.1",
+    "s3.tiebreaker_challenger.1",
+    "s3.tiebreaker_synthesis.1",
+    "s3.tiebreaker_decision.1",
+)
+
+_S3_TIEBREAKER_REQUIRED_ROW_SET: frozenset[str] = frozenset(_S3_TIEBREAKER_REQUIRED_ROW_IDS)
+
+# Component ref suffix for the legacy single-call TIEBREAKER_WORKFLOW wrapper.
+_TIEBREAKER_WORKFLOW_COMPONENT_REF = (
+    "arnold_pipelines.megaplan.workflows.components:SOURCE_TIEBREAKER_WORKFLOW"
+)
+
+
+def _collect_tiebreaker_workflow_calls(
+    block: "ParsedSourceBlock",
+) -> list[str]:
+    """Collect component_refs where SOURCE_TIEBREAKER_WORKFLOW is called."""
+    calls: list[str] = []
+    for statement in block.statements:
+        if isinstance(statement, ParsedSubflowCall):
+            if statement.component_ref == _TIEBREAKER_WORKFLOW_COMPONENT_REF:
+                calls.append(statement.component_ref)
+        elif isinstance(statement, ParsedNestedWorkflowCall):
+            if statement.component_ref == _TIEBREAKER_WORKFLOW_COMPONENT_REF:
+                calls.append(statement.component_ref)
+        elif isinstance(statement, ParsedStepCall):
+            if statement.component_ref == _TIEBREAKER_WORKFLOW_COMPONENT_REF:
+                calls.append(statement.component_ref)
+        elif isinstance(statement, ParsedBranchBlock):
+            for arm in statement.arms:
+                calls.extend(_collect_tiebreaker_workflow_calls(arm.body))
+        elif isinstance(statement, ParsedLoopBlock):
+            calls.extend(_collect_tiebreaker_workflow_calls(statement.body))
+    return calls
+
+
+def _tiebreaker_shape_diagnostics(
+    parsed_source: "ParsedWorkflowSource",
+) -> tuple["AuthoringDiagnostic", ...]:
+    """Emit AWF252 when a tiebreaker is present but not all four phases are source-visible.
+
+    A valid tiebreaker must have four individually authored step calls
+    (researcher, challenger, synthesis, decision), each backed by structured
+    semantic evidence.  A single TIEBREAKER_WORKFLOW subworkflow call or
+    handler wrapper is not sufficient.
+    """
+    workflow = parsed_source.workflow
+    if workflow is None:
+        return ()
+
+    implemented_rows = _implemented_front_half_rows(workflow)
+    implemented_s3_row_ids = {
+        row.row_id
+        for row in implemented_rows
+        if row.row_id in _S3_TIEBREAKER_REQUIRED_ROW_SET
+    }
+
+    # If no S3 tiebreaker rows are present at all, check for the old
+    # single-call wrapper pattern.
+    if not implemented_s3_row_ids:
+        tiebreaker_wf_calls = _collect_tiebreaker_workflow_calls(workflow.source_block)
+        if tiebreaker_wf_calls:
+            return (
+                _diagnostic(
+                    DiagnosticCode.TIEBREAKER_SHAPE_VIOLATION,
+                    (
+                        "SOURCE_TIEBREAKER_WORKFLOW single-call wrapper detected "
+                        "without source-visible researcher/challenger/synthesis/decision "
+                        "phases; replace the wrapper with four individually authored "
+                        "step calls"
+                    ),
+                    source_span=workflow.source_span,
+                    component_ref=_TIEBREAKER_WORKFLOW_COMPONENT_REF,
+                    details={
+                        "missing_phases": list(_S3_TIEBREAKER_REQUIRED_ROW_IDS),
+                        "detected_component": _TIEBREAKER_WORKFLOW_COMPONENT_REF,
+                    },
+                ),
+            )
+        return ()
+
+    # If we have some S3 rows, all four must be present.
+    missing_row_ids = sorted(_S3_TIEBREAKER_REQUIRED_ROW_SET - implemented_s3_row_ids)
+    if not missing_row_ids:
+        # All four phases are present — no shape violation.
+        return ()
+
+    diagnostics: list[AuthoringDiagnostic] = []
+    for row_id in missing_row_ids:
+        phase = row_id.replace("s3.", "").replace(".1", "")
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.TIEBREAKER_SHAPE_VIOLATION,
+                (
+                    f"tiebreaker phase {phase!r} (row {row_id!r}) is missing from "
+                    f"source; all four phases (researcher, challenger, synthesis, "
+                    f"decision) must be source-visible with row-level evidence"
+                ),
+                source_span=workflow.source_span,
+                details={
+                    "missing_row_id": row_id,
+                    "missing_phase": phase,
+                    "implemented_s3_rows": sorted(implemented_s3_row_ids),
                 },
             )
         )
@@ -1105,7 +1222,10 @@ def _front_half_row_specs() -> Mapping[str, tuple[str, str]]:
         if contract.phase is None or contract.row_id is None:
             continue
         phase_name = contract.phase.value.upper()
-        for export_name in (f"SOURCE_{phase_name}", f"AUTHORING_{phase_name}"):
+        # Prefixed exports (SOURCE_*, AUTHORING_*) plus the bare export name
+        # so that components like TIEBREAKER_RESEARCHER (which don't follow
+        # the SOURCE_/AUTHORING_ convention) are still detected.
+        for export_name in (f"SOURCE_{phase_name}", f"AUTHORING_{phase_name}", phase_name):
             row_specs[
                 f"arnold_pipelines.megaplan.workflows.components:{export_name}"
             ] = (contract.row_id, contract.phase.value)

@@ -1,4 +1,4 @@
-"""Tests for the S2 front-half boundary contract registry.
+"""Tests for the S2/S3 boundary contract registry.
 
 Covers immutability, completeness, row-ID correctness, phase assignment,
 and the absence of routing targets/predicates in boundary contracts.
@@ -17,24 +17,36 @@ from arnold.workflow.semantic_evidence import (
     S2_PLAN_ROW_ID,
     S2_PREP_ROW_ID,
     S2_REVISE_ROW_ID,
+    S3_PARENT_REJOIN_ROW_ID,
+    S3_REPLAN_AUTHORITY_ROW_ID,
+    S3_TIEBREAKER_CHALLENGER_ROW_ID,
+    S3_TIEBREAKER_DECISION_ROW_ID,
+    S3_TIEBREAKER_RESEARCHER_ROW_ID,
+    S3_TIEBREAKER_SYNTHESIS_ROW_ID,
 )
 
 from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     BOUNDARY_CONTRACTS,
     BOUNDARY_CONTRACTS_BY_ID,
+    challenger_to_synthesis,
     critique_to_gate,
+    decision_to_parent,
     gate_to_revise,
+    parent_rejoin_promotion,
     plan_to_critique,
     prep_to_plan,
+    replan_authority,
+    researcher_to_challenger,
     revise_to_critique,
+    synthesis_to_decision,
 )
 
 # ── Registry completeness ──────────────────────────────────────────────────
 
 
-def test_registry_defines_exactly_five_contracts() -> None:
-    """The registry must contain exactly the five S2 front-half contracts."""
-    assert len(BOUNDARY_CONTRACTS) == 5
+def test_registry_defines_exactly_eleven_contracts() -> None:
+    """The registry must contain exactly the eleven S2+S3 contracts."""
+    assert len(BOUNDARY_CONTRACTS) == 11
 
 
 def test_registry_by_id_has_no_duplicates() -> None:
@@ -56,6 +68,12 @@ def test_named_contracts_are_in_registry() -> None:
         critique_to_gate.boundary_id,
         gate_to_revise.boundary_id,
         revise_to_critique.boundary_id,
+        researcher_to_challenger.boundary_id,
+        challenger_to_synthesis.boundary_id,
+        synthesis_to_decision.boundary_id,
+        decision_to_parent.boundary_id,
+        replan_authority.boundary_id,
+        parent_rejoin_promotion.boundary_id,
     }
     registry_ids = {c.boundary_id for c in BOUNDARY_CONTRACTS}
     assert named_ids == registry_ids
@@ -83,6 +101,12 @@ def test_boundary_ids_match_expected() -> None:
     assert critique_to_gate.boundary_id == "critique_to_gate"
     assert gate_to_revise.boundary_id == "gate_to_revise"
     assert revise_to_critique.boundary_id == "revise_to_critique"
+    assert researcher_to_challenger.boundary_id == "tiebreaker_researcher_to_challenger"
+    assert challenger_to_synthesis.boundary_id == "tiebreaker_challenger_to_synthesis"
+    assert synthesis_to_decision.boundary_id == "tiebreaker_synthesis_to_decision"
+    assert decision_to_parent.boundary_id == "tiebreaker_decision_to_parent"
+    assert replan_authority.boundary_id == "replan_authority"
+    assert parent_rejoin_promotion.boundary_id == "parent_rejoin_promotion"
 
 
 # ── Row ID correctness ─────────────────────────────────────────────────────
@@ -118,6 +142,42 @@ def test_revise_to_critique_has_correct_row_id() -> None:
     assert revise_to_critique.row_id == "s2.revise.1"
 
 
+def test_researcher_to_challenger_has_correct_row_id() -> None:
+    """researcher_to_challenger must reference S3_TIEBREAKER_RESEARCHER_ROW_ID."""
+    assert researcher_to_challenger.row_id == S3_TIEBREAKER_RESEARCHER_ROW_ID
+    assert researcher_to_challenger.row_id == "s3.tiebreaker_researcher.1"
+
+
+def test_challenger_to_synthesis_has_correct_row_id() -> None:
+    """challenger_to_synthesis must reference S3_TIEBREAKER_CHALLENGER_ROW_ID."""
+    assert challenger_to_synthesis.row_id == S3_TIEBREAKER_CHALLENGER_ROW_ID
+    assert challenger_to_synthesis.row_id == "s3.tiebreaker_challenger.1"
+
+
+def test_synthesis_to_decision_has_correct_row_id() -> None:
+    """synthesis_to_decision must reference S3_TIEBREAKER_SYNTHESIS_ROW_ID."""
+    assert synthesis_to_decision.row_id == S3_TIEBREAKER_SYNTHESIS_ROW_ID
+    assert synthesis_to_decision.row_id == "s3.tiebreaker_synthesis.1"
+
+
+def test_decision_to_parent_has_correct_row_id() -> None:
+    """decision_to_parent must reference S3_TIEBREAKER_DECISION_ROW_ID."""
+    assert decision_to_parent.row_id == S3_TIEBREAKER_DECISION_ROW_ID
+    assert decision_to_parent.row_id == "s3.tiebreaker_decision.1"
+
+
+def test_replan_authority_has_correct_row_id() -> None:
+    """replan_authority must reference S3_REPLAN_AUTHORITY_ROW_ID."""
+    assert replan_authority.row_id == S3_REPLAN_AUTHORITY_ROW_ID
+    assert replan_authority.row_id == "s3.replan_authority.1"
+
+
+def test_parent_rejoin_promotion_has_correct_row_id() -> None:
+    """parent_rejoin_promotion must reference S3_PARENT_REJOIN_ROW_ID."""
+    assert parent_rejoin_promotion.row_id == S3_PARENT_REJOIN_ROW_ID
+    assert parent_rejoin_promotion.row_id == "s3.parent_rejoin.1"
+
+
 # ── Phase correctness ──────────────────────────────────────────────────────
 
 
@@ -144,6 +204,36 @@ def test_gate_to_revise_has_correct_phase() -> None:
 def test_revise_to_critique_has_correct_phase() -> None:
     """revise_to_critique must carry BoundaryPhase.REVISE."""
     assert revise_to_critique.phase is BoundaryPhase.REVISE
+
+
+def test_researcher_to_challenger_has_correct_phase() -> None:
+    """researcher_to_challenger must carry BoundaryPhase.TIEBREAKER_RESEARCHER."""
+    assert researcher_to_challenger.phase is BoundaryPhase.TIEBREAKER_RESEARCHER
+
+
+def test_challenger_to_synthesis_has_correct_phase() -> None:
+    """challenger_to_synthesis must carry BoundaryPhase.TIEBREAKER_CHALLENGER."""
+    assert challenger_to_synthesis.phase is BoundaryPhase.TIEBREAKER_CHALLENGER
+
+
+def test_synthesis_to_decision_has_correct_phase() -> None:
+    """synthesis_to_decision must carry BoundaryPhase.TIEBREAKER_SYNTHESIS."""
+    assert synthesis_to_decision.phase is BoundaryPhase.TIEBREAKER_SYNTHESIS
+
+
+def test_decision_to_parent_has_correct_phase() -> None:
+    """decision_to_parent must carry BoundaryPhase.TIEBREAKER_DECISION."""
+    assert decision_to_parent.phase is BoundaryPhase.TIEBREAKER_DECISION
+
+
+def test_replan_authority_has_correct_phase() -> None:
+    """replan_authority must carry BoundaryPhase.REPLAN_AUTHORITY."""
+    assert replan_authority.phase is BoundaryPhase.REPLAN_AUTHORITY
+
+
+def test_parent_rejoin_promotion_has_correct_phase() -> None:
+    """parent_rejoin_promotion must carry BoundaryPhase.PARENT_REJOIN."""
+    assert parent_rejoin_promotion.phase is BoundaryPhase.PARENT_REJOIN
 
 
 # ── Immutability ───────────────────────────────────────────────────────────
@@ -177,6 +267,42 @@ def test_revise_to_critique_is_frozen() -> None:
     """revise_to_critique must be immutable."""
     with pytest.raises(FrozenInstanceError):
         revise_to_critique.boundary_id = "changed"  # type: ignore[misc]
+
+
+def test_researcher_to_challenger_is_frozen() -> None:
+    """researcher_to_challenger must be immutable."""
+    with pytest.raises(FrozenInstanceError):
+        researcher_to_challenger.boundary_id = "changed"  # type: ignore[misc]
+
+
+def test_challenger_to_synthesis_is_frozen() -> None:
+    """challenger_to_synthesis must be immutable."""
+    with pytest.raises(FrozenInstanceError):
+        challenger_to_synthesis.boundary_id = "changed"  # type: ignore[misc]
+
+
+def test_synthesis_to_decision_is_frozen() -> None:
+    """synthesis_to_decision must be immutable."""
+    with pytest.raises(FrozenInstanceError):
+        synthesis_to_decision.boundary_id = "changed"  # type: ignore[misc]
+
+
+def test_decision_to_parent_is_frozen() -> None:
+    """decision_to_parent must be immutable."""
+    with pytest.raises(FrozenInstanceError):
+        decision_to_parent.boundary_id = "changed"  # type: ignore[misc]
+
+
+def test_replan_authority_is_frozen() -> None:
+    """replan_authority must be immutable."""
+    with pytest.raises(FrozenInstanceError):
+        replan_authority.boundary_id = "changed"  # type: ignore[misc]
+
+
+def test_parent_rejoin_promotion_is_frozen() -> None:
+    """parent_rejoin_promotion must be immutable."""
+    with pytest.raises(FrozenInstanceError):
+        parent_rejoin_promotion.boundary_id = "changed"  # type: ignore[misc]
 
 
 def test_registry_tuple_is_immutable() -> None:
@@ -231,11 +357,12 @@ def test_all_contracts_have_same_workflow_id() -> None:
 
 
 def test_gate_to_revise_requires_authority() -> None:
-    """Only gate_to_revise must have authority_required=True."""
+    """Only gate_to_revise and replan_authority must have authority_required=True."""
+    authority_boundaries = {"gate_to_revise", "replan_authority"}
     for contract in BOUNDARY_CONTRACTS:
-        if contract.boundary_id == "gate_to_revise":
+        if contract.boundary_id in authority_boundaries:
             assert contract.authority_required is True, (
-                "gate_to_revise must require authority"
+                f"{contract.boundary_id} must require authority"
             )
         else:
             assert contract.authority_required is False, (
@@ -297,3 +424,103 @@ def test_revise_to_critique_to_dict() -> None:
     assert payload["boundary_id"] == "revise_to_critique"
     assert payload["row_id"] == "s2.revise.1"
     assert payload["phase"] == "revise"
+
+
+def test_researcher_to_challenger_to_dict() -> None:
+    """researcher_to_challenger.to_dict() must produce expected fields."""
+    payload = researcher_to_challenger.to_dict()
+    assert payload["boundary_id"] == "tiebreaker_researcher_to_challenger"
+    assert payload["row_id"] == "s3.tiebreaker_researcher.1"
+    assert payload["phase"] == "tiebreaker_researcher"
+
+
+def test_challenger_to_synthesis_to_dict() -> None:
+    """challenger_to_synthesis.to_dict() must produce expected fields."""
+    payload = challenger_to_synthesis.to_dict()
+    assert payload["boundary_id"] == "tiebreaker_challenger_to_synthesis"
+    assert payload["row_id"] == "s3.tiebreaker_challenger.1"
+    assert payload["phase"] == "tiebreaker_challenger"
+
+
+def test_synthesis_to_decision_to_dict() -> None:
+    """synthesis_to_decision.to_dict() must produce expected fields."""
+    payload = synthesis_to_decision.to_dict()
+    assert payload["boundary_id"] == "tiebreaker_synthesis_to_decision"
+    assert payload["row_id"] == "s3.tiebreaker_synthesis.1"
+    assert payload["phase"] == "tiebreaker_synthesis"
+
+
+def test_decision_to_parent_to_dict() -> None:
+    """decision_to_parent.to_dict() must produce expected fields."""
+    payload = decision_to_parent.to_dict()
+    assert payload["boundary_id"] == "tiebreaker_decision_to_parent"
+    assert payload["row_id"] == "s3.tiebreaker_decision.1"
+    assert payload["phase"] == "tiebreaker_decision"
+
+
+def test_replan_authority_to_dict() -> None:
+    """replan_authority.to_dict() must produce expected fields."""
+    payload = replan_authority.to_dict()
+    assert payload["boundary_id"] == "replan_authority"
+    assert payload["row_id"] == "s3.replan_authority.1"
+    assert payload["phase"] == "replan_authority"
+    assert payload["authority_required"] is True
+    assert payload["receipt_required"] is False
+
+
+def test_parent_rejoin_promotion_to_dict() -> None:
+    """parent_rejoin_promotion.to_dict() must produce expected fields."""
+    payload = parent_rejoin_promotion.to_dict()
+    assert payload["boundary_id"] == "parent_rejoin_promotion"
+    assert payload["row_id"] == "s3.parent_rejoin.1"
+    assert payload["phase"] == "parent_rejoin"
+    assert payload["receipt_required"] is True
+    assert payload["phase_result_required"] is False
+
+
+# ── S3 child output boundary contracts ───────────────────────────────────
+
+
+def test_researcher_to_challenger_is_child_output_boundary() -> None:
+    """researcher→challenger must be a child output boundary with trace path."""
+    assert researcher_to_challenger.receipt_required is True
+    assert researcher_to_challenger.phase_result_required is True
+    assert researcher_to_challenger.details.get("child_trace_path") == "tiebreaker/researcher"
+
+
+def test_challenger_to_synthesis_is_child_output_boundary() -> None:
+    """challenger→synthesis must be a child output boundary with trace path."""
+    assert challenger_to_synthesis.receipt_required is True
+    assert challenger_to_synthesis.phase_result_required is True
+    assert challenger_to_synthesis.details.get("child_trace_path") == "tiebreaker/challenger"
+
+
+def test_synthesis_to_decision_is_reducer_promotion_boundary() -> None:
+    """synthesis→decision must mark reducer_promotion in details."""
+    assert synthesis_to_decision.receipt_required is True
+    assert synthesis_to_decision.phase_result_required is True
+    assert synthesis_to_decision.details.get("child_trace_path") == "tiebreaker/synthesis"
+    assert synthesis_to_decision.details.get("reducer_promotion") is True
+
+
+def test_decision_to_parent_is_parent_rejoin_boundary() -> None:
+    """decision→parent must mark parent_rejoin_promotion in details."""
+    assert decision_to_parent.receipt_required is True
+    assert decision_to_parent.phase_result_required is True
+    assert decision_to_parent.details.get("child_trace_path") == "tiebreaker/decision"
+    assert decision_to_parent.details.get("parent_rejoin_promotion") is True
+    assert decision_to_parent.details.get("decision_outcomes") == ("proceed", "iterate", "escalate")
+
+
+def test_replan_authority_requires_authority_and_not_receipt() -> None:
+    """replan_authority must require authority but not a receipt."""
+    assert replan_authority.authority_required is True
+    assert replan_authority.receipt_required is False
+    assert replan_authority.phase_result_required is True
+
+
+def test_parent_rejoin_promotion_requires_receipt_not_phase_result() -> None:
+    """parent_rejoin must require receipt but not phase_result."""
+    assert parent_rejoin_promotion.receipt_required is True
+    assert parent_rejoin_promotion.phase_result_required is False
+    assert parent_rejoin_promotion.authority_required is False

@@ -48,7 +48,7 @@
     }
   },
   "counts": {
-    "steps": 12,
+    "steps": 14,
     "routes": 23,
     "capabilities": 3
   },
@@ -58,8 +58,10 @@
     "critique",
     "gate",
     "revise",
-    "tiebreaker_run",
-    "tiebreaker_decide",
+    "tiebreaker_researcher",
+    "tiebreaker_challenger",
+    "tiebreaker_synthesis",
+    "tiebreaker_decision",
     "finalize",
     "execute",
     "review",
@@ -70,10 +72,15 @@
     {
       "id": "prep",
       "kind": "megaplan:prep",
-      "inputs": [],
+      "inputs": [
+        {
+          "name": "brief",
+          "value_ref": "param:brief"
+        }
+      ],
       "outputs": [
         {
-          "name": "prep_payload"
+          "name": "prep_signal"
         }
       ],
       "capabilities": [],
@@ -86,7 +93,10 @@
       "terminal": false,
       "subpipeline": null,
       "metadata": {
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_prep"
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_PREP",
+        "source_form": "function",
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_prep",
+        "terminal": false
       }
     },
     {
@@ -95,7 +105,7 @@
       "inputs": [
         {
           "name": "prep_payload",
-          "value_ref": "prep.prep_payload"
+          "value_ref": "output:prep_signal"
         }
       ],
       "outputs": [
@@ -113,7 +123,10 @@
       "terminal": false,
       "subpipeline": null,
       "metadata": {
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_plan"
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_PLAN",
+        "source_form": "function",
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_plan",
+        "terminal": false
       }
     },
     {
@@ -121,8 +134,8 @@
       "kind": "megaplan:critique",
       "inputs": [
         {
-          "name": "plan_payload",
-          "value_ref": "plan.plan_payload"
+          "name": "items",
+          "value_ref": "megaplan.policy.critique_lenses"
         }
       ],
       "outputs": [
@@ -140,6 +153,14 @@
       "terminal": false,
       "subpipeline": null,
       "metadata": {
+        "source_form": "function",
+        "parallel_map": true,
+        "items_ref": "megaplan.policy.critique_lenses",
+        "mapper_ref": "arnold_pipelines.megaplan.workflows.components:CRITIQUE_PANEL_WORKFLOW",
+        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_CRITIQUE",
+        "path_template": "critique/{item_id}",
+        "iteration_coordinate": "{item_id}",
+        "call_site_path": "critique-fanout",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_critique"
       }
     },
@@ -149,15 +170,12 @@
       "inputs": [
         {
           "name": "critique_payload",
-          "value_ref": "critique.critique_payload"
+          "value_ref": "output:critique_payload"
         }
       ],
       "outputs": [
         {
-          "name": "gate_payload"
-        },
-        {
-          "name": "recommendation"
+          "name": "gate_route_signal"
         }
       ],
       "capabilities": [],
@@ -184,7 +202,7 @@
             "transition_id": "gate:tiebreaker",
             "transition_type": "override",
             "trigger_ref": "gate.recommendation",
-            "target_ref": "tiebreaker_run",
+            "target_ref": "tiebreaker_researcher",
             "policy_ref": "megaplan:gate"
           },
           {
@@ -213,7 +231,10 @@
       "terminal": false,
       "subpipeline": null,
       "metadata": {
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_gate"
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_GATE",
+        "source_form": "function",
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_gate",
+        "terminal": false
       }
     },
     {
@@ -222,7 +243,7 @@
       "inputs": [
         {
           "name": "gate_payload",
-          "value_ref": "gate.gate_payload"
+          "value_ref": "output:review_route_signal"
         }
       ],
       "outputs": [
@@ -251,17 +272,84 @@
       "terminal": false,
       "subpipeline": null,
       "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_REVISE",
+        "source_form": "function",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_revise",
+        "terminal": false,
         "max_iterations": 4
       }
     },
     {
-      "id": "tiebreaker_run",
-      "kind": "megaplan:tiebreaker_run",
+      "id": "tiebreaker_researcher",
+      "kind": "megaplan:tiebreaker_researcher",
       "inputs": [
         {
           "name": "gate_payload",
-          "value_ref": "gate.gate_payload"
+          "value_ref": "output:gate_route_signal"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "research_findings"
+        }
+      ],
+      "capabilities": [],
+      "policy": {
+        "timing": {
+          "timeout_seconds": 300.0
+        }
+      },
+      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
+      "terminal": false,
+      "subpipeline": null,
+      "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:TIEBREAKER_RESEARCHER",
+        "source_form": "function",
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
+        "terminal": false
+      }
+    },
+    {
+      "id": "tiebreaker_challenger",
+      "kind": "megaplan:tiebreaker_challenger",
+      "inputs": [
+        {
+          "name": "research_findings",
+          "value_ref": "output:research_findings"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "challenge_findings"
+        }
+      ],
+      "capabilities": [],
+      "policy": {
+        "timing": {
+          "timeout_seconds": 300.0
+        }
+      },
+      "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
+      "terminal": false,
+      "subpipeline": null,
+      "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:TIEBREAKER_CHALLENGER",
+        "source_form": "function",
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
+        "terminal": false
+      }
+    },
+    {
+      "id": "tiebreaker_synthesis",
+      "kind": "megaplan:tiebreaker_synthesis",
+      "inputs": [
+        {
+          "name": "research_findings",
+          "value_ref": "output:research_findings"
+        },
+        {
+          "name": "challenge_findings",
+          "value_ref": "output:challenge_findings"
         }
       ],
       "outputs": [
@@ -279,16 +367,19 @@
       "terminal": false,
       "subpipeline": null,
       "metadata": {
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run"
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:TIEBREAKER_SYNTHESIS",
+        "source_form": "function",
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
+        "terminal": false
       }
     },
     {
-      "id": "tiebreaker_decide",
-      "kind": "megaplan:tiebreaker_decide",
+      "id": "tiebreaker_decision",
+      "kind": "megaplan:tiebreaker_decision",
       "inputs": [
         {
           "name": "tiebreaker_payload",
-          "value_ref": "tiebreaker_run.tiebreaker_payload"
+          "value_ref": "output:tiebreaker_payload"
         }
       ],
       "outputs": [
@@ -309,21 +400,21 @@
           {
             "transition_id": "tiebreaker:iterate",
             "transition_type": "override",
-            "trigger_ref": "tiebreaker_decide.decision",
-            "target_ref": "critique",
+            "trigger_ref": "tiebreaker_decision.decision",
+            "target_ref": "revise",
             "policy_ref": "megaplan:tiebreaker"
           },
           {
             "transition_id": "tiebreaker:proceed",
             "transition_type": "override",
-            "trigger_ref": "tiebreaker_decide.decision",
+            "trigger_ref": "tiebreaker_decision.decision",
             "target_ref": "finalize",
             "policy_ref": "megaplan:tiebreaker"
           },
           {
             "transition_id": "tiebreaker:escalate",
             "transition_type": "escalation",
-            "trigger_ref": "tiebreaker_decide.decision",
+            "trigger_ref": "tiebreaker_decision.decision",
             "target_ref": "override",
             "policy_ref": "megaplan:tiebreaker"
           }
@@ -340,7 +431,10 @@
       "terminal": false,
       "subpipeline": null,
       "metadata": {
-        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_decide"
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:TIEBREAKER_DECISION",
+        "source_form": "function",
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_decide",
+        "terminal": false
       }
     },
     {
@@ -349,7 +443,7 @@
       "inputs": [
         {
           "name": "gate_payload",
-          "value_ref": "gate.gate_payload"
+          "value_ref": "output:gate_route_signal"
         }
       ],
       "outputs": [
@@ -367,7 +461,10 @@
       "terminal": false,
       "subpipeline": null,
       "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_FINALIZE",
+        "source_form": "function",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_finalize",
+        "terminal": false,
         "policy_refs": [
           "megaplan:default",
           "megaplan:artifact-contract"
@@ -379,8 +476,8 @@
       "kind": "megaplan:execute",
       "inputs": [
         {
-          "name": "finalize_payload",
-          "value_ref": "finalize.finalize_payload"
+          "name": "items",
+          "value_ref": "megaplan.execute.batches"
         }
       ],
       "outputs": [
@@ -405,6 +502,14 @@
       "terminal": false,
       "subpipeline": null,
       "metadata": {
+        "source_form": "function",
+        "parallel_map": true,
+        "items_ref": "megaplan.execute.batches",
+        "mapper_ref": "arnold_pipelines.megaplan.workflows.components:EXECUTE_BATCH_WORKFLOW",
+        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_EXECUTE",
+        "path_template": "execute/{index}",
+        "iteration_coordinate": "{index}",
+        "call_site_path": "execute-batches",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_execute",
         "policy_refs": [
           "megaplan:execute",
@@ -419,13 +524,13 @@
       "kind": "megaplan:review",
       "inputs": [
         {
-          "name": "execute_payload",
-          "value_ref": "execute.execute_payload"
+          "name": "items",
+          "value_ref": "output:execute_payload"
         }
       ],
       "outputs": [
         {
-          "name": "review_payload"
+          "name": "review_route_signal"
         }
       ],
       "capabilities": [],
@@ -481,6 +586,14 @@
       "terminal": false,
       "subpipeline": null,
       "metadata": {
+        "source_form": "function",
+        "parallel_map": true,
+        "items_ref": "execute_payload",
+        "mapper_ref": "arnold_pipelines.megaplan.workflows.components:REVIEW_PANEL_WORKFLOW",
+        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_REVIEW",
+        "path_template": "review/{item_id}",
+        "iteration_coordinate": "{item_id}",
+        "call_site_path": "review-fan-in",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_review",
         "policy_refs": [
           "megaplan:review",
@@ -492,7 +605,12 @@
     {
       "id": "halt",
       "kind": "megaplan:halt",
-      "inputs": [],
+      "inputs": [
+        {
+          "name": "review_payload",
+          "value_ref": "output:review_route_signal"
+        }
+      ],
       "outputs": [
         {
           "name": "status"
@@ -508,6 +626,8 @@
       "terminal": true,
       "subpipeline": null,
       "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_HALT",
+        "source_form": "function",
         "terminal": true
       }
     },
@@ -517,7 +637,7 @@
       "inputs": [
         {
           "name": "gate_payload",
-          "value_ref": "gate.gate_payload"
+          "value_ref": "output:review_route_signal"
         }
       ],
       "outputs": [
@@ -535,7 +655,10 @@
       "terminal": false,
       "subpipeline": null,
       "metadata": {
+        "component_ref": "arnold_pipelines.megaplan.workflows.components:AUTHORING_OVERRIDE",
+        "source_form": "function",
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_override",
+        "terminal": false,
         "policy_refs": [
           "megaplan:override",
           "megaplan:model-routing"
@@ -603,7 +726,7 @@
       "source": "gate",
       "target": "finalize",
       "label": "proceed",
-      "condition_ref": "proceed",
+      "condition_ref": "gate.gate_route_signal.eq.proceed",
       "metadata": {}
     },
     {
@@ -611,15 +734,15 @@
       "source": "gate",
       "target": "revise",
       "label": "iterate",
-      "condition_ref": "iterate",
+      "condition_ref": "gate.gate_route_signal.eq.iterate",
       "metadata": {}
     },
     {
       "id": "gate:tiebreaker",
       "source": "gate",
-      "target": "tiebreaker_run",
+      "target": "tiebreaker_researcher",
       "label": "tiebreaker",
-      "condition_ref": "tiebreaker",
+      "condition_ref": "gate.gate_route_signal.eq.tiebreaker",
       "metadata": {}
     },
     {
@@ -627,7 +750,7 @@
       "source": "gate",
       "target": "override",
       "label": "escalate",
-      "condition_ref": "escalate",
+      "condition_ref": "gate.gate_route_signal.eq.escalate",
       "metadata": {}
     },
     {
@@ -635,7 +758,7 @@
       "source": "gate",
       "target": "halt",
       "label": "abort",
-      "condition_ref": "abort",
+      "condition_ref": "gate.gate_route_signal.eq.abort",
       "metadata": {}
     },
     {
@@ -643,7 +766,7 @@
       "source": "gate",
       "target": "halt",
       "label": "suspend",
-      "condition_ref": "suspend",
+      "condition_ref": "gate.gate_route_signal.eq.suspend",
       "metadata": {}
     },
     {
@@ -651,7 +774,7 @@
       "source": "gate",
       "target": "override",
       "label": "blocked_preflight",
-      "condition_ref": "blocked",
+      "condition_ref": "gate.gate_route_signal.eq.blocked_preflight",
       "metadata": {}
     },
     {
@@ -659,47 +782,7 @@
       "source": "gate",
       "target": "finalize",
       "label": "force_proceed",
-      "condition_ref": "force_proceed",
-      "metadata": {}
-    },
-    {
-      "id": "revise:critique",
-      "source": "revise",
-      "target": "critique",
-      "label": "default",
-      "condition_ref": "revise:loop",
-      "metadata": {}
-    },
-    {
-      "id": "tiebreaker_run:decide",
-      "source": "tiebreaker_run",
-      "target": "tiebreaker_decide",
-      "label": "default",
-      "condition_ref": null,
-      "metadata": {}
-    },
-    {
-      "id": "tiebreaker_decide:critique",
-      "source": "tiebreaker_decide",
-      "target": "critique",
-      "label": "iterate",
-      "condition_ref": "tiebreaker:loop",
-      "metadata": {}
-    },
-    {
-      "id": "tiebreaker_decide:finalize",
-      "source": "tiebreaker_decide",
-      "target": "finalize",
-      "label": "proceed",
-      "condition_ref": "proceed",
-      "metadata": {}
-    },
-    {
-      "id": "tiebreaker_decide:override",
-      "source": "tiebreaker_decide",
-      "target": "override",
-      "label": "escalate",
-      "condition_ref": "escalate",
+      "condition_ref": "gate.gate_route_signal.eq.force_proceed",
       "metadata": {}
     },
     {
@@ -719,19 +802,59 @@
       "metadata": {}
     },
     {
-      "id": "review:halt",
-      "source": "review",
-      "target": "halt",
-      "label": "default",
-      "condition_ref": "pass",
-      "metadata": {}
-    },
-    {
       "id": "review:revise",
       "source": "review",
       "target": "revise",
       "label": "rework",
-      "condition_ref": "rework",
+      "condition_ref": "review-fan-in.review_route_signal.eq.rework",
+      "metadata": {}
+    },
+    {
+      "id": "tiebreaker_researcher:challenger",
+      "source": "tiebreaker_researcher",
+      "target": "tiebreaker_challenger",
+      "label": "default",
+      "condition_ref": null,
+      "metadata": {}
+    },
+    {
+      "id": "tiebreaker_challenger:synthesis",
+      "source": "tiebreaker_challenger",
+      "target": "tiebreaker_synthesis",
+      "label": "default",
+      "condition_ref": null,
+      "metadata": {}
+    },
+    {
+      "id": "tiebreaker_synthesis:decision",
+      "source": "tiebreaker_synthesis",
+      "target": "tiebreaker_decision",
+      "label": "default",
+      "condition_ref": null,
+      "metadata": {}
+    },
+    {
+      "id": "tiebreaker_decision:finalize",
+      "source": "tiebreaker_decision",
+      "target": "finalize",
+      "label": "proceed",
+      "condition_ref": "proceed",
+      "metadata": {}
+    },
+    {
+      "id": "tiebreaker_decision:critique",
+      "source": "tiebreaker_decision",
+      "target": "revise",
+      "label": "iterate",
+      "condition_ref": "tiebreaker:loop",
+      "metadata": {}
+    },
+    {
+      "id": "tiebreaker_decision:override",
+      "source": "tiebreaker_decision",
+      "target": "override",
+      "label": "escalate",
+      "condition_ref": "escalate",
       "metadata": {}
     },
     {
@@ -739,7 +862,7 @@
       "source": "override",
       "target": "halt",
       "label": "abort",
-      "condition_ref": "abort",
+      "condition_ref": "override.override_result.eq.abort",
       "metadata": {}
     },
     {
@@ -747,7 +870,7 @@
       "source": "override",
       "target": "finalize",
       "label": "force_proceed",
-      "condition_ref": "force_proceed",
+      "condition_ref": "override.override_result.eq.force_proceed",
       "metadata": {}
     },
     {
@@ -755,7 +878,7 @@
       "source": "override",
       "target": "revise",
       "label": "replan",
-      "condition_ref": "replan",
+      "condition_ref": "override.override_result.eq.replan",
       "metadata": {}
     }
   ]

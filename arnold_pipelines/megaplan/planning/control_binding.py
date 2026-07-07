@@ -37,6 +37,10 @@ from arnold.control.interface import (
 from arnold.runtime.outcome import RunOutcome
 from arnold_pipelines.megaplan.profiles import effective_premium_vendor
 from arnold_pipelines.megaplan.profiles.policy import DEFAULT_AGENT_ROUTING, ROBUSTNESS_ACCEPTED, normalize_robustness
+from arnold_pipelines.megaplan.replan_state import (
+    REPLAN_STATE_KEYS_TO_CLEAR,
+    reset_replan_loop_state,
+)
 from arnold_pipelines.megaplan.fallback_chains import decode_phase_model_value, select_fallback_spec
 from arnold_pipelines.megaplan.types import (
     AgentSpec,
@@ -1228,31 +1232,36 @@ class PlanningControlBinding:
             note = transition.payload.get("note")
             plan_dir = _plan_dir(state, transition)
             plan_file = latest_plan_path(plan_dir, state)  # type: ignore[arg-type]
+            timestamp = now_utc()
             override_entry = {
                 "action": "replan",
-                "timestamp": now_utc(),
+                "timestamp": timestamp,
                 "reason": reason,
+                "from_state": current_state,
+                "plan_file": plan_file.name,
             }
             note_entry = None
             if isinstance(note, str) and note:
-                note_entry = {"timestamp": now_utc(), "note": note}
+                note_entry = {"timestamp": timestamp, "note": note}
+            next_state = dict(state)
+            next_state["meta"] = _next_meta(
+                state,
+                note_entry=note_entry,
+                override_entry=override_entry,
+            )
+            reset_replan_loop_state(next_state, target_state=STATE_PLANNED)
             return ControlTransitionResult(
                 accepted=True,
                 mutated=True,
                 reason="replan",
-                artifacts={"plan_file": str(plan_file)},
+                artifacts={
+                    "plan_file": str(plan_file),
+                    "remove_state_keys": REPLAN_STATE_KEYS_TO_CLEAR,
+                },
                 state_deltas=(
-                    _replace_delta(state, "current_state", STATE_PLANNED),
-                    _replace_delta(state, "last_gate", {}),
-                    _replace_delta(
-                        state,
-                        "meta",
-                        _next_meta(
-                            state,
-                            note_entry=note_entry,
-                            override_entry=override_entry,
-                        ),
-                    ),
+                    _replace_delta(state, "current_state", next_state["current_state"]),
+                    _replace_delta(state, "last_gate", next_state["last_gate"]),
+                    _replace_delta(state, "meta", next_state["meta"]),
                 ),
             )
 

@@ -1,6 +1,6 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 22,
+  "evidence_ref_count": 27,
   "evidence_refs": [
     {
       "kind": "verification_record"
@@ -12,6 +12,15 @@
       "kind": "verification_record"
     },
     {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
       "kind": "incident_brief",
       "session_id": "megaplan-native-parity-corrective",
       "status": "2026-07-06T01:06:05.309505+00:00"
@@ -40,6 +49,10 @@
       "kind": "problem_summary",
       "path": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/incident-ledger/summaries/problems/problem-55b5ebf18290.json",
       "session_id": "megaplan-native-parity-corrective"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
     },
     {
       "kind": "watchdog_observation",
@@ -68,6 +81,10 @@
     {
       "kind": "watchdog_observation",
       "status": "unhealthy"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
     },
     {
       "kind": "watchdog_report_path",
@@ -100,31 +117,33 @@
       "session_id": "megaplan-native-parity-corrective"
     }
   ],
-  "generated_at": "2026-07-06T07:28:56.919751+00:00",
+  "generated_at": "2026-07-07T01:31:37.915202+00:00",
   "incident_id": "inc-megaplan-native-parity-corrective",
   "kind": "incident_summary",
-  "latest_actor": "repair_system",
-  "next_expected_event": null,
-  "outcome": "recovered",
+  "latest_actor": "immediate_repair",
+  "next_expected_event": "repair_attempt.verification",
+  "outcome": "discord_escalated",
   "placeholders": {
     "install_freshness": "unknown",
     "recurrence": "unknown",
     "shipped_fix": "unknown"
   },
   "problem_ids": [
+    "problem-3b7df8021d2b",
     "problem-55b5ebf18290",
     "problem-67a765759422",
     "problem-ba6e85d2053d",
     "problem-bd43205325d0",
     "problem-bef9405c197d",
-    "problem-e20c45ae0eb0"
+    "problem-e20c45ae0eb0",
+    "problem-fc037a661409"
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:ab09fc8081db4dfd6875417b107ce99b006e11418e5e6082e22a7b202593f8c9",
-    "last_seq": 166,
+    "digest": "sha256:5d63df306a7cb80039a2b6544c81e20892277c2ed731ef4745036dd00317217e",
+    "last_seq": 171,
     "projection": "incidents"
   },
-  "state": "verified_recovered",
-  "summary_text": "inc-megaplan-native-parity-corrective: repair-data outcome=live_with_fresh_activity kind=chain workspace=/workspace/megaplan-native-parity-corrective/Arnold"
+  "state": "repair_attempt",
+  "summary_text": "inc-megaplan-native-parity-corrective: repair-data outcome=discord_escalated kind=chain workspace=/workspace/megaplan-native-parity-corrective/Arnold"
 }

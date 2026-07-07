@@ -23,8 +23,8 @@ FIXTURE_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_topology.yaml"
 MANIFEST_GOLDEN_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_manifest_golden.json"
 NORMALIZED_SHAPE_PATH = Path(__file__).parent / "fixtures" / "normalized_pipeline_shape.json"
 AMENDMENT_PATH = Path(__file__).parents[3] / "docs" / "arnold" / "workflow-manifest-amendments.md"
-LOCKED_MANIFEST_HASH = "sha256:450be0a9526590ed43f3f11ab75c3125d049d2210409d923636afff9ab035add"
-LOCKED_TOPOLOGY_HASH = "sha256:2705e157e12fc074301afa8f5aec4e48d9820814ebaaa77535d152a8cc381fd4"
+LOCKED_MANIFEST_HASH = "sha256:2468fae140db618e0715b80173a059d89927e06f43bb1228b841120b8eb800b1"
+LOCKED_TOPOLOGY_HASH = "sha256:a83f81eabe54696bbf33dbfc6cbf4db6f6b35dc3312ea4e6c23b86f93f50f999"
 
 
 @pytest.fixture
@@ -223,7 +223,7 @@ class TestTopologyFixtureLock:
         edges = {
             (e.label, e.target)
             for e in manifest.edges
-            if e.source == "tiebreaker_decide"
+            if e.source == "tiebreaker_decision"
         }
         expected = {(item["label"], item["target"]) for item in fixture["tiebreaker_targets"]}
         assert edges == expected
@@ -233,13 +233,12 @@ class TestTopologyFixtureLock:
         pipeline_loop_routes = {
             route.id: (route.source, route.target, route.label, route.condition_ref)
             for route in pipeline.routes
-            if route.id in {"revise:critique", "tiebreaker_decide:critique"}
+            if route.id == "tiebreaker_decision:critique"
         }
         assert pipeline_loop_routes == {
-            "revise:critique": ("revise", "critique", "default", "revise:loop"),
-            "tiebreaker_decide:critique": (
-                "tiebreaker_decide",
-                "critique",
+            "tiebreaker_decision:critique": (
+                "tiebreaker_decision",
+                "revise",
                 "iterate",
                 "tiebreaker:loop",
             ),
@@ -249,7 +248,7 @@ class TestTopologyFixtureLock:
         manifest_loop_edges = {
             edge.id: (edge.source, edge.target, edge.label, edge.condition_ref)
             for edge in manifest.edges
-            if edge.id in {"revise:critique", "tiebreaker_decide:critique"}
+            if edge.id == "tiebreaker_decision:critique"
         }
         assert manifest_loop_edges == pipeline_loop_routes
 
@@ -267,7 +266,7 @@ class TestTopologyFixtureLock:
         pipeline = build_pipeline()
         labels_by_source = {
             source: [route.label for route in pipeline.routes if route.source == source]
-            for source in ("gate", "tiebreaker_decide", "review")
+            for source in ("gate", "tiebreaker_decision", "review")
         }
 
         assert labels_by_source == {
@@ -281,8 +280,8 @@ class TestTopologyFixtureLock:
                 "blocked_preflight",
                 "force_proceed",
             ],
-            "tiebreaker_decide": ["iterate", "proceed", "escalate"],
-            "review": ["default", "rework"],
+            "tiebreaker_decision": ["proceed", "iterate", "escalate"],
+            "review": ["rework"],
         }
 
     @pytest.mark.parametrize(
@@ -456,7 +455,7 @@ class TestM6StructuralPolicyAttachments:
 
     def test_tiebreaker_decide_node_exposes_loop_and_transitions(self) -> None:
         manifest = build_and_compile_pipeline()
-        tiebreaker_node = next(node for node in manifest.nodes if node.id == "tiebreaker_decide")
+        tiebreaker_node = next(node for node in manifest.nodes if node.id == "tiebreaker_decision")
 
         # Loop policy
         assert tiebreaker_node.policy.loop is not None

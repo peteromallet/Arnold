@@ -32,6 +32,13 @@ class ConstructType(StrEnum):
     CRITIQUE = "critique"
     GATE = "gate"
     REVISE = "revise"
+    # ── S3 tiebreaker/replan construct types ──────────────────────────────
+    TIEBREAKER_RESEARCHER = "tiebreaker_researcher"
+    TIEBREAKER_CHALLENGER = "tiebreaker_challenger"
+    TIEBREAKER_SYNTHESIS = "tiebreaker_synthesis"
+    TIEBREAKER_DECISION = "tiebreaker_decision"
+    REPLAN_AUTHORITY = "replan_authority"
+    PARENT_REJOIN = "parent_rejoin"
 
 
 # ── S2 front-half stable row ID namespace ──────────────────────────────────
@@ -44,6 +51,18 @@ S2_PLAN_ROW_ID = "s2.plan.1"
 S2_CRITIQUE_ROW_ID = "s2.critique.1"
 S2_GATE_ROW_ID = "s2.gate.1"
 S2_REVISE_ROW_ID = "s2.revise.1"
+
+# ── S3 tiebreaker/replan stable row ID namespace ───────────────────────────
+# Row IDs are versioned under 's3.' to avoid collision with the S2 namespace.
+# The plan defers mapping these IDs to a traceability artifact; S3 introduces
+# the namespace and uses it in boundary contracts and tests.
+
+S3_TIEBREAKER_RESEARCHER_ROW_ID = "s3.tiebreaker_researcher.1"
+S3_TIEBREAKER_CHALLENGER_ROW_ID = "s3.tiebreaker_challenger.1"
+S3_TIEBREAKER_SYNTHESIS_ROW_ID = "s3.tiebreaker_synthesis.1"
+S3_TIEBREAKER_DECISION_ROW_ID = "s3.tiebreaker_decision.1"
+S3_REPLAN_AUTHORITY_ROW_ID = "s3.replan_authority.1"
+S3_PARENT_REJOIN_ROW_ID = "s3.parent_rejoin.1"
 
 
 class CompatibilityQuarantineCategory(StrEnum):
@@ -226,6 +245,12 @@ __all__ = [
     "S2_PLAN_ROW_ID",
     "S2_PREP_ROW_ID",
     "S2_REVISE_ROW_ID",
+    "S3_PARENT_REJOIN_ROW_ID",
+    "S3_REPLAN_AUTHORITY_ROW_ID",
+    "S3_TIEBREAKER_CHALLENGER_ROW_ID",
+    "S3_TIEBREAKER_DECISION_ROW_ID",
+    "S3_TIEBREAKER_RESEARCHER_ROW_ID",
+    "S3_TIEBREAKER_SYNTHESIS_ROW_ID",
     "SemanticEvidence",
     "SemanticFailure",
 ]

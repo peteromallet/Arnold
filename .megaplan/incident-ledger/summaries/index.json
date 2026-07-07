@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-06T07:28:56.926212+00:00",
+  "generated_at": "2026-07-07T01:31:37.922295+00:00",
   "incident_count": 3,
   "incidents": [
     {
@@ -15,8 +15,12 @@
       "path": ".megaplan/incident-ledger/summaries/incidents/incident-42.json"
     }
   ],
-  "problem_count": 11,
+  "problem_count": 13,
   "problems": [
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-3b7df8021d2b.json",
+      "problem_id": "problem-3b7df8021d2b"
+    },
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-55b5ebf18290.json",
       "problem_id": "problem-55b5ebf18290"
@@ -60,6 +64,10 @@
     {
       "path": ".megaplan/incident-ledger/summaries/problems/problem-e20c45ae0eb0.json",
       "problem_id": "problem-e20c45ae0eb0"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-fc037a661409.json",
+      "problem_id": "problem-fc037a661409"
     }
   ],
   "schema_version": 1
