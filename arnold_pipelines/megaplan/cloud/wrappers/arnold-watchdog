@@ -5192,11 +5192,11 @@ for path in chain_paths:
     pr_number = payload.get("pr_number")
     if last_state == "awaiting_pr_merge":
         pass
-    elif last_state in ("done", "complete") and pr_number:
+    elif last_state in ("done", "complete", "finalized") and pr_number:
         # Ground-truth guard: the chain driver can mark last_state=done once the
         # milestone plan is finalized even when the milestone PR is still open
         # under merge_policy: review. Verify the PR live; if it is not merged yet
-        # the chain is really awaiting_pr_merge, not done. Without this the
+        # the chain is really awaiting_pr_merge, not done/finalized. Without this the
         # watchdog trusts last_state=done and falls through to a stale
         # repair-loop marker, mislabeling the session needs_human.
         try:
