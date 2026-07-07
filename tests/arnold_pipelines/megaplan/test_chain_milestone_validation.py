@@ -408,3 +408,109 @@ def test_final_milestone_manifest_failure_rolls_back_done_state(
     proof_map = json.loads((tmp_path / "proof-map.json").read_text(encoding="utf-8"))
     assert proof_map == {"m1": ["proof.md"]}
     assert not spec_path.with_name("completion-manifest.json").exists()
+
+
+def test_auto_merge_waits_for_merged_pr_before_appending_completion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chain_driver_monkeypatch: None
+) -> None:
+    spec_path = _write_validation_fixture(tmp_path, validator_exit=0)
+    spec_path.write_text(
+        """
+driver:
+  require_anchor: false
+  missing_anchor_ack: validation test fixture intentionally has no North Star
+merge_policy: auto
+milestones:
+  - label: m1
+    idea: idea.md
+    branch: epic/demo
+""".lstrip(),
+        encoding="utf-8",
+    )
+    completed_appends: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._refresh_base_branch",
+        lambda *args, **kwargs: "main",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+        lambda *args, **kwargs: "main",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._capture_sync_state",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._ensure_milestone_pr",
+        lambda *args, **kwargs: 42,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._commit_and_push_phase",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._reconcile_chain_from_ground_truth",
+        lambda *args, **kwargs: args[3],
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._sync_chain_last_state_from_plan",
+        lambda *args, **kwargs: args[2],
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._plan_state_payload_from_name",
+        lambda *args, **kwargs: {"current_state": "done"},
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._chain_completion_guard",
+        lambda *args, **kwargs: (True, "guard accepted"),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._mark_pr_ready",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._enable_auto_merge",
+        lambda *args, **kwargs: "open",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._pr_state",
+        lambda *args, **kwargs: "open",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._run_milestone_validations_blocking",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._finalize_validation_artifacts_after_done_append",
+        lambda *args, **kwargs: None,
+    )
+
+    def append_completed(_root, state, record, **_kwargs):
+        completed_appends.append(dict(record))
+        state.completed.append(record)
+        return True, "guard accepted"
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._append_completed_with_guard",
+        append_completed,
+    )
+
+    result = run_chain(
+        spec_path,
+        tmp_path,
+        writer=lambda _message: None,
+        no_git_refresh=True,
+        no_push=False,
+        mode="code",
+    )
+
+    state = load_chain_state(spec_path)
+    assert result["status"] == "awaiting_pr_merge"
+    assert state.last_state == "awaiting_pr_merge"
+    assert state.current_milestone_index == 0
+    assert state.current_plan_name == "plan-m1"
+    assert state.pr_number == 42
+    assert state.pr_state == "open"
+    assert state.completed == []
+    assert completed_appends == []
