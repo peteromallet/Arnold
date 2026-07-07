@@ -31,6 +31,14 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     challenger_to_synthesis,
     critique_to_gate,
     decision_to_parent,
+    execute_aggregate_promotion,
+    execute_approval,
+    execute_approval_denial,
+    execute_batch_checkpoint,
+    execute_blocked_anchor,
+    execute_no_review_terminal,
+    execute_partial_failure,
+    execute_resume_anchor,
     gate_to_revise,
     parent_rejoin_promotion,
     plan_to_critique,
@@ -44,9 +52,9 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
 # ── Registry completeness ──────────────────────────────────────────────────
 
 
-def test_registry_defines_exactly_eleven_contracts() -> None:
-    """The registry must contain exactly the eleven S2+S3 contracts."""
-    assert len(BOUNDARY_CONTRACTS) == 11
+def test_registry_defines_exactly_nineteen_contracts() -> None:
+    """The registry must contain exactly the nineteen S2+S3+S4 contracts."""
+    assert len(BOUNDARY_CONTRACTS) == 19
 
 
 def test_registry_by_id_has_no_duplicates() -> None:
@@ -74,6 +82,14 @@ def test_named_contracts_are_in_registry() -> None:
         decision_to_parent.boundary_id,
         replan_authority.boundary_id,
         parent_rejoin_promotion.boundary_id,
+        execute_approval.boundary_id,
+        execute_approval_denial.boundary_id,
+        execute_batch_checkpoint.boundary_id,
+        execute_partial_failure.boundary_id,
+        execute_blocked_anchor.boundary_id,
+        execute_resume_anchor.boundary_id,
+        execute_aggregate_promotion.boundary_id,
+        execute_no_review_terminal.boundary_id,
     }
     registry_ids = {c.boundary_id for c in BOUNDARY_CONTRACTS}
     assert named_ids == registry_ids
@@ -357,8 +373,8 @@ def test_all_contracts_have_same_workflow_id() -> None:
 
 
 def test_gate_to_revise_requires_authority() -> None:
-    """Only gate_to_revise and replan_authority must have authority_required=True."""
-    authority_boundaries = {"gate_to_revise", "replan_authority"}
+    """Only gate_to_revise, replan_authority, and execute_approval must have authority_required=True."""
+    authority_boundaries = {"gate_to_revise", "replan_authority", "execute_approval"}
     for contract in BOUNDARY_CONTRACTS:
         if contract.boundary_id in authority_boundaries:
             assert contract.authority_required is True, (

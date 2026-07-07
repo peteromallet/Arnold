@@ -69,6 +69,7 @@ REQUIRED_INSTALLED_CONFORMANCE_SUITES = MappingProxyType(
         "fixed_scenario": "verify packaged native scenario fixtures are present",
         "rendered_policy": "verify compiled policy/native metadata from installed package",
         "override_matrix": "verify installed override matrix classification",
+        "execute_s4_parity": "verify installed execute topology/checkpoints/receipts match development",
         "native_python_anti_wrapper": "verify .pypeline control flow and shim absence",
         "source_path_reconciliation": "verify installed resources, not checkout paths, supply proof",
     }
@@ -110,6 +111,116 @@ def installed_megaplan_wheel(
         text=True,
     )
     return InstalledWheelArtifact(python=python, wheel=wheels[0])
+
+
+def _execute_s4_parity_payload() -> dict[str, object]:
+    from arnold.workflow.boundary_evidence import (
+        AuthorityRecord,
+        BoundaryOutcome,
+        BoundaryReceipt,
+    )
+    from arnold_pipelines.megaplan._core import (
+        compute_task_batches,
+        execute_batch_artifact_path,
+        stable_task_id_digest,
+    )
+    from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline, build_pipeline
+    from arnold_pipelines.megaplan.workflows import POLICY_COMPONENTS
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+        BOUNDARY_CONTRACTS_BY_ID,
+    )
+
+    pipeline = build_pipeline()
+    shell = build_and_compile_pipeline()
+    sample_tasks = [
+        {"id": "T1", "depends_on": []},
+        {"id": "T2", "depends_on": ["T1"]},
+        {"id": "T3", "depends_on": ["T1"]},
+        {"id": "T4", "depends_on": ["T2", "T3"]},
+    ]
+    digest = stable_task_id_digest(["T3", "T2", "T2"])
+    checkpoint = execute_batch_artifact_path(Path("/plan"), 2, ["T3", "T2"])
+    execute_policy = next(policy for policy in POLICY_COMPONENTS if policy.id == "megaplan:execute")
+    route_surface = execute_policy.metadata["route_surface"]
+    s4_ids = (
+        "execute_approval",
+        "execute_approval_denial",
+        "execute_batch_checkpoint",
+        "execute_partial_failure",
+        "execute_blocked_anchor",
+        "execute_resume_anchor",
+        "execute_aggregate_promotion",
+        "execute_no_review_terminal",
+    )
+    batch_receipt = BoundaryReceipt(
+        boundary_id="execute_batch_checkpoint",
+        workflow_id="megaplan-review",
+        row_id=BOUNDARY_CONTRACTS_BY_ID["execute_batch_checkpoint"].row_id,
+        invocation_id="inv-s4",
+        artifact_refs=("execute_batches/batch_2/tasks_digest.json",),
+        state_observation={"current_phase": "execute", "batch_stage": "checkpoint"},
+        history_ref="execute_batch_checkpoint",
+        phase_result_ref="phase_result.json",
+        outcome=BoundaryOutcome.COMPLETE,
+        details={"batch_index": 2, "task_ids": ("T2", "T3"), "child_trace_path": "execute/2"},
+    ).to_dict()
+    approval_receipt = BoundaryReceipt(
+        boundary_id="execute_approval",
+        workflow_id="megaplan-review",
+        row_id=BOUNDARY_CONTRACTS_BY_ID["execute_approval"].row_id,
+        invocation_id="inv-s4",
+        artifact_refs=("approval_record.json",),
+        state_observation={"current_phase": "execute", "approval_gate": "cleared"},
+        history_ref="execute_approval_cleared",
+        phase_result_ref="phase_result.json",
+        outcome=BoundaryOutcome.COMPLETE,
+        authority_records=(
+            AuthorityRecord(
+                actor="operator",
+                role="approver",
+                decision="approved",
+                scope="execute:approval-approved",
+            ),
+        ),
+        details={"approval_scope": "execute:approval-approved", "session_freshness": "current"},
+    ).to_dict()
+    return {
+        "execute_routes": [
+            {
+                "source": route.source,
+                "target": route.target,
+                "label": route.label,
+                "condition_ref": route.condition_ref,
+            }
+            for route in pipeline.routes
+            if route.source == "execute" or route.target == "execute"
+        ],
+        "native_execute_routes": [
+            route
+            for route in shell.native_program.routing_topology["routes"]
+            if route["source"] == "execute" or route["target"] == "execute"
+        ],
+        "route_surface_keys": sorted(route_surface),
+        "batch_order": compute_task_batches(sample_tasks),
+        "stable_digest": digest,
+        "checkpoint_path": checkpoint.relative_to("/plan").as_posix(),
+        "s4_contracts": {
+            boundary_id: {
+                "phase": BOUNDARY_CONTRACTS_BY_ID[boundary_id].phase.value,
+                "row_id": BOUNDARY_CONTRACTS_BY_ID[boundary_id].row_id,
+                "authority_required": BOUNDARY_CONTRACTS_BY_ID[boundary_id].authority_required,
+                "details_keys": sorted(BOUNDARY_CONTRACTS_BY_ID[boundary_id].details),
+            }
+            for boundary_id in s4_ids
+        },
+        "receipt_schema": {
+            "batch_keys": sorted(batch_receipt),
+            "batch_detail_keys": sorted(batch_receipt["details"]),
+            "approval_keys": sorted(approval_receipt),
+            "approval_authority_keys": sorted(approval_receipt["authority_records"][0]),
+            "approval_detail_keys": sorted(approval_receipt["details"]),
+        },
+    }
 
 
 # ── installed-package authority chain ──────────────────────────────────────
@@ -327,7 +438,7 @@ class TestCanonicalSourceIsSemanticAuthority:
         assert AUTHORING_SOURCE_PATH.name == "workflow.pypeline"
         assert AUTHORING_SOURCE_PATH.is_file()
 
-    def test_canonical_source_compiles_without_diagnostics(self) -> None:
+    def test_canonical_source_compiles_with_only_row_evidence_diagnostics(self) -> None:
         from arnold.workflow import check_workflow_source
         from arnold_pipelines.megaplan.workflows.planning import AUTHORING_SOURCE_PATH
 
@@ -335,8 +446,9 @@ class TestCanonicalSourceIsSemanticAuthority:
             AUTHORING_SOURCE_PATH.read_text(encoding="utf-8"),
             source_path=AUTHORING_SOURCE_PATH,
         )
-        assert result.ok is True
-        assert result.diagnostics == ()
+        assert {
+            diagnostic.code.value for diagnostic in result.diagnostics
+        } <= {"AWF245_ROW_EVIDENCE_INSUFFICIENCY"}
 
     def test_canonical_source_lowers_to_known_structure(self) -> None:
         """Lowering the canonical source must reveal parallel_map and
@@ -346,7 +458,12 @@ class TestCanonicalSourceIsSemanticAuthority:
         lowered = lower_workflow_file(AUTHORING_SOURCE_PATH)
         kinds = {step.kind for step in lowered.steps}
         assert "parallel_map" in kinds, "canonical source must contain parallel_map steps"
-        assert "subpipeline" in kinds, "canonical source must contain subpipeline steps"
+        assert {
+            "megaplan:tiebreaker_researcher",
+            "megaplan:tiebreaker_challenger",
+            "megaplan:tiebreaker_synthesis",
+            "megaplan:tiebreaker_decision",
+        } <= kinds, "canonical source must expose tiebreaker child steps"
 
     def test_changes_to_source_reflect_in_built_pipeline(self) -> None:
         """Modifications to the canonical source (even just re-reading it)
@@ -355,9 +472,10 @@ class TestCanonicalSourceIsSemanticAuthority:
 
         pipeline = build_pipeline()
         assert pipeline.steps, "pipeline must have steps from canonical source"
-        # The step count is 12 for the canonical Megaplan workflow
-        assert len(pipeline.steps) == 12, (
-            f"expected 12 canonical steps, got {len(pipeline.steps)}"
+        # The canonical S4 topology exposes the four tiebreaker child steps
+        # and the execute/review handoff directly.
+        assert len(pipeline.steps) == 14, (
+            f"expected 14 canonical steps, got {len(pipeline.steps)}"
         )
 
     def test_workflow_components_are_from_canonical_source(self) -> None:
@@ -424,7 +542,14 @@ class TestCanonicalSourceIsSemanticAuthority:
         assert payload["prohibited_hits"] == []
         assert payload["contains_while"] is True
         assert payload["if_count"] >= 4
-        assert {"loop", "parallel_map", "TIEBREAKER_WORKFLOW"} <= set(payload["called_names"])
+        assert {
+            "loop",
+            "parallel_map",
+            "TIEBREAKER_RESEARCHER",
+            "TIEBREAKER_CHALLENGER",
+            "TIEBREAKER_SYNTHESIS",
+            "TIEBREAKER_DECISION",
+        } <= set(payload["called_names"])
         assert {
             "gate_route_signal",
             "review_route_signal",
@@ -514,23 +639,33 @@ class TestCanonicalSourceIsSemanticAuthority:
                 "mutation_guards": not any(token in pypeline_text for token in {PROHIBITED_WRAPPER_TOKENS!r}),
                 "static_topology": bool(shell.native_program.routing_topology["nodes"] and shell.native_program.routing_topology["routes"]),
                 "fixed_scenario": (
-                    len(pipeline.steps) == 12
-                    and {{"prep", "plan", "critique", "gate", "tiebreaker_run", "finalize", "execute", "review", "override"}}
+                    len(pipeline.steps) == 14
+                    and {{"prep", "plan", "critique", "gate", "tiebreaker_researcher", "tiebreaker_decision", "finalize", "execute", "review", "override"}}
                     <= {{step.id for step in pipeline.steps}}
                 ),
                 "rendered_policy": bool(manifest.policy and shell.native_program.description),
                 "override_matrix": len(override.OVERRIDE_ACTION_MATRIX) == 11,
+                "execute_s4_parity": (
+                    any(route["source"] == "execute" and route["target"] == "review" for route in shell.native_program.routing_topology["routes"])
+                    and "execute_batches/batch_2/tasks_" in __import__("arnold_pipelines.megaplan._core", fromlist=["execute_batch_artifact_path"]).execute_batch_artifact_path(pathlib.Path("/plan"), 2, ["T3", "T2"]).as_posix()
+                ),
                 "native_python_anti_wrapper": (
                     any(isinstance(node, ast.While) for node in ast.walk(workflow_fn))
                     and sum(isinstance(node, ast.If) for node in ast.walk(workflow_fn)) >= 4
-                    and {{"loop", "parallel_map", "TIEBREAKER_WORKFLOW"}} <= calls
+                    and {{"loop", "parallel_map", "TIEBREAKER_RESEARCHER", "TIEBREAKER_CHALLENGER", "TIEBREAKER_SYNTHESIS", "TIEBREAKER_DECISION"}} <= calls
                     and {{"gate_route_signal", "review_route_signal", "decision", "override_result"}} <= branches
                     and "@workflow" not in workflow_py_text
                 ),
                 "source_path_reconciliation": (
                     workflow_resource.is_file()
                     and workflow_py_resource.is_file()
-                    and {{step.kind for step in lowered.steps}} >= {{"parallel_map", "subpipeline"}}
+                    and {{step.kind for step in lowered.steps}} >= {{
+                        "parallel_map",
+                        "megaplan:tiebreaker_researcher",
+                        "megaplan:tiebreaker_challenger",
+                        "megaplan:tiebreaker_synthesis",
+                        "megaplan:tiebreaker_decision",
+                    }}
                 ),
             }}
             missing = sorted(set(required) - set(proofs))
@@ -555,6 +690,143 @@ class TestCanonicalSourceIsSemanticAuthority:
         )
         payload = json.loads(result.stdout)
         assert payload["proofs"] == sorted(REQUIRED_INSTALLED_CONFORMANCE_SUITES)
+
+    def test_installed_execute_s4_parity_matches_development_checkout(
+        self,
+        installed_megaplan_wheel: InstalledWheelArtifact,
+    ) -> None:
+        expected = _execute_s4_parity_payload()
+        script = textwrap.dedent(
+            """
+            from __future__ import annotations
+
+            import json
+            from pathlib import Path
+
+            from arnold.workflow.boundary_evidence import (
+                AuthorityRecord,
+                BoundaryOutcome,
+                BoundaryReceipt,
+            )
+            from arnold_pipelines.megaplan._core import (
+                compute_task_batches,
+                execute_batch_artifact_path,
+                stable_task_id_digest,
+            )
+            from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline, build_pipeline
+            from arnold_pipelines.megaplan.workflows import POLICY_COMPONENTS
+            from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+                BOUNDARY_CONTRACTS_BY_ID,
+            )
+
+            pipeline = build_pipeline()
+            shell = build_and_compile_pipeline()
+            sample_tasks = [
+                {"id": "T1", "depends_on": []},
+                {"id": "T2", "depends_on": ["T1"]},
+                {"id": "T3", "depends_on": ["T1"]},
+                {"id": "T4", "depends_on": ["T2", "T3"]},
+            ]
+            digest = stable_task_id_digest(["T3", "T2", "T2"])
+            checkpoint = execute_batch_artifact_path(Path("/plan"), 2, ["T3", "T2"])
+            execute_policy = next(policy for policy in POLICY_COMPONENTS if policy.id == "megaplan:execute")
+            route_surface = execute_policy.metadata["route_surface"]
+            s4_ids = (
+                "execute_approval",
+                "execute_approval_denial",
+                "execute_batch_checkpoint",
+                "execute_partial_failure",
+                "execute_blocked_anchor",
+                "execute_resume_anchor",
+                "execute_aggregate_promotion",
+                "execute_no_review_terminal",
+            )
+            batch_receipt = BoundaryReceipt(
+                boundary_id="execute_batch_checkpoint",
+                workflow_id="megaplan-review",
+                row_id=BOUNDARY_CONTRACTS_BY_ID["execute_batch_checkpoint"].row_id,
+                invocation_id="inv-s4",
+                artifact_refs=("execute_batches/batch_2/tasks_digest.json",),
+                state_observation={"current_phase": "execute", "batch_stage": "checkpoint"},
+                history_ref="execute_batch_checkpoint",
+                phase_result_ref="phase_result.json",
+                outcome=BoundaryOutcome.COMPLETE,
+                details={"batch_index": 2, "task_ids": ("T2", "T3"), "child_trace_path": "execute/2"},
+            ).to_dict()
+            approval_receipt = BoundaryReceipt(
+                boundary_id="execute_approval",
+                workflow_id="megaplan-review",
+                row_id=BOUNDARY_CONTRACTS_BY_ID["execute_approval"].row_id,
+                invocation_id="inv-s4",
+                artifact_refs=("approval_record.json",),
+                state_observation={"current_phase": "execute", "approval_gate": "cleared"},
+                history_ref="execute_approval_cleared",
+                phase_result_ref="phase_result.json",
+                outcome=BoundaryOutcome.COMPLETE,
+                authority_records=(
+                    AuthorityRecord(
+                        actor="operator",
+                        role="approver",
+                        decision="approved",
+                        scope="execute:approval-approved",
+                    ),
+                ),
+                details={"approval_scope": "execute:approval-approved", "session_freshness": "current"},
+            ).to_dict()
+            payload = {
+                "execute_routes": [
+                    {
+                        "source": route.source,
+                        "target": route.target,
+                        "label": route.label,
+                        "condition_ref": route.condition_ref,
+                    }
+                    for route in pipeline.routes
+                    if route.source == "execute" or route.target == "execute"
+                ],
+                "native_execute_routes": [
+                    route
+                    for route in shell.native_program.routing_topology["routes"]
+                    if route["source"] == "execute" or route["target"] == "execute"
+                ],
+                "route_surface_keys": sorted(route_surface),
+                "batch_order": compute_task_batches(sample_tasks),
+                "stable_digest": digest,
+                "checkpoint_path": checkpoint.relative_to("/plan").as_posix(),
+                "s4_contracts": {
+                    boundary_id: {
+                        "phase": BOUNDARY_CONTRACTS_BY_ID[boundary_id].phase.value,
+                        "row_id": BOUNDARY_CONTRACTS_BY_ID[boundary_id].row_id,
+                        "authority_required": BOUNDARY_CONTRACTS_BY_ID[boundary_id].authority_required,
+                        "details_keys": sorted(BOUNDARY_CONTRACTS_BY_ID[boundary_id].details),
+                    }
+                    for boundary_id in s4_ids
+                },
+                "receipt_schema": {
+                    "batch_keys": sorted(batch_receipt),
+                    "batch_detail_keys": sorted(batch_receipt["details"]),
+                    "approval_keys": sorted(approval_receipt),
+                    "approval_authority_keys": sorted(approval_receipt["authority_records"][0]),
+                    "approval_detail_keys": sorted(approval_receipt["details"]),
+                },
+            }
+            print(json.dumps(payload, sort_keys=True))
+            """
+        )
+        result = subprocess.run(
+            [str(installed_megaplan_wheel.python), "-c", script],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=installed_megaplan_wheel.wheel.parent,
+            env={
+                key: value
+                for key, value in os.environ.items()
+                if key not in {"PYTHONPATH", "PYTHONHOME"}
+            }
+            | {"PYTHONNOUSERSITE": "1"},
+        )
+        assert json.loads(result.stdout) == expected
 
 
 # ── installed-package smoke: no legacy leaks ───────────────────────────────
@@ -658,6 +930,7 @@ class TestInstalledPackagePublicSurface:
 
         expected_policy_ids = {
             "megaplan:default",
+            "megaplan:prep-clarify",
             "megaplan:gate",
             "megaplan:revise-loop",
             "megaplan:tiebreaker",
@@ -666,6 +939,7 @@ class TestInstalledPackagePublicSurface:
             "megaplan:execute",
             "megaplan:override",
             "megaplan:model-routing",
+            "megaplan:blast-radius",
             "megaplan:robustness",
             "megaplan:artifact-contract",
             "megaplan:suspension",

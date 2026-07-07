@@ -418,7 +418,9 @@ def build_parser() -> argparse.ArgumentParser:
     # Also add aliases for other COMMAND_HANDLERS that are reached via main()
     # but never registered in the parser.
     for _cmd in ("introspect", "trace", "doctor", "record-tag"):
-        subparsers.add_parser(_cmd)
+        observability_parser = subparsers.add_parser(_cmd)
+        observability_parser.add_argument("--project-dir", default=None)
+        observability_parser.add_argument("--plan")
 
     return parser
 from .status_view import (
@@ -2991,12 +2993,26 @@ def _consume_execute_compat_flags(
         "--user-approved": "user_approved",
         "--retry-blocked-tasks": "retry_blocked_tasks",
     }
-    for token in remaining:
+    index = 0
+    while index < len(remaining):
+        token = remaining[index]
+        if token == "--phase-model":
+            if index + 1 >= len(remaining):
+                consumed.append(token)
+                index += 1
+                continue
+            phase_model = list(getattr(args, "phase_model", None) or [])
+            phase_model.append(remaining[index + 1])
+            setattr(args, "phase_model", phase_model)
+            index += 2
+            continue
         attr = recognized.get(token)
         if attr is None:
             consumed.append(token)
+            index += 1
             continue
         setattr(args, attr, True)
+        index += 1
     return consumed
 
 

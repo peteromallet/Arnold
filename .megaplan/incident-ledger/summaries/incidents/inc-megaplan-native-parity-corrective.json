@@ -1,8 +1,177 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 27,
+  "evidence_ref_count": 189,
   "evidence_refs": [
     {
+      "action": "commented",
+      "kind": "github.issue",
+      "number": 163,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/163#issuecomment-4904661124"
+    },
+    {
+      "action": "commented",
+      "kind": "github.issue",
+      "number": 164,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/164#issuecomment-4904661379"
+    },
+    {
+      "action": "commented",
+      "kind": "github.issue",
+      "number": 165,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/165#issuecomment-4904661672"
+    },
+    {
+      "action": "commented",
+      "kind": "github.issue",
+      "number": 170,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/170#issuecomment-4904662527"
+    },
+    {
+      "action": "commented",
+      "kind": "github.issue",
+      "number": 171,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/171#issuecomment-4904662804"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 163,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/163"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 164,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/164"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 165,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/165"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 170,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/170"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 171,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/171"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 172,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/172"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 176,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/176"
+    },
+    {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 177,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/177"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
       "kind": "verification_record"
     },
     {
@@ -21,129 +190,105 @@
       "kind": "verification_record"
     },
     {
-      "kind": "incident_brief",
-      "session_id": "megaplan-native-parity-corrective",
-      "status": "2026-07-06T01:06:05.309505+00:00"
+      "kind": "verification_record"
     },
     {
-      "kind": "incident_brief",
-      "session_id": "megaplan-native-parity-corrective",
-      "status": "2026-07-06T01:06:05.309505+00:00"
+      "kind": "verification_record"
     },
     {
-      "kind": "incident_summary",
-      "path": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-native-parity-corrective.json",
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "github_sync.incident_projection",
       "session_id": "megaplan-native-parity-corrective"
     },
     {
-      "kind": "incident_summary",
-      "path": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-native-parity-corrective.json",
+      "kind": "github_sync.incident_projection",
       "session_id": "megaplan-native-parity-corrective"
     },
     {
-      "kind": "problem_summary",
-      "path": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/incident-ledger/summaries/problems/problem-55b5ebf18290.json",
+      "kind": "github_sync.incident_projection",
       "session_id": "megaplan-native-parity-corrective"
     },
     {
-      "kind": "problem_summary",
-      "path": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/incident-ledger/summaries/problems/problem-55b5ebf18290.json",
+      "kind": "github_sync.incident_projection",
       "session_id": "megaplan-native-parity-corrective"
     },
     {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "stale_active_step"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "stale_active_step"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "stopped"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "unhealthy"
-    },
-    {
-      "kind": "watchdog_observation",
-      "status": "dispatched"
-    },
-    {
-      "kind": "watchdog_report_path",
-      "path": "/workspace/watchdog-report.json",
+      "kind": "github_sync.incident_projection",
       "session_id": "megaplan-native-parity-corrective"
     },
     {
-      "kind": "watchdog_report_path",
-      "path": "/workspace/watchdog-report.json",
+      "kind": "github_sync.incident_projection",
       "session_id": "megaplan-native-parity-corrective"
     },
     {
-      "kind": "watchdog_report_path",
-      "path": "/workspace/watchdog-reports/20260706T010640Z.json",
+      "kind": "github_sync.incident_projection",
       "session_id": "megaplan-native-parity-corrective"
     },
     {
-      "kind": "watchdog_report_path",
-      "path": "/workspace/watchdog-reports/20260706T010640Z.json",
-      "session_id": "megaplan-native-parity-corrective"
-    },
-    {
-      "kind": "watchdog_report_path",
-      "path": "/workspace/watchdog-reports/20260706T010642Z.json",
-      "session_id": "megaplan-native-parity-corrective"
-    },
-    {
-      "kind": "watchdog_report_path",
-      "path": "/workspace/watchdog-reports/20260706T010642Z.json",
+      "kind": "github_sync.incident_projection",
       "session_id": "megaplan-native-parity-corrective"
     }
   ],
-  "generated_at": "2026-07-07T01:31:37.915202+00:00",
+  "generated_at": "2026-07-07T19:33:31.351116+00:00",
   "incident_id": "inc-megaplan-native-parity-corrective",
   "kind": "incident_summary",
-  "latest_actor": "immediate_repair",
-  "next_expected_event": "repair_attempt.verification",
-  "outcome": "discord_escalated",
+  "latest_actor": "watchdog",
+  "next_expected_event": null,
+  "omitted_evidence_ref_count": 125,
+  "outcome": "busy",
   "placeholders": {
     "install_freshness": "unknown",
     "recurrence": "unknown",
     "shipped_fix": "unknown"
   },
   "problem_ids": [
+    "problem-0311d1fc8813",
     "problem-3b7df8021d2b",
     "problem-55b5ebf18290",
     "problem-67a765759422",
+    "problem-8f475cf8e677",
+    "problem-9eb61fd41e68",
+    "problem-a351abf81c18",
     "problem-ba6e85d2053d",
     "problem-bd43205325d0",
     "problem-bef9405c197d",
     "problem-e20c45ae0eb0",
+    "problem-f336ce99590e",
+    "problem-f4fa774946c7",
     "problem-fc037a661409"
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:5d63df306a7cb80039a2b6544c81e20892277c2ed731ef4745036dd00317217e",
-    "last_seq": 171,
+    "digest": "sha256:9f7625ab4af64098a0a4033c19416b13fc17b1c4a84df8cf6de2611edaf7cdcb",
+    "last_seq": 252,
     "projection": "incidents"
   },
-  "state": "repair_attempt",
-  "summary_text": "inc-megaplan-native-parity-corrective: repair-data outcome=discord_escalated kind=chain workspace=/workspace/megaplan-native-parity-corrective/Arnold"
+  "state": "dispatch",
+  "summary_text": "inc-megaplan-native-parity-corrective: repair request already claimed"
 }

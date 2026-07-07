@@ -37,7 +37,11 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping
 if TYPE_CHECKING:
     from arnold_pipelines.megaplan.drivers import Substrate
 
-from arnold_pipelines.megaplan._core import active_phase_name, find_plan_dir
+from arnold_pipelines.megaplan._core import (
+    active_phase_name,
+    find_plan_dir,
+    list_batch_artifacts,
+)
 from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
 from arnold.runtime.envelope import (
     _envelope_ctx,
@@ -980,7 +984,7 @@ def _plan_liveness_mtime(plan_dir: Path | None) -> float | None:
     # dormant-path: subprocess seam, retired at M6
     candidates = [plan_dir / "state.json"]
     try:
-        candidates.extend(plan_dir.glob("execution_batch_*.json"))
+        candidates.extend(list_batch_artifacts(plan_dir))
     except OSError:
         pass
     newest: float | None = None
@@ -2562,7 +2566,7 @@ def _execution_batch_completed_task_ids(
     if plan_dir is None:
         return set()
     completed: set[str] = set()
-    for batch_path in sorted(plan_dir.glob("execution_batch_*.json")):
+    for batch_path in list_batch_artifacts(plan_dir):
         try:
             payload = json.loads(batch_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):

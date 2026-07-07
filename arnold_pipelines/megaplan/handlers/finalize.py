@@ -28,8 +28,10 @@ from arnold_pipelines.megaplan.planning.state import (
 )
 from arnold_pipelines.megaplan.workers import WorkerResult
 from arnold_pipelines.megaplan._core import (
+    list_batch_artifacts,
     atomic_write_json,
     atomic_write_text,
+    batch_artifact_index,
     configured_robustness,
     is_creative_mode,
     latest_plan_path,
@@ -1044,15 +1046,9 @@ def _task_execute_claim_context(
             if isinstance(raw_batch_number, int) and not isinstance(raw_batch_number, bool):
                 aggregate_tier_by_batch[raw_batch_number] = batch_entry
     context_by_task_id: dict[str, dict[str, Any]] = {}
-    for batch_path in sorted(plan_dir.glob("execution_batch_*.json")):
+    for batch_path in sorted(list_batch_artifacts(plan_dir)):
         history = history_by_output.get(batch_path.name)
-        batch_number: int | None = None
-        name = batch_path.name
-        if name.startswith("execution_batch_") and name.endswith(".json"):
-            try:
-                batch_number = int(name[len("execution_batch_") : -len(".json")])
-            except ValueError:
-                batch_number = None
+        batch_number = batch_artifact_index(batch_path)
         aggregate_tier = aggregate_tier_by_batch.get(batch_number) if batch_number is not None else None
         if history is None and aggregate_tier is None:
             continue

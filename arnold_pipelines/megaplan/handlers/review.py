@@ -53,6 +53,7 @@ from arnold_pipelines.megaplan.workers import (
 )
 from arnold_pipelines.megaplan.runtime.execution_environment import preflight_phase
 from arnold_pipelines.megaplan._core import (
+    list_batch_artifacts,
     append_history,
     apply_session_update,
     atomic_write_json,
@@ -426,7 +427,7 @@ def _review_execution_batch_completed_task_ids(
     state: PlanState,
 ) -> set[str]:
     completed: set[str] = set()
-    for batch_path in sorted(plan_dir.glob("execution_batch_*.json")):
+    for batch_path in sorted(list_batch_artifacts(plan_dir)):
         try:
             payload = read_json(batch_path)
         except (OSError, ValueError):

@@ -1,6 +1,6 @@
 manifest_id: megaplan
-manifest_hash: sha256:2468fae140db618e0715b80173a059d89927e06f43bb1228b841120b8eb800b1
-topology_hash: sha256:a83f81eabe54696bbf33dbfc6cbf4db6f6b35dc3312ea4e6c23b86f93f50f999
+manifest_hash: sha256:1ac5bde8195484b6e8d38f8da5a2449e86fb8caaa97f9959577d116cba2f63b7
+topology_hash: sha256:7485470207d2ec624791b2c1f4ed71cdc3e0a49246fcde6a128e013e0f995133
 nodes:
 - prep
 - plan
@@ -44,6 +44,8 @@ tiebreaker_targets:
   target: finalize
 - label: escalate
   target: override
+- label: replan
+  target: revise
 review_targets:
 - label: rework
   target: revise

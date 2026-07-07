@@ -16,12 +16,32 @@ OVERRIDE_PATH = REPO_ROOT / "arnold_pipelines" / "megaplan" / "handlers" / "over
 CRITIQUE_PATH = REPO_ROOT / "arnold_pipelines" / "megaplan" / "handlers" / "critique.py"
 SHARED_PATH = REPO_ROOT / "arnold_pipelines" / "megaplan" / "handlers" / "shared.py"
 ROUTE_DISPATCH_PATH = REPO_ROOT / "arnold_pipelines" / "megaplan" / "route_dispatch.py"
+EXECUTE_HANDLER_PATH = REPO_ROOT / "arnold_pipelines" / "megaplan" / "handlers" / "execute.py"
+EXECUTE_BATCH_PATH = REPO_ROOT / "arnold_pipelines" / "megaplan" / "execute" / "batch.py"
 FORBIDDEN_TRANSITION_HELPERS = {"workflow_transition", "workflow_next", "_next_progress_step"}
 FORBIDDEN_CRITIQUE_HELPERS = {"run_parallel_critique"}
 FORBIDDEN_GATE_TARGETS = {"finalize", "revise", "tiebreaker_run", "override", "halt", "gate"}
 FORBIDDEN_TIEBREAKER_TARGETS = {"finalize", "critique", "override"}
 FORBIDDEN_REVIEW_TARGETS = {"execute", "review", "halt", "finalize", "revise"}
 FORBIDDEN_OVERRIDE_TARGETS = {"finalize", "revise", "halt"}
+# Typed execute-policy functions that MUST be the sole authorities for
+# execute route decisions.  If these imports disappear or are replaced by
+# inline literals the checker must reject the change.
+REQUIRED_EXECUTE_POLICY_CALLS = {
+    "resolve_execute_entry_route",
+    "evaluate_destructive_approval",
+    "evaluate_no_review_terminal",
+    "resolve_single_batch_next_step",
+}
+# Legacy next_step payloads written by the execute handler must be
+# translated through these lookup maps — never a bare string literal.
+EXECUTE_NEXT_STEP_MAPS = {"_LEGACY_NEXT_STEP", "_NO_REVIEW_NEXT_STEP"}
+# The batch auto-loop must route all next_step derivations through this
+# compatibility mapper.
+BATCH_NEXT_STEP_MAPPER = "_legacy_next_step_for_execute_policy"
+# Route target strings that must never appear as bare literals in
+# execute route-decision code (handler or batch auto-loop).
+FORBIDDEN_EXECUTE_ROUTE_TARGETS = {"review", "halt", "finalize", "revise", "override", "plan"}
 
 
 def _function_node(path: Path, name: str) -> ast.FunctionDef:
@@ -235,3 +255,230 @@ class TestSharedRouteHelpers:
         )
 
         assert resolve_route_target_for_signal("tiebreaker_decide", "proceed") == "finalize"
+
+
+class TestExecuteSignals:
+    """S4: Execute handler and batch auto-loop must not own route decisions.
+
+    Handler-owned execute route decisions, hidden auto-loop scheduler
+    branches, and handler-local ``next_step`` assignment patterns are
+    rejected at the checker/linter level so they cannot silently regress.
+
+    These tests use the same AST-inspection strategy as the other
+    ``Test*Signals`` classes: they parse the source files and assert
+    that the required typed-policy surfaces are present while forbidden
+    patterns (transition helpers, bare route-target literals, direct
+    ``next_step`` string assignments) are absent.
+    """
+
+    # ── execute handler (handlers/execute.py) ──────────────────────────
+
+    def test_handle_execute_avoids_transition_helpers(self) -> None:
+        """The execute handler must never call legacy transition helpers."""
+        calls = _called_names(_function_node(EXECUTE_HANDLER_PATH, "handle_execute"))
+        assert calls.isdisjoint(FORBIDDEN_TRANSITION_HELPERS), (
+            f"handle_execute must not call {sorted(calls & FORBIDDEN_TRANSITION_HELPERS)}"
+        )
+
+    def test_handle_execute_imports_typed_policy(self) -> None:
+        """handle_execute module must import typed execute-policy functions."""
+        source = EXECUTE_HANDLER_PATH.read_text(encoding="utf-8")
+        assert "from arnold_pipelines.megaplan.execute.policy import" in source, (
+            "execute handler must import from execute.policy"
+        )
+
+    def test_enforce_entry_route_calls_policy(self) -> None:
+        """``_enforce_entry_route`` (called by handle_execute) must delegate
+        to ``resolve_execute_entry_route`` — the handler-local helper is the
+        bridge between the typed policy and legacy error raising."""
+        calls = _called_names(
+            _function_node(EXECUTE_HANDLER_PATH, "_enforce_entry_route")
+        )
+        assert "resolve_execute_entry_route" in calls, (
+            "_enforce_entry_route must call resolve_execute_entry_route"
+        )
+
+    def test_enforce_approval_gate_calls_policy(self) -> None:
+        """``_enforce_approval_gate`` (called by handle_execute) must delegate
+        to ``evaluate_destructive_approval`` — the handler-local helper is the
+        bridge between the typed policy and legacy error raising."""
+        calls = _called_names(
+            _function_node(EXECUTE_HANDLER_PATH, "_enforce_approval_gate")
+        )
+        assert "evaluate_destructive_approval" in calls, (
+            "_enforce_approval_gate must call evaluate_destructive_approval"
+        )
+
+    def test_handle_execute_uses_no_review_terminal_policy(self) -> None:
+        """No-review terminal must route through evaluate_no_review_terminal."""
+        calls = _called_names(_function_node(EXECUTE_HANDLER_PATH, "handle_execute"))
+        assert "evaluate_no_review_terminal" in calls, (
+            "handle_execute must call evaluate_no_review_terminal for no-review routing"
+        )
+
+    def test_handle_execute_uses_single_batch_next_step_policy(self) -> None:
+        """Next-step derivation must route through resolve_single_batch_next_step."""
+        calls = _called_names(_function_node(EXECUTE_HANDLER_PATH, "handle_execute"))
+        assert "resolve_single_batch_next_step" in calls, (
+            "handle_execute must call resolve_single_batch_next_step for next-step routing"
+        )
+
+    def test_handle_execute_next_step_assignments_use_lookup_maps(self) -> None:
+        """All ``response['next_step']`` writes must use ``_LEGACY_NEXT_STEP``
+        or ``_NO_REVIEW_NEXT_STEP`` lookup maps — never a bare string literal.
+
+        We walk the AST of ``handle_execute`` and collect every
+        ``response[...] = ...`` assignment whose subscript is the string
+        ``'next_step'``.  The assigned value must come from a name that is
+        one of the approved lookup maps, or from a subscript of those maps.
+        """
+        func = _function_node(EXECUTE_HANDLER_PATH, "handle_execute")
+        violations: list[int] = []
+        for node in ast.walk(func):
+            if not isinstance(node, ast.Assign):
+                continue
+            for target in node.targets:
+                if not isinstance(target, ast.Subscript):
+                    continue
+                if not isinstance(target.slice, ast.Constant):
+                    continue
+                if target.slice.value != "next_step":
+                    continue
+                # The assigned value must be a name (map[key]) or subscript (map[key])
+                if isinstance(node.value, ast.Name):
+                    if node.value.id not in EXECUTE_NEXT_STEP_MAPS:
+                        violations.append(node.lineno)
+                elif isinstance(node.value, ast.Subscript):
+                    if isinstance(node.value.value, ast.Name):
+                        if node.value.value.id not in EXECUTE_NEXT_STEP_MAPS:
+                            violations.append(node.lineno)
+                    else:
+                        violations.append(node.lineno)
+                elif isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                    violations.append(node.lineno)
+        assert not violations, (
+            f"handle_execute assigns next_step via bare literal/unknown name "
+            f"at lines {violations}; must use {EXECUTE_NEXT_STEP_MAPS}"
+        )
+
+    def test_handle_execute_no_bare_route_targets_in_route_logic(self) -> None:
+        """The execute handler must not embed bare route-target string
+        literals in its route-decision code path.  ``_enforce_entry_route``
+        and ``_enforce_approval_gate`` are the two helper functions that
+        translate typed outcomes into legacy errors; neither should contain
+        hardcoded target refs like ``'halt'``, ``'review'``, ``'finalize'``.
+
+        We tolerate the string ``'execute'`` in error messages because it
+        refers to the phase name, not a route target.
+        """
+        for helper_name in ("_enforce_entry_route", "_enforce_approval_gate"):
+            strings = _string_constants(
+                _function_node(EXECUTE_HANDLER_PATH, helper_name)
+            )
+            intersection = strings & FORBIDDEN_EXECUTE_ROUTE_TARGETS
+            assert not intersection, (
+                f"{helper_name} contains forbidden route-target literal(s): {intersection}"
+            )
+
+    # ── batch auto-loop (execute/batch.py) ─────────────────────────────
+
+    def test_auto_loop_avoids_transition_helpers(self) -> None:
+        """The batch auto-loop must never call legacy transition helpers."""
+        calls = _called_names(
+            _function_node(EXECUTE_BATCH_PATH, "handle_execute_auto_loop")
+        )
+        assert calls.isdisjoint(FORBIDDEN_TRANSITION_HELPERS), (
+            f"handle_execute_auto_loop must not call "
+            f"{sorted(calls & FORBIDDEN_TRANSITION_HELPERS)}"
+        )
+
+    def test_auto_loop_uses_resolve_single_batch_next_step(self) -> None:
+        """All next-step decisions must flow through resolve_single_batch_next_step."""
+        calls = _called_names(
+            _function_node(EXECUTE_BATCH_PATH, "handle_execute_auto_loop")
+        )
+        assert "resolve_single_batch_next_step" in calls, (
+            "handle_execute_auto_loop must call resolve_single_batch_next_step"
+        )
+
+    def test_auto_loop_uses_legacy_next_step_mapper(self) -> None:
+        """Every next_step legacy assignment must pass through the
+        ``_legacy_next_step_for_execute_policy`` compatibility mapper so
+        there is no hidden local branch that writes a bare string."""
+        calls = _called_names(
+            _function_node(EXECUTE_BATCH_PATH, "handle_execute_auto_loop")
+        )
+        assert BATCH_NEXT_STEP_MAPPER in calls, (
+            f"handle_execute_auto_loop must call {BATCH_NEXT_STEP_MAPPER}"
+        )
+
+    def test_auto_loop_no_bare_next_step_string_literals(self) -> None:
+        """The auto-loop must never write a bare string literal into
+        ``response['next_step']``.  Every such assignment must go through
+        the ``_legacy_next_step_for_execute_policy`` mapper or a policy
+        lookup map."""
+        func = _function_node(EXECUTE_BATCH_PATH, "handle_execute_auto_loop")
+        helper_funcs: dict[str, ast.FunctionDef] = {}
+        tree = ast.parse(EXECUTE_BATCH_PATH.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                helper_funcs[node.name] = node
+
+        violations: list[tuple[str, int]] = []
+        for check_func in [func] + list(helper_funcs.values()):
+            for node in ast.walk(check_func):
+                if not isinstance(node, ast.Assign):
+                    continue
+                for target in node.targets:
+                    if not isinstance(target, ast.Subscript):
+                        continue
+                    if not isinstance(target.slice, ast.Constant):
+                        continue
+                    if target.slice.value != "next_step":
+                        continue
+                    if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                        violations.append((check_func.name, node.lineno))
+        assert not violations, (
+            f"bare string literal next_step assignments at: {violations}"
+        )
+
+    def test_calibration_tier_spec_calls_resolve_batch_tier(self) -> None:
+        """Tier routing must flow through ``resolve_batch_tier`` (not hidden
+        inline tier selection).  The auto-loop delegates to
+        ``handle_execute_one_batch``, which calls ``_calibration_tier_spec``,
+        which is the bridge to the typed tier policy.  We verify that bridge
+        actually calls the policy function."""
+        calls = _called_names(
+            _function_node(EXECUTE_BATCH_PATH, "_calibration_tier_spec")
+        )
+        assert "resolve_batch_tier" in calls, (
+            "_calibration_tier_spec must call resolve_batch_tier"
+        )
+
+    # ── EXECUTE component route_bindings ───────────────────────────────
+
+    def test_execute_component_has_no_route_bindings(self) -> None:
+        """The EXECUTE step component must not carry authoritative
+        ``route_bindings``.  Execute route authority lives in the typed
+        policy surface and ``workflow.pypeline``, not in component metadata.
+
+        This mirrors the topology-golden test from T4 and serves as a
+        fast-fail lint-level check.
+        """
+        from arnold_pipelines.megaplan.workflows.components import STEP_COMPONENTS_BY_ID
+
+        execute_component = STEP_COMPONENTS_BY_ID["execute"]
+        bindings = execute_component.metadata.get("route_bindings", ())
+        assert bindings == (), (
+            "EXECUTE step component must not carry authoritative route_bindings; "
+            "route authority is in EXECUTE_POLICY.route_surface / workflow.pypeline"
+        )
+
+    # ── route dispatch: execute component bindings must stay empty ──────
+    #
+    # Unlike gate / tiebreaker, execute is NOT a front-half routing step,
+    # so the route-dispatch module will honour component bindings if they
+    # exist.  The protection is therefore structural: the component must
+    # never carry authoritative bindings (tested above).  There is no
+    # monkeypatch-ignores test for execute because the dispatch correctly
+    # reads component metadata for non-front-half steps.
