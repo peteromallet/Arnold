@@ -1,1 +1,1 @@
-/workspace/arnold/arnold_pipelines/megaplan/data/superfixer_debug_skill.md
+/workspace/superfixer-alive-but-failed-recovery/Arnold/.megaplan/runtime/editable-engine/arnold_pipelines/megaplan/data/superfixer_debug_skill.md
