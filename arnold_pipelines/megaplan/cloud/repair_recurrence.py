@@ -84,6 +84,103 @@ def _as_path(value: object) -> Path | None:
     return Path(text)
 
 
+def _has_entries(value: object) -> bool:
+    if isinstance(value, list):
+        return any(bool(_as_text(item)) for item in value)
+    return bool(_as_text(value))
+
+
+def _plan_identity(context: Mapping[str, Any]) -> str:
+    plan_failure = _as_dict(context.get("plan_latest_failure"))
+    chain_state = _as_dict(context.get("chain_state_summary"))
+    return _as_text(
+        chain_state.get("current_plan_name")
+        or plan_failure.get("plan_name")
+        or _as_dict(context.get("plan_runtime_state")).get("plan_name")
+    )
+
+
+def _read_json_file(path: Path | None) -> dict[str, Any]:
+    if path is None or not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _empty_pending_batch_task_ids(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    if _has_entries(payload.get("files_changed")) or _has_entries(payload.get("commands_run")):
+        return ()
+    raw_tasks = payload.get("task_updates")
+    if not isinstance(raw_tasks, list):
+        raw_tasks = payload.get("tasks")
+    if not isinstance(raw_tasks, list) or not raw_tasks:
+        return ()
+    task_ids: list[str] = []
+    for raw_task in raw_tasks:
+        task = _as_dict(raw_task)
+        if not task:
+            return ()
+        if _as_text(task.get("status")).lower() != "pending":
+            return ()
+        if _has_entries(task.get("files_changed")) or _has_entries(task.get("commands_run")):
+            return ()
+        task_id = _as_text(task.get("task_id") or task.get("id"))
+        if task_id:
+            task_ids.append(task_id)
+    return tuple(task_ids)
+
+
+def _empty_execute_batch_summary(context: Mapping[str, Any]) -> dict[str, Any]:
+    attempt_context = _as_dict(context.get("execute_attempt_context"))
+    plan = _plan_identity(context)
+    if not plan:
+        return {}
+    for section_name in ("execute_batch_output", "execution_batch"):
+        section = _as_dict(attempt_context.get(section_name))
+        payload = _read_json_file(_as_path(section.get("path")))
+        task_ids = _empty_pending_batch_task_ids(payload)
+        if task_ids:
+            return {
+                "plan": plan,
+                "section": section_name,
+                "path": _as_text(section.get("path")),
+                "task_ids": list(task_ids),
+            }
+    return {}
+
+
+def _normalize_empty_batch_summary(value: object) -> dict[str, Any]:
+    item = _as_dict(value)
+    plan = _as_text(item.get("plan"))
+    task_ids = tuple(
+        _as_text(task_id)
+        for task_id in _as_list(item.get("task_ids"))
+        if _as_text(task_id)
+    )
+    if not plan or not task_ids:
+        return {}
+    return {
+        "plan": plan,
+        "task_ids": task_ids,
+        "section": _as_text(item.get("section")),
+        "path": _as_text(item.get("path")),
+    }
+
+
+def _empty_batch_summary_for_attempt(attempt: Mapping[str, Any]) -> dict[str, Any]:
+    advancement_summary = _normalize_empty_batch_summary(
+        _as_dict(attempt.get("advancement_snapshot")).get("execute_empty_batch")
+    )
+    if advancement_summary:
+        return advancement_summary
+    return _normalize_empty_batch_summary(
+        _empty_execute_batch_summary(_as_dict(attempt.get("failure_context")))
+    )
+
+
 def _parse_when(value: object) -> datetime | None:
     text = _as_text(value)
     if not text:
@@ -463,6 +560,7 @@ def build_advancement_snapshot(
             },
         },
         "plan_activity": plan_activity,
+        "execute_empty_batch": _empty_execute_batch_summary(context),
     }
 
 
@@ -630,11 +728,33 @@ def evaluate_recurrence(
         ),
         key=lambda a: _as_int(a["attempt_id"]),  # type: ignore[index]
     )
-    layer3_detected = False
+    same_signature_detected = False
     if prior_by_id and any(current_key):
         last_signature = _as_dict(prior_by_id[-1].get("problem_signature"))
         if last_signature and signature_tuple(last_signature) == current_key:
-            layer3_detected = True
+            same_signature_detected = True
+
+    empty_batch_streak: list[dict[str, Any]] = []
+    current_empty_batch = _normalize_empty_batch_summary(
+        _as_dict(_as_dict(snapshot.get("current")).get("execute_empty_batch"))
+    )
+    if current_empty_batch:
+        empty_batch_streak.append(current_empty_batch)
+        seen_task_sets = {current_empty_batch["task_ids"]}
+        for attempt in reversed(prior_by_id):
+            prior_empty_batch = _empty_batch_summary_for_attempt(attempt)
+            if not prior_empty_batch:
+                break
+            if prior_empty_batch["plan"] != current_empty_batch["plan"]:
+                break
+            task_ids = prior_empty_batch["task_ids"]
+            if task_ids in seen_task_sets:
+                break
+            seen_task_sets.add(task_ids)
+            empty_batch_streak.append(prior_empty_batch)
+    empty_batch_threshold = max(_as_int(snapshot.get("min_dispatches")) or 3, 2)
+    empty_batch_detected = len(empty_batch_streak) >= empty_batch_threshold
+    layer3_detected = same_signature_detected or empty_batch_detected
 
     return {
         "detected": layer1_detected or layer2_detected,
@@ -654,7 +774,15 @@ def evaluate_recurrence(
         },
         "layer3": {
             "detected": layer3_detected,
-            "consecutive_same_signature": layer3_detected,
+            "consecutive_same_signature": same_signature_detected,
+            "empty_batch_streak": {
+                "detected": empty_batch_detected,
+                "count": len(empty_batch_streak),
+                "min_dispatches": empty_batch_threshold,
+                "task_id_batches": [
+                    list(item["task_ids"]) for item in empty_batch_streak
+                ],
+            },
             "breaker_signature": normalized_signature if layer3_detected else {},
         },
     }

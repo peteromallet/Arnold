@@ -311,6 +311,75 @@ def test_layer3_breaker_does_not_trip_when_signature_changed() -> None:
     assert result["deterministic_failure_breaker"] is False
 
 
+def test_layer3_breaker_trips_on_consecutive_empty_pending_batches_across_tasks(tmp_path: Path) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "demo-plan"
+    plan_dir.mkdir(parents=True)
+
+    def context_for(task_id: str, index: int) -> dict[str, object]:
+        artifact = plan_dir / f"execute_batch_{index}_output.json"
+        artifact.write_text(
+            json.dumps(
+                {
+                    "files_changed": [],
+                    "commands_run": [],
+                    "task_updates": [
+                        {
+                            "task_id": task_id,
+                            "status": "pending",
+                            "executor_notes": "",
+                            "files_changed": [],
+                            "commands_run": [],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        ctx = _failure_context(blocked_task_id=task_id, current_state="finalized")
+        ctx["workspace"] = str(tmp_path)
+        ctx["execute_attempt_context"] = {
+            "execution_batch": {
+                "path": str(artifact),
+                "blocked_or_deferred_tasks": [{"task_id": task_id}],
+            },
+            "execute_batch_output": {"path": str(artifact)},
+            "plan_history": {"last_entries": [{"step": "execute", "result": "blocked"}]},
+        }
+        return ctx
+
+    prior_one = context_for("T3", 1)
+    prior_two = context_for("T5", 2)
+    current = context_for("T8", 3)
+    attempts = [
+        {
+            "attempt_id": 1,
+            "problem_signature": repair_recurrence.build_problem_signature(prior_one),
+            "failure_context": prior_one,
+        },
+        {
+            "attempt_id": 2,
+            "problem_signature": repair_recurrence.build_problem_signature(prior_two),
+            "failure_context": prior_two,
+        },
+    ]
+    current_snapshot = repair_recurrence.build_advancement_snapshot(current, run_kind="chain")
+
+    result = repair_recurrence.evaluate_recurrence(
+        repair_recurrence.build_problem_signature(current),
+        attempts,
+        {"current": current_snapshot, "min_dispatches": 3},
+    )
+
+    assert result["deterministic_failure_breaker"] is True
+    assert result["layer3"]["consecutive_same_signature"] is False
+    assert result["layer3"]["empty_batch_streak"] == {
+        "detected": True,
+        "count": 3,
+        "min_dispatches": 3,
+        "task_id_batches": [["T8"], ["T5"], ["T3"]],
+    }
+
+
 def test_layer3_breaker_does_not_trip_on_empty_signature() -> None:
     empty_sig = {field: "" for field in repair_recurrence.PROBLEM_SIGNATURE_FIELDS}
     attempts = [{"attempt_id": 1, "problem_signature": empty_sig}]

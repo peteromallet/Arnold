@@ -92,6 +92,7 @@ _EXECUTE_REQUIREMENTS_TEMPLATE = textwrap.dedent(
     - Do not over-engineer beyond what the plan prescribes — no str() wraps, .get() fallbacks, or try/except guards unless the plan called for them or you found a concrete reason.
     - Do NOT fix unrelated issues you encounter (e.g., dependency compatibility, Python version workarounds). Only change files directly needed for the task. If tests need updating, only update tests that are directly related to your fix.
     - If you cannot build the project from source (e.g., C extension compilation failures), report the build failure explicitly. Do NOT fall back to testing against an installed or cached package — that tests the wrong codebase and produces false positives.
+    {verification_cwd_requirement}
     - If you cannot verify your changes (tests missing or unrunnable), treat this as high risk — re-examine your implementation with extra scrutiny instead of accepting it on faith.
     - If tests fail, read the traceback carefully. Diagnose WHY — don't just retry. Common causes: wrong function/method used, missing import, incorrect type, edge case not handled. Fix the root cause, then re-run.
     - When verifying changes, run the entire test file or module (e.g., `pytest tests/test_foo.py`), not individual test functions. Individual tests miss regressions in the same module.
@@ -286,6 +287,15 @@ def _checkpoint_requirements(
             f"- Best-effort sense-check checkpointing: if `{checkpoint_path}` is writable, then after each sense check acknowledgment read the full file again, update that sense check's `executor_note`, and write the full file back.",
             f"- Always use full read-modify-write updates for `{checkpoint_path}` instead of partial edits. If the sandbox blocks writes, continue execution and rely on the structured output below.",
         ]
+    )
+
+
+def _verification_cwd_requirement(project_dir: Path) -> str:
+    return (
+        "- All terminal verification commands must run from the Project directory "
+        f"(`{project_dir}`) or a descendant. Do not `cd` to `/workspace/arnold`, "
+        "an editable-engine mirror, or any shared engine checkout for tests; those "
+        "paths are outside the session worktree and the sandbox will refuse them."
     )
 
 
@@ -488,6 +498,7 @@ def _execute_prompt(
             checkpoint_path,
             projection_capabilities,
         ),
+        verification_cwd_requirement=_verification_cwd_requirement(project_dir),
         output_shape=_EXECUTE_OUTPUT_SHAPE_EXAMPLE,
     )
 
@@ -727,6 +738,7 @@ def _execute_batch_prompt(
         - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
         - Keep `executor_notes` verification-focused.
         - {_checkpoint_summary_requirement(checkpoint_path, projection_capabilities)}
+        {_verification_cwd_requirement(Path(state["config"]["project_dir"]))}
         - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
         - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
         - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
