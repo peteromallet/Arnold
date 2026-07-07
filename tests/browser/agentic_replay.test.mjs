@@ -5,7 +5,6 @@ import { createBrowserHarness } from "./harness.mjs";
 import {
   PANEL_STATE,
   RENDER_SECTIONS,
-  createAgentEditState,
 } from "../../vibecomfy/comfy_nodes/web/agent_edit_lifecycle.js";
 
 const LS_AGENTIC_REPLAY_ENABLED = "vibecomfy_agentic_replay_enabled";
@@ -103,9 +102,53 @@ function makeReplayScenario(overrides = {}) {
 
 function makePanelState(overrides = {}) {
   return {
-    ...createAgentEditState(),
+    phase: PANEL_STATE.IDLE,
+    sessionId: null,
+    turnId: null,
+    baselineTurnId: null,
+    chatScopeId: null,
+    chatScopeFingerprint: null,
+    candidateScopeId: null,
+    submittingScopeId: null,
+    candidateGraph: null,
+    candidateGraphHash: null,
+    candidateReport: null,
+    serverSubmitGraphHash: null,
+    message: null,
+    failure: null,
+    clarification: null,
+    applyAllowed: false,
+    applyEligibility: null,
+    canvasApplyAllowed: false,
+    queueAllowed: false,
+    auditRef: null,
+    debugPayload: null,
+    inFlightSubmit: false,
+    submitAbortController: null,
+    submitEpoch: null,
+    inFlightApply: false,
+    inFlightRebaseline: false,
+    rebaselinePending: false,
+    rebaselineRecovery: null,
+    lastSubmit: null,
+    lastAppliedChanges: null,
+    lastSubmitFieldChanges: null,
+    changeDetails: null,
     chatMessages: [],
     transcriptMessages: [],
+    responseDetails: {},
+    executionEvents: [],
+    auditArtifacts: [],
+    debugDiagnostics: {},
+    compartmentIndexes: {
+      responseDetailsByTurnId: {},
+      executionEventsByKey: {},
+      auditArtifactsByTurnId: {},
+    },
+    chatRehydrateEpoch: 0,
+    chatRehydrateCommittedEpoch: 0,
+    syntheticAgentMessage: null,
+    deltaOps: null,
     expandedBubbleTurnKeys: {},
     ...overrides,
   };
@@ -189,7 +232,6 @@ test("replay selectors, stage projection, reverse navigation, and clear cleanup 
         currentAgentPanel: () => panel,
         PANEL_STATE,
         RENDER_SECTIONS,
-        createAgentEditState,
       },
       applyReplayOriginalGraph(graph) {
         originalGraphCalls.push(graph);
@@ -236,11 +278,23 @@ test("replay selectors, stage projection, reverse navigation, and clear cleanup 
     assert.equal(panel.state.phase, PANEL_STATE.IDLE, "sent is an idle panel state");
     assert.equal(panel.state.candidateGraph, null, "sent clears stale candidate data");
     assert.equal(panel.state.applyEligibility, null, "sent clears stale apply eligibility");
-    assert.deepEqual(panel.state.responseDetails, {}, "sent clears stale response details");
+    assert.equal(
+      panel.state.responseDetails?.["turn-replay-1"]?.turn?.turnId,
+      "turn-replay-1",
+      "sent projects replay transcript details through the canonical compartment",
+    );
     assert.equal(panel.state.failure, null, "sent clears stale failures");
     assert.equal(panel.state.changeDetails, null, "sent clears stale change details");
-    assert.equal(panel.state.lastAppliedChanges, null, "sent clears stale applied-change state");
-    assert.deepEqual(panel.state.expandedBubbleTurnKeys, {}, "sent resets replay-owned detail expansion");
+    assert.equal(
+      panel.state.lastAppliedChanges?.summary,
+      "stale applied changes",
+      "sent preserves baseline applied-change metadata until replay exit",
+    );
+    assert.deepEqual(
+      panel.state.expandedBubbleTurnKeys,
+      { "turn:stale": true },
+      "sent preserves thread-owned expansion state instead of mutating it",
+    );
     assert.equal(panel.state.__demoMode, undefined, "sent is not in demo mode");
     assert.equal(panel.state._replay?.stage, "sent", "sent records the active replay stage");
 
@@ -250,9 +304,6 @@ test("replay selectors, stage projection, reverse navigation, and clear cleanup 
     assert.equal(panel.state.phase, PANEL_STATE.SUBMITTING, "thinking uses submitting phase");
     assert.equal(panel.state.chatMessages.length, 2, "thinking adds a pending agent bubble");
     assert.equal(panel.state.chatMessages[1].pending_response, true, "thinking agent bubble is pending");
-    assert.equal(panel.state.chatMessages[1].executor_pending, true, "thinking agent bubble marks executor pending");
-    assert.equal(panel.state.pending_response, true, "thinking state exposes pending response");
-    assert.equal(panel.state.executor_pending, true, "thinking state exposes executor pending");
     assert.equal(panel.state.candidateGraph, null, "thinking does not leak candidate state");
     assert.equal(panel.state.applyEligibility, null, "thinking clears apply eligibility");
     assert.equal(panel.state.__demoMode, undefined, "thinking remains outside demo mode");
@@ -265,7 +316,11 @@ test("replay selectors, stage projection, reverse navigation, and clear cleanup 
     assert.deepEqual(panel.state.candidateGraph, makeReplayScenario().body.candidate_graph);
     assert.equal(panel.state.applyAllowed, true, "ready-to-apply exposes apply action");
     assert.equal(panel.state.canvasApplyAllowed, true, "ready-to-apply exposes canvas apply");
-    assert.deepEqual(panel.state.responseDetails, makeReplayScenario().body.response_details);
+    assert.equal(
+      panel.state.responseDetails?.["turn-replay-1"]?.turn?.turnId,
+      "turn-replay-1",
+      "ready-to-apply keeps canonical response details for the active turn",
+    );
     assert.equal(panel.state.changeDetails?.summary, "Inserted a reroute node.");
     assert.equal(panel.state.__demoMode, true, "candidate-visible stages enter demo mode");
     assert.equal(panel.state._replay?.stage, "ready_to_apply", "ready-to-apply updates replay bookkeeping");
@@ -298,14 +353,26 @@ test("replay selectors, stage projection, reverse navigation, and clear cleanup 
     assert.equal(controls.stageLabel.textContent, "", "clear removes the stage label");
     assert.equal(controls.prevButton.disabled, true, "clear disables reverse navigation");
     assert.equal(controls.nextButton.disabled, true, "clear disables forward navigation");
-    assert.deepEqual(panel.state.chatMessages, [], "clear removes replay thread messages");
-    assert.deepEqual(panel.state.transcriptMessages, [], "clear removes replay transcript messages");
-    assert.equal(panel.state.phase, PANEL_STATE.IDLE, "clear resets the panel phase");
-    assert.equal(panel.state.candidateGraph, null, "clear removes replay candidate graph");
-    assert.equal(panel.state.applyEligibility, null, "clear removes replay eligibility state");
-    assert.equal(panel.state.__demoMode, undefined, "clear removes demo mode");
+    assert.deepEqual(
+      panel.state.chatMessages,
+      [{ role: "agent", text: "stale message" }],
+      "clear restores the pre-replay thread messages",
+    );
+    assert.deepEqual(
+      panel.state.transcriptMessages,
+      [{ role: "agent", text: "stale message" }],
+      "clear restores transcript through rehydrate projection",
+    );
+    assert.equal(panel.state.phase, PANEL_STATE.AWAITING_REVIEW, "clear restores the panel phase");
+    assert.deepEqual(panel.state.candidateGraph, { nodes: [{ id: 99 }], links: [] }, "clear restores candidate graph");
+    assert.deepEqual(
+      panel.state.applyEligibility,
+      { applyable: false, reason: "stale" },
+      "clear restores replay baseline eligibility state",
+    );
+    assert.equal(panel.state.__demoMode, true, "clear restores demo metadata from baseline");
     assert.equal(panel.state._replay, undefined, "clear removes replay bookkeeping");
-    assert.equal(panel.state.lastAppliedChanges, null, "clear removes applied replay metadata");
+    assert.equal(panel.state.changeDetails?.summary, "stale change details", "clear restores baseline change details");
     assert.equal(
       scheduledRenders.at(-1)?.reason,
       "agentic-replay-clear",
@@ -316,9 +383,10 @@ test("replay selectors, stage projection, reverse navigation, and clear cleanup 
         ({ activePanel, sections }) =>
           activePanel === panel
           && sections.includes(RENDER_SECTIONS.THREAD)
-          && sections.includes(RENDER_SECTIONS.CANDIDATE),
+          && sections.includes(RENDER_SECTIONS.META)
+          && !sections.includes(RENDER_SECTIONS.CANDIDATE),
       ),
-      "replay renders stay scoped to the active panel thread/candidate sections",
+      "replay renders stay scoped to valid active-panel sections",
     );
   } finally {
     await harness.dispose();
@@ -351,7 +419,6 @@ test("replay navigation honors pruned backend stage lists", async () => {
         currentAgentPanel: () => panel,
         PANEL_STATE,
         RENDER_SECTIONS,
-        createAgentEditState,
       },
       applyReplayOriginalGraph() {},
       applyReplayGraphCandidate() {},
