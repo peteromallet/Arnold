@@ -1858,6 +1858,63 @@ def flow() -> None:
     )
 
 
+def test_source_compiler_m3_binds_route_metadata_to_parallel_map_reducer_target() -> None:
+    source = """
+from arnold.pipeline import parallel_map
+from arnold.workflow.authoring import workflow
+from project.workflow_components import decide, execute, execute_child, finalize
+
+@workflow(id="parallel-map-route-binding")
+def flow() -> None:
+    decision = decide(id="decide")
+    if decision == "approve":
+        finalize_payload = finalize(id="approve_finalize")
+        parallel_map(
+            id="approve_execute_batches",
+            items="project.items",
+            step=execute_child,
+            reducer=execute,
+            path_template="execute/{index}",
+        )
+    else:
+        return None
+"""
+    resolver = _Resolver(
+        {
+            "project.workflow_components:decide": _step_component("decide"),
+            "project.workflow_components:execute": _step_component("execute"),
+            "project.workflow_components:execute_child": authoring.ComponentContract(
+                id="execute_child",
+                kind=authoring.ComponentKind.WORKFLOW,
+                provenance=authoring.ComponentProvenance(
+                    module="project.workflow_components",
+                    qualname="execute_child",
+                    export_name="execute_child",
+                ),
+            ),
+            "project.workflow_components:finalize": _step_component(
+                "finalize",
+                route_bindings=(
+                    {"id": "finalize:execute", "label": "default", "target_ref": "execute"},
+                ),
+            ),
+        }
+    )
+
+    lowered = workflow.lower_workflow_source(
+        source,
+        source_path="parallel_map_route_binding.py",
+        resolver=resolver,
+    )
+
+    assert (
+        "finalize:execute",
+        "approve_finalize",
+        "approve_execute_batches",
+        "default",
+    ) in tuple((route.id, route.source, route.target, route.label) for route in lowered.routes)
+
+
 @pytest.mark.parametrize(
     ("condition", "expected_message"),
     [

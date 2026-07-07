@@ -4398,6 +4398,7 @@ def _bind_route_metadata(
     diagnostics: list[AuthoringDiagnostic],
 ) -> tuple[Route, ...]:
     step_calls = _step_calls_by_id(block)
+    source_statements = _source_statements_by_id(block)
     routes_by_visible_key: dict[tuple[str, str, str], list[Route]] = {}
     routes_by_source_and_label: dict[tuple[str, str], list[Route]] = {}
     for route in routes:
@@ -4456,9 +4457,9 @@ def _bind_route_metadata(
                 structural_matches = [
                     route
                     for route in label_matches
-                    if (
-                        (target_call := step_calls.get(route.target)) is not None
-                        and target_call.component.id.removeprefix("megaplan:") == target_ref
+                    if _source_statement_matches_target_ref(
+                        source_statements.get(route.target),
+                        target_ref,
                     )
                 ]
                 if len(structural_matches) == 1:
@@ -4515,6 +4516,51 @@ def _step_calls_by_id(block: ParsedSourceBlock) -> dict[str, ParsedStepCall]:
         elif isinstance(statement, ParsedLoopBlock):
             step_calls.update(_step_calls_by_id(statement.body))
     return step_calls
+
+
+def _source_statements_by_id(block: ParsedSourceBlock) -> dict[str, ParsedSourceStatement]:
+    statements: dict[str, ParsedSourceStatement] = {}
+    for statement in block.statements:
+        if isinstance(
+            statement,
+            (
+                ParsedStepCall,
+                ParsedSubflowCall,
+                ParsedNestedWorkflowCall,
+                ParsedParallelMapCall,
+            ),
+        ):
+            statements[statement.id] = statement
+        elif isinstance(statement, ParsedBranchBlock):
+            for arm in statement.arms:
+                statements.update(_source_statements_by_id(arm.body))
+        elif isinstance(statement, ParsedLoopBlock):
+            statements.update(_source_statements_by_id(statement.body))
+    return statements
+
+
+def _source_statement_matches_target_ref(
+    statement: ParsedSourceStatement | None,
+    target_ref: str,
+) -> bool:
+    if isinstance(statement, ParsedStepCall):
+        return statement.component.id.removeprefix("megaplan:") == target_ref
+    if isinstance(statement, ParsedSubflowCall):
+        return statement.component.id.removeprefix("megaplan:") == target_ref
+    if isinstance(statement, ParsedNestedWorkflowCall):
+        return statement.component.id.removeprefix("megaplan:") == target_ref
+    if isinstance(statement, ParsedParallelMapCall):
+        return _component_ref_matches_target_ref(statement.reducer_ref, target_ref)
+    return False
+
+
+def _component_ref_matches_target_ref(component_ref: str, target_ref: str) -> bool:
+    export_name = component_ref.rsplit(":", 1)[-1]
+    candidates = {export_name.lower()}
+    for prefix in ("SOURCE_", "AUTHORING_"):
+        if export_name.startswith(prefix):
+            candidates.add(export_name.removeprefix(prefix).lower())
+    return target_ref.lower() in candidates
 
 
 def _route_metadata_diagnostic(step: ParsedStepCall, message: str) -> AuthoringDiagnostic:
