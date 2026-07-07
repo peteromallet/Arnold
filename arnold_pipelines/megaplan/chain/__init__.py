@@ -2741,6 +2741,43 @@ def _ensure_published_claimed_changes_for_pr_progression(
     )
 
 
+def _finalize_task_statuses_terminal_for_blocked_execute(plan_dir: Path) -> bool:
+    finalize_path = plan_dir / "finalize.json"
+    try:
+        finalize = json.loads(finalize_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(finalize, dict):
+        return False
+    tasks = finalize.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        return False
+
+    saw_completed_work = False
+    terminal_statuses = {
+        "done",
+        "completed",
+        "complete",
+        "passed",
+        "success",
+        "ok",
+        "skipped",
+        "waived",
+        "not_applicable",
+    }
+    for task in tasks:
+        if not isinstance(task, dict):
+            return False
+        status = str(task.get("status") or "").strip().casefold()
+        if status not in terminal_statuses:
+            return False
+        if task.get("reviewer_verdict") == "deferred_baseline_unavailable":
+            continue
+        if status in {"done", "completed", "complete", "passed", "success", "ok"}:
+            saw_completed_work = True
+    return saw_completed_work
+
+
 def _recover_stale_merged_pr_for_unfinished_plan(
     root: Path,
     spec_path: Path,
@@ -2777,8 +2814,37 @@ def _recover_stale_merged_pr_for_unfinished_plan(
                 all_done, _reason = _latest_execution_batch_all_tasks_done(plan_dir)
                 if all_done:
                     canonical_state = STATE_EXECUTED
+                elif _finalize_task_statuses_terminal_for_blocked_execute(plan_dir):
+                    canonical_state = STATE_DONE
+                    _mark_plan_completed_by_chain(
+                        root,
+                        plan_name,
+                        milestone_label=milestone.label,
+                        completion_reason=(
+                            "merged PR milestone completed despite internal "
+                            "failed/no_next_step after blocked execute; finalize "
+                            "tasks were terminal and the baseline checkpoint was deferred"
+                        ),
+                        writer=writer,
+                    )
     if current_state == STATE_DONE:
         return None, f"plan {plan_name} is already {STATE_DONE!r}"
+    if canonical_state == STATE_DONE:
+        state.last_state = STATE_DONE
+        state.metadata["merged_pr_blocked_execute_completion"] = {
+            "recovered_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "milestone": milestone.label,
+            "plan": plan_name,
+            "pr_number": state.pr_number,
+            "plan_current_state": current_state,
+            "canonical_plan_current_state": canonical_state,
+        }
+        chain_spec.save_chain_state(spec_path, state)
+        return (
+            state,
+            f"accepted merged PR #{state.pr_number} for {plan_name}; "
+            "blocked execute had terminal finalize task statuses",
+        )
     if not isinstance(canonical_state, str) or not canonical_state:
         return None, f"plan {plan_name} has no usable current_state for stale merged PR recovery"
     if canonical_state not in {STATE_PREPPED, STATE_FINALIZED, STATE_EXECUTED}:
