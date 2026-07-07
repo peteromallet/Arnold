@@ -418,6 +418,8 @@ def project_repair_custody(
     """Project plan, queue, and repair-data artifacts into one custody view."""
 
     from arnold_pipelines.megaplan.cloud import repair_requests
+    from arnold_pipelines.megaplan.cloud.feature_flags import resolver_observe_enabled
+    from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
 
     plan_payload = _as_mapping(plan_state)
     target_payload = _as_mapping(current_target)
@@ -520,7 +522,7 @@ def project_repair_custody(
         else:
             bucket = CUSTODY_BUCKET_BROKEN_SUPERFIXER
 
-    return {
+    projection = {
         "blocker_id": blocker_id or "",
         "blocker_fingerprint": fingerprint,
         "custody_bucket": bucket,
@@ -535,6 +537,18 @@ def project_repair_custody(
         "plan_state": dict(plan_payload),
         "current_target": dict(target_payload),
     }
+
+    if resolver_observe_enabled() and target_payload:
+        canonical = resolve_run_state(target_payload)
+        projection["canonical_state"] = canonical.canonical_state.name
+        projection["canonical_reason"] = canonical.reason
+        projection["canonical_human_required"] = canonical.human_required
+        projection["canonical_human_gate"] = (
+            canonical.human_gate.name if canonical.human_gate is not None else None
+        )
+        projection["canonical_resolver"] = canonical.to_dict()
+
+    return projection
 
 
 def classify_repair_dispatch(
@@ -584,6 +598,82 @@ def classify_repair_dispatch(
     ]
 
     rationale: list[str] = []
+
+    if target_payload:
+        from arnold_pipelines.megaplan.cloud.feature_flags import resolver_enforcement_enabled
+        from arnold_pipelines.megaplan.run_state.model import CanonicalState
+        from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
+
+        if resolver_enforcement_enabled():
+            canonical = resolve_run_state(target_payload)
+            if canonical.canonical_state is CanonicalState.HUMAN_ACTION_REQUIRED:
+                rationale.append("resolver enforcement: typed human-action-required gate")
+                return RepairDispatchDecision(
+                    decision=DISPATCH_DECISION_HUMAN_REQUIRED,
+                    dispatch_intent=DISPATCH_INTENT_HUMAN_REQUIRED,
+                    rationale=tuple(rationale),
+                    blocker_id=blocker_id,
+                    request_id=request_id,
+                    custody_bucket=custody_bucket,
+                    current_state=current_state,
+                    retry_strategy=normalized_retry_strategy,
+                    failure_kind=failure_kind,
+                )
+            if canonical.canonical_state is CanonicalState.BROKEN_STATE_MACHINE:
+                rationale.append("resolver enforcement: broken-state-machine escalation")
+                return RepairDispatchDecision(
+                    decision=DISPATCH_DECISION_BROKEN_SUPERFIXER,
+                    dispatch_intent=DISPATCH_INTENT_BROKEN_SUPERFIXER,
+                    rationale=tuple(rationale),
+                    blocker_id=blocker_id,
+                    request_id=request_id,
+                    custody_bucket=custody_bucket,
+                    current_state=current_state,
+                    retry_strategy=normalized_retry_strategy,
+                    failure_kind=failure_kind,
+                )
+            if canonical.canonical_state in {
+                CanonicalState.REAL_IMPLEMENTATION_BLOCK,
+                CanonicalState.RETRYABLE_EXECUTION_BLOCK,
+            }:
+                if _has_active_repair(lock_evidence=lock_evidence, process_evidence=process_evidence, custody=custody):
+                    rationale.append("active repair ownership or runtime evidence already exists")
+                    return RepairDispatchDecision(
+                        decision=DISPATCH_DECISION_REPAIRING,
+                        dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+                        rationale=tuple(rationale),
+                        blocker_id=blocker_id,
+                        request_id=request_id,
+                        custody_bucket=custody_bucket,
+                        current_state=current_state,
+                        retry_strategy=normalized_retry_strategy,
+                        failure_kind=failure_kind,
+                    )
+                if request_id:
+                    rationale.append("resolver enforcement: canonical machine-actionable block")
+                    return RepairDispatchDecision(
+                        decision=DISPATCH_DECISION_L1,
+                        dispatch_intent=DISPATCH_INTENT_L1,
+                        rationale=tuple(rationale),
+                        blocker_id=blocker_id,
+                        request_id=request_id,
+                        custody_bucket=custody_bucket,
+                        current_state=current_state,
+                        retry_strategy=normalized_retry_strategy,
+                        failure_kind=failure_kind,
+                    )
+                rationale.append("resolver enforcement: canonical machine-actionable block without active request")
+                return RepairDispatchDecision(
+                    decision=DISPATCH_DECISION_NO_ACTION,
+                    dispatch_intent=DISPATCH_INTENT_QUEUE_ONLY,
+                    rationale=tuple(rationale),
+                    blocker_id=blocker_id,
+                    request_id="",
+                    custody_bucket=custody_bucket,
+                    current_state=current_state,
+                    retry_strategy=normalized_retry_strategy,
+                    failure_kind=failure_kind,
+                )
 
     if _is_terminal_dispatch_state(current_state, terminal_outcomes):
         rationale.append("plan or repair evidence is terminal")

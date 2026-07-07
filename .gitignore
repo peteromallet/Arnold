@@ -91,3 +91,6 @@ supabase/.temp/
 
 # Ephemeral agentic run scaffolding
 .megaplan-agentic/
+
+# Runtime mirror; not source
+.megaplan/runtime/editable-engine
