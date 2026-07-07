@@ -215,7 +215,7 @@ def _metadata_for_step(step_id: str) -> dict[str, Any]:
     for key in ("policy_refs", "override_actions"):
         value = component.metadata.get(key)
         if value:
-            metadata[key] = value
+            metadata[key] = list(value) if isinstance(value, tuple) else value
     return metadata
 
 
@@ -329,13 +329,13 @@ def build_pipeline(
         metadata={
             "product": "megaplan",
             "max_critique_iterations": max_critique_iterations,
-            "policy_refs": (
+            "policy_refs": [
                 DEFAULT_POLICY.id,
                 MODEL_ROUTING_POLICY.id,
                 ROBUSTNESS_POLICY.id,
                 ARTIFACT_CONTRACT_POLICY.id,
                 SUSPENSION_POLICY.id,
-            ),
+            ],
         },
     )
 
