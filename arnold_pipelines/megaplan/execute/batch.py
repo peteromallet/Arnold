@@ -945,6 +945,28 @@ def _blocked_task_reason(task_ids: Iterable[str]) -> str | None:
     )
 
 
+def _is_harness_generated_block(task: dict[str, Any]) -> bool:
+    if task.get("status") != "blocked":
+        return False
+    notes = task.get("executor_notes")
+    return isinstance(notes, str) and "[harness]" in notes
+
+
+def _prerequisite_blocked_task_ids(
+    tasks: Iterable[dict[str, Any]],
+    *,
+    active_task_ids: set[str],
+) -> set[str]:
+    return {
+        task["id"]
+        for task in tasks
+        if task.get("status") == "blocked"
+        and not _is_harness_generated_block(task)
+        and isinstance(task.get("id"), str)
+        and task["id"] in active_task_ids
+    }
+
+
 def baseline_unavailable_checkpoint_ids(
     finalize_data: dict[str, Any],
     candidate_ids: Iterable[str],
@@ -3319,7 +3341,10 @@ def handle_execute_auto_loop(
         finalize_data, active_blocked_task_ids
     )
     active_blocked_task_ids -= baseline_unavailable_blocked_ids
-    prereq_blocked_task_ids = set(active_blocked_task_ids)
+    prereq_blocked_task_ids = _prerequisite_blocked_task_ids(
+        finalize_data.get("tasks", []),
+        active_task_ids=active_task_ids,
+    )
     blocked_task_reason = _blocked_task_reason(active_blocked_task_ids)
     if blocked_task_reason:
         blocking_reasons.append(blocked_task_reason)
