@@ -1,0 +1,62 @@
+{
+  "generated_at": "2026-07-07T01:36:24.081664+00:00",
+  "incident_count": 3,
+  "incidents": [
+    {
+      "incident_id": "inc-demo-session",
+      "path": ".megaplan/incident-ledger/summaries/incidents/inc-demo-session.json"
+    },
+    {
+      "incident_id": "inc-superfixer-alive-but-failed-recovery",
+      "path": ".megaplan/incident-ledger/summaries/incidents/inc-superfixer-alive-but-failed-recovery.json"
+    },
+    {
+      "incident_id": "incident-42",
+      "path": ".megaplan/incident-ledger/summaries/incidents/incident-42.json"
+    }
+  ],
+  "problem_count": 10,
+  "problems": [
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-67a765759422.json",
+      "problem_id": "problem-67a765759422"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-68a048c70af7.json",
+      "problem_id": "problem-68a048c70af7"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-6e386e382223.json",
+      "problem_id": "problem-6e386e382223"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-6eaee57d9632.json",
+      "problem_id": "problem-6eaee57d9632"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-8f475cf8e677.json",
+      "problem_id": "problem-8f475cf8e677"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-9e338df241c5.json",
+      "problem_id": "problem-9e338df241c5"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-b3c4cc0b2599.json",
+      "problem_id": "problem-b3c4cc0b2599"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-bd43205325d0.json",
+      "problem_id": "problem-bd43205325d0"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-bef9405c197d.json",
+      "problem_id": "problem-bef9405c197d"
+    },
+    {
+      "path": ".megaplan/incident-ledger/summaries/problems/problem-e20c45ae0eb0.json",
+      "problem_id": "problem-e20c45ae0eb0"
+    }
+  ],
+  "schema_version": 1
+}

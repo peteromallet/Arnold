@@ -1,0 +1,196 @@
+{
+  "deadline_ts": null,
+  "evidence_ref_count": 56,
+  "evidence_refs": [
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    }
+  ],
+  "generated_at": "2026-07-07T01:36:24.077971+00:00",
+  "incident_id": "incident-42",
+  "kind": "incident_summary",
+  "latest_actor": "immediate_repair",
+  "next_expected_event": "repair_attempt.verification",
+  "outcome": "attempted",
+  "placeholders": {
+    "install_freshness": "unknown",
+    "recurrence": "repeated_attempts_without_new_evidence",
+    "shipped_fix": "unknown"
+  },
+  "problem_ids": [
+    "problem-68a048c70af7"
+  ],
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:c96cf6179e6f342d635416e16508e7b6b6e5a4962a84c85614b0e279d828bf8c",
+    "last_seq": 196,
+    "projection": "incidents"
+  },
+  "state": "repair_attempt",
+  "summary_text": "incident-42: repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project"
+}
