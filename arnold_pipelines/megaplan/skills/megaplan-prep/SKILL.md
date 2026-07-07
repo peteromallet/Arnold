@@ -1,1 +1,1 @@
-/workspace/canonical-run-state-control-plane/arnold/.megaplan/runtime/editable-engine/arnold_pipelines/megaplan/data/prep_skill.md
+/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/runtime/editable-engine/arnold_pipelines/megaplan/data/prep_skill.md
