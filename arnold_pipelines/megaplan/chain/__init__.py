@@ -5676,6 +5676,42 @@ def run_chain(
                     root, state.pr_number, writer=writer
                 )
                 chain_spec.save_chain_state(spec_path, state)
+                post_enable_pr_state = _pr_state(
+                    root, state.pr_number, writer=writer
+                )
+                state.pr_state = post_enable_pr_state
+                if post_enable_pr_state == "closed":
+                    chain_spec.save_chain_state(spec_path, state)
+                    log(
+                        f"PR #{state.pr_number} closed during milestone completion; "
+                        "stopping chain"
+                    )
+                    return _stop_for_closed_pr(
+                        spec_path=spec_path,
+                        state=state,
+                        events=events,
+                        spec=spec,
+                        milestone_label=milestone.label,
+                        pr_number=state.pr_number,
+                    )
+                if post_enable_pr_state != "merged":
+                    state.last_state = STATE_AWAITING_PR_MERGE
+                    chain_spec.save_chain_state(spec_path, state)
+                    log(
+                        f"PR #{state.pr_number} auto-merge enabled; "
+                        f"state={post_enable_pr_state}; awaiting merge"
+                    )
+                    return _result(
+                        STATE_AWAITING_PR_MERGE,
+                        state,
+                        events,
+                        spec=spec,
+                        reason=(
+                            f"milestone {milestone.label} PR "
+                            f"#{state.pr_number} is {post_enable_pr_state}"
+                        ),
+                    )
+                chain_spec.save_chain_state(spec_path, state)
         # Completion-verification contract (SHADOW-MODE, fail-open): compute +
         # persist + log a milestone-level verdict. NEVER alters the append,
         # NEVER blocks the chain, NEVER runs the suite. See
