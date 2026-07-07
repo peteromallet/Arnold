@@ -199,6 +199,11 @@ class NormalizedEvidence:
         """True when stale_evidence includes ``stale_chain_state_after_terminal_plan``."""
         return "stale_chain_state_after_terminal_plan" in self.stale_kinds
 
+    @property
+    def is_missing_workspace(self) -> bool:
+        """True when stale_evidence includes ``missing_workspace``."""
+        return "missing_workspace" in self.stale_kinds
+
     # ------------------------------------------------------------------
     # latest failure
     # ------------------------------------------------------------------
@@ -366,6 +371,7 @@ class NormalizedEvidence:
                 "is_stale_needs_human": self.is_stale_needs_human,
                 "is_stale_marker_plan_ref": self.is_stale_marker_plan_ref,
                 "is_stale_chain_state": self.is_stale_chain_state,
+                "is_missing_workspace": self.is_missing_workspace,
             },
             "latest_failure": {
                 "failure_kind": self.latest_failure_kind,

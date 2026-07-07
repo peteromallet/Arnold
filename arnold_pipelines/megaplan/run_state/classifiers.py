@@ -264,6 +264,7 @@ class ResolverContext:
     has_needs_human_label: bool
     # broken-state signals
     escalation_label: str
+    has_missing_workspace: bool
     broken_repeat_count: int
     # progress signals
     changed_file_count: "int | None"
@@ -341,6 +342,7 @@ class ResolverContext:
             is_retryable_execution=is_retryable_execution,
             has_needs_human_label=norm.has_needs_human,
             escalation_label=norm.escalation_label,
+            has_missing_workspace=norm.is_missing_workspace,
             broken_repeat_count=_detect_broken_repeat(evidence),
             changed_file_count=norm.changed_file_count,
             has_active_repair=norm.has_active_repair,
@@ -360,7 +362,7 @@ class ResolverContext:
 
 
 def classify_broken_state_machine(ctx: ResolverContext) -> "CanonicalRunState | None":
-    """Explicit BROKEN escalation, or the same blocker fingerprint repeated.
+    """Explicit BROKEN escalation, missing workspace, or repeated blocker fingerprint.
 
     Per the North Star, BROKEN is a watchdog-side escalation *marker*: a live
     worker or an authoritative completion always overrides it, because both the
@@ -369,8 +371,9 @@ def classify_broken_state_machine(ctx: ResolverContext) -> "CanonicalRunState | 
     terminal-success.
     """
     explicit = ctx.escalation_label.upper() == "BROKEN_STATE_MACHINE"
+    missing_workspace = ctx.has_missing_workspace
     repeated = ctx.broken_repeat_count >= _BROKEN_REPEAT_THRESHOLD
-    if not (explicit or repeated):
+    if not (explicit or missing_workspace or repeated):
         return None
     # Live beats stale: a live worker is always given the chance to clear the
     # escalation, regardless of whether it was explicit or fingerprint-based.
@@ -380,27 +383,44 @@ def classify_broken_state_machine(ctx: ResolverContext) -> "CanonicalRunState | 
     if ctx.is_terminal_success:
         return None
     stale = ctx.stale_source_names
+    if explicit:
+        confidence = "high"
+        source_of_truth = ("needs_human", "repair_progress")
+        reason = (
+            "Explicit BROKEN_STATE_MACHINE escalation label recorded by the "
+            "needs-human sidecar and the worker is neither live nor complete."
+        )
+    elif missing_workspace:
+        confidence = "high"
+        source_of_truth = ("stale_evidence",)
+        reason = (
+            "Structured missing_workspace evidence indicates the custody "
+            "workspace is gone and the worker is neither live nor complete."
+        )
+    else:
+        confidence = "medium"
+        source_of_truth = ("retry_fingerprints", "repair_progress")
+        reason = (
+            f"Same blocker fingerprint repeated {ctx.broken_repeat_count}x "
+            "without progress and the worker is neither live nor complete."
+        )
+    evidence = ctx.evidence_with_fingerprint() + (
+        _evi("broken_repeat_count", "", ctx.broken_repeat_count),
+    )
+    if missing_workspace:
+        evidence = evidence + (_evi("missing_workspace", "", "present"),)
     return CanonicalRunState(
         canonical_state=CanonicalState.BROKEN_STATE_MACHINE,
-        confidence="high" if explicit else "medium",
-        source_of_truth=("needs_human", "repair_progress")
-        if explicit
-        else ("retry_fingerprints", "repair_progress"),
+        confidence=confidence,
+        source_of_truth=source_of_truth,
         stale_sources=stale,
         human_required=False,
         human_gate=None,
         repairable=False,
         running=False,
         next_action="escalate_broken_state_machine",
-        reason=(
-            "Explicit BROKEN_STATE_MACHINE escalation label recorded by the "
-            "needs-human sidecar and the worker is neither live nor complete."
-            if explicit
-            else f"Same blocker fingerprint repeated {ctx.broken_repeat_count}x "
-            "without progress and the worker is neither live nor complete."
-        ),
-        evidence=ctx.evidence_with_fingerprint()
-        + (_evi("broken_repeat_count", "", ctx.broken_repeat_count),),
+        reason=reason,
+        evidence=evidence,
     )
 
 
