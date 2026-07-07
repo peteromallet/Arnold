@@ -104,3 +104,299 @@ Installing collected packages: arnold
 Successfully installed arnold-0.23.0
 WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
 [megaplan-refresh] done
+  [tool] (≧◡≦) ⚡ running 4 tools concurrently
+  [done] ⚡ 4/4 tools completed in 4.9s total (1.5s)
+  [tool] (◕‿◕✿) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+Tool read_file returned error (0.81s): {"content": "", "total_lines": 0, "file_size": 0, "truncated": false, "is_binary": false, "is_image": false, "error": "File not found: /workspace/canonical-run-state-control-plane/arnold/arnold_pipeli
+  [tool] (◕ᴗ◕✿) ⚡ running 4 tools concurrently
+  [done] ⚡ 4/4 tools completed in 6.8s total (2.0s)
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 3.2s total (2.0s)
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 3.1s total (2.0s)
+Tool search_files returned error (0.41s): {"total_count": 0, "error": "Path not found: /workspace/canonical-run-state-control-plane/arnold/docs/superfixer. Verify the path exists (use 'terminal' to check)."}
+  [tool] ヾ(＾∇＾) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.1s total (2.0s)
+  [tool] (✿◠‿◠) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.9s total (2.0s)
+  [tool] (◕ᴗ◕✿) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.1s total (2.0s)
+Tool search_files returned error (0.41s): {"total_count": 0, "error": "Path not found: /workspace/canonical-run-state-control-plane/arnold/.tmp. Verify the path exists (use 'terminal' to check)."}
+  [tool] ♪(´ε` ) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.1s total (2.0s)
+  [tool] ( ˘▽˘)っ 📖 read_file
+  [done] ┊ 📖 read        0.0s [error] (0.0s)
+Tool read_file returned error (0.00s): {"error": "read_file requires a non-empty path"}
+  [tool] ヾ(＾∇＾) 📖 read_file
+  [done] ┊ 📖 read        0.0s [error] (0.0s)
+Tool read_file returned error (0.00s): {"error": "read_file requires a non-empty path"}
+  [tool] (｡◕‿◕｡) 📖 read_file
+  [done] ┊ 📖 read        0.0s [error] (0.0s)
+Tool read_file returned error (0.00s): {"error": "read_file requires a non-empty path"}
+  [tool] (★ω★) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 5.0s total (2.0s)
+  [tool] (｡◕‿◕｡) 📖 /workspace/canonical-run-st...
+  [done] ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  1.7s (2.0s)
+  [tool] (★ω★) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.1s total (2.0s)
+  [tool] (◕‿◕✿) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.5s total (2.0s)
+  [tool] ٩(◕‿◕｡)۶ 📖 /workspace/canonical-run-st...
+  [done] ┊ 📖 read      ...egaplan/cloud/repair_contract.py  2.0s (2.5s)
+  [tool] (≧◡≦) 🔎 _is_known_repairable_shape
+  [done] ┊ 🔎 grep      _is_known_repairable_shape  0.8s (1.0s)
+  [tool] ( ˘▽˘)っ 📖 /workspace/canonical-run-st...
+  [done] ┊ 📖 read      ...egaplan/cloud/repair_contract.py  1.6s (2.0s)
+  [tool] (★ω★) 🔎 launch_chain_tick|launch_pl...
+  [done] ┊ 🔎 grep      launch_chain_tick|launch_plan_ti...  0.8s (1.0s)
+[chain] reconciled cursor index: -1 -> 0 from completed milestones
+[chain] milestone m1-canonical-run-state-control-plane starting
+[chain] git ls-remote --exit-code --heads origin main -> rc=0
+[chain] git fetch origin main -> rc=0
+[chain] git rev-parse --verify refs/remotes/origin/main^{commit} -> rc=0
+[chain] git symbolic-ref --short HEAD -> rc=0
+[chain] git pull --ff-only origin main -> rc=0
+[chain] git ls-remote --heads origin canonical-run-state-control-plane -> rc=2
+[chain] cleaning worktree for automated branch checkout
+[chain] git reset --hard HEAD -> rc=0
+[chain] git clean -fd -e .megaplan -> rc=0
+[chain] git clean -fd .megaplan/schemas -> rc=0
+[chain] git ls-remote --exit-code --heads origin main -> rc=0
+[chain] git fetch origin main -> rc=0
+[chain] git rev-parse --verify refs/remotes/origin/main^{commit} -> rc=0
+[chain] forking canonical-run-state-control-plane from origin/main (authoritative merged history)
+[chain] git checkout -B canonical-run-state-control-plane origin/main -> rc=0
+[chain] git push --no-verify -u origin canonical-run-state-control-plane -> rc=0
+[chain] initializing plan from /workspace/canonical-run-state-control-plane/arnold/.megaplan/initiatives/canonical-run-state-control-plane/briefs/m1-canonical-run-state-control-plane.md
+[chain] launched plan=canonical-resolver-and-20260707-0108
+[chain] git add -A -> rc=0
+[chain] git reset -- .megaplan/cloud-chain-canonical-run-state-control-plane.log .megaplan/initiatives/canonical-run-state-control-plane/NORTHSTAR.md .megaplan/initiatives/canonical-run-state-control-plane/briefs/m1-canonical-run-state-control-plane.md .megaplan/initiatives/canonical-run-state-control-plane/chain.yaml .megaplan/runtime/editable-engine -> rc=0
+[chain] git commit --allow-empty --no-verify -m megaplan: canonical-resolver-and-20260707-0108 init -> rc=0
+[chain] git add -A -> rc=0
+[chain] git commit --no-verify -m megaplan: canonical-resolver-and-20260707-0108 init-cleanup -> rc=0
+[chain] git fetch origin canonical-run-state-control-plane -> rc=0
+[chain] git rebase origin/canonical-run-state-control-plane -> rc=0
+[chain] git push --no-verify origin HEAD:canonical-run-state-control-plane -> rc=0
+[chain] gh pr list --head canonical-run-state-control-plane --state open --json number,state -> rc=0
+[chain] gh pr create --draft --base main --head canonical-run-state-control-plane --title m1-canonical-run-state-control-plane: megaplan milestone --body Automated megaplan chain milestone `m1-canonical-run-state-control-plane`.
+
+Idea file: `.megaplan/initiatives/canonical-run-state-control-plane/briefs/m1-canonical-run-state-control-plane.md`
+ -> rc=0
+[auto canonical-resolver-and-20260707-0108] iter 1 state=initialized next=prep valid_next=['prep', 'prep']
+[auto canonical-resolver-and-20260707-0108] running: megaplan prep --plan canonical-resolver-and-20260707-0108
+  ┊ 🔎 find      *  1.2s
+  ┊ 🔎 find      current_target.py  1.2s
+  ┊ 🔎 find      human_blockers.py  1.2s
+  ┊ 🔎 find      repair_contract.py  1.2s
+  ┊ 📖 read      .../arnold_pipelines/megaplan/cloud  0.8s [error]
+  ┊ 🔎 find      *  0.8s
+  ┊ 📖 read      ...megaplan/cloud/current_target.py  1.7s
+  ┊ 📖 read      ...megaplan/cloud/human_blockers.py  1.7s
+  ┊ 📖 read      ...egaplan/cloud/repair_contract.py  1.7s
+  ┊ 📖 read      .../megaplan/cloud/status_format.py  1.7s
+  ┊ 📖 read      ...megaplan/cloud/current_target.py  1.6s
+  ┊ 🔎 find      status_snapshot.py  0.8s
+  ┊ 🔎 find      *run_state*  0.8s
+  ┊ 📖 read      ...egaplan/cloud/status_snapshot.py  1.8s
+  ┊ 🔎 find      canonical-run-state*  0.8s
+  ┊ 🔎 find      *  0.4s [error]
+  ┊ 🔎 find      canonical-run-state*  0.8s
+  ┊ 📖 read      ...egaplan/cloud/status_snapshot.py  1.6s
+  ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  1.7s
+  ┊ 📖 read      ...nical-run-state-control-plane.md  1.7s
+  ┊ 📖 read      ...loud/wrappers/arnold-repair-loop  1.6s
+  ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  1.7s
+  ┊ 📖 read      ...nical-run-state-control-plane.md  1.8s
+  ┊ 🔎 find      *  0.4s [error]
+  ┊ 📖 read      .../megaplan/cloud/feature_flags.py  1.8s
+  ┊ 📖 read      ...es/megaplan/cloud/meta_repair.py  1.7s
+  ┊ 🔎 find      *  0.8s
+  ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  1.7s
+  ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  1.7s
+  ┊ 📖 read      ...lines/megaplan/chain/__init__.py  1.7s
+  ┊ 📖 read      ...rnold_pipelines/megaplan/auto.py  1.7s
+  ┊ 🔎 grep      main_sweep|sweep_loop|dispatch_s...  0.8s
+  ┊ 📖 read      ...wrappers/arnold-progress-auditor  1.7s
+  ┊ 📖 read      ...loud/wrappers/arnold-repair-loop  1.6s
+  ┊ 📖 read      ...es/megaplan/cloud/meta_repair.py  1.6s
+  ┊ 🔎 grep      classify_repair_dispatch  0.8s
+  [tool] ♪(´ε` ) ⚡ running 3 tools concurrently
+  [tool] (★ω★) ⚡ running 4 tools concurrently
+  [tool] (｡◕‿◕｡) ⚡ running 4 tools concurrently
+  [tool] (✿◠‿◠) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 7.0s total (2.5s)
+  [done] ⚡ 4/4 tools completed in 8.5s total (2.5s)
+  [done] ⚡ 3/3 tools completed in 6.8s total (2.6s)
+  [done] ⚡ 4/4 tools completed in 9.5s total (3.0s)
+  [tool] ( ˘▽˘)っ ⚡ running 3 tools concurrently
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 5 tools concurrently
+  [done] ⚡ 3/3 tools completed in 5.1s total (2.0s)
+  [tool] (◕ᴗ◕✿) ⚡ running 3 tools concurrently
+  [tool] (✿◠‿◠) ⚡ running 4 tools concurrently
+  [done] ⚡ 4/4 tools completed in 7.1s total (2.0s)
+  [done] ⚡ 5/5 tools completed in 10.3s total (2.5s)
+  [done] ⚡ 3/3 tools completed in 6.2s total (2.5s)
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 3 tools concurrently
+  [tool] (◕‿◕✿) ⚡ running 4 tools concurrently
+  [tool] ( ˘▽˘)っ 📖 /workspace/canonical-run-st...
+  [done] ⚡ 3/3 tools completed in 3.6s total (1.5s)
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 2 tools concurrently
+  [done] ┊ 📖 read      ...egaplan/cloud/repair_contract.py  1.5s (1.6s)
+  [done] ⚡ 4/4 tools completed in 5.7s total (2.0s)
+  [done] ⚡ 2/2 tools completed in 3.5s total (2.0s)
+  [tool] ٩(◕‿◕｡)۶ 📖 /workspace/canonical-run-st...
+  [tool] ヾ(＾∇＾) 📖 /workspace/canonical-run-st...
+  [done] ┊ 📖 read      ...egaplan/cloud/repair_contract.py  1.6s (2.0s)
+  [done] ┊ 📖 read      ...egaplan/cloud/repair_contract.py  1.8s (2.0s)
+  [tool] (★ω★) 📖 /workspace/canonical-run-st...
+  [tool] ♪(´ε` ) ⚡ running 4 tools concurrently
+  [done] ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  1.8s (2.0s)
+  [tool] ヾ(＾∇＾) ⚡ running 3 tools concurrently
+  [tool] ٩(◕‿◕｡)۶ 📖 /workspace/canonical-run-st...
+  [tool] (≧◡≦) ⚡ running 2 tools concurrently
+  [done] ⚡ 4/4 tools completed in 6.0s total (2.0s)
+  [done] ⚡ 3/3 tools completed in 3.6s total (1.5s)
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [done] ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  1.6s (2.0s)
+  [tool] (◕ᴗ◕✿) 📖 /workspace/canonical-run-st...
+  [tool] (★ω★) 📖 /workspace/canonical-run-st...
+  [done] ┊ 📖 read      ...megaplan/cloud/current_target.py  2.0s (2.1s)
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 3 tools concurrently
+  [done] ┊ 📖 read      ...egaplan/cloud/repair_contract.py  1.8s (2.0s)
+  [tool] ( ˘▽˘)っ 📖 read_file
+  [done] ┊ 📖 read        0.0s [error] (0.0s)
+Tool read_file returned error (0.00s): {"error": "read_file requires a non-empty path"}
+  [done] ⚡ 3/3 tools completed in 3.2s total (2.0s)
+  [tool] (◕ᴗ◕✿) 🔎 AWF018
+  [tool] (★ω★) ⚡ running 2 tools concurrently
+  [done] ┊ 🔎 grep      AWF018  1.0s (1.5s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 ROUTE_METADATA_MISMATCH
+  [done] ⚡ 2/2 tools completed in 3.3s total (2.0s)
+  [done] ┊ 🔎 grep      ROUTE_METADATA_MISMATCH  0.8s (1.0s)
+  [tool] ( ˘▽˘)っ ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 3.2s total (2.0s)
+  [tool] (｡◕‿◕｡) 📖 /workspace/canonical-run-st...
+  [tool] (★ω★) ⚡ running 2 tools concurrently
+  [done] ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  2.0s (2.5s)
+  [done] ⚡ 2/2 tools completed in 2.0s total (1.5s)
+  [tool] (◕ᴗ◕✿) 📖 /workspace/canonical-run-st...
+  [tool] ♪(´ε` ) ⚡ running 2 tools concurrently
+  [done] ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  1.8s (2.0s)
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [tool] (★ω★) 📖 /workspace/canonical-run-st...
+  [done] ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  1.6s (2.0s)
+  [tool] (◕‿◕✿) ⚡ running 2 tools concurrently
+  [tool] (◕‿◕✿) 📖 /workspace/canonical-run-st...
+  [done] ⚡ 2/2 tools completed in 0.8s total (1.0s)
+  [done] ┊ 📖 read      ...loud/wrappers/arnold-repair-loop  1.6s (2.0s)
+  [tool] (★ω★) ⚡ running 2 tools concurrently
+  [tool] ( ˘▽˘)っ ⚡ running 2 tools concurrently
+  [tool] ♪(´ε` ) 📖 /workspace/canonical-run-st...
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [done] ⚡ 2/2 tools completed in 3.2s total (2.0s)
+  [done] ┊ 📖 read      ...loud/wrappers/arnold-repair-loop  1.9s (2.0s)
+  [tool] (｡◕‿◕｡) 📖 /workspace/canonical-run-st...
+  [done] ┊ 📖 read      ...lines/megaplan/chain/__init__.py  1.8s (2.0s)
+  [tool] (｡◕‿◕｡) 🔎 manual_review\s*=\s*(True|F...
+  [done] ┊ 🔎 grep      manual_review\s*=\s*(True|False)  0.8s (1.0s)
+  [tool] (◕ᴗ◕✿) ⚡ running 3 tools concurrently
+  [tool] ( ˘▽˘)っ ⚡ running 2 tools concurrently
+  [done] ⚡ 3/3 tools completed in 2.0s total (1.0s)
+  [done] ⚡ 2/2 tools completed in 1.0s total (1.0s)
+  [tool] (｡◕‿◕｡) 📖 /workspace/canonical-run-st...
+  [done] ┊ 📖 read      ...megaplan/cloud/current_target.py  1.8s (2.1s)
+  [tool] (★ω★) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.5s total (2.0s)
+  [tool] ٩(◕‿◕｡)۶ 📖 /workspace/canonical-run-st...
+  [done] ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  2.0s (2.5s)
+  [tool] ♪(´ε` ) 📖 /workspace/canonical-run-st...
+  [tool] (◕ᴗ◕✿) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [done] ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  1.8s (2.0s)
+  [tool] (◕ᴗ◕✿) 📖 /workspace/canonical-run-st...
+  ┊ 📖 read      ...megaplan/cloud/current_target.py  2.3s
+  ┊ 📖 read      ...megaplan/cloud/human_blockers.py  2.3s
+  ┊ 📖 read      ...egaplan/cloud/repair_contract.py  2.2s
+  ┊ 📖 read      ...megaplan/cloud/current_target.py  2.0s
+  ┊ 📖 read      ...megaplan/cloud/human_blockers.py  2.1s
+  ┊ 📖 read      ...egaplan/cloud/repair_contract.py  2.1s
+  ┊ 📖 read      .../megaplan/cloud/feature_flags.py  2.0s
+  ┊ 📖 read      ...egaplan/cloud/status_snapshot.py  2.1s
+  ┊ 📖 read      ...egaplan/cloud/repair_contract.py  1.8s
+  ┊ 📖 read      ...egaplan/cloud/status_snapshot.py  1.8s
+  ┊ 🔎 grep      _is_known_repairable_shape  1.0s
+  ┊ 🔎 grep      _is_terminal_dispatch_state  1.4s
+  ┊ 🔎 grep      _human_blocker_dispatch_gate  1.2s
+  ┊ 🔎 grep      AWF018_ROUTE_METADATA_MISMATCH  0.8s
+  ┊ 🔎 grep      _has_active_repair  0.8s
+  [done] ┊ 📖 read      ...egaplan/cloud/repair_contract.py  1.7s (2.0s)
+  [tool] ( ˘▽˘)っ 🔎 _is_known_repairable_shape
+  [done] ┊ 🔎 grep      _is_known_repairable_shape  0.9s (1.0s)
+  [tool] (≧◡≦) 📖 /workspace/canonical-run-st...
+  [done] ┊ 📖 read      ...egaplan/cloud/repair_contract.py  2.1s (2.5s)
+  [tool] ( ˘▽˘)っ ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.4s total (2.0s)
+  ┊ 📖 read      ...nical-run-state-control-plane.md  2.1s
+  ┊ 📖 read      ...egaplan/cloud/repair_contract.py  1.9s
+  ┊ 📖 read      ...megaplan/cloud/human_blockers.py  2.3s
+  ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  2.1s
+  ┊ 📖 read      ...egaplan/cloud/repair_contract.py  1.7s
+  ┊ 📖 read      ...megaplan/cloud/human_blockers.py  1.7s
+  ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  1.7s
+  ┊ 🔎 grep      _is_known_repairable_shape  1.2s
+  ┊ 🔎 grep      _human_blocker_dispatch_gate  1.2s
+  ┊ 🔎 find      current_target  1.2s
+  ┊ 🔎 find      current_target  0.8s
+  ┊ 🔎 grep      resolve_current_target  0.8s
+  ┊ 📖 read      ...megaplan/cloud/current_target.py  1.6s
+  ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  1.6s
+  ┊ 🔎 grep      needs_human|needs-human|needs.human  1.0s
+  ┊ 🔎 grep      notify_needs_human|dispatch_deci...  1.0s
+  ┊ 📖 read      ...egaplan/cloud/status_snapshot.py  1.6s
+  ┊ 📖 read      .../megaplan/cloud/status_format.py  1.6s
+  [tool] (｡◕‿◕｡) 📖 /workspace/canonical-run-st...
+  [done] ┊ 📖 read      ...egaplan/cloud/repair_contract.py  2.0s (2.5s)
+  ┊ 📖 read      ...egaplan/cloud/repair_contract.py  2.4s
+  ┊ 📖 read      ...megaplan/cloud/human_blockers.py  2.4s
+  ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  2.3s
+  ┊ 🔎 grep      _is_known_repairable_shape  1.8s
+  ┊ 🔎 grep      classify_repair_dispatch  1.6s
+  ┊ 🔎 grep      manual_review_dispatch_status_env  1.8s
+  ┊ 🔎 grep      DISPATCH_DECISION_HUMAN_REQUIRED  1.8s
+  ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  0.0s
+  ┊ 🔎 grep      PLAN_STATUS_MANUAL_REVIEW  0.8s
+  ┊ 🔎 grep      manual_review\b.*retry_strategy  0.4s
+  ┊ 🔎 grep      manual_review_origin  0.6s
+  ┊ 🔎 grep      failure_kind.*execution_blocked|...  0.8s
+  ┊ 🔎 grep      failure_kind.*blocked_recovery_n...  0.8s
+  ┊ 📖 read      ...egaplan/cloud/status_snapshot.py  2.3s
+  ┊ 📖 read      .../megaplan/cloud/status_format.py  2.3s
+  ┊ 📖 read      ...megaplan/cloud/human_blockers.py  2.5s
+  ┊ 📖 read      ...egaplan/cloud/repair_contract.py  2.3s
+  ┊ 📖 read      ...egaplan/cloud/status_snapshot.py  2.1s
+  ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  2.1s
+  ┊ 📖 read      ...loud/wrappers/arnold-repair-loop  2.1s
+  ┊ 🔎 grep      needs.human  1.2s
+  ┊ 🔎 grep      canonical.state|canonical_state|...  1.2s
+  ┊ 📖 read      ...wrappers/arnold-progress-auditor  1.6s
+  ┊ 📖 read      ...es/megaplan/cloud/meta_repair.py  1.6s
+  ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  1.7s
+  ┊ 📖 read      ...lines/megaplan/chain/__init__.py  1.7s
+  ┊ 📖 read      ...rnold_pipelines/megaplan/auto.py  1.7s
+  ┊ 🔎 find      current_target\.py  0.8s
+  ┊ 📖 read      ...megaplan/cloud/current_target.py  1.6s
+  ┊ 🔎 grep      escalate.*needs.human|needs.huma...  0.8s
+  ┊ 🔎 grep      AWF018|ROUTE_METADATA_MISMATCH  0.8s
+  ┊ 📖 read      ...n/cloud/wrappers/arnold-watchdog  1.6s
+  ┊ 🔎 find      run_state  0.8s
+  ┊ 🔎 find      prompt_generation|build_prompt|r...  0.8s
+  ┊ 🔎 grep      compare_needs_human_to_resolver|...  0.8s
+  ┊ 🔎 grep      prompt|failure_summary|chain_hea...  0.8s
+  ┊ 🔎 find      *run_state*  0.7s
+  ┊ 🔎 grep      ARNOLD_RESOLVER_OBSERVE|ARNOLD_R...  0.7s
+  ┊ 🔎 grep      resolver_observe_enabled|resolve...  0.7s
+  ┊ 📖 read      .../megaplan/cloud/feature_flags.py  1.6s
+  ┊ 🔎 grep      class DriverOutcome|current_stat...  0.8s
+  ┊ 📖 read      ...megaplan/cloud/current_target.py  1.6s
+  ┊ 🔎 grep      def classify_repair_dispatch  0.8s
