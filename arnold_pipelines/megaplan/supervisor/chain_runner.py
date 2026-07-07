@@ -15,7 +15,11 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping
 
-from arnold_pipelines.megaplan._core import read_json, resolve_plan_dir
+from arnold_pipelines.megaplan._core import (
+    list_batch_artifacts,
+    read_json,
+    resolve_plan_dir,
+)
 from arnold_pipelines.megaplan._core.state import write_plan_state
 from arnold_pipelines.megaplan.chain import spec as chain_spec
 from arnold.control.interface import ControlBinding, RunStateView
@@ -50,7 +54,12 @@ from arnold_pipelines.megaplan.supervisor.state import (
     save_supervisor_state,
     validate_supervisor_state,
 )
+from arnold_pipelines.megaplan.orchestration.authority_readers import (
+    effective_execute_completed_task_ids,
+)
+from arnold_pipelines.megaplan.resolutions import effective_user_action_resolutions
 from arnold_pipelines.megaplan.types import CliError
+from arnold_pipelines.megaplan.user_actions import action_resolution_status
 from arnold_pipelines.megaplan.runtime.execution_environment import (
     merge_isolation_evidence,
     resolve_execution_environment,
@@ -850,11 +859,120 @@ def _latest_execute_result(plan_dir: Path) -> str | None:
 
 
 def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
-    from arnold_pipelines.megaplan.chain import (
-        _latest_execution_batch_all_tasks_done as chain_authority_check,
+    try:
+        state_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        state_payload = {}
+    config = state_payload.get("config") if isinstance(state_payload, dict) else {}
+    raw_project_dir = config.get("project_dir") if isinstance(config, dict) else None
+    project_dir = Path(raw_project_dir) if isinstance(raw_project_dir, str) and raw_project_dir else None
+    batches = sorted(
+        list_batch_artifacts(plan_dir),
+        key=_execution_batch_sort_key,
     )
+    if not batches:
+        return False, "no execution_batch_*.json artifact found"
+    latest = batches[-1]
+    try:
+        payload = json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return False, f"{latest.name} could not be read: {error}"
+    if not isinstance(payload, dict):
+        return False, f"{latest.name} payload is not an object"
 
-    return chain_authority_check(plan_dir)
+    task_records: list[dict[str, Any]] = []
+    for key in ("task_updates", "tasks"):
+        raw_records = payload.get(key)
+        if isinstance(raw_records, list):
+            task_records.extend(item for item in raw_records if isinstance(item, dict))
+    if not task_records:
+        return False, f"{latest.name} has no task records"
+
+    decisions: dict[str, Any] = {}
+    completed = effective_execute_completed_task_ids(
+        task_records,
+        plan_dir=plan_dir,
+        project_dir=project_dir,
+        state=state_payload,
+        decisions=decisions,
+    )
+    pending: list[str] = []
+    for task in task_records:
+        task_id = str(task.get("task_id") or task.get("id") or "?")
+        if task_id in completed:
+            continue
+        decision = decisions.get(task_id)
+        authority_status = getattr(getattr(decision, "status", None), "value", None)
+        if authority_status is None:
+            authority_status = "unknown"
+        raw_status = task.get("status")
+        pending.append(f"{task_id}={raw_status!r}:authority={authority_status}")
+    if pending:
+        return False, f"{latest.name} has uncorroborated tasks: {', '.join(pending)}"
+    finalize_path = plan_dir / "finalize.json"
+    if finalize_path.exists():
+        try:
+            finalize_payload = json.loads(finalize_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            return False, f"finalize.json could not be read: {error}"
+        finalize_tasks = (
+            finalize_payload.get("tasks")
+            if isinstance(finalize_payload, dict)
+            else None
+        )
+        if isinstance(finalize_tasks, list) and finalize_tasks:
+            finalize_records = [
+                task for task in finalize_tasks if isinstance(task, dict)
+            ]
+            filtered_finalize_records: list[dict[str, Any]] = []
+            batch_task_ids = {
+                str(task.get("task_id") or task.get("id") or "")
+                for task in task_records
+                if isinstance(task, dict)
+            }
+            for task in finalize_records:
+                task_id = str(task.get("task_id") or task.get("id") or "")
+                if task_id and task_id in batch_task_ids:
+                    filtered_finalize_records.append(task)
+                    continue
+                if task.get("status") != "pending":
+                    filtered_finalize_records.append(task)
+                    continue
+                if any(
+                    task.get(field)
+                    for field in (
+                        "files_changed",
+                        "commands_run",
+                        "evidence_files",
+                        "sections_written",
+                        "evidence",
+                        "head_sha",
+                    )
+                ):
+                    filtered_finalize_records.append(task)
+            finalize_records = filtered_finalize_records
+            finalize_decisions: dict[str, Any] = {}
+            finalize_completed = effective_execute_completed_task_ids(
+                finalize_records,
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                state=state_payload,
+                decisions=finalize_decisions,
+            )
+            pending = []
+            for task in finalize_records:
+                task_id = str(task.get("task_id") or task.get("id") or "?")
+                if task_id in finalize_completed:
+                    continue
+                decision = finalize_decisions.get(task_id)
+                authority_status = getattr(getattr(decision, "status", None), "value", None)
+                if authority_status is None:
+                    authority_status = "unknown"
+                raw_status = task.get("status")
+                pending.append(f"{task_id}={raw_status!r}:authority={authority_status}")
+            if pending:
+                return False, f"finalize.json has uncorroborated tasks: {', '.join(pending)}"
+    return True, latest.name
 
 
 def _mark_blocked_execute_as_executed(plan_dir: Path) -> None:
@@ -872,6 +990,30 @@ def _mark_blocked_execute_as_executed(plan_dir: Path) -> None:
     )
 
 
+def _has_unresolved_execute_user_actions(plan_dir: Path) -> tuple[bool, str | None]:
+    finalize_payload = read_json(plan_dir / "finalize.json", default={})
+    if not isinstance(finalize_payload, dict):
+        return False, None
+    user_actions = finalize_payload.get("user_actions")
+    if not isinstance(user_actions, list) or not user_actions:
+        return False, None
+    state_payload = read_json(plan_dir / "state.json", default={})
+    if not isinstance(state_payload, dict):
+        state_payload = {}
+    resolutions = effective_user_action_resolutions(plan_dir, state_payload)
+    for action in user_actions:
+        if not isinstance(action, dict):
+            continue
+        action_id = action.get("id")
+        if not isinstance(action_id, str) or not action_id:
+            continue
+        status = action_resolution_status(action, resolutions)
+        if status.get("resolution") in {"satisfied", "accepted_blocked", "waived"}:
+            continue
+        return True, action_id
+    return False, None
+
+
 def _recover_blocked_execute_if_tasks_done(
     root: Path,
     plan_name: str,
@@ -880,6 +1022,18 @@ def _recover_blocked_execute_if_tasks_done(
 ) -> bool:
     plan_dir = _plan_dir(root, plan_name)
     if _latest_execute_result(plan_dir) != "blocked":
+        return False
+    has_unresolved_user_actions, action_id = _has_unresolved_execute_user_actions(plan_dir)
+    if has_unresolved_user_actions:
+        reason = (
+            f"unresolved user action {action_id}"
+            if action_id
+            else "unresolved execute user action"
+        )
+        writer(
+            f"[supervisor-chain] execute result=blocked for {plan_name}; "
+            f"treating as real block: {reason}\n"
+        )
         return False
 
     all_done, reason = _latest_execution_batch_all_tasks_done(plan_dir)

@@ -96,6 +96,7 @@ from arnold_pipelines.megaplan.runtime.process import (
 )
 from arnold_pipelines.megaplan.anchors import AnchorCaptureRequest, attach_anchor_documents, resolve_anchor_path
 from arnold_pipelines.megaplan.resolutions import effective_user_action_resolutions
+from arnold_pipelines.megaplan.user_actions import action_resolution_status
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.planning.state import (
     STATE_AWAITING_PR_MERGE,
@@ -3099,6 +3100,38 @@ def _mark_blocked_execute_as_executed(plan_dir: Path) -> None:
     )
 
 
+def _has_unresolved_execute_user_actions(plan_dir: Path) -> tuple[bool, str | None]:
+    try:
+        finalize_payload = json.loads((plan_dir / "finalize.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return False, None
+    if not isinstance(finalize_payload, dict):
+        return False, None
+    user_actions = finalize_payload.get("user_actions")
+    if not isinstance(user_actions, list) or not user_actions:
+        return False, None
+
+    try:
+        state_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError):
+        state_payload = {}
+    if not isinstance(state_payload, dict):
+        state_payload = {}
+
+    resolutions = effective_user_action_resolutions(plan_dir, state_payload)
+    for action in user_actions:
+        if not isinstance(action, dict):
+            continue
+        action_id = action.get("id")
+        if not isinstance(action_id, str) or not action_id:
+            continue
+        status = action_resolution_status(action, resolutions)
+        if status.get("resolution") in {"satisfied", "accepted_blocked", "waived"}:
+            continue
+        return True, action_id
+    return False, None
+
+
 def _mark_plan_completed_by_chain(
     root: Path,
     plan_name: str,
@@ -3250,6 +3283,17 @@ def _recover_blocked_execute_if_tasks_done(
         )
         return False
     if _latest_execute_result(plan_dir) != "blocked":
+        return False
+    has_unresolved_user_actions, action_id = _has_unresolved_execute_user_actions(plan_dir)
+    if has_unresolved_user_actions:
+        reason = (
+            f"unresolved user action {action_id}"
+            if action_id
+            else "unresolved execute user action"
+        )
+        writer(
+            f"[chain] execute result=blocked for {outcome.plan}; treating as real block: {reason}\n"
+        )
         return False
 
     all_done, reason = _latest_execution_batch_all_tasks_done(plan_dir)
