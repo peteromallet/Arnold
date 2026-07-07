@@ -86,6 +86,104 @@
         "response_json": "response.json",
         "candidate_ui": "candidate.ui.json"
       }
+    },
+    {
+      "id": "wan22_latent_scaling_fix",
+      "title": "Wan2.2 latent scaling fix",
+      "query": "The high-noise LoRA variant produces outputs identical to the low-noise variant.",
+      "description": "Adds ModelSamplingSD3 scaling into both Wan2.2 UNet chains and separates the high-noise LoRA strength.",
+      "category": "video / diffusion",
+      "required_node_packs": ["ComfyUI-WanVideoWrapper"],
+      "run_location": {
+        "run_dir": "video-wan2-2-i2v-video-generation-with-lora-and-nois-374aa9",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "llm_caption_override",
+      "title": "LLM caption override",
+      "query": "The prompt it generates doesn't capture what's in the image.",
+      "description": "Finds and removes a hardcoded caption that was overriding Florence2 image understanding before the LLM prompt stage.",
+      "category": "multi / image-to-video",
+      "required_node_packs": ["ComfyUI-Florence2", "ComfyUI-PYSSSS"],
+      "run_location": {
+        "run_dir": "multi-image-to-video-with-llm",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "animatediff_lineart_enable",
+      "title": "AnimateDiff LineArt enable",
+      "query": "The animation barely follows my input images.",
+      "description": "Discovers the LineArt preprocessor was disabled, enables the ControlNet conditioning path, and improves resolution.",
+      "category": "image/video / control",
+      "required_node_packs": ["ComfyUI-AnimateDiff-Evolved", "ComfyUI-ControlNet-Aux"],
+      "run_location": {
+        "run_dir": "image-animatediff-video-from-images-with",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "mesh_noise_cleanup",
+      "title": "3D mesh noise cleanup",
+      "query": "The generated 3D mesh is full of floating bits and noise.",
+      "description": "Uses research-backed 3D parameter changes to reduce floating mesh artifacts while preserving detail.",
+      "category": "3D / mesh",
+      "required_node_packs": ["ComfyUI-Hunyuan3DWrapper"],
+      "run_location": {
+        "run_dir": "3d-generates-a-3d-mesh-from",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "grid_cells_512",
+      "title": "Grid cells to 512px",
+      "query": "The preview grid looks too small and blurry — make each cell 512×512.",
+      "description": "Applies a multi-target batch edit that resizes all four preview-grid image resize nodes in one turn.",
+      "category": "image / batch edit",
+      "required_node_packs": ["ComfyUI-KJNodes"],
+      "run_location": {
+        "run_dir": "image-background-removal-and-grid-composition-54a681",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "seed_grid_to_row",
+      "title": "Seed grid → horizontal row",
+      "query": "Arrange the four variations in a single horizontal row instead of a 2x2 grid.",
+      "description": "Replaces a 2x2 grid-composite node with ImageConcatMulti and rewires the split images into a row layout.",
+      "category": "image / layout",
+      "required_node_packs": ["ComfyUI-KJNodes"],
+      "run_location": {
+        "run_dir": "image-generates-a-2x2-seed-variation",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
+    },
+    {
+      "id": "hunyuan_i2v_latent_source",
+      "title": "Hunyuan i2v latent source",
+      "query": "The video doesn't resemble my input image at all — the first frame is completely different.",
+      "description": "Diagnoses a sampler initialized from the wrong reference-frame latent and disconnects that edge so image conditioning can drive the result.",
+      "category": "video / image-to-video",
+      "required_node_packs": ["ComfyUI-HunyuanVideoWrapper"],
+      "run_location": {
+        "run_dir": "video-hunyuanvideo-image-to-video-generation-with-en-ff076a",
+        "original_ui": "original.ui.json",
+        "response_json": "response.json",
+        "candidate_ui": "candidate.ui.json"
+      }
     }
   ]
 }

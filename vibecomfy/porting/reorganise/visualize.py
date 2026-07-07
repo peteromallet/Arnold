@@ -32,12 +32,19 @@ def write_layout_png(ui_json: Mapping[str, Any], path: Path) -> None:
     min_y = min(rect[1] for rect in rects)
     max_x = max(rect[0] + rect[2] for rect in rects)
     max_y = max(rect[1] + rect[3] for rect in rects)
-    canvas_w, canvas_h = 1600, 1000
+    # Size the canvas to the content's aspect ratio so very wide (or very tall)
+    # workflows are not flattened into a thin strip with large false margins --
+    # those margins read as dead space when inspecting the PNG.  The canvas
+    # grows to match the content aspect up to a per-axis cap.
     margin = 48
+    max_canvas_w = 2200
+    max_canvas_h = 2200
     scale = min(
-        (canvas_w - margin * 2) / max(1.0, max_x - min_x),
-        (canvas_h - margin * 2) / max(1.0, max_y - min_y),
+        (max_canvas_w - margin * 2) / max(1.0, max_x - min_x),
+        (max_canvas_h - margin * 2) / max(1.0, max_y - min_y),
     )
+    canvas_w = round(max(1.0, max_x - min_x) * scale) + margin * 2
+    canvas_h = round(max(1.0, max_y - min_y) * scale) + margin * 2
 
     def tx(x: float) -> int:
         return round((x - min_x) * scale + margin)

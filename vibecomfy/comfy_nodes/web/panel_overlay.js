@@ -35,6 +35,39 @@ function safePreviewOverlayText(text, fallback = "") {
 
 const PREVIEW_DOM_OVERLAY_ID = "vibecomfy-preview-dom-overlay";
 
+function safePreviewLogDetail(value) {
+  if (value == null) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value.length > 500 ? `${value.slice(0, 497)}...` : value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (value instanceof Error) {
+    const name = typeof value.name === "string" && value.name ? value.name : "Error";
+    const message = typeof value.message === "string" ? value.message : "";
+    return message ? `${name}: ${message}` : name;
+  }
+  if (Array.isArray(value)) {
+    return `[array length=${value.length}]`;
+  }
+  if (typeof value === "object") {
+    let keys = [];
+    try {
+      keys = Object.keys(value).slice(0, 6);
+    } catch (_e) {
+      keys = [];
+    }
+    const ctor = typeof value.constructor?.name === "string" && value.constructor.name
+      ? value.constructor.name
+      : "Object";
+    return keys.length ? `[${ctor} keys=${keys.join(",")}]` : `[${ctor}]`;
+  }
+  return typeof value;
+}
+
 function clearPreviewDomOverlay(doc = (typeof document !== "undefined" ? document : null)) {
   const root = doc?.getElementById?.(PREVIEW_DOM_OVERLAY_ID);
   if (root) {
@@ -414,7 +447,7 @@ function warnOverlayUnresolved(model, message, detail) {
     return;
   }
   model.unresolvedWarnCount += 1;
-  console.warn(message, detail);
+  console.warn(message, safePreviewLogDetail(detail));
 }
 
 export function installAgentPreviewOverlay(app, deps = {}) {
@@ -456,7 +489,7 @@ export function installAgentPreviewOverlay(app, deps = {}) {
       }
     } catch (e) {
       clearPreviewDomOverlay(liveCanvasElement(app)?.ownerDocument);
-      console.warn("[vibecomfy] drawPreviewOverlay threw:", e);
+      console.warn("[vibecomfy] drawPreviewOverlay threw:", safePreviewLogDetail(e));
     }
   };
   app.__vibecomfyAgentPreviewOverlayDraw = overlayDraw;

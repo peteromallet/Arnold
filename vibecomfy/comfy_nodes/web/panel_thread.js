@@ -1730,7 +1730,7 @@ function renderWelcomeExamples(body, deps = {}) {
     "Add a code node that processes images with PIL",
     "Explain what's happening in this workflow in depth",
     "Make the prompts more specific",
-    "Save the output",
+    "Reorganise this workflow",
     "Improve this workflow so it's cleaner, more reliable, and easier to understand",
   ];
   for (const example of examplePrompts) {

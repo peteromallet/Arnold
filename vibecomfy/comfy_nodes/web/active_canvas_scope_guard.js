@@ -16,6 +16,54 @@ import {
   resolveScopeSessionId,
 } from "./scoped_session_storage.js";
 
+function activeWorkflowWindowId() {
+  const workflow = typeof app !== "undefined"
+    ? app?.extensionManager?.workflow?.activeWorkflow
+    : null;
+  if (!workflow || typeof workflow !== "object") {
+    return null;
+  }
+  const directCandidates = [
+    workflow.id,
+    workflow.workflowId,
+    workflow.workflow_id,
+    workflow.uuid,
+  ];
+  for (const candidate of directCandidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  if (typeof workflow.content === "string" && workflow.content.trim()) {
+    try {
+      const parsed = JSON.parse(workflow.content);
+      if (typeof parsed?.id === "string" && parsed.id.trim()) {
+        return parsed.id.trim();
+      }
+    } catch (_e) {
+      // Fall through to path/name fallbacks.
+    }
+  }
+  const fallbackCandidates = [
+    workflow.path,
+    workflow.fullFilename,
+    workflow.filename,
+  ];
+  for (const candidate of fallbackCandidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  const openWorkflows = app?.extensionManager?.workflow?.openWorkflows;
+  if (Array.isArray(openWorkflows)) {
+    const index = openWorkflows.indexOf(workflow);
+    if (index >= 0) {
+      return `open-workflow-${index}`;
+    }
+  }
+  return null;
+}
+
 /**
  * resolveActiveCanvasScope()
  *
@@ -35,12 +83,13 @@ export function resolveActiveCanvasScope() {
     if (!graph || typeof graph !== "object") {
       return null;
     }
-    const scopeId = computeScopeId(graph);
+    const workflowId = activeWorkflowWindowId();
+    const scopeId = computeScopeId(graph, { workflowId });
     if (!scopeId) {
       return null;
     }
     const fingerprint = computeStructuralGraphFingerprint(graph);
-    return { scopeId, fingerprint };
+    return { scopeId, fingerprint, workflowId: workflowId || null };
   } catch (_e) {
     return null;
   }

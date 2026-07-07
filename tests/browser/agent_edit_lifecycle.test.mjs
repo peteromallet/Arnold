@@ -5862,6 +5862,45 @@ test("resolveActiveCanvasScope: returns null in Node.js (no app canvas)", () => 
   assert.equal(result, null);
 });
 
+test("resolveActiveCanvasScope: uses Comfy active workflow id for empty workflow tabs", () => {
+  const previousApp = globalThis.app;
+  const workflow = {
+    content: JSON.stringify({
+      id: "workflow-empty-tab-a",
+      nodes: [],
+      links: [],
+    }),
+    filename: "Unsaved Workflow",
+  };
+  globalThis.app = {
+    canvas: {
+      graph: {
+        serialize() {
+          return { nodes: [], links: [] };
+        },
+      },
+    },
+    extensionManager: {
+      workflow: {
+        activeWorkflow: workflow,
+        openWorkflows: [workflow],
+      },
+    },
+  };
+  try {
+    const result = resolveActiveCanvasScope();
+    assert.ok(result);
+    assert.equal(result.workflowId, "workflow-empty-tab-a");
+    assert.match(result.scopeId, /^[a-z0-9]+-[a-z0-9]+:workflow-empty-tab-a:[0-9a-f]{16}$/);
+  } finally {
+    if (previousApp === undefined) {
+      delete globalThis.app;
+    } else {
+      globalThis.app = previousApp;
+    }
+  }
+});
+
 test("assertPanelScopeMatchesActiveCanvas: both unscoped returns ok", () => {
   // No scope tracking on panel, no app canvas → both null → ok.
   const panel = makePanel({ chatScopeId: null, chatScopeFingerprint: null });

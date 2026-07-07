@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
-from math import hypot
+from math import ceil, hypot, sqrt
 from types import MappingProxyType
 from typing import Any, Literal, Mapping, Sequence
 
@@ -130,6 +130,12 @@ COMPILE_METRIC_MINIMUM_GUTTER = "compiled_minimum_gutter"
 COMPILE_METRIC_HELPER_DISTANCE_MAX = "compiled_helper_distance_max"
 COMPILE_METRIC_IDEMPOTENCE_DELTA = "compiled_idempotence_delta"
 COMPILE_METRIC_STRUCTURAL_HASH_UNCHANGED = "structural_hash_unchanged"
+
+# A layered column is reflowed into wrapped sub-columns when it is at least this
+# many times taller than the section's next-tallest column. See
+# ``_rebalance_layer_columns``.
+_REBALANCE_IMBALANCE_FACTOR = 1.6
+_REBALANCE_MIN_DOMINANT_NODES = 3
 COMPILE_ISSUE_NODE_OVERLAP = "compiler_node_overlap"
 COMPILE_ISSUE_GROUP_OVERLAP = "compiler_group_overlap"
 COMPILE_ISSUE_INTERNAL_WHITESPACE_HIGH = "compiler_internal_whitespace_high"
@@ -2026,7 +2032,7 @@ def _layout_sections_with_phases(
     pinned_refs = set() if huge_mode else _effective_pinned_refs(facts, layout_options, classification)
     should_repair_huge_overlaps = huge_mode and _existing_primary_overlap_count(facts) > 0
     topology_by_section = {topology.section_id: topology for topology in section_topologies}
-    placements = _section_placements(sections, section_topologies, facts, spacing, furniture_by_ref, layout_options)
+    placements = _section_placements(sections, section_topologies, facts, spacing, furniture_by_ref, layout_options, plan)
     node_layouts = _global_placement_shim(
         sections,
         placements,
@@ -2352,6 +2358,7 @@ def _section_placements(
     spacing: _Spacing,
     furniture_by_ref: Mapping[CanonicalNodeRef, NodeFurnitureFact],
     options: LayoutCompileOptions,
+    plan: LayoutPlanV1 | None,
 ) -> dict[str, _SectionPlacement]:
     topology_by_section = {topology.section_id: topology for topology in section_topologies}
     huge_mode = _large_workflow_soft_quality_gate(facts)
@@ -2377,6 +2384,7 @@ def _section_placements(
         furniture_by_ref,
         options,
         spacing,
+        plan,
         collapse_islands=huge_mode,
     )
     rank_x_offsets = _rank_x_offsets(
@@ -2387,6 +2395,7 @@ def _section_placements(
         furniture_by_ref,
         options,
         spacing,
+        plan,
         collapse_islands=huge_mode,
     )
     next_y_by_lane: dict[tuple[str, int, int, int], int] = {}
@@ -2418,6 +2427,7 @@ def _section_placements(
             furniture_by_ref,
             options,
             spacing,
+            plan,
         )
         if lane in x_by_lane:
             x = x_by_lane[lane]
@@ -2442,6 +2452,89 @@ def _section_placements(
             + spacing.section_gap_y
         )
         row_by_lane[lane] = row + 1
+    if huge_mode:
+        placements = _reflow_overtall_lane_trails(
+            placements,
+            sections,
+            topology_by_section,
+            facts,
+            furniture_by_ref,
+            options,
+            spacing,
+            plan,
+        )
+    return placements
+
+
+def _reflow_overtall_lane_trails(
+    placements: dict[str, _SectionPlacement],
+    sections: Sequence[_CompileSection],
+    topology_by_section: Mapping[str, CompiledSectionTopology],
+    facts: GraphInventoryFacts,
+    furniture_by_ref: Mapping[CanonicalNodeRef, NodeFurnitureFact],
+    options: LayoutCompileOptions,
+    spacing: _Spacing,
+    plan: LayoutPlanV1 | None,
+) -> dict[str, _SectionPlacement]:
+    """Flow the trailing sections of an over-tall wall lane into a footer row.
+
+    A resource lane (loaders, settings, model pickers) often holds many small
+    sections that stack into a column far taller than the rest of the wall,
+    leaving an empty band beside them.  When a lane runs well past the wall's
+    main content line, its trailing sections are relaid as a left-to-right row
+    anchored where the stack would have continued, so the tail fills the empty
+    band instead of stretching the canvas.  Only trailing sections beyond the
+    content line move; earlier sections keep their stacked positions.  The rule
+    keys off lane heights and footprints, never off node or section identity.
+    """
+    items: list[dict[str, Any]] = []
+    for section in sections:
+        placement = placements[section.id]
+        topology = topology_by_section[section.id]
+        lane_key = (topology.scope_path, placement.rank, placement.band)
+        width, height = _estimated_section_size(
+            section, facts, furniture_by_ref, options, spacing, plan
+        )
+        items.append(
+            {
+                "id": section.id,
+                "lane": lane_key,
+                "x": placement.x,
+                "y": placement.y,
+                "w": width,
+                "h": height,
+                "placement": placement,
+            }
+        )
+    lane_bottoms: dict[tuple[str, int, int], int] = {}
+    for item in items:
+        lane_bottoms[item["lane"]] = max(lane_bottoms.get(item["lane"], 0), item["y"] + item["h"])
+    if len(lane_bottoms) < 2:
+        return placements
+    content_bottom = sorted(lane_bottoms.values(), reverse=True)[1]
+    gap_x = max(spacing.section_gap_x, spacing.node_gap_y)
+    for lane, bottom in lane_bottoms.items():
+        if bottom <= content_bottom * 1.25:
+            continue
+        lane_items = [item for item in items if item["lane"] == lane]
+        trailing = sorted(
+            (item for item in lane_items if item["y"] + item["h"] > content_bottom),
+            key=lambda item: (item["y"], item["x"]),
+        )
+        if len(trailing) < 2:
+            continue
+        anchor_y = trailing[0]["y"]
+        cursor_x = min(item["x"] for item in lane_items)
+        for item in trailing:
+            placement = item["placement"]
+            placements[item["id"]] = _SectionPlacement(
+                rank=placement.rank,
+                band=placement.band,
+                row=placement.row,
+                x=cursor_x,
+                y=anchor_y,
+            )
+            cursor_x += item["w"] + gap_x
     return placements
 
 
@@ -2597,6 +2690,7 @@ def _rank_x_offsets(
     furniture_by_ref: Mapping[CanonicalNodeRef, NodeFurnitureFact],
     options: LayoutCompileOptions,
     spacing: _Spacing,
+    plan: LayoutPlanV1 | None,
     *,
     collapse_islands: bool,
 ) -> dict[tuple[str, int, int], int]:
@@ -2611,6 +2705,7 @@ def _rank_x_offsets(
             furniture_by_ref,
             options,
             spacing,
+            plan,
         )
         rank_widths = rank_widths_by_island.setdefault(
             (topology.scope_path, island_index),
@@ -2726,6 +2821,7 @@ def _band_y_offsets(
     furniture_by_ref: Mapping[CanonicalNodeRef, NodeFurnitureFact],
     options: LayoutCompileOptions,
     spacing: _Spacing,
+    plan: LayoutPlanV1 | None,
     *,
     collapse_islands: bool,
 ) -> dict[tuple[str, int, int], int]:
@@ -2741,6 +2837,7 @@ def _band_y_offsets(
             furniture_by_ref,
             options,
             spacing,
+            plan,
         )
         lane_key = (topology.scope_path, island_index, band, rank)
         lane_heights[lane_key] = (
@@ -2772,8 +2869,9 @@ def _estimated_section_height(
     furniture_by_ref: Mapping[CanonicalNodeRef, NodeFurnitureFact],
     options: LayoutCompileOptions,
     spacing: _Spacing,
+    plan: LayoutPlanV1 | None = None,
 ) -> int:
-    return _estimated_section_size(section, facts, furniture_by_ref, options, spacing)[1]
+    return _estimated_section_size(section, facts, furniture_by_ref, options, spacing, plan)[1]
 
 
 def _estimated_section_size(
@@ -2782,8 +2880,9 @@ def _estimated_section_size(
     furniture_by_ref: Mapping[CanonicalNodeRef, NodeFurnitureFact],
     options: LayoutCompileOptions,
     spacing: _Spacing,
+    plan: LayoutPlanV1 | None = None,
 ) -> tuple[int, int]:
-    local_layout = _local_section_layout(section, facts, furniture_by_ref, options, spacing, None)
+    local_layout = _local_section_layout(section, facts, furniture_by_ref, options, spacing, plan)
     return (
         local_layout.width + spacing.group_padding * 2,
         DEFAULT_GROUP_HEADER_HEIGHT
@@ -3063,26 +3162,26 @@ def _offsets_for_template(
     if template == "grid":
         return _layout_grid(ordered, sizes, gap_x, gap_y)
     if template == "pipeline":
-        return _layout_columns(_local_layers(ordered, edges, facts), sizes, gap_x, gap_y)
+        return _layout_columns_balanced(_local_layers(ordered, edges, facts), sizes, gap_x, gap_y)
     if template == "fan_in":
         sink = _fan_in_ref(ordered, edges)
         if sink is not None:
             predecessors = tuple(sorted({source for source, target in edges if target == sink}, key=lambda ref: _local_ref_sort_key(ref, facts)))
             remainder = tuple(ref for ref in ordered if ref != sink and ref not in predecessors)
-            return _layout_columns(((*predecessors, *remainder), (sink,)), sizes, gap_x, gap_y)
+            return _layout_columns_balanced(((*predecessors, *remainder), (sink,)), sizes, gap_x, gap_y)
     if template == "fan_out":
         source = _fan_out_ref(ordered, edges)
         if source is not None:
             successors = tuple(sorted({target for item_source, target in edges if item_source == source}, key=lambda ref: _local_ref_sort_key(ref, facts)))
             remainder = tuple(ref for ref in ordered if ref != source and ref not in successors)
-            return _layout_columns(((source,), (*successors, *remainder)), sizes, gap_x, gap_y)
+            return _layout_columns_balanced(((source,), (*successors, *remainder)), sizes, gap_x, gap_y)
     if template == "hub_and_spokes":
         hub = _hub_ref(ordered, edges)
         if hub is not None:
             inputs = tuple(sorted({source for source, target in edges if target == hub}, key=lambda ref: _local_ref_sort_key(ref, facts)))
             outputs = tuple(sorted({target for source, target in edges if source == hub}, key=lambda ref: _local_ref_sort_key(ref, facts)))
             remainder = tuple(ref for ref in ordered if ref != hub and ref not in inputs and ref not in outputs)
-            return _layout_columns((inputs, (hub, *remainder), outputs), sizes, gap_x, gap_y)
+            return _layout_columns_balanced((inputs, (hub, *remainder), outputs), sizes, gap_x, gap_y)
     if template == "parallel_branches":
         candidate = _parallel_branch_candidate(ordered, facts)
         if candidate is not None:
@@ -3093,11 +3192,15 @@ def _offsets_for_template(
             middle_column = (*roots, *(() if terminals else remainder))
             tail_column = terminal_column if terminals else ()
             columns = tuple(column for column in ((source,), middle_column, tail_column) if column)
-            return _layout_columns(columns, sizes, gap_x, gap_y)
+            return _layout_columns_balanced(columns, sizes, gap_x, gap_y)
     if template == "notes_sidebar":
         notes = _note_refs(ordered, facts)
         main = tuple(ref for ref in ordered if ref not in notes)
-        main_offsets = _layout_columns(_local_layers(main, edges, facts) if main else (), sizes, gap_x, gap_y) if main else {}
+        main_offsets = (
+            _layout_columns_balanced(_local_layers(main, edges, facts), sizes, gap_x, gap_y)
+            if main
+            else {}
+        )
         main_width, _main_height = _local_bounds(main_offsets, sizes)
         note_offsets = _layout_columns((notes,), sizes, gap_x, gap_y)
         return {
@@ -3770,6 +3873,146 @@ def _layout_columns(
             y += sizes[ref][1] + gap_y
         x += column_width + gap_x
     return offsets
+
+
+def _column_stack_height(
+    refs: Sequence[CanonicalNodeRef],
+    sizes: Mapping[CanonicalNodeRef, tuple[int, int]],
+    gap_y: int,
+) -> int:
+    if not refs:
+        return 0
+    return sum(sizes[ref][1] for ref in refs) + max(0, len(refs) - 1) * gap_y
+
+
+def _reflow_into_balanced_columns(
+    refs: Sequence[CanonicalNodeRef],
+    sizes: Mapping[CanonicalNodeRef, tuple[int, int]],
+    gap_y: int,
+    target_columns: int,
+) -> tuple[tuple[CanonicalNodeRef, ...], ...]:
+    """Pack nodes into ``target_columns`` contiguous, height-balanced columns.
+
+    Finds the smallest achievable per-column stack height (binary search over
+    the greedy "fill each column up to a budget" packing) and reflows the nodes
+    into that many contiguous columns.  Contiguity preserves the section's
+    vertical reading order; minimising the tallest column keeps the group
+    compact instead of letting one column run far past its siblings.
+    """
+    if target_columns <= 1 or len(refs) <= 1:
+        return (tuple(refs),) if refs else ()
+    node_heights = [sizes[ref][1] for ref in refs]
+
+    def columns_for_budget(budget: int) -> int:
+        columns = 1
+        running = 0
+        for height in node_heights:
+            stepped = height if running == 0 else running + gap_y + height
+            if stepped <= budget or running == 0:
+                running = stepped
+            else:
+                columns += 1
+                running = height
+        return columns
+
+    low = max(node_heights)
+    high = _column_stack_height(refs, sizes, gap_y)
+    budget = high
+    while low <= high:
+        midpoint = (low + high) // 2
+        if columns_for_budget(midpoint) <= target_columns:
+            budget = midpoint
+            high = midpoint - 1
+        else:
+            low = midpoint + 1
+
+    columns: list[tuple[CanonicalNodeRef, ...]] = []
+    current: list[CanonicalNodeRef] = []
+    running = 0
+    for ref, height in zip(refs, node_heights, strict=True):
+        stepped = height if not current else running + gap_y + height
+        if stepped <= budget or not current:
+            current.append(ref)
+            running = stepped
+        else:
+            columns.append(tuple(current))
+            current = [ref]
+            running = height
+    if current:
+        columns.append(tuple(current))
+    return tuple(columns)
+
+
+def _rebalance_layer_columns(
+    columns: Sequence[Sequence[CanonicalNodeRef]],
+    sizes: Mapping[CanonicalNodeRef, tuple[int, int]],
+    gap_y: int,
+    *,
+    max_columns: int = COMPILE_MAX_ROW_COLUMNS,
+    imbalance_factor: float = _REBALANCE_IMBALANCE_FACTOR,
+    min_dominant_nodes: int = _REBALANCE_MIN_DOMINANT_NODES,
+) -> tuple[tuple[CanonicalNodeRef, ...], ...]:
+    """Reflow a layered section into a compact, height-balanced column grid.
+
+    Sections whose nodes are weakly connected -- for example prompt pipelines
+    wired through rgthree Set/Get broadcast channels rather than direct edges --
+    collapse their independent roots into a single topological layer, and
+    topological layering can also emit more layers than a group can read as
+    columns.  Both cases produce a group that is either far taller than its
+    neighbours (one over-tall column with whitespace beside it) or far wider
+    than the wall's column budget.
+
+    This reflows the section's nodes into at most ``max_columns`` contiguous
+    columns of near-equal height whenever the layered layout is imbalanced or
+    exceeds the column budget, preserving reading order.  Already compact,
+    balanced layouts are returned unchanged.  The rule is structural: it keys
+    off relative column heights, node counts, and the column budget -- never off
+    node identity, class, or section title.
+    """
+    cleaned = tuple(tuple(column) for column in columns if column)
+    if not cleaned:
+        return ()
+    heights = tuple(_column_stack_height(column, sizes, gap_y) for column in cleaned)
+    dominant_index = max(range(len(heights)), key=lambda index: heights[index])
+    dominant_height = heights[dominant_index]
+    dominant_column = cleaned[dominant_index]
+    sibling_heights = tuple(height for index, height in enumerate(heights) if index != dominant_index)
+    runner_up_height = max(sibling_heights, default=0)
+
+    flat_refs = tuple(ref for column in cleaned for ref in column)
+    if len(flat_refs) < min(max(2, min_dominant_nodes), 3):
+        return cleaned
+
+    over_capacity = len(cleaned) > max_columns
+    imbalanced = (
+        runner_up_height > 0
+        and dominant_height >= runner_up_height * imbalance_factor
+        and len(dominant_column) >= min_dominant_nodes
+    )
+    # A single column with many nodes (e.g. every root landed in layer 0 because
+    # the section's nodes are only wired through broadcasts) is the degenerate
+    # imbalance case: there are no siblings to compare against.
+    single_tall_column = len(cleaned) < 2 and len(flat_refs) >= min_dominant_nodes
+    if not over_capacity and not imbalanced and not single_tall_column:
+        return cleaned
+
+    if runner_up_height > 0:
+        columns_for_height = ceil(max(1, dominant_height) / max(1, runner_up_height * imbalance_factor))
+    else:
+        columns_for_height = int(ceil(sqrt(len(flat_refs))))
+    target_columns = max(2, min(max_columns, columns_for_height, len(flat_refs)))
+    reflowed = _reflow_into_balanced_columns(flat_refs, sizes, gap_y, target_columns)
+    return reflowed if reflowed else cleaned
+
+
+def _layout_columns_balanced(
+    columns: Sequence[Sequence[CanonicalNodeRef]],
+    sizes: Mapping[CanonicalNodeRef, tuple[int, int]],
+    gap_x: int,
+    gap_y: int,
+) -> dict[CanonicalNodeRef, tuple[int, int]]:
+    rebalanced = _rebalance_layer_columns(columns, sizes, gap_y)
+    return _layout_columns(rebalanced, sizes, gap_x, gap_y)
 
 
 def _layout_wrapped_row(

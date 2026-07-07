@@ -62,22 +62,37 @@ class TestDemoIdSafety:
 
 
 class TestDemoManifest:
-    """The bundled manifest contains exactly six records with path-safe IDs."""
+    """The bundled manifest contains the curated records with path-safe IDs."""
 
-    def test_manifest_has_six_scenarios(self):
+    def test_manifest_has_curated_scenarios(self):
         manifest = _load_demo_manifest()
         assert isinstance(manifest, dict)
         scenarios = manifest.get("scenarios", [])
-        assert len(scenarios) == 6
         ids = [s.get("id") for s in scenarios]
-        assert len(set(ids)) == 6
+        assert len(scenarios) == 13
+        assert len(set(ids)) == 13
         assert all(_is_safe_demo_id(sid) for sid in ids)
+        assert {
+            "tts_emotion_injection",
+            "qwen_face_distortion_wrong_slot",
+            "vace_identity_padded_reference",
+            "triporefine_stage_add",
+            "av_fps_desync",
+            "sdxl_plastic_fabric",
+            "wan22_latent_scaling_fix",
+            "llm_caption_override",
+            "animatediff_lineart_enable",
+            "mesh_noise_cleanup",
+            "grid_cells_512",
+            "seed_grid_to_row",
+            "hunyuan_i2v_latent_source",
+        } <= set(ids)
 
     def test_list_endpoint_shape(self):
         result, status = _load_demo_scenarios_list()
         assert status == 200
         assert result["ok"] is True
-        assert len(result["scenarios"]) == 6
+        assert len(result["scenarios"]) == 13
         assert result["source_run_tree"] == "out/agentic/agentic-100-20260630-021138"
 
 
@@ -412,7 +427,7 @@ class TestDemoRouteEnvGating:
         response = asyncio.run(registered[("GET", "/vibecomfy/demo/scenarios")](_Request()))
         assert response["status"] == 200
         assert response["body"]["ok"] is True
-        assert len(response["body"]["scenarios"]) == 6
+        assert len(response["body"]["scenarios"]) == 13
 
     def test_scenario_route_enabled_missing_id(self, monkeypatch, registered):
         monkeypatch.setenv("VIBECOMFY_DEMO_PICKER", "1")

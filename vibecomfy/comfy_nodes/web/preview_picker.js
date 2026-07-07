@@ -460,11 +460,9 @@ export function installPreviewPicker(panel, options = {}) {
       currentPanel.state.__demoMode = false;
     }
 
-    const detailTurnKey = `turn:${payload.turnId}`;
-    currentPanel.state.expandedBubbleTurnKeys = {
-      ...(currentPanel.state.expandedBubbleTurnKeys || {}),
-      [detailTurnKey]: stage === "ready_to_apply" || stage === "applied",
-    };
+    if (!currentPanel.state.expandedBubbleTurnKeys || typeof currentPanel.state.expandedBubbleTurnKeys !== "object") {
+      currentPanel.state.expandedBubbleTurnKeys = {};
+    }
     if (currentPanel.state.responseDetails && typeof currentPanel.state.responseDetails === "object") {
       delete currentPanel.state.responseDetails[payload.turnId];
     }

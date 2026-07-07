@@ -11,6 +11,39 @@
 const SUPPORTED_FRONTEND = "1.39.x";
 let inOverlayDraw = false;
 
+function safeAdapterLogDetail(value) {
+  if (value == null) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value.length > 500 ? `${value.slice(0, 497)}...` : value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (value instanceof Error) {
+    const name = typeof value.name === "string" && value.name ? value.name : "Error";
+    const message = typeof value.message === "string" ? value.message : "";
+    return message ? `${name}: ${message}` : name;
+  }
+  if (Array.isArray(value)) {
+    return `[array length=${value.length}]`;
+  }
+  if (typeof value === "object") {
+    let keys = [];
+    try {
+      keys = Object.keys(value).slice(0, 6);
+    } catch (_e) {
+      keys = [];
+    }
+    const ctor = typeof value.constructor?.name === "string" && value.constructor.name
+      ? value.constructor.name
+      : "Object";
+    return keys.length ? `[${ctor} keys=${keys.join(",")}]` : `[${ctor}]`;
+  }
+  return typeof value;
+}
+
 // ── Capability shape ───────────────────────────────────────────────────────
 // Each capability is { available: bool, detail: string, path: string | null }
 // where `detail` explains why a capability is missing in degraded profiles.
@@ -132,7 +165,7 @@ export function applyGraphCandidateInPlace(app, candidate, options = {}) {
       repaintGraph(app, graph);
     } catch (error) {
       // Best-effort: the candidate is already applied to the graph data.
-      console.warn("[vibecomfy] post-apply canvas redraw failed (data applied):", error);
+      console.warn("[vibecomfy] post-apply canvas redraw failed (data applied):", safeAdapterLogDetail(error));
     }
   }
   return { graph, capability };
@@ -1108,7 +1141,7 @@ export function installPreviewForegroundOverlay(app, overlayDraw, options = {}) 
       return;
     }
     loggedErrorKeys.add(key);
-    console.warn(label, error);
+    console.warn(label, safeAdapterLogDetail(error));
   };
 
   const wrapperInChain = (fn) => {

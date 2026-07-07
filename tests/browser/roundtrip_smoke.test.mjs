@@ -171,6 +171,69 @@ async function waitFor(predicate, { attempts = 200 } = {}) {
   throw new Error("waitFor timed out");
 }
 
+const LAYOUT_PREVIEW_TEST_FIT_PADDING_PX = 80;
+const LAYOUT_PREVIEW_TEST_FIT_MAX_SCALE = 1.0;
+
+function graphNodeBoundsForViewportTest(graph) {
+  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let count = 0;
+  for (const node of nodes) {
+    const x = Number(node?.pos?.[0]);
+    const y = Number(node?.pos?.[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      continue;
+    }
+    const width = Number.isFinite(Number(node?.size?.[0])) && Number(node.size[0]) > 0 ? Number(node.size[0]) : 200;
+    const height = Number.isFinite(Number(node?.size?.[1])) && Number(node.size[1]) > 0 ? Number(node.size[1]) : 100;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x + width);
+    maxY = Math.max(maxY, y + height);
+    count += 1;
+  }
+  if (count === 0) {
+    return null;
+  }
+  return {
+    x: minX,
+    y: minY,
+    w: Math.max(maxX - minX, 1),
+    h: Math.max(maxY - minY, 1),
+  };
+}
+
+function expectedLayoutPreviewViewportForTest(graph, { width, height }) {
+  const bounds = graphNodeBoundsForViewportTest(graph);
+  assert(bounds, "expected test graph to have node bounds");
+  const availableWidth = Math.max(1, width - LAYOUT_PREVIEW_TEST_FIT_PADDING_PX * 2);
+  const availableHeight = Math.max(1, height - LAYOUT_PREVIEW_TEST_FIT_PADDING_PX * 2);
+  const scale = Math.min(
+    LAYOUT_PREVIEW_TEST_FIT_MAX_SCALE,
+    availableWidth / bounds.w,
+    availableHeight / bounds.h,
+  );
+  const centerX = bounds.x + bounds.w / 2;
+  const centerY = bounds.y + bounds.h / 2;
+  return {
+    scale,
+    offset: [
+      (width / 2 / scale) - centerX,
+      (height / 2 / scale) - centerY,
+    ],
+  };
+}
+
+function assertViewportClose(actual, expected, label) {
+  assert(actual, `${label}: missing viewport`);
+  assert.equal(Math.abs(Number(actual.scale) - expected.scale) < 1e-9, true, `${label}: scale`);
+  assert.equal(Math.abs(Number(actual.offset?.[0]) - expected.offset[0]) < 1e-9, true, `${label}: offset x`);
+  assert.equal(Math.abs(Number(actual.offset?.[1]) - expected.offset[1]) < 1e-9, true, `${label}: offset y`);
+}
+
 function expandAgentBubbleDetails(root) {
   const toggles = root.querySelectorAll(
     (node) => (
@@ -3074,6 +3137,8 @@ test("VibeComfy Apply requires explicit canvas allowance, rechecks canvas hash, 
 });
 
 test("VibeComfy reorganisation candidates preview the candidate layout and preserve baseline undo", async () => {
+  const canvasSize = { width: 1000, height: 800 };
+  const staleViewport = { scale: 0.12, offset: [2750, -344] };
   const originalGraph = {
     nodes: [
       { id: 1, type: "Input", pos: [40, 50], size: [210, 90], properties: { vibecomfy_uid: "uid-1" } },
@@ -3196,6 +3261,13 @@ test("VibeComfy reorganisation candidates preview the candidate layout and prese
   try {
     const extensionModule = await harness.loadExtension();
     await harness.setup();
+    harness.app.canvas.canvas = {
+      width: canvasSize.width,
+      height: canvasSize.height,
+      clientWidth: canvasSize.width,
+      clientHeight: canvasSize.height,
+    };
+    harness.app.canvas.ds = { scale: staleViewport.scale, offset: [...staleViewport.offset] };
     await harness.invokeCommand("VibeComfy.AgentEdit");
     await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/status?route=auto"));
     const prompt = harness.document.getElementById("vibecomfy-agent-panel-prompt");
@@ -3204,27 +3276,142 @@ test("VibeComfy reorganisation candidates preview the candidate layout and prese
     prompt.value = "reorganise this";
     await harness.clickButton("Submit");
     await waitFor(() => panel.state.phase === "AWAITING_REVIEW");
-    assert.deepEqual(harness.getCurrentGraph(), reorganisedGraph, "review should show the candidate layout on the canvas");
+    // Non-destructive preview: the live canvas must keep the ORIGINAL layout —
+    // nodes do not move until the user Applies.
+    assert.deepEqual(harness.getCurrentGraph(), originalGraph, "preview must not move nodes — canvas keeps the original layout");
+    assertViewportClose(harness.app.canvas.ds, staleViewport, "preview must not change the canvas viewport");
+    assert.ok(panel.state._layoutPreviewBaseline?.graph, "preview baseline should capture the pre-preview graph for the diff");
+    // The diff still describes both moves (old position -> new position).
     const reviewDiff = extensionModule.computePreviewDiff(panel.state.candidateGraph, panel.state.candidateReport);
     assert.equal(reviewDiff.layout_moved.length, 2, "review should preserve moved-node preview entries");
+    for (const entry of reviewDiff.layout_moved) {
+      assert.ok(
+        entry.before.x !== entry.after.x || entry.before.y !== entry.after.y,
+        "each layout_moved entry must carry a real before->after delta",
+      );
+    }
+    // The overlay draws movement arrows (dashed shaft + filled arrowhead), not
+    // per-node "moved" text badges.
     const reviewDrawOps = await harness.drawPreviewOverlay(reviewDiff);
+    assert.ok(reviewDrawOps.some((op) => op.kind === "stroke"), "review overlay should draw movement arrow shafts");
+    assert.ok(reviewDrawOps.some((op) => op.kind === "fill"), "review overlay should draw movement arrowheads");
     assert.ok(
-      reviewDrawOps.some((op) => op.kind === "fillText" && String(op.args[0]).includes("moved")),
-      "review overlay should draw moved-node badges for reorganisation preview",
+      !reviewDrawOps.some((op) => op.kind === "fillText" && String(op.args[0]).includes("moved")),
+      "review overlay should not draw per-node moved badges",
     );
 
     await harness.clickButton("Reject");
-    assert.deepEqual(harness.getCurrentGraph(), originalGraph, "reject should restore the pre-preview layout");
+    assert.deepEqual(harness.getCurrentGraph(), originalGraph, "reject leaves the original layout untouched (nothing was moved)");
+    assertViewportClose(harness.app.canvas.ds, staleViewport, "reject leaves the viewport unchanged");
 
     prompt.value = "reorganise this again";
     await harness.clickButton("Submit");
     await waitFor(() => panel.state.phase === "AWAITING_REVIEW");
-    assert.deepEqual(harness.getCurrentGraph(), reorganisedGraph, "second review should show the candidate layout");
+    assert.deepEqual(harness.getCurrentGraph(), originalGraph, "second preview must also keep the original layout in place");
+    assertViewportClose(harness.app.canvas.ds, staleViewport, "second preview must not change the viewport");
 
     await harness.clickButton("Apply");
-    assert.deepEqual(harness.getCurrentGraph(), reorganisedGraph, "apply should leave the accepted layout visible");
+    assert.deepEqual(harness.getCurrentGraph(), reorganisedGraph, "apply should commit the reorganised layout");
+    assertViewportClose(harness.app.canvas.ds, staleViewport, "apply leaves the viewport as-is");
     assert.equal(panel.state.undoStack.length, 1);
-    assert.deepEqual(panel.state.undoStack[0].graph, originalGraph, "undo should restore the layout before preview");
+    assert.deepEqual(panel.state.undoStack[0].graph, originalGraph, "undo should restore the layout before the change");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy rehydrate restores reorganise latest-candidate layout preview", async () => {
+  const SESSION_ID = "session-layout-rehydrate-preview";
+  const CHAT_URL = `/vibecomfy/agent-edit/chat?session_id=${encodeURIComponent(SESSION_ID)}`;
+  const originalGraph = {
+    nodes: [
+      { id: 1, type: "Input", pos: [40, 50], size: [210, 90], properties: { vibecomfy_uid: "uid-1" } },
+      { id: 2, type: "Output", pos: [80, 210], size: [210, 90], properties: { vibecomfy_uid: "uid-2" } },
+    ],
+    links: [[1, 1, 0, 2, 0, "IMAGE"]],
+  };
+  const reorganisedGraph = {
+    nodes: [
+      { id: 1, type: "Input", pos: [500, 80], size: [210, 90], properties: { vibecomfy_uid: "uid-1" } },
+      { id: 2, type: "Output", pos: [760, 80], size: [210, 90], properties: { vibecomfy_uid: "uid-2" } },
+    ],
+    links: [[1, 1, 0, 2, 0, "IMAGE"]],
+  };
+  const reorganisedGraphHash = sha256HexUtf8(reorganisedGraph);
+  const harness = await createBrowserHarness({
+    graph: originalGraph,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+          },
+        },
+      },
+      [CHAT_URL]: {
+        status: 200,
+        body: {
+          ok: true,
+          session_id: SESSION_ID,
+          latest_turn_id: "0001",
+          latest_candidate: {
+            ok: true,
+            route: "reorganise",
+            session_id: SESSION_ID,
+            turn_id: "0001",
+            outcome: { kind: "candidate", changes: [] },
+            candidate: {
+              state: "candidate",
+              graph: reorganisedGraph,
+              graph_hash: reorganisedGraphHash,
+              turn_identity: { session_id: SESSION_ID, turn_id: "0001" },
+            },
+            graph: reorganisedGraph,
+            candidate_graph_hash: reorganisedGraphHash,
+            eligibility: {
+              applyable: true,
+              reason: "applyable",
+              message: "Reorganise candidate is ready.",
+              warnings: [],
+            },
+            canvas_apply_allowed: true,
+            apply_allowed: true,
+            queue_allowed: true,
+            message: "Reorganised layout candidate ready to review.",
+            report: { kind: "reorganise" },
+          },
+          messages: [
+            { role: "user", text: "reorganise this workflow", turn_id: "0001" },
+            { role: "agent", text: "Reorganised layout candidate ready to review.", turn_id: "0001" },
+          ],
+        },
+      },
+    },
+  });
+
+  try {
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+    globalThis.localStorage.setItem("vibecomfy_active_session_id", SESSION_ID);
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    const panel = extensionModule.ensureAgentPanel();
+
+    await waitFor(() => panel.state.phase === "AWAITING_REVIEW");
+    await waitFor(() => panel.state._layoutPreviewActive === true);
+    // Non-destructive: rehydrate activates the preview but must NOT swap the
+    // canvas — nodes stay at the original layout, with arrows drawn on top.
+    assert.deepEqual(harness.getCurrentGraph(), originalGraph, "rehydrated preview must keep the original layout in place");
+    assert.equal(panel.state._layoutPreviewActive, true, "rehydrated reorganise candidate should activate layout preview state");
+    assert.deepEqual(panel.state._layoutPreviewBaseline.graph, originalGraph, "rehydrated preview baseline should preserve the pre-preview layout");
   } finally {
     await harness.dispose();
   }
@@ -11014,6 +11201,225 @@ test("VibeComfy scoped workflow chats keep distinct sessions, rehydrate URLs, an
   }
 });
 
+test("VibeComfy scoped workflow chats switch when Comfy configures a graph directly", async () => {
+  const graphA = {
+    nodes: [
+      { id: 1, type: "LoadImage", properties: { vibecomfy_uid: "scope-configure-a-load" } },
+      { id: 2, type: "PreviewImage", properties: { vibecomfy_uid: "scope-configure-a-preview" } },
+    ],
+    links: [[1, 1, 0, 2, 0, "IMAGE"]],
+  };
+  const graphB = {
+    nodes: [
+      { id: 10, type: "CheckpointLoaderSimple", properties: { vibecomfy_uid: "scope-configure-b-loader" } },
+      { id: 11, type: "KSampler", properties: { vibecomfy_uid: "scope-configure-b-sampler" } },
+    ],
+    links: [[1, 10, 0, 11, 0, "MODEL"]],
+  };
+  const sessionA = "session-configure-scope-a";
+  const sessionB = "session-configure-scope-b";
+  const chatUrlA = `/vibecomfy/agent-edit/chat?session_id=${sessionA}`;
+  const chatUrlB = `/vibecomfy/agent-edit/chat?session_id=${sessionB}`;
+
+  const harness = await createBrowserHarness({
+    graph: graphA,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+            deepseek: { requested_route: "deepseek", normalized_route: "deepseek", browser_api_key_allowed: true },
+          },
+        },
+      },
+      [chatUrlA]: {
+        status: 200,
+        body: {
+          ok: true,
+          session_id: sessionA,
+          latest_turn_id: "0001",
+          messages: [
+            { role: "user", text: "configure scope A user", turn_id: "0001" },
+            { role: "agent", text: "configure scope A answer", turn_id: "0001" },
+          ],
+        },
+      },
+      [chatUrlB]: {
+        status: 200,
+        body: {
+          ok: true,
+          session_id: sessionB,
+          latest_turn_id: "0001",
+          messages: [
+            { role: "user", text: "configure scope B user", turn_id: "0001" },
+            { role: "agent", text: "configure scope B answer", turn_id: "0001" },
+          ],
+        },
+      },
+    },
+  });
+
+  const originalGlobalApp = globalThis.app;
+  try {
+    globalThis.app = harness.app;
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+
+    const panel = extensionModule.ensureAgentPanel();
+    const scopeA = extensionModule.resolveActiveCanvasScope() || {
+      scopeId: extensionModule.computeScopeId(graphA),
+      fingerprint: extensionModule.computeStructuralGraphFingerprint(graphA),
+    };
+    extensionModule.setScopedSessionId(scopeA.scopeId, sessionA);
+    panel.state.chatScopeId = scopeA.scopeId;
+    panel.state.chatScopeFingerprint = scopeA.fingerprint;
+
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((entry) => entry.url === chatUrlA));
+    await waitFor(() => /configure scope A answer/.test(harness.textDump()));
+
+    const scopeB = {
+      scopeId: extensionModule.computeScopeId(graphB),
+      fingerprint: extensionModule.computeStructuralGraphFingerprint(graphB),
+    };
+    assert.notEqual(scopeB.scopeId, scopeA.scopeId, "synthetic workflow scopes must be distinct");
+    extensionModule.setScopedSessionId(scopeB.scopeId, sessionB);
+    harness.app.canvas.graph.clear();
+    harness.app.canvas.graph.configure(graphB);
+
+    await waitFor(() => panel.state.chatScopeId === scopeB.scopeId);
+    assert.equal(panel.state.chatScopeFingerprint, scopeB.fingerprint);
+    await waitFor(() => harness.requests.some((entry) => entry.url === chatUrlB));
+    await waitFor(() => /configure scope B answer/.test(harness.textDump()));
+    assert.doesNotMatch(harness.textDump(), /configure scope A/);
+  } finally {
+    if (originalGlobalApp === undefined) {
+      delete globalThis.app;
+    } else {
+      globalThis.app = originalGlobalApp;
+    }
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy scoped workflow chats switch for empty Comfy workflow tabs with workflow ids", async () => {
+  const graphA = {
+    id: "workflow-store-a",
+    nodes: [
+      { id: 1, type: "LoadImage", properties: { vibecomfy_uid: "scope-workflow-store-a-load" } },
+    ],
+    links: [],
+  };
+  const graphB = {
+    id: "workflow-store-b",
+    nodes: [],
+    links: [],
+  };
+  const sessionA = "session-workflow-store-a";
+  const sessionB = "session-workflow-store-b";
+  const chatUrlA = `/vibecomfy/agent-edit/chat?session_id=${sessionA}`;
+  const chatUrlB = `/vibecomfy/agent-edit/chat?session_id=${sessionB}`;
+  const workflowA = {
+    content: JSON.stringify({ ...graphA, id: "workflow-store-a" }),
+    filename: "Workflow A",
+  };
+  const workflowB = {
+    content: JSON.stringify({ ...graphB, id: "workflow-store-b" }),
+    filename: "Workflow B",
+  };
+
+  const harness = await createBrowserHarness({
+    graph: graphA,
+    responses: {
+      "/system_stats": {
+        status: 200,
+        body: { system: { comfyui_frontend_package: "1.39.19" } },
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: {
+          ok: true,
+          provider_available: true,
+          route: "deepseek",
+          requested_route: "auto",
+          route_options: {
+            auto: { requested_route: "auto", normalized_route: "deepseek", browser_api_key_allowed: false },
+          },
+        },
+      },
+      [chatUrlA]: {
+        status: 200,
+        body: {
+          ok: true,
+          session_id: sessionA,
+          latest_turn_id: "0001",
+          messages: [{ role: "agent", text: "workflow store A answer", turn_id: "0001" }],
+        },
+      },
+      [chatUrlB]: {
+        status: 200,
+        body: {
+          ok: true,
+          session_id: sessionB,
+          latest_turn_id: "0001",
+          messages: [{ role: "agent", text: "workflow store B answer", turn_id: "0001" }],
+        },
+      },
+    },
+  });
+
+  const originalGlobalApp = globalThis.app;
+  try {
+    globalThis.app = harness.app;
+    harness.app.extensionManager.workflow = {
+      activeWorkflow: workflowA,
+      openWorkflows: [workflowA, workflowB],
+    };
+    const extensionModule = await harness.loadExtension();
+    await harness.setup();
+
+    const panel = extensionModule.ensureAgentPanel();
+    const scopeA = extensionModule.resolveActiveCanvasScope();
+    assert.ok(scopeA?.scopeId, "workflow A should resolve a scoped chat identity");
+    assert.equal(scopeA.workflowId, "workflow-store-a");
+    extensionModule.setScopedSessionId(scopeA.scopeId, sessionA);
+    panel.state.chatScopeId = scopeA.scopeId;
+    panel.state.chatScopeFingerprint = scopeA.fingerprint;
+
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((entry) => entry.url === chatUrlA));
+    await waitFor(() => /workflow store A answer/.test(harness.textDump()));
+
+    harness.app.extensionManager.workflow.activeWorkflow = workflowB;
+    const expectedScopeB = extensionModule.computeScopeId(graphB, { workflowId: "workflow-store-b" });
+    assert.ok(expectedScopeB, "empty workflow B should still have a workflow-window scope");
+    extensionModule.setScopedSessionId(expectedScopeB, sessionB);
+    harness.app.loadGraphData(graphB);
+
+    await waitFor(() => panel.state.chatScopeId === expectedScopeB);
+    assert.equal(panel.state.chatScopeFingerprint, extensionModule.computeStructuralGraphFingerprint(graphB));
+    await waitFor(() => harness.requests.some((entry) => entry.url === chatUrlB));
+    await waitFor(() => /workflow store B answer/.test(harness.textDump()));
+    assert.doesNotMatch(harness.textDump(), /workflow store A answer/);
+  } finally {
+    if (originalGlobalApp === undefined) {
+      delete globalThis.app;
+    } else {
+      globalThis.app = originalGlobalApp;
+    }
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy scoped workflow rehydrate ignores stale latest candidates after scope switch", async () => {
   const graphA = {
     nodes: [
@@ -13058,6 +13464,71 @@ test("VibeComfy comfy_adapter preview overlay survives external rechaining and r
   }
 });
 
+test("VibeComfy preview overlay warning details stay bounded so console inspection cannot break preview drawing", async () => {
+  const originalWarn = console.warn;
+  const originalWindow = globalThis.window;
+  const warned = [];
+  globalThis.window = {
+    LiteGraph: {
+      NODE_TITLE_HEIGHT: 30,
+      NODE_SLOT_HEIGHT: 20,
+      NODE_WIDGET_HEIGHT: 20,
+    },
+  };
+  console.warn = (...args) => {
+    warned.push(args);
+    if (args.some((arg) => arg && typeof arg === "object")) {
+      throw new RangeError("recursive console inspection");
+    }
+  };
+
+  try {
+    const liveGraph = {
+      nodes: [
+        {
+          id: 1,
+          pos: [10, 20],
+          size: [120, 80],
+          inputs: [{ name: "in" }],
+          outputs: [{ name: "out" }],
+          properties: { vibecomfy_uid: "live-a" },
+        },
+      ],
+      links: {},
+    };
+    const circularLink = { label: "bad-link" };
+    circularLink.self = circularLink;
+    circularLink.toString = () => "missing::0->live-a::0";
+    const ctx = createMockCanvasContext();
+
+    assert.doesNotThrow(() => {
+      drawPanelOverlayPreviewOverlay(ctx, {
+        edited: [],
+        edited_fields: [],
+        added: [],
+        removed: [],
+        removed_named: [],
+        layout_moved: [],
+        unresolved: [],
+        added_links: [circularLink],
+        removed_links: [],
+        _candidateGraph: { nodes: [], links: [] },
+        _candidateGraphHash: "circular-warning-detail",
+      }, makePanelOverlayDeps(liveGraph));
+    });
+
+    assert.equal(warned.length, 1);
+    assert.equal(typeof warned[0][1], "string");
+  } finally {
+    console.warn = originalWarn;
+    if (originalWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+  }
+});
+
 test("VibeComfy comfy_adapter reports polling fallback when preview foreground cannot be intercepted directly", async () => {
   const harness = await createBrowserHarness();
 
@@ -14606,14 +15077,14 @@ test("VibeComfy empty-state examples are clickable and fill the composer prompt"
     await waitFor(() => /Try an example/.test(harness.textDump()));
 
     const example = harness.document.body.querySelectorAll(
-      (node) => node.textContent === "Save the output",
+      (node) => node.textContent === "Reorganise this workflow",
     )[0];
     assert(example, "expected an empty-state example row");
     example.click();
 
     assert.equal(
       harness.document.getElementById("vibecomfy-agent-panel-prompt")?.value,
-      "Save the output",
+      "Reorganise this workflow",
     );
   } finally {
     await harness.dispose();

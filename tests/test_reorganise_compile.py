@@ -2579,6 +2579,102 @@ def test_compile_local_section_layout_stacks_multiple_sidecars_on_same_target() 
     assert "sidecar:left" in local.placement_choices.get(CanonicalNodeRef("", "get_a"), "")
 
 
+def test_rebalance_layer_columns_wraps_an_over_tall_dominant_column() -> None:
+    """A weakly-connected section (e.g. prompt nodes wired through Set/Get
+    broadcasts) collapses its independent roots into one topological layer.
+    Stacking that layer must not produce one column far taller than its
+    siblings; the dominant column is reflowed into compact sub-columns."""
+    dominant = tuple(CanonicalNodeRef("", f"n{i}") for i in range(6))
+    siblings = (
+        (CanonicalNodeRef("", "s1"),),
+        (CanonicalNodeRef("", "s2"),),
+    )
+    sizes = {ref: (200, 100) for ref in (*dominant, *siblings[0], *siblings[1])}
+    gap_y = 64
+    unbalanced_height = compile_module._column_stack_height(dominant, sizes, gap_y)
+
+    rebalanced = compile_module._rebalance_layer_columns(
+        [dominant, *siblings], sizes, gap_y
+    )
+
+    # The section never grows wider than the wall's column budget.
+    assert len(rebalanced) <= compile_module.COMPILE_MAX_ROW_COLUMNS
+    # Every node is still placed exactly once.
+    assert sum(len(column) for column in rebalanced) == len(dominant) + len(siblings[0]) + len(siblings[1])
+    # No resulting column is as tall as the original over-tall column.
+    heights = [compile_module._column_stack_height(column, sizes, gap_y) for column in rebalanced]
+    assert max(heights) < unbalanced_height
+    # The reflow is balanced: the tallest column tracks the next tallest.
+    ordered = sorted(heights, reverse=True)
+    assert ordered[0] < ordered[1] * compile_module._REBALANCE_IMBALANCE_FACTOR + 1
+
+
+def test_rebalance_layer_columns_leaves_balanced_columns_untouched() -> None:
+    """Columns that are already balanced (no dominant outlier) must pass through
+    unchanged so pipeline / hub layouts keep their semantic column structure."""
+    refs = tuple(CanonicalNodeRef("", f"n{i}") for i in range(4))
+    sizes = {ref: (200, 100) for ref in refs}
+    gap_y = 64
+    balanced = [(refs[0], refs[1]), (refs[2], refs[3])]
+
+    rebalanced = compile_module._rebalance_layer_columns(balanced, sizes, gap_y)
+
+    assert [tuple(column) for column in rebalanced] == balanced
+
+
+def test_local_section_layout_balances_weakly_connected_notes_sidebar() -> None:
+    """Regression: a notes_sidebar section whose main nodes share no direct
+    edges (broadcast-routed) used to pile every root into one over-tall column.
+    It must now spread them across balanced columns so the group stays compact.
+    """
+    ui = {
+        "nodes": [
+            _with_io(_node(i, "CLIPTextEncode", f"c{i}"), outputs=[{"name": "out", "type": "*", "links": []}])
+            for i in range(1, 7)
+        ]
+        + [_node(7, "Note", "note1")],
+        "links": [],
+    }
+    plan = parse_layout_plan({
+        "version": 1,
+        "sections": [
+            {
+                "id": "cond",
+                "kind": "conditioning",
+                "nodes": [["", f"c{i}"] for i in range(1, 7)] + [["", "note1"]],
+            }
+        ],
+        "helper_placements": [],
+        "unassigned_policy": "reject",
+    })
+    facts = extract_graph_facts(ui)
+    furniture_by_ref = {fact.ref: fact for fact in facts.node_furniture}
+
+    trace = _CompileTraceAccumulator(facts)
+    classification = _classify_layout_phase(facts, trace=trace)
+    sections = _compile_section_ownership_phase(
+        plan, facts, classification, LayoutCompileOptions(), trace=trace
+    )
+    cond_section = next(section for section in sections if section.id == "cond")
+    local = _local_section_layout(
+        cond_section, facts, furniture_by_ref, LayoutCompileOptions(), _spacing("balanced"), plan
+    )
+
+    assert local.template == "notes_sidebar"
+    main_refs = [CanonicalNodeRef("", f"c{i}") for i in range(1, 7)]
+    # Roots must not all collapse into a single column: they spread across
+    # multiple x columns after rebalancing.
+    distinct_x = {local.offsets[ref][0] for ref in main_refs}
+    assert len(distinct_x) >= 2
+    # And the section's tallest column is well under the single-column height.
+    sizes = {
+        ref: _node_size_for_ref(ref, facts, furniture_by_ref.get(ref), preserve=True, minimize_setget_helpers=True)
+        for ref in local.offsets
+    }
+    single_column_height = compile_module._column_stack_height(tuple(main_refs), sizes, _spacing("balanced").node_gap_y)
+    assert local.height < single_column_height
+
+
 def test_compile_local_section_layout_sidecars_push_adjacent_primaries() -> None:
     """When a sidecar is placed next to a target that has adjacent primary
     neighbours, the adjacent primaries must be pushed to avoid overlap."""

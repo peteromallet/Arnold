@@ -261,8 +261,8 @@ test("Load & Play stages demo replay from before-send to review", async () => {
     assert.equal(panel.state.applyEligibility?.reason, "applyable", "eligibility reason stored");
     assert.equal(
       panel.state.expandedBubbleTurnKeys["turn:demo-turn-a"],
-      true,
-      "agent bubble details auto-expanded",
+      undefined,
+      "agent bubble details stay collapsed at preview stage",
     );
 
     assert.equal(panel.state.chatMessages.length, 2, "two transcript messages");
@@ -340,7 +340,7 @@ test("Load & Play shows reorganise candidate layout during review", async () => 
   }
 });
 
-test("non-applyable eligibility disables apply/canvasApply while still expanding details", async () => {
+test("non-applyable eligibility disables apply/canvasApply while keeping details collapsed", async () => {
   const harness = await createBrowserHarness({
     responses: {
       "/vibecomfy/demo/scenarios": makeScenarioList(),
@@ -381,8 +381,8 @@ test("non-applyable eligibility disables apply/canvasApply while still expanding
     assert.equal(panel.state.applyEligibility?.reason, "server_blocked", "eligibility reason preserved");
     assert.equal(
       panel.state.expandedBubbleTurnKeys["turn:demo-turn-a"],
-      true,
-      "details still expanded",
+      undefined,
+      "blocked preview details stay collapsed",
     );
   } finally {
     await harness.dispose();

@@ -402,6 +402,34 @@ test("computeScopeId returns null for empty graph", async () => {
   assert.equal(computeScopeId({ nodes: [], links: [] }), null);
 });
 
+test("computeScopeId uses workflow id to scope empty Comfy workflow tabs", async () => {
+  resetStorage();
+  const mod = await loadResolver();
+  const { computeScopeId } = mod;
+
+  const empty = { nodes: [], links: [] };
+  const scopeA = computeScopeId(empty, { workflowId: "workflow-window-a" });
+  const scopeB = computeScopeId(empty, { workflowId: "workflow-window-b" });
+
+  assert.equal(typeof scopeA, "string");
+  assert.equal(typeof scopeB, "string");
+  assert.notEqual(scopeA, scopeB);
+  assert.match(scopeA, /^[a-z0-9]+-[a-z0-9]+:workflow-window-a:[0-9a-f]{16}$/);
+});
+
+test("computeScopeId separates identical graphs in different Comfy workflow tabs", async () => {
+  resetStorage();
+  const mod = await loadResolver();
+  const { computeScopeId } = mod;
+
+  const graph = baseGraph();
+  const scopeA = computeScopeId(graph, { workflowId: "workflow-window-a" });
+  const scopeB = computeScopeId(graph, { workflowId: "workflow-window-b" });
+
+  assert.notEqual(scopeA, scopeB);
+  assert.notEqual(scopeA, computeScopeId(graph));
+});
+
 // ── Tests: captureInitialScopeId ──────────────────────────────────────────
 
 test("captureInitialScopeId returns scope info with isNew=true on first call", async () => {

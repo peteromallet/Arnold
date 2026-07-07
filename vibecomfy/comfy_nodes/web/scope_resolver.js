@@ -246,28 +246,41 @@ export function computeStructuralGraphFingerprint(graph) {
  * computeScopeId(graph)
  *
  * Builds the per-workflow-window chat scope identity for the current
- * browser tab.  The scope id is:
+ * browser tab.  The default scope id is:
  *
  *   <tab-nonce>:<structural-fingerprint>
+ *
+ * When a Comfy workflow-window id is supplied, the scope id is:
+ *
+ *   <tab-nonce>:<workflow-id>:<structural-fingerprint>
  *
  * This guarantees:
  *  - Same graph in the same tab → same scope id (session reused)
  *  - Same graph in different tabs → different scope ids (SD2 fork)
  *  - Different graphs in the same tab → different scope ids
+ *  - Same/empty graph in different Comfy workflow tabs → different scope ids
  *
- * Returns null when the graph is empty (no nodes).
+ * Returns null when the graph is empty (no nodes) and no workflow id is
+ * supplied.
  *
  * @param {object} graph  ComfyUI UI JSON (nodes + links)
+ * @param {object} [opts]
+ * @param {string|null} [opts.workflowId]  active Comfy workflow-window id
  * @returns {string|null} scope id or null for empty graphs
  */
-export function computeScopeId(graph) {
+export function computeScopeId(graph, { workflowId = null } = {}) {
   const projection = buildStructuralGraphProjection(graph);
-  if (!Array.isArray(projection.nodes) || projection.nodes.length === 0) {
+  const normalizedWorkflowId = typeof workflowId === "string" && workflowId.trim()
+    ? workflowId.trim()
+    : null;
+  if ((!Array.isArray(projection.nodes) || projection.nodes.length === 0) && !normalizedWorkflowId) {
     return null;
   }
   const fingerprint = computeStructuralGraphFingerprint(graph);
   const nonce = _tabNonce();
-  return `${nonce}:${fingerprint}`;
+  return normalizedWorkflowId
+    ? `${nonce}:${encodeURIComponent(normalizedWorkflowId)}:${fingerprint}`
+    : `${nonce}:${fingerprint}`;
 }
 
 // ── Initial fingerprint capture with sessionStorage caching ──────────────
@@ -320,16 +333,21 @@ function _scopeFingerprintCacheKey(scopeId) {
  * @param {boolean} [opts.forceRefresh]  bypass cache
  * @returns {{ scopeId: string, fingerprint: string, isNew: boolean }|null}
  */
-export function captureInitialScopeId(graph, { forceRefresh = false } = {}) {
+export function captureInitialScopeId(graph, { forceRefresh = false, workflowId = null } = {}) {
   const projection = buildStructuralGraphProjection(graph);
-  if (!Array.isArray(projection.nodes) || projection.nodes.length === 0) {
+  const normalizedWorkflowId = typeof workflowId === "string" && workflowId.trim()
+    ? workflowId.trim()
+    : null;
+  if ((!Array.isArray(projection.nodes) || projection.nodes.length === 0) && !normalizedWorkflowId) {
     return null;
   }
 
   // Compute current fingerprint
   const currentFingerprint = computeStructuralGraphFingerprint(graph);
   const nonce = _tabNonce();
-  const currentScopeId = `${nonce}:${currentFingerprint}`;
+  const currentScopeId = normalizedWorkflowId
+    ? `${nonce}:${encodeURIComponent(normalizedWorkflowId)}:${currentFingerprint}`
+    : `${nonce}:${currentFingerprint}`;
 
   // Check cache (unless force refresh)
   if (!forceRefresh) {

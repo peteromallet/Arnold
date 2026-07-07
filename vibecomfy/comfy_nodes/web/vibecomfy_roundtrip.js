@@ -60,6 +60,7 @@ import {
   applyGraphCandidateInPlace,
   applyGraphDeltaInPlace,
   installQueueGuard as installQueueGuardAdapter,
+  repaintGraph,
 } from "./comfy_adapter.js";
 import {
   createAgentEditState,
@@ -2247,7 +2248,15 @@ function installGraphConfigureIntentFallback() {
     normalizeForApply(nextGraph);
     const repairCandidate = clonePlainData(nextGraph);
     const result = originalConfigure.call(this, nextGraph, ...args);
+    if (result && typeof result.then === "function") {
+      return result.then((value) => {
+        repairLiveNodes(repairCandidate);
+        syncPanelScopeAfterGraphLoad();
+        return value;
+      });
+    }
     repairLiveNodes(repairCandidate);
+    syncPanelScopeAfterGraphLoad();
     return result;
   };
   graph.__vibecomfyIntentConfigureFallbackInstalled = true;
@@ -2543,6 +2552,39 @@ function clonePlainData(value) {
   }
 }
 
+function safePreviewLogDetail(value) {
+  if (value == null) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value.length > 500 ? `${value.slice(0, 497)}...` : value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (value instanceof Error) {
+    const name = typeof value.name === "string" && value.name ? value.name : "Error";
+    const message = typeof value.message === "string" ? value.message : "";
+    return message ? `${name}: ${message}` : name;
+  }
+  if (Array.isArray(value)) {
+    return `[array length=${value.length}]`;
+  }
+  if (typeof value === "object") {
+    let keys = [];
+    try {
+      keys = Object.keys(value).slice(0, 6);
+    } catch (_e) {
+      keys = [];
+    }
+    const ctor = typeof value.constructor?.name === "string" && value.constructor.name
+      ? value.constructor.name
+      : "Object";
+    return keys.length ? `[${ctor} keys=${keys.join(",")}]` : `[${ctor}]`;
+  }
+  return typeof value;
+}
+
 function isReorganiseLayoutPreviewCandidate(panel) {
   if (!panel?.state?.candidateGraph || typeof panel.state.candidateGraph !== "object") {
     return false;
@@ -2576,12 +2618,180 @@ function layoutPreviewBaselineSnapshot(panel, fallbackSnapshot = null) {
     graphHash: baseline.graphHash || fallbackSnapshot?.graphHash || null,
     structuralHash: baseline.structuralHash || fallbackSnapshot?.structuralHash || null,
     liveCanvasToken: baseline.liveCanvasToken || fallbackSnapshot?.liveCanvasToken || null,
+    viewport: clonePlainData(baseline.viewport || null),
   };
 }
 
-function applyGraphForLayoutPreview(graphPayload, { repaint = true } = {}) {
+const LAYOUT_PREVIEW_FIT_PADDING_PX = 80;
+const LAYOUT_PREVIEW_FIT_MAX_SCALE = 1.0;
+
+function resolveCanvasViewportDs({ create = false, preferredPath = null } = {}) {
+  const canvas = app?.canvas;
+  if (!canvas || typeof canvas !== "object") {
+    return null;
+  }
+  const candidates = [
+    { path: "canvas.ds", target: canvas },
+    { path: "canvas.graphcanvas.ds", target: canvas.graphcanvas },
+    { path: "canvas.graphCanvas.ds", target: canvas.graphCanvas },
+  ].filter((entry) => entry.target && typeof entry.target === "object");
+  if (preferredPath) {
+    const preferred = candidates.find((entry) => entry.path === preferredPath && entry.target?.ds && typeof entry.target.ds === "object");
+    if (preferred) {
+      return { path: preferred.path, ds: preferred.target.ds };
+    }
+  }
+  for (const entry of candidates) {
+    if (entry.target?.ds && typeof entry.target.ds === "object") {
+      return { path: entry.path, ds: entry.target.ds };
+    }
+  }
+  if (create && candidates.length > 0) {
+    candidates[0].target.ds = { scale: 1, offset: [0, 0] };
+    return { path: candidates[0].path, ds: candidates[0].target.ds };
+  }
+  return null;
+}
+
+function captureCanvasViewportSnapshot() {
+  const resolved = resolveCanvasViewportDs();
+  const ds = resolved?.ds;
+  if (!ds || typeof ds !== "object") {
+    return null;
+  }
+  const scale = Number(ds.scale);
+  const offset = Array.isArray(ds.offset) ? ds.offset : null;
+  const offsetX = offset ? Number(offset[0]) : NaN;
+  const offsetY = offset ? Number(offset[1]) : NaN;
+  if (!Number.isFinite(scale) || scale <= 0 || !Number.isFinite(offsetX) || !Number.isFinite(offsetY)) {
+    return null;
+  }
+  return {
+    path: resolved.path,
+    scale,
+    offset: [offsetX, offsetY],
+  };
+}
+
+function restoreCanvasViewportSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") {
+    return false;
+  }
+  const scale = Number(snapshot.scale);
+  const offset = Array.isArray(snapshot.offset) ? snapshot.offset : null;
+  const offsetX = offset ? Number(offset[0]) : NaN;
+  const offsetY = offset ? Number(offset[1]) : NaN;
+  if (!Number.isFinite(scale) || scale <= 0 || !Number.isFinite(offsetX) || !Number.isFinite(offsetY)) {
+    return false;
+  }
+  const resolved = resolveCanvasViewportDs({ create: true, preferredPath: snapshot.path || null });
+  const ds = resolved?.ds;
+  if (!ds || typeof ds !== "object") {
+    return false;
+  }
+  ds.scale = scale;
+  if (!Array.isArray(ds.offset)) {
+    ds.offset = [offsetX, offsetY];
+  } else {
+    ds.offset[0] = offsetX;
+    ds.offset[1] = offsetY;
+  }
+  return true;
+}
+
+function canvasViewportPixelSize() {
+  const canvas = app?.canvas;
+  const element = canvas?.canvas || canvas?.ctx?.canvas || canvas?.canvasEl || null;
+  const widthCandidates = [
+    element?.width,
+    element?.clientWidth,
+    element?.offsetWidth,
+    canvas?.width,
+    canvas?.clientWidth,
+    globalThis.window?.innerWidth,
+  ];
+  const heightCandidates = [
+    element?.height,
+    element?.clientHeight,
+    element?.offsetHeight,
+    canvas?.height,
+    canvas?.clientHeight,
+    globalThis.window?.innerHeight,
+  ];
+  const width = widthCandidates.map(Number).find((value) => Number.isFinite(value) && value > 0);
+  const height = heightCandidates.map(Number).find((value) => Number.isFinite(value) && value > 0);
+  if (!Number.isFinite(width) || !Number.isFinite(height)) {
+    return null;
+  }
+  return { width, height };
+}
+
+function graphNodeBounds(graphPayload) {
+  const nodes = Array.isArray(graphPayload?.nodes) ? graphPayload.nodes : [];
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let count = 0;
+  for (const node of nodes) {
+    const pos = readNodePos(node, NaN, NaN);
+    if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y)) {
+      continue;
+    }
+    const size = readNodeSize(node, 200, 100);
+    const width = Number.isFinite(size.w) && size.w > 0 ? size.w : 200;
+    const height = Number.isFinite(size.h) && size.h > 0 ? size.h : 100;
+    minX = Math.min(minX, pos.x);
+    minY = Math.min(minY, pos.y);
+    maxX = Math.max(maxX, pos.x + width);
+    maxY = Math.max(maxY, pos.y + height);
+    count += 1;
+  }
+  if (count === 0) {
+    return null;
+  }
+  return {
+    x: minX,
+    y: minY,
+    w: Math.max(maxX - minX, 1),
+    h: Math.max(maxY - minY, 1),
+  };
+}
+
+function fitCanvasViewportToGraphPayload(graphPayload) {
+  const resolved = resolveCanvasViewportDs();
+  const size = canvasViewportPixelSize();
+  const bounds = graphNodeBounds(graphPayload);
+  if (!resolved?.ds || !size || !bounds) {
+    return false;
+  }
+  const availableWidth = Math.max(1, size.width - LAYOUT_PREVIEW_FIT_PADDING_PX * 2);
+  const availableHeight = Math.max(1, size.height - LAYOUT_PREVIEW_FIT_PADDING_PX * 2);
+  const scale = Math.min(
+    LAYOUT_PREVIEW_FIT_MAX_SCALE,
+    availableWidth / bounds.w,
+    availableHeight / bounds.h,
+  );
+  if (!Number.isFinite(scale) || scale <= 0) {
+    return false;
+  }
+  const centerX = bounds.x + bounds.w / 2;
+  const centerY = bounds.y + bounds.h / 2;
+  const offsetX = (size.width / 2 / scale) - centerX;
+  const offsetY = (size.height / 2 / scale) - centerY;
+  resolved.ds.scale = scale;
+  if (!Array.isArray(resolved.ds.offset)) {
+    resolved.ds.offset = [offsetX, offsetY];
+  } else {
+    resolved.ds.offset[0] = offsetX;
+    resolved.ds.offset[1] = offsetY;
+  }
+  return true;
+}
+
+function applyGraphForLayoutPreview(graphPayload, { repaint = true, fitViewport = false } = {}) {
   let repairCandidate = null;
-  return applyGraphCandidateInPlace(app, clonePlainData(graphPayload), {
+  const result = applyGraphCandidateInPlace(app, clonePlainData(graphPayload), {
     beforeConfigure(nextCandidate) {
       decorateIntentGraphPayload(nextCandidate);
       repairCandidate = clonePlainData(nextCandidate);
@@ -2589,8 +2799,15 @@ function applyGraphForLayoutPreview(graphPayload, { repaint = true } = {}) {
     afterConfigure(_graph, nextCandidate) {
       repairLiveIntentNodesFromCandidate(repairCandidate || nextCandidate);
     },
-    repaint,
+    repaint: fitViewport ? false : repaint,
   });
+  if (fitViewport) {
+    fitCanvasViewportToGraphPayload(graphPayload);
+    if (repaint) {
+      repaintGraph(app, result.graph);
+    }
+  }
+  return result;
 }
 
 async function activateLayoutPreviewIfNeeded(panel, baselineSnapshot = null) {
@@ -2618,8 +2835,13 @@ async function activateLayoutPreviewIfNeeded(panel, baselineSnapshot = null) {
     graphHash: snapshot.graphHash || null,
     structuralHash: snapshot.structuralHash || null,
     liveCanvasToken: snapshot.liveCanvasToken || null,
+    viewport: captureCanvasViewportSnapshot(),
   };
-  applyGraphForLayoutPreview(panel.state.candidateGraph, { repaint: true });
+  // Non-destructive preview: do NOT swap the canvas to the candidate. Leave the
+  // live graph at its original positions; the always-on AWAITING_REVIEW overlay
+  // renders the already-computed layout_moved arrows (old position → new target)
+  // on top. Invalidate the overlay draw-model cache + repaint so arrows appear.
+  clearCandidateInvalidationSideEffects(true);
   panel.state._layoutPreviewActive = true;
   panel.state._layoutPreviewCandidateGraphHash = panel.state.candidateGraphHash;
   panel.state._layoutPreviewTurnId = panel.state.turnId || null;
@@ -2636,17 +2858,21 @@ function restoreLayoutPreviewBaseline(panel, { repaint = true, clear = true } = 
     }
     return false;
   }
+  // Non-destructive preview: the live graph and viewport were never mutated, so
+  // there is nothing to restore. Drop the cached overlay diff + draw model so
+  // the layout-moved arrows stop rendering, and repaint when asked.
   try {
-    applyGraphForLayoutPreview(baseline.graph, { repaint });
-    return true;
-  } catch (error) {
-    console.warn("[vibecomfy] failed to restore layout preview baseline:", error);
-    return false;
-  } finally {
     if (clear) {
+      clearCandidatePreviewState(panel);
       clearLayoutPreviewState(panel);
     }
+    if (repaint) {
+      clearCandidateInvalidationSideEffects(true);
+    }
+  } catch (error) {
+    console.warn("[vibecomfy] failed to clear layout preview:", safePreviewLogDetail(error));
   }
+  return true;
 }
 
 // ── Audit download helpers ─────────────────────────────────────────────────
@@ -4397,7 +4623,7 @@ async function _rehydrateChat(panel) {
       resetThreadRenderState(panel);
       // ── T8: Pass requestScopeId so restoreLatestCandidateFromChat can
       // refuse cross-scope / cross-session candidate restores.
-      restoreLatestCandidateFromChat(panel, payload, requestScopeId);
+      await restoreLatestCandidateFromChat(panel, payload, requestScopeId);
       renderAgentPanel(panel, { dirtySections: [RENDER_SECTIONS.META, RENDER_SECTIONS.THREAD] });
     } else {
       throw new Error(payload.raw?.error || "chat endpoint returned ok: false");
@@ -4447,7 +4673,7 @@ function _persistActiveSession(sessionId, scopeId = null) {
 //      to the active scope (cross-session refusal).
 // When no scope is active (requestScopeId is null) the legacy behaviour
 // is preserved.
-function restoreLatestCandidateFromChat(panel, payload, requestScopeId = null) {
+async function restoreLatestCandidateFromChat(panel, payload, requestScopeId = null) {
   const latest = payload?.latestCandidate || null;
   if (!panel?.state || !latest || typeof latest !== "object") {
     return;
@@ -4552,6 +4778,11 @@ function restoreLatestCandidateFromChat(panel, payload, requestScopeId = null) {
     changeDetails: panel.state.changeDetails,
     message: panel.state.message,
   });
+  try {
+    await activateLayoutPreviewIfNeeded(panel);
+  } catch (error) {
+    console.warn("[vibecomfy] layout preview activation after rehydrate failed:", safePreviewLogDetail(error));
+  }
 }
 
 // ── T9: Return the active scope id from the current panel, if any. ────────
@@ -6408,6 +6639,9 @@ function buildAgentPanelDebugSnapshot(panel = currentAgentPanel()) {
     rehydrateCommitAt: runtime._rehydrateCommitAt,
     marksAfterCommit: runtime._marksAfterCommit,
     phase: panel?.state?.phase || null,
+    chatScopeId: panel?.state?.chatScopeId || null,
+    chatScopeFingerprint: panel?.state?.chatScopeFingerprint || null,
+    activeCanvasScope: resolveActiveCanvasScope(),
     readiness: {
       kind: routeStatus.kind || null,
       ready: Boolean(readinessState.ready),
@@ -6643,7 +6877,7 @@ function clearCandidatePreviewState(panel) {
     }
   } catch (e) {
     // Best-effort: a failed dirty-canvas call should not block cleanup.
-    console.warn("[vibecomfy] clearCandidatePreviewState canvas dirty failed:", e);
+    console.warn("[vibecomfy] clearCandidatePreviewState canvas dirty failed:", safePreviewLogDetail(e));
   }
 }
 
@@ -6884,7 +7118,7 @@ export function computePreviewDiff(candidateGraph, candidateReport) {
     }
 
     if (unresolved.length > 0) {
-      console.warn("[vibecomfy] computePreviewDiff — unresolved report entries:", unresolved);
+      console.warn("[vibecomfy] computePreviewDiff — unresolved report entries:", safePreviewLogDetail(unresolved));
     }
 
     // ── Edited Fields: from normalized FieldChange data (T10) ────────────
@@ -7024,7 +7258,7 @@ export function computePreviewDiff(candidateGraph, candidateReport) {
           keys.add(key);
         } else if (_unresolvableLinkWarnCount < _MAX_UNRESOLVABLE_LINK_WARNS) {
           _unresolvableLinkWarnCount += 1;
-          console.warn("[vibecomfy] computePreviewDiff — unresolvable link endpoint:", link);
+          console.warn("[vibecomfy] computePreviewDiff — unresolvable link endpoint:", safePreviewLogDetail(link));
         }
       }
       return keys;
@@ -7161,7 +7395,7 @@ export function computePreviewDiff(candidateGraph, candidateReport) {
 
     return diff;
   } catch (e) {
-    console.warn("[vibecomfy] computePreviewDiff failed, returning empty diff:", e);
+    console.warn("[vibecomfy] computePreviewDiff failed, returning empty diff:", safePreviewLogDetail(e));
     return {
       edited: [],
       edited_fields: [],
@@ -7318,7 +7552,7 @@ function _warnOverlayUnresolved(model, message, detail) {
     return;
   }
   model.unresolvedWarnCount += 1;
-  console.warn(message, detail);
+  console.warn(message, safePreviewLogDetail(detail));
 }
 
 // ── Ghost dimension computation (T3) ──────────────────────────────────────
@@ -7754,32 +7988,30 @@ export function drawPreviewOverlay(ctx, diff) {
     }
 
     // ── Reorganisation layout moves ────────────────────────────────────
-    // Layout previews swap the live canvas to the candidate graph, so ordinary
-    // semantic diffing sees no added/edited nodes. Use the saved pre-preview
-    // baseline to show what moved or resized.
+    // Non-destructive preview: the live canvas keeps the ORIGINAL layout, so each
+    // live node already sits at its old (before) position. Draw a dashed arrow
+    // from each mover to a translucent target rect at its proposed (after)
+    // position — node (old) ──→ ghost (new) — without moving anything.
     var layoutMoved = Array.isArray(diff.layout_moved) ? diff.layout_moved : [];
     for (var _lmi = 0; _lmi < layoutMoved.length; _lmi += 1) {
       var move = layoutMoved[_lmi];
       if (!move || !move.uid || !move.before || !move.after) {
         continue;
       }
-      var movedNode = liveByUid.get(move.uid);
       var beforeBounds = {
         x: Number(move.before.x) || 0,
         y: (Number(move.before.y) || 0) - TITLE_H,
         w: Math.max(1, Number(move.before.w) || 1),
         h: Math.max(1, Number(move.before.h) || 1) + TITLE_H,
       };
-      var afterBounds = movedNode
-        ? readNodeBounding(movedNode, TITLE_H)
-        : {
-            x: Number(move.after.x) || 0,
-            y: (Number(move.after.y) || 0) - TITLE_H,
-            w: Math.max(1, Number(move.after.w) || 1),
-            h: Math.max(1, Number(move.after.h) || 1) + TITLE_H,
-          };
+      var afterBounds = {
+        x: Number(move.after.x) || 0,
+        y: (Number(move.after.y) || 0) - TITLE_H,
+        w: Math.max(1, Number(move.after.w) || 1),
+        h: Math.max(1, Number(move.after.h) || 1) + TITLE_H,
+      };
 
-      _drawFullBoxMarker(beforeBounds, layoutColor, layoutBeforeFill, true);
+      // Translucent ghost at the proposed position (shows the future footprint).
       _drawFullBoxMarker(afterBounds, layoutColor, layoutFill, false);
 
       var beforeCx = beforeBounds.x + beforeBounds.w / 2;
@@ -7801,14 +8033,23 @@ export function drawPreviewOverlay(ctx, diff) {
         if (ctx.setLineDash) {
           ctx.setLineDash([]);
         }
+        // Arrowhead at the target, pointing along the move direction.
+        var moveAngle = Math.atan2(afterCy - beforeCy, afterCx - beforeCx);
+        var _ah = 8;
         ctx.beginPath();
-        ctx.arc(afterCx, afterCy, 4, 0, Math.PI * 2);
+        ctx.moveTo(afterCx, afterCy);
+        _lineTo(
+          afterCx - _ah * Math.cos(moveAngle - Math.PI / 6),
+          afterCy - _ah * Math.sin(moveAngle - Math.PI / 6),
+        );
+        _lineTo(
+          afterCx - _ah * Math.cos(moveAngle + Math.PI / 6),
+          afterCy - _ah * Math.sin(moveAngle + Math.PI / 6),
+        );
         ctx.fill();
       } finally {
         ctx.restore();
       }
-
-      _drawBadge(afterBounds.x + 4, afterBounds.y + 18, move.resized ? "moved + resized" : "moved", layoutColor);
     }
 
     // ── Removed nodes (red outline + "− will be removed" badge) ─────────
@@ -10319,7 +10560,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
     try {
       await activateLayoutPreviewIfNeeded(panel, arrivalSnapshot);
     } catch (error) {
-      console.warn("[vibecomfy] layout preview activation failed:", error);
+      console.warn("[vibecomfy] layout preview activation failed:", safePreviewLogDetail(error));
     }
     renderLifecycleTransition(panel, candidateObligations);
 
