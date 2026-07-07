@@ -680,7 +680,7 @@ test("VibeComfy browser harness loads the extension, captures commands, loadGrap
     assert.equal(harness.serializeCalls.length, 1);
     assert.deepEqual(
       harness.requests.map((entry) => entry.url),
-      ["/vibecomfy/ping", "/system_stats", "/vibecomfy/roundtrip"],
+      ["/vibecomfy/ping", "/system_stats", "/vibecomfy/demo/scenarios", "/vibecomfy/roundtrip"],
     );
 
     harness.clickButton("Apply");
