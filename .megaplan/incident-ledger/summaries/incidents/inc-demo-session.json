@@ -1,6 +1,6 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 170,
+  "evidence_ref_count": 175,
   "evidence_refs": [
     {
       "kind": "verification_record"
@@ -195,12 +195,12 @@
       "kind": "verification_record"
     }
   ],
-  "generated_at": "2026-07-07T01:36:24.074740+00:00",
+  "generated_at": "2026-07-07T13:29:44.802352+00:00",
   "incident_id": "inc-demo-session",
   "kind": "incident_summary",
   "latest_actor": "immediate_repair",
   "next_expected_event": "repair_attempt.verification",
-  "omitted_evidence_ref_count": 106,
+  "omitted_evidence_ref_count": 111,
   "outcome": "discord_escalated",
   "placeholders": {
     "install_freshness": "unknown",
@@ -215,8 +215,8 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:c96cf6179e6f342d635416e16508e7b6b6e5a4962a84c85614b0e279d828bf8c",
-    "last_seq": 201,
+    "digest": "sha256:8c80f44e6634cba0574620716302c91c608f8e33e973547f4eef72e23785616e",
+    "last_seq": 210,
     "projection": "incidents"
   },
   "state": "repair_attempt",
