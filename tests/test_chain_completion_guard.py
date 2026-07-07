@@ -1866,6 +1866,93 @@ def test_rearm_rerun_phase_execute_authority_block_resets_plan(
     assert "rerun-phase retry" in writer.call_args.args[0]
 
 
+def test_rearm_rerun_phase_execute_authority_block_quarantines_stale_execute_artifacts(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "name": "plan-m1",
+        "current_state": "blocked",
+        "config": {"project_dir": str(tmp_path)},
+        "resume_cursor": {"phase": "execute", "retry_strategy": "rerun_phase"},
+        "latest_failure": {
+            "kind": "authority_divergence",
+            "phase": "execute",
+            "message": "execute terminal success lacks corroborated task completion",
+            "metadata": {"reasons": ["T13:not_executed:pending"]},
+        },
+        "meta": {},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state) + "\n", encoding="utf-8")
+    (plan_dir / "execute_batch_13_output.json").write_text(
+        json.dumps(
+            {
+                "output": "",
+                "task_updates": [
+                    {"task_id": "T13", "status": "pending", "executor_notes": ""}
+                ],
+                "sense_check_acknowledgments": [
+                    {"sense_check_id": "SC13", "executor_note": ""}
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_12.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T12",
+                        "status": "done",
+                        "files_changed": ["src/app.py"],
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_13.json").write_text(
+        json.dumps(
+            {
+                "output": "[Reconstructed from tool calls] Made 0 tool calls.",
+                "task_updates": [
+                    {"task_id": "T5", "status": "pending", "executor_notes": ""}
+                ],
+                "deviations": [
+                    "Tasks left pending after execute (executor never started them): T13"
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    writer = mock.Mock()
+    recovered = chain_module._rearm_rerun_phase_execute_authority_block(
+        plan_dir,
+        writer=writer,
+    )
+
+    assert recovered is True
+    assert not (plan_dir / "execute_batch_13_output.json").exists()
+    assert not (plan_dir / "execution_batch_13.json").exists()
+    assert (plan_dir / "execute_batch_13_output.json.authority-divergence").exists()
+    assert (plan_dir / "execution_batch_13.json.authority-divergence").exists()
+    assert (plan_dir / "execution_batch_12.json").exists()
+    saved = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    recoveries = saved.get("meta", {}).get("rerun_phase_execute_recoveries")
+    assert isinstance(recoveries, list)
+    assert recoveries[-1]["quarantined_artifacts"] == [
+        "execute_batch_13_output.json",
+        "execution_batch_13.json",
+    ]
+
+
 def test_latest_execution_batch_all_tasks_done_ignores_stale_pending_finalize_rows(
     tmp_path: Path,
 ) -> None:
