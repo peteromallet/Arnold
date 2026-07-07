@@ -1,0 +1,68 @@
+{
+  "deadline_ts": null,
+  "evidence_ref_count": 10,
+  "evidence_refs": [
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "dispatched"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "stopped"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "stopped"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "stopped"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "recursion_blocked"
+    },
+    {
+      "kind": "watchdog_observation",
+      "status": "recursion_blocked"
+    }
+  ],
+  "generated_at": "2026-07-07T01:36:24.076991+00:00",
+  "incident_id": "inc-superfixer-alive-but-failed-recovery",
+  "kind": "incident_summary",
+  "latest_actor": "watchdog",
+  "next_expected_event": "watchdog.dispatch",
+  "outcome": "stopped",
+  "placeholders": {
+    "install_freshness": "unknown",
+    "recurrence": "unknown",
+    "shipped_fix": "unknown"
+  },
+  "problem_ids": [
+    "problem-67a765759422",
+    "problem-8f475cf8e677",
+    "problem-bd43205325d0",
+    "problem-bef9405c197d",
+    "problem-e20c45ae0eb0"
+  ],
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:c96cf6179e6f342d635416e16508e7b6b6e5a4962a84c85614b0e279d828bf8c",
+    "last_seq": 208,
+    "projection": "incidents"
+  },
+  "state": "detection",
+  "summary_text": "inc-superfixer-alive-but-failed-recovery: session stopped and needs repair attention"
+}

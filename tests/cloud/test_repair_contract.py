@@ -867,11 +867,12 @@ def test_outcome_constants_are_well_defined() -> None:
 
 def test_success_outcomes_match_planned_lattice() -> None:
     assert repair_contract.SUCCESS_OUTCOMES == frozenset(
-        {"complete", "progressed", "live_with_fresh_activity", "true_human_blocker"}
+        {"complete", "progressed", "true_human_blocker"}
     )
 
 
 def test_non_success_outcomes_include_liveness_and_exhaustion() -> None:
+    assert "live_with_fresh_activity" in repair_contract.NON_SUCCESS_OUTCOMES
     assert "partial_liveness" in repair_contract.NON_SUCCESS_OUTCOMES
     assert "repair_timeout" in repair_contract.NON_SUCCESS_OUTCOMES
     assert "repair_exhausted" in repair_contract.NON_SUCCESS_OUTCOMES
@@ -888,7 +889,7 @@ def test_all_outcomes_union_covers_both_sets() -> None:
     assert repair_contract.SUCCESS_OUTCOMES.isdisjoint(repair_contract.NON_SUCCESS_OUTCOMES)
 
 
-def test_is_success_outcome_only_accepts_four_values() -> None:
+def test_is_success_outcome_only_accepts_three_values() -> None:
     for outcome in repair_contract.ALL_OUTCOMES:
         expected = outcome in repair_contract.SUCCESS_OUTCOMES
         assert repair_contract.is_success_outcome(outcome) == expected, (
@@ -899,6 +900,14 @@ def test_is_success_outcome_only_accepts_four_values() -> None:
 def test_is_success_outcome_unknown_value_not_in_lattice() -> None:
     assert not repair_contract.is_success_outcome("bogus")
     assert not repair_contract.is_success_outcome("")
+
+
+def test_live_with_fresh_activity_constant_loadable_but_non_success() -> None:
+    """The legacy constant must remain loadable for historical records but is non-success."""
+    assert repair_contract.LIVE_WITH_FRESH_ACTIVITY == "live_with_fresh_activity"
+    assert repair_contract.LIVE_WITH_FRESH_ACTIVITY not in repair_contract.SUCCESS_OUTCOMES
+    assert repair_contract.LIVE_WITH_FRESH_ACTIVITY in repair_contract.NON_SUCCESS_OUTCOMES
+    assert not repair_contract.is_success_outcome(repair_contract.LIVE_WITH_FRESH_ACTIVITY)
 
 
 def test_is_terminal_outcome() -> None:
@@ -1021,14 +1030,14 @@ def test_classify_progressed_beats_fresh_and_blocker() -> None:
 
 
 def test_classify_fresh_activity_beats_blocker_and_liveness() -> None:
-    assert (
-        repair_contract.classify_verification_outcome(
-            has_fresh_activity=True,
-            has_true_human_blocker=True,
-            is_live=True,
-        )
-        == repair_contract.LIVE_WITH_FRESH_ACTIVITY
+    """Fresh activity is now partial_liveness (non-success), not a success outcome."""
+    outcome = repair_contract.classify_verification_outcome(
+        has_fresh_activity=True,
+        has_true_human_blocker=True,
+        is_live=True,
     )
+    assert outcome == repair_contract.PARTIAL_LIVENESS
+    assert not repair_contract.is_success_outcome(outcome)
 
 
 def test_classify_true_human_blocker_beats_liveness() -> None:
@@ -1084,7 +1093,7 @@ def test_classify_every_outcome_reachable() -> None:
     )
     assert (
         repair_contract.classify_verification_outcome(has_fresh_activity=True)
-        == repair_contract.LIVE_WITH_FRESH_ACTIVITY
+        == repair_contract.PARTIAL_LIVENESS
     )
     assert (
         repair_contract.classify_verification_outcome(has_true_human_blocker=True)

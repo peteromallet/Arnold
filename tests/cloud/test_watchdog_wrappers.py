@@ -6885,7 +6885,7 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert 'DEV_REQUESTED_MODEL="codex:gpt-5.5"' in text
     assert 'CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM:-0' in text
     assert 'GLM_FALLBACK="zhipu:glm-5.2 disabled by default for watchdog repair; using gpt-5.4 for iteration 1"' in text
-    assert 'repair_data_set_outcome "live_with_fresh_activity"' in text
+    assert 'repair_data_set_outcome "partial_liveness"' in text
     assert 'repair_data_set_outcome "recurring_retry_pending"' in text
     assert 'repair_data_set_outcome "discord_escalated"' in text
     assert text.index('exit_if_repair_target_complete "post-iterations"') < text.index('repair_data_set_outcome "discord_escalated"')
@@ -8057,7 +8057,7 @@ def test_launch_chain_tick_does_not_treat_stopped_health_as_model_launch_failure
     assert "TMUX new-session" in result.stderr
 
 
-def test_compute_meta_repair_trigger_skips_stale_launch_failure_after_success(
+def test_compute_meta_repair_trigger_triggers_on_stale_launch_failure_after_partial_liveness(
     tmp_path: Path,
 ) -> None:
     marker_dir = tmp_path / "markers"
@@ -8067,7 +8067,7 @@ def test_compute_meta_repair_trigger_skips_stale_launch_failure_after_success(
         json.dumps(
             {
                 "session": "demo-session",
-                "outcome": "live_with_fresh_activity",
+                "outcome": "partial_liveness",
                 "attempts": [
                     {"attempt_id": 1, "mechanical_launch": "failed:tmux_launch_failed"},
                 ],
@@ -8103,7 +8103,8 @@ def test_compute_meta_repair_trigger_skips_stale_launch_failure_after_success(
     )
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "NO_TRIGGER"
+    # partial_liveness is non-success, so stale launch failure still triggers
+    assert result.stdout.strip() == "TRIGGER:model_tool_launch_failure"
 
 
 def test_launch_chain_tick_dispatches_meta_repair_on_partial_liveness_trigger(tmp_path: Path) -> None:

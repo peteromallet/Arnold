@@ -39,7 +39,6 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
 from arnold_pipelines.megaplan.cloud.redact import REDACTION
 from arnold_pipelines.megaplan.cloud.repair_contract import (
     COMPLETE,
-    LIVE_WITH_FRESH_ACTIVITY,
     NEEDS_HUMAN,
     PARTIAL_LIVENESS,
     REPAIR_EXHAUSTED,
@@ -375,16 +374,16 @@ class TestNonTriggerCases:
         assert result.should_dispatch is False
         assert "terminal success outcome" in result.rationale[0]
 
-    def test_success_outcome_suppresses_stale_launch_failure(self) -> None:
+    def test_liveness_outcome_no_longer_suppresses_stale_launch_failure(self) -> None:
         result = classify_repair_system_failure(
-            session="s19-success-launch",
-            repair_outcome=LIVE_WITH_FRESH_ACTIVITY,
+            session="s19-liveness-launch",
+            repair_outcome=PARTIAL_LIVENESS,
             has_model_tool_launch_error=True,
             partial_liveness_ticks=4,
         )
-        assert result.trigger is None
-        assert result.should_dispatch is False
-        assert "terminal success outcome" in result.rationale[0]
+        # partial_liveness is non-success; model/tool launch failure still fires
+        assert result.trigger == MetaRepairTrigger.MODEL_TOOL_LAUNCH_FAILURE
+        assert result.should_dispatch is True
 
     def test_still_repairing_no_trigger(self) -> None:
         result = classify_repair_system_failure(
@@ -471,13 +470,14 @@ class TestClassificationPriority:
         )
         assert result.trigger == MetaRepairTrigger.MODEL_TOOL_LAUNCH_FAILURE
 
-    def test_success_outcome_beats_launch_failure(self) -> None:
+    def test_liveness_outcome_no_longer_beats_launch_failure(self) -> None:
         result = classify_repair_system_failure(
-            session="s27-success",
-            repair_outcome=LIVE_WITH_FRESH_ACTIVITY,
+            session="s27-liveness",
+            repair_outcome=PARTIAL_LIVENESS,
             has_model_tool_launch_error=True,
         )
-        assert result.trigger is None
+        # partial_liveness is non-success; launch failure fires
+        assert result.trigger == MetaRepairTrigger.MODEL_TOOL_LAUNCH_FAILURE
 
 
 # ---------------------------------------------------------------------------
@@ -820,7 +820,7 @@ class TestEvaluateMetaRepairTriggers:
         assert classification.should_dispatch is False
         assert prompt is None
 
-    def test_live_with_fresh_activity_suppresses_stale_launch_trigger(
+    def test_partial_liveness_no_longer_suppresses_stale_launch_trigger(
         self, tmp_path: Path
     ) -> None:
         repair_root = _make_session_dir(tmp_path, "eval-s2-live-launch")
@@ -830,7 +830,7 @@ class TestEvaluateMetaRepairTriggers:
                     "session": "eval-s2-live-launch",
                     "workspace": "/workspace/test-project",
                     "plan_name": "test-plan",
-                    "outcome": LIVE_WITH_FRESH_ACTIVITY,
+                    "outcome": PARTIAL_LIVENESS,
                     "attempts": [
                         {
                             "attempt_id": 1,
@@ -844,7 +844,7 @@ class TestEvaluateMetaRepairTriggers:
         classification, prompt = evaluate_meta_repair_triggers(
             session="eval-s2-live-launch",
             repair_data_dir=repair_root,
-            repair_outcome=LIVE_WITH_FRESH_ACTIVITY,
+            repair_outcome=PARTIAL_LIVENESS,
             has_model_tool_launch_error=True,
             current_target_observation={
                 "authoritative_source": "chain_state",
@@ -860,9 +860,9 @@ class TestEvaluateMetaRepairTriggers:
             },
             load_evidence=True,
         )
-        assert classification.should_dispatch is False
-        assert classification.trigger is None
-        assert prompt is None
+        # partial_liveness is non-success; stale launch failure triggers meta-repair
+        assert classification.should_dispatch is True
+        assert classification.trigger == MetaRepairTrigger.MODEL_TOOL_LAUNCH_FAILURE
 
     def test_loads_evidence_when_requested(self, tmp_path: Path) -> None:
         repair_root = _make_session_dir(tmp_path, "eval-s3")
