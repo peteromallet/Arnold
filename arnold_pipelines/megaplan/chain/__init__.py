@@ -3566,6 +3566,76 @@ def _rearm_fresh_session_execute_block(
     return True
 
 
+def _rearm_rerun_phase_execute_authority_block(
+    plan_dir: Path,
+    *,
+    writer,
+) -> bool:
+    """Reset a blocked execute authority-divergence plan for a rerun-phase retry.
+
+    ``megaplan auto`` records uncorroborated execute terminal success as
+    ``current_state=blocked`` with ``resume_cursor={phase: execute,
+    retry_strategy: rerun_phase}``. A later chain relaunch should honor that
+    suspension and re-run execute instead of preserving the stale blocked state.
+    """
+
+    state_path = plan_dir / "state.json"
+    try:
+        state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(state_payload, dict):
+        return False
+    if state_payload.get("current_state") != STATE_BLOCKED:
+        return False
+    if state_payload.get("active_step"):
+        return False
+    resume_cursor = state_payload.get("resume_cursor")
+    if not isinstance(resume_cursor, dict):
+        return False
+    if resume_cursor.get("phase") != "execute":
+        return False
+    if resume_cursor.get("retry_strategy") != "rerun_phase":
+        return False
+    latest_failure = state_payload.get("latest_failure")
+    if not isinstance(latest_failure, dict):
+        return False
+    if latest_failure.get("phase") != "execute":
+        return False
+    if latest_failure.get("kind") != "authority_divergence":
+        return False
+
+    from arnold_pipelines.megaplan._core.state import write_plan_state
+
+    recovery_event = {
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "reason": "chain relaunch honored execute rerun_phase authority-divergence cursor",
+    }
+
+    def _patch_blocked_execute(current: dict[str, Any]) -> bool:
+        current.pop("latest_failure", None)
+        current.pop("resume_cursor", None)
+        current.pop("active_step", None)
+        meta = current.setdefault("meta", {})
+        if isinstance(meta, dict):
+            entries = meta.setdefault("rerun_phase_execute_recoveries", [])
+            if isinstance(entries, list):
+                entries.append(recovery_event)
+        return True
+
+    write_plan_state(
+        plan_dir,
+        mode="patch-many",
+        patch={"current_state": STATE_FINALIZED},
+        mutation=_patch_blocked_execute,
+    )
+    writer(
+        "[chain] execute authority-divergence recorded a rerun-phase retry; reset "
+        "blocked plan back to finalized so execute can re-run\n"
+    )
+    return True
+
+
 def _drive_plan_with_blocked_execute_recovery(
     root: Path,
     spec_path: Path,
@@ -5088,6 +5158,7 @@ def run_chain(
                     plan_dir = None
                 if plan_dir is not None:
                     _rearm_fresh_session_execute_block(plan_dir, writer=writer)
+                    _rearm_rerun_phase_execute_authority_block(plan_dir, writer=writer)
                 plan_state = _plan_state_payload_from_name(root, plan_name)
                 if _blocked_plan_replay_would_be_redundant(state, plan_state=plan_state):
                     _append_reconciliation_audit(
