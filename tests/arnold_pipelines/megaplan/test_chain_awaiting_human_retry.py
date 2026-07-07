@@ -675,6 +675,93 @@ def test_reconcile_clears_stale_active_state_when_completed_milestone_is_termina
     assert saved.last_state == "done"
 
 
+def test_reconcile_appends_missing_completed_record_for_terminal_merged_pr_plan(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    spec = load_spec(spec_path)
+    _write_plan_state(tmp_path, current_state="done")
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="m7-plan",
+        last_state="initialized",
+        pr_number=122,
+        pr_state="open",
+        completed=[],
+    )
+
+    messages: list[str] = []
+    with patch("arnold_pipelines.megaplan.chain._pr_state", return_value="merged"):
+        reconciled = _reconcile_chain_from_ground_truth(
+            tmp_path,
+            spec_path,
+            spec,
+            state,
+            writer=messages.append,
+            push_enabled=True,
+        )
+
+    saved = load_chain_state(spec_path)
+    assert reconciled.current_milestone_index == 1
+    assert reconciled.current_plan_name is None
+    assert reconciled.last_state == "done"
+    assert reconciled.completed == [
+        {
+            "label": "m7",
+            "plan": "m7-plan",
+            "status": "done",
+            "pr_number": 122,
+            "pr_state": "merged",
+        }
+    ]
+    assert saved.current_milestone_index == 1
+    assert saved.current_plan_name is None
+    assert saved.last_state == "done"
+    assert saved.completed == reconciled.completed
+    assert any("reconciled terminal plan m7-plan into completed milestone m7" in msg for msg in messages)
+
+
+def test_reconcile_appends_missing_completed_record_for_terminal_local_plan(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_chain_spec(tmp_path)
+    spec = load_spec(spec_path)
+    _write_plan_state(tmp_path, current_state="done")
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="m7-plan",
+        last_state="initialized",
+        completed=[],
+    )
+
+    reconciled = _reconcile_chain_from_ground_truth(
+        tmp_path,
+        spec_path,
+        spec,
+        state,
+        writer=lambda _message: None,
+        push_enabled=False,
+    )
+
+    saved = load_chain_state(spec_path)
+    assert reconciled.current_milestone_index == 1
+    assert reconciled.current_plan_name is None
+    assert reconciled.last_state == "done"
+    assert reconciled.completed == [
+        {
+            "label": "m7",
+            "plan": "m7-plan",
+            "status": "done",
+            "pr_number": None,
+            "pr_state": None,
+        }
+    ]
+    assert saved.current_milestone_index == 1
+    assert saved.current_plan_name is None
+    assert saved.last_state == "done"
+    assert saved.completed == reconciled.completed
+
+
 def test_run_chain_resumes_when_reconciled_finalized_pr_is_open(
     tmp_path: Path,
 ) -> None:

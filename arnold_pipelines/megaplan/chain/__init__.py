@@ -4169,6 +4169,37 @@ def _reconcile_chain_from_ground_truth(
         )
         state.last_state = STATE_AWAITING_PR_MERGE
 
+    if (
+        active_milestone is not None
+        and active_milestone.label not in completed_labels
+        and current_plan_state == STATE_DONE
+    ):
+        can_reconcile_terminal_plan = (
+            not active_uses_pr
+            or (
+                state.pr_number is not None
+                and state.pr_state == "merged"
+            )
+        )
+        if can_reconcile_terminal_plan:
+            writer(
+                f"[chain] reconciled terminal plan {plan_name} into completed "
+                f"milestone {active_milestone.label}\n"
+            )
+            state.completed.append(
+                {
+                    "label": active_milestone.label,
+                    "plan": plan_name,
+                    "status": "done",
+                    "pr_number": state.pr_number,
+                    "pr_state": state.pr_state,
+                }
+            )
+            completed_labels.add(active_milestone.label)
+            next_index = _completed_prefix_index(spec, completed_labels)
+            if next_index != state.current_milestone_index:
+                _mark_chain_after_milestone_advance(spec, state, next_index=next_index)
+
     if active_milestone is not None and active_milestone.label in completed_labels:
         next_index = _completed_prefix_index(spec, completed_labels)
         if next_index != state.current_milestone_index:
