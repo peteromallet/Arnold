@@ -1061,12 +1061,11 @@ NEEDS_HUMAN = "needs_human"
 DISCORD_ESCALATED = "discord_escalated"  # legacy non-success — preserved for compatibility
 ENVIRONMENT_GONE = "environment_gone"  # wiped workspace/spec — ops concern, not repairable
 
-SUCCESS_OUTCOMES: frozenset[str] = frozenset(
-    {COMPLETE, PROGRESSED, LIVE_WITH_FRESH_ACTIVITY, TRUE_HUMAN_BLOCKER}
-)
+SUCCESS_OUTCOMES: frozenset[str] = frozenset({COMPLETE, PROGRESSED, TRUE_HUMAN_BLOCKER})
 
 NON_SUCCESS_OUTCOMES: frozenset[str] = frozenset(
     {
+        LIVE_WITH_FRESH_ACTIVITY,
         PARTIAL_LIVENESS,
         REPAIRING,
         REPAIR_TIMEOUT,
@@ -1083,9 +1082,9 @@ ALL_OUTCOMES: frozenset[str] = SUCCESS_OUTCOMES | NON_SUCCESS_OUTCOMES
 def is_success_outcome(outcome: str) -> bool:
     """Return True when *outcome* is a terminal repair success.
 
-    Only ``complete``, ``progressed``, ``live_with_fresh_activity``, and
-    ``true_human_blocker`` are considered success.  Liveness-only outcomes
-    (``partial_liveness``) are explicitly excluded.
+    Only ``complete``, ``progressed``, and ``true_human_blocker`` are
+    considered success. Liveness/activity-only outcomes are explicitly
+    excluded because they do not prove the original blocker cleared.
     """
     return outcome in SUCCESS_OUTCOMES
 
@@ -1151,7 +1150,7 @@ def classify_verification_outcome(
 
     1. *is_complete* → :data:`COMPLETE` (terminal success)
     2. *has_progressed* → :data:`PROGRESSED` (terminal success)
-    3. *has_fresh_activity* → :data:`LIVE_WITH_FRESH_ACTIVITY` (terminal success)
+    3. *has_fresh_activity* → :data:`PARTIAL_LIVENESS` (terminal non-success)
     4. *has_true_human_blocker* → :data:`TRUE_HUMAN_BLOCKER` (terminal success)
     5. *is_live* with no progress/fresh-activity/blocker → :data:`PARTIAL_LIVENESS` (terminal non-success)
     6. Otherwise → :data:`REPAIRING` (non-terminal)
@@ -1164,10 +1163,10 @@ def classify_verification_outcome(
         return COMPLETE
     if has_progressed:
         return PROGRESSED
-    if has_fresh_activity:
-        return LIVE_WITH_FRESH_ACTIVITY
     if has_true_human_blocker:
         return TRUE_HUMAN_BLOCKER
+    if has_fresh_activity:
+        return PARTIAL_LIVENESS
     if is_live:
         return PARTIAL_LIVENESS
     return REPAIRING

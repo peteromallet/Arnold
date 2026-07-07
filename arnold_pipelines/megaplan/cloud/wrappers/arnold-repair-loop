@@ -4140,17 +4140,11 @@ exit_if_repair_target_complete() {
 }
 
 # Mirror of the pre-loop INITIAL_HEALTH=="alive" bail (see ~4673), but callable
-# at iteration boundaries and post-loop. If the target is currently alive AND no
-# marker forces repair-despite-alive, the original blocker is cleared: declare
-# live_with_fresh_activity (the SUCCESS outcome the pre-loop bail and the auditor
-# both use) and exit 0 instead of burning more iterations or escalating to
-# Discord. Closes the gap where a repair that revived the chain mid-loop (e.g. an
-# iteration-1 re-drive whose 30s verify window closed before the cold plan
-# finished re-initializing, or recovery via the plan's own critique/revise loop)
-# could not be recognized as success and fell through to discord_escalated.
-# Reuses live_with_fresh_activity — no new outcome vocabulary, no reader
-# token-drift, and it counts as success so the recurrence/auditor layer treats it
-# as a genuine recovery rather than a non-success partial_liveness.
+# at iteration boundaries and post-loop. Liveness alone is not proof that the
+# original blocker cleared: a plan can heartbeat while still terminally blocked.
+# Record partial_liveness and leave repair markers in place so the watchdog/meta
+# layers can keep supervising until completion, progress, or a true human blocker
+# is proven.
 exit_if_repair_target_recovered() {
   local phase="$1"
   local health forced_reason
@@ -4163,9 +4157,8 @@ exit_if_repair_target_recovered() {
     log "repair target alive at $phase but marker requires repair session=$SESSION reason=$forced_reason"
     return 0
   fi
-  repair_data_set_outcome "live_with_fresh_activity"
-  clear_repair_markers
-  log "repair target recovered (alive) at $phase; exiting without escalation session=$SESSION"
+  repair_data_set_outcome "partial_liveness"
+  log "repair target has partial liveness at $phase; blocker clearance not verified session=$SESSION"
   exit 0
 }
 
@@ -4569,6 +4562,7 @@ $recurrence_block
 
 Session: $SESSION
 Workspace: $WORKSPACE
+Repair agent launch workdir: $WORKSPACE by default; cd to $ARNOLD_SRC only when the evidence points to an Arnold engine/superfixer bug.
 Run kind: $RUN_KIND
 Run input: $REMOTE_SPEC
 Plan name: ${PLAN_NAME:-}
@@ -4598,15 +4592,15 @@ Task:
    cd "$WORKSPACE" && MEGAPLAN_ACTOR_ID=repair-loop-dev-fix PYTHONPATH="$ARNOLD_SRC:\${PYTHONPATH:-}" python3 -P -m arnold_pipelines.megaplan user-action resolve --plan "${PLAN_NAME:-<PLAN_NAME_FROM_SNAPSHOT>}" --action-id <ACTION_ID> --resolution <satisfied|accepted_blocked|waived|manual_required|rejected> --reason "..." --instructions "..." --tasks "<TASK_ID,...>"
    Prefer satisfied when the evidence clearly answers the action. Use accepted_blocked or waived only when the action itself permits a fallback. Leave unresolved or mark manual_required only when the decision is genuinely ambiguous, unusually difficult, or requires human-only judgment.
 3. Go to the deepest structural level you can reach in this bounded turn. Do not just fix the one symptom that caused this stop; find the underlying pattern and check whether it has other instantiations.
-4. Apply the narrowest safe root-cause fix in $ARNOLD_SRC on branch $SYNC_BRANCH, but prefer a general engine fix over a workflow-specific patch when the evidence supports it.
+4. Apply the narrowest safe root-cause fix at the correct ownership boundary: use $ARNOLD_SRC on branch $SYNC_BRANCH for Arnold engine/superfixer bugs, and use $WORKSPACE for target application code when the blocker is a task implementation failure in that repo. Prefer a general engine fix over a workflow-specific patch only when the evidence points to Arnold itself.
 5. If you spot a structural pattern with other instantiations you cannot fix in this turn, append it to the findings doc at $FINDINGS_DOC so it can be reviewed. Capture what you fixed, the deeper pattern, the other instantiations you could not fix, and a recommendation for what a human should review.
 6. Validate minimally: py_compile for touched python files and/or the smallest relevant focused test.
-7. If source changes pass validation, commit and push them.
+7. If code changes pass validation, commit and push them in the repo you changed ($ARNOLD_SRC for engine/superfixer fixes, $WORKSPACE for target-repo fixes).
 8. Do not relaunch the run yourself. The wrapper will do the mechanical launch next using the marker's run-kind-aware command.
 $mode_tasks
 
 Constraints:
-- Work only in $ARNOLD_SRC for source fixes. You may update the active plan's user_action_resolutions.json and state metadata only through the user-action or override CLI commands above.
+- Do not edit outside $ARNOLD_SRC or $WORKSPACE. Use $ARNOLD_SRC for Arnold engine/superfixer fixes; use $WORKSPACE for target-repo task fixes. You may update the active plan's user_action_resolutions.json and state metadata only through the user-action or override CLI commands above.
 - Do not hardcode a workflow-specific workaround when a general engine fix is appropriate.
 - Do not escalate awaiting_human just because a user action exists. Escalate only after you have reviewed the evidence and cannot make a confident decision.
 - If you find a pattern such as flags positioned wrong across multiple dispatch sites or stale recovery logic duplicated in several places, fix what you can now and persist the broader findings in $FINDINGS_DOC.
@@ -4630,6 +4624,7 @@ $failure_summary
 
 Session: $SESSION
 Workspace: $WORKSPACE
+Repair agent launch workdir: $WORKSPACE by default; cd to $ARNOLD_SRC only when the evidence points to an Arnold engine/superfixer bug.
 Run kind: $RUN_KIND
 Run input: $REMOTE_SPEC
 Plan name: ${PLAN_NAME:-}
@@ -4656,6 +4651,20 @@ EOF
   redact_file_in_place "$prompt_path"
 }
 
+
+repair_agent_workdir() {
+  # The repair target is the cloud session workspace. Most live
+  # execution_blocked incidents are target-repo task failures, and launching the
+  # agent from /workspace/arnold biases it into an engine-only repair. Arnold
+  # engine/superfixer fixes remain available via the explicit $ARNOLD_SRC
+  # prompt contract and PYTHONPATH below.
+  if [[ -d "$WORKSPACE" ]]; then
+    printf '%s\n' "$WORKSPACE"
+  else
+    printf '%s\n' "$ARNOLD_SRC"
+  fi
+}
+
 run_dev_fix_turn() {
   require_repair_lock_held
   local iteration="$1"
@@ -4665,11 +4674,12 @@ run_dev_fix_turn() {
   local dispatch_model="$5"
   local dispatch_kind="$6"
   local fallback_reason="$7"
-  local prompt_path report_path before_sha after_sha rc dev_timeout reasoning_effort
+  local prompt_path report_path before_sha after_sha rc dev_timeout reasoning_effort repair_workdir
   prompt_path="$RUN_DIR/iter${iteration}-dev-fix-prompt.md"
   report_path="$RUN_DIR/iter${iteration}-dev-fix-report.json"
   write_dev_prompt "$prompt_path" "$requested_model" "$dispatch_model" "$report_path" "$recurring"
-  before_sha="$(cd "$ARNOLD_SRC" && git rev-parse HEAD 2>/dev/null || true)"
+  repair_workdir="$(repair_agent_workdir)"
+  before_sha="$(cd "$repair_workdir" && git rev-parse HEAD 2>/dev/null || true)"
   dev_timeout="$DEV_TIMEOUT"
   reasoning_effort="$CODEX_REASONING_EFFORT"
   if [[ "$recurring" == "1" ]]; then
@@ -4677,21 +4687,21 @@ run_dev_fix_turn() {
     reasoning_effort="$ROOT_CAUSE_REASONING_EFFORT"
   fi
   dev_timeout="$(cap_timeout_to_repair_budget "$dev_timeout" "dev-dispatch-$iteration")"
-  log "iteration=$iteration dev-fix model=$dispatch_model requested=$requested_model recurring=$recurring timeout=$dev_timeout reasoning=$reasoning_effort"
+  log "iteration=$iteration dev-fix model=$dispatch_model requested=$requested_model recurring=$recurring timeout=$dev_timeout reasoning=$reasoning_effort workdir=$repair_workdir"
   prepare_repair_agent_exec_env
   if [[ "$dispatch_kind" == "hermes" ]]; then
     (
-      cd "$ARNOLD_SRC" &&
-      timeout "$dev_timeout" env PYENV_VERSION="${PYENV_VERSION:-3.11.11}" python "$HERMES_LAUNCHER" \
+      cd "$repair_workdir" &&
+      timeout "$dev_timeout" env PYENV_VERSION="${PYENV_VERSION:-3.11.11}" PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python "$HERMES_LAUNCHER" \
         --model="$dispatch_model" \
         --toolsets="file,web,terminal" \
         --query_file="$prompt_path" \
-        --project_dir="$ARNOLD_SRC"
+        --project_dir="$repair_workdir"
     ) >> "$LOG" 2>&1 &
   else
     (
-      cd "$ARNOLD_SRC" &&
-      timeout "$dev_timeout" codex exec \
+      cd "$repair_workdir" &&
+      timeout "$dev_timeout" env PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" codex exec \
         --sandbox danger-full-access \
         -c model="$dispatch_model" \
         -c model_reasoning_effort="$reasoning_effort" \
@@ -4705,7 +4715,7 @@ run_dev_fix_turn() {
   else
     rc=$?
   fi
-  after_sha="$(cd "$ARNOLD_SRC" && git rev-parse HEAD 2>/dev/null || true)"
+  after_sha="$(cd "$repair_workdir" && git rev-parse HEAD 2>/dev/null || true)"
   repair_data_record_dev "$iteration" "$attempt_id" "$requested_model" "$dispatch_model" "$fallback_reason" "$report_path" "$rc" "$before_sha" "$after_sha"
   append_repair_finding_if_reported "$iteration" "$report_path" "$dispatch_model"
 }
@@ -5091,9 +5101,8 @@ if [[ "$INITIAL_HEALTH" == "alive" ]]; then
   if [[ -n "$forced_repair_reason" ]]; then
     log "repair target is alive but marker requires repair session=$SESSION reason=$forced_repair_reason"
   else
-  repair_data_set_outcome "live_with_fresh_activity"
-  clear_repair_markers
-  log "repair target already running; no dev-fix needed session=$SESSION"
+  repair_data_set_outcome "partial_liveness"
+  log "repair target already running; blocker clearance not verified session=$SESSION"
   exit 0
   fi
 fi
@@ -5242,9 +5251,8 @@ if repair_source_initiative_if_possible; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "source initiative restored; mechanical launch came up and held"
-    repair_data_set_outcome "live_with_fresh_activity"
-    clear_repair_markers
-    log "repair loop succeeded after source initiative repair"
+    repair_data_set_outcome "partial_liveness"
+    log "repair loop reached partial liveness after source initiative repair"
     exit 0
   fi
 fi
@@ -5256,9 +5264,8 @@ if repair_source_workspace_if_possible; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "0" "0" "running" "source workspace restored; mechanical launch came up and held"
-    repair_data_set_outcome "live_with_fresh_activity"
-    clear_repair_markers
-    log "repair loop succeeded after source workspace repair"
+    repair_data_set_outcome "partial_liveness"
+    log "repair loop reached partial liveness after source workspace repair"
     exit 0
   fi
 fi
@@ -5269,9 +5276,8 @@ if repair_dependency_manifests_if_possible; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "dependency manifest repaired; mechanical launch came up and held"
-    repair_data_set_outcome "live_with_fresh_activity"
-    clear_repair_markers
-    log "repair loop succeeded after dependency manifest repair"
+    repair_data_set_outcome "partial_liveness"
+    log "repair loop reached partial liveness after dependency manifest repair"
     exit 0
   fi
 fi
@@ -5284,9 +5290,8 @@ if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "stale state cleared; mechanical launch came up and held"
-    repair_data_set_outcome "live_with_fresh_activity"
-    clear_repair_markers
-    log "repair loop succeeded after stale-state clear"
+    repair_data_set_outcome "partial_liveness"
+    log "repair loop reached partial liveness after stale-state clear"
     exit 0
   fi
 fi
@@ -5296,9 +5301,8 @@ mechanical_status="$(mechanical_launch_step "0" "$SESSION" "$WORKSPACE" "$REMOTE
 }
 if [[ "${mechanical_status:-}" == "running" ]]; then
   repair_data_record_mechanical "0" "0" "running" "baseline mechanical relaunch came up and held"
-  repair_data_set_outcome "live_with_fresh_activity"
-  clear_repair_markers
-  log "repair loop succeeded via baseline mechanical relaunch"
+  repair_data_set_outcome "partial_liveness"
+  log "repair loop reached partial liveness via baseline mechanical relaunch"
   exit 0
 fi
 
@@ -5368,9 +5372,8 @@ for iteration in 1 2 3; do
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "$iteration" "$CURRENT_ATTEMPT_ID" "running" "mechanical launch came up and held"
-    repair_data_set_outcome "live_with_fresh_activity"
-    clear_repair_markers
-    log "repair loop succeeded mechanically iteration=$iteration"
+    repair_data_set_outcome "partial_liveness"
+    log "repair loop reached partial liveness mechanically iteration=$iteration"
     exit 0
   fi
 
@@ -5382,9 +5385,8 @@ for iteration in 1 2 3; do
   exit_if_repair_target_complete "iteration-$iteration-pre-kimi"
   resolved_relaunch_command="$(resolve_relaunch_command "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" 2>/dev/null || true)"
   if run_kimi_launch_turn "$iteration" "$RUN_KIND" "$PLAN_NAME" "$resolved_relaunch_command"; then
-    repair_data_set_outcome "live_with_fresh_activity"
-    clear_repair_markers
-    log "repair loop succeeded via Kimi iteration=$iteration"
+    repair_data_set_outcome "partial_liveness"
+    log "repair loop reached partial liveness via Kimi iteration=$iteration"
     exit 0
   fi
   exit_if_repair_target_complete "iteration-$iteration-post-kimi"
