@@ -2013,6 +2013,72 @@ def test_latest_execution_batch_all_tasks_done_ignores_stale_pending_finalize_ro
     assert reason == "execution_batch_1.json"
 
 
+def test_latest_execution_batch_all_tasks_done_rejects_pending_finalize_rows_during_authority_rerun(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    head = _commit_semantic_change(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "name": "plan-m1",
+        "current_state": "blocked",
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"execution_baseline": {"head": base}},
+        "latest_failure": {
+            "kind": "authority_divergence",
+            "phase": "execute",
+            "message": "execute terminal success lacks corroborated task completion",
+        },
+        "resume_cursor": {"phase": "execute", "retry_strategy": "rerun_phase"},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state) + "\n", encoding="utf-8")
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "kind": "code",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": head,
+                    },
+                    {
+                        "id": "T2",
+                        "status": "pending",
+                        "kind": "test",
+                        "executor_notes": "Never executed before finalize snapshot.",
+                    },
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
+
+    assert ok is False
+    assert "authority-divergence execute rerun" in reason
+
+
 def test_latest_execution_batch_all_tasks_done_accepts_explained_noop_finalize_rows(
     tmp_path: Path,
 ) -> None:
