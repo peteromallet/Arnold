@@ -20,6 +20,13 @@ import { applyGraphCandidateInPlace } from "./comfy_adapter.js";
 import { scheduleRenderAgentPanel } from "./panel_scheduler.js";
 import { currentAgentPanel } from "./panel_runtime.js";
 import { PANEL_STATE, RENDER_SECTIONS } from "./agent_edit_lifecycle.js";
+import {
+  commitApplyResolved,
+  commitLifecycleReset,
+  commitOptimisticSubmit,
+  commitTerminalResponse,
+  commitTranscriptRehydrate,
+} from "./agent_lifecycle_commit.js";
 
 const LS_DEMO_PICKER_ENABLED = "vibecomfy_demo_picker_enabled";
 const SCENARIOS_ENDPOINT = "/vibecomfy/demo/scenarios";
@@ -27,6 +34,9 @@ const SCENARIO_ENDPOINT = "/vibecomfy/demo/scenario";
 const DEMO_STAGES = Object.freeze(["before_send", "sent_loading", "ready_to_apply", "applied"]);
 
 function makeHelpers(overrides = {}) {
+  // T8: Pass through ALL provided helpers so callers can inject roundtrip
+  // functions (fulfillLifecycleTransitionObligations, pushHistory, etc.)
+  // without creating circular imports.
   return {
     app: overrides.app || app,
     applyGraphCandidateInPlace: overrides.applyGraphCandidateInPlace || applyGraphCandidateInPlace,
@@ -34,6 +44,7 @@ function makeHelpers(overrides = {}) {
     currentAgentPanel: overrides.currentAgentPanel || currentAgentPanel,
     PANEL_STATE: overrides.PANEL_STATE || PANEL_STATE,
     RENDER_SECTIONS: overrides.RENDER_SECTIONS || RENDER_SECTIONS,
+    ...overrides,
   };
 }
 
@@ -345,22 +356,17 @@ export function installPreviewPicker(panel, options = {}) {
   }
 
   function clearCandidateState(currentPanel) {
-    Object.assign(currentPanel.state, {
-      candidateGraph: null,
-      candidateGraphHash: null,
-      candidateReport: null,
-      serverSubmitGraphHash: null,
-      applyEligibility: null,
-      applyAllowed: false,
-      canvasApplyAllowed: false,
-      queueAllowed: false,
-      applyEligibilityWarning: null,
-      applyEligibilityWarningKey: null,
-      changeDetails: null,
-      deltaOps: null,
-    });
     delete currentPanel.state._previewDiff;
     delete currentPanel.state._previewDiffGraphHash;
+  }
+
+  function commitDemoTranscript(currentPanel, payload, messages, latestCandidate = null) {
+    commitTranscriptRehydrate(currentPanel, {
+      messages,
+      sessionId: payload.sessionId,
+      latestTurnId: payload.turnId,
+      latestCandidate,
+    });
   }
 
   function applyOriginalGraph(payload) {
@@ -397,74 +403,74 @@ export function installPreviewPicker(panel, options = {}) {
     currentPanel.state.__demoMode = true;
     currentPanel.state.__demoStage = stage;
     currentPanel.state.__demoStageIndex = stageIndex;
-    currentPanel.state.sessionId = payload.sessionId;
-    currentPanel.state.turnId = payload.turnId;
-    currentPanel.state.baselineTurnId = null;
-    currentPanel.state.message = null;
-    currentPanel.state.failure = null;
-    currentPanel.state.clarification = null;
-    currentPanel.state.lastSubmitFieldChanges = null;
 
     if (stage === "before_send") {
       applyOriginalGraph(payload);
-      currentPanel.state.phase = helpers.PANEL_STATE.IDLE;
-      currentPanel.state.chatMessages = [];
-      currentPanel.state.transcriptMessages = [];
-      currentPanel.state.lastAppliedChanges = null;
+      commitLifecycleReset(currentPanel, {
+        rejected: {},
+        message: null,
+        debugPayload: { source: "demo", stage },
+      });
+      commitDemoTranscript(currentPanel, payload, [], null);
       clearCandidateState(currentPanel);
     } else if (stage === "sent_loading") {
       applyOriginalGraph(payload);
-      currentPanel.state.phase = helpers.PANEL_STATE.SUBMITTING;
-      currentPanel.state.chatMessages = [payload.userMessage];
-      currentPanel.state.transcriptMessages = currentPanel.state.chatMessages.slice();
-      currentPanel.state.lastAppliedChanges = null;
+      commitLifecycleReset(currentPanel, {
+        rejected: {},
+        message: null,
+        debugPayload: { source: "demo", stage, reset: true },
+      });
+      commitOptimisticSubmit(currentPanel, {
+        lastSubmit: { prompt: payload.query, source: "demo" },
+        debugPayload: { source: "demo", stage },
+      });
+      commitDemoTranscript(currentPanel, payload, [payload.userMessage], null);
       clearCandidateState(currentPanel);
-      currentPanel.state.message = "Demo request sent. Waiting for agent response...";
     } else if (stage === "ready_to_apply") {
       if (isLayoutPreviewScenario()) {
         applyCandidateGraph(payload);
       } else {
         applyOriginalGraph(payload);
       }
-      const candidateActionAllowed = Boolean(payload.candidateGraph && payload.eligibility.applyable === true);
-      currentPanel.state.phase = helpers.PANEL_STATE.AWAITING_REVIEW;
-      currentPanel.state.chatMessages = [payload.userMessage, payload.agentMessage];
-      currentPanel.state.transcriptMessages = currentPanel.state.chatMessages.slice();
-      Object.assign(currentPanel.state, {
+      const terminalResult = {
+        ok: true,
+        session_id: payload.sessionId,
+        turn_id: payload.turnId,
+        baseline_turn_id: null,
+        message: payload.agentReply || null,
+        outcome: { kind: "candidate" },
+        eligibility: payload.eligibility,
+        report: loadedScenario.report || {},
+      };
+      commitTerminalResponse(currentPanel, {
+        result: terminalResult,
+        outcome: { kind: "candidate" },
         candidateGraph: payload.candidateGraph,
         candidateGraphHash: payload.candidateGraphHash,
-        candidateReport: loadedScenario.report || {},
-        serverSubmitGraphHash: null,
         applyEligibility: payload.eligibility,
-        applyAllowed: candidateActionAllowed,
-        canvasApplyAllowed: candidateActionAllowed,
         queueAllowed: false,
-        applyEligibilityWarning: null,
-        applyEligibilityWarningKey: null,
         changeDetails: payload.changeDetails,
-        lastAppliedChanges: null,
-        deltaOps: null,
+        debugPayload: {
+          source: "demo",
+          stage,
+          scenarioId: loadedScenario?.scenario?.id || loadedScenario?.id || null,
+        },
       });
+      commitDemoTranscript(currentPanel, payload, [payload.userMessage, payload.agentMessage], terminalResult);
     } else if (stage === "applied") {
       if (!options.alreadyApplied) {
         applyCandidateGraph(payload);
       }
-      currentPanel.state.phase = helpers.PANEL_STATE.IDLE;
-      currentPanel.state.chatMessages = [payload.userMessage, payload.agentMessage];
-      currentPanel.state.transcriptMessages = currentPanel.state.chatMessages.slice();
+      commitApplyResolved(currentPanel, {
+        accepted: { ok: true, session_id: payload.sessionId, turn_id: payload.turnId },
+        lastAppliedChanges: options.lastAppliedChanges || payload.changeDetails || {
+          summary: "Demo candidate applied.",
+        },
+        debugPayload: { source: "demo", stage },
+      });
+      commitDemoTranscript(currentPanel, payload, [payload.userMessage, payload.agentMessage], null);
       clearCandidateState(currentPanel);
-      currentPanel.state.lastAppliedChanges = options.lastAppliedChanges || payload.changeDetails || {
-        summary: "Demo candidate applied.",
-      };
-      currentPanel.state.message = "Demo candidate applied.";
       currentPanel.state.__demoMode = false;
-    }
-
-    if (!currentPanel.state.expandedBubbleTurnKeys || typeof currentPanel.state.expandedBubbleTurnKeys !== "object") {
-      currentPanel.state.expandedBubbleTurnKeys = {};
-    }
-    if (currentPanel.state.responseDetails && typeof currentPanel.state.responseDetails === "object") {
-      delete currentPanel.state.responseDetails[payload.turnId];
     }
 
     updateStageButtons();
@@ -605,6 +611,129 @@ export function installPreviewPicker(panel, options = {}) {
       showError(error?.message || String(error));
     });
 
+  // ── T8: Demo Apply/Reject handlers ──────────────────────────────────
+  // These are called by applyAgentCandidate / rejectAgentCandidate when
+  // __demoMode is true.  They keep demo flows local (no POST) and route
+  // lifecycle reflection through commit helpers.
+
+  function handleDemoApply(currentPanel) {
+    const payload = stagePayload();
+    if (!currentPanel?.state || !payload) {
+      return;
+    }
+    if (!currentPanel.state.candidateGraph) {
+      // Guard: no candidate to apply (handled in roundtrip, but double-check)
+      return;
+    }
+
+    // T12: Demo apply must respect the active canvas scope, mirroring the
+    // production apply authority (which calls assertApplyScopeConsistency in
+    // vibecomfy_roundtrip.js before touching the canvas).  A scope mismatch
+    // means the demo candidate does not belong to the currently visible
+    // workflow tab and must be refused locally: no POST, no graph mutation.
+    // The helper is optional so isolation tests that don't track scope (and
+    // have no chatScopeId) treat this as a no-op pass-through.
+    const scopeCheck = typeof helpers.assertApplyScopeConsistency === "function"
+      ? helpers.assertApplyScopeConsistency(currentPanel, currentPanel.state.sessionId || null)
+      : { ok: true, reason: null, details: null };
+    if (!scopeCheck.ok) {
+      const blockedObligations = commitLifecycleReset(currentPanel, {
+        rejected: { demo: true, scope_mismatch: true },
+        message: `Demo apply blocked: ${scopeCheck.reason || "scope/session inconsistency"}.`,
+        toast: "Demo apply blocked (scope mismatch)",
+        debugPayload: {
+          demo: true,
+          scope_mismatch: scopeCheck.reason || "unknown",
+          details: scopeCheck.details || null,
+        },
+      });
+      if (typeof helpers.fulfillLifecycleTransitionObligations === "function") {
+        helpers.fulfillLifecycleTransitionObligations(currentPanel, blockedObligations);
+      }
+      schedulePanelRender(currentPanel);
+      return;
+    }
+
+    // Apply the candidate graph to the canvas (simple path without intent
+    // repairs; demo scenarios use basic graphs).
+    applyCandidateGraph(payload);
+
+    // Build change feedback mirroring the production apply path.
+    const lastAppliedChanges = helpers.announceChangedNodes
+      ? helpers.announceChangedNodes(currentPanel, helpers.extractChangedNodeFeedback
+        ? helpers.extractChangedNodeFeedback(currentPanel.state.candidateReport)
+        : null)
+      : (payload.changeDetails || { summary: "Demo candidate applied." });
+
+    // Push undo history.
+    if (typeof helpers.pushHistory === "function") {
+      helpers.pushHistory(currentPanel, "applied",
+        currentPanel.state.turnId ? `turn ${currentPanel.state.turnId}` : "candidate");
+    }
+
+    // Lifecycle reflection through commit helper.
+    const successObligations = commitApplyResolved(currentPanel, {
+      accepted: { demo: true },
+      lastAppliedChanges,
+      toast: "Demo candidate applied",
+      debugPayload: {
+        demo: true,
+        undo_stack_depth: currentPanel.state.undoStack?.length ?? 0,
+      },
+    });
+
+    // Fulfill + render (delegated from roundtrip via helpers).
+    if (typeof helpers.fulfillLifecycleTransitionObligations === "function") {
+      helpers.fulfillLifecycleTransitionObligations(currentPanel, successObligations);
+    }
+
+    // Move to the "applied" stage (which also handles transcript, candidate
+    // state cleanup, and clearing __demoMode).
+    renderDemoStage(3, { alreadyApplied: true, lastAppliedChanges });
+
+    // Schedule render.
+    schedulePanelRender(currentPanel);
+  }
+
+  function handleDemoReject(currentPanel) {
+    if (!currentPanel?.state?.candidateGraph
+        || !currentPanel.state.sessionId
+        || !currentPanel.state.turnId) {
+      return;
+    }
+
+    // Push undo history.
+    if (typeof helpers.pushHistory === "function") {
+      helpers.pushHistory(currentPanel, "rejected",
+        currentPanel.state.turnId ? `turn ${currentPanel.state.turnId}` : "candidate");
+    }
+
+    // Lifecycle reflection through commit helper.
+    const obligations = commitLifecycleReset(currentPanel, {
+      rejected: { demo: true },
+      message: "Demo candidate rejected and cleared from the panel.",
+      toast: "Demo candidate rejected",
+      debugPayload: {
+        demo: true,
+        graph_unchanged: true,
+      },
+    });
+
+    // Fulfill + restore layout baseline.
+    if (typeof helpers.fulfillLifecycleTransitionObligations === "function") {
+      helpers.fulfillLifecycleTransitionObligations(currentPanel, obligations);
+    }
+    if (typeof helpers.restoreLayoutPreviewBaseline === "function") {
+      helpers.restoreLayoutPreviewBaseline(currentPanel);
+    }
+
+    // Clear demo mode.
+    delete currentPanel.state.__demoMode;
+
+    // Schedule render.
+    schedulePanelRender(currentPanel);
+  }
+
   return {
     toggle: toggleBtn,
     container: pickerContainer,
@@ -620,6 +749,8 @@ export function installPreviewPicker(panel, options = {}) {
         renderDemoStage(3, { ...options, alreadyApplied: true });
       }
     },
+    handleDemoApply,
+    handleDemoReject,
   };
 }
 

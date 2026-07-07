@@ -1336,3 +1336,245 @@ test("normalizeAgentEditResponse handles revise candidate with full apply eligib
   assert.equal(normalized.applyAllowed, true);
   assert.equal(normalized.queueAllowed, true);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T11 — Projection-leak contract for the normalized response projection.
+//
+// The normalized projection exposes a curated surface (outcome, candidateGraph,
+// eligibility, turnIdentity, message, report, ...). Raw/internal fields that
+// must never surface as first-class projection fields (raw graph payloads,
+// debug payloads, provider diagnostics, model/system prompts, audit paths, and
+// live LiteGraph objects) are tested here. They may travel inside `normalized.raw`
+// (the explicit raw mirror kept for diagnostics), but must NOT be hoisted onto
+// the curated projection fields themselves.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const LEAK_FORBIDDEN_KEYS = [
+  "raw_graph",
+  "rawGraph",
+  "debug_payload",
+  "debugPayload",
+  "provider_diagnostics",
+  "providerDiagnostics",
+  "model_prompt",
+  "modelPrompt",
+  "system_prompt",
+  "systemPrompt",
+  "audit_path",
+  "auditPath",
+  "live_litegraph",
+  "liveLitegraph",
+];
+
+const LEAK_FORBIDDEN_REGEX =
+  /(?:raw_?graph|debug_?payload|provider_?diagnostics|model_?prompt|system_?prompt|audit_?path|live_?litegraph)/i;
+
+function collectLeakKeys(value, path = "$", acc = []) {
+  if (value === null || value === undefined || typeof value !== "object") {
+    return acc;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => collectLeakKeys(entry, `${path}[${index}]`, acc));
+    return acc;
+  }
+  for (const [key, entry] of Object.entries(value)) {
+    const keyPath = `${path}.${key}`;
+    if (LEAK_FORBIDDEN_KEYS.includes(key) || LEAK_FORBIDDEN_REGEX.test(key)) {
+      acc.push(keyPath);
+    }
+    collectLeakKeys(entry, keyPath, acc);
+  }
+  return acc;
+}
+
+// The curated projection surface (every field normalizeAgentEditResponse
+// deliberately exposes). Forbidden raw payloads must never appear here.
+const CURATED_PROJECTION_FIELDS = [
+  "ok",
+  "exists",
+  "message",
+  "route",
+  "reply",
+  "evidence",
+  "outcome",
+  "customNodeResolution",
+  "candidateGraph",
+  "candidate",
+  "candidateGraphHash",
+  "eligibility",
+  "turnIdentity",
+  "stageSnapshots",
+  "fieldChanges",
+  "applyEligible",
+  "noCandidateReason",
+  "applyAllowed",
+  "canvasApplyAllowed",
+  "queueAllowed",
+  "graphUnchanged",
+  "report",
+  "auditRef",
+  "debug",
+  "failureKind",
+  "retryable",
+  "nextAction",
+  "clarificationRequired",
+  "clarificationMessage",
+  "rebaselineRecovery",
+  "sessionId",
+  "turnId",
+  "baselineTurnId",
+  "baselineGraphHash",
+  "baselineGraphHashKind",
+  "baselineGraphHashVersion",
+  "baselineSource",
+  "baselineRebaselineId",
+  "baselineGraphSourcePath",
+  "submitGraphHash",
+  "clientGraphHash",
+  "clientStructuralGraphHash",
+  "latestCandidate",
+  "messages",
+  "sessionPath",
+  "sessionPathResolved",
+  "detailJsonPath",
+  "detailJsonPathResolved",
+];
+
+test("normalized projection surface stays closed: no unexpected top-level keys beyond raw/endpoint/marker", () => {
+  const raw = {
+    ok: true,
+    message: "Candidate ready.",
+    outcome: { kind: "candidate" },
+    candidate: { graph: { nodes: [{ id: 1, type: "KSampler" }], links: [] } },
+    candidate_graph_hash: "gh",
+    apply_eligibility: { applyable: true, reason: "applyable", message: "ok", warnings: [] },
+  };
+  const normalized = normalizeAgentEditResponse(raw, { endpoint: "/submit" });
+  const allowedTop = new Set([
+    ...CURATED_PROJECTION_FIELDS,
+    "raw", // explicit raw mirror
+    "endpoint",
+    "__normalized__", // NORMALIZED_RESPONSE_MARKER symbol/string
+  ]);
+  for (const key of Object.keys(normalized)) {
+    assert.ok(
+      allowedTop.has(key),
+      `normalized projection gained an unexpected top-level key "${key}" — extend CURATED_PROJECTION_FIELDS if intentional`,
+    );
+  }
+});
+
+test("normalized curated projection fields never carry forbidden raw/debug/provider/prompt/audit/litegraph payloads", () => {
+  const raw = {
+    ok: true,
+    message: "Candidate ready.",
+    outcome: { kind: "candidate" },
+    candidate: {
+      graph: { nodes: [{ id: 1, type: "KSampler" }], links: [] },
+      graph_hash: "gh-leak",
+    },
+    candidate_graph_hash: "gh-leak",
+    apply_eligibility: { applyable: true, reason: "applyable", message: "ok", warnings: [] },
+    // Forbidden raw payloads that must NOT be hoisted onto curated projection:
+    raw_graph: { nodes: [{ id: 99, type: "LATENT" }], links: [] },
+    debug_payload: { internal_trace: "secret" },
+    provider_diagnostics: { tokens_in: 1, model_id: "secret-model" },
+    model: "secret-model",
+    model_prompt: "hidden model prompt",
+    system_prompt: "hidden system prompt",
+    audit_path: "/secret/audit/turn.json",
+    live_litegraph: { __lgNode: true },
+  };
+  const normalized = normalizeAgentEditResponse(raw, { endpoint: "/submit" });
+
+  for (const field of CURATED_PROJECTION_FIELDS) {
+    const value = normalized[field];
+    const leaks = collectLeakKeys(value, `$.${field}`);
+    assert.equal(
+      leaks.length,
+      0,
+      `curated projection field "${field}" leaked forbidden payload at: ${JSON.stringify(leaks.slice(0, 3))}`,
+    );
+  }
+});
+
+test("normalized candidateGraph projection never aliases the forbidden raw_graph payload", () => {
+  const raw = {
+    ok: true,
+    outcome: { kind: "candidate" },
+    candidate: { graph: { nodes: [{ id: 1, type: "KSampler" }], links: [] } },
+    candidate_graph_hash: "gh",
+    raw_graph: { nodes: [{ id: 99, type: "LATENT" }], links: [] },
+    apply_eligibility: { applyable: true, reason: "applyable", message: "ok", warnings: [] },
+  };
+  const normalized = normalizeAgentEditResponse(raw, { endpoint: "/submit" });
+  assert.ok(normalized.candidateGraph, "candidateGraph must be projected");
+  assert.notDeepEqual(
+    normalized.candidateGraph,
+    raw.raw_graph,
+    "candidateGraph must not alias the forbidden raw_graph payload",
+  );
+  assert.deepEqual(
+    normalized.candidateGraph,
+    raw.candidate.graph,
+    "candidateGraph must equal the canonical candidate.graph",
+  );
+});
+
+test("readCandidateGraph/readEligibility/readTurnIdentity do not surface forbidden raw payloads", () => {
+  const raw = {
+    ok: true,
+    outcome: { kind: "candidate" },
+    candidate: {
+      graph: { nodes: [{ id: 7, type: "VAEDecode" }], links: [] },
+      graph_hash: "gh-read",
+      turn_identity: { session_id: "s1", turn_id: "t1" },
+    },
+    apply_eligibility: { applyable: true, reason: "applyable", message: "ok", warnings: [] },
+    raw_graph: { nodes: [{ id: 99, type: "LATENT" }], links: [] },
+    debug_payload: { secret: true },
+    provider_diagnostics: { tokens: 5 },
+    system_prompt: "secret",
+    audit_path: "/secret",
+  };
+  const graph = readCandidateGraph(raw, { endpoint: "/submit" });
+  assert.deepEqual(graph, raw.candidate.graph);
+  assert.notDeepEqual(graph, raw.raw_graph, "readCandidateGraph must not surface raw_graph");
+
+  const eligibility = readEligibility(raw, { endpoint: "/submit" });
+  const eligLeaks = collectLeakKeys(eligibility, "$.eligibility");
+  assert.equal(eligLeaks.length, 0, "readEligibility must not surface forbidden payloads");
+
+  const identity = readTurnIdentity(raw, { endpoint: "/submit" });
+  const idLeaks = collectLeakKeys(identity, "$.turnIdentity");
+  assert.equal(idLeaks.length, 0, "readTurnIdentity must not surface forbidden payloads");
+});
+
+test("normalizeCanonicalAgentEditResponse keeps the curated projection leak-free for a candidate", () => {
+  const raw = {
+    ok: true,
+    message: "Canonical candidate.",
+    outcome: { kind: "candidate" },
+    candidate: {
+      graph: { nodes: [{ id: 3, type: "CLIPTextEncode" }], links: [] },
+      graph_hash: "canonical-gh",
+      turn_identity: { session_id: "cs1", turn_id: "ct1" },
+    },
+    apply_eligibility: { applyable: true, reason: "applyable", message: "ok", warnings: [] },
+    raw_graph: { nodes: [{ id: 99 }], links: [] },
+    debug_payload: { secret: true },
+    provider_diagnostics: { tokens: 9 },
+    model: "secret",
+    system_prompt: "secret",
+    audit_path: "/secret",
+  };
+  const normalized = normalizeCanonicalAgentEditResponse(raw, { endpoint: "/submit" });
+  for (const field of CURATED_PROJECTION_FIELDS) {
+    const leaks = collectLeakKeys(normalized[field], `$.${field}`);
+    assert.equal(
+      leaks.length,
+      0,
+      `canonical projection field "${field}" leaked forbidden payload: ${JSON.stringify(leaks.slice(0, 3))}`,
+    );
+  }
+});

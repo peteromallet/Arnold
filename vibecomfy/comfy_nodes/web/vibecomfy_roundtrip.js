@@ -73,6 +73,12 @@ import {
   transition,
 } from "./agent_edit_lifecycle.js";
 import {
+  commitOptimisticSubmit,
+  commitTerminalResponse,
+  commitApplyResolved,
+  commitLifecycleReset,
+} from "./agent_lifecycle_commit.js";
+import {
   normalizeAgentEditResponse,
   outcomeRequiresCustomNodes,
   readApplyCandidate,
@@ -852,7 +858,6 @@ function normalizeLiveExecNodesForSerialization() {
 function captureSerializedGraphForAgent() {
   normalizeForSerialize(null, { live: true });
   const graph = app.canvas.graph.serialize();
-  applyRenderedNodeSizesToSerializedGraph(graph);
   normalizeForSerialize(graph);
   return graph;
 }
@@ -4312,6 +4317,21 @@ function createAgentPanelShell() {
       currentAgentPanel,
       PANEL_STATE,
       RENDER_SECTIONS,
+      // T8: Delegate demo Apply/Reject lifecycle work to preview_picker.
+      // These helpers let preview_picker fulfill/render obligations,
+      // push undo history, announce changed nodes, and restore layout
+      // preview baselines without importing from vibecomfy_roundtrip
+      // (which would create a circular dependency).
+      fulfillLifecycleTransitionObligations,
+      pushHistory,
+      announceChangedNodes,
+      extractChangedNodeFeedback,
+      restoreLayoutPreviewBaseline,
+      clonePlainData,
+      // T12: Demo apply consults the same scope guard as the production
+      // apply authority so a candidate from a different workflow tab is
+      // refused locally (no POST, no graph mutation).
+      assertApplyScopeConsistency,
     },
   });
 
@@ -9888,11 +9908,9 @@ function handleRequiresCustomNodesSubmitResponse(panel, context = {}) {
 	        ? result.reply.trim()
 	        : "VibeComfy could not confirm automatic installation for this edit.";
   const customNodeResolution = readCustomNodeResolution(result, { endpoint: "submit:custom-nodes" });
-  const obligations = transition(panel, "REQUIRES_CUSTOM_NODES_RESPONSE", {
-    result: result.raw || result,
-    sessionId: resultSessionId,
-    turnId: resultTurnId,
-    baselineTurnId: resultBaselineTurnId,
+  const obligations = commitTerminalResponse(panel, {
+    result,
+    outcome,
     auditRef: result.auditRef || null,
     message: customNodeMessage,
     customNodeResolution,
@@ -10074,7 +10092,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
     // The user just sent a message — always jump the thread to the newest
     // content regardless of where they had scrolled.
     ensureThreadRenderState(panel).forceScrollOnNextRender = true;
-    const startObligations = transition(panel, "SUBMIT_START", {
+    const startObligations = commitOptimisticSubmit(panel, {
       lastSubmit: null,
       debugPayload: {
         task,
@@ -10109,7 +10127,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       return;
     }
 
-    const submitStartObligations = transition(panel, "SUBMIT_START", {
+    const submitStartObligations = commitOptimisticSubmit(panel, {
       submitEpoch,
       lastSubmit: {
         task,
@@ -10272,13 +10290,9 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       }
       const failure = normalizeSubmitFailure(e);
       clearPendingResponseMessages(panel);
-      const obligations = transition(panel, "SUBMIT_NETWORK_FAILURE", {
+      const obligations = commitTerminalResponse(panel, {
         failure,
         syntheticAgentMessage: syntheticFailureAgentMessage(panel, failure, "frontend"),
-        debugPayload: {
-          ...failure,
-          last_submit: panel.state.lastSubmit,
-        },
       });
       fulfillLifecycleTransitionObligations(panel, obligations);
       pushHistory(panel, "failure", failure.kind || "NetworkError");
@@ -10336,11 +10350,10 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
         turn_id: resultTurnId,
         session_id: resultSessionId,
       };
-      const obligations = transition(panel, "CLARIFY_ONLY_RESPONSE", {
-        result: result.raw || result,
-        sessionId: resultSessionId,
-        turnId: resultTurnId,
-        baselineTurnId: resultBaselineTurnId,
+      const obligations = commitTerminalResponse(panel, {
+        result,
+        outcome,
+        candidateGraph: null,
         auditRef: result.auditRef || null,
         clarification,
         message: clarifyMessage,
@@ -10399,11 +10412,10 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       const changeDetails = result.raw?.change_details && typeof result.raw.change_details === "object"
         ? clonePlainData(result.raw.change_details)
         : null;
-      const obligations = transition(panel, "NOOP_RESPONSE", {
-        result: result.raw || result,
-        sessionId: resultSessionId,
-        turnId: resultTurnId,
-        baselineTurnId: resultBaselineTurnId,
+      const obligations = commitTerminalResponse(panel, {
+        result,
+        outcome,
+        candidateGraph: null,
         auditRef: result.auditRef || null,
         message: noopMessage,
         lastSubmitFieldChanges,
@@ -10501,13 +10513,10 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       arrival_client_graph_hash: arrivalSnapshot.graphHash,
       arrival_client_structural_graph_hash: arrivalSnapshot.structuralHash,
     });
-    const candidateObligations = transition(panel,
-      outcomeHasClarificationPrompt(outcome) ? "EDIT_CLARIFY_RESPONSE" : "OK_CANDIDATE_RESPONSE",
+    const candidateObligations = commitTerminalResponse(panel,
       {
-        result: result.raw || result,
-        sessionId: resultSessionId,
-        turnId: resultTurnId,
-        baselineTurnId: resultBaselineTurnId,
+        result,
+        outcome,
         candidateGraph,
         candidateGraphHash,
         serverSubmitGraphHash: applyCandidate?.submitGraphHash || null,
@@ -10612,67 +10621,15 @@ function stopAgentSubmit(panel) {
 }
 
 async function applyAgentCandidate(panel) {
-  // ── T6: Demo-only apply branch (local state only, no backend accept) ──
+  // ── T8: Demo-only apply branch (local state only, no backend accept) ──
+  // Delegates to preview_picker which handles graph application, lifecycle
+  // reflection, and state cleanup inline.  No POST to /agent-edit/accept.
   if (panel?.state?.__demoMode) {
     if (!panel.state.candidateGraph) {
       transition(panel, "APPLY_PREFLIGHT_BLOCKED", { reason: "no_candidate" });
       return;
     }
-    try {
-      let repairCandidate = null;
-      applyGraphCandidateInPlace(app, panel.state.candidateGraph, {
-        beforeConfigure(nextCandidate) {
-          decorateIntentGraphPayload(nextCandidate);
-          repairCandidate = clonePlainData(nextCandidate);
-        },
-        afterConfigure(_graph, nextCandidate) {
-          repairLiveIntentNodesFromCandidate(repairCandidate || nextCandidate);
-        },
-        repaint: true,
-      });
-    } catch (e) {
-      const failure = agentPanelFailure("CanvasApplyError", String(e), {
-        retryable: true,
-        graph_unchanged: false,
-        next_action: "Retry demo Apply or choose another scenario.",
-      });
-      const obligations = transition(panel, "CANVAS_APPLY_FAILURE", {
-        failure,
-        syntheticAgentMessage: syntheticFailureAgentMessage(panel, failure, "canvas_apply"),
-        undoStackDepth: panel.state.undoStack.length,
-        debugPayload: {
-          ...failure,
-          demo: true,
-          undo_stack_depth: panel.state.undoStack.length,
-        },
-      });
-      fulfillLifecycleTransitionObligations(panel, obligations);
-      pushHistory(panel, "failure", failure.kind || "CanvasApplyError");
-      renderLifecycleTransition(panel, obligations);
-      return;
-    }
-    const lastAppliedChanges = announceChangedNodes(panel, extractChangedNodeFeedback(panel.state.candidateReport));
-    pushHistory(panel, "applied", panel.state.turnId ? `turn ${panel.state.turnId}` : "candidate");
-    const successObligations = transition(panel, "APPLY_SUCCESS", {
-      accepted: { demo: true },
-      lastAppliedChanges,
-      toast: "Demo candidate applied",
-      debugPayload: {
-        demo: true,
-        undo_stack_depth: panel.state.undoStack.length,
-      },
-    });
-    fulfillLifecycleTransitionObligations(panel, successObligations);
-    renderLifecycleTransition(panel, successObligations);
-    if (typeof panel.previewPicker?.showAppliedStage === "function") {
-      panel.previewPicker.showAppliedStage({
-        alreadyApplied: true,
-        lastAppliedChanges,
-      });
-    } else {
-      delete panel.state.__demoMode;
-    }
-    return;
+    return panel.previewPicker?.handleDemoApply?.(panel);
   }
 
   if (!panel.state.candidateGraph) {
@@ -11274,7 +11231,7 @@ async function applyAgentCandidate(panel) {
       audit_ref: accepted.auditRef || panel.state.auditRef,
       raw_payload: accepted.raw || accepted,
     });
-    const successObligations = transition(panel, "APPLY_SUCCESS", {
+    const successObligations = commitApplyResolved(panel, {
       accepted: accepted.raw || accepted,
       lastAppliedChanges,
       undoStackDepth: panel.state.undoStack.length,
@@ -11331,26 +11288,14 @@ async function applyAgentCandidate(panel) {
 }
 
 async function rejectAgentCandidate(panel) {
-  // ── T6: Demo-only reject branch (local state only, no backend reject) ──
+  // ── T8: Demo-only reject branch (local state only, no backend reject) ──
+  // Delegates to preview_picker which handles lifecycle reflection and
+  // state cleanup inline.  No POST to /agent-edit/reject.
   if (panel?.state?.__demoMode) {
     if (!panel?.state?.candidateGraph || !panel.state.sessionId || !panel.state.turnId) {
       return;
     }
-    pushHistory(panel, "rejected", panel.state.turnId ? `turn ${panel.state.turnId}` : "candidate");
-    const obligations = transition(panel, "REJECT_SUCCESS", {
-      rejected: { demo: true },
-      message: "Demo candidate rejected and cleared from the panel.",
-      toast: "Demo candidate rejected",
-      debugPayload: {
-        demo: true,
-        graph_unchanged: true,
-      },
-    });
-    fulfillLifecycleTransitionObligations(panel, obligations);
-    restoreLayoutPreviewBaseline(panel);
-    renderLifecycleTransition(panel, obligations);
-    delete panel.state.__demoMode;
-    return;
+    return panel.previewPicker?.handleDemoReject?.(panel);
   }
 
   if (!panel?.state?.candidateGraph || !panel.state.sessionId || !panel.state.turnId) {
@@ -11458,6 +11403,11 @@ async function rejectAgentCandidate(panel) {
     raw_payload: rejected.raw || rejected,
   });
 
+  // ── T6: Production reject stays backend-authoritative. The POST above owns
+  // Reject authority; the rebaseline-recovery sync below is wired by the
+  // production orchestrator. commitLifecycleReset is reserved for local/demo
+  // reset outcomes where no production POST is involved, so this call site
+  // keeps the direct REJECT_SUCCESS transition (see plan Step 6 (3)).
   const obligations = transition(panel, "REJECT_SUCCESS", {
     rejected: rejected.raw || rejected,
     message: "Candidate rejected and cleared from the panel.",
