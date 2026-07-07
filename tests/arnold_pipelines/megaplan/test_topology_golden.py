@@ -23,8 +23,8 @@ FIXTURE_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_topology.yaml"
 MANIFEST_GOLDEN_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_manifest_golden.json"
 NORMALIZED_SHAPE_PATH = Path(__file__).parent / "fixtures" / "normalized_pipeline_shape.json"
 AMENDMENT_PATH = Path(__file__).parents[3] / "docs" / "arnold" / "workflow-manifest-amendments.md"
-LOCKED_MANIFEST_HASH = "sha256:2468fae140db618e0715b80173a059d89927e06f43bb1228b841120b8eb800b1"
-LOCKED_TOPOLOGY_HASH = "sha256:a83f81eabe54696bbf33dbfc6cbf4db6f6b35dc3312ea4e6c23b86f93f50f999"
+LOCKED_MANIFEST_HASH = "sha256:1ac5bde8195484b6e8d38f8da5a2449e86fb8caaa97f9959577d116cba2f63b7"
+LOCKED_TOPOLOGY_HASH = "sha256:7485470207d2ec624791b2c1f4ed71cdc3e0a49246fcde6a128e013e0f995133"
 
 
 @pytest.fixture
@@ -122,7 +122,7 @@ def _subpipeline_contract(subpipeline: Any | None) -> dict[str, Any] | None:
 
 
 def _normalized_pipeline_contract(pipeline: Any) -> dict[str, Any]:
-    return {
+    payload = {
         "fixture_schema": "arnold.megaplan.normalized_pipeline_shape.v1",
         "source": "arnold_pipelines.megaplan.pipeline:build_pipeline",
         "hash_neutral": True,
@@ -166,6 +166,7 @@ def _normalized_pipeline_contract(pipeline: Any) -> dict[str, Any]:
             for route in pipeline.routes
         ],
     }
+    return json.loads(json.dumps(payload, sort_keys=True, default=str))
 
 
 def _manifest_policy_contract(policy: Any | None) -> dict[str, Any] | None:
@@ -280,7 +281,7 @@ class TestTopologyFixtureLock:
                 "blocked_preflight",
                 "force_proceed",
             ],
-            "tiebreaker_decision": ["proceed", "iterate", "escalate"],
+            "tiebreaker_decision": ["proceed", "iterate", "escalate", "replan"],
             "review": ["rework"],
         }
 
@@ -407,6 +408,32 @@ class TestM6StructuralPolicyAttachments:
         # Policy refs must include execute-specific refs
         policy_refs = execute_node.metadata.get("policy_refs", [])
         assert "megaplan:execute" in policy_refs
+
+    def test_execute_route_bindings_not_authoritative_in_component(self) -> None:
+        """Execute route authority lives in policy/pypeline, not in component
+        route_bindings.  The compiled execute node must still carry the
+        execute→review edge, but the component-level route_bindings must be
+        absent (or empty) so they cannot become authoritative."""
+        from arnold_pipelines.megaplan import workflows as wf
+
+        execute_component = wf.STEP_COMPONENTS_BY_ID["execute"]
+        bindings = execute_component.metadata.get("route_bindings", ())
+        assert bindings == (), (
+            "EXECUTE step component must not carry authoritative route_bindings; "
+            "route authority is in EXECUTE_POLICY.route_surface / workflow.pypeline"
+        )
+
+        # The compiled manifest must still carry the execute→review edge.
+        manifest = build_and_compile_pipeline()
+        execute_edges = [
+            e for e in manifest.edges
+            if e.source == "execute"
+        ]
+        assert len(execute_edges) == 1, (
+            "compiled manifest must preserve single execute→review edge "
+            "derived from the pypeline"
+        )
+        assert execute_edges[0].target == "review"
 
     def test_override_node_exposes_full_action_matrix_in_policy_overlays(self) -> None:
         manifest = build_and_compile_pipeline()

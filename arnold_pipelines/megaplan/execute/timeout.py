@@ -11,10 +11,11 @@ from arnold_pipelines.megaplan._core import (
     append_history,
     atomic_write_json,
     atomic_write_text,
-    batch_artifact_path,
+    legacy_batch_artifact_path,
     make_history_entry,
     read_json,
     render_final_md,
+    resolve_batch_artifact,
     save_state_merge_meta,
     sha256_file,
     is_prose_mode,
@@ -140,7 +141,9 @@ def _reset_timeout_invalid_tasks(
 def _timeout_checkpoint_path(plan_dir: Path, *, batch_number: int | None) -> Path:
     if batch_number is None:
         return plan_dir / "execution_checkpoint.json"
-    return batch_artifact_path(plan_dir, batch_number)
+    return resolve_batch_artifact(plan_dir, batch_number) or legacy_batch_artifact_path(
+        plan_dir, batch_number
+    )
 
 
 def _capture_execute_checkpoint_payload(

@@ -29,7 +29,13 @@ from arnold_pipelines.megaplan.workers._impl import (
     mock_worker_output,
     session_key_for,
 )
-from arnold_pipelines.megaplan._core import creative_form_id, read_json, schemas_root, touch_active_step
+from arnold_pipelines.megaplan._core import (
+    list_batch_artifacts,
+    creative_form_id,
+    read_json,
+    schemas_root,
+    touch_active_step,
+)
 from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan.model_seam import (
     ModelBudgetError,
@@ -2764,7 +2770,7 @@ def _reconstruct_execute_payload(
     # If the batch scratch file was never filled, fall back to the latest
     # audited checkpoint rather than replaying unrelated prior batches.
     if not task_updates and latest_batch_output_path is None:
-        checkpoint_files = sorted(plan_dir.glob("execution_batch_*.json"), reverse=True)
+        checkpoint_files = sorted(list_batch_artifacts(plan_dir), reverse=True)
         if checkpoint_files:
             try:
                 cp_data = json.loads(checkpoint_files[0].read_text(encoding="utf-8"))

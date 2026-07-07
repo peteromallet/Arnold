@@ -1,1 +1,8 @@
-{"_worker":"<function _run_folder_audit.<locals>.fake_worker at 0x7018e2856340>","audit":{"folders":[{"inferred_purpose":"root","items":[{"classification":"fit","fits":true,"name":"a.txt","type":"file"}],"level":0,"path":"."}],"settled_decisions":[],"summary":{"fit":1,"total_folders":1,"total_items":1}},"audit_json":"/tmp/pytest-of-root/pytest-1126/test_committed_native_golden_t6/D7-execute-dag/artifacts/audit.json","audit_md":"/tmp/pytest-of-root/pytest-1126/test_committed_native_golden_t6/D7-execute-dag/artifacts/audit.md","target_dir":"/tmp/pytest-of-root/pytest-1126/test_committed_native_golden_t6/D7-execute-dag/sample","tree":[{"children":[{"name":"a.txt","type":"file"}],"level":0,"path":"."}]}
+{
+  "sections": "/tmp/s4-native-goldens-qwko463k/D7-execute-dag/artifacts/outline/sections.json",
+  "intro": "/tmp/s4-native-goldens-qwko463k/D7-execute-dag/artifacts/section_drafts/intro.md",
+  "body": "/tmp/s4-native-goldens-qwko463k/D7-execute-dag/artifacts/section_drafts/body.md",
+  "critique": "/tmp/s4-native-goldens-qwko463k/D7-execute-dag/artifacts/critique/v1.md",
+  "revise": "/tmp/s4-native-goldens-qwko463k/D7-execute-dag/artifacts/revise/v1.md",
+  "final": "/tmp/s4-native-goldens-qwko463k/D7-execute-dag/artifacts/assembly/final.md"
+}

@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-07T19:33:31.361552+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-megaplan-native-parity-corrective"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 1,
+  "owner_actor": "watchdog",
+  "problem_id": "problem-a351abf81c18",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:9f7625ab4af64098a0a4033c19416b13fc17b1c4a84df8cf6de2611edaf7cdcb",
+    "last_seq": 212,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-a351abf81c18: phase_failure:s3-tiebreaker-and-replan-20260706-2045:execute:consecutive=0:recorded=2026-07-07T03:43:33Z:state=finalized:active=none:started=unknown:pid=none:SourceCompileError: AWF242_RAW_STRING_ROUTE_BRANCH: canonical Megaplan route branches must use closed outcome enum members; AWF242_RAW_STRING_ROUTE_BRANCH: cano"
+}

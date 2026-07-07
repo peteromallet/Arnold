@@ -71,6 +71,7 @@ from arnold_pipelines.megaplan.runtime.execution_environment import (
     resolve_execution_environment,
 )
 from arnold_pipelines.megaplan._core import (
+    list_batch_artifacts,
     atomic_write_json,
     resolve_plan_dir,
     save_state_merge_meta,
@@ -1766,7 +1767,7 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
     def _authoritative_batch_task_overrides() -> dict[str, dict[str, Any]]:
         overrides: dict[str, dict[str, Any]] = {}
         for batch_path in sorted(
-            plan_dir.glob("execution_batch_*.json"),
+            list_batch_artifacts(plan_dir),
             key=_execution_batch_sort_key,
         ):
             try:
@@ -1802,7 +1803,7 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
 
     authoritative_batch_overrides = _authoritative_batch_task_overrides()
     batches = sorted(
-        plan_dir.glob("execution_batch_*.json"),
+        list_batch_artifacts(plan_dir),
         key=_execution_batch_sort_key,
     )
     if not batches:
@@ -1995,7 +1996,7 @@ def _best_effort_git_head(project_dir: Path) -> str | None:
 
 def _latest_recorded_execution_head(plan_dir: Path) -> str | None:
     for path in sorted(
-        plan_dir.glob("execution_batch_*.json"),
+        list_batch_artifacts(plan_dir),
         key=_execution_batch_sort_key,
         reverse=True,
     ):

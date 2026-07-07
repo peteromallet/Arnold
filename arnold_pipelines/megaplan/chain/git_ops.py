@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan.types import CliError
+from arnold_pipelines.megaplan._core import list_batch_artifacts
 
 _MISSING_REMOTE_REF_MARKERS = (
     "couldn't find remote ref",
@@ -892,7 +893,7 @@ def _claimed_paths(root: Path, plan_name: str) -> set[str]:
     artifacts = [
         plan_dir / "finalize.json",
         plan_dir / "execution.json",
-        *sorted(plan_dir.glob("execution_batch_*.json")),
+        *sorted(list_batch_artifacts(plan_dir)),
     ]
     for artifact in artifacts:
         if not artifact.exists():

@@ -1,33 +1,45 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 135,
+  "evidence_ref_count": 165,
   "evidence_refs": [
     {
-      "kind": "verification_record"
+      "action": "created",
+      "kind": "github.issue",
+      "number": 167,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/167"
     },
     {
-      "kind": "verification_record"
+      "action": "created",
+      "kind": "github.issue",
+      "number": 168,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/168"
     },
     {
-      "kind": "verification_record"
+      "action": "created",
+      "kind": "github.issue",
+      "number": 169,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/169"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.label_fallback"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.label_fallback"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.label_fallback"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
-      "kind": "verification_record"
+      "kind": "github_sync.publication_payload"
     },
     {
       "kind": "verification_record"
@@ -195,13 +207,13 @@
       "kind": "verification_record"
     }
   ],
-  "generated_at": "2026-07-07T01:31:37.912440+00:00",
+  "generated_at": "2026-07-07T19:33:31.343846+00:00",
   "incident_id": "inc-demo-session",
   "kind": "incident_summary",
-  "latest_actor": "immediate_repair",
-  "next_expected_event": "repair_attempt.verification",
-  "omitted_evidence_ref_count": 71,
-  "outcome": "attempted",
+  "latest_actor": "github_sync",
+  "next_expected_event": "six_hour_auditor.diagnosis",
+  "omitted_evidence_ref_count": 101,
+  "outcome": "published",
   "placeholders": {
     "install_freshness": "unknown",
     "recurrence": "repeated_attempts_without_new_evidence",
@@ -215,10 +227,10 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:5d63df306a7cb80039a2b6544c81e20892277c2ed731ef4745036dd00317217e",
-    "last_seq": 154,
+    "digest": "sha256:9f7625ab4af64098a0a4033c19416b13fc17b1c4a84df8cf6de2611edaf7cdcb",
+    "last_seq": 205,
     "projection": "incidents"
   },
-  "state": "repair_attempt",
-  "summary_text": "inc-demo-session: repair-data outcome=repairing plan=demo-plan kind=plan workspace=/tmp/pytest-of-root/pytest-701/test_repair_loop_serializes_sa0/ws"
+  "state": "github_sync.issue_published",
+  "summary_text": "inc-demo-session: Published persistent problem problem-9e338df241c5 to GitHub as a new issue"
 }

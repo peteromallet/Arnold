@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from arnold_pipelines.megaplan.observability.events import EventKind, emit
+from arnold_pipelines.megaplan._core import list_batch_artifacts
 from arnold_pipelines.megaplan.orchestration.completion_io import (
     read_typed_completion_verdict,
 )
@@ -580,7 +581,7 @@ def _resolve_evidence_nucleus(
 
 
 def _iter_existing_artifacts(plan_dir: Path) -> tuple[Path, ...]:
-    paths = sorted(plan_dir.glob("execution_batch_*.json"))
+    paths = sorted(list_batch_artifacts(plan_dir))
     finalize = plan_dir / "finalize.json"
     if finalize.is_file():
         paths.append(finalize)
@@ -643,7 +644,7 @@ def _best_effort_git_head_for_path(path: Path) -> str | None:
 
 def _latest_recorded_execution_head(plan_dir: Path) -> str | None:
     for path in sorted(
-        plan_dir.glob("execution_batch_*.json"),
+        list_batch_artifacts(plan_dir),
         key=_execution_batch_sort_key,
         reverse=True,
     ):

@@ -1,19 +1,19 @@
 {
   "integrity": [
     {
-      "actual": "sha256:5d63df306a7cb80039a2b6544c81e20892277c2ed731ef4745036dd00317217e",
+      "actual": "sha256:9f7625ab4af64098a0a4033c19416b13fc17b1c4a84df8cf6de2611edaf7cdcb",
       "code": "index_divergence",
-      "expected": "sha256:a7650ef18c56f97a9a28b12bf8db9e78b0a932348ada68efbf4699e99e83f9d3",
-      "message": "incidents projection source metadata diverged for digest: 'sha256:5d63df306a7cb80039a2b6544c81e20892277c2ed731ef4745036dd00317217e' != 'sha256:a7650ef18c56f97a9a28b12bf8db9e78b0a932348ada68efbf4699e99e83f9d3'",
+      "expected": "sha256:b41f8cd9b2fdf6b69c418c0684f9c98bca6545c3e77266c8ab2361b29de4f4c2",
+      "message": "incidents projection source metadata diverged for digest: 'sha256:9f7625ab4af64098a0a4033c19416b13fc17b1c4a84df8cf6de2611edaf7cdcb' != 'sha256:b41f8cd9b2fdf6b69c418c0684f9c98bca6545c3e77266c8ab2361b29de4f4c2'",
       "projection": "incidents",
       "recommendation": "system.integrity_repair",
       "severity": "error"
     },
     {
-      "actual": "sha256:5d63df306a7cb80039a2b6544c81e20892277c2ed731ef4745036dd00317217e",
+      "actual": "sha256:9f7625ab4af64098a0a4033c19416b13fc17b1c4a84df8cf6de2611edaf7cdcb",
       "code": "index_divergence",
-      "expected": "sha256:a7650ef18c56f97a9a28b12bf8db9e78b0a932348ada68efbf4699e99e83f9d3",
-      "message": "problems projection source metadata diverged for digest: 'sha256:5d63df306a7cb80039a2b6544c81e20892277c2ed731ef4745036dd00317217e' != 'sha256:a7650ef18c56f97a9a28b12bf8db9e78b0a932348ada68efbf4699e99e83f9d3'",
+      "expected": "sha256:b41f8cd9b2fdf6b69c418c0684f9c98bca6545c3e77266c8ab2361b29de4f4c2",
+      "message": "problems projection source metadata diverged for digest: 'sha256:9f7625ab4af64098a0a4033c19416b13fc17b1c4a84df8cf6de2611edaf7cdcb' != 'sha256:b41f8cd9b2fdf6b69c418c0684f9c98bca6545c3e77266c8ab2361b29de4f4c2'",
       "projection": "problems",
       "recommendation": "system.integrity_repair",
       "severity": "error"
@@ -37,18 +37,37 @@
   ],
   "problems": [
     {
+      "first_seen_seq": 209,
+      "first_seen_ts": "2026-07-07T02:36:43.796229+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 254,
+      "last_seen_ts": "2026-07-07T20:01:42.128668+00:00",
+      "linked_incident_ids": [
+        "inc-megaplan-native-parity-corrective"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "stale active step plan s tiebreaker and replan state finalized phase execute pid not live",
+      "occurrence_count": 8,
+      "owner_actor": "six_hour_auditor",
+      "problem_id": "problem-0311d1fc8813",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "stale_active_step: plan=s3-tiebreaker-and-replan-20260706-2045; state=finalized; phase=execute; worker_pid=3329056 not live"
+    },
+    {
       "first_seen_seq": 167,
       "first_seen_ts": "2026-07-06T20:53:23.823473+00:00",
       "fix_commits": [],
-      "last_seen_seq": 198,
-      "last_seen_ts": "2026-07-07T02:34:56.122211+00:00",
+      "last_seen_seq": 249,
+      "last_seen_ts": "2026-07-07T18:28:17.221932+00:00",
       "linked_incident_ids": [
         "inc-megaplan-native-parity-corrective"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome discord escalated kind chain workspace transient path",
-      "occurrence_count": 4,
-      "owner_actor": "six_hour_auditor",
+      "occurrence_count": 7,
+      "owner_actor": "immediate_repair",
       "problem_id": "problem-3b7df8021d2b",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -59,15 +78,15 @@
       "first_seen_seq": 156,
       "first_seen_ts": "2026-07-06T01:06:03.327729+00:00",
       "fix_commits": [],
-      "last_seen_seq": 161,
-      "last_seen_ts": "2026-07-06T01:55:28.639393+00:00",
+      "last_seen_seq": 236,
+      "last_seen_ts": "2026-07-07T14:02:56.994449+00:00",
       "linked_incident_ids": [
         "inc-megaplan-native-parity-corrective"
       ],
       "next_review_ts": null,
       "normalized_signature": "stale active step plan s tiebreaker and replan state initialized phase plan pid not live",
-      "occurrence_count": 4,
-      "owner_actor": "six_hour_auditor",
+      "occurrence_count": 6,
+      "owner_actor": "github_sync",
       "problem_id": "problem-55b5ebf18290",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -78,14 +97,14 @@
       "first_seen_seq": 159,
       "first_seen_ts": "2026-07-06T01:52:10.049821+00:00",
       "fix_commits": [],
-      "last_seen_seq": 196,
-      "last_seen_ts": "2026-07-07T02:33:23.522922+00:00",
+      "last_seen_seq": 248,
+      "last_seen_ts": "2026-07-07T18:07:11.887769+00:00",
       "linked_incident_ids": [
         "inc-megaplan-native-parity-corrective"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repairing kind chain workspace transient path",
-      "occurrence_count": 5,
+      "occurrence_count": 13,
       "owner_actor": "immediate_repair",
       "problem_id": "problem-67a765759422",
       "recurred_after_fix": false,
@@ -97,15 +116,15 @@
       "first_seen_seq": 1,
       "first_seen_ts": "2026-07-03T20:59:15.263244+00:00",
       "fix_commits": [],
-      "last_seen_seq": 188,
-      "last_seen_ts": "2026-07-07T02:26:19.115159+00:00",
+      "last_seen_seq": 202,
+      "last_seen_ts": "2026-07-07T02:35:11.340038+00:00",
       "linked_incident_ids": [
         "incident-42"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repairing plan m plan kind chain workspace transient path",
-      "occurrence_count": 22,
-      "owner_actor": "immediate_repair",
+      "occurrence_count": 23,
+      "owner_actor": "github_sync",
       "problem_id": "problem-68a048c70af7",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -116,15 +135,15 @@
       "first_seen_seq": 5,
       "first_seen_ts": "2026-07-03T21:24:24.562997+00:00",
       "fix_commits": [],
-      "last_seen_seq": 192,
-      "last_seen_ts": "2026-07-07T02:26:42.016641+00:00",
+      "last_seen_seq": 203,
+      "last_seen_ts": "2026-07-07T02:35:15.235210+00:00",
       "linked_incident_ids": [
         "inc-demo-session"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repairing plan demo plan kind chain workspace transient path",
-      "occurrence_count": 118,
-      "owner_actor": "immediate_repair",
+      "occurrence_count": 119,
+      "owner_actor": "github_sync",
       "problem_id": "problem-6e386e382223",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -135,15 +154,15 @@
       "first_seen_seq": 134,
       "first_seen_ts": "2026-07-04T16:05:39.851549+00:00",
       "fix_commits": [],
-      "last_seen_seq": 146,
-      "last_seen_ts": "2026-07-05T01:37:26.792536+00:00",
+      "last_seen_seq": 204,
+      "last_seen_ts": "2026-07-07T02:35:18.669631+00:00",
       "linked_incident_ids": [
         "inc-demo-session"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repairing plan demo plan kind plan workspace private var folders w b tthv m c dbyzvk gn t pytest of peteromalley pytest test repair loop serializes sa ws",
-      "occurrence_count": 3,
-      "owner_actor": "meta_repair",
+      "occurrence_count": 4,
+      "owner_actor": "github_sync",
       "problem_id": "problem-6eaee57d9632",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -151,18 +170,37 @@
       "title": "repair-data outcome=repairing plan=demo-plan kind=plan workspace=/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-46/test_repair_loop_serializes_sa0/ws"
     },
     {
+      "first_seen_seq": 250,
+      "first_seen_ts": "2026-07-07T19:08:31.293929+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 251,
+      "last_seen_ts": "2026-07-07T19:08:33.827899+00:00",
+      "linked_incident_ids": [
+        "inc-megaplan-native-parity-corrective"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "meta repair recursion guard blocked dispatch",
+      "occurrence_count": 2,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-8f475cf8e677",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "meta-repair recursion guard blocked dispatch"
+    },
+    {
       "first_seen_seq": 9,
       "first_seen_ts": "2026-07-03T21:24:28.137736+00:00",
       "fix_commits": [],
-      "last_seen_seq": 193,
-      "last_seen_ts": "2026-07-07T02:26:43.093500+00:00",
+      "last_seen_seq": 205,
+      "last_seen_ts": "2026-07-07T02:35:21.994374+00:00",
       "linked_incident_ids": [
         "inc-demo-session"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome discord escalated plan demo plan kind chain workspace transient path",
-      "occurrence_count": 28,
-      "owner_actor": "immediate_repair",
+      "occurrence_count": 29,
+      "owner_actor": "github_sync",
       "problem_id": "problem-9e338df241c5",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -173,20 +211,39 @@
       "first_seen_seq": 194,
       "first_seen_ts": "2026-07-07T02:33:10.287019+00:00",
       "fix_commits": [],
-      "last_seen_seq": 194,
-      "last_seen_ts": "2026-07-07T02:33:10.287019+00:00",
+      "last_seen_seq": 243,
+      "last_seen_ts": "2026-07-07T16:04:43.958764+00:00",
       "linked_incident_ids": [
         "inc-megaplan-native-parity-corrective"
       ],
       "next_review_ts": null,
       "normalized_signature": "unhealthy and needs repair attention retrying failure",
-      "occurrence_count": 1,
+      "occurrence_count": 7,
       "owner_actor": "watchdog",
       "problem_id": "problem-9eb61fd41e68",
       "recurred_after_fix": false,
       "scope": "repair_system",
       "status": "open",
       "title": "session unhealthy and needs repair attention: retrying_failure"
+    },
+    {
+      "first_seen_seq": 212,
+      "first_seen_ts": "2026-07-07T03:43:35.348781+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 212,
+      "last_seen_ts": "2026-07-07T03:43:35.348781+00:00",
+      "linked_incident_ids": [
+        "inc-megaplan-native-parity-corrective"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "phase failure s tiebreaker and replan execute consecutive recorded t z state finalized active none started unknown pid none sourcecompileerror awf raw string route branch canonical megaplan route branches must use closed outcome enum members awf raw string route branch cano",
+      "occurrence_count": 1,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-a351abf81c18",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "phase_failure:s3-tiebreaker-and-replan-20260706-2045:execute:consecutive=0:recorded=2026-07-07T03:43:33Z:state=finalized:active=none:started=unknown:pid=none:SourceCompileError: AWF242_RAW_STRING_ROUTE_BRANCH: canonical Megaplan route branches must use closed outcome enum members; AWF242_RAW_STRING_ROUTE_BRANCH: cano"
     },
     {
       "first_seen_seq": 154,
@@ -230,15 +287,15 @@
       "first_seen_seq": 162,
       "first_seen_ts": "2026-07-06T05:11:02.606561+00:00",
       "fix_commits": [],
-      "last_seen_seq": 172,
-      "last_seen_ts": "2026-07-07T01:34:57.132274+00:00",
+      "last_seen_seq": 239,
+      "last_seen_ts": "2026-07-07T14:03:04.182543+00:00",
       "linked_incident_ids": [
         "inc-megaplan-native-parity-corrective"
       ],
       "next_review_ts": null,
       "normalized_signature": "stopped and needs repair attention",
-      "occurrence_count": 2,
-      "owner_actor": "watchdog",
+      "occurrence_count": 7,
+      "owner_actor": "github_sync",
       "problem_id": "problem-bd43205325d0",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -249,14 +306,14 @@
       "first_seen_seq": 166,
       "first_seen_ts": "2026-07-06T05:18:09.586858+00:00",
       "fix_commits": [],
-      "last_seen_seq": 175,
-      "last_seen_ts": "2026-07-07T01:45:07.883491+00:00",
+      "last_seen_seq": 245,
+      "last_seen_ts": "2026-07-07T16:11:00.998211+00:00",
       "linked_incident_ids": [
         "inc-megaplan-native-parity-corrective"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome live with fresh activity kind chain workspace transient path",
-      "occurrence_count": 2,
+      "occurrence_count": 8,
       "owner_actor": "repair_system",
       "problem_id": "problem-bef9405c197d",
       "recurred_after_fix": false,
@@ -268,14 +325,14 @@
       "first_seen_seq": 155,
       "first_seen_ts": "2026-07-05T23:34:02.322711+00:00",
       "fix_commits": [],
-      "last_seen_seq": 195,
-      "last_seen_ts": "2026-07-07T02:33:11.730468+00:00",
+      "last_seen_seq": 246,
+      "last_seen_ts": "2026-07-07T18:06:57.067393+00:00",
       "linked_incident_ids": [
         "inc-megaplan-native-parity-corrective"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair loop background dispatched",
-      "occurrence_count": 5,
+      "occurrence_count": 13,
       "owner_actor": "watchdog",
       "problem_id": "problem-e20c45ae0eb0",
       "recurred_after_fix": false,
@@ -284,18 +341,56 @@
       "title": "repair loop background-dispatched"
     },
     {
+      "first_seen_seq": 247,
+      "first_seen_ts": "2026-07-07T18:06:57.068527+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 247,
+      "last_seen_ts": "2026-07-07T18:06:57.068527+00:00",
+      "linked_incident_ids": [
+        "inc-megaplan-native-parity-corrective"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "repair loop already active",
+      "occurrence_count": 1,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-f336ce99590e",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "repair loop already active"
+    },
+    {
+      "first_seen_seq": 252,
+      "first_seen_ts": "2026-07-07T19:08:38.854913+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 252,
+      "last_seen_ts": "2026-07-07T19:08:38.854913+00:00",
+      "linked_incident_ids": [
+        "inc-megaplan-native-parity-corrective"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "repair request already claimed",
+      "occurrence_count": 1,
+      "owner_actor": "watchdog",
+      "problem_id": "problem-f4fa774946c7",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "repair request already claimed"
+    },
+    {
       "first_seen_seq": 168,
       "first_seen_ts": "2026-07-06T21:33:47.276842+00:00",
       "fix_commits": [],
-      "last_seen_seq": 173,
-      "last_seen_ts": "2026-07-07T01:35:12.891885+00:00",
+      "last_seen_seq": 208,
+      "last_seen_ts": "2026-07-07T02:35:32.420214+00:00",
       "linked_incident_ids": [
         "inc-megaplan-native-parity-corrective"
       ],
       "next_review_ts": null,
       "normalized_signature": "meta repair background dispatched",
-      "occurrence_count": 2,
-      "owner_actor": "watchdog",
+      "occurrence_count": 3,
+      "owner_actor": "github_sync",
       "problem_id": "problem-fc037a661409",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -306,10 +401,10 @@
   "projection": "problems",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:a7650ef18c56f97a9a28b12bf8db9e78b0a932348ada68efbf4699e99e83f9d3",
-    "event_count": 198,
-    "journal_line_count": 198,
-    "last_seq": 198,
+    "digest": "sha256:b41f8cd9b2fdf6b69c418c0684f9c98bca6545c3e77266c8ab2361b29de4f4c2",
+    "event_count": 254,
+    "journal_line_count": 254,
+    "last_seq": 254,
     "malformed_line_count": 0
   }
 }

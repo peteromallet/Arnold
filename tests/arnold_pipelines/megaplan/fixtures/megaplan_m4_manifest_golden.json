@@ -180,6 +180,14 @@
       "target": "override"
     },
     {
+      "condition_ref": "tiebreaker:replan",
+      "id": "tiebreaker_decision:revise_replan",
+      "label": "replan",
+      "metadata": {},
+      "source": "tiebreaker_decision",
+      "target": "revise"
+    },
+    {
       "id": "tiebreaker_researcher:challenger",
       "label": "default",
       "metadata": {},
@@ -195,7 +203,7 @@
     }
   ],
   "id": "megaplan",
-  "manifest_hash": "sha256:2468fae140db618e0715b80173a059d89927e06f43bb1228b841120b8eb800b1",
+  "manifest_hash": "sha256:1ac5bde8195484b6e8d38f8da5a2449e86fb8caaa97f9959577d116cba2f63b7",
   "metadata": {
     "max_critique_iterations": 4,
     "policy_refs": [
@@ -1129,6 +1137,13 @@
             "transition_id": "tiebreaker:escalate",
             "transition_type": "escalation",
             "trigger_ref": "tiebreaker_decision.decision"
+          },
+          {
+            "policy_ref": "megaplan:tiebreaker",
+            "target_ref": "revise",
+            "transition_id": "tiebreaker:replan",
+            "transition_type": "override",
+            "trigger_ref": "tiebreaker_decision.decision"
           }
         ],
         "effects": [],
@@ -1383,6 +1398,6 @@
     ]
   },
   "schema_version": "arnold.workflow.manifest.v1",
-  "topology_hash": "sha256:a83f81eabe54696bbf33dbfc6cbf4db6f6b35dc3312ea4e6c23b86f93f50f999",
+  "topology_hash": "sha256:7485470207d2ec624791b2c1f4ed71cdc3e0a49246fcde6a128e013e0f995133",
   "version": "m4-phase3"
 }

@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-07T19:33:31.358684+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-megaplan-native-parity-corrective"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 6,
+  "owner_actor": "github_sync",
+  "problem_id": "problem-0311d1fc8813",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:9f7625ab4af64098a0a4033c19416b13fc17b1c4a84df8cf6de2611edaf7cdcb",
+    "last_seq": 234,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-0311d1fc8813: stale_active_step: plan=s3-tiebreaker-and-replan-20260706-2045; state=finalized; phase=execute; worker_pid=3329056 not live"
+}

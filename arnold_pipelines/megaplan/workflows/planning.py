@@ -498,7 +498,8 @@ def _canonical_routes(*, lowered_routes: Sequence[Route] = ()) -> tuple[Route, .
     return tuple(
         route
         for route in _canonical_lowered_routes(lowered_routes)
-        if route.label in supported_labels.get(route.source, set())
+        if route.source not in supported_labels
+        or route.label in supported_labels[route.source]
     )
 
 

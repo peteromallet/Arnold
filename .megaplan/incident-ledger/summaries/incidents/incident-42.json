@@ -1,8 +1,30 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 38,
+  "evidence_ref_count": 49,
   "evidence_refs": [
     {
+      "action": "created",
+      "kind": "github.issue",
+      "number": 166,
+      "repo": "peteromallet/Arnold",
+      "url": "https://github.com/peteromallet/Arnold/issues/166"
+    },
+    {
+      "kind": "github_sync.label_fallback"
+    },
+    {
+      "kind": "github_sync.publication_payload"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
+      "kind": "verification_record"
+    },
+    {
       "kind": "verification_record"
     },
     {
@@ -115,14 +137,31 @@
     },
     {
       "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "attempt_ids"
+    },
+    {
+      "kind": "github_sync.incident_projection",
+      "session_id": "demo-session"
+    },
+    {
+      "kind": "github_sync.problem_projection",
+      "status": "open"
     }
   ],
-  "generated_at": "2026-07-07T01:31:37.916932+00:00",
+  "generated_at": "2026-07-07T19:33:31.357516+00:00",
   "incident_id": "incident-42",
   "kind": "incident_summary",
-  "latest_actor": "meta_repair",
-  "next_expected_event": "repair_attempt.verification",
-  "outcome": "attempted",
+  "latest_actor": "github_sync",
+  "next_expected_event": "six_hour_auditor.diagnosis",
+  "outcome": "published",
   "placeholders": {
     "install_freshness": "unknown",
     "recurrence": "repeated_attempts_without_new_evidence",
@@ -133,10 +172,10 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:5d63df306a7cb80039a2b6544c81e20892277c2ed731ef4745036dd00317217e",
-    "last_seq": 148,
+    "digest": "sha256:9f7625ab4af64098a0a4033c19416b13fc17b1c4a84df8cf6de2611edaf7cdcb",
+    "last_seq": 202,
     "projection": "incidents"
   },
-  "state": "repair_attempt",
-  "summary_text": "incident-42: repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project"
+  "state": "github_sync.issue_published",
+  "summary_text": "incident-42: Published persistent problem problem-68a048c70af7 to GitHub as a new issue"
 }

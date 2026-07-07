@@ -15,7 +15,11 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping
 
-from arnold_pipelines.megaplan._core import read_json, resolve_plan_dir
+from arnold_pipelines.megaplan._core import (
+    list_batch_artifacts,
+    read_json,
+    resolve_plan_dir,
+)
 from arnold_pipelines.megaplan._core.state import write_plan_state
 from arnold_pipelines.megaplan.chain import spec as chain_spec
 from arnold.control.interface import ControlBinding, RunStateView
@@ -861,7 +865,7 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
     raw_project_dir = config.get("project_dir") if isinstance(config, dict) else None
     project_dir = Path(raw_project_dir) if isinstance(raw_project_dir, str) and raw_project_dir else None
     batches = sorted(
-        plan_dir.glob("execution_batch_*.json"),
+        list_batch_artifacts(plan_dir),
         key=_execution_batch_sort_key,
     )
     if not batches:

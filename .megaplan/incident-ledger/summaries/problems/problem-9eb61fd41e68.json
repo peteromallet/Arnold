@@ -1,0 +1,21 @@
+{
+  "fix_commits": [],
+  "generated_at": "2026-07-07T19:33:31.361218+00:00",
+  "kind": "problem_summary",
+  "linked_incident_ids": [
+    "inc-megaplan-native-parity-corrective"
+  ],
+  "next_review_ts": null,
+  "occurrence_count": 7,
+  "owner_actor": "watchdog",
+  "problem_id": "problem-9eb61fd41e68",
+  "recurred_after_fix": false,
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:9f7625ab4af64098a0a4033c19416b13fc17b1c4a84df8cf6de2611edaf7cdcb",
+    "last_seq": 243,
+    "projection": "problems"
+  },
+  "status": "open",
+  "summary_text": "problem-9eb61fd41e68: session unhealthy and needs repair attention: retrying_failure"
+}
