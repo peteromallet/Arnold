@@ -323,6 +323,9 @@ export function transition(panel, event, payload = {}) {
         dirtySections: ALL_RENDER_DIRTY_SECTIONS,
       });
 
+    case "RESTORE_LIFECYCLE_BASELINE":
+      return _handleRestoreLifecycleBaseline(panel, payload);
+
     // ── Foundation: Baseline sync ───────────────────────────────────────
     // Mirror authoritative baseline fields from a backend response payload.
     // Called after every backend response (submit success, failure, accept,
@@ -994,6 +997,92 @@ function _handleInvalidateCandidate(panel, payload) {
   delete panel.state._previewDiffGraphHash;
 
   return { render: repaint };
+}
+
+const LIFECYCLE_BASELINE_RESTORE_FIELDS = Object.freeze([
+  "phase",
+  "sessionId",
+  "turnId",
+  "baselineTurnId",
+  "chatScopeId",
+  "chatScopeFingerprint",
+  "candidateScopeId",
+  "submittingScopeId",
+  "baselineGraphHash",
+  "baselineGraphHashKind",
+  "baselineGraphHashVersion",
+  "baselineSource",
+  "baselineRebaselineId",
+  "baselineGraphSourcePath",
+  "candidateGraph",
+  "candidateGraphHash",
+  "candidateReport",
+  "serverSubmitGraphHash",
+  "customNodeResolution",
+  "nodePackInstallStates",
+  "message",
+  "failure",
+  "clarification",
+  "applyAllowed",
+  "applyEligibility",
+  "applyEligibilityWarning",
+  "applyEligibilityWarningKey",
+  "queueAllowed",
+  "canvasApplyAllowed",
+  "auditRef",
+  "debugPayload",
+  "inFlightSubmit",
+  "submitAbortController",
+  "submitEpoch",
+  "inFlightApply",
+  "inFlightRebaseline",
+  "rebaselinePending",
+  "rebaselineRecovery",
+  "lastSubmit",
+  "lastAppliedChanges",
+  "lastSubmitFieldChanges",
+  "changeDetails",
+  "chatMessages",
+  "transcriptMessages",
+  "responseDetails",
+  "executionEvents",
+  "auditArtifacts",
+  "debugDiagnostics",
+  "compartmentIndexes",
+  "chatRehydrateEpoch",
+  "chatRehydrateCommittedEpoch",
+  "syntheticAgentMessage",
+  "deltaOps",
+]);
+
+function _cloneLifecycleBaselineValue(value) {
+  if (value == null || typeof value !== "object") {
+    return value;
+  }
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (_e) {
+    return value;
+  }
+}
+
+function _handleRestoreLifecycleBaseline(panel, payload) {
+  const baseline = payload?.baseline && typeof payload.baseline === "object"
+    ? payload.baseline
+    : {};
+  for (const field of LIFECYCLE_BASELINE_RESTORE_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(baseline, field)) {
+      panel.state[field] = _cloneLifecycleBaselineValue(baseline[field]);
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "debugPayload")) {
+    panel.state.debugPayload = payload.debugPayload || null;
+  }
+  return _obligations({
+    render: false,
+    dirtySections: ALL_RENDER_DIRTY_SECTIONS,
+    restored: true,
+  });
 }
 
 function _handleSubmitStart(panel, payload) {

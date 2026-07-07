@@ -311,3 +311,38 @@ test("scoped session survives within tab across multiple resolutions", async () 
   // Resolve again — still there
   assert.equal(resolveScopeSessionId("scope-persist"), "sess-persist-42");
 });
+
+// ── T12: Workflow-tab scope isolation ──────────────────────────────────────
+// Candidates and session bindings must remain scoped to their workflow tab.
+// Two distinct scopes must never resolve to each other's session, and mutating
+// one scope must not perturb the other.  This is the runtime invariant that
+// keeps a candidate surfaced in tab A from being applied in tab B.
+
+test("distinct workflow scopes keep independent session bindings (scope isolation)", async () => {
+  installMocks();
+  resetStorage();
+
+  const mod = await loadModule();
+  const { resolveScopeSessionId, setScopedSessionId } = mod;
+
+  // Two unrelated workflow tabs each bind their own session.
+  setScopedSessionId("workflow-tab-alpha", "sess-alpha-1");
+  setScopedSessionId("workflow-tab-beta", "sess-beta-1");
+
+  assert.equal(resolveScopeSessionId("workflow-tab-alpha"), "sess-alpha-1", "alpha resolves its own session");
+  assert.equal(resolveScopeSessionId("workflow-tab-beta"), "sess-beta-1", "beta resolves its own session");
+  assert.notEqual(
+    resolveScopeSessionId("workflow-tab-alpha"),
+    resolveScopeSessionId("workflow-tab-beta"),
+    "two scopes never alias to the same session",
+  );
+
+  // A brand-new workflow tab (never bound) resolves to null — it cannot pick up
+  // another tab's candidate session by accident.
+  assert.equal(resolveScopeSessionId("workflow-tab-gamma"), null, "unbound scope resolves to null");
+
+  // Mutating alpha must not leak into beta (cross-scope independence).
+  setScopedSessionId("workflow-tab-alpha", "sess-alpha-2");
+  assert.equal(resolveScopeSessionId("workflow-tab-alpha"), "sess-alpha-2", "alpha updated independently");
+  assert.equal(resolveScopeSessionId("workflow-tab-beta"), "sess-beta-1", "beta unaffected by alpha update");
+});

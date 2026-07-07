@@ -34,6 +34,9 @@ const SCENARIO_ENDPOINT = "/vibecomfy/demo/scenario";
 const DEMO_STAGES = Object.freeze(["before_send", "sent_loading", "ready_to_apply", "applied"]);
 
 function makeHelpers(overrides = {}) {
+  // T8: Pass through ALL provided helpers so callers can inject roundtrip
+  // functions (fulfillLifecycleTransitionObligations, pushHistory, etc.)
+  // without creating circular imports.
   return {
     app: overrides.app || app,
     applyGraphCandidateInPlace: overrides.applyGraphCandidateInPlace || applyGraphCandidateInPlace,
@@ -41,6 +44,7 @@ function makeHelpers(overrides = {}) {
     currentAgentPanel: overrides.currentAgentPanel || currentAgentPanel,
     PANEL_STATE: overrides.PANEL_STATE || PANEL_STATE,
     RENDER_SECTIONS: overrides.RENDER_SECTIONS || RENDER_SECTIONS,
+    ...overrides,
   };
 }
 
@@ -607,6 +611,129 @@ export function installPreviewPicker(panel, options = {}) {
       showError(error?.message || String(error));
     });
 
+  // ── T8: Demo Apply/Reject handlers ──────────────────────────────────
+  // These are called by applyAgentCandidate / rejectAgentCandidate when
+  // __demoMode is true.  They keep demo flows local (no POST) and route
+  // lifecycle reflection through commit helpers.
+
+  function handleDemoApply(currentPanel) {
+    const payload = stagePayload();
+    if (!currentPanel?.state || !payload) {
+      return;
+    }
+    if (!currentPanel.state.candidateGraph) {
+      // Guard: no candidate to apply (handled in roundtrip, but double-check)
+      return;
+    }
+
+    // T12: Demo apply must respect the active canvas scope, mirroring the
+    // production apply authority (which calls assertApplyScopeConsistency in
+    // vibecomfy_roundtrip.js before touching the canvas).  A scope mismatch
+    // means the demo candidate does not belong to the currently visible
+    // workflow tab and must be refused locally: no POST, no graph mutation.
+    // The helper is optional so isolation tests that don't track scope (and
+    // have no chatScopeId) treat this as a no-op pass-through.
+    const scopeCheck = typeof helpers.assertApplyScopeConsistency === "function"
+      ? helpers.assertApplyScopeConsistency(currentPanel, currentPanel.state.sessionId || null)
+      : { ok: true, reason: null, details: null };
+    if (!scopeCheck.ok) {
+      const blockedObligations = commitLifecycleReset(currentPanel, {
+        rejected: { demo: true, scope_mismatch: true },
+        message: `Demo apply blocked: ${scopeCheck.reason || "scope/session inconsistency"}.`,
+        toast: "Demo apply blocked (scope mismatch)",
+        debugPayload: {
+          demo: true,
+          scope_mismatch: scopeCheck.reason || "unknown",
+          details: scopeCheck.details || null,
+        },
+      });
+      if (typeof helpers.fulfillLifecycleTransitionObligations === "function") {
+        helpers.fulfillLifecycleTransitionObligations(currentPanel, blockedObligations);
+      }
+      schedulePanelRender(currentPanel);
+      return;
+    }
+
+    // Apply the candidate graph to the canvas (simple path without intent
+    // repairs; demo scenarios use basic graphs).
+    applyCandidateGraph(payload);
+
+    // Build change feedback mirroring the production apply path.
+    const lastAppliedChanges = helpers.announceChangedNodes
+      ? helpers.announceChangedNodes(currentPanel, helpers.extractChangedNodeFeedback
+        ? helpers.extractChangedNodeFeedback(currentPanel.state.candidateReport)
+        : null)
+      : (payload.changeDetails || { summary: "Demo candidate applied." });
+
+    // Push undo history.
+    if (typeof helpers.pushHistory === "function") {
+      helpers.pushHistory(currentPanel, "applied",
+        currentPanel.state.turnId ? `turn ${currentPanel.state.turnId}` : "candidate");
+    }
+
+    // Lifecycle reflection through commit helper.
+    const successObligations = commitApplyResolved(currentPanel, {
+      accepted: { demo: true },
+      lastAppliedChanges,
+      toast: "Demo candidate applied",
+      debugPayload: {
+        demo: true,
+        undo_stack_depth: currentPanel.state.undoStack?.length ?? 0,
+      },
+    });
+
+    // Fulfill + render (delegated from roundtrip via helpers).
+    if (typeof helpers.fulfillLifecycleTransitionObligations === "function") {
+      helpers.fulfillLifecycleTransitionObligations(currentPanel, successObligations);
+    }
+
+    // Move to the "applied" stage (which also handles transcript, candidate
+    // state cleanup, and clearing __demoMode).
+    renderDemoStage(3, { alreadyApplied: true, lastAppliedChanges });
+
+    // Schedule render.
+    schedulePanelRender(currentPanel);
+  }
+
+  function handleDemoReject(currentPanel) {
+    if (!currentPanel?.state?.candidateGraph
+        || !currentPanel.state.sessionId
+        || !currentPanel.state.turnId) {
+      return;
+    }
+
+    // Push undo history.
+    if (typeof helpers.pushHistory === "function") {
+      helpers.pushHistory(currentPanel, "rejected",
+        currentPanel.state.turnId ? `turn ${currentPanel.state.turnId}` : "candidate");
+    }
+
+    // Lifecycle reflection through commit helper.
+    const obligations = commitLifecycleReset(currentPanel, {
+      rejected: { demo: true },
+      message: "Demo candidate rejected and cleared from the panel.",
+      toast: "Demo candidate rejected",
+      debugPayload: {
+        demo: true,
+        graph_unchanged: true,
+      },
+    });
+
+    // Fulfill + restore layout baseline.
+    if (typeof helpers.fulfillLifecycleTransitionObligations === "function") {
+      helpers.fulfillLifecycleTransitionObligations(currentPanel, obligations);
+    }
+    if (typeof helpers.restoreLayoutPreviewBaseline === "function") {
+      helpers.restoreLayoutPreviewBaseline(currentPanel);
+    }
+
+    // Clear demo mode.
+    delete currentPanel.state.__demoMode;
+
+    // Schedule render.
+    schedulePanelRender(currentPanel);
+  }
+
   return {
     toggle: toggleBtn,
     container: pickerContainer,
@@ -622,6 +749,8 @@ export function installPreviewPicker(panel, options = {}) {
         renderDemoStage(3, { ...options, alreadyApplied: true });
       }
     },
+    handleDemoApply,
+    handleDemoReject,
   };
 }
 

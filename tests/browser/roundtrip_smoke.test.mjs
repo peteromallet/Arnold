@@ -16960,3 +16960,33 @@ test("VibeComfy status readiness and settings message are coupled across loading
     await harness.dispose();
   }
 });
+
+// ── T12: Production-POST parity contract ───────────────────────────────────
+// Production apply/reject are the ONLY sources permitted to POST to the
+// /agent-edit/accept and /agent-edit/reject routes.  Preview (demo) and replay
+// must never reference these routes in source.  This static contract is the
+// parity counterpart to the runtime no-POST tests in preview_picker.test.mjs
+// and agentic_replay.test.mjs: production POSTs, preview/replay do not.
+
+test("production-POST parity: only roundtrip references accept/reject routes; preview and replay never do", async () => {
+  const fs = await import("node:fs");
+  const webDir = new URL("../../vibecomfy/comfy_nodes/web/", import.meta.url);
+  const read = (name) => fs.readFileSync(new URL(name, webDir), "utf8");
+
+  const roundtrip = read("vibecomfy_roundtrip.js");
+  const preview = read("preview_picker.js");
+  const replay = read("agentic_replay.js");
+
+  const ACCEPT = /\/vibecomfy\/agent-edit\/accept\b/;
+  const REJECT = /\/vibecomfy\/agent-edit\/reject\b/;
+
+  // PRODUCTION POSTS: the roundtrip authority references both routes.
+  assert.ok(ACCEPT.test(roundtrip), "production roundtrip references the accept route");
+  assert.ok(REJECT.test(roundtrip), "production roundtrip references the reject route");
+
+  // PARITY: preview (demo) and replay never reference either production route.
+  assert.equal(ACCEPT.test(preview), false, "preview_picker must not reference the accept route");
+  assert.equal(REJECT.test(preview), false, "preview_picker must not reference the reject route");
+  assert.equal(ACCEPT.test(replay), false, "agentic_replay must not reference the accept route");
+  assert.equal(REJECT.test(replay), false, "agentic_replay must not reference the reject route");
+});

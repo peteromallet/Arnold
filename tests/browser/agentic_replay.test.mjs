@@ -204,6 +204,7 @@ test("replay selectors, stage projection, reverse navigation, and clear cleanup 
     const panel = {
       shell,
       state: makePanelState({
+        phase: PANEL_STATE.AWAITING_REVIEW,
         chatMessages: [{ role: "agent", text: "stale message" }],
         transcriptMessages: [{ role: "agent", text: "stale transcript" }],
         candidateGraph: { nodes: [{ id: 99 }], links: [] },
@@ -328,20 +329,20 @@ test("replay selectors, stage projection, reverse navigation, and clear cleanup 
     controls.toolbar.dispatchEvent(keyEvent("ArrowRight"));
     assert.equal(controls.stageLabel.textContent, "4/4 — Applied");
     assert.equal(candidateGraphCalls.length, 1, "applied uses the candidate-graph callback");
-    assert.equal(panel.state.phase, PANEL_STATE.IDLE, "applied returns to idle phase");
-    assert.equal(panel.state.applyAllowed, false, "applied disables apply action");
-    assert.equal(panel.state.canvasApplyAllowed, false, "applied disables canvas apply action");
+    assert.equal(
+      panel.state.phase,
+      PANEL_STATE.AWAITING_REVIEW,
+      "applied without a resolved apply result remains a visualization-only candidate state",
+    );
+    assert.equal(panel.state.applyAllowed, true, "visualization-only applied keeps candidate lifecycle state");
+    assert.equal(panel.state.canvasApplyAllowed, true, "visualization-only applied keeps canvas apply eligibility");
     assert.equal(panel.state.__demoMode, true, "applied remains in demo mode until clear");
-    assert.equal(panel.state.lastAppliedChanges?.summary, "Inserted a reroute node.");
+    assert.equal(panel.state.lastAppliedChanges, null, "applied does not reflect apply success without fixture evidence");
 
     controls.prevButton.click();
     assert.equal(controls.stageLabel.textContent, "3/4 — Ready to apply");
     assert.equal(originalGraphCalls.length, 4, "reverse navigation restores the original graph");
-    assert.equal(
-      panel.state.lastAppliedChanges?.summary,
-      "Inserted a reroute node.",
-      "reverse navigation preserves lifecycle-owned applied metadata until exit",
-    );
+    assert.equal(panel.state.lastAppliedChanges, null, "reverse navigation rebuilds from baseline before replaying commits");
     assert.equal(panel.state.__demoMode, true, "reverse navigation keeps demo mode for review stage");
 
     controls.toolbar.dispatchEvent(keyEvent("ArrowLeft"));
@@ -364,8 +365,8 @@ test("replay selectors, stage projection, reverse navigation, and clear cleanup 
     );
     assert.deepEqual(
       panel.state.transcriptMessages,
-      [{ role: "agent", text: "stale message" }],
-      "clear restores transcript through rehydrate projection",
+      [{ role: "agent", text: "stale transcript" }],
+      "clear restores the pre-replay transcript baseline exactly",
     );
     assert.equal(panel.state.phase, PANEL_STATE.AWAITING_REVIEW, "clear restores the panel phase");
     assert.deepEqual(panel.state.candidateGraph, { nodes: [{ id: 99 }], links: [] }, "clear restores candidate graph");
@@ -377,6 +378,11 @@ test("replay selectors, stage projection, reverse navigation, and clear cleanup 
     assert.equal(panel.state.__demoMode, true, "clear restores demo metadata from baseline");
     assert.equal(panel.state._replay, undefined, "clear removes replay bookkeeping");
     assert.equal(panel.state.changeDetails?.summary, "stale change details", "clear restores baseline change details");
+    assert.equal(
+      panel.state.lastAppliedChanges?.summary,
+      "stale applied changes",
+      "clear restores baseline applied-change metadata",
+    );
     assert.equal(
       scheduledRenders.at(-1)?.reason,
       "agentic-replay-clear",
@@ -449,6 +455,164 @@ test("replay navigation honors pruned backend stage lists", async () => {
     controls.nextButton.click();
     assert.equal(controls.stageLabel.textContent, "2/2 — Applied");
     assert.equal(controls.nextButton.disabled, true, "last pruned stage disables forward navigation");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("replay applied stage reflects apply only when fixture carries a resolved apply result", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/vibecomfy/agentic-replay/runs": makeRunsResponse(),
+      "/vibecomfy/agentic-replay/runs/run_2026/tests": makeTestsResponse(),
+      "/vibecomfy/agentic-replay/runs/run_2026/tests/test_alpha": makeReplayScenario({
+        stages: [
+          { id: "ready_to_apply", label: "Ready to apply" },
+          { id: "applied", label: "Applied" },
+        ],
+        apply_result: {
+          ok: true,
+          action: "accept",
+          session_id: "session-replay-1",
+          turn_id: "turn-replay-1",
+          baseline_turn_id: "turn-replay-1",
+          baseline_graph_hash: "accepted-hash",
+        },
+        last_applied_changes: { summary: "Replay fixture accepted the candidate." },
+      }),
+    },
+  });
+  try {
+    globalThis.localStorage.setItem(LS_AGENTIC_REPLAY_ENABLED, "1");
+    const replay = await harness.loadAgenticReplay();
+    const shell = harness.document.createElement("div");
+    const panel = { shell, state: makePanelState() };
+    const controls = replay.installAgenticReplay(panel, {
+      helpers: {
+        app: harness.app,
+        applyGraphCandidateInPlace: () => {},
+        scheduleRenderAgentPanel: () => {},
+        currentAgentPanel: () => panel,
+        PANEL_STATE,
+        RENDER_SECTIONS,
+      },
+      applyReplayOriginalGraph() {},
+      applyReplayGraphCandidate() {},
+    });
+
+    await waitFor(() => controls.runSelect.children.length > 1);
+    controls.runSelect.value = "run_2026";
+    controls.runSelect.dispatchEvent({ type: "change", target: controls.runSelect });
+    await waitFor(() => controls.testSelect.children.length > 1);
+    controls.testSelect.value = "test_alpha";
+    controls.testSelect.dispatchEvent({ type: "change", target: controls.testSelect });
+
+    controls.loadButton.click();
+    await waitFor(() => controls.stageLabel.textContent === "1/2 — Ready to apply");
+    assert.equal(panel.state.phase, PANEL_STATE.AWAITING_REVIEW);
+
+    controls.nextButton.click();
+    assert.equal(controls.stageLabel.textContent, "2/2 — Applied");
+    assert.equal(panel.state.phase, PANEL_STATE.IDLE, "resolved apply fixtures may use apply reflection");
+    assert.equal(panel.state.applyAllowed, false, "resolved apply clears apply actions");
+    assert.equal(panel.state.canvasApplyAllowed, false, "resolved apply clears canvas apply actions");
+    assert.equal(panel.state.lastAppliedChanges?.summary, "Replay fixture accepted the candidate.");
+
+    controls.prevButton.click();
+    assert.equal(controls.stageLabel.textContent, "1/2 — Ready to apply");
+    assert.equal(panel.state.phase, PANEL_STATE.AWAITING_REVIEW, "reverse navigation rebuilds before the apply commit");
+    assert.equal(panel.state.lastAppliedChanges, null, "reverse navigation drops resolved apply metadata");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+// ── T12: Concurrency — replay must not corrupt in-flight production state ──
+// A production submit/apply that is mid-flight (SUBMITTING, inFlightSubmit,
+// submitEpoch set) owns the panel.state lifecycle surface.  Replay navigation
+// may visualize a recorded scenario but must NEVER overwrite the production
+// submit epoch/flag or POST to any production accept/reject/submit route.
+
+test("replay navigation cannot corrupt in-flight production submit state and posts no production routes", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/vibecomfy/agentic-replay/runs": makeRunsResponse(),
+      "/vibecomfy/agentic-replay/runs/run_2026/tests": makeTestsResponse(),
+      "/vibecomfy/agentic-replay/runs/run_2026/tests/test_alpha": makeReplayScenario(),
+      // Production routes must never be reached from replay navigation.
+      "/vibecomfy/agent-edit/accept": { status: 500, body: { ok: false, error: "should not be reached" } },
+      "/vibecomfy/agent-edit/reject": { status: 500, body: { ok: false, error: "should not be reached" } },
+    },
+  });
+  try {
+    globalThis.localStorage.setItem(LS_AGENTIC_REPLAY_ENABLED, "1");
+    const replay = await harness.loadAgenticReplay();
+    const shell = harness.document.createElement("div");
+    const headerRight = harness.document.createElement("div");
+    const originalGraphCalls = [];
+    const candidateGraphCalls = [];
+    // Production submit is IN FLIGHT: the lifecycle surface is owned by the
+    // production authority with a real submit epoch and in-flight flag.
+    const panel = {
+      shell,
+      state: makePanelState({
+        phase: PANEL_STATE.SUBMITTING,
+        inFlightSubmit: true,
+        submitEpoch: "prod-epoch-concurrency",
+        sessionId: "sess-prod-inflight",
+        turnId: "turn-prod-inflight",
+        chatMessages: [{ role: "user", text: "production submit in flight" }],
+      }),
+    };
+    const controls = replay.installAgenticReplay(panel, {
+      headerRight,
+      helpers: {
+        app: harness.app,
+        applyGraphCandidateInPlace: () => {},
+        scheduleRenderAgentPanel: () => {},
+        currentAgentPanel: () => panel,
+        PANEL_STATE,
+        RENDER_SECTIONS,
+      },
+      applyReplayOriginalGraph(graph) {
+        originalGraphCalls.push(graph);
+      },
+      applyReplayGraphCandidate(graph) {
+        candidateGraphCalls.push(graph);
+      },
+    });
+
+    await waitFor(() => controls.runSelect.children.length > 1);
+    controls.runSelect.value = "run_2026";
+    controls.runSelect.dispatchEvent({ type: "change", target: controls.runSelect });
+    await waitFor(() => controls.testSelect.children.length > 1);
+    controls.testSelect.value = "test_alpha";
+    controls.testSelect.dispatchEvent({ type: "change", target: controls.testSelect });
+    await waitFor(() => controls.loadButton.disabled === false);
+    controls.loadButton.click();
+    // Give replay's async navigation a chance to run without asserting on a
+    // specific stage (the in-flight guard may legitimately refuse activation).
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    // CONCURRENCY INVARIANT: the production submit epoch and in-flight flag
+    // survive replay interaction regardless of whether replay activated.
+    assert.equal(panel.state.submitEpoch, "prod-epoch-concurrency", "production submit epoch not corrupted by replay");
+    assert.equal(panel.state.inFlightSubmit, true, "in-flight submit flag not cleared by replay");
+
+    // NO-POST INVARIANT: replay never calls production accept/reject routes.
+    assert.ok(
+      !harness.requests.some((r) => r.url === "/vibecomfy/agent-edit/accept"),
+      "replay must not POST /agent-edit/accept",
+    );
+    assert.ok(
+      !harness.requests.some((r) => r.url === "/vibecomfy/agent-edit/reject"),
+      "replay must not POST /agent-edit/reject",
+    );
+    // The production submit user message must survive replay interaction.
+    assert.ok(
+      panel.state.chatMessages.some((m) => m.text === "production submit in flight"),
+      "in-flight production chat message survives replay interaction",
+    );
   } finally {
     await harness.dispose();
   }

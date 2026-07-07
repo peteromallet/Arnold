@@ -601,6 +601,24 @@ export function commitApplyResolved(panel, payload = {}) {
 }
 
 /**
+ * Restore a previously captured lifecycle baseline allowlist.
+ *
+ * This is used by source adapters that need deterministic navigation over
+ * already-captured lifecycle state. The reducer owns the field writes; callers
+ * still own source metadata, graph visualization, rendering, and transport.
+ *
+ * @param {object} panel - the agent panel.
+ * @param {object} payload - `{ baseline, debugPayload? }`.
+ * @returns {object} plain obligations from `transition(...)`.
+ */
+export function commitLifecycleBaselineRestore(panel, payload = {}) {
+  return transition(panel, "RESTORE_LIFECYCLE_BASELINE", {
+    baseline: payload.baseline || null,
+    ...(payload.debugPayload !== undefined ? { debugPayload: payload.debugPayload } : {}),
+  });
+}
+
+/**
  * Commit a lifecycle reset: discard the current candidate, clear review/apply
  * flags, and return the panel to idle. Wraps `REJECT_SUCCESS`.
  *

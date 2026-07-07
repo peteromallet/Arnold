@@ -468,3 +468,132 @@ test("demo Apply and Reject do not POST to the backend accept/reject routes", as
     await harness.dispose();
   }
 });
+
+// ── T12: Concurrency, scope, and no-production-impersonation regressions ────
+// Preview (demo) must never impersonate a production turn: it carries no
+// production-only submit hash, never POSTs to accept/reject, and stays flagged
+// as non-production (__demoMode).  These invariants hold even when the demo
+// panel shares the same panel.state surface as the production authority.
+
+test("demo candidate never impersonates production — no submit hash, no accept POST on Apply", async () => {
+  const harness = await createBrowserHarness({
+    withGraphMutation: true,
+    responses: {
+      "/vibecomfy/ping": { status: 200, body: "pong" },
+      "/vibecomfy/agent/status?route=auto": makeStatusResponse(),
+      "/vibecomfy/demo/scenarios": makeScenarioList(),
+      "/vibecomfy/demo/scenario?id=demo_a": makeScenarioResponse(),
+      "/vibecomfy/agent-edit/accept": { status: 500, body: { ok: false, error: "should not be reached" } },
+      "/vibecomfy/agent-edit/reject": { status: 500, body: { ok: false, error: "should not be reached" } },
+    },
+  });
+  try {
+    globalThis.localStorage.setItem(LS_DEMO_PICKER_ENABLED, "1");
+    await harness.loadExtension();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    const runtime = await harness.loadPanelRuntime();
+    const panel = runtime.currentAgentPanel();
+    assert.ok(panel, "panel is open");
+    assert.ok(panel.previewPicker, "preview picker is installed on the panel");
+
+    await waitFor(() => panel.previewPicker.select.children.length > 1, { label: "scenario options" });
+    panel.previewPicker.select.value = "demo_a";
+    panel.previewPicker.select.dispatchEvent({ type: "change", target: panel.previewPicker.select });
+    panel.previewPicker.loadButton.click();
+    await waitFor(() => panel.state.__demoStage === "before_send", { label: "before_send" });
+    panel.previewPicker.nextButton.click();
+    await waitFor(() => panel.state.__demoStage === "sent_loading", { label: "sent_loading" });
+    panel.previewPicker.nextButton.click();
+    await waitFor(() => panel.state.__demoStage === "ready_to_apply", { label: "ready_to_apply" });
+
+    assert.equal(panel.state.phase, PANEL_STATE.AWAITING_REVIEW, "demo reaches review");
+    // serverSubmitGraphHash is minted ONLY by a real server submit.  Preview
+    // must leave it null so the demo candidate cannot be mistaken for a
+    // production-accepted turn or bypass CAS/staleness checks.
+    assert.equal(panel.state.serverSubmitGraphHash, null, "demo candidate has no production submit hash");
+    assert.equal(panel.state.__demoMode, true, "demo candidate is flagged as non-production");
+    assert.ok(
+      !harness.requests.some((r) => r.url === "/vibecomfy/agent-edit/accept"),
+      "reaching demo review must not POST accept",
+    );
+
+    panel.buttons.apply.disabled = false;
+    const preApplyRequestCount = harness.requests.length;
+    panel.buttons.apply.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.ok(
+      !harness.requests.some((r) => r.url === "/vibecomfy/agent-edit/accept"),
+      "demo Apply must not POST accept",
+    );
+    assert.equal(harness.requests.length, preApplyRequestCount, "demo Apply emits no new network traffic");
+    assert.equal(panel.state.phase, PANEL_STATE.IDLE, "demo Apply settles to IDLE");
+    assert.equal(panel.state.__demoMode, false, "demo Apply clears demo mode");
+    assert.equal(panel.state.serverSubmitGraphHash, null, "demo Apply leaves no production submit hash");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+// ── T12: Demo Apply respects the active canvas scope ───────────────────────
+// handleDemoApply consults the same assertApplyScopeConsistency guard as the
+// production apply authority.  When the active chat scope does not match the
+// candidate's scope, demo apply must be refused locally: no POST, no graph
+// mutation, and the demo stage must not advance to "applied".
+
+test("demo Apply is blocked when the candidate scope mismatches the active chat scope", async () => {
+  const harness = await createBrowserHarness({
+    withGraphMutation: true,
+    responses: {
+      "/vibecomfy/ping": { status: 200, body: "pong" },
+      "/vibecomfy/agent/status?route=auto": makeStatusResponse(),
+      "/vibecomfy/demo/scenarios": makeScenarioList(),
+      "/vibecomfy/demo/scenario?id=demo_a": makeScenarioResponse(),
+      "/vibecomfy/agent-edit/accept": { status: 500, body: { ok: false, error: "should not be reached" } },
+      "/vibecomfy/agent-edit/reject": { status: 500, body: { ok: false, error: "should not be reached" } },
+    },
+  });
+  try {
+    globalThis.localStorage.setItem(LS_DEMO_PICKER_ENABLED, "1");
+    await harness.loadExtension();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    const runtime = await harness.loadPanelRuntime();
+    const panel = runtime.currentAgentPanel();
+    assert.ok(panel, "panel is open");
+
+    await waitFor(() => panel.previewPicker.select.children.length > 1, { label: "scope scenario options" });
+    panel.previewPicker.select.value = "demo_a";
+    panel.previewPicker.select.dispatchEvent({ type: "change", target: panel.previewPicker.select });
+    panel.previewPicker.loadButton.click();
+    await waitFor(() => panel.state.__demoStage === "before_send", { label: "scope before_send" });
+    panel.previewPicker.nextButton.click();
+    await waitFor(() => panel.state.__demoStage === "sent_loading", { label: "scope sent_loading" });
+    panel.previewPicker.nextButton.click();
+    await waitFor(() => panel.state.__demoStage === "ready_to_apply", { label: "scope ready_to_apply" });
+    assert.equal(panel.state.phase, PANEL_STATE.AWAITING_REVIEW, "demo reaches review");
+
+    // Inject a scope mismatch: the candidate belongs to a different workflow
+    // tab than the active chat scope.  assertApplyScopeConsistency must refuse.
+    panel.state.chatScopeId = "scope-active-chat";
+    panel.state.candidateScopeId = "scope-other-candidate";
+    panel.state.submittingScopeId = "scope-active-chat";
+
+    panel.buttons.apply.disabled = false;
+    panel.buttons.apply.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // SCOPE-RESPECT INVARIANT: demo apply must NOT advance to "applied" and
+    // must NOT POST accept when the scope mismatches.
+    assert.ok(
+      !harness.requests.some((r) => r.url === "/vibecomfy/agent-edit/accept"),
+      "scope-mismatched demo Apply must not POST accept",
+    );
+    assert.notEqual(
+      panel.state.__demoStage,
+      "applied",
+      "scope-mismatched demo Apply must not advance to the applied stage",
+    );
+  } finally {
+    await harness.dispose();
+  }
+});

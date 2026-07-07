@@ -26,7 +26,7 @@ import { currentAgentPanel } from "./panel_runtime.js";
 import { PANEL_STATE, RENDER_SECTIONS } from "./agent_edit_lifecycle.js";
 import {
   commitApplyResolved,
-  commitLatestCandidateRestore,
+  commitLifecycleBaselineRestore,
   commitLifecycleReset,
   commitOptimisticSubmit,
   commitTerminalResponse,
@@ -131,6 +131,46 @@ function normalizeEligibility(raw, fallbackReason = "applyable", fallbackMessage
     message: fallbackMessage,
     warnings: [],
   };
+}
+
+function readResolvedApplyResult(raw) {
+  const candidates = [
+    raw?.apply_result,
+    raw?.applyResult,
+    raw?.accept_result,
+    raw?.acceptResult,
+    raw?.accepted,
+  ];
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object" || candidate.ok === false) {
+      continue;
+    }
+    if (
+      candidate.action === "accept"
+      || typeof candidate.session_id === "string"
+      || typeof candidate.sessionId === "string"
+      || typeof candidate.turn_id === "string"
+      || typeof candidate.turnId === "string"
+      || typeof candidate.baseline_turn_id === "string"
+      || typeof candidate.baselineTurnId === "string"
+    ) {
+      return clonePlainData(candidate);
+    }
+  }
+  return null;
+}
+
+function readResolvedApplyChanges(raw) {
+  if (raw?.last_applied_changes !== undefined) {
+    return clonePlainData(raw.last_applied_changes);
+  }
+  if (raw?.lastAppliedChanges !== undefined) {
+    return clonePlainData(raw.lastAppliedChanges);
+  }
+  if (raw?.applied_changes !== undefined) {
+    return clonePlainData(raw.applied_changes);
+  }
+  return clonePlainData(raw?.change_details || null);
 }
 
 // ---------------------------------------------------------------------------
@@ -500,18 +540,36 @@ export function installAgenticReplay(panel, options = {}) {
       chatScopeFingerprint: state.chatScopeFingerprint || null,
       candidateScopeId: state.candidateScopeId || null,
       submittingScopeId: state.submittingScopeId || null,
+      baselineGraphHash: state.baselineGraphHash || null,
+      baselineGraphHashKind: state.baselineGraphHashKind || null,
+      baselineGraphHashVersion: Number.isFinite(state.baselineGraphHashVersion)
+        ? state.baselineGraphHashVersion
+        : null,
+      baselineSource: state.baselineSource || null,
+      baselineRebaselineId: state.baselineRebaselineId || null,
+      baselineGraphSourcePath: state.baselineGraphSourcePath || null,
       candidateGraph: clonePlainData(state.candidateGraph || null),
       candidateGraphHash: state.candidateGraphHash || null,
       candidateReport: clonePlainData(state.candidateReport || null),
       serverSubmitGraphHash: state.serverSubmitGraphHash || null,
+      customNodeResolution: clonePlainData(state.customNodeResolution || null),
+      nodePackInstallStates: clonePlainData(state.nodePackInstallStates || {}),
       applyEligibility: clonePlainData(state.applyEligibility || null),
+      applyEligibilityWarning: clonePlainData(state.applyEligibilityWarning || null),
+      applyEligibilityWarningKey: state.applyEligibilityWarningKey || null,
       applyAllowed: state.applyAllowed === true,
       canvasApplyAllowed: state.canvasApplyAllowed === true,
       queueAllowed: state.queueAllowed === true,
       auditRef: state.auditRef || null,
+      debugPayload: clonePlainData(state.debugPayload || null),
       changeDetails: clonePlainData(state.changeDetails || null),
       responseDetails: clonePlainData(state.responseDetails || {}),
+      executionEvents: clonePlainData(state.executionEvents || []),
+      auditArtifacts: clonePlainData(state.auditArtifacts || []),
+      debugDiagnostics: clonePlainData(state.debugDiagnostics || {}),
+      compartmentIndexes: clonePlainData(state.compartmentIndexes || {}),
       lastAppliedChanges: clonePlainData(state.lastAppliedChanges || null),
+      lastSubmitFieldChanges: clonePlainData(state.lastSubmitFieldChanges || null),
       phase: state.phase || helpers.PANEL_STATE.IDLE,
       message: state.message || null,
       clarification: clonePlainData(state.clarification || null),
@@ -519,8 +577,17 @@ export function installAgenticReplay(panel, options = {}) {
       lastSubmit: clonePlainData(state.lastSubmit || null),
       submitEpoch: state.submitEpoch || null,
       inFlightSubmit: state.inFlightSubmit === true,
+      submitAbortController: null,
       inFlightApply: state.inFlightApply === true,
       inFlightRebaseline: state.inFlightRebaseline === true,
+      rebaselinePending: clonePlainData(state.rebaselinePending || null),
+      rebaselineRecovery: clonePlainData(state.rebaselineRecovery || null),
+      chatRehydrateEpoch: Number.isFinite(state.chatRehydrateEpoch) ? state.chatRehydrateEpoch : 0,
+      chatRehydrateCommittedEpoch: Number.isFinite(state.chatRehydrateCommittedEpoch)
+        ? state.chatRehydrateCommittedEpoch
+        : 0,
+      syntheticAgentMessage: clonePlainData(state.syntheticAgentMessage || null),
+      deltaOps: clonePlainData(state.deltaOps || null),
       demoMode: state.__demoMode === true,
     };
   }
@@ -538,62 +605,10 @@ export function installAgenticReplay(panel, options = {}) {
       return;
     }
 
-    commitLifecycleReset(panel, {
-      rejected: {},
-      message: replayBaseline.phase === helpers.PANEL_STATE.ERROR ? replayBaseline.message : null,
-      debugPayload: { source: "replay", stage: "restore:reset" },
+    commitLifecycleBaselineRestore(panel, {
+      baseline: replayBaseline,
+      debugPayload: { source: "replay", stage: "restore:baseline" },
     });
-
-    if (replayBaseline.phase === helpers.PANEL_STATE.SUBMITTING) {
-      commitOptimisticSubmit(panel, {
-        lastSubmit: replayBaseline.lastSubmit,
-        submitEpoch: replayBaseline.submitEpoch,
-        debugPayload: { source: "replay", stage: "restore:submitting" },
-      });
-    }
-
-    if (replayBaseline.phase === helpers.PANEL_STATE.ERROR && replayBaseline.failure) {
-      commitTerminalResponse(panel, {
-        failure: replayBaseline.failure,
-        message: replayBaseline.message,
-        debugPayload: { source: "replay", stage: "restore:error" },
-      });
-    }
-
-    const latestCandidate = replayBaseline.candidateGraph
-      ? {
-          session_id: replayBaseline.sessionId,
-          turn_id: replayBaseline.turnId,
-        }
-      : null;
-    commitTranscriptRehydrate(panel, {
-      messages: replayBaseline.chatMessages || [],
-      sessionId: replayBaseline.sessionId,
-      latestTurnId: replayBaseline.turnId,
-      latestCandidate,
-    });
-
-    if (replayBaseline.candidateGraph) {
-      commitLatestCandidateRestore(panel, {
-        requestScopeId: replayBaseline.chatScopeId,
-        candidateSessionId: replayBaseline.sessionId,
-        sessionId: replayBaseline.sessionId,
-        turnId: replayBaseline.turnId,
-        baselineTurnId: replayBaseline.baselineTurnId,
-        candidateGraph: replayBaseline.candidateGraph,
-        candidateGraphHash: replayBaseline.candidateGraphHash,
-        candidateReport: replayBaseline.candidateReport,
-        serverSubmitGraphHash: replayBaseline.serverSubmitGraphHash,
-        message: replayBaseline.message,
-        applyEligibility: replayBaseline.applyEligibility,
-        applyAllowed: replayBaseline.applyAllowed,
-        canvasApplyAllowed: replayBaseline.canvasApplyAllowed,
-        queueAllowed: replayBaseline.queueAllowed,
-        auditRef: replayBaseline.auditRef,
-        changeDetails: replayBaseline.changeDetails,
-        debugPayload: { source: "replay", stage: "restore:candidate" },
-      });
-    }
 
     if (replayBaseline.demoMode) {
       panel.state.__demoMode = true;
@@ -603,8 +618,162 @@ export function installAgenticReplay(panel, options = {}) {
     delete panel.state._replay;
   }
 
+  function buildReplayContext() {
+    const data = scenarioData;
+    const sessionId = data.session_id || "replay";
+    const turnId = data.turn_id || "0000";
+    return {
+      data,
+      sessionId,
+      turnId,
+      userMsg: makeUserMessage(data.query || "", sessionId, turnId),
+      agentMsg: makeAgentMessage(data.reply || "", sessionId, turnId),
+    };
+  }
+
+  function buildTerminalCandidateEnvelope({ data, sessionId, turnId }) {
+    return {
+      ok: true,
+      session_id: sessionId,
+      turn_id: turnId,
+      message: data.message || data.reply || null,
+      outcome: { kind: "candidate" },
+      eligibility: normalizeEligibility(data.eligibility),
+      report: clonePlainData(data.candidate_report || {}),
+    };
+  }
+
+  function ensureOptimisticReplayCommit(panel, context, stageId) {
+    const currentPhase = panel.state.phase;
+    if (currentPhase === helpers.PANEL_STATE.SUBMITTING) {
+      return;
+    }
+    commitOptimisticSubmit(panel, {
+      lastSubmit: { prompt: context.data.query || "", source: "replay" },
+      debugPayload: { source: "replay", stage: `${stageId}:optimistic` },
+    });
+  }
+
+  function ensureReplayCandidateCommit(panel, context, stageId) {
+    const candidateGraph = context.data.candidate_graph || null;
+    if (!candidateGraph) {
+      return null;
+    }
+    const candidateHash = context.data.candidate_graph_hash || null;
+    const currentPhase = panel.state.phase;
+    const currentCandidateHash = panel.state.candidateGraphHash;
+    if (
+      currentPhase === helpers.PANEL_STATE.AWAITING_REVIEW
+      && panel.state.candidateGraph
+      && (!candidateHash || currentCandidateHash === candidateHash)
+    ) {
+      return buildTerminalCandidateEnvelope(context);
+    }
+    ensureOptimisticReplayCommit(panel, context, stageId);
+    const terminalResult = buildTerminalCandidateEnvelope(context);
+    commitTerminalResponse(panel, {
+      result: terminalResult,
+      outcome: { kind: "candidate" },
+      candidateGraph,
+      candidateGraphHash: candidateHash,
+      applyEligibility: normalizeEligibility(context.data.eligibility),
+      queueAllowed: false,
+      changeDetails: clonePlainData(context.data.change_details || null),
+      debugPayload: { source: "replay", stage: stageId },
+    });
+    return terminalResult;
+  }
+
+  function commitReplayStageLifecycle(panel, stage, context) {
+    switch (stage.id) {
+      case "sent": {
+        commitLifecycleReset(panel, {
+          rejected: {},
+          message: null,
+          debugPayload: { source: "replay", stage: "sent" },
+        });
+        commitTranscriptRehydrate(panel, {
+          messages: [context.userMsg],
+          sessionId: context.sessionId,
+          latestTurnId: context.turnId,
+          latestCandidate: null,
+        });
+        setReplayMeta(panel, stage.id, false);
+        break;
+      }
+
+      case "thinking": {
+        const pendingAgent = makePendingAgentMessage(context.sessionId, context.turnId);
+        commitLifecycleReset(panel, {
+          rejected: {},
+          message: null,
+          debugPayload: { source: "replay", stage: "thinking:reset" },
+        });
+        commitOptimisticSubmit(panel, {
+          lastSubmit: { prompt: context.data.query || "", source: "replay" },
+          debugPayload: { source: "replay", stage: "thinking" },
+        });
+        commitTranscriptRehydrate(panel, {
+          messages: [context.userMsg, pendingAgent],
+          sessionId: context.sessionId,
+          latestTurnId: context.turnId,
+          latestCandidate: null,
+        });
+        setReplayMeta(panel, stage.id, false);
+        break;
+      }
+
+      case "ready_to_apply": {
+        const terminalResult = ensureReplayCandidateCommit(panel, context, "ready_to_apply");
+        commitTranscriptRehydrate(panel, {
+          messages: [context.userMsg, context.agentMsg],
+          sessionId: context.sessionId,
+          latestTurnId: context.turnId,
+          latestCandidate: terminalResult,
+        });
+        setReplayMeta(panel, stage.id, true);
+        break;
+      }
+
+      case "applied": {
+        const terminalResult = ensureReplayCandidateCommit(panel, context, "applied:candidate");
+        commitTranscriptRehydrate(panel, {
+          messages: [context.userMsg, context.agentMsg],
+          sessionId: context.sessionId,
+          latestTurnId: context.turnId,
+          latestCandidate: terminalResult || { session_id: context.sessionId, turn_id: context.turnId },
+        });
+        const accepted = readResolvedApplyResult(context.data);
+        if (accepted) {
+          commitApplyResolved(panel, {
+            accepted,
+            lastAppliedChanges: readResolvedApplyChanges(context.data),
+            debugPayload: { source: "replay", stage: "applied" },
+          });
+        }
+        setReplayMeta(panel, stage.id, true);
+        break;
+      }
+
+      default:
+        break;
+    }
+  }
+
+  function applyReplayStageVisualization(stage, context) {
+    if (stage.id === "applied") {
+      if (context.data.candidate_graph) {
+        _defaultApplyReplayGraphCandidate(clonePlainData(context.data.candidate_graph));
+      }
+      return;
+    }
+    if (context.data.original_graph) {
+      _defaultApplyReplayOriginalGraph(clonePlainData(context.data.original_graph));
+    }
+  }
+
   function applyStage(index) {
-    if (index < 0 || index >= stages.length) return;
+    if (index < 0 || index >= stages.length || !scenarioData) return;
     const stage = stages[index];
     const panel = options._panel || helpers.currentAgentPanel();
     if (!panel?.state) {
@@ -615,131 +784,12 @@ export function installAgenticReplay(panel, options = {}) {
     currentStageIdx = index;
     updateNavButtons();
 
-    const data = scenarioData;
-    const sessionId = data.session_id || "replay";
-    const turnId = data.turn_id || "0000";
-    const userMsg = makeUserMessage(data.query || "", sessionId, turnId);
-    const agentMsg = makeAgentMessage(data.reply || "", sessionId, turnId);
-
-    switch (stage.id) {
-      case "sent": {
-        commitLifecycleReset(panel, {
-          rejected: {},
-          message: null,
-          debugPayload: { source: "replay", stage: "sent" },
-        });
-        commitTranscriptRehydrate(panel, {
-          messages: [userMsg],
-          sessionId,
-          latestTurnId: turnId,
-          latestCandidate: null,
-        });
-        setReplayMeta(panel, stage.id, false);
-        if (data.original_graph) {
-          _defaultApplyReplayOriginalGraph(clonePlainData(data.original_graph));
-        }
-        break;
-      }
-
-      case "thinking": {
-        const pendingAgent = makePendingAgentMessage(sessionId, turnId);
-        commitLifecycleReset(panel, {
-          rejected: {},
-          message: null,
-          debugPayload: { source: "replay", stage: "thinking:reset" },
-        });
-        commitOptimisticSubmit(panel, {
-          lastSubmit: { prompt: data.query || "", source: "replay" },
-          debugPayload: { source: "replay", stage: "thinking" },
-        });
-        commitTranscriptRehydrate(panel, {
-          messages: [userMsg, pendingAgent],
-          sessionId,
-          latestTurnId: turnId,
-          latestCandidate: null,
-        });
-        setReplayMeta(panel, stage.id, false);
-        if (data.original_graph) {
-          _defaultApplyReplayOriginalGraph(clonePlainData(data.original_graph));
-        }
-        break;
-      }
-
-      case "ready_to_apply": {
-        const candidateGraph = data.candidate_graph || null;
-        const terminalResult = {
-          ok: true,
-          session_id: sessionId,
-          turn_id: turnId,
-          message: data.message || data.reply || null,
-          outcome: { kind: "candidate" },
-          eligibility: normalizeEligibility(data.eligibility),
-          report: clonePlainData(data.candidate_report || {}),
-        };
-        commitTerminalResponse(panel, {
-          result: terminalResult,
-          outcome: { kind: "candidate" },
-          candidateGraph,
-          candidateGraphHash: data.candidate_graph_hash || null,
-          applyEligibility: normalizeEligibility(data.eligibility),
-          queueAllowed: false,
-          changeDetails: clonePlainData(data.change_details || null),
-          debugPayload: { source: "replay", stage: "ready_to_apply" },
-        });
-        commitTranscriptRehydrate(panel, {
-          messages: [userMsg, agentMsg],
-          sessionId,
-          latestTurnId: turnId,
-          latestCandidate: terminalResult,
-        });
-        setReplayMeta(panel, stage.id, true);
-        if (data.original_graph) {
-          _defaultApplyReplayOriginalGraph(clonePlainData(data.original_graph));
-        }
-        break;
-      }
-
-      case "applied": {
-        const candidateGraph = data.candidate_graph || null;
-        commitTerminalResponse(panel, {
-          result: {
-            ok: true,
-            session_id: sessionId,
-            turn_id: turnId,
-            message: data.message || data.reply || null,
-            outcome: { kind: "candidate" },
-            eligibility: normalizeEligibility(data.eligibility),
-            report: clonePlainData(data.candidate_report || {}),
-          },
-          outcome: { kind: "candidate" },
-          candidateGraph,
-          candidateGraphHash: data.candidate_graph_hash || null,
-          applyEligibility: normalizeEligibility(data.eligibility),
-          queueAllowed: false,
-          changeDetails: clonePlainData(data.change_details || null),
-          debugPayload: { source: "replay", stage: "applied:candidate" },
-        });
-        commitTranscriptRehydrate(panel, {
-          messages: [userMsg, agentMsg],
-          sessionId,
-          latestTurnId: turnId,
-          latestCandidate: { session_id: sessionId, turn_id: turnId },
-        });
-        commitApplyResolved(panel, {
-          accepted: { ok: true, session_id: sessionId, turn_id: turnId },
-          lastAppliedChanges: clonePlainData(data.change_details || null),
-          debugPayload: { source: "replay", stage: "applied" },
-        });
-        setReplayMeta(panel, stage.id, true);
-        if (candidateGraph) {
-          _defaultApplyReplayGraphCandidate(clonePlainData(candidateGraph));
-        }
-        break;
-      }
-
-      default:
-        break;
+    restoreReplayBaseline(panel);
+    const context = buildReplayContext();
+    for (let stageIndex = 0; stageIndex <= index; stageIndex += 1) {
+      commitReplayStageLifecycle(panel, stages[stageIndex], context);
     }
+    applyReplayStageVisualization(stage, context);
 
     // Schedule render
     scheduleReplayRender(panel, "agentic-replay");

@@ -933,11 +933,6 @@ export async function createBrowserHarness({
   globalThis.sessionStorage = makeStorage();
   globalThis.window.localStorage = globalThis.localStorage;
   globalThis.window.sessionStorage = globalThis.sessionStorage;
-  try {
-    globalThis.localStorage.setItem("vibecomfy_demo_picker_enabled", "0");
-  } catch (_e) {
-    // Dedicated preview-picker tests can opt back in explicitly.
-  }
   globalThis.console = {
     ...originalConsole,
     log: (...args) => consoleCapture.log.push(args.map(String).join(" ")),
