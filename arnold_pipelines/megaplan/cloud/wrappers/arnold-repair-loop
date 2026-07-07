@@ -3742,6 +3742,31 @@ exit_if_repair_target_complete() {
   exit 0
 }
 
+# Mirror of the pre-loop INITIAL_HEALTH=="alive" bail, but callable
+# at iteration boundaries and post-loop. If the target is currently alive AND no
+# marker forces repair-despite-alive, declare partial_liveness (non-success;
+# the process is alive but failure resolution is unverified) and exit 0
+# instead of burning more iterations or escalating to Discord.
+# Unlike the legacy live_with_fresh_activity, partial_liveness does NOT clear
+# repair markers — the alive-but-failed custody detection in status_snapshot
+# depends on the unchanged repairable-failure receipt.
+exit_if_repair_target_recovered() {
+  local phase="$1"
+  local health forced_reason
+  health="$(session_health_status "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME")"
+  if [[ "$health" != "alive" ]]; then
+    return 0
+  fi
+  forced_reason="$(marker_requires_repair_despite_alive || true)"
+  if [[ -n "$forced_reason" ]]; then
+    log "repair target alive at $phase but marker requires repair session=$SESSION reason=$forced_reason"
+    return 0
+  fi
+  repair_data_set_outcome "partial_liveness"
+  log "repair target recovered (alive) at $phase; exiting without escalation session=$SESSION"
+  exit 0
+}
+
 verify_started_and_holding() {
   local session="$1"
   local workspace="$2"
@@ -4595,8 +4620,7 @@ if [[ "$INITIAL_HEALTH" == "alive" ]]; then
   if [[ -n "$forced_repair_reason" ]]; then
     log "repair target is alive but marker requires repair session=$SESSION reason=$forced_repair_reason"
   else
-  repair_data_set_outcome "live_with_fresh_activity"
-  clear_repair_markers
+  repair_data_set_outcome "partial_liveness"
   log "repair target already running; no dev-fix needed session=$SESSION"
   exit 0
   fi
@@ -4627,8 +4651,7 @@ if repair_dependency_manifests_if_possible; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "dependency manifest repaired; mechanical launch came up and held"
-    repair_data_set_outcome "live_with_fresh_activity"
-    clear_repair_markers
+    repair_data_set_outcome "partial_liveness"
     log "repair loop succeeded after dependency manifest repair"
     exit 0
   fi
@@ -4642,8 +4665,7 @@ if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "1" "0" "running" "stale state cleared; mechanical launch came up and held"
-    repair_data_set_outcome "live_with_fresh_activity"
-    clear_repair_markers
+    repair_data_set_outcome "partial_liveness"
     log "repair loop succeeded after stale-state clear"
     exit 0
   fi
@@ -4668,6 +4690,7 @@ for iteration in 1 2 3; do
   fi
   BREAKER_TRIPPED="${BREAKER_TRIPPED:-0}"
   exit_if_repair_target_complete "iteration-$iteration-start"
+  exit_if_repair_target_recovered "iteration-$iteration-start"
   case "$iteration" in
     1)
       DEV_REQUESTED_MODEL="glm-5.2"
@@ -4714,8 +4737,7 @@ for iteration in 1 2 3; do
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
     repair_data_record_mechanical "$iteration" "$CURRENT_ATTEMPT_ID" "running" "mechanical launch came up and held"
-    repair_data_set_outcome "live_with_fresh_activity"
-    clear_repair_markers
+    repair_data_set_outcome "partial_liveness"
     log "repair loop succeeded mechanically iteration=$iteration"
     exit 0
   fi
@@ -4728,8 +4750,7 @@ for iteration in 1 2 3; do
   exit_if_repair_target_complete "iteration-$iteration-pre-kimi"
   resolved_relaunch_command="$(resolve_relaunch_command "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" 2>/dev/null || true)"
   if run_kimi_launch_turn "$iteration" "$RUN_KIND" "$PLAN_NAME" "$resolved_relaunch_command"; then
-    repair_data_set_outcome "live_with_fresh_activity"
-    clear_repair_markers
+    repair_data_set_outcome "partial_liveness"
     log "repair loop succeeded via Kimi iteration=$iteration"
     exit 0
   fi
@@ -4737,6 +4758,7 @@ for iteration in 1 2 3; do
 done
 
 exit_if_repair_target_complete "post-iterations"
+exit_if_repair_target_recovered "post-iterations"
 
 if [[ "${BREAKER_TRIPPED:-0}" == "1" ]]; then
   discord_status="$(send_discord_escalation)"

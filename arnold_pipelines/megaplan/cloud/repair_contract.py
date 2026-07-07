@@ -1055,11 +1055,11 @@ NEEDS_HUMAN = "needs_human"
 DISCORD_ESCALATED = "discord_escalated"  # legacy non-success — preserved for compatibility
 
 SUCCESS_OUTCOMES: frozenset[str] = frozenset(
-    {COMPLETE, PROGRESSED, LIVE_WITH_FRESH_ACTIVITY, TRUE_HUMAN_BLOCKER}
+    {COMPLETE, PROGRESSED, TRUE_HUMAN_BLOCKER}
 )
 
 NON_SUCCESS_OUTCOMES: frozenset[str] = frozenset(
-    {PARTIAL_LIVENESS, REPAIRING, REPAIR_TIMEOUT, REPAIR_EXHAUSTED, NEEDS_HUMAN, DISCORD_ESCALATED}
+    {LIVE_WITH_FRESH_ACTIVITY, PARTIAL_LIVENESS, REPAIRING, REPAIR_TIMEOUT, REPAIR_EXHAUSTED, NEEDS_HUMAN, DISCORD_ESCALATED}
 )
 
 ALL_OUTCOMES: frozenset[str] = SUCCESS_OUTCOMES | NON_SUCCESS_OUTCOMES
@@ -1068,9 +1068,9 @@ ALL_OUTCOMES: frozenset[str] = SUCCESS_OUTCOMES | NON_SUCCESS_OUTCOMES
 def is_success_outcome(outcome: str) -> bool:
     """Return True when *outcome* is a terminal repair success.
 
-    Only ``complete``, ``progressed``, ``live_with_fresh_activity``, and
-    ``true_human_blocker`` are considered success.  Liveness-only outcomes
-    (``partial_liveness``) are explicitly excluded.
+    Only ``complete``, ``progressed``, and ``true_human_blocker`` are
+    considered success.  Liveness-only outcomes (``partial_liveness``)
+    and the legacy ``live_with_fresh_activity`` are explicitly excluded.
     """
     return outcome in SUCCESS_OUTCOMES
 
@@ -1136,7 +1136,7 @@ def classify_verification_outcome(
 
     1. *is_complete* → :data:`COMPLETE` (terminal success)
     2. *has_progressed* → :data:`PROGRESSED` (terminal success)
-    3. *has_fresh_activity* → :data:`LIVE_WITH_FRESH_ACTIVITY` (terminal success)
+    3. *has_fresh_activity* → :data:`PARTIAL_LIVENESS` (terminal non-success)
     4. *has_true_human_blocker* → :data:`TRUE_HUMAN_BLOCKER` (terminal success)
     5. *is_live* with no progress/fresh-activity/blocker → :data:`PARTIAL_LIVENESS` (terminal non-success)
     6. Otherwise → :data:`REPAIRING` (non-terminal)
@@ -1150,7 +1150,7 @@ def classify_verification_outcome(
     if has_progressed:
         return PROGRESSED
     if has_fresh_activity:
-        return LIVE_WITH_FRESH_ACTIVITY
+        return PARTIAL_LIVENESS
     if has_true_human_blocker:
         return TRUE_HUMAN_BLOCKER
     if is_live:
