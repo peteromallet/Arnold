@@ -377,7 +377,12 @@ def _build_session_entry(
         or None
     )
     latest_activity = _latest_activity(chain_health, marker)
-    liveness = _safe_liveness(liveness_probe, marker)
+    plan_state = _load_current_plan_state(workspace, str(current_plan or ""))
+    liveness = _augment_liveness_with_plan_state(
+        _safe_liveness(liveness_probe, marker),
+        chain_health=chain_health,
+        plan_state=plan_state,
+    )
     superseding_sibling = _find_superseding_sibling(
         marker,
         marker_dir=marker_dir,
@@ -399,6 +404,7 @@ def _build_session_entry(
         marker_dir=marker_dir,
         repair_data_dir=repair_data_dir,
         current_plan=str(current_plan or ""),
+        plan_state=plan_state,
         now=now,
     )
 
@@ -456,6 +462,7 @@ def _classify_session(
     marker_dir: Path,
     repair_data_dir: Path,
     current_plan: str,
+    plan_state: Mapping[str, Any] | None,
     now: datetime,
 ) -> tuple[SessionStatus, str]:
     # Structural problems first: a session we cannot reason about is attention.
@@ -471,6 +478,13 @@ def _classify_session(
             "complete",
             f"superseded by sibling session {superseding_sibling}; no runner expected",
         )
+
+    # A spec inside the session workspace is canonical durable input; if that
+    # file is gone, old chain-health and needs-human sidecars are stale evidence
+    # and must not keep the session classified as a live blocker. Specs outside
+    # the workspace (placeholders, legacy) never invalidate a session.
+    if _canonical_spec_missing(workspace, remote_spec):
+        return "attention", "spec missing or unreadable"
 
     # A current needs-human sidecar is ground truth for active work. A complete
     # chain with no active plan has no live repair target, so stale repair
@@ -505,6 +519,13 @@ def _classify_session(
     if _is_repair_active(repair_progress, repair_data_dir, session, now):
         return "repairing", "automated repair dispatched for this session"
 
+    # A live process plus an unchanged repairable failure receipt is custody, not
+    # running: the failure has not been cleared, so report it as attention so the
+    # operator can see the repair system is stuck. Checked before any
+    # liveness-based ``running`` return on purpose.
+    if _has_current_repairable_failure(plan_state):
+        return "attention", "alive_but_failed: current repairable failure receipt remains"
+
     if liveness.get("tmux") or liveness.get("process"):
         return "running", "live runner process observed"
 
@@ -516,6 +537,28 @@ def _classify_session(
     if latest_activity_dt is None:
         return "attention", "no activity timestamp; cannot confirm liveness"
     return "attention", f"stalled (no live process, last activity {_age_s(latest_activity_dt, now)}s ago)"
+
+
+def _canonical_spec_missing(workspace: Path | None, remote_spec: str) -> bool:
+    """True when a chain marker points at a spec that should exist locally.
+
+    Many tests and some legacy markers carry placeholder specs outside the
+    workspace. Those are not enough to invalidate a session. A spec inside the
+    session workspace is canonical durable input, though; if that file is gone,
+    old chain-health and needs-human sidecars are stale evidence and must not
+    keep the session classified as a live blocker.
+    """
+    if workspace is None or not remote_spec:
+        return False
+    try:
+        spec_path = Path(remote_spec)
+        workspace_resolved = workspace.resolve()
+        spec_resolved = spec_path.resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if spec_resolved != workspace_resolved and workspace_resolved not in spec_resolved.parents:
+        return False
+    return not spec_path.exists()
 
 
 # --- source file readers ---------------------------------------------------
@@ -711,6 +754,88 @@ def _watchdog_status(watchdog_item: Mapping[str, Any], chain_complete: bool) -> 
         return "complete"
     status = str(watchdog_item.get("status") or "").strip().lower()
     return status or "unknown"
+
+
+def _load_current_plan_state(workspace: Path | None, current_plan: str) -> dict[str, Any] | None:
+    """Load the per-plan ``state.json`` so custody can read its failure receipt."""
+    if workspace is None or not current_plan:
+        return None
+    path = workspace / ".megaplan" / "plans" / current_plan / "state.json"
+    loaded = _load_json(path)
+    return dict(loaded) if isinstance(loaded, Mapping) and loaded else None
+
+
+def _has_current_repairable_failure(plan_state: Mapping[str, Any] | None) -> bool:
+    """True when the current plan state carries an unresolved repairable failure.
+
+    A live process coexisting with such a receipt is ``alive_but_failed`` custody
+    (attention), not ``running``: the failure has not been cleared. ``phase_failed``
+    in the execute phase is the open repair case; a finalized/blocked/manual-review
+    state with a step/handler failure is the parked-but-unresolved case.
+    """
+    if not isinstance(plan_state, Mapping) or not plan_state:
+        return False
+    latest_failure = plan_state.get("latest_failure")
+    if not isinstance(latest_failure, Mapping) or not latest_failure:
+        return False
+    kind = str(latest_failure.get("kind") or "").strip().lower()
+    phase = str(latest_failure.get("phase") or "").strip().lower()
+    current_state = str(plan_state.get("current_state") or "").strip().lower()
+    if kind == "phase_failed" and phase in {"", "execute"}:
+        return True
+    return current_state in {"blocked", "manual_review", "finalized"} and kind in {
+        "phase_failed",
+        "step_failed",
+        "handler_failed",
+    }
+
+
+def _augment_liveness_with_plan_state(
+    liveness: Mapping[str, bool],
+    *,
+    chain_health: Mapping[str, Any] | None,
+    plan_state: Mapping[str, Any] | None,
+) -> dict[str, bool]:
+    """Augment generic ps/tmux liveness with plan-state + chain-health signals.
+
+    The generic process matcher can miss a manual-phase worker (e.g.
+    ``megaplan execute --plan ...``) that the watchdog chain-health and the plan's
+    own ``active_step`` already track. This keeps custody honest about which
+    processes are truly live without re-implementing a process scanner here.
+    """
+    augmented = {"tmux": bool(liveness.get("tmux")), "process": bool(liveness.get("process"))}
+    if augmented["process"]:
+        return augmented
+
+    active_step = plan_state.get("active_step") if isinstance(plan_state, Mapping) else None
+    if isinstance(active_step, Mapping):
+        pid = _as_int(active_step.get("worker_pid"))
+        if pid is not None and _pid_is_live(pid):
+            augmented["process"] = True
+            return augmented
+
+    # Watchdog chain-health is produced from the same local namespace and can
+    # observe an active step even when the generic ps matcher cannot identify a
+    # direct manual phase command.
+    if chain_health and bool(chain_health.get("plan_has_active_step")) and bool(
+        chain_health.get("plan_has_live_activity")
+    ):
+        augmented["process"] = True
+    return augmented
+
+
+def _pid_is_live(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def _latest_activity(chain_health: Mapping[str, Any] | None, marker: Mapping[str, Any]) -> str:
