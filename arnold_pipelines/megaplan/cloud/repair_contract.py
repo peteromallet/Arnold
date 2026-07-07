@@ -1061,11 +1061,12 @@ NEEDS_HUMAN = "needs_human"
 DISCORD_ESCALATED = "discord_escalated"  # legacy non-success — preserved for compatibility
 ENVIRONMENT_GONE = "environment_gone"  # wiped workspace/spec — ops concern, not repairable
 
-SUCCESS_OUTCOMES: frozenset[str] = frozenset({COMPLETE, PROGRESSED, TRUE_HUMAN_BLOCKER})
+SUCCESS_OUTCOMES: frozenset[str] = frozenset(
+    {COMPLETE, PROGRESSED, LIVE_WITH_FRESH_ACTIVITY, TRUE_HUMAN_BLOCKER}
+)
 
 NON_SUCCESS_OUTCOMES: frozenset[str] = frozenset(
     {
-        LIVE_WITH_FRESH_ACTIVITY,
         PARTIAL_LIVENESS,
         REPAIRING,
         REPAIR_TIMEOUT,
@@ -1150,7 +1151,7 @@ def classify_verification_outcome(
 
     1. *is_complete* → :data:`COMPLETE` (terminal success)
     2. *has_progressed* → :data:`PROGRESSED` (terminal success)
-    3. *has_fresh_activity* → :data:`PARTIAL_LIVENESS` (terminal non-success)
+    3. *has_fresh_activity* → :data:`LIVE_WITH_FRESH_ACTIVITY` (terminal success)
     4. *has_true_human_blocker* → :data:`TRUE_HUMAN_BLOCKER` (terminal success)
     5. *is_live* with no progress/fresh-activity/blocker → :data:`PARTIAL_LIVENESS` (terminal non-success)
     6. Otherwise → :data:`REPAIRING` (non-terminal)
@@ -1166,7 +1167,7 @@ def classify_verification_outcome(
     if has_true_human_blocker:
         return TRUE_HUMAN_BLOCKER
     if has_fresh_activity:
-        return PARTIAL_LIVENESS
+        return LIVE_WITH_FRESH_ACTIVITY
     if is_live:
         return PARTIAL_LIVENESS
     return REPAIRING
