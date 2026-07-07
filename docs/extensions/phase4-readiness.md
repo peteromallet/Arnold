@@ -13,11 +13,19 @@ documents.
 - The roadmap and ticket backlog still name
   `src/tools/video-editor/runtime/contributionFamilies.ts` as the contribution
   family matrix. That file is not present in this checkout. The current
-  runtime family sources are `src/sdk/index.ts`, which defines
-  `ContributionKind`, `KNOWN_CONTRIBUTION_KINDS`,
-  `CONTRIBUTION_KIND_MILESTONE`, and `contributionKindNotYetBridged()`, and
-  `src/tools/video-editor/runtime/extensionSurface.ts`, which normalizes active
-  or reserved contributions into provider/runtime descriptors.
+  source-of-truth files are:
+  - `src/sdk/video/families/contributionKinds.ts` — canonical source for the
+    `VideoContributionKind` union and `VIDEO_CONTRIBUTION_KINDS` array
+    (re-exported publicly as `ContributionKind` and `KNOWN_CONTRIBUTION_KINDS`
+    via `src/sdk/index.ts`)
+  - `src/sdk/video/families/familyDefinitions.ts` — canonical family registry
+    with maturity posture, conformance reports, and milestone maps (provides
+    `CONTRIBUTION_KIND_MILESTONE` and `contributionKindNotYetBridged()` via
+    `src/sdk/familyBridge.ts`)
+  - `config/extensions/family-maturity.json` — machine-readable family maturity
+    snapshot for release gates
+  - `src/tools/video-editor/runtime/extensionSurface.ts` — normalizes active
+    or reserved contributions into provider/runtime descriptors
 - `src/tools/video-editor/runtime/extensionSurface.ts` currently bridges or
   surfaces reserved descriptors for output formats, processes, shaders, and
   agent tools. Output formats are turned into planner metadata with route
@@ -135,7 +143,7 @@ not edit `docs/extensions/reigh-extension-layer-roadmap-v2.md` or
 
 | Source item | Current status | Reconciliation needed before Phase 4 |
 | --- | --- | --- |
-| Roadmap Phase 1 acceptance cites `runtime/contributionFamilies.ts` | Stale path in this checkout; contribution kind data currently lives in `src/sdk/index.ts`, and runtime descriptor normalization lives in `extensionSurface.ts`. | Update roadmap/ticket references after review, or restore a generated/owned contribution-family matrix file if that remains the intended gate. |
+| Roadmap Phase 1 acceptance cites `runtime/contributionFamilies.ts` | Stale path in this checkout; canonical sources: `src/sdk/video/families/contributionKinds.ts` (kind union), `src/sdk/video/families/familyDefinitions.ts` (family registry), `config/extensions/family-maturity.json` (maturity snapshot). Runtime descriptor normalization lives in `extensionSurface.ts`. | Update roadmap/ticket references after review, or restore a generated/owned contribution-family matrix file if that remains the intended gate. |
 | Roadmap Phase 4 "Contribution Families And Render Hardening" | Correctly identifies asset parsers, effects, transitions, clip types, keyframes, agent tools, live data, render materials, sidecars/processes, and shaders as the next higher-power families. | Keep this sequencing, but require the checklist above and planner participation before any family moves to supported. |
 | EXT-030 AssetParserContribution | Planned. | Add explicit render/export/bake posture and diagnostics requirements to the ticket if asset parser output can affect timeline materialization. |
 | EXT-031 EffectContribution | Planned as trusted/signed packages. | Preserve trusted/signed wording, add manager trust warning coverage, and require planner blockers for preview-only effects. |
@@ -155,8 +163,11 @@ not edit `docs/extensions/reigh-extension-layer-roadmap-v2.md` or
 Phase 4 should not start as broad parallel family implementation. The next
 accepted action should be either:
 
-1. Fix the stale `contributionFamilies.ts` reference by restoring or replacing
-   the family matrix gate, then update roadmap/ticket docs after review; or
+1. Fix the stale `contributionFamilies.ts` reference by updating to current
+   canonical sources (`src/sdk/video/families/contributionKinds.ts`,
+   `src/sdk/video/families/familyDefinitions.ts`, and
+   `config/extensions/family-maturity.json`), then update roadmap/ticket docs
+   after review; or
 2. Begin EXT-035-style render planner integration as a prerequisite slice for
    the first selected family, with this document as the acceptance checklist.
 

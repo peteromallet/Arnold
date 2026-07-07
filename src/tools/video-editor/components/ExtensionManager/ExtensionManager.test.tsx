@@ -1445,6 +1445,303 @@ describe('ExtensionManager — settings persistence', () => {
 });
 
 // ---------------------------------------------------------------------------
+// T10: SchemaForm vs key-value fallback for settings editing
+// ---------------------------------------------------------------------------
+
+describe('ExtensionManager — settings editing: SchemaForm vs key-value fallback (T10)', () => {
+  beforeEach(() => {
+    mockUseVideoEditorRuntime.mockReset();
+  });
+
+  /** Build a valid manifest with a simple, editable settingsSchema. */
+  function makeSchemaManifest(overrides?: Partial<Record<string, unknown>>) {
+    return {
+      id: 'ext.schema',
+      version: '1.0.0',
+      label: 'Schema Package',
+      settingsSchema: {
+        version: 1,
+        schema: {
+          type: 'object',
+          properties: {
+            theme: { type: 'string', title: 'Theme', default: 'light' },
+            fontSize: { type: 'number', title: 'Font Size', default: 14, minimum: 8, maximum: 72 },
+          },
+        },
+      },
+      contributions: [],
+      ...(overrides ?? {}),
+    };
+  }
+
+  /** Build a manifest without settingsSchema (schemaless / legacy). */
+  function makeSchemalessManifest(overrides?: Partial<Record<string, unknown>>) {
+    return {
+      id: 'ext.raw',
+      version: '1.0.0',
+      label: 'Legacy Package',
+      contributions: [],
+      ...(overrides ?? {}),
+    };
+  }
+
+  describe('SchemaForm is used for schema-backed settings', () => {
+    it('renders SchemaForm when manifest declares a valid settingsSchema with properties', async () => {
+      const user = userEvent.setup();
+      const repo = makeRepository();
+      repo.getSettingsSnapshot = vi.fn().mockResolvedValue({
+        extensionId: 'ext.schema',
+        schemaVersion: 1,
+        values: { theme: 'dark', fontSize: 16 },
+        lastWrittenAt: new Date().toISOString(),
+      });
+
+      const manifest = makeSchemaManifest();
+
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime(
+          [{ extensionId: 'ext.schema', packageState: 'loaded', label: 'Schema Package' }],
+          [{ manifest }],
+        ),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      // Expand settings
+      await user.click(screen.getByRole('button', { name: 'Show extension settings' }));
+
+      // Wait for settings to load
+      await waitFor(() => {
+        expect(screen.getByText('theme')).toBeInTheDocument();
+      });
+
+      // Click Edit
+      await user.click(screen.getByRole('button', { name: 'Edit extension settings' }));
+
+      // SchemaForm should be rendered (data-testid="schema-form")
+      await waitFor(() => {
+        expect(screen.getByTestId('schema-form')).toBeInTheDocument();
+      });
+
+      // Raw key-value text inputs should NOT be present
+      expect(screen.queryByRole('textbox', { name: 'Settings value for theme' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('textbox', { name: 'Settings value for fontSize' })).not.toBeInTheDocument();
+    });
+
+    it('SchemaForm fields are interactive and editable', async () => {
+      const user = userEvent.setup();
+      const repo = makeRepository();
+      repo.getSettingsSnapshot = vi.fn().mockResolvedValue({
+        extensionId: 'ext.schema',
+        schemaVersion: 1,
+        values: { theme: 'dark', fontSize: 16 },
+        lastWrittenAt: new Date().toISOString(),
+      });
+
+      const manifest = makeSchemaManifest();
+
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime(
+          [{ extensionId: 'ext.schema', packageState: 'loaded', label: 'Schema Package' }],
+          [{ manifest }],
+        ),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      await user.click(screen.getByRole('button', { name: 'Show extension settings' }));
+      await waitFor(() => { expect(screen.getByText('theme')).toBeInTheDocument(); });
+      await user.click(screen.getByRole('button', { name: 'Edit extension settings' }));
+
+      // SchemaForm field wrappers should be present
+      await waitFor(() => {
+        expect(screen.getByTestId('schema-form-field-theme')).toBeInTheDocument();
+        expect(screen.getByTestId('schema-form-field-fontSize')).toBeInTheDocument();
+      });
+    });
+
+    it('shows Edit button for supported schema (editable=true)', async () => {
+      const repo = makeRepository();
+      repo.getSettingsSnapshot = vi.fn().mockResolvedValue({
+        extensionId: 'ext.schema',
+        schemaVersion: 1,
+        values: { theme: 'dark' },
+        lastWrittenAt: new Date().toISOString(),
+      });
+
+      const manifest = makeSchemaManifest();
+
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime(
+          [{ extensionId: 'ext.schema', packageState: 'loaded', label: 'Schema Package' }],
+          [{ manifest }],
+        ),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      const toggle = screen.getByRole('button', { name: 'Show extension settings' });
+      await act(async () => { fireEvent.click(toggle); });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Edit extension settings' })).toBeInTheDocument();
+      });
+
+      // No Read-only indicator for supported schema
+      expect(screen.queryByText('Read-only')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('key-value fallback is used for schemaless or legacy settings', () => {
+    it('renders raw text input fields when manifest has no settingsSchema (legacy fallback)', async () => {
+      const user = userEvent.setup();
+      const repo = makeRepository();
+      repo.getSettingsSnapshot = vi.fn().mockResolvedValue({
+        extensionId: 'ext.raw',
+        schemaVersion: 1,
+        values: { customKey: 'customValue', another: '42' },
+        lastWrittenAt: new Date().toISOString(),
+      });
+
+      // Provide a manifest without settingsSchema → reconcile blocks it.
+      // To hit the true key-value fallback we must have NO manifest at all,
+      // which is the real legacy / orphan scenario.
+      // This test supplies NO manifest entry for ext.raw.
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime(
+          [{ extensionId: 'ext.raw', packageState: 'loaded', label: 'Legacy Package' }],
+          [], // no extension entries → no manifest → legacy path
+        ),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      // Expand settings
+      await user.click(screen.getByRole('button', { name: 'Show extension settings' }));
+
+      // Wait for settings to load — raw values from snapshot appear as read-only key-value rows
+      await waitFor(() => {
+        expect(screen.getByText('customKey')).toBeInTheDocument();
+      });
+
+      // Click Edit
+      await user.click(screen.getByRole('button', { name: 'Edit extension settings' }));
+
+      // Raw key-value text inputs should be rendered
+      await waitFor(() => {
+        expect(screen.getByRole('textbox', { name: 'Settings value for customKey' })).toBeInTheDocument();
+        expect(screen.getByRole('textbox', { name: 'Settings value for another' })).toBeInTheDocument();
+      });
+
+      // SchemaForm should NOT be rendered
+      expect(screen.queryByTestId('schema-form')).not.toBeInTheDocument();
+    });
+
+    it('shows blocked reconciliation when a schemaless manifest IS provided (reconcile rejects it)', async () => {
+      const user = userEvent.setup();
+      const repo = makeRepository();
+      repo.getSettingsSnapshot = vi.fn().mockResolvedValue({
+        extensionId: 'ext.raw',
+        schemaVersion: 1,
+        values: { customKey: 'willBeDropped' },
+        lastWrittenAt: new Date().toISOString(),
+      });
+
+      const manifest = makeSchemalessManifest(); // has no settingsSchema
+
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime(
+          [{ extensionId: 'ext.raw', packageState: 'loaded', label: 'Legacy Package' }],
+          [{ manifest }],
+        ),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      await user.click(screen.getByRole('button', { name: 'Show extension settings' }));
+
+      // Blocked reconciliation should show, no Edit button, no SchemaForm
+      await waitFor(() => {
+        expect(screen.getByText('No saved settings for this extension.')).toBeInTheDocument();
+      });
+
+      // Blocked state visible
+      const blockedEl = document.querySelector('[data-video-editor-extension-settings-reconciliation-state="blocked"]');
+      expect(blockedEl).toBeInTheDocument();
+
+      // No Edit button
+      expect(screen.queryByRole('button', { name: 'Edit extension settings' })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('unsupported schema shows read-only with no SchemaForm', () => {
+    it('does NOT show SchemaForm or Edit button when schema has unsupported constructs', async () => {
+      const user = userEvent.setup();
+      const repo = makeRepository();
+      repo.getSettingsSnapshot = vi.fn().mockResolvedValue({
+        extensionId: 'ext.unsupported',
+        schemaVersion: 1,
+        values: { nested: { deep: true } },
+        lastWrittenAt: new Date().toISOString(),
+      });
+
+      const manifest = {
+        id: 'ext.unsupported',
+        version: '1.0.0',
+        label: 'Unsupported Schema Package',
+        settingsSchema: {
+          version: 1,
+          schema: {
+            type: 'object',
+            properties: {
+              nested: { type: 'object', properties: { deep: { type: 'boolean' } } },
+            },
+          },
+        },
+        contributions: [],
+      };
+
+      mockUseVideoEditorRuntime.mockReturnValue({
+        extensionRuntime: makeRuntime(
+          [{ extensionId: 'ext.unsupported', packageState: 'loaded', label: 'Unsupported Schema Package' }],
+          [{ manifest }],
+        ),
+        extensionStateRepository: repo,
+        triggerExtensionRefresh: vi.fn(),
+      });
+
+      render(<ExtensionManager />);
+
+      await user.click(screen.getByRole('button', { name: 'Show extension settings' }));
+
+      // Read-only indicator should appear
+      await waitFor(() => {
+        expect(screen.getByText('Read-only')).toBeInTheDocument();
+      });
+
+      // No Edit button
+      expect(screen.queryByRole('button', { name: 'Edit extension settings' })).not.toBeInTheDocument();
+
+      // Values displayed read-only
+      expect(screen.getByText('nested')).toBeInTheDocument();
+
+      // SchemaForm should NOT be rendered
+      expect(screen.queryByTestId('schema-form')).not.toBeInTheDocument();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Diagnostic badge and inline detail tests (T9)
 // ---------------------------------------------------------------------------
 

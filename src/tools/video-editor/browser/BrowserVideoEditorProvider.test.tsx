@@ -1,9 +1,14 @@
 import { render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BrowserVideoEditorProvider } from '@/tools/video-editor/browser/BrowserVideoEditorProvider';
 import { defineExtension } from '@reigh/editor-sdk';
 import type { ExtensionContext, DisposeHandle } from '@reigh/editor-sdk';
 import type { DataProvider } from '@/tools/video-editor/data/DataProvider';
+import {
+  EXTENSION_SMOKE_CONTRIBUTION_ID,
+  EXTENSION_SMOKE_QUERY_PARAM,
+  EXTENSION_SMOKE_ACTIVE_VALUE,
+} from '@/sdk/smoke/extensionSmoke';
 
 const runtimeProviderSpy = vi.fn();
 
@@ -14,6 +19,9 @@ vi.mock('@/tools/video-editor/contexts/EditorRuntimeProvider', () => ({
   },
 }));
 
+// Preserve original window.location so smoke-query tests can override search.
+const originalLocation = window.location;
+
 const provider: DataProvider = {
   loadTimeline: vi.fn(),
   saveTimeline: vi.fn(),
@@ -21,8 +29,22 @@ const provider: DataProvider = {
   resolveAssetUrl: vi.fn(async (file: string) => file),
 };
 
+beforeEach(() => {
+  // Restore a clean window.location before each test.
+  Object.defineProperty(window, 'location', {
+    value: { ...originalLocation, search: '' },
+    writable: true,
+    configurable: true,
+  });
+});
+
 afterEach(() => {
   runtimeProviderSpy.mockClear();
+  Object.defineProperty(window, 'location', {
+    value: originalLocation,
+    writable: true,
+    configurable: true,
+  });
 });
 
 describe('BrowserVideoEditorProvider', () => {
@@ -220,5 +242,210 @@ describe('BrowserVideoEditorProvider', () => {
     const callArgs = runtimeProviderSpy.mock.calls[0]?.[0];
     expect(callArgs.extensions).toBeDefined();
     expect(callArgs.extensions).toHaveLength(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Smoke extension injection via ?extensionSmoke=1
+  // ---------------------------------------------------------------------------
+
+  describe('?extensionSmoke=1 injection', () => {
+    it('prepends the smoke extension when ?extensionSmoke=1 is present', () => {
+      Object.defineProperty(window, 'location', {
+        value: { ...originalLocation, search: `?${EXTENSION_SMOKE_QUERY_PARAM}=${EXTENSION_SMOKE_ACTIVE_VALUE}` },
+        writable: true,
+        configurable: true,
+      });
+
+      render(
+        <BrowserVideoEditorProvider
+          dataProvider={provider}
+          timelineId="timeline-smoke-1"
+          userId={null}
+        >
+          <div data-testid="smoke-child">Smoke inject</div>
+        </BrowserVideoEditorProvider>,
+      );
+
+      expect(screen.getByTestId('smoke-child')).toHaveTextContent('Smoke inject');
+
+      const callArgs = runtimeProviderSpy.mock.calls[0]?.[0];
+      expect(callArgs.extensions).toHaveLength(1);
+      expect(callArgs.extensions[0].manifest.id).toBe('com.reigh.smoke.extension-smoke');
+      // Verify the smoke extension carries its stable contribution
+      const contrib = callArgs.extensions[0].manifest.contributions?.[0];
+      expect(contrib).toBeDefined();
+      expect(contrib.id).toBe(EXTENSION_SMOKE_CONTRIBUTION_ID);
+      expect(contrib.kind).toBe('slot');
+      expect(contrib.slot).toBe('statusBar');
+    });
+
+    it('does NOT inject the smoke extension when query param is absent', () => {
+      // Clean search (empty) — no ?extensionSmoke present
+      Object.defineProperty(window, 'location', {
+        value: { ...originalLocation, search: '' },
+        writable: true,
+        configurable: true,
+      });
+
+      render(
+        <BrowserVideoEditorProvider
+          dataProvider={provider}
+          timelineId="timeline-smoke-no-param"
+          userId={null}
+        >
+          <div data-testid="smoke-no-param">No param</div>
+        </BrowserVideoEditorProvider>,
+      );
+
+      expect(screen.getByTestId('smoke-no-param')).toHaveTextContent('No param');
+
+      const callArgs = runtimeProviderSpy.mock.calls[0]?.[0];
+      // Default: empty extensions array when no extensions prop and no smoke param
+      expect(callArgs.extensions).toHaveLength(0);
+    });
+
+    it('does NOT inject the smoke extension when extensionSmoke=0 (not exactly 1)', () => {
+      Object.defineProperty(window, 'location', {
+        value: { ...originalLocation, search: '?extensionSmoke=0' },
+        writable: true,
+        configurable: true,
+      });
+
+      render(
+        <BrowserVideoEditorProvider
+          dataProvider={provider}
+          timelineId="timeline-smoke-zero"
+          userId={null}
+        >
+          <div data-testid="smoke-zero">Zero</div>
+        </BrowserVideoEditorProvider>,
+      );
+
+      expect(screen.getByTestId('smoke-zero')).toHaveTextContent('Zero');
+
+      const callArgs = runtimeProviderSpy.mock.calls[0]?.[0];
+      expect(callArgs.extensions).toHaveLength(0);
+    });
+
+    it('does NOT inject the smoke extension when extensionSmoke=true (not exactly 1)', () => {
+      Object.defineProperty(window, 'location', {
+        value: { ...originalLocation, search: '?extensionSmoke=true' },
+        writable: true,
+        configurable: true,
+      });
+
+      render(
+        <BrowserVideoEditorProvider
+          dataProvider={provider}
+          timelineId="timeline-smoke-true"
+          userId={null}
+        >
+          <div data-testid="smoke-true">True</div>
+        </BrowserVideoEditorProvider>,
+      );
+
+      expect(screen.getByTestId('smoke-true')).toHaveTextContent('True');
+
+      const callArgs = runtimeProviderSpy.mock.calls[0]?.[0];
+      expect(callArgs.extensions).toHaveLength(0);
+    });
+
+    it('prepends smoke extension before direct extensions preserving order', () => {
+      Object.defineProperty(window, 'location', {
+        value: { ...originalLocation, search: `?${EXTENSION_SMOKE_QUERY_PARAM}=${EXTENSION_SMOKE_ACTIVE_VALUE}` },
+        writable: true,
+        configurable: true,
+      });
+
+      const directExt = defineExtension({
+        manifest: {
+          id: 'com.test.direct-order' as never,
+          version: '1.0.0',
+          label: 'Direct extension for order test',
+          contributions: [
+            {
+              id: 'direct.cmd' as never,
+              kind: 'command',
+              command: 'com.test.direct-order.cmd',
+              label: 'Direct command',
+            },
+          ],
+        },
+        activate(_ctx: ExtensionContext): DisposeHandle {
+          return { dispose() {} };
+        },
+      });
+
+      render(
+        <BrowserVideoEditorProvider
+          dataProvider={provider}
+          timelineId="timeline-smoke-order"
+          userId={null}
+          extensions={[directExt]}
+        >
+          <div data-testid="smoke-order">Order</div>
+        </BrowserVideoEditorProvider>,
+      );
+
+      expect(screen.getByTestId('smoke-order')).toHaveTextContent('Order');
+
+      const callArgs = runtimeProviderSpy.mock.calls[0]?.[0];
+      expect(callArgs.extensions).toHaveLength(2);
+      // Smoke extension must be first (prepended)
+      expect(callArgs.extensions[0].manifest.id).toBe('com.reigh.smoke.extension-smoke');
+      // Direct extension must follow in original order
+      expect(callArgs.extensions[1].manifest.id).toBe('com.test.direct-order');
+    });
+
+    it('injects smoke as the only extension when no direct extensions are provided', () => {
+      Object.defineProperty(window, 'location', {
+        value: { ...originalLocation, search: `?${EXTENSION_SMOKE_QUERY_PARAM}=${EXTENSION_SMOKE_ACTIVE_VALUE}` },
+        writable: true,
+        configurable: true,
+      });
+
+      // extensions prop is undefined — smoke should become the sole extension
+      render(
+        <BrowserVideoEditorProvider
+          dataProvider={provider}
+          timelineId="timeline-smoke-only"
+          userId={null}
+        >
+          <div data-testid="smoke-only">Only smoke</div>
+        </BrowserVideoEditorProvider>,
+      );
+
+      expect(screen.getByTestId('smoke-only')).toHaveTextContent('Only smoke');
+
+      const callArgs = runtimeProviderSpy.mock.calls[0]?.[0];
+      expect(callArgs.extensions).toHaveLength(1);
+      expect(callArgs.extensions[0].manifest.id).toBe('com.reigh.smoke.extension-smoke');
+    });
+
+    it('smoke extension has an activate function and no permissions', () => {
+      Object.defineProperty(window, 'location', {
+        value: { ...originalLocation, search: `?${EXTENSION_SMOKE_QUERY_PARAM}=${EXTENSION_SMOKE_ACTIVE_VALUE}` },
+        writable: true,
+        configurable: true,
+      });
+
+      render(
+        <BrowserVideoEditorProvider
+          dataProvider={provider}
+          timelineId="timeline-smoke-activate"
+          userId={null}
+        >
+          <div data-testid="smoke-activate">Activate check</div>
+        </BrowserVideoEditorProvider>,
+      );
+
+      expect(screen.getByTestId('smoke-activate')).toHaveTextContent('Activate check');
+
+      const callArgs = runtimeProviderSpy.mock.calls[0]?.[0];
+      const smokeExt = callArgs.extensions[0];
+      expect(typeof smokeExt.activate).toBe('function');
+      expect(smokeExt.manifest.permissions).toBeUndefined();
+      expect(smokeExt.manifest.dependsOn).toBeUndefined();
+    });
   });
 });

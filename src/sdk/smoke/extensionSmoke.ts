@@ -8,14 +8,16 @@
  * loading real user extensions.
  *
  * This module is intentionally free of dynamic imports, sandbox promises,
- * loaders, or permission enforcement — it is a pure, inert, statically-
- * bundled opt-in test hook.
+ * loaders, permission enforcement, or timeline mutation — it is a pure,
+ * statically-bundled opt-in test hook with host-owned UI registration only.
  *
  * @publicContract
  */
 
 import { defineExtension, type ReighExtension } from '../lifecycle';
 import type { ContributionId, ExtensionId } from '../ids';
+import { getInternalExtensionRenderSurface } from '../internalExtensionRenderSurface';
+import { createElement } from 'react';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -51,16 +53,28 @@ function createSmokeExtension(): ReighExtension {
           id: EXTENSION_SMOKE_CONTRIBUTION_ID as ContributionId,
           kind: 'slot',
           slot: 'statusBar',
+          render: EXTENSION_SMOKE_CONTRIBUTION_ID,
           order: 9999, // Sort last so it never collides visually
           label: 'Extension Smoke',
         },
       ],
     },
-    activate() {
-      // No-op: this extension is purely a static slot declaration for
-      // integration smoke-test hooks.  It intentionally performs no
-      // host mutations, service registrations, or chrome subscriptions.
-      return { dispose() {} };
+    activate(ctx) {
+      const renderSurface = getInternalExtensionRenderSurface(ctx);
+      if (!renderSurface) {
+        return { dispose() {} };
+      }
+
+      return renderSurface.registerRenderer(
+        EXTENSION_SMOKE_CONTRIBUTION_ID,
+        () => createElement(
+          'div',
+          {
+            'data-testid': EXTENSION_SMOKE_CONTRIBUTION_ID,
+          },
+          'Extension smoke active',
+        ),
+      );
     },
   });
 }

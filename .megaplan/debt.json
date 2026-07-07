@@ -3860,6 +3860,40 @@
       "resolved": false,
       "resolved_by": null,
       "resolved_at": null
+    },
+    {
+      "id": "DEBT-228",
+      "subsystem": "sdk-slot-rendering-production-smoke",
+      "concern": "no existing extension-facing slot renderer registration api exists in this checkout. step 5 must either build one or find an alternative path.",
+      "flag_ids": [
+        "FLAG-001"
+      ],
+      "plan_ids": [
+        "extension-foundation-20260707-0036"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-07-07T01:01:24Z",
+      "updated_at": "2026-07-07T01:01:24Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-229",
+      "subsystem": "sdk-packagability-quality-gates",
+      "concern": "sdk standalone npm package publishing may not be feasible within this sprint.",
+      "flag_ids": [
+        "SDK-PUBLISHABILITY-DEFERRAL"
+      ],
+      "plan_ids": [
+        "extension-foundation-20260707-0036"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-07-07T01:01:24Z",
+      "updated_at": "2026-07-07T01:01:24Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
     }
   ]
 }

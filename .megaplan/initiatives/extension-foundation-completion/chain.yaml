@@ -1,0 +1,27 @@
+base_branch: main
+anchors:
+  north_star: NORTHSTAR.md
+milestones:
+- label: m1-extension-foundation-completion
+  idea: .megaplan/initiatives/extension-foundation-completion/briefs/m1-extension-foundation-completion.md
+  branch: epic/extension-foundation-completion
+  profile: partnered-5
+  vendor: codex
+  robustness: thorough
+  depth: high
+  phase_model:
+  - execute=codex:high
+  - loop_execute=codex:high
+  prep_clarify: false
+  notes: Finish extension foundation completion on top of latest main, using the validation
+    research copied under this initiative.
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+driver:
+  robustness: thorough
+  auto_approve: true
+  max_iterations: 24
+  poll_sleep: 8.0

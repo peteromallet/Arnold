@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Unit tests for the production-bundled smoke extension.
  *
@@ -13,13 +14,16 @@
  * @publicContract
  */
 
-import { describe, expect, it } from 'vitest';
+import { render, screen, cleanup } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createElement, type ReactNode } from 'react';
 import {
   getExtensionSmokeExtension,
   EXTENSION_SMOKE_QUERY_PARAM,
   EXTENSION_SMOKE_ACTIVE_VALUE,
   EXTENSION_SMOKE_CONTRIBUTION_ID,
 } from '@/sdk/smoke/extensionSmoke';
+import { INTERNAL_EXTENSION_RENDER_SURFACE } from '@/sdk/internalExtensionRenderSurface';
 import type { ReighExtension, ExtensionContribution } from '@reigh/editor-sdk';
 
 // ---------------------------------------------------------------------------
@@ -40,6 +44,10 @@ function findContribution(
 ): ExtensionContribution | undefined {
   return ext.manifest.contributions?.find((c) => c.id === (contribId as any));
 }
+
+afterEach(() => {
+  cleanup();
+});
 
 // ---------------------------------------------------------------------------
 // Absent / null / undefined trigger
@@ -207,14 +215,37 @@ describe('getExtensionSmokeExtension — contribution structure', () => {
 // ---------------------------------------------------------------------------
 
 describe('getExtensionSmokeExtension — manifest validation', () => {
-  it('activation function is a no-op that returns a disposable handle', () => {
+  it('activation registers a renderer that produces the stable smoke anchor', () => {
     const sp = makeSearchParams({ [EXTENSION_SMOKE_QUERY_PARAM]: EXTENSION_SMOKE_ACTIVE_VALUE });
     const ext = getExtensionSmokeExtension(sp)!;
     expect(typeof ext.activate).toBe('function');
+
+    const disposeRenderer = vi.fn();
+    const registerRenderer = vi.fn((_renderId: string, renderer: () => ReactNode) => {
+      render(createElement('div', null, renderer()));
+      return { dispose: disposeRenderer };
+    });
+    const handle = ext.activate!({
+      [INTERNAL_EXTENSION_RENDER_SURFACE]: { registerRenderer },
+    } as any);
+
+    expect(handle).toBeDefined();
+    expect(typeof handle.dispose).toBe('function');
+    expect(registerRenderer).toHaveBeenCalledWith(
+      EXTENSION_SMOKE_CONTRIBUTION_ID,
+      expect.any(Function),
+    );
+    expect(screen.getByTestId(EXTENSION_SMOKE_CONTRIBUTION_ID)).toHaveTextContent('Extension smoke active');
+    expect(() => handle.dispose()).not.toThrow();
+    expect(disposeRenderer).toHaveBeenCalledTimes(1);
+  });
+
+  it('activation returns a no-op disposable when the host render surface is unavailable', () => {
+    const sp = makeSearchParams({ [EXTENSION_SMOKE_QUERY_PARAM]: EXTENSION_SMOKE_ACTIVE_VALUE });
+    const ext = getExtensionSmokeExtension(sp)!;
     const handle = ext.activate!({} as any);
     expect(handle).toBeDefined();
     expect(typeof handle.dispose).toBe('function');
-    // Dispose should not throw
     expect(() => handle.dispose()).not.toThrow();
   });
 

@@ -107,7 +107,7 @@ export function parseSdkContributionKinds(source, externalAuthority) {
   }
 
   // If the above is a type alias (e.g. `= VideoContributionKind`), look for
-  // the VideoContributionKind union in the same source or a combined kinds.ts.
+  // the VideoContributionKind union in the same source or a combined contributionKinds.ts.
   if (kinds.length === 0) {
     const videoKindBlockRe = /export type VideoContributionKind\s*=\s*([\s\S]*?);/;
     const videoKindBlock = source.match(videoKindBlockRe);

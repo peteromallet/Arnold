@@ -3,7 +3,7 @@
  *
  * Demonstrates:
  *   1. A `ProcessContribution` declared in the extension manifest with a
- *      full `ProcessSpec` describing a stdio-JSON-RPC process.
+ *      full `ProcessManifestEntry` describing a stdio-JSON-RPC process.
  *   2. Environment field declarations with platform defaults.
  *   3. Process operation specs declaring available operations and their
  *      input/output contracts.
@@ -27,10 +27,9 @@ import type {
   ProcessManifestEntry,
 } from '@reigh/editor-sdk';
 
-export type ProcessSpec = ProcessContribution['spec'];
-export type ProcessSpawnConfig = ProcessSpec['spawn'];
-export type ProcessEnvFieldSpec = NonNullable<ProcessSpec['env']>[number];
-export type ProcessOperationSpec = NonNullable<ProcessSpec['operations']>[number];
+export type ProcessSpawnConfig = ProcessManifestEntry['spawn'];
+export type ProcessEnvFieldSpec = NonNullable<ProcessManifestEntry['env']>[number];
+export type ProcessOperationSpec = NonNullable<ProcessManifestEntry['operations']>[number];
 
 // ---------------------------------------------------------------------------
 // Process specification — declarative trusted-local process descriptor
@@ -92,7 +91,7 @@ const EXAMPLE_PROCESS_OPERATIONS: readonly ProcessOperationSpec[] = [
   },
 ];
 
-const EXAMPLE_PROCESS_SPEC: ProcessSpec = {
+const EXAMPLE_PROCESS_MANIFEST_ENTRY: ProcessManifestEntry = {
   id: 'example-analyzer',
   label: 'Example Analyzer Process',
   description:
@@ -131,10 +130,10 @@ export const processExample: ReighExtension = defineExtension({
         kind: 'process',
         label: 'Example Analyzer Process',
         order: 10,
-        spec: EXAMPLE_PROCESS_SPEC,
+        spec: EXAMPLE_PROCESS_MANIFEST_ENTRY,
       } as ProcessContribution,
     ],
-    processes: [EXAMPLE_PROCESS_SPEC as ProcessManifestEntry],
+    processes: [EXAMPLE_PROCESS_MANIFEST_ENTRY],
     messages: {
       activated: 'Process example activated (declaration-only in V1).',
       disposed: 'Process example disposed.',

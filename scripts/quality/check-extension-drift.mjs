@@ -146,10 +146,10 @@ const R = new DriftReport();
 const familyMatrix = loadFamilyMaturityMatrix(FAMILY_MATURITY_PATH);
 
 // Parse SDK kinds from source and apply registry-based bridged/reserved.
-// Read both index.ts (barrel) and kinds.ts (authority module) since
-// ContributionKind is now a type alias re-exported from kinds.ts.
-const KINDS_PATH = resolve(repoRoot, 'src/sdk/video/families/kinds.ts');
-const sdkSource = (readFileIfExists(SDK_INDEX) || '') + '\n' + (readFileIfExists(KINDS_PATH) || '');
+// Read both index.ts (barrel) and contributionKinds.ts (canonical authority) since
+// ContributionKind is a type alias whose canonical union lives in contributionKinds.ts.
+const CANONICAL_KINDS_PATH = resolve(repoRoot, 'src/sdk/video/families/contributionKinds.ts');
+const sdkSource = (readFileIfExists(SDK_INDEX) || '') + '\n' + (readFileIfExists(CANONICAL_KINDS_PATH) || '');
 if (!sdkSource.trim()) {
   R.error(`SDK index not found: ${SDK_INDEX}`);
 }

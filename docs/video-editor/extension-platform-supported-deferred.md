@@ -1,7 +1,7 @@
 # Extension Platform — Supported V1 & Deferred/Unsupported Behavior
 
 **Status:** Active (M15)
-**Last updated:** 2026-06-20
+**Last updated:** 2026-07-07
 **Scope:** Every V1 extension-platform behavior classified as `supported` or `deferred`, with concrete evidence links to tests, examples, absence checks, blockers, or contract-recheck row IDs.
 
 ---
@@ -70,7 +70,7 @@ This document is the downstream consumer of the [M15 Contract-Recheck Matrix](./
 |---|---|---|---|
 | S-020 | Public surface classes: toolbar, inspector, overlay, status, code panel, dialogs | **supported** | CR:M2-001; EX:toolbar-example.ts, toolbar-extension.ts, inspector-example.ts, overlay-example.ts, status-surface-example.ts, code-panel-diagnostics-example.ts, surface-coverage.ts |
 | S-021 | Inspector and overlay contributions update on host state changes | **supported** | CR:M2-003; EX:inspector-example.ts, overlay-example.ts; TEST:Canary.test.tsx |
-| S-022 | `SchemaForm` renders and validates common schema subset | **supported** | CR:M2-006; `SchemaForm` host primitive; `src/sdk/index.ts` parameter schema types |
+| S-022 | `SchemaForm` renders and validates common schema subset; ExtensionManager falls back to raw key-value editing only for schemaless/legacy packages (intentional) | **supported** | CR:M2-006; `SchemaForm` host primitive; `src/sdk/index.ts` parameter schema types; T10 |
 | S-023 | Diagnostic fallback links open `DiagnosticPanel` filtered to failing extension | **supported** | CR:M2-008; DOC:frontend-closure-checklist.md§3.2 |
 | S-024 | Code panel canary publishes structured diagnostics with source ranges | **supported** | CR:M2-010, CR:M2-011; EX:code-panel-diagnostics-example.ts; TEST:Canary.test.tsx |
 | S-025 | Reserved frontend component slots compile as inert placeholders | **supported** | CR:M2-013; `InertReservedPlaceholder` in `TimelineEditorShellCore.tsx` |
@@ -204,6 +204,18 @@ This document is the downstream consumer of the [M15 Contract-Recheck Matrix](./
 | S-154 | `npm run test:sdk-boundary` passes | **supported** | CR:M0-003; `src/sdk/__tests__/sdk-boundary.test.ts` |
 | S-155 | `npm run build` passes with docs-linked examples | **supported** | CR:X-001; sdk-boundary.test.ts verifies public alias |
 
+### 2.16 Extension Manager, Persistence & Cleanup
+
+*Delivered as proof points across T5 (cleanup), T9 (enable/disable cycle with persistence), and T10 (SchemaForm settings editing). The manager UI, persisted enablement, persisted settings, and lifecycle cleanup are supported; installation, update, and deletion remain deferred (see D-001).*
+
+| Row ID | Behavior | Classification | Evidence |
+|---|---|---|---|
+| S-160 | Extension manager UI: enable/disable toggle with immediate contribution visibility change | **supported** | CR:M14-001 (partial); TEST:ExtensionManager.test.tsx (T10 — settings editing); TEST:ExtensionHarnessPage.tsx manager-cycle scenario (T9); `ExtensionManager.tsx` enable/disable controls |
+| S-161 | Settings editing via `SchemaForm` for schema-backed packages with intentional key-value fallback for schemaless/legacy packages | **supported** | CR:M14-001 (partial); TEST:ExtensionManager.test.tsx (T10 — 7 tests for SchemaForm vs fallback split); `ExtensionManager.tsx` lines 828–853 |
+| S-162 | Persisted extension enablement state via repository-backed persistence (`DataProvider.createExtensionPersistenceService`) | **supported** | CR:M14-003 (partial); TEST:extensionStateRepository.test.ts; TEST:ExtensionHarnessPage.tsx manager-cycle scenario (T9 — `extension-manager-cycle-persisted-enablement` probe); `EditorRuntimeProvider.tsx` persistence wiring |
+| S-163 | Persisted extension settings via `InMemoryDataProvider` and `SupabaseDataProvider` persistence services | **supported** | CR:M14-003 (partial); TEST:InMemoryDataProvider.extensionPersistence.test.ts; TEST:SupabaseDataProvider.test.ts (persistence); `DataProvider.createExtensionPersistenceService` |
+| S-164 | Activation lifecycle cleanup disposes renderer registrations and never mutates stale state | **supported** | CR:M5-011, M5-012 (partial); TEST:extensionSmoke.test.ts (T5 — disposal on deactivation); TEST:extensionRenderSurface.test.ts (T5 — renderer unregistration); `internalExtensionRenderSurface.ts` |
+
 ---
 
 ## 3. Deferred / Unsupported V1 Behavior Matrix
@@ -212,8 +224,8 @@ This document is the downstream consumer of the [M15 Contract-Recheck Matrix](./
 
 | Row ID | Behavior | Classification | Evidence |
 |---|---|---|---|
-| D-001 | User-facing extension manager UI (install, enable/disable, settings edit) | **deferred** | CR:M14-001; BLOCKER:B-001 |
-| D-002 | Persisted enablement, settings, failed load, contribution cleanup | **deferred** | CR:M14-003; BLOCKER:B-001 |
+| D-001 | Extension installation, update, and deletion from manager UI | **deferred** | CR:M14-001; BLOCKER:B-001; ABSENCE:grep -rE 'installExtension|uninstallExtension|deleteExtension|removeExtension' src/tools/video-editor/components/ExtensionManager/ |
+| D-002 | Failed extension load recovery and automated diagnostic triage | **deferred** | CR:M14-003; BLOCKER:B-001 |
 | D-003 | Integrity mismatch prevents installation/activation | **deferred** | CR:M14-004; BLOCKER:B-001; DOC:extensions-trust-envelope.md§6 (planned M4–M5) |
 | D-004 | Extension state persistence, workspace pack load, bundle pack validation | **deferred** | CR:M14-005; BLOCKER:B-001 |
 | D-005 | Migration diagnostics for older metadata shapes | **deferred** | CR:M14-006; BLOCKER:B-001 |
@@ -339,8 +351,9 @@ This document is the downstream consumer of the [M15 Contract-Recheck Matrix](./
 | D-131 | DSL/compiler canary reading `CreativeContext.timeline`, storing source/source-map, emitting `TimelineProposal` | **deferred** | CR:M3-013; `SourceMapRuntime` exists; explicit DSL canary test not identified |
 | D-132 | Proposal diff rendering, source-map navigation from diff/diagnostic UI, stale badges | **deferred** | CR:M3-015; infrastructure exists; dedicated rendering tests not identified |
 | D-133 | Schema capability registry tests (supported widgets, unsupported diagnostics, validation, custom widget placeholder) | **deferred** | CR:M2-007; concept documented; dedicated registry tests not identified |
-| D-134 | Extension status drawer: active extension IDs, contribution inventory, diagnostics, current blockers | **deferred** | CR:M2-009; skeletal concept; M14 owns full manager UI |
+| D-134 | Extension status drawer: active extension IDs, contribution inventory, diagnostics, current blockers, and composition-spine expansion | **deferred** | CR:M2-009; skeletal concept; the manager UI basics (enable/disable, settings editing, persistence) are now supported and credited to M5/M14 cross-delivery (see S-160–S-164); composition-spine and status-drawer expansion remain staged |
 | D-135 | Subscription cleanup dedicated tests (leaked listener prevention) | **deferred** | CR:M2-002; `DisposeHandle` infrastructure exists; dedicated leak tests not identified |
+| D-136 | Standalone `@reigh/editor-sdk` npm package publishing (independent npm registry publication with its own `package.json`, versioning, and distribution outside the monorepo) | **deferred** | ABSENCE:grep -r 'standalone-publish' src/sdk/; `@reigh/editor-sdk` is a monorepo path alias resolving to `src/sdk/index.ts` — it does not have its own `package.json`, publishConfig, or independent build pipeline (no standalone-publish markers exist). The SDK is monorepo-extractable (verified by `scripts/quality/check-video-editor-sdk-imports.mjs` external-consumption smoke). Standalone npm publishing has not been implemented. |
 
 ---
 
@@ -353,6 +366,7 @@ These behaviors are documented as unsupported across all milestones and have no 
 | Behavior | Evidence |
 |---|---|
 | Marketplace / extension registry | ABSENCE:grep -r 'marketplace' src/sdk/; CR:X-006 |
+| Standalone `@reigh/editor-sdk` npm publishing | Deferred — see D-136 above. The SDK is monorepo-extractable but has not been published as an independent npm package. |
 | Cloud extension loading | ABSENCE:grep -r 'cloud.*extension' src/tools/video-editor/runtime/ |
 | Sandboxed execution (iframe/Worker/ShadowRealm) | DOC:extensions-trust-envelope.md§5 |
 | Theme contributions | ABSENCE:grep -r 'theme.*contribution' src/sdk/index.ts |
@@ -392,7 +406,8 @@ These behaviors are documented as unsupported across all milestones and have no 
 | Shader & WebGL Bridge | 6 |
 | Provider Compatibility | 4 |
 | Cross-Cutting Guarantees | 6 |
-| **Total supported** | **91** |
+| Extension Manager, Persistence & Cleanup | 5 |
+| **Total supported** | **96** |
 
 ### 5.2 Deferred V1 behaviors
 
@@ -410,8 +425,8 @@ These behaviors are documented as unsupported across all milestones and have no 
 | Shader Frontend (M13) | 3 |
 | TimelinePatch Reserved Ops | 2 |
 | Permissions & Sandboxing | 4 |
-| Structural Deferrals | 6 |
-| **Total deferred** | **69** |
+| Structural Deferrals | 7 |
+| **Total deferred** | **70** |
 
 ---
 
@@ -454,4 +469,4 @@ Each deferred row maps to the contract-recheck row(s) where the gap was identifi
 
 | Date | Change |
 |---|---|
-| 2026-06-20 | Initial supported/deferred matrix for M15. Derived from contract-recheck matrix (122 rows, 70 pass, 52 gap), provider compatibility matrix, trust envelope, shader execution model, and frontend closure checklist. |
+| 2026-07-07 | Reconciled matrix with final foundation state (T11): narrowed D-001 to install/update/delete only, narrowed D-002 to failed-load recovery; added S-160–S-164 for delivered manager UI, persisted enablement/settings, and lifecycle cleanup; updated D-134 to credit M5/M14 cross-delivery while keeping composition-spine expansion staged; D-136 standalone npm publishing deferral confirmed. |

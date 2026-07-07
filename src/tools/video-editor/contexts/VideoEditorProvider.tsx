@@ -36,6 +36,11 @@ import {
   type DiagnosticCollection,
 } from '@reigh/editor-sdk';
 import { createExtensionContext } from '@/tools/video-editor/runtime/extensionContextFactory';
+import { createRendererRegistry } from '@/tools/video-editor/runtime/extensionRendererRegistry';
+import {
+  createInternalExtensionRenderSurface,
+  resolveRegisteredSlotRenderers,
+} from '@/tools/video-editor/runtime/extensionRenderSurface';
 import type { CreativeContext } from '@reigh/editor-sdk';
 import { useAgentChatRegistry } from '@/shared/contexts/AgentChatContext.tsx';
 import { clearTimelineClipData, setTimelineClipData } from '@/shared/state/selectionStore.ts';
@@ -172,6 +177,7 @@ function InnerProvider({
   transitionRegistryRef,
   clipTypeRegistryRef,
   agentToolRegistryRef,
+  rendererRegistryRef,
 }: {
   children: React.ReactNode;
   effectCatalog?: VideoEditorEffectCatalog | null;
@@ -184,6 +190,7 @@ function InnerProvider({
   transitionRegistryRef: React.MutableRefObject<TransitionRegistry | null>;
   clipTypeRegistryRef: React.MutableRefObject<ClipTypeRegistry | null>;
   agentToolRegistryRef: React.MutableRefObject<AgentToolRegistry | null>;
+  rendererRegistryRef: React.MutableRefObject<ReturnType<typeof createRendererRegistry>>;
 }) {
   useRenderDiagnostic('VideoEditorProvider');
   const runtime = useVideoEditorRuntime();
@@ -342,6 +349,9 @@ function InnerProvider({
         const transitionRegistry = transitionRegistryRef.current;
         const clipTypeRegistry = clipTypeRegistryRef.current;
         const agentToolRegistry = agentToolRegistryRef.current;
+        const diagnosticsService =
+          host.lifecycles.get(extId)?.diagnosticsService ??
+          createExtensionDiagnosticsService(extId);
         // Create per-extension commands service backed by the shared registry
         const commandsService: ExtensionCommandService | undefined = registry
           ? {
@@ -358,9 +368,7 @@ function InnerProvider({
           ? createEffectRegistrationService({
               extension: ext,
               effectRegistry,
-              diagnosticsService:
-                host.lifecycles.get(extId)?.diagnosticsService ??
-                createExtensionDiagnosticsService(extId),
+              diagnosticsService,
             })
           : undefined;
         // Create per-extension transitions service backed by the shared TransitionRegistry.
@@ -368,9 +376,7 @@ function InnerProvider({
           ? createTransitionRegistrationService({
               extension: ext,
               transitionRegistry,
-              diagnosticsService:
-                host.lifecycles.get(extId)?.diagnosticsService ??
-                createExtensionDiagnosticsService(extId),
+              diagnosticsService,
             })
           : undefined;
         // Create per-extension clipTypes service backed by the shared ClipTypeRegistry.
@@ -378,9 +384,7 @@ function InnerProvider({
           ? createClipTypeRegistrationService({
               extension: ext,
               clipTypeRegistry,
-              diagnosticsService:
-                host.lifecycles.get(extId)?.diagnosticsService ??
-                createExtensionDiagnosticsService(extId),
+              diagnosticsService,
             })
           : undefined;
         // Create per-extension agent tools service backed by the shared AgentToolRegistry.
@@ -401,7 +405,22 @@ function InnerProvider({
               },
             }
           : undefined;
-        return createExtensionContext(ext, liveCreativeOverrides, commandsService, effectsService, transitionsService, clipTypesService, agentToolsService);
+        return createExtensionContext(
+          ext,
+          liveCreativeOverrides,
+          commandsService,
+          effectsService,
+          transitionsService,
+          clipTypesService,
+          agentToolsService,
+          undefined,
+          undefined,
+          createInternalExtensionRenderSurface({
+            extension: ext,
+            diagnosticsService,
+            rendererRegistry: rendererRegistryRef.current,
+          }),
+        );
       },
     );
     syncExtensionDiagnosticsToCollection(diagnosticCollection, 'extension-lifecycle', [
@@ -663,6 +682,7 @@ function InnerProvider({
             commandRegistryRef={commandRegistryRef}
             effectRegistryRef={effectRegistryRef}
             agentToolRegistryRef={agentToolRegistryRef}
+            rendererRegistryRef={rendererRegistryRef}
             activeExtensionIds={activeExtensionIds}
           />
           <VideoEditorTransitionRegistryLifecycle
@@ -711,6 +731,7 @@ function VideoEditorEffectRegistryLifecycle({
   commandRegistryRef,
   effectRegistryRef,
   agentToolRegistryRef,
+  rendererRegistryRef,
   activeExtensionIds,
 }: {
   effectsQueryData: Array<{ slug: string; code: string }> | undefined;
@@ -719,6 +740,7 @@ function VideoEditorEffectRegistryLifecycle({
   commandRegistryRef: React.MutableRefObject<CommandRegistry | null>;
   effectRegistryRef: React.MutableRefObject<EffectRegistry | null>;
   agentToolRegistryRef: React.MutableRefObject<AgentToolRegistry | null>;
+  rendererRegistryRef: React.MutableRefObject<ReturnType<typeof createRendererRegistry>>;
   activeExtensionIds: ReadonlySet<string>;
 }) {
   const { registry: effectRegistry, snapshot: effectRegistrySnapshot } = useEffectRegistryContext();
@@ -745,13 +767,14 @@ function VideoEditorEffectRegistryLifecycle({
     // - agentTool: future-only scaffolding, not yet a public contribution system
     const handle = host.onLifecycleDisposed((extensionId: string) => {
       commandRegistry?.unregisterAll(extensionId);
+      rendererRegistryRef.current.unregisterAll(extensionId);
       effectRegistry.unregisterOwner(extensionId);
       agentToolRegistry?.unregisterAll(extensionId);
       removeExtensionDiagnosticsFromCollection(diagnosticCollection, extensionId);
       clearExtensionSettingsFromLocalStorage(extensionId);
     });
     return () => handle.dispose();
-  }, [commandRegistryRef, diagnosticCollection, effectRegistry, lifecycleHostRef, agentToolRegistryRef]);
+  }, [commandRegistryRef, diagnosticCollection, effectRegistry, lifecycleHostRef, agentToolRegistryRef, rendererRegistryRef]);
 
   useEffect(() => {
     syncExtensionDiagnosticsToCollection(
@@ -923,6 +946,10 @@ export function VideoEditorProvider({
   // ---- M8: transition registry ref (registry is created by TransitionRegistryProvider,
   //        exposed via context and stored here for the synchronize effect) ----
   const transitionRegistryRef = useRef<TransitionRegistry | null>(null);
+  const rendererRegistryRef = useRef(createRendererRegistry());
+  const [rendererRegistrySnapshot, setRendererRegistrySnapshot] = useState(
+    () => rendererRegistryRef.current.getSnapshot(),
+  );
 
   // ---- M9: clip-type registry ref (registry is created by ClipTypeRegistryProvider,
   //        exposed via context and stored here for the synchronize effect) ----
@@ -938,6 +965,13 @@ export function VideoEditorProvider({
   if (!diagnosticCollectionRef.current) {
     diagnosticCollectionRef.current = createDiagnosticCollection();
   }
+
+  useEffect(() => {
+    const registry = rendererRegistryRef.current;
+    const handle = registry.subscribe(setRendererRegistrySnapshot);
+    setRendererRegistrySnapshot(registry.getSnapshot());
+    return () => handle.dispose();
+  }, []);
 
   // ---- M6b: Process manager (host override or default from declared process specs) ----
   const processManagerRef = useRef<ProcessManager | null>(null);
@@ -1012,6 +1046,10 @@ export function VideoEditorProvider({
       host?.disposeAll();
     };
   }, []);
+  const resolvedExtensionsConfig = useMemo(
+    () => resolveRegisteredSlotRenderers(extensionRuntime, rendererRegistrySnapshot),
+    [extensionRuntime, rendererRegistrySnapshot],
+  );
 
   const runtimeValue = useMemo(() => ({
     provider: dataProvider,
@@ -1047,7 +1085,7 @@ export function VideoEditorProvider({
     timelineId,
     timelineName,
     userId,
-    extensions: extensionRuntime.config,
+    extensions: resolvedExtensionsConfig,
     extensionRuntime,
     commandRegistry: commandRegistryRef.current ?? undefined,
     agentToolRegistry: agentToolRegistryRef.current ?? undefined,
@@ -1062,7 +1100,7 @@ export function VideoEditorProvider({
       ? processResultAttachRecords
       : undefined,
     recordProcessResultAttach,
-  }), [agentChatRegistry.register, agentChatRegistry.unregister, dataProvider, projectId, shotsHost, timelineId, timelineName, userId, extensionRuntime.config, extensionRuntime, processResultAttachRecords, processStatuses, recordProcessResultAttach]);
+  }), [agentChatRegistry.register, agentChatRegistry.unregister, dataProvider, projectId, shotsHost, timelineId, timelineName, userId, resolvedExtensionsConfig, extensionRuntime, processResultAttachRecords, processStatuses, recordProcessResultAttach]);
 
   return (
     <DataProviderWrapper value={runtimeValue}>
@@ -1077,6 +1115,7 @@ export function VideoEditorProvider({
         transitionRegistryRef={transitionRegistryRef}
         clipTypeRegistryRef={clipTypeRegistryRef}
         agentToolRegistryRef={agentToolRegistryRef}
+        rendererRegistryRef={rendererRegistryRef}
       >
         {children}
       </InnerProvider>

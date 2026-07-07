@@ -44,6 +44,7 @@ import type {
   OutputFormatContribution,
   OutputFormatRef,
   ProcessContribution,
+  ProcessManifestEntry,
   PreviewArtifactManifestProfile,
   ReferenceState,
   ReighExtension,
@@ -61,8 +62,7 @@ import type {
 import { metadataJsonOutputExtension } from './metadata-json-output-example';
 import { processExample } from './process-example';
 
-type ProcessSpec = ProcessContribution['spec'];
-type ProcessOperationSpec = NonNullable<ProcessSpec['operations']>[number];
+type ProcessOperationSpec = NonNullable<ProcessManifestEntry['operations']>[number];
 type ProcessStatus =
   | {
       readonly processId: string;
@@ -71,7 +71,7 @@ type ProcessStatus =
       readonly message?: string;
       readonly updatedAt?: string;
       readonly pid?: number;
-      readonly version?: ProcessSpec['version'];
+      readonly version?: ProcessManifestEntry['version'];
     }
   | {
       readonly processId: string;
@@ -116,7 +116,7 @@ function isOutputFormatContribution(value: unknown): value is OutputFormatContri
 }
 
 function findProcessOperation(
-  spec: ProcessSpec,
+  spec: ProcessManifestEntry,
   operationId: string,
 ): ProcessOperationSpec | undefined {
   return spec.operations?.find((operation) => operation.id === operationId);
@@ -128,7 +128,7 @@ const sourceProcessContribution = assertPresent(
 );
 const sourceProcessSpec = assertPresent(
   processExample.manifest.processes?.[0],
-  'source process spec',
+  'source process manifest entry',
 );
 const sourceAnalyzeOperation = assertPresent(
   findProcessOperation(sourceProcessSpec, 'analyze'),
@@ -155,7 +155,7 @@ const ex04ExportOperation: ProcessOperationSpec = Object.freeze({
   determinism: 'process-dependent',
 });
 
-const ex04ProcessSpec: ProcessSpec = Object.freeze({
+const ex04ProcessSpec: ProcessManifestEntry = Object.freeze({
   ...sourceProcessSpec,
   description:
     'Trusted local stdio-JSON-RPC process composed into EX-04 for route-scoped metadata sidecar export evidence.',
@@ -877,7 +877,7 @@ export interface OutputFormatSidecarComposedContract {
   readonly extension: ReighExtension;
   readonly outputFormat: RenderDependentOutputFormatContribution;
   readonly processContribution: ProcessContribution;
-  readonly processSpec: ProcessSpec;
+  readonly processSpec: ProcessManifestEntry;
   readonly graph: CompositionGraph;
   readonly consumedMaterial: RenderMaterialRef;
   readonly artifactEvidence: readonly OutputFormatSidecarArtifactEvidence[];

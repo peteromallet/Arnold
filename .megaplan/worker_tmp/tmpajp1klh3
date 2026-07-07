@@ -1,0 +1,1628 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+Review the implementation against the success criteria.
+
+        Project directory:
+        /workspace/extension-foundation-completion/reigh-app
+
+        Brief summary: # Extension Foundation Completion
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: Extension Foundation Completion
+
+## Overview
+Complete the remaining extension-foundation release work without expanding into composition-spine, marketplace, sandboxing, or process runtime. The plan treats the brief as mostly accurate, with two repo-verified adjustments: M3 proposal import is already wired and should only be regression-tested, and this checkout does not expose `ctx.slots.register()`, so production smoke should use the existing slot/render-registration path unless a worker finds an already-supported public slot API.
+
+## Phase 1: Release Gate Triage And M1 Contract Fixes
+
+### Step 1: Capture the current gate failures (`package.json`, quality scripts)
+**Complexity: 2**
+1. Run the cheapest failing commands first: `npm run check:extension-drift -- --release`, `npm run check:sdk-public-exports -- --release`, `npm run check:video-editor-sdk-imports`, then `npm run test:extensions`.
+2. Record exact failures before editing so any later remaining failure can be classified as fixed, deferred, or unrelated baseline.
+
+### Step 2: Fix contribution-kind drift parsing (`scripts/quality/check-extension-drift.mjs`)
+**Complexity: 2**
+1. Point the SDK kind source at `src/sdk/video/families/contributionKinds.ts`, or teach the parser to follow the `kinds.ts` re-export if that is simpler in the current script shape.
+2. Re-run the drift release gate and handle any real reserved-kind manifest failures directly, without weakening release behavior.
+
+### Step 3: Repair public SDK export governance (`config/contracts/registry.json`, `src/sdk/video/families/processes.ts`)
+**Complexity: 3**
+1. Remove stale forbidden process internals from the `editor-sdk-public-entrypoint` expected exports.
+2. Replace `ProcessManifestEntry = ProcessSpec` with a public-safe shape that does not leak the forbidden `ProcessSpec` alias.
+3. Update SDK barrel or governance tests only if the intentional public API surface changes.
+4. Re-run `npm run check:sdk-public-exports -- --release`.
+
+### Step 4: Stabilize `test:extensions` imports (`src/sdk/index.test.ts`, `src/sdk/examples-governance.test.ts`, `src/sdk/extensionSettingsService.test.ts`)
+**Complexity: 2**
+1. Run the five Vitest files from `test:extensions` after Steps 2-3.
+2. If imports fail, fix the tests with the narrowest supported import path or local mock; do not reintroduce SDK imports from video-editor runtime internals.
+3. Keep the tests validating public SDK behavior rather than internal provider construction.
+
+## Phase 2: Production Smoke Becomes Real Runtime Behavior
+
+### Step 5: Make the smoke extension render a stable status-bar contribution (`src/sdk/smoke/extensionSmoke.ts`)
+**Complexity: 4**
+1. Add a real renderer for the smoke slot with `data-testid="extension-smoke-status"` and `EXTENSION_SMOKE_CONTRIBUTION_ID` as the stable contribution anchor.
+2. Use the existing renderer-registration mechanism if available; if the implementation proves there is no public slot renderer API, add the smallest host-owned slot/render registration surface and register it in contract governance.
+3. Ensure cleanup disposes the registration and does not mutate raw timeline internals.
+
+### Step 6: Wire `?extensionSmoke=1` into production entry points (`BrowserVideoEditorProvider.tsx`, `VideoEditorPage.tsx`)
+**Complexity: 3**
+1. In `BrowserVideoEditorProvider`, read the effective search params and prepend `getExtensionSmokeExtension(...)` to direct extensions only when the query value is exactly `1`.
+2. In `VideoEditorPage`, do the same for the internal production app path because it currently calls `useExtensionLoaderWiring` directly and does not pass through `BrowserVideoEditorProvider`.
+3. Preserve existing behavior when no extensions are supplied and when the smoke parameter is absent.
+
+### Step 7: Test smoke activation and provider/page wiring (`extensionSmoke.test.ts`, provider/page tests)
+**Complexity: 3**
+1. Update `src/sdk/smoke/extensionSmoke.test.ts` from no-op activation assertions to renderer/registration/disposal assertions.
+2. Add or extend `src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx` to prove the smoke extension is injected and existing direct extensions remain in order.
+3. Add the smallest app-path test proving `VideoEditorPage` or its loader invocation sees the smoke extension when `?extensionSmoke=1` is present.
+
+## Phase 3: SDK Packagability Truthfulness
+
+### Step 8: Reclassify npm publishability without weakening import gates (`scripts/quality/check-video-editor-sdk-imports.mjs`, docs)
+**Complexity: 2**
+1. Keep the current SDK import-boundary and external-consumer checks as release gates.
+2. Update script wording/docs that imply a fully publishable standalone npm package if the repo only proves monorepo extractability/external consumption.
+3. Add an explicit deferred supported/deferred row for standalone `@reigh/editor-sdk` npm package publishing if it is not implemented in this sprint.
+
+## Phase 4: Manager Enable/Disable And Settings Proof
+
+### Step 9: Add an integrated enable/disable cycle smoke (`tests/e2e/extension-harness.spec.ts`, `ExtensionHarnessPage.tsx`)
+**Complexity: 4**
+1. Add a harness scenario that uses the real manager, repository persistence, loader re-resolution, and a visible contribution.
+2. Test disable: contribution visible -> toggle off -> persisted disabled state -> refresh key or equivalent re-resolution -> contribution disappears without page refresh.
+3. Test enable: toggle on -> persisted enabled state -> re-resolution -> contribution reappears without page refresh.
+4. Avoid using only static mocked package-state inventory, because that would not prove the runtime chain.
+
+### Step 10: Verify and document settings editor posture (`ExtensionManager.tsx`, manager tests, docs)
+**Complexity: 2**
+1. Confirm `SchemaForm` is used for schema-backed settings and the key-value/raw fallback only applies to schemaless or legacy snapshots.
+2. Add or tighten tests in `ExtensionManager.test.tsx` if the current tests do not prove this split.
+3. Document the fallback as intentional rather than replacing it with forced `SchemaForm` for extensions that have no manifest schema.
+
+## Phase 5: Docs Reconciliation
+
+### Step 11: Reconcile supported/deferred matrices (`docs/video-editor/extension-platform-supported-deferred.md`)
+**Complexity: 3**
+1. Move D-001 and D-002 out of deferred status where M5 code/tests prove manager UI, persisted enablement/settings, and cleanup behavior.
+2. Add or revise rows so install/update/delete/marketplace/sandboxing remain clearly deferred.
+3. Update D-134 to credit M5 for the manager UI while keeping composition-spine/status-drawer expansion staged.
+4. Add an explicit npm SDK publishability deferral if Step 8 does not implement full package publishing.
+
+### Step 12: Fix stale readiness references (`docs/extensions/phase4-readiness.md`)
+**Complexity: 1**
+1. Replace references to nonexistent `runtime/contributionFamilies.ts` with actual current anchors: `src/sdk/video/families/contributionKinds.ts`, `src/sdk/video/families/familyDefinitions.ts`, `src/tools/video-editor/runtime/extensionSurface.ts`, and `config/extensions/family-maturity.json`.
+2. Remove or correct references to missing docs instead of letting docs imply nonexistent source-of-truth files.
+
+## Phase 6: Final Verification
+
+### Step 13: Run release verification in widening order
+**Complexity: 3**
+1. Run targeted checks for touched areas first: smoke Vitest, provider/page tests, manager tests, E2E harness scenario, drift, public exports, SDK imports.
+2. Run `npm run test:extensions` as the main release gate.
+3. Run `npm run build`.
+4. Run the existing proposal vertical test as a regression guard; no M3 code change is expected unless the test fails.
+
+## Execution Order
+1. Baseline gate failures first, then contract fixes, then runtime smoke, then E2E/docs.
+2. Do not touch proposal runtime unless the existing proposal vertical test contradicts the repo evidence.
+3. Keep docs updates after code/test changes so claims match the final checkout.
+
+## Validation Order
+1. `npm run check:extension-drift -- --release`.
+2. `npm run check:sdk-public-exports -- --release`.
+3. `npm run check:video-editor-sdk-imports`.
+4. `npm run test:extensions:production-smoke` plus focused provider/page tests.
+5. `npm run test:readiness:e2e -- tests/e2e/extension-harness.spec.ts` or equivalent Playwright invocation.
+6. `npm run test:extensions`.
+7. `npm run build`.
+8. Existing proposal vertical test as a regression guard.
+
+
+        Review execution context (`finalize.json` + `execution.json`, prompt projection only):
+        {
+  "tasks": [
+    {
+      "id": "T1",
+      "depends_on": [],
+      "status": "skipped",
+      "kind": "audit",
+      "complexity": 2,
+      "reviewer_verdict": "deferred_baseline_unavailable",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This is read-only command triage, but it spans several release gates and must preserve exact failure evidence so later workers do not mistake baseline failures for regressions.",
+      "executor_notes": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative.",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": []
+    },
+    {
+      "id": "T2",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Fix contribution-kind drift parsing in `scripts/quality/check-extension-drift.mjs` so the release gate reads the canonical SDK kind source at `src/sdk/video/families/contributionKinds.ts` or correctly follows the current re-export chain. Re-run the drift release gate and fix any genuine reserved-kind manifest failures without weakening release behavior.",
+      "complexity_justification": "The change is localized to one quality script and possibly manifest data it reports; the failure mode is visible in the drift gate output, so it does not require broad system reasoning.",
+      "executor_notes": "Changed KINDS_PATH (src/sdk/video/families/kinds.ts, a deprecated re-export shim) to CANONICAL_KINDS_PATH (src/sdk/video/families/contributionKinds.ts, the canonical authority). The parseSdkContributionKinds function now regex-matches VideoContributionKind type union and VIDEO_CONTRIBUTION_KINDS array from the canonical source instead of falling back to family-maturity.json for kind enumeration. Verified: release gate passes (exit 0, 0 errors, 0 warnings), audit mode passes, existing tests retain same pass/fail profile (pre-existing fixture/doc failures unchanged). No reserved-kind manifest...",
+      "files_changed": [
+        "scripts/quality/check-extension-drift.mjs",
+        "scripts/quality/lib/drift-check-helpers.mjs"
+      ],
+      "commands_run": [
+        "node scripts/quality/check-extension-drift.mjs --release",
+        "node scripts/quality/check-extension-drift.mjs --audit",
+        "node --test scripts/quality/check-extension-drift.test.mjs"
+      ]
+    },
+    {
+      "id": "T3",
+      "depends_on": [
+        "T2"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This changes the public SDK type contract consumed by manifest types, schemas, examples, and export governance; a subtle alias leak or registry mismatch can pass local type edits while breaking downstream public API expectations.",
+      "executor_notes": "Changed `ProcessManifestEntry` from a `ProcessSpec` alias to its own public-safe interface and made `ProcessContribution.spec` use that public shape. Updated `config/contracts/reigh-extension.schema.json` so process manifest and process contribution schema refs no longer expose `ProcessSpec`. Cleaned `config/contracts/registry.json` to remove forbidden process-internal expected exports and added currently exported public symbols needed for contract-governance parity. Updated public examples to use `ProcessManifestEntry` terminology/typing. Verified with `npm run check:sdk-public-exports --...",
+      "files_changed": [
+        "config/contracts/registry.json",
+        "config/contracts/reigh-extension.schema.json",
+        "src/examples/output-format-sidecar-composed-example.ts",
+        "src/examples/process-example.ts",
+        "src/sdk/video/families/processes.ts"
+      ],
+      "commands_run": [
+        "npm ci",
+        "npm ci --legacy-peer-deps",
+        "npm run check:sdk-public-exports -- --release",
+        "node scripts/quality/check-contract-governance.mjs",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts src/sdk/index.test.ts src/sdk/examples-governance.test.ts"
+      ]
+    },
+    {
+      "id": "T4",
+      "depends_on": [
+        "T3"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "The work is focused test repair caused by import path and public-surface changes from T3; failures should point directly to the stale import or mock.",
+      "executor_notes": "Verification complete. Ran all 5 vitest files in test:extensions suite (manifest-schema-validation.test.ts, index.test.ts, examples-governance.test.ts, extensionSettingsService.test.ts, extensionSettingsMigration.test.ts) \u2014 1056 tests pass. Also ran boundary tests, family definition tests, conformance gate tests, and production smoke test \u2014 all pass. No test regressions from T3's ProcessManifestEntry refactor. The extension-drift gate passes (0 errors, 0 warnings). SDK public exports gate passes (0 violations). Video-editor SDK imports gate passes. The one pre-existing failure is the family...",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/manifest-schema-validation.test.ts src/sdk/examples-governance.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/boundary.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/sdk/video/families/conformanceGate.test.ts src/sdk/video/families/familyDefinitions.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/extensionSettingsService.test.ts src/sdk/extensionSettingsMigration.test.ts",
+        "npm run test:extensions",
+        "npm run check:sdk-public-exports -- --release",
+        "npm run check:video-editor-sdk-imports",
+        "node scripts/quality/check-extension-drift.mjs --release",
+        "npm run test:extensions:production-smoke"
+      ]
+    },
+    {
+      "id": "T5",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Make the production smoke extension register and render a real stable status-bar contribution in `src/sdk/smoke/extensionSmoke.ts`. Add a renderer that produces `data-testid=\"extension-smoke-status\"` anchored by `EXTENSION_SMOKE_CONTRIBUTION_ID`, use the existing render-id/renderer-registry path if supported, or add the smallest host-owned slot/render registration surface and contract governance needed if no public surface exists; ensure activation cleanup disposes registrations and never mut...",
+      "complexity_justification": "This touches extension runtime registration semantics and possibly SDK/public context contracts used outside the smoke test; a bad cleanup or registration design can leave stale runtime contributions beyond the edited file.",
+      "executor_notes": "Replaced the smoke extension's no-op activation with host-owned renderer registration keyed by the contribution render ID, producing a real `data-testid=\"extension-smoke-status\"` status-bar node and disposing the registration on deactivation. Wired both provider runtimes to expose the internal render surface, project registered slot renderers into the active extension config, and unregister all renderers on lifecycle disposal. Verified with targeted smoke/runtime tests (31 passing) plus `npx tsc --noEmit --pretty false`.",
+      "files_changed": [
+        "src/sdk/internalExtensionRenderSurface.ts",
+        "src/sdk/smoke/extensionSmoke.ts",
+        "src/sdk/smoke/extensionSmoke.test.ts",
+        "src/tools/video-editor/contexts/EditorRuntimeProvider.tsx",
+        "src/tools/video-editor/contexts/VideoEditorProvider.tsx",
+        "src/tools/video-editor/runtime/extensionContextFactory.ts",
+        "src/tools/video-editor/runtime/extensionRendererRegistry.ts",
+        "src/tools/video-editor/runtime/extensionRenderSurface.ts",
+        "src/tools/video-editor/runtime/extensionRenderSurface.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/smoke/extensionSmoke.test.ts src/tools/video-editor/runtime/extensionRenderSurface.test.ts",
+        "npx tsc --noEmit --pretty false"
+      ]
+    },
+    {
+      "id": "T6",
+      "depends_on": [
+        "T5"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Wire `?extensionSmoke=1` into both production entry paths. In `BrowserVideoEditorProvider.tsx`, prepend `getExtensionSmokeExtension(...)` to direct extensions only when the effective query value is exactly `1`; in `VideoEditorPage.tsx`, apply the same behavior for the internal app path that calls `useExtensionLoaderWiring` directly. Preserve extension order and existing behavior when the parameter is absent or not exactly `1`.",
+      "complexity_justification": "The wiring spans two entry points with ordering and query-param semantics that must remain consistent, but it is not a shared schema or state-machine change.",
+      "executor_notes": "Wired ?extensionSmoke=1 into both entry paths. In BrowserVideoEditorProvider.tsx: added getExtensionSmokeExtension import from @/sdk/smoke/extensionSmoke, added useMemo to React imports, computed effectiveDirectExtensions via useMemo that checks window.location.search and prepends smoke extension to the extensions prop when the query value is exactly '1', and passed effectiveDirectExtensions to useExtensionLoaderWiring. In VideoEditorPage.tsx: added getExtensionSmokeExtension import, moved useSearchParams() earlier in the component to avoid temporal dead zone, computed smokeDirectExtensions...",
+      "files_changed": [
+        "src/tools/video-editor/browser/BrowserVideoEditorProvider.tsx",
+        "src/tools/video-editor/pages/VideoEditorPage.tsx"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit --pretty false",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/smoke/extensionSmoke.test.ts src/tools/video-editor/runtime/extensionRenderSurface.test.ts src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx src/tools/video-editor/pages/VideoEditorPage.test.tsx",
+        "npm run test:extensions:production-smoke",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts src/sdk/index.test.ts src/sdk/examples-governance.test.ts src/sdk/extensionSettingsService.test.ts src/sdk/extensionSettingsMigration.test.ts"
+      ]
+    },
+    {
+      "id": "T7",
+      "depends_on": [
+        "T6"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Update production smoke and entry-path tests. Convert `src/sdk/smoke/extensionSmoke.test.ts` from no-op activation checks to registration/rendering/disposal assertions; add or extend `src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx` for exact-`1` injection and direct-extension order; add the smallest `VideoEditorPage` or loader invocation test proving the stock app path sees the smoke extension when `?extensionSmoke=1` is present.",
+      "complexity_justification": "These tests coordinate mocks across SDK smoke activation, provider wiring, and page-loader behavior; correctness depends on observing the real ordering and disposal contracts added in T5-T6.",
+      "executor_notes": "Extended BrowserVideoEditorProvider.test.tsx with 7 new tests ('?extensionSmoke=1 injection' describe block): prepend-on-exact-1, absent-injection, zero-non-match, true-non-match, order-preservation (smoke before direct), smoke-only-when-no-prop, and activate/permissions structural assertions. Extended VideoEditorPage.test.tsx with 4 new tests ('?extensionSmoke=1 page integration' describe block): passes smoke on exact-1, rejects on absent, rejects on zero, rejects on empty value. Updated VideoEditorProvider mock to destructure and capture 'extensions' prop plus 'lastProviderExtensions' sta...",
+      "files_changed": [
+        "src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx",
+        "src/tools/video-editor/pages/VideoEditorPage.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/smoke/extensionSmoke.test.ts src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx src/tools/video-editor/pages/VideoEditorPage.test.tsx",
+        "npm run test:extensions:production-smoke",
+        "npx tsc --noEmit --pretty false"
+      ]
+    },
+    {
+      "id": "T8",
+      "depends_on": [
+        "T7"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Reclassify SDK packagability truthfully without weakening import gates. Keep `scripts/quality/check-video-editor-sdk-imports.mjs` enforcing SDK import-boundary and external-consumer checks, but update script wording and relevant docs so they claim monorepo extractability/external consumption rather than a fully publishable standalone `@reigh/editor-sdk` npm package; add an explicit deferred note or row for standalone npm publishing if it is still not implemented.",
+      "complexity_justification": "This is a narrow wording/docs alignment task around one quality script and documentation; the import gates remain mechanically the same, so the main risk is overclaiming language.",
+      "executor_notes": "Updated check-video-editor-sdk-imports.mjs: relabeled packagability smoke section header, JSDoc, fixture comment/label, success messages, execution header, and final summary from 'packagability'/'standalone npm publishing' to 'monorepo extractability'/'external consumption'. All import-boundary enforcement code unchanged. Added explicit deferred-note referencing D-136 in 3 locations within the script. Updated extension-platform-supported-deferred.md: added D-136 deferred row for standalone @reigh/editor-sdk npm publishing with ABSENCE:grep evidence, added standalone npm publishing to out-of...",
+      "files_changed": [
+        "scripts/quality/check-video-editor-sdk-imports.mjs",
+        "docs/video-editor/extension-platform-supported-deferred.md"
+      ],
+      "commands_run": [
+        "node scripts/quality/check-video-editor-sdk-imports.mjs",
+        "node scripts/quality/check-extension-deferred-claims.mjs",
+        "node scripts/quality/check-extension-release-checklist.mjs"
+      ]
+    },
+    {
+      "id": "T9",
+      "depends_on": [
+        "T8"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Add an integrated extension manager enable/disable cycle smoke in `tests/e2e/extension-harness.spec.ts` and `ExtensionHarnessPage.tsx`. Use the real manager, repository persistence, loader re-resolution, and a visible contribution to prove disable hides the contribution and persists disabled state without page refresh, then enable restores persisted state and the contribution reappears without page refresh; avoid static-only mocked package inventory as the proof path.",
+      "complexity_justification": "This is browser-level integration across manager UI, persistence, extension loader re-resolution, and rendered contribution state; a partial mock can give a false positive while leaving the runtime chain broken.",
+      "executor_notes": "Added a dedicated `manager-cycle` harness scenario backed by the real BrowserVideoEditorProvider, a repository from InMemoryDataProvider.createExtensionPersistenceService(), loader re-resolution, and the live smoke status-bar contribution. The page now exposes `extension-manager-cycle-package-state` and `extension-manager-cycle-persisted-enablement` probes, and the Playwright spec drives loaded -> disabled-by-user -> loaded plus contribution visible -> absent -> visible without page refresh. `npx tsc --noEmit --pretty false` passes. The required file-scope Playwright run was attempted once,...",
+      "files_changed": [
+        "src/tools/video-editor/pages/ExtensionHarnessPage.tsx",
+        "tests/e2e/extension-harness.spec.ts"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit --pretty false",
+        "npx playwright test tests/e2e/extension-harness.spec.ts"
+      ]
+    },
+    {
+      "id": "T10",
+      "depends_on": [
+        "T9"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Verify and document extension manager settings behavior. Confirm `ExtensionManager.tsx` uses `SchemaForm` for schema-backed settings and only falls back to key-value/raw editing for schemaless or legacy snapshots; add or tighten `ExtensionManager.test.tsx` coverage for that split; update docs to describe the fallback as intentional rather than a missing SchemaForm implementation.",
+      "complexity_justification": "The task is mostly assertion and documentation around an existing manager behavior split; it touches UI tests and docs, but the expected behavior is already defined and local.",
+      "executor_notes": "Confirmed ExtensionManager.tsx uses SchemaForm when schemaAnalysis?.schema exists (line 828) and falls back to raw key-value editing (lines 835-853) for schemaless/legacy packages \u2014 this is already correct, intentional behavior. Added 7 new tests in a dedicated 'ExtensionManager \u2014 settings editing: SchemaForm vs key-value fallback (T10)' describe block: (1) SchemaForm renders with valid settingsSchema + properties, (2) SchemaForm fields are interactive, (3) Edit button shown for supported schema, (4) raw key-value fallback when no manifest provided, (5) blocked reconciliation when schemales...",
+      "files_changed": [
+        "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+        "docs/video-editor/extension-author-contract.md",
+        "docs/video-editor/extension-platform-supported-deferred.md"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+        "npx tsc --noEmit --pretty false",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts src/sdk/index.test.ts src/sdk/examples-governance.test.ts src/sdk/extensionSettingsService.test.ts src/sdk/extensionSettingsMigration.test.ts src/sdk/smoke/extensionSmoke.test.ts src/tools/video-editor/runtime/extensionRenderSurface.test.ts src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+        "npm run test:extensions:production-smoke"
+      ]
+    },
+    {
+      "id": "T11",
+      "depends_on": [
+        "T10"
+      ],
+      "status": "done",
+      "kind": "docs",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Reconcile `docs/video-editor/extension-platform-supported-deferred.md` with the final foundation state. Move D-001 and D-002 out of deferred status where code/tests prove manager UI, persisted enablement/settings, and cleanup; keep install/update/delete/marketplace/sandboxing clearly deferred; update D-134 to credit M5 for manager UI while keeping composition-spine/status-drawer expansion staged; include the standalone SDK npm publishing deferral if T8 did not implement publishing.",
+      "complexity_justification": "This documentation must synthesize several implemented proof points without crossing North Star constraints, so the risk is inconsistent public claims rather than code mechanics.",
+      "executor_notes": "Reconciled extension-platform-supported-deferred.md with final foundation state: (1) Narrowed D-001 from 'User-facing extension manager UI (install, enable/disable, settings edit)' to 'Extension installation, update, and deletion from manager UI' \u2014 deferred, with precise ABSENCE:grep evidence confirming no installExtension/uninstallExtension/deleteExtension/removeExtension symbols in ExtensionManager. (2) Narrowed D-002 from 'Persisted enablement, settings, failed load, contribution cleanup' to 'Failed extension load recovery and automated diagnostic triage' \u2014 deferred. (3) Added new sectio...",
+      "files_changed": [
+        "docs/video-editor/extension-platform-supported-deferred.md"
+      ],
+      "commands_run": [
+        "node scripts/quality/check-extension-deferred-claims.mjs",
+        "node scripts/quality/check-extension-release-checklist.mjs",
+        "grep -rnE 'installExtension|uninstallExtension|deleteExtension|removeExtension' src/tools/video-editor/components/ExtensionManager/"
+      ]
+    },
+    {
+      "id": "T12",
+      "depends_on": [
+        "T11"
+      ],
+      "status": "done",
+      "kind": "docs",
+      "complexity": 1,
+      "reviewer_verdict": "",
+      "description": "Fix stale readiness references in `docs/extensions/phase4-readiness.md`. Replace nonexistent `runtime/contributionFamilies.ts` references with current anchors: `src/sdk/video/families/contributionKinds.ts`, `src/sdk/video/families/familyDefinitions.ts`, `src/tools/video-editor/runtime/extensionSurface.ts`, and `config/extensions/family-maturity.json`; remove or correct references to missing docs so the readiness page points only to real source-of-truth files.",
+      "complexity_justification": "This is a mechanical documentation reference correction in one file with explicit replacement targets and no product logic.",
+      "executor_notes": "Fixed 3 stale `contributionFamilies.ts` references in docs/extensions/phase4-readiness.md. (1) Lines 13-28: replaced vague 'src/sdk/index.ts defines ContributionKind...' with precise canonical source list pointing to src/sdk/video/families/contributionKinds.ts, src/sdk/video/families/familyDefinitions.ts, config/extensions/family-maturity.json, and extensionSurface.ts. (2) Line 146 (roadmap reconciliation table): updated 'Current status' to list canonical sources instead of 'src/sdk/index.ts'. (3) Lines 166-170 (Phase 4 entry decision): updated action item to reference current canonical sou...",
+      "files_changed": [
+        "docs/extensions/phase4-readiness.md"
+      ],
+      "commands_run": [
+        "node scripts/quality/check-readiness.mjs --strict",
+        "npm run test:readiness"
+      ]
+    },
+    {
+      "id": "T13",
+      "depends_on": [
+        "T12"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This is a broad verification task requiring command selection, baseline comparison, and failure classification across release gates, but it should not introduce new implementation logic.",
+      "executor_notes": "Final verification complete. test:extensions vitest: 1056/1056 pass. test:readiness: 577/577 pass. production-smoke: 30/30 pass. tsc: 0 errors. SDK public exports: 0 violations. SDK imports/extractability: all pass. Extension drift: 0 errors, 0 warnings. Release checklist: 42/42 release-blocking rows pass. Pre-existing failures: family-conformance process gap (1 error), deferred-claims sandbox patterns (2 false positives), build (process runtime node: imports). Fixed 1 T5 regression: internalExtensionRenderSurface.ts type cast for external consumer validator. Baseline null \u2014 cannot compare.",
+      "files_changed": [
+        "src/sdk/internalExtensionRenderSurface.ts"
+      ],
+      "commands_run": [
+        "npm run test:extensions",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts src/sdk/index.test.ts src/sdk/examples-governance.test.ts src/sdk/extensionSettingsService.test.ts src/sdk/extensionSettingsMigration.test.ts",
+        "npm run build",
+        "npm run test:readiness",
+        "npm run test:extensions:production-smoke",
+        "npx tsc --noEmit --pretty false",
+        "npm run check:sdk-public-exports -- --release",
+        "npm run check:video-editor-sdk-imports",
+        "npm run check:extension-drift -- --release",
+        "npm run check:deferred-claims:release",
+        "npm run check:release-checklist:release"
+      ]
+    }
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "verdict": "",
+      "question": "Did the baseline capture include exact outputs for all listed gates, including `check:extension-family-conformance`, with failures classified before any edits?",
+      "executor_note": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative."
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "verdict": "",
+      "question": "Does the drift gate now parse the canonical contribution kind source or current re-export chain and pass in release mode without suppressing reserved-kind failures?",
+      "executor_note": "VERIFIED. The drift gate now reads src/sdk/video/families/contributionKinds.ts (the canonical source) instead of the deprecated kinds.ts re-export. Release mode passes with exit code 0, 0 errors, 0 warnings. All 8 checked-in extension manifests pass validation. No reserved-kind failures: the only reserved kind ('agent') does not appear in any checked-in manifest. The fix does not suppress reserved-kind failures \u2014 reserved kinds in manifests remain detectable via the sdk.reserved set populated from the family maturity matrix. Release behavior is preserved (all mismatch categories hard-fail i..."
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "verdict": "",
+      "question": "Does `ProcessManifestEntry` expose a public-safe shape, with export governance passing and no stale expected forbidden process internals remaining in registry/schema/examples/tests?",
+      "executor_note": "VERIFIED. `ProcessManifestEntry` is now a standalone public-safe interface rather than a `ProcessSpec` alias, `ProcessContribution.spec` points at the public-safe manifest shape, the frozen manifest schema no longer references `ProcessSpec`, the public examples use `ProcessManifestEntry` terminology/types, `npm run check:sdk-public-exports -- --release` passes, and `node scripts/quality/check-contract-governance.mjs` passes without stale forbidden process-internal registry expectations."
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "verdict": "",
+      "question": "Do the `test:extensions` Vitest files import only supported public SDK paths or local mocks, with no new runtime-internal SDK dependencies?",
+      "executor_note": "CONFIRMED: No new runtime-internal SDK dependencies introduced. The five test:extensions vitest files import from: (a) '@/sdk/index' / '@/sdk/index.ts' (public barrel), (b) '@/sdk/video/families/processes' (canonical @publicContract module re-exported by barrel), (c) './index' and './extensionSettingsService' etc. (same-package canonical modules), (d) '@/tools/video-editor/runtime/extensionContextFactory' (pre-existing test-only runtime import in index.test.ts L39 and extensionSettingsService.test.ts L29 \u2014 used to create context for tests, not new from T3), (e) './__tests__/inMemoryStateRep..."
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "verdict": "",
+      "question": "Does the smoke extension register, render, and dispose a real status-bar contribution with `data-testid=\"extension-smoke-status\"` while avoiding raw timeline mutation?",
+      "executor_note": "Yes. The smoke extension now registers a real host-owned status-bar renderer keyed by `EXTENSION_SMOKE_CONTRIBUTION_ID`, renders a stable `data-testid=\"extension-smoke-status\"` anchor, and removes that renderer through lifecycle disposal without touching raw timeline mutation APIs."
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "verdict": "",
+      "question": "Is `?extensionSmoke=1` honored by both `BrowserVideoEditorProvider` and `VideoEditorPage`, with exact query matching and original extension order preserved?",
+      "executor_note": "Confirmed. Both entry paths honor ?extensionSmoke=1 with exact query matching. BrowserVideoEditorProvider checks window.location.search via getExtensionSmokeExtension, which returns null unless the value is exactly '1'. When present, the smoke extension is prepended to the extensions prop array ([smokeExt, ...extensions]), preserving original extension order. When absent, extensions are passed through unchanged. VideoEditorPage checks searchParams (from useSearchParams) with the same getExtensionSmokeExtension function, and passes [smokeExt] as directExtensions to useExtensionLoaderWiring w..."
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "verdict": "",
+      "question": "Do the smoke/provider/page tests fail on missing renderer registration, missing disposal, wrong query matching, or wrong extension order?",
+      "executor_note": "VERIFIED. The smoke/provider/page tests collectively fail on all four failure modes: (1) Missing renderer registration \u2014 extensionSmoke.test.ts:238 verifies registerRenderer() is called with the smoke contribution ID; if skipped, expect(registerRenderer).toHaveBeenCalledWith(...) fails. (2) Missing disposal \u2014 extensionSmoke.test.ts:239-240 verifies handle.dispose() calls disposeRenderer; if disposal is a no-op, expect(disposeRenderer).toHaveBeenCalledTimes(1) fails. (3) Wrong query matching \u2014 BrowserVideoEditorProvider.test.tsx tests absent/zero/true/inactive values all assert extensions.le..."
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "verdict": "",
+      "question": "Do SDK import gates still enforce boundaries while wording/docs avoid claiming standalone npm publishability unless it is actually implemented?",
+      "executor_note": "CONFIRMED. SDK import gates in check-video-editor-sdk-imports.mjs still enforce boundaries without weakening \u2014 the import-boundary check (lines 1-373) is completely unchanged, negative fixtures still catch violations, and the extractability smoke still runs. The only changes are wording updates: 'packagability' \u2192 'monorepo extractability', 'standalone npm' \u2192 'external consumption', with explicit deferral notes pointing to D-136 in extension-platform-supported-deferred.md. The script no longer claims standalone npm publishability. The supported-deferred matrix now explicitly defers standalon..."
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "verdict": "",
+      "question": "Does the integrated harness test prove real manager toggle persistence, loader re-resolution, and contribution disappearance/reappearance without page refresh?",
+      "executor_note": "Yes by implementation: the new `manager-cycle` scenario runs the real ExtensionManager against a real repository-backed loader path, and the e2e assertions check package-state transition (`loaded` -> `disabled-by-user` -> `loaded`), persisted enablement transition (`enabled` -> `disabled` -> `enabled`), and smoke contribution disappearance/reappearance without reloading the page. Browser-level execution was attempted once but blocked by missing Playwright browser binaries in the environment."
+    },
+    {
+      "id": "SC10",
+      "task_id": "T10",
+      "verdict": "",
+      "question": "Do manager tests and docs prove `SchemaForm` is used when a schema exists and the raw/key-value editor is only a schemaless or legacy fallback?",
+      "executor_note": "YES. The manager tests and docs prove SchemaForm is used when a schema exists and the raw/key-value editor is only a schemaless or legacy fallback. Evidence: (1) ExtensionManager.tsx lines 828-853 show schemaAnalysis?.schema ? <SchemaForm> : (keys > 0 ? raw inputs : 'No keys'). (2) New tests in 'SchemaForm is used for schema-backed settings' describe block verify SchemaForm renders (data-testid='schema-form') when a valid settingsSchema with properties is provided AND raw text inputs are NOT present. (3) New tests in 'key-value fallback is used for schemaless or legacy settings' verify raw..."
+    },
+    {
+      "id": "SC11",
+      "task_id": "T11",
+      "verdict": "",
+      "question": "Does the supported/deferred matrix reflect delivered manager enablement/settings work without implying marketplace, sandboxing, install/update/delete, process runtime, or composition-spine support?",
+      "executor_note": "CONFIRMED. The supported/deferred matrix now accurately reflects delivered manager enablement/settings work (S-160\u2013S-164) while keeping clearly deferred: install/update/delete (narrowed D-001), marketplace (D-123, plus out-of-scope section 4.1), sandboxing (D-120, D-121, D-122, plus out-of-scope section 4.1), process runtime (D-023\u2013D-027), and composition-spine expansion (D-134 updated to credit M5/M14 while staging the drawer). No overclaiming \u2014 every supported row has concrete evidence links and (partial) contract-recheck references."
+    },
+    {
+      "id": "SC12",
+      "task_id": "T12",
+      "verdict": "",
+      "question": "Does `phase4-readiness.md` now reference only existing current source-of-truth files and remove or correct missing-doc links?",
+      "executor_note": "Confirmed: phase4-readiness.md now references only existing source-of-truth files (contributionKinds.ts, familyDefinitions.ts, family-maturity.json, extensionSurface.ts). The three remaining mentions of 'contributionFamilies.ts' are historical context describing what the stale roadmap/ticket docs cite \u2014 not current file references \u2014 and are appropriately framed as 'stale path in this checkout'. All referenced files verified to exist on disk."
+    },
+    {
+      "id": "SC13",
+      "task_id": "T13",
+      "verdict": "",
+      "question": "Did final verification run the targeted gates, `npm run test:extensions`, `npm run build`, and the proposal vertical Vitest, with any failures compared to the T1 baseline?",
+      "executor_note": "VERIFIED. Ran npm run test:extensions (vitest: 1056 pass; chain stops at pre-existing family-conformance error), npm run build (pre-existing node: import failure \u2014 out of scope), npm run test:readiness (proposal vertical: 577 pass, 23/23 M5 cleared). Production smoke: 30/30. tsc: 0 errors. All release gates pass except 3 pre-existing failures unchanged by this plan. Baseline null \u2014 authoritative comparison delegated to harness. No new regressions introduced; 1 regression from T5 fixed (external consumer type cast)."
+    }
+  ],
+  "task_updates": [
+    {
+      "task_id": "T2",
+      "status": "done",
+      "executor_notes": "Changed KINDS_PATH (src/sdk/video/families/kinds.ts, a deprecated re-export shim) to CANONICAL_KINDS_PATH (src/sdk/video/families/contributionKinds.ts, the canonical authority). The parseSdkContributionKinds function now regex-matches VideoContributionKind type union and VIDEO_CONTRIBUTION_KINDS array from the canonical source instead of falling back to family-maturity.json for kind enumeration. Verified: release gate passes (exit 0, 0 errors, 0 warnings), audit mode passes, existing tests retain same pass/fail profile (pre-existing fixture/doc failures unchanged). No reserved-kind manifest...",
+      "files_changed": [
+        "scripts/quality/check-extension-drift.mjs",
+        "scripts/quality/lib/drift-check-helpers.mjs"
+      ],
+      "commands_run": [
+        "node scripts/quality/check-extension-drift.mjs --release",
+        "node scripts/quality/check-extension-drift.mjs --audit",
+        "node --test scripts/quality/check-extension-drift.test.mjs"
+      ]
+    },
+    {
+      "task_id": "T3",
+      "status": "done",
+      "executor_notes": "Changed `ProcessManifestEntry` from a `ProcessSpec` alias to its own public-safe interface and made `ProcessContribution.spec` use that public shape. Updated `config/contracts/reigh-extension.schema.json` so process manifest and process contribution schema refs no longer expose `ProcessSpec`. Cleaned `config/contracts/registry.json` to remove forbidden process-internal expected exports and added currently exported public symbols needed for contract-governance parity. Updated public examples to use `ProcessManifestEntry` terminology/typing. Verified with `npm run check:sdk-public-exports --...",
+      "files_changed": [
+        "config/contracts/registry.json",
+        "config/contracts/reigh-extension.schema.json",
+        "src/examples/output-format-sidecar-composed-example.ts",
+        "src/examples/process-example.ts",
+        "src/sdk/video/families/processes.ts"
+      ],
+      "commands_run": [
+        "npm ci",
+        "npm ci --legacy-peer-deps",
+        "npm run check:sdk-public-exports -- --release",
+        "node scripts/quality/check-contract-governance.mjs",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts src/sdk/index.test.ts src/sdk/examples-governance.test.ts"
+      ]
+    },
+    {
+      "task_id": "T4",
+      "status": "done",
+      "executor_notes": "Verification complete. Ran all 5 vitest files in test:extensions suite (manifest-schema-validation.test.ts, index.test.ts, examples-governance.test.ts, extensionSettingsService.test.ts, extensionSettingsMigration.test.ts) \u2014 1056 tests pass. Also ran boundary tests, family definition tests, conformance gate tests, and production smoke test \u2014 all pass. No test regressions from T3's ProcessManifestEntry refactor. The extension-drift gate passes (0 errors, 0 warnings). SDK public exports gate passes (0 violations). Video-editor SDK imports gate passes. The one pre-existing failure is the family...",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/manifest-schema-validation.test.ts src/sdk/examples-governance.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/boundary.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/sdk/video/families/conformanceGate.test.ts src/sdk/video/families/familyDefinitions.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/extensionSettingsService.test.ts src/sdk/extensionSettingsMigration.test.ts",
+        "npm run test:extensions",
+        "npm run check:sdk-public-exports -- --release",
+        "npm run check:video-editor-sdk-imports",
+        "node scripts/quality/check-extension-drift.mjs --release",
+        "npm run test:extensions:production-smoke"
+      ]
+    },
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "Replaced the smoke extension's no-op activation with host-owned renderer registration keyed by the contribution render ID, producing a real `data-testid=\"extension-smoke-status\"` status-bar node and disposing the registration on deactivation. Wired both provider runtimes to expose the internal render surface, project registered slot renderers into the active extension config, and unregister all renderers on lifecycle disposal. Verified with targeted smoke/runtime tests (31 passing) plus `npx tsc --noEmit --pretty false`.",
+      "files_changed": [
+        "src/sdk/internalExtensionRenderSurface.ts",
+        "src/sdk/smoke/extensionSmoke.ts",
+        "src/sdk/smoke/extensionSmoke.test.ts",
+        "src/tools/video-editor/contexts/EditorRuntimeProvider.tsx",
+        "src/tools/video-editor/contexts/VideoEditorProvider.tsx",
+        "src/tools/video-editor/runtime/extensionContextFactory.ts",
+        "src/tools/video-editor/runtime/extensionRendererRegistry.ts",
+        "src/tools/video-editor/runtime/extensionRenderSurface.ts",
+        "src/tools/video-editor/runtime/extensionRenderSurface.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/smoke/extensionSmoke.test.ts src/tools/video-editor/runtime/extensionRenderSurface.test.ts",
+        "npx tsc --noEmit --pretty false"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "Wired ?extensionSmoke=1 into both entry paths. In BrowserVideoEditorProvider.tsx: added getExtensionSmokeExtension import from @/sdk/smoke/extensionSmoke, added useMemo to React imports, computed effectiveDirectExtensions via useMemo that checks window.location.search and prepends smoke extension to the extensions prop when the query value is exactly '1', and passed effectiveDirectExtensions to useExtensionLoaderWiring. In VideoEditorPage.tsx: added getExtensionSmokeExtension import, moved useSearchParams() earlier in the component to avoid temporal dead zone, computed smokeDirectExtensions...",
+      "files_changed": [
+        "src/tools/video-editor/browser/BrowserVideoEditorProvider.tsx",
+        "src/tools/video-editor/pages/VideoEditorPage.tsx"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit --pretty false",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/smoke/extensionSmoke.test.ts src/tools/video-editor/runtime/extensionRenderSurface.test.ts src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx src/tools/video-editor/pages/VideoEditorPage.test.tsx",
+        "npm run test:extensions:production-smoke",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts src/sdk/index.test.ts src/sdk/examples-governance.test.ts src/sdk/extensionSettingsService.test.ts src/sdk/extensionSettingsMigration.test.ts"
+      ]
+    },
+    {
+      "task_id": "T7",
+      "status": "done",
+      "executor_notes": "Extended BrowserVideoEditorProvider.test.tsx with 7 new tests ('?extensionSmoke=1 injection' describe block): prepend-on-exact-1, absent-injection, zero-non-match, true-non-match, order-preservation (smoke before direct), smoke-only-when-no-prop, and activate/permissions structural assertions. Extended VideoEditorPage.test.tsx with 4 new tests ('?extensionSmoke=1 page integration' describe block): passes smoke on exact-1, rejects on absent, rejects on zero, rejects on empty value. Updated VideoEditorProvider mock to destructure and capture 'extensions' prop plus 'lastProviderExtensions' sta...",
+      "files_changed": [
+        "src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx",
+        "src/tools/video-editor/pages/VideoEditorPage.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/smoke/extensionSmoke.test.ts src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx src/tools/video-editor/pages/VideoEditorPage.test.tsx",
+        "npm run test:extensions:production-smoke",
+        "npx tsc --noEmit --pretty false"
+      ]
+    },
+    {
+      "task_id": "T8",
+      "status": "done",
+      "executor_notes": "Updated check-video-editor-sdk-imports.mjs: relabeled packagability smoke section header, JSDoc, fixture comment/label, success messages, execution header, and final summary from 'packagability'/'standalone npm publishing' to 'monorepo extractability'/'external consumption'. All import-boundary enforcement code unchanged. Added explicit deferred-note referencing D-136 in 3 locations within the script. Updated extension-platform-supported-deferred.md: added D-136 deferred row for standalone @reigh/editor-sdk npm publishing with ABSENCE:grep evidence, added standalone npm publishing to out-of...",
+      "files_changed": [
+        "scripts/quality/check-video-editor-sdk-imports.mjs",
+        "docs/video-editor/extension-platform-supported-deferred.md"
+      ],
+      "commands_run": [
+        "node scripts/quality/check-video-editor-sdk-imports.mjs",
+        "node scripts/quality/check-extension-deferred-claims.mjs",
+        "node scripts/quality/check-extension-release-checklist.mjs"
+      ]
+    },
+    {
+      "task_id": "T9",
+      "status": "done",
+      "executor_notes": "Added a dedicated `manager-cycle` harness scenario backed by the real BrowserVideoEditorProvider, a repository from InMemoryDataProvider.createExtensionPersistenceService(), loader re-resolution, and the live smoke status-bar contribution. The page now exposes `extension-manager-cycle-package-state` and `extension-manager-cycle-persisted-enablement` probes, and the Playwright spec drives loaded -> disabled-by-user -> loaded plus contribution visible -> absent -> visible without page refresh. `npx tsc --noEmit --pretty false` passes. The required file-scope Playwright run was attempted once,...",
+      "files_changed": [
+        "src/tools/video-editor/pages/ExtensionHarnessPage.tsx",
+        "tests/e2e/extension-harness.spec.ts"
+      ],
+      "commands_run": [
+        "npx tsc --noEmit --pretty false",
+        "npx playwright test tests/e2e/extension-harness.spec.ts"
+      ]
+    },
+    {
+      "task_id": "T10",
+      "status": "done",
+      "executor_notes": "Confirmed ExtensionManager.tsx uses SchemaForm when schemaAnalysis?.schema exists (line 828) and falls back to raw key-value editing (lines 835-853) for schemaless/legacy packages \u2014 this is already correct, intentional behavior. Added 7 new tests in a dedicated 'ExtensionManager \u2014 settings editing: SchemaForm vs key-value fallback (T10)' describe block: (1) SchemaForm renders with valid settingsSchema + properties, (2) SchemaForm fields are interactive, (3) Edit button shown for supported schema, (4) raw key-value fallback when no manifest provided, (5) blocked reconciliation when schemales...",
+      "files_changed": [
+        "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+        "docs/video-editor/extension-author-contract.md",
+        "docs/video-editor/extension-platform-supported-deferred.md"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+        "npx tsc --noEmit --pretty false",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts src/sdk/index.test.ts src/sdk/examples-governance.test.ts src/sdk/extensionSettingsService.test.ts src/sdk/extensionSettingsMigration.test.ts src/sdk/smoke/extensionSmoke.test.ts src/tools/video-editor/runtime/extensionRenderSurface.test.ts src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+        "npm run test:extensions:production-smoke"
+      ]
+    },
+    {
+      "task_id": "T11",
+      "status": "done",
+      "executor_notes": "Reconciled extension-platform-supported-deferred.md with final foundation state: (1) Narrowed D-001 from 'User-facing extension manager UI (install, enable/disable, settings edit)' to 'Extension installation, update, and deletion from manager UI' \u2014 deferred, with precise ABSENCE:grep evidence confirming no installExtension/uninstallExtension/deleteExtension/removeExtension symbols in ExtensionManager. (2) Narrowed D-002 from 'Persisted enablement, settings, failed load, contribution cleanup' to 'Failed extension load recovery and automated diagnostic triage' \u2014 deferred. (3) Added new sectio...",
+      "files_changed": [
+        "docs/video-editor/extension-platform-supported-deferred.md"
+      ],
+      "commands_run": [
+        "node scripts/quality/check-extension-deferred-claims.mjs",
+        "node scripts/quality/check-extension-release-checklist.mjs",
+        "grep -rnE 'installExtension|uninstallExtension|deleteExtension|removeExtension' src/tools/video-editor/components/ExtensionManager/"
+      ]
+    },
+    {
+      "task_id": "T12",
+      "status": "done",
+      "executor_notes": "Fixed 3 stale `contributionFamilies.ts` references in docs/extensions/phase4-readiness.md. (1) Lines 13-28: replaced vague 'src/sdk/index.ts defines ContributionKind...' with precise canonical source list pointing to src/sdk/video/families/contributionKinds.ts, src/sdk/video/families/familyDefinitions.ts, config/extensions/family-maturity.json, and extensionSurface.ts. (2) Line 146 (roadmap reconciliation table): updated 'Current status' to list canonical sources instead of 'src/sdk/index.ts'. (3) Lines 166-170 (Phase 4 entry decision): updated action item to reference current canonical sou...",
+      "files_changed": [
+        "docs/extensions/phase4-readiness.md"
+      ],
+      "commands_run": [
+        "node scripts/quality/check-readiness.mjs --strict",
+        "npm run test:readiness"
+      ]
+    },
+    {
+      "task_id": "T13",
+      "status": "done",
+      "executor_notes": "Final verification complete. test:extensions vitest: 1056/1056 pass. test:readiness: 577/577 pass. production-smoke: 30/30 pass. tsc: 0 errors. SDK public exports: 0 violations. SDK imports/extractability: all pass. Extension drift: 0 errors, 0 warnings. Release checklist: 42/42 release-blocking rows pass. Pre-existing failures: family-conformance process gap (1 error), deferred-claims sandbox patterns (2 false positives), build (process runtime node: imports). Fixed 1 T5 regression: internalExtensionRenderSurface.ts type cast for external consumer validator. Baseline null \u2014 cannot compare.",
+      "files_changed": [
+        "src/sdk/internalExtensionRenderSurface.ts"
+      ],
+      "commands_run": [
+        "npm run test:extensions",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts src/sdk/index.test.ts src/sdk/examples-governance.test.ts src/sdk/extensionSettingsService.test.ts src/sdk/extensionSettingsMigration.test.ts",
+        "npm run build",
+        "npm run test:readiness",
+        "npm run test:extensions:production-smoke",
+        "npx tsc --noEmit --pretty false",
+        "npm run check:sdk-public-exports -- --release",
+        "npm run check:video-editor-sdk-imports",
+        "npm run check:extension-drift -- --release",
+        "npm run check:deferred-claims:release",
+        "npm run check:release-checklist:release"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC2",
+      "executor_note": "VERIFIED. The drift gate now reads src/sdk/video/families/contributionKinds.ts (the canonical source) instead of the deprecated kinds.ts re-export. Release mode passes with exit code 0, 0 errors, 0 warnings. All 8 checked-in extension manifests pass validation. No reserved-kind failures: the only reserved kind ('agent') does not appear in any checked-in manifest. The fix does not suppress reserved-kind failures \u2014 reserved kinds in manifests remain detectable via the sdk.reserved set populated from the family maturity matrix. Release behavior is preserved (all mismatch categories hard-fail i..."
+    },
+    {
+      "sense_check_id": "SC3",
+      "executor_note": "VERIFIED. `ProcessManifestEntry` is now a standalone public-safe interface rather than a `ProcessSpec` alias, `ProcessContribution.spec` points at the public-safe manifest shape, the frozen manifest schema no longer references `ProcessSpec`, the public examples use `ProcessManifestEntry` terminology/types, `npm run check:sdk-public-exports -- --release` passes, and `node scripts/quality/check-contract-governance.mjs` passes without stale forbidden process-internal registry expectations."
+    },
+    {
+      "sense_check_id": "SC4",
+      "executor_note": "CONFIRMED: No new runtime-internal SDK dependencies introduced. The five test:extensions vitest files import from: (a) '@/sdk/index' / '@/sdk/index.ts' (public barrel), (b) '@/sdk/video/families/processes' (canonical @publicContract module re-exported by barrel), (c) './index' and './extensionSettingsService' etc. (same-package canonical modules), (d) '@/tools/video-editor/runtime/extensionContextFactory' (pre-existing test-only runtime import in index.test.ts L39 and extensionSettingsService.test.ts L29 \u2014 used to create context for tests, not new from T3), (e) './__tests__/inMemoryStateRep..."
+    },
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "Yes. The smoke extension now registers a real host-owned status-bar renderer keyed by `EXTENSION_SMOKE_CONTRIBUTION_ID`, renders a stable `data-testid=\"extension-smoke-status\"` anchor, and removes that renderer through lifecycle disposal without touching raw timeline mutation APIs."
+    },
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "Confirmed. Both entry paths honor ?extensionSmoke=1 with exact query matching. BrowserVideoEditorProvider checks window.location.search via getExtensionSmokeExtension, which returns null unless the value is exactly '1'. When present, the smoke extension is prepended to the extensions prop array ([smokeExt, ...extensions]), preserving original extension order. When absent, extensions are passed through unchanged. VideoEditorPage checks searchParams (from useSearchParams) with the same getExtensionSmokeExtension function, and passes [smokeExt] as directExtensions to useExtensionLoaderWiring w..."
+    },
+    {
+      "sense_check_id": "SC7",
+      "executor_note": "VERIFIED. The smoke/provider/page tests collectively fail on all four failure modes: (1) Missing renderer registration \u2014 extensionSmoke.test.ts:238 verifies registerRenderer() is called with the smoke contribution ID; if skipped, expect(registerRenderer).toHaveBeenCalledWith(...) fails. (2) Missing disposal \u2014 extensionSmoke.test.ts:239-240 verifies handle.dispose() calls disposeRenderer; if disposal is a no-op, expect(disposeRenderer).toHaveBeenCalledTimes(1) fails. (3) Wrong query matching \u2014 BrowserVideoEditorProvider.test.tsx tests absent/zero/true/inactive values all assert extensions.le..."
+    },
+    {
+      "sense_check_id": "SC8",
+      "executor_note": "CONFIRMED. SDK import gates in check-video-editor-sdk-imports.mjs still enforce boundaries without weakening \u2014 the import-boundary check (lines 1-373) is completely unchanged, negative fixtures still catch violations, and the extractability smoke still runs. The only changes are wording updates: 'packagability' \u2192 'monorepo extractability', 'standalone npm' \u2192 'external consumption', with explicit deferral notes pointing to D-136 in extension-platform-supported-deferred.md. The script no longer claims standalone npm publishability. The supported-deferred matrix now explicitly defers standalon..."
+    },
+    {
+      "sense_check_id": "SC9",
+      "executor_note": "Yes by implementation: the new `manager-cycle` scenario runs the real ExtensionManager against a real repository-backed loader path, and the e2e assertions check package-state transition (`loaded` -> `disabled-by-user` -> `loaded`), persisted enablement transition (`enabled` -> `disabled` -> `enabled`), and smoke contribution disappearance/reappearance without reloading the page. Browser-level execution was attempted once but blocked by missing Playwright browser binaries in the environment."
+    },
+    {
+      "sense_check_id": "SC10",
+      "executor_note": "YES. The manager tests and docs prove SchemaForm is used when a schema exists and the raw/key-value editor is only a schemaless or legacy fallback. Evidence: (1) ExtensionManager.tsx lines 828-853 show schemaAnalysis?.schema ? <SchemaForm> : (keys > 0 ? raw inputs : 'No keys'). (2) New tests in 'SchemaForm is used for schema-backed settings' describe block verify SchemaForm renders (data-testid='schema-form') when a valid settingsSchema with properties is provided AND raw text inputs are NOT present. (3) New tests in 'key-value fallback is used for schemaless or legacy settings' verify raw..."
+    },
+    {
+      "sense_check_id": "SC11",
+      "executor_note": "CONFIRMED. The supported/deferred matrix now accurately reflects delivered manager enablement/settings work (S-160\u2013S-164) while keeping clearly deferred: install/update/delete (narrowed D-001), marketplace (D-123, plus out-of-scope section 4.1), sandboxing (D-120, D-121, D-122, plus out-of-scope section 4.1), process runtime (D-023\u2013D-027), and composition-spine expansion (D-134 updated to credit M5/M14 while staging the drawer). No overclaiming \u2014 every supported row has concrete evidence links and (partial) contract-recheck references."
+    },
+    {
+      "sense_check_id": "SC12",
+      "executor_note": "Confirmed: phase4-readiness.md now references only existing source-of-truth files (contributionKinds.ts, familyDefinitions.ts, family-maturity.json, extensionSurface.ts). The three remaining mentions of 'contributionFamilies.ts' are historical context describing what the stale roadmap/ticket docs cite \u2014 not current file references \u2014 and are appropriately framed as 'stale path in this checkout'. All referenced files verified to exist on disk."
+    },
+    {
+      "sense_check_id": "SC13",
+      "executor_note": "VERIFIED. Ran npm run test:extensions (vitest: 1056 pass; chain stops at pre-existing family-conformance error), npm run build (pre-existing node: import failure \u2014 out of scope), npm run test:readiness (proposal vertical: 577 pass, 23/23 M5 cleared). Production smoke: 30/30. tsc: 0 errors. All release gates pass except 3 pre-existing failures unchanged by this plan. Baseline null \u2014 authoritative comparison delegated to harness. No new regressions introduced; 1 regression from T5 fixed (external consumer type cast)."
+    },
+    {
+      "sense_check_id": "SC1",
+      "executor_note": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative."
+    }
+  ],
+  "output": "Aggregated execute batches: completed 12/12. Batch 1: Fixed contribution-kind drift parsing in check-extension-drift.mjs. Changed the source path from the deprecated kinds.ts re-export module to the canonical contributionKinds.ts. The drift gate now correctly parses the VideoContributionKind type union and VIDEO_CONTRIBUTION_KINDS array via regex instead of falling back to the family maturity matrix. Release gate passes with 0 errors and 0 warnings. No reserved-kind manifest failures exist, and release behavior is preserved without weakening. Batch 2: Repaired the public process-manifest contract so ProcessManifestEntry is a standalone public-safe shape, aligned the manifest schema/examples with that shape, and cleaned the SDK registry to drop forbidden process-internal exports while adding currently exported public symbols required for contract governance. Batch 3: T4 verification complete. All SDK vitest tests pass (1056 tests across 5 files). No new failures introduced by T3's public-surface changes. Pre-existing family-conformance warning about process delegated gap metadata (owner/reason/expiration) is unrelated to T3 changes and not a regression. All release gates pass: extension-drift (0 errors), sdk-public-exports (0 violations), video-editor-sdk-imports (all passed). SC4 confirmed: no new runtime-internal SDK dependencies introduced; all imports in test:extensions vitest files are either public SDK paths, canonical @publicContract modules, pre-existing test-only r...",
+  "deviations": [
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: scripts/quality/check-extension-drift.mjs, scripts/quality/lib/drift-check-helpers.mjs",
+    "Advisory observation mismatch: git status/content hash delta found unclaimed files: .gitattributes",
+    "Advisory audit finding: Executor claimed changed files not present in git status: scripts/quality/check-extension-drift.mjs, scripts/quality/lib/drift-check-helpers.mjs",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .gitattributes",
+    "Advisory audit finding: Sense check SC3 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC11 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC12 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC13 is missing an executor acknowledgment.",
+    "Advisory audit finding: Tasks left pending after execute (executor never started them): T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13",
+    "Environment setup required npm installation; plain `npm ci` failed on an existing peer-dependency resolution conflict between `@base-ui/react` and `date-fns`, so verification used `npm ci --legacy-peer-deps`.",
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: config/contracts/registry.json, config/contracts/reigh-extension.schema.json, src/examples/output-format-sidecar-composed-example.ts, src/examples/process-example.ts, src/sdk/video/families/processes.ts",
+    "Advisory observation mismatch: git status/content hash delta found unclaimed files: .gitattributes",
+    "Advisory audit finding: Executor claimed changed files not present in git status: config/contracts/registry.json, config/contracts/reigh-extension.schema.json, scripts/quality/check-extension-drift.mjs, scripts/quality/lib/drift-check-helpers.mjs, src/examples/output-format-sidecar-composed-example.ts, src/examples/process-example.ts, src/sdk/video/families/processes.ts",
+    {
+      "omitted_count": 115,
+      "reason": "prompt projection"
+    }
+  ],
+  "files_changed": [
+    "scripts/quality/check-extension-drift.mjs",
+    "scripts/quality/lib/drift-check-helpers.mjs",
+    "config/contracts/registry.json",
+    "config/contracts/reigh-extension.schema.json",
+    "src/examples/output-format-sidecar-composed-example.ts",
+    "src/examples/process-example.ts",
+    "src/sdk/video/families/processes.ts",
+    "src/sdk/internalExtensionRenderSurface.ts",
+    "src/sdk/smoke/extensionSmoke.ts",
+    "src/sdk/smoke/extensionSmoke.test.ts",
+    "src/tools/video-editor/contexts/EditorRuntimeProvider.tsx",
+    "src/tools/video-editor/contexts/VideoEditorProvider.tsx",
+    "src/tools/video-editor/runtime/extensionContextFactory.ts",
+    "src/tools/video-editor/runtime/extensionRendererRegistry.ts",
+    "src/tools/video-editor/runtime/extensionRenderSurface.ts",
+    "src/tools/video-editor/runtime/extensionRenderSurface.test.ts",
+    "src/tools/video-editor/browser/BrowserVideoEditorProvider.tsx",
+    "src/tools/video-editor/pages/VideoEditorPage.tsx",
+    "src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx",
+    "src/tools/video-editor/pages/VideoEditorPage.test.tsx"
+  ],
+  "commands_run": [
+    "node scripts/quality/check-extension-drift.mjs --release",
+    "node scripts/quality/check-extension-drift.mjs --audit",
+    "node --test scripts/quality/check-extension-drift.test.mjs",
+    "npm ci",
+    "npm ci --legacy-peer-deps",
+    "npm run check:sdk-public-exports -- --release",
+    "node scripts/quality/check-contract-governance.mjs",
+    "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts src/sdk/index.test.ts src/sdk/examples-governance.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/manifest-schema-validation.test.ts src/sdk/examples-governance.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/sdk/boundary.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/sdk/video/families/conformanceGate.test.ts src/sdk/video/families/familyDefinitions.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/sdk/extensionSettingsService.test.ts src/sdk/extensionSettingsMigration.test.ts",
+    "npm run test:extensions",
+    "npm run check:video-editor-sdk-imports",
+    "npm run test:extensions:production-smoke",
+    "npx vitest run --config config/testing/vitest.config.ts src/sdk/smoke/extensionSmoke.test.ts src/tools/video-editor/runtime/extensionRenderSurface.test.ts",
+    "npx tsc --noEmit --pretty false",
+    "npx vitest run --config config/testing/vitest.config.ts src/sdk/smoke/extensionSmoke.test.ts src/tools/video-editor/runtime/extensionRenderSurface.test.ts src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx src/tools/video-editor/pages/VideoEditorPage.test.tsx",
+    "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts src/sdk/index.test.ts src/sdk/examples-governance.test.ts src/sdk/extensionSettingsService.test.ts src/sdk/extensionSettingsMigration.test.ts",
+    "npx vitest run --config config/testing/vitest.config.ts src/sdk/smoke/extensionSmoke.test.ts src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx src/tools/video-editor/pages/VideoEditorPage.test.tsx",
+    "node scripts/quality/check-video-editor-sdk-imports.mjs",
+    {
+      "omitted_count": 12,
+      "reason": "prompt projection"
+    }
+  ],
+  "watch_items": [
+    "Do not implement composition-spine, marketplace, install-from-URL, update/delete, dependency resolution, sandboxing, code signing, runtime permission enforcement, process execution, or sidecar support.",
+    "Keep extension code trusted and unsandboxed; do not imply sandboxing or marketplace guarantees in docs or UI copy.",
+    "Preserve existing editor behavior when no extension packages are supplied and when `?extensionSmoke=1` is absent or not exactly `1`.",
+    "Use the existing render-id/renderer-registry path for the smoke contribution if it exists; only add a minimal host-owned slot/render API if repo evidence proves none is available.",
+    "The stable smoke DOM anchor is `data-testid=\"extension-smoke-status\"`; the contribution anchor is `EXTENSION_SMOKE_CONTRIBUTION_ID`.",
+    "Process public API repair must not leak the forbidden `ProcessSpec` alias through `ProcessManifestEntry`, manifest schema/examples, or SDK barrels.",
+    "`check:extension-family-conformance` is part of `test:extensions` and must be included in baseline and final verification even though it was missing from the original validation order.",
+    "Provider/page unit tests alone do not prove the real shell render path; the E2E harness or an equivalent browser-level test must show visible contribution disappearance/reappearance without page refresh.",
+    "Standalone `@reigh/editor-sdk` npm publishing may remain deferred, but docs and gate wording must distinguish that from current external-consumer/import-boundary proof.",
+    "Proposal-mode code should be preserved; only run the existing vertical regression unless it fails and points to a real regression from this work.",
+    "Docs must move delivered manager enablement/settings behavior out of deferred status while keeping future composition-spine/status-drawer expansion staged."
+  ],
+  "user_actions": [],
+  "meta_commentary": "Execute the DAG sequentially; the heavy contract/runtime tasks are intentionally isolated so each worker can finish within one turn. T1 baseline evidence matters: later workers should fix in-scope regressions but should not chase unrelated pre-existing failures unless they block the required release gates. The most important judgment calls are to keep smoke rendering minimal and host-owned, preserve exact `?extensionSmoke=1` semantics in both entry paths, and keep docs honest about deferred npm publishing, marketplace, sandboxing, process runtime, and composition-spine capabilities."
+}
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-07T00:50:08Z",
+  "hash": "sha256:6c9674ca272c086a5a049b663578c372be13b2c36c3687a83300924c1f4b6c5f",
+  "questions": [
+    "Should the production smoke renderer introduce a public `ctx.slots.register()` API if none exists, or should it use the repo\u2019s existing render-id/renderer-registry path? This materially changes SDK public API and contract registry scope.",
+    "Is standalone npm publishing for `@reigh/editor-sdk` allowed to remain explicitly deferred as long as import-boundary and external-consumer gates pass?",
+    "Should `?extensionSmoke=1` be honored by both the SDK browser provider and the stock `VideoEditorPage` internal app path? The plan assumes yes because `VideoEditorPage` currently bypasses `BrowserVideoEditorProvider`."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`npm run test:extensions` exits successfully from the final checkout.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`scripts/quality/check-extension-drift.mjs --release` parses SDK contribution kinds from the canonical source and exits successfully without unresolved release advisories.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_build_output",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`scripts/quality/check-sdk-public-exports.mjs --release` exits successfully and the registry no longer expects forbidden process-internal exports.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`ProcessManifestEntry` no longer exposes the forbidden `ProcessSpec` public type alias.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`?extensionSmoke=1` injects a production-bundled smoke extension through real runtime loading and renders a stable DOM anchor without changing behavior when the query parameter is absent.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "drive_browser",
+        "inspect_runtime_ui",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The smoke extension activation test proves registration/rendering/disposal instead of accepting a no-op activation.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Manager enable/disable has an integrated or browser-level smoke proving toggle persistence, runtime re-resolution, and contribution disappearance/reappearance without page refresh.",
+      "priority": "must",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "observe_runtime_logs",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Manager settings behavior is either schema-backed through `SchemaForm` or explicitly tested/documented as a narrower fallback for schemaless legacy snapshots.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "SDK standalone npm publishability is either implemented and verified, or explicitly deferred in source-controlled docs/gate wording without weakening SDK import-boundary checks.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Docs no longer classify delivered M5 manager enablement/settings behavior as deferred, and composition-spine/marketplace/sandboxing/process-runtime capabilities remain clearly staged or deferred.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`npm run build` exits successfully after the implementation.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Existing proposal-mode import/accept/reject coverage continues to pass without introducing a second mutation engine.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Changes remain scoped to extension-foundation completion and avoid broad UI redesign or unrelated refactors.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "M3 proposal import is already complete in this checkout; implementation should preserve it and run existing proposal vertical coverage rather than rewrite the flow.",
+    "`SchemaForm` is already used for schema-backed manager settings, and key-value/raw editing is an intentional fallback only for schemaless or legacy settings snapshots.",
+    "A minimal inert status-bar renderer with `data-testid=\"extension-smoke-status\"` is sufficient for production smoke because the goal is proving activation/rendering, not adding visible product functionality.",
+    "`?extensionSmoke=1` should be honored by both `BrowserVideoEditorProvider` and `VideoEditorPage` because the stock app path currently calls `useExtensionLoaderWiring` directly.",
+    "SDK npm package publishing can be deferred if the docs and gate wording honestly distinguish publishability from current monorepo/external-consumer importability.",
+    "No marketplace, install-from-URL, update/delete flow, sandboxing, code signing, runtime permission enforcement, process execution, or composition-spine implementation is part of this plan."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "script",
+        "value": "npm run check:extension-drift -- --release",
+        "reason": "Direct release gate for contribution-kind/docs/manifest drift."
+      },
+      {
+        "kind": "script",
+        "value": "npm run check:sdk-public-exports -- --release",
+        "reason": "Direct release gate for public export registry and forbidden process exports."
+      },
+      {
+        "kind": "script",
+        "value": "npm run check:video-editor-sdk-imports",
+        "reason": "SDK boundary and external consumer proof affected by packagability wording/import changes."
+      },
+      {
+        "kind": "script",
+        "value": "npm run test:extensions:production-smoke",
+        "reason": "Direct smoke extension tests change from no-op to real registration/rendering."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx",
+        "reason": "Provider injection behavior for `?extensionSmoke=1`."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+        "reason": "Manager settings SchemaForm/fallback and toggle behavior are in scope."
+      },
+      {
+        "kind": "path",
+        "value": "tests/e2e/extension-harness.spec.ts",
+        "reason": "Browser-level enable/disable re-resolution smoke."
+      },
+      {
+        "kind": "script",
+        "value": "npm run test:extensions",
+        "reason": "Primary North Star release gate."
+      },
+      {
+        "kind": "script",
+        "value": "npm run build",
+        "reason": "Final build proof required by done criteria."
+      }
+    ],
+    "changed_surfaces": [
+      "scripts/quality/check-extension-drift.mjs",
+      "config/contracts/registry.json",
+      "src/sdk/video/families/processes.ts",
+      "src/sdk/index.test.ts",
+      "src/sdk/examples-governance.test.ts",
+      "src/sdk/extensionSettingsService.test.ts",
+      "scripts/quality/check-video-editor-sdk-imports.mjs",
+      "src/sdk/smoke/extensionSmoke.ts",
+      "src/sdk/smoke/extensionSmoke.test.ts",
+      "src/tools/video-editor/browser/BrowserVideoEditorProvider.tsx",
+      "src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx",
+      "src/tools/video-editor/pages/VideoEditorPage.tsx",
+      "src/tools/video-editor/pages/ExtensionHarnessPage.tsx",
+      "tests/e2e/extension-harness.spec.ts",
+      "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+      "docs/video-editor/extension-platform-supported-deferred.md",
+      "docs/extensions/phase4-readiness.md"
+    ],
+    "always_run": [
+      "npm run test:extensions",
+      "npm run build"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: config/contracts/registry.json, scripts/quality/check-extension-drift.mjs, scripts/quality/check-video-editor-sdk-imports.mjs, src/sdk/examples-governance.test.ts, src/sdk/extensionSettingsService.test.ts, src/sdk/index.test.ts, src/sdk/smoke/extensionSmoke.test.ts, src/sdk/smoke/extensionSmoke.ts, src/sdk/video/families/processes.ts, src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx, src/tools/video-editor/browser/BrowserVideoEditorProvider.tsx, src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx, src/tools/video-editor/pages/ExtensionHarnessPage.tsx, src/tools/video-editor/pages/VideoEditorPage.tsx, tests/e2e/extension-harness.spec.ts. Ignored documentation-only change(s) for selector derivation: docs/extensions/phase4-readiness.md, docs/video-editor/extension-platform-supported-deferred.md. Candidate: The core changes are scoped to SDK governance, smoke wiring, manager E2E, and docs. The final fallback remains broad because public SDK contracts and provider/runtime wiring have high regression risk.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    }
+  },
+  "structure_warnings": []
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "PROCEED",
+  "passed": true,
+  "rationale_brief": "The plan is thorough, correctly scoped, and directly addresses all 13 success criteria and every North Star requirement. It honestly adjusts the brief where repo evidence contradicts it (M3 proposal import is already wired and only needs regression; no existing slot renderer registration API exists so Step 5 conditionally handles both paths). The gate signals meta-analysis classifies all critique flags as non-blocking (significant_flags: 0, no unresolved or addressed-blocking flags).",
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "?extensionSmoke=1 is honored by both BrowserVideoEditorProvider and VideoEditorPage because the stock app path bypasses BrowserVideoEditorProvider.",
+      "rationale": "The plan's Step 6 explicitly handles both entry points. VideoEditorPage calls useExtensionLoaderWiring directly and does not pass through BrowserVideoEditorProvider, so both wiring paths must inject the smoke extension when the query parameter is exactly '1'."
+    },
+    {
+      "id": "SD2",
+      "decision": "Production smoke renderer uses the existing render-id/renderer-registry path if available; if none exists, the worker adds the smallest host-owned slot/render registration surface and registers it in contract governance.",
+      "rationale": "The plan's Step 5 conditionally handles both cases. The goal is a stable DOM anchor (data-testid='extension-smoke-status'), not a specific public API design. This keeps scope bounded while still achieving the North Star's production smoke requirement."
+    },
+    {
+      "id": "SD3",
+      "decision": "Standalone npm publishing for @reigh/editor-sdk is allowed to remain explicitly deferred as long as import-boundary and external-consumer gates pass.",
+      "rationale": "The North Star permits deferral. The SDK remains extractable and importable by external consumers. Steps 8 and 11 update docs and gate wording to honestly distinguish current monorepo extractability from future standalone publishing."
+    }
+  ],
+  "warnings": [
+    "FLAG-001 / FLAG-ALL-LOC-001 (slot renderer gap): The plan's Step 5 conditionally handles adding a host-owned slot/render registration surface if none exists. The execution worker must be prepared to touch additional files beyond changed_surfaces: ExtensionContext interface (context.ts), slotAdapter.ts, FamilyRuntimeAssembly.ts, extensionContextFactory, and sdk-public-export-allowlist.json. Scope may expand beyond the listed 17 files.",
+    "FLAG-ALL-LOC-002 (missing ProcessSpec test files): boundary.test.ts, sdk-boundary.test.ts, and barrel-import-smoke.test.ts reference ProcessSpec/ProcessManifestEntry and are not in changed_surfaces. These will likely break during Step 3 and must be fixed. The full_suite_fallback in test_blast_radius covers this but the worker should triage these files proactively.",
+    "FLAG-ALL-LOC-003 (manifest.ts): src/sdk/manifest.ts uses ProcessManifestEntry in ExtensionManifest type and is not in changed_surfaces. A shape change in Step 3 will require corresponding manifest.ts updates.",
+    "FLAG-VER-001 (smoke verification): Provider/page tests mock runtime providers and won't exercise the real shell render path. The worker should add or extend the E2E harness (Step 9) or a targeted browser test to prove data-testid='extension-smoke-status' appears in the real DOM.",
+    "FLAG-VER-003 (proposal regression): The existing proposal vertical test at src/tools/video-editor/hooks/useAgentSession.proposal-vertical.test.tsx has no dedicated npm script. The worker must invoke it directly via npx vitest run with the exact path rather than relying on a script alias.",
+    "FLAG-PREREQ-001 (family-conformance gate): check:extension-family-conformance is part of test:extensions but omitted from Step 1 triage and the validation order. The worker must include it in the baseline gate capture or risk being blocked before Vitest tests ever run.",
+    "Step 3 export-governance fix: The plan lists registry.json as a target but check-sdk-public-exports.mjs walks src/sdk/index.ts. The worker should verify the actual gate logic before editing and may need to adjust the schema (reigh-extension.schema.json) and example files (process-example.ts, process-fixture-descriptor.ts) in addition to the listed files."
+  ],
+  "orchestrator_guidance": "First iteration; follow gate recommendation: PROCEED.",
+  "carried_flags": [],
+  "iteration": 1,
+  "produced_at": "2026-07-07T01:01:23Z"
+}
+
+        Settled decisions (verify the executor implemented these correctly):
+- SD1: ?extensionSmoke=1 is honored by both BrowserVideoEditorProvider and VideoEditorPage because the stock app path bypasses BrowserVideoEditorProvider. (The plan's Step 6 explicitly handles both entry points. VideoEditorPage calls useExtensionLoaderWiring directly and does not pass through BrowserVideoEditorProvider, so both wiring paths must inject the smoke extension when the query parameter is exactly '1'.)
+- SD2: Production smoke renderer uses the existing render-id/renderer-registry path if available; if none exists, the worker adds the smallest host-owned slot/render registration surface and registers it in contract governance. (The plan's Step 5 conditionally handles both cases. The goal is a stable DOM anchor (data-testid='extension-smoke-status'), not a specific public API design. This keeps scope bounded while still achieving the North Star's production smoke requirement.)
+- SD3: Standalone npm publishing for @reigh/editor-sdk is allowed to remain explicitly deferred as long as import-boundary and external-consumer gates pass. (The North Star permits deferral. The SDK remains extractable and importable by external consumers. Steps 8 and 11 update docs and gate wording to honestly distinguish current monorepo extractability from future standalone publishing.)
+
+
+Critique flags to re-verify against the final diff:
+            [
+  {
+    "id": "verifiability-0",
+    "concern": "Criterion 4: requires human verification (drive_browser, inspect_runtime_ui).",
+    "severity": "minor",
+    "status": "open"
+  },
+  {
+    "id": "verifiability-1",
+    "concern": "Criterion 6: requires human verification (drive_browser, inspect_runtime_ui, observe_runtime_logs).",
+    "severity": "minor",
+    "status": "open"
+  },
+  {
+    "id": "verifiability-2",
+    "concern": "Criterion 12: requires human verification (subjective_judgment).",
+    "severity": "minor",
+    "status": "open"
+  }
+]
+
+            For each flag above that was raised during critique, verify whether the final diff actually addresses the concern.
+            A flag is resolved only if the final diff contains code that directly addresses the concern.
+            Do not trust pre-execute promises or plan claims; check the diff itself.
+            Add resolved flag IDs to `verified_flag_ids`.
+            Add flag IDs that are unresolved only by prose judgment, without a deterministic pre/post failing check, to `disputed_flag_ids`.
+            For any unresolved flag that is backed by a deterministic pre/post failing check, add a `rework_items` entry with a typed `target`, `issue`, `expected`, `actual`, `evidence_file`, `flag_id`, `source: "review_flag_reverify"`, and `deterministic_check`. Use `target.kind: "task"` with `task_id` for a single finalize task, `target.kind: "bulk"` with `task_ids` for a bulk operation that maps to multiple finalize tasks, or `target.kind: "manifest"` with `task_ids` for manifest-backed routes. Only use legacy `task_id: "REVIEW"` when the finding is a review blocker with no routable finalize target; execute treats that as telemetry/blocker compatibility, not runnable rework.
+
+Advisory mechanical pre-check flags:
+            [
+  {
+    "id": "PRECHECK-DIFF_SIZE_SANITY",
+    "check": "diff_size_sanity",
+    "detail": "Diff size looks larger than expected: changed_lines=1746, expected\u2248390, ratio=4.48, files=200, hunks=129.",
+    "severity": "minor",
+    "evidence_file": ".gitattributes"
+  }
+]
+
+            Copy this list verbatim into the output `pre_check_flags` field.
+
+        Historical execution audit context (`execution_audit.json`, prompt projection only):
+        {
+  "skipped": false,
+  "reason": "",
+  "findings": [
+    "Executor claimed changed files not present in git status: config/contracts/registry.json, config/contracts/reigh-extension.schema.json, docs/extensions/phase4-readiness.md, docs/video-editor/extension-author-contract.md, docs/video-editor/extension-platform-supported-deferred.md, scripts/quality/check-extension-drift.mjs, scripts/quality/check-video-editor-sdk-imports.mjs, scripts/quality/lib/drift-check-helpers.mjs, src/examples/output-format-sidecar-composed-example.ts, src/examples/process-example.ts, src/sdk/internalExtensionRenderSurface.ts, src/sdk/smoke/extensionSmoke.test.ts, src/sd...",
+    "Git status shows changed files not claimed by any task: .gitattributes"
+  ],
+  "files_in_diff": [
+    ".gitattributes",
+    "config/contracts/registry.json",
+    "config/contracts/reigh-extension.schema.json",
+    "docs/extensions/phase4-readiness.md",
+    "docs/video-editor/extension-author-contract.md",
+    "docs/video-editor/extension-platform-supported-deferred.md",
+    "scripts/quality/check-extension-drift.mjs",
+    "scripts/quality/check-video-editor-sdk-imports.mjs",
+    "scripts/quality/lib/drift-check-helpers.mjs",
+    "src/examples/output-format-sidecar-composed-example.ts",
+    "src/examples/process-example.ts",
+    "src/sdk/internalExtensionRenderSurface.ts",
+    "src/sdk/smoke/extensionSmoke.test.ts",
+    "src/sdk/smoke/extensionSmoke.ts",
+    "src/sdk/video/families/processes.ts",
+    "src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx",
+    "src/tools/video-editor/browser/BrowserVideoEditorProvider.tsx",
+    "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+    "src/tools/video-editor/contexts/EditorRuntimeProvider.tsx",
+    "src/tools/video-editor/contexts/VideoEditorProvider.tsx",
+    "src/tools/video-editor/pages/ExtensionHarnessPage.tsx",
+    "src/tools/video-editor/pages/VideoEditorPage.test.tsx",
+    "src/tools/video-editor/pages/VideoEditorPage.tsx",
+    "src/tools/video-editor/runtime/extensionContextFactory.ts",
+    "src/tools/video-editor/runtime/extensionRenderSurface.test.ts",
+    "src/tools/video-editor/runtime/extensionRenderSurface.ts",
+    "src/tools/video-editor/runtime/extensionRendererRegistry.ts",
+    "test-results/.last-run.json",
+    "test-results/extension-harness-Extensio-026ed-ness-page-has-correct-title-chromium-condensed/",
+    "test-results/extension-harness-Extensio-026ed-ness-page-has-correct-title-chromium-desktop/",
+    "test-results/extension-harness-Extensio-026ed-ness-page-has-correct-title-chromium-mobile/",
+    "test-results/extension-harness-Extensio-0b72d-mary-bar-shows-issue-counts-chromium-condensed/",
+    "test-results/extension-harness-Extensio-0b72d-mary-bar-shows-issue-counts-chromium-desktop/",
+    "test-results/extension-harness-Extensio-0b72d-mary-bar-shows-issue-counts-chromium-mobile/",
+    "test-results/extension-harness-Extensio-0cf9e-rust-warning-do-not-overlap-chromium-condensed/",
+    "test-results/extension-harness-Extensio-0cf9e-rust-warning-do-not-overlap-chromium-desktop/",
+    "test-results/extension-harness-Extensio-0cf9e-rust-warning-do-not-overlap-chromium-mobile/",
+    "test-results/extension-harness-Extensio-0de81--visible-with-loaded-badges-chromium-condensed/",
+    "test-results/extension-harness-Extensio-0de81--visible-with-loaded-badges-chromium-desktop/",
+    "test-results/extension-harness-Extensio-0de81--visible-with-loaded-badges-chromium-mobile/"
+  ],
+  "files_claimed": [
+    "config/contracts/registry.json",
+    "config/contracts/reigh-extension.schema.json",
+    "docs/extensions/phase4-readiness.md",
+    "docs/video-editor/extension-author-contract.md",
+    "docs/video-editor/extension-platform-supported-deferred.md",
+    "scripts/quality/check-extension-drift.mjs",
+    "scripts/quality/check-video-editor-sdk-imports.mjs",
+    "scripts/quality/lib/drift-check-helpers.mjs",
+    "src/examples/output-format-sidecar-composed-example.ts",
+    "src/examples/process-example.ts",
+    "src/sdk/internalExtensionRenderSurface.ts",
+    "src/sdk/smoke/extensionSmoke.test.ts",
+    "src/sdk/smoke/extensionSmoke.ts",
+    "src/sdk/video/families/processes.ts",
+    "src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx",
+    "src/tools/video-editor/browser/BrowserVideoEditorProvider.tsx",
+    "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+    "src/tools/video-editor/contexts/EditorRuntimeProvider.tsx",
+    "src/tools/video-editor/contexts/VideoEditorProvider.tsx",
+    "src/tools/video-editor/pages/ExtensionHarnessPage.tsx",
+    "src/tools/video-editor/pages/VideoEditorPage.test.tsx",
+    "src/tools/video-editor/pages/VideoEditorPage.tsx",
+    "src/tools/video-editor/runtime/extensionContextFactory.ts",
+    "src/tools/video-editor/runtime/extensionRenderSurface.test.ts",
+    "src/tools/video-editor/runtime/extensionRenderSurface.ts",
+    "src/tools/video-editor/runtime/extensionRendererRegistry.ts",
+    "tests/e2e/extension-harness.spec.ts"
+  ]
+}
+
+        Fresh review-time evidence (`review_evidence.json`):
+        {
+  "projection": "bounded_prompt_summary",
+  "full_artifact": "review_evidence.json",
+  "schema": "megaplan.review_evidence",
+  "schema_version": 1,
+  "evidence_contract_version": 1,
+  "mode": "shadow",
+  "subject": {
+    "kind": "plan",
+    "name": "plan",
+    "to_state": "done",
+    "from_state": "executed",
+    "phase": "review",
+    "plan_name": "plan",
+    "milestone_label": null
+  },
+  "accepted": false,
+  "would_block": false,
+  "failures": [
+    "green_suite: verification suite ran but delta is not computable (collection parse failure in baseline or verification)"
+  ],
+  "providers_used": [
+    "phase_coverage",
+    "landed_diff",
+    "worker_did_work",
+    "green_suite",
+    "execution_acceptance_contract",
+    "review_disposition",
+    "declared_noop"
+  ],
+  "legacy_evidence_count": 0,
+  "unknown_evidence_count": 1,
+  "would_block_reasons": [
+    "green_suite: verification suite ran but delta is not computable (collection parse failure in baseline or verification)"
+  ],
+  "artifact": "review_evidence.json",
+  "generated_at": "2026-07-07T02:18:38Z",
+  "phase": "review",
+  "iteration": 1,
+  "base_sha": "decd8be4cd5a37361ac9a5f1d84ed853cba2adb3",
+  "head_sha": "ec87faa0b146eea72334d1ecf8364b6cc346d3ed",
+  "invocation_id": "584b72dea37c4d0a",
+  "provider_diagnostics": {
+    "phase_coverage": {
+      "ok": true
+    },
+    "landed_diff": {
+      "ok": true
+    },
+    "worker_did_work": {
+      "ok": true
+    },
+    "green_suite": {
+      "ok": true
+    },
+    "execution_acceptance_contract": {
+      "ok": true
+    },
+    "review_disposition": {
+      "ok": true
+    },
+    "declared_noop": {
+      "ok": true
+    }
+  },
+  "diagnostics": {
+    "base_sha": {
+      "ok": true,
+      "source": "state.meta.chain_policy.milestone_base_sha"
+    },
+    "head_sha": {
+      "ok": true,
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "source": "git_rev_parse_head"
+    },
+    "invocation_id": {
+      "ok": true,
+      "source": "state.meta.current_invocation_id"
+    }
+  },
+  "evidence": [
+    {
+      "kind": "phase_coverage",
+      "status": "satisfied",
+      "summary": "all batch tasks done",
+      "trust_class": "judgment",
+      "provider": "PhaseCoverageProvider",
+      "provider_version": "1",
+      "source": "phase_result.json",
+      "subject": "plan",
+      "artifact": {
+        "path": "phase_result.json",
+        "sha256": "sha256:728476765c91a6bcbcbbe972a3f236478291ce0a68148b559be2fe0b2d41f1cf",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "phase": "execute",
+        "exit_kind": "blocked_by_quality",
+        "reason": "finalize.json",
+        "evidence_id": "sha256:37c1782f0553589ab9c042f8d1e07f77ff4322867fe3e97ceae086491bb110e5"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "landed_diff",
+      "status": "satisfied",
+      "summary": "diff present and claim-consistent",
+      "trust_class": "judgment",
+      "provider": "LandedDiffProvider",
+      "provider_version": "1",
+      "source": "execution_evidence.validate_execution_evidence",
+      "subject": "plan",
+      "artifact": {
+        "path": "finalize.json",
+        "sha256": "sha256:1763dc077a538866e661d4b564ac8f1223aefd49d0c4510415aa8c1bb3b72e57",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "preview": "{\n  \"findings\": [\n    \"Git status shows changed files not claimed by any task: 173 paths (showing 40): .gitattributes, test-results/.last-run.json, test-results/extension-harness-Extensio-026ed-ness-page-has-correct-title-chromium-condensed/trace.zip, test-results/extension-harness-Extensio-026ed-ness-page-has-correct-title-chromium-desktop/trace.zip, test-results/extension-harness-Extensio-026ed-ness-page-has-correct-title-chromium-mobile/trace.zip, test-results/extension-harness-Extensio-0b72d-mary-bar-shows-issue-counts-chromium-condensed/trace.zip, test-results/extension-harness-Extensio-0b72d-mary-bar-shows-issue-counts-chromium-desktop/trace.zip, test-results/extension-harness-Extensio-0b72d-mary-bar-shows-issue-counts-chromium-mobile/trace.zip, test-results/extension-harness-Extensio-0cf9e-rust-warning-do-not-overlap-chromium-condensed/trace.zip, test-results/extension-harness-Extensio-0cf9e-rust-warning-do-not-overlap-chromium-desktop/trace.zip, test-results/extension-harness-Extensio-0cf9e-rust-warning-do-not-overlap-chromium-mobile/trace.zip, test-results/extension-harness-Extensio-0de81--visible-with-loaded-badges-chromium-condensed/trace.zip, test-results/extension-harn\n\n[truncated 29,130 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "worker_did_work",
+      "status": "satisfied",
+      "summary": "worker activity present",
+      "trust_class": "evidence",
+      "provider": "WorkerDidWorkProvider",
+      "provider_version": "1",
+      "source": "execution_batch_*.json",
+      "subject": "plan",
+      "artifacts": [
+        {
+          "path": "execution_batch_10.json",
+          "sha256": "sha256:ef6e4621e867b258abbd3c0bb3963c04c9baa5631b49522783dd6db3c44d0d10",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_11.json",
+          "sha256": "sha256:65778575309debaa6e34d08df3ffa9ded66c377883e368e302eedaf5f4ad8a72",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_12.json",
+          "sha256": "sha256:e66dd7fc0e1049c5915db40a248f98eff3026b84599b361b87e0adc572d58dea",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_13.json",
+          "sha256": "sha256:746e22aac6376af4019fa657cf8336246a4b5ce83430df4485f25ef4ea225de9",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_2.json",
+          "sha256": "sha256:b11dfdfc2b26a8fbfccbac2d9ded4b051b073b891cd46766c376f209a017a5b6",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_3.json",
+          "sha256": "sha256:864eb9434beb70c8c66b499b608f7575a0632310cdb746653ebbf2d21513a41e",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_4.json",
+          "sha256": "sha256:563da2512619d895bf16e425f24b9f167d9c47d8e1f7b9e7070cdfaec1745e9a",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_5.json",
+          "sha256": "sha256:cad4afcc3109650a516788be8be42d120ffe3a93875e9f7ef1e9e5b34acbda2b",
+          "artifact_type": "application/json"
+        }
+      ],
+      "artifacts_omitted": 4,
+      "details_preview": {
+        "files_changed": 60,
+        "commands_run": 100,
+        "sections_written": 0,
+        "batches": 12,
+        "batch_artifacts": [
+          "execution_batch_10.json",
+          "execution_batch_11.json",
+          "execution_batch_12.json",
+          "execution_batch_13.json",
+          "execution_batch_2.json",
+          "execution_batch_3.json",
+          "execution_batch_4.json",
+          "execution_batch_5.json",
+          "execution_batch_6.json",
+          "execution_batch_7.json",
+          "execution_batch_8.json",
+          "execution_batch_9.json"
+        ],
+        "activity_source": "execution_batch_records",
+        "evidence_id": "sha256:09f99cf2a3f990c29da63bacec5fd725fc7bcdd7d64e73bbc9e89d07bbccbe35"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "green_suite",
+      "status": "unsatisfied",
+      "summary": "verification suite ran but delta is not computable (collection parse failure in baseline or verification)",
+      "trust_class": "evidence",
+      "provider": "GreenSuiteProvider",
+      "provider_version": "1",
+      "source": "verification:9022ac6d6e06",
+      "subject": "plan:plan",
+      "observed_at": "1783390718.635481",
+      "code_hash": "sha256:5c5c4b7ccdaa9d59a6358952d1646edf2ddee653d6fa33165d399d22df2c2893",
+      "artifact": {
+        "path": "verification/raw_9022ac6d6e06.log",
+        "sha256": "sha256:078e3781f7f929792627bd8c528ae2793ae2e97b8fcbf56b573c496cc2a0d32a",
+        "artifact_type": "text/plain"
+      },
+      "artifacts": [
+        {
+          "path": "verification/raw_9022ac6d6e06.log",
+          "sha256": "sha256:078e3781f7f929792627bd8c528ae2793ae2e97b8fcbf56b573c496cc2a0d32a",
+          "artifact_type": "text/plain"
+        },
+        {
+          "path": "verification/suite_runs.ndjson",
+          "sha256": "sha256:b739e25c3c2a2cdb8a1ee9e0dbc36d56e1e2b76df37beb2d868484384da54276",
+          "artifact_type": "application/x-ndjson"
+        }
+      ],
+      "details_preview": {
+        "preview": "{\n  \"run_id\": \"9022ac6d6e06\",\n  \"phase\": \"verification\",\n  \"command\": \"/root/.pyenv/versions/3.11.11/bin/python -m pytest src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx tests/e2e/extension-harness.spec.ts --tb=no -q --no-header -rA\",\n  \"duration\": 0.31572915508877486,\n  \"collected\": 0,\n  \"collected_ids\": [],\n  \"failure_count\": 0,\n  \"failures\": [\n    \"runner_error\"\n  ],\n  \"pass_count\": 0,\n  \"status\": \"runner_error\",\n  \"exit_code\": 4,\n  \"code_hash\": \"sha256:5c5c4b7ccdaa9d59a6358952d1646edf2ddee653d6fa33165d399d22df2c2893\",\n  \"collections_parse_ok\": false,\n  \"collection_errors\": [],\n  \"raw_log_path\": \"/workspace/extension-foundation-completion/reigh-app/.megaplan/plans/extension-foundation-20260707-0036/verification/raw_9022ac6d6e06.log\",\n  \"freshness_cache_hit\": false,\n  \"baseline_test_command\": null,\n  \"baseline_test_note\": \"Baseline capture failed: runner error (exit code: 4)\",\n  \"delta\": {\n    \"computable\": false,\n    \"newly_failing\": [],\n    \"newly_passing\": [],\n    \"still_red\": [],\n    \"still_green\": [],\n    \"deleted_tests\": [],\n    \"added_tests\": [],\n    \"flakes\": [],\n    \"tests_col\n\n[truncated 946 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "execution_acceptance_contract",
+      "status": "unknown",
+      "summary": "execute acceptance contract could not be verified because suite evidence is runner_error",
+      "trust_class": "evidence",
+      "provider": "ExecuteAcceptanceContractProvider",
+      "provider_version": "1",
+      "source": "gate.json|gate_signals_v*.json + verification/suite_runs.ndjson",
+      "subject": "plan",
+      "details_preview": {
+        "preview": "{\n  \"contract\": {\n    \"scope\": \"execute\",\n    \"verification_mode\": \"verification_suite\",\n    \"required_checks\": [\n      {\n        \"id\": \"correctness\",\n        \"question\": \"Are the proposed changes technically correct?\",\n        \"reason\": \"`src/sdk/context.ts` has no slot/UI registration API, `src/sdk/smoke/extensionSmoke.ts` is a no-op activation, and the slot adapter/projector/assembly pipeline only propagates `null` renderers for slot contributions.\",\n        \"complexity\": 4,\n        \"attention\": \"high_complexity_unverifiable\"\n      },\n      {\n        \"id\": \"all_locations\",\n        \"question\": \"Does the change touch all locations AND supporting infrastructure?\",\n        \"reason\": \"slotAdapter.ts line 60: render: null as unknown as VideoEditorSlotRenderer; context.ts lines 216-249: ExtensionContext has no slots property; plan says 'if the implementation proves there is no public slot renderer API, add the smallest host-owned slot/render registration surface'\",\n        \"complexity\": 3\n      },\n      {\n        \"id\": \"verification\",\n        \"question\": \"Is there convincing verification for the change?\",\n        \"reason\": \"`test:extensions:production-smoke` only runs `src/sdk/smoke/ex\n\n[truncated 1,235 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "review_disposition",
+      "status": "not_applicable",
+      "summary": "no review.json (review may have been skipped)",
+      "trust_class": "judgment",
+      "provider": "ReviewDispositionProvider",
+      "provider_version": "1",
+      "subject": "plan",
+      "details_preview": {
+        "evidence_id": "sha256:519e446830e0c539cd39205827fa57231e722b8cf892a97834d8200a3ebfdc63"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "declared_noop",
+      "status": "not_applicable",
+      "summary": "no declared no-op/waiver artifact (absence is not a failure)",
+      "trust_class": "claim",
+      "provider": "DeclaredNoopProvider",
+      "provider_version": "1",
+      "source": "completion/noop.json|completion_noop.json",
+      "subject": "plan",
+      "details_preview": {
+        "evidence_id": "sha256:c5a9ab90387234220c35d0514efb5fab48bd80d5d3066b982919aa7d976625c8"
+      },
+      "details_full_location": "review_evidence.json"
+    }
+  ],
+  "evidence_count": 7,
+  "green_suite": {
+    "delta": {
+      "computable": false,
+      "newly_failing": 0,
+      "newly_passing": 0,
+      "still_red": 0,
+      "still_green": 0,
+      "deleted_tests": 0,
+      "added_tests": 0,
+      "flakes": 0,
+      "tests_collected": 0,
+      "duration": 0.31572915508877486,
+      "flake_retry_skipped": false,
+      "flake_retry_reason": ""
+    }
+  }
+}
+
+        Your output template is at: /workspace/extension-foundation-completion/reigh-app/.megaplan/plans/extension-foundation-20260707-0036/review_output.json
+        Read this file first — it contains the expected JSON structure with pre-populated `task_verdicts`, `sense_check_verdicts`, and `criteria`.
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Git diff summary:
+        ?? .megaplan/epics/extension-foundation-20260707-0036/
+
+        Requirements:
+        - Verify each success criterion explicitly.
+        - Fresh repository inspection and `review_evidence.json` outrank stale execution-time claims from `execution_audit.json`, `finalize.json`, and executor notes.
+        - Use repository tools to inspect relevant files and run focused verification commands when behavior or tests are part of a criterion; include concrete repository-backed evidence for every criterion verdict.
+        - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
+          - `must` criteria are hard gates only when backed by a deterministic runnable check that failed on the pre-execute baseline and still fails after execution. Ungrounded prose concerns are advisory.
+          - `should` criteria are quality targets. If the spirit is met but the letter is not, mark `pass` with evidence explaining the gap. Only mark `fail` if the intent was clearly missed. A `should` failure alone does NOT require `needs_rework`.
+          - `info` criteria are for human reference. Mark them `waived` with a note — do not evaluate them.
+          - If a criterion has `requires` capabilities that are not satisfiable by container workers (e.g., `drive_browser`, `subjective_judgment`), mark it `deferred_human` — NOT `fail` or `waived`. Deferred-human criteria do NOT count toward `needs_rework`.
+          - If a criterion (any priority) cannot be verified in this context (e.g., requires manual testing or runtime observation), mark it `waived` with an explanation.
+        - Set `review_verdict` to `needs_rework` only for a rework item with `deterministic_check: {"command": "...", "baseline_status": "failed", "post_status": "failed"}`. Use `approved` for prose-only concerns; record those as advisory issues instead.
+        - Set `review_completion_status` to `"incomplete"` when you could not inspect the repository or run verification commands; otherwise set it to `"complete"`.
+        - The decisions listed above were settled at the gate stage. Verify that the executor implemented each settled decision correctly. Flag deviations from these decisions, but do not question the decisions themselves.
+        - baseline_test_failures in finalize.json lists tests that were already failing before execution. Do not flag these as rework items unless the executor introduced new failures in those same tests.
+        - Cross-reference each task's `files_changed` and `commands_run` against the git diff and any audit findings.
+        - Review every `sense_check` explicitly and treat perfunctory acknowledgments as a reason to dig deeper.
+        - Follow this JSON shape exactly:
+        ```json
+        {
+          "review_verdict": "approved",
+          "review_completion_status": "complete",
+          "criteria": [
+            {
+              "name": "All existing tests pass",
+              "priority": "must",
+              "pass": "pass",
+              "evidence": "Test suite ran green — 42 passed, 0 failed."
+            },
+            {
+              "name": "File under ~300 lines",
+              "priority": "should",
+              "pass": "pass",
+              "evidence": "File is 375 lines — above the target but reasonable given the component's responsibilities. Spirit met."
+            },
+            {
+              "name": "Manual smoke tests pass",
+              "priority": "info",
+              "pass": "waived",
+              "evidence": "Cannot be verified in automated review. Noted for manual QA."
+            }
+          ],
+          "issues": [],
+          "rework_items": [],
+          "summary": "Approved. All must criteria pass. The should criterion on line count is close enough given the component scope.",
+          "task_verdicts": [
+            {
+              "task_id": "T6",
+              "reviewer_verdict": "Pass. Claimed handler changes and command evidence match the repo state.",
+              "evidence_files": ["megaplan/handlers.py", "megaplan/evaluation.py"]
+            }
+          ],
+          "sense_check_verdicts": [
+            {
+              "sense_check_id": "SC6",
+              "verdict": "Confirmed. The execute blocker only fires when both evidence arrays are empty."
+            }
+          ]
+        }
+        ```
+        - `rework_items` must be an array of structured rework directives. When `review_verdict` is `needs_rework`, populate one entry per issue with:
+          - `target`: typed route for the rework. Use `{"kind": "task", "task_id": "T6"}` for one finalize task, `{"kind": "bulk", "id": "bulk-1", "task_ids": ["T6", "T7"]}` for bulk-operation findings, or `{"kind": "manifest", "id": "manifest-path-or-ref", "task_ids": ["T6"]}` for manifest-backed findings.
+          - `task_id`: legacy compatibility only. It may mirror the single task target, or be `"REVIEW"` only for review blockers with no runnable finalize target.
+          - `issue`: what is wrong
+          - `expected`: what correct behavior looks like
+          - `actual`: what was observed
+          - `evidence_file`: file path supporting the finding
+          - `flag_id`: critique/review flag ID when applicable, otherwise `null`
+          - `source`: short machine-readable source tag when applicable, otherwise `null`
+          - `deterministic_check` (required for blocking rework): object with `command`, `baseline_status`, and `post_status`
+        - `issues` must still be populated as a flat one-line-per-item summary derived from `rework_items` (for backward compatibility). When approved, blocking `rework_items` should be empty; prose-only concerns may be summarized in `issues`.
+        - When the work needs another execute pass, keep the same shape and change only `review_verdict` to `needs_rework`; make `issues`, `rework_items`, `summary`, and task verdicts specific enough for the executor to act on directly.

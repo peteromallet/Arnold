@@ -31,6 +31,8 @@ const state = vi.hoisted(() => ({
   providerUnmounts: 0,
   saveStatusCallback: null as null | ((status: 'saved' | 'saving' | 'dirty' | 'error') => void),
   confirm: vi.fn(() => true),
+  /** Captured extensions prop from the last VideoEditorProvider render (for smoke tests). */
+  lastProviderExtensions: null as readonly any[] | null,
   supabaseCtor: vi.fn(function MockSupabaseProvider(this: Record<string, unknown>, options: unknown) {
     this.kind = 'supabase';
     this.options = options;
@@ -89,16 +91,19 @@ vi.mock('@/tools/video-editor/contexts/VideoEditorProvider.tsx', async () => {
       timelineId,
       timelineName,
       onSaveStatusChange,
+      extensions,
       children,
     }: {
       dataProvider: { kind?: string };
       timelineId: string;
       timelineName?: string | null;
       onSaveStatusChange?: (status: 'saved' | 'saving' | 'dirty' | 'error') => void;
+      extensions?: readonly any[];
       children: React.ReactNode;
     }) => {
       const [saveStatus, setSaveStatus] = ReactModule.useState<'saved' | 'saving' | 'dirty' | 'error'>('saved');
       state.saveStatusCallback = onSaveStatusChange ?? null;
+      state.lastProviderExtensions = extensions ?? null;
 
       ReactModule.useEffect(() => {
         state.providerMounts += 1;
@@ -179,6 +184,7 @@ describe('VideoEditorPage', () => {
     state.providerMounts = 0;
     state.providerUnmounts = 0;
     state.saveStatusCallback = null;
+    state.lastProviderExtensions = null;
     state.confirm.mockReset();
     state.confirm.mockReturnValue(true);
     state.supabaseCtor.mockClear();
@@ -741,5 +747,53 @@ describe('VideoEditorPage', () => {
       '11111111-1111-1111-1111-111111111111',
     );
     expect(state.confirm).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // ?extensionSmoke=1 in the stock app path
+  // ---------------------------------------------------------------------------
+
+  describe('?extensionSmoke=1 page integration', () => {
+    it('passes the smoke extension into VideoEditorProvider when ?extensionSmoke=1 is present', async () => {
+      renderPage('/tools/video-editor?timeline=timeline-1&extensionSmoke=1');
+
+      const provider = await screen.findByTestId('video-editor-provider');
+      expect(provider).toHaveAttribute('data-kind', 'supabase');
+
+      // The smoke extension should have been resolved and passed to the provider
+      expect(state.lastProviderExtensions).not.toBeNull();
+      expect(state.lastProviderExtensions).toHaveLength(1);
+      expect(state.lastProviderExtensions![0].manifest.id).toBe('com.reigh.smoke.extension-smoke');
+      expect(state.lastProviderExtensions![0].manifest.contributions).toHaveLength(1);
+      expect(state.lastProviderExtensions![0].manifest.contributions[0].id).toBe('extension-smoke-status');
+    });
+
+    it('does NOT pass the smoke extension when ?extensionSmoke is absent', async () => {
+      renderPage('/tools/video-editor?timeline=timeline-1');
+
+      const provider = await screen.findByTestId('video-editor-provider');
+      expect(provider).toHaveAttribute('data-kind', 'supabase');
+
+      // No smoke extension — provider receives empty or no extensions
+      expect(state.lastProviderExtensions ?? []).toHaveLength(0);
+    });
+
+    it('does NOT pass the smoke extension when extensionSmoke=0 (not exactly 1)', async () => {
+      renderPage('/tools/video-editor?timeline=timeline-1&extensionSmoke=0');
+
+      const provider = await screen.findByTestId('video-editor-provider');
+      expect(provider).toHaveAttribute('data-kind', 'supabase');
+
+      expect(state.lastProviderExtensions ?? []).toHaveLength(0);
+    });
+
+    it('does NOT pass the smoke extension when extensionSmoke is empty', async () => {
+      renderPage('/tools/video-editor?timeline=timeline-1&extensionSmoke');
+
+      const provider = await screen.findByTestId('video-editor-provider');
+      expect(provider).toHaveAttribute('data-kind', 'supabase');
+
+      expect(state.lastProviderExtensions ?? []).toHaveLength(0);
+    });
   });
 });

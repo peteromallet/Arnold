@@ -1,11 +1,11 @@
 /**
  * Process family module.
  *
- * Houses the process family contracts extracted from the public barrel
- * (src/sdk/index.ts): ProcessSpawnConfig, ProcessManifestEntry,
- * ProcessEnvFieldSpec, ProcessOperationSpec, ProcessSpec,
- * ProcessContribution, ProcessLifecycleState, ProcessStatusBase,
- * and ProcessStatus.
+ * Houses the process family contracts used by the public barrel
+ * (src/sdk/index.ts) and direct-path host integrations. The stable
+ * public manifest-facing surface is ProcessManifestEntry; host-only
+ * lifecycle/status vocabulary remains available from this canonical
+ * module for direct imports.
  *
  * This module contains only data-only types and read-only surfaces; no
  * registry, provider, resolver, or DOM behaviour lives here.
@@ -34,8 +34,6 @@ export interface ProcessSpawnConfig {
   env?: Record<string, string>;
   cwd?: string;
 }
-
-export type ProcessManifestEntry = ProcessSpec;
 
 // ---------------------------------------------------------------------------
 // M12: Process environment / operation / spec types
@@ -94,22 +92,25 @@ export interface ProcessOperationSpec {
 }
 
 /** M12: Declarative trusted-local process specification. */
-export interface ProcessSpec {
-  id: string;
-  label: string;
-  description?: string;
-  spawn: ProcessSpawnConfig;
-  protocol: 'stdio-jsonrpc';
-  healthCheck?: string;
-  shutdown?: string;
-  restartPolicy?: 'never' | 'always' | 'on-failure';
-  version?: CapabilityVersion;
-  env?: readonly ProcessEnvFieldSpec[];
-  operations?: readonly ProcessOperationSpec[];
-  liveSources?: readonly ProcessLiveSourceDeclaration[];
-  capabilities?: IntegrationCapabilities;
-  requiredBy?: readonly CapabilitySourceRef[];
+export interface ProcessManifestEntry {
+  readonly id: string;
+  readonly label: string;
+  readonly description?: string;
+  readonly spawn: ProcessSpawnConfig;
+  readonly protocol: 'stdio-jsonrpc';
+  readonly healthCheck?: string;
+  readonly shutdown?: string;
+  readonly restartPolicy?: 'never' | 'always' | 'on-failure';
+  readonly version?: CapabilityVersion;
+  readonly env?: readonly ProcessEnvFieldSpec[];
+  readonly operations?: readonly ProcessOperationSpec[];
+  readonly liveSources?: readonly ProcessLiveSourceDeclaration[];
+  readonly capabilities?: IntegrationCapabilities;
+  readonly requiredBy?: readonly CapabilitySourceRef[];
 }
+
+/** M12: Host-side process descriptor used by the runtime process manager. */
+export interface ProcessSpec extends ProcessManifestEntry {}
 
 // ---------------------------------------------------------------------------
 // M12: Process contribution (manifest)
@@ -121,7 +122,7 @@ export interface ProcessContribution {
   readonly kind: 'process';
   readonly label?: string;
   readonly order?: number;
-  readonly spec: ProcessSpec;
+  readonly spec: ProcessManifestEntry;
 }
 
 // ---------------------------------------------------------------------------

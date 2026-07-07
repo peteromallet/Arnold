@@ -1,0 +1,531 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Extension Foundation Completion
+Source: `.megaplan/initiatives/extension-foundation-completion/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `5096c8e4d17f234e0df8f3541ba0a750d121b65a16b78405f36f68f9dfc07c70`
+
+```md
+# North Star: Extension Foundation Completion
+
+## End State
+
+The Reigh video-editor extension foundation is genuinely complete and releasable from a clean checkout. The repository can prove, with source-controlled tests and quality gates, that the extension preview contract is honest; provider persistence is durable; proposal-mode agent mutations are visible and reviewable before application; diagnostics, lifecycle cleanup, and settings forms are host-owned and scoped; and the Extension Manager accurately reflects runtime package state without implying sandboxing, marketplace support, or future composition-spine capabilities.
+
+## Success In One Sentence
+
+From a clean cloud checkout, the extension foundation passes its release gates, production smoke, SDK boundary checks, proposal UI flow, manager enable/disable smoke, and docs consistency checks without hiding deferred work behind supported-language claims.
+
+## Immutable Constraints
+
+- Do not implement the composition-spine epic in this run.
+- Do not add marketplace, install-from-URL, discovery, update, delete, dependency resolution, sandboxing, code signing, or runtime permission enforcement.
+- Do not claim export/process/sidecar/composition support beyond what current code and tests prove.
+- Do not weaken release gates to make them pass. Fix the product/code/docs mismatch or explicitly document a deferred requirement in the correct source-of-truth docs.
+- Keep extension code trusted and unsandboxed unless a separate future epic changes the security model.
+- Preserve existing editor behavior when no extension packages are supplied.
+- Keep proposal application on the existing `TimelineOps.apply` / proposal runtime path; do not introduce a second mutation engine.
+- Do not mutate raw timeline internals from extensions, agents, processes, or sidecars.
+
+## Required Proof
+
+- `npm run test:extensions` passes.
+- SDK public export governance passes from a clean checkout.
+- Extension production smoke is wired into runtime/app behavior and passes.
+- SDK packagability is either fixed or explicitly deferred by a failing/non-release gate that no longer blocks this foundation claim.
+- Proposal-mode agent output is imported into frontend proposal runtime, visible to the user, and accept/reject tested.
+- Extension Manager enable/disable is covered by at least one browser-level or equivalent integrated smoke proving runtime re-resolution and contribution disappearance/reappearance without page refresh.
+- Manager settings editing is either backed by the M4 `SchemaForm` path or explicitly documented and tested as a narrower intentional editor.
+- Docs reconcile older supported/deferred matrices with the newer foundation state and keep composition-spine work clearly staged.
+```
+
+### Current Stage
+Stage: `finalize`
+Plan directory: `/workspace/extension-foundation-completion/reigh-app/.megaplan/plans/extension-foundation-20260707-0036`
+Current milestone: `m1-extension-foundation-completion`
+
+### Phase Instruction
+Convert the approved plan into executable tasks while preserving North Star constraints and visible alignment checks.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are DECOMPOSING the approved plan below into an ordered task DAG. The plan has been
+        critiqued, gated, and possibly revised. Do NOT re-evaluate strategy or re-litigate
+        decisions - gate has settled those.
+
+        Project directory:
+        /workspace/extension-foundation-completion/reigh-app
+
+        Brief summary: # Extension Foundation Completion
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: Extension Foundation Completion
+
+## Overview
+Complete the remaining extension-foundation release work without expanding into composition-spine, marketplace, sandboxing, or process runtime. The plan treats the brief as mostly accurate, with two repo-verified adjustments: M3 proposal import is already wired and should only be regression-tested, and this checkout does not expose `ctx.slots.register()`, so production smoke should use the existing slot/render-registration path unless a worker finds an already-supported public slot API.
+
+## Phase 1: Release Gate Triage And M1 Contract Fixes
+
+### Step 1: Capture the current gate failures (`package.json`, quality scripts)
+**Complexity: 2**
+1. Run the cheapest failing commands first: `npm run check:extension-drift -- --release`, `npm run check:sdk-public-exports -- --release`, `npm run check:video-editor-sdk-imports`, then `npm run test:extensions`.
+2. Record exact failures before editing so any later remaining failure can be classified as fixed, deferred, or unrelated baseline.
+
+### Step 2: Fix contribution-kind drift parsing (`scripts/quality/check-extension-drift.mjs`)
+**Complexity: 2**
+1. Point the SDK kind source at `src/sdk/video/families/contributionKinds.ts`, or teach the parser to follow the `kinds.ts` re-export if that is simpler in the current script shape.
+2. Re-run the drift release gate and handle any real reserved-kind manifest failures directly, without weakening release behavior.
+
+### Step 3: Repair public SDK export governance (`config/contracts/registry.json`, `src/sdk/video/families/processes.ts`)
+**Complexity: 3**
+1. Remove stale forbidden process internals from the `editor-sdk-public-entrypoint` expected exports.
+2. Replace `ProcessManifestEntry = ProcessSpec` with a public-safe shape that does not leak the forbidden `ProcessSpec` alias.
+3. Update SDK barrel or governance tests only if the intentional public API surface changes.
+4. Re-run `npm run check:sdk-public-exports -- --release`.
+
+### Step 4: Stabilize `test:extensions` imports (`src/sdk/index.test.ts`, `src/sdk/examples-governance.test.ts`, `src/sdk/extensionSettingsService.test.ts`)
+**Complexity: 2**
+1. Run the five Vitest files from `test:extensions` after Steps 2-3.
+2. If imports fail, fix the tests with the narrowest supported import path or local mock; do not reintroduce SDK imports from video-editor runtime internals.
+3. Keep the tests validating public SDK behavior rather than internal provider construction.
+
+## Phase 2: Production Smoke Becomes Real Runtime Behavior
+
+### Step 5: Make the smoke extension render a stable status-bar contribution (`src/sdk/smoke/extensionSmoke.ts`)
+**Complexity: 4**
+1. Add a real renderer for the smoke slot with `data-testid="extension-smoke-status"` and `EXTENSION_SMOKE_CONTRIBUTION_ID` as the stable contribution anchor.
+2. Use the existing renderer-registration mechanism if available; if the implementation proves there is no public slot renderer API, add the smallest host-owned slot/render registration surface and register it in contract governance.
+3. Ensure cleanup disposes the registration and does not mutate raw timeline internals.
+
+### Step 6: Wire `?extensionSmoke=1` into production entry points (`BrowserVideoEditorProvider.tsx`, `VideoEditorPage.tsx`)
+**Complexity: 3**
+1. In `BrowserVideoEditorProvider`, read the effective search params and prepend `getExtensionSmokeExtension(...)` to direct extensions only when the query value is exactly `1`.
+2. In `VideoEditorPage`, do the same for the internal production app path because it currently calls `useExtensionLoaderWiring` directly and does not pass through `BrowserVideoEditorProvider`.
+3. Preserve existing behavior when no extensions are supplied and when the smoke parameter is absent.
+
+### Step 7: Test smoke activation and provider/page wiring (`extensionSmoke.test.ts`, provider/page tests)
+**Complexity: 3**
+1. Update `src/sdk/smoke/extensionSmoke.test.ts` from no-op activation assertions to renderer/registration/disposal assertions.
+2. Add or extend `src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx` to prove the smoke extension is injected and existing direct extensions remain in order.
+3. Add the smallest app-path test proving `VideoEditorPage` or its loader invocation sees the smoke extension when `?extensionSmoke=1` is present.
+
+## Phase 3: SDK Packagability Truthfulness
+
+### Step 8: Reclassify npm publishability without weakening import gates (`scripts/quality/check-video-editor-sdk-imports.mjs`, docs)
+**Complexity: 2**
+1. Keep the current SDK import-boundary and external-consumer checks as release gates.
+2. Update script wording/docs that imply a fully publishable standalone npm package if the repo only proves monorepo extractability/external consumption.
+3. Add an explicit deferred supported/deferred row for standalone `@reigh/editor-sdk` npm package publishing if it is not implemented in this sprint.
+
+## Phase 4: Manager Enable/Disable And Settings Proof
+
+### Step 9: Add an integrated enable/disable cycle smoke (`tests/e2e/extension-harness.spec.ts`, `ExtensionHarnessPage.tsx`)
+**Complexity: 4**
+1. Add a harness scenario that uses the real manager, repository persistence, loader re-resolution, and a visible contribution.
+2. Test disable: contribution visible -> toggle off -> persisted disabled state -> refresh key or equivalent re-resolution -> contribution disappears without page refresh.
+3. Test enable: toggle on -> persisted enabled state -> re-resolution -> contribution reappears without page refresh.
+4. Avoid using only static mocked package-state inventory, because that would not prove the runtime chain.
+
+### Step 10: Verify and document settings editor posture (`ExtensionManager.tsx`, manager tests, docs)
+**Complexity: 2**
+1. Confirm `SchemaForm` is used for schema-backed settings and the key-value/raw fallback only applies to schemaless or legacy snapshots.
+2. Add or tighten tests in `ExtensionManager.test.tsx` if the current tests do not prove this split.
+3. Document the fallback as intentional rather than replacing it with forced `SchemaForm` for extensions that have no manifest schema.
+
+## Phase 5: Docs Reconciliation
+
+### Step 11: Reconcile supported/deferred matrices (`docs/video-editor/extension-platform-supported-deferred.md`)
+**Complexity: 3**
+1. Move D-001 and D-002 out of deferred status where M5 code/tests prove manager UI, persisted enablement/settings, and cleanup behavior.
+2. Add or revise rows so install/update/delete/marketplace/sandboxing remain clearly deferred.
+3. Update D-134 to credit M5 for the manager UI while keeping composition-spine/status-drawer expansion staged.
+4. Add an explicit npm SDK publishability deferral if Step 8 does not implement full package publishing.
+
+### Step 12: Fix stale readiness references (`docs/extensions/phase4-readiness.md`)
+**Complexity: 1**
+1. Replace references to nonexistent `runtime/contributionFamilies.ts` with actual current anchors: `src/sdk/video/families/contributionKinds.ts`, `src/sdk/video/families/familyDefinitions.ts`, `src/tools/video-editor/runtime/extensionSurface.ts`, and `config/extensions/family-maturity.json`.
+2. Remove or correct references to missing docs instead of letting docs imply nonexistent source-of-truth files.
+
+## Phase 6: Final Verification
+
+### Step 13: Run release verification in widening order
+**Complexity: 3**
+1. Run targeted checks for touched areas first: smoke Vitest, provider/page tests, manager tests, E2E harness scenario, drift, public exports, SDK imports.
+2. Run `npm run test:extensions` as the main release gate.
+3. Run `npm run build`.
+4. Run the existing proposal vertical test as a regression guard; no M3 code change is expected unless the test fails.
+
+## Execution Order
+1. Baseline gate failures first, then contract fixes, then runtime smoke, then E2E/docs.
+2. Do not touch proposal runtime unless the existing proposal vertical test contradicts the repo evidence.
+3. Keep docs updates after code/test changes so claims match the final checkout.
+
+## Validation Order
+1. `npm run check:extension-drift -- --release`.
+2. `npm run check:sdk-public-exports -- --release`.
+3. `npm run check:video-editor-sdk-imports`.
+4. `npm run test:extensions:production-smoke` plus focused provider/page tests.
+5. `npm run test:readiness:e2e -- tests/e2e/extension-harness.spec.ts` or equivalent Playwright invocation.
+6. `npm run test:extensions`.
+7. `npm run build`.
+8. Existing proposal vertical test as a regression guard.
+
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-07T00:50:08Z",
+  "hash": "sha256:6c9674ca272c086a5a049b663578c372be13b2c36c3687a83300924c1f4b6c5f",
+  "questions": [
+    "Should the production smoke renderer introduce a public `ctx.slots.register()` API if none exists, or should it use the repo\u2019s existing render-id/renderer-registry path? This materially changes SDK public API and contract registry scope.",
+    "Is standalone npm publishing for `@reigh/editor-sdk` allowed to remain explicitly deferred as long as import-boundary and external-consumer gates pass?",
+    "Should `?extensionSmoke=1` be honored by both the SDK browser provider and the stock `VideoEditorPage` internal app path? The plan assumes yes because `VideoEditorPage` currently bypasses `BrowserVideoEditorProvider`."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`npm run test:extensions` exits successfully from the final checkout.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "`scripts/quality/check-extension-drift.mjs --release` parses SDK contribution kinds from the canonical source and exits successfully without unresolved release advisories.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_build_output",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`scripts/quality/check-sdk-public-exports.mjs --release` exits successfully and the registry no longer expects forbidden process-internal exports.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`ProcessManifestEntry` no longer exposes the forbidden `ProcessSpec` public type alias.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`?extensionSmoke=1` injects a production-bundled smoke extension through real runtime loading and renders a stable DOM anchor without changing behavior when the query parameter is absent.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "drive_browser",
+        "inspect_runtime_ui",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The smoke extension activation test proves registration/rendering/disposal instead of accepting a no-op activation.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Manager enable/disable has an integrated or browser-level smoke proving toggle persistence, runtime re-resolution, and contribution disappearance/reappearance without page refresh.",
+      "priority": "must",
+      "requires": [
+        "drive_browser",
+        "inspect_runtime_ui",
+        "observe_runtime_logs",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Manager settings behavior is either schema-backed through `SchemaForm` or explicitly tested/documented as a narrower fallback for schemaless legacy snapshots.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "SDK standalone npm publishability is either implemented and verified, or explicitly deferred in source-controlled docs/gate wording without weakening SDK import-boundary checks.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Docs no longer classify delivered M5 manager enablement/settings behavior as deferred, and composition-spine/marketplace/sandboxing/process-runtime capabilities remain clearly staged or deferred.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`npm run build` exits successfully after the implementation.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Existing proposal-mode import/accept/reject coverage continues to pass without introducing a second mutation engine.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Changes remain scoped to extension-foundation completion and avoid broad UI redesign or unrelated refactors.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "M3 proposal import is already complete in this checkout; implementation should preserve it and run existing proposal vertical coverage rather than rewrite the flow.",
+    "`SchemaForm` is already used for schema-backed manager settings, and key-value/raw editing is an intentional fallback only for schemaless or legacy settings snapshots.",
+    "A minimal inert status-bar renderer with `data-testid=\"extension-smoke-status\"` is sufficient for production smoke because the goal is proving activation/rendering, not adding visible product functionality.",
+    "`?extensionSmoke=1` should be honored by both `BrowserVideoEditorProvider` and `VideoEditorPage` because the stock app path currently calls `useExtensionLoaderWiring` directly.",
+    "SDK npm package publishing can be deferred if the docs and gate wording honestly distinguish publishability from current monorepo/external-consumer importability.",
+    "No marketplace, install-from-URL, update/delete flow, sandboxing, code signing, runtime permission enforcement, process execution, or composition-spine implementation is part of this plan."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "script",
+        "value": "npm run check:extension-drift -- --release",
+        "reason": "Direct release gate for contribution-kind/docs/manifest drift."
+      },
+      {
+        "kind": "script",
+        "value": "npm run check:sdk-public-exports -- --release",
+        "reason": "Direct release gate for public export registry and forbidden process exports."
+      },
+      {
+        "kind": "script",
+        "value": "npm run check:video-editor-sdk-imports",
+        "reason": "SDK boundary and external consumer proof affected by packagability wording/import changes."
+      },
+      {
+        "kind": "script",
+        "value": "npm run test:extensions:production-smoke",
+        "reason": "Direct smoke extension tests change from no-op to real registration/rendering."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx",
+        "reason": "Provider injection behavior for `?extensionSmoke=1`."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+        "reason": "Manager settings SchemaForm/fallback and toggle behavior are in scope."
+      },
+      {
+        "kind": "path",
+        "value": "tests/e2e/extension-harness.spec.ts",
+        "reason": "Browser-level enable/disable re-resolution smoke."
+      },
+      {
+        "kind": "script",
+        "value": "npm run test:extensions",
+        "reason": "Primary North Star release gate."
+      },
+      {
+        "kind": "script",
+        "value": "npm run build",
+        "reason": "Final build proof required by done criteria."
+      }
+    ],
+    "changed_surfaces": [
+      "scripts/quality/check-extension-drift.mjs",
+      "config/contracts/registry.json",
+      "src/sdk/video/families/processes.ts",
+      "src/sdk/index.test.ts",
+      "src/sdk/examples-governance.test.ts",
+      "src/sdk/extensionSettingsService.test.ts",
+      "scripts/quality/check-video-editor-sdk-imports.mjs",
+      "src/sdk/smoke/extensionSmoke.ts",
+      "src/sdk/smoke/extensionSmoke.test.ts",
+      "src/tools/video-editor/browser/BrowserVideoEditorProvider.tsx",
+      "src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx",
+      "src/tools/video-editor/pages/VideoEditorPage.tsx",
+      "src/tools/video-editor/pages/ExtensionHarnessPage.tsx",
+      "tests/e2e/extension-harness.spec.ts",
+      "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+      "docs/video-editor/extension-platform-supported-deferred.md",
+      "docs/extensions/phase4-readiness.md"
+    ],
+    "always_run": [
+      "npm run test:extensions",
+      "npm run build"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: config/contracts/registry.json, scripts/quality/check-extension-drift.mjs, scripts/quality/check-video-editor-sdk-imports.mjs, src/sdk/examples-governance.test.ts, src/sdk/extensionSettingsService.test.ts, src/sdk/index.test.ts, src/sdk/smoke/extensionSmoke.test.ts, src/sdk/smoke/extensionSmoke.ts, src/sdk/video/families/processes.ts, src/tools/video-editor/browser/BrowserVideoEditorProvider.test.tsx, src/tools/video-editor/browser/BrowserVideoEditorProvider.tsx, src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx, src/tools/video-editor/pages/ExtensionHarnessPage.tsx, src/tools/video-editor/pages/VideoEditorPage.tsx, tests/e2e/extension-harness.spec.ts. Ignored documentation-only change(s) for selector derivation: docs/extensions/phase4-readiness.md, docs/video-editor/extension-platform-supported-deferred.md. Candidate: The core changes are scoped to SDK governance, smoke wiring, manager E2E, and docs. The final fallback remains broad because public SDK contracts and provider/runtime wiring have high regression risk.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    }
+  },
+  "structure_warnings": []
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "PROCEED",
+  "passed": true,
+  "rationale_brief": "The plan is thorough, correctly scoped, and directly addresses all 13 success criteria and every North Star requirement. It honestly adjusts the brief where repo evidence contradicts it (M3 proposal import is already wired and only needs regression; no existing slot renderer registration API exists so Step 5 conditionally handles both paths). The gate signals meta-analysis classifies all critique flags as non-blocking (significant_flags: 0, no unresolved or addressed-blocking flags).",
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "?extensionSmoke=1 is honored by both BrowserVideoEditorProvider and VideoEditorPage because the stock app path bypasses BrowserVideoEditorProvider.",
+      "rationale": "The plan's Step 6 explicitly handles both entry points. VideoEditorPage calls useExtensionLoaderWiring directly and does not pass through BrowserVideoEditorProvider, so both wiring paths must inject the smoke extension when the query parameter is exactly '1'."
+    },
+    {
+      "id": "SD2",
+      "decision": "Production smoke renderer uses the existing render-id/renderer-registry path if available; if none exists, the worker adds the smallest host-owned slot/render registration surface and registers it in contract governance.",
+      "rationale": "The plan's Step 5 conditionally handles both cases. The goal is a stable DOM anchor (data-testid='extension-smoke-status'), not a specific public API design. This keeps scope bounded while still achieving the North Star's production smoke requirement."
+    },
+    {
+      "id": "SD3",
+      "decision": "Standalone npm publishing for @reigh/editor-sdk is allowed to remain explicitly deferred as long as import-boundary and external-consumer gates pass.",
+      "rationale": "The North Star permits deferral. The SDK remains extractable and importable by external consumers. Steps 8 and 11 update docs and gate wording to honestly distinguish current monorepo extractability from future standalone publishing."
+    }
+  ],
+  "warnings": [
+    "FLAG-001 / FLAG-ALL-LOC-001 (slot renderer gap): The plan's Step 5 conditionally handles adding a host-owned slot/render registration surface if none exists. The execution worker must be prepared to touch additional files beyond changed_surfaces: ExtensionContext interface (context.ts), slotAdapter.ts, FamilyRuntimeAssembly.ts, extensionContextFactory, and sdk-public-export-allowlist.json. Scope may expand beyond the listed 17 files.",
+    "FLAG-ALL-LOC-002 (missing ProcessSpec test files): boundary.test.ts, sdk-boundary.test.ts, and barrel-import-smoke.test.ts reference ProcessSpec/ProcessManifestEntry and are not in changed_surfaces. These will likely break during Step 3 and must be fixed. The full_suite_fallback in test_blast_radius covers this but the worker should triage these files proactively.",
+    "FLAG-ALL-LOC-003 (manifest.ts): src/sdk/manifest.ts uses ProcessManifestEntry in ExtensionManifest type and is not in changed_surfaces. A shape change in Step 3 will require corresponding manifest.ts updates.",
+    "FLAG-VER-001 (smoke verification): Provider/page tests mock runtime providers and won't exercise the real shell render path. The worker should add or extend the E2E harness (Step 9) or a targeted browser test to prove data-testid='extension-smoke-status' appears in the real DOM.",
+    "FLAG-VER-003 (proposal regression): The existing proposal vertical test at src/tools/video-editor/hooks/useAgentSession.proposal-vertical.test.tsx has no dedicated npm script. The worker must invoke it directly via npx vitest run with the exact path rather than relying on a script alias.",
+    "FLAG-PREREQ-001 (family-conformance gate): check:extension-family-conformance is part of test:extensions but omitted from Step 1 triage and the validation order. The worker must include it in the baseline gate capture or risk being blocked before Vitest tests ever run.",
+    "Step 3 export-governance fix: The plan lists registry.json as a target but check-sdk-public-exports.mjs walks src/sdk/index.ts. The worker should verify the actual gate logic before editing and may need to adjust the schema (reigh-extension.schema.json) and example files (process-example.ts, process-fixture-descriptor.ts) in addition to the listed files."
+  ],
+  "orchestrator_guidance": "First iteration; follow gate recommendation: PROCEED.",
+  "carried_flags": [],
+  "iteration": 1,
+  "produced_at": "2026-07-07T01:01:23Z"
+}
+
+        Your output template is at: /workspace/extension-foundation-completion/reigh-app/.megaplan/plans/extension-foundation-20260707-0036/finalize_output.json
+        Read this file first — it contains the expected JSON structure (tasks, user_actions, sense_checks, watch_items, meta_commentary).
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Requirements:
+        - Produce structured JSON only.
+        - For each `## Step N:` in the plan, emit 1-N tasks.
+        - For each task, emit one sense_check.
+        - Default `user_actions` to `[]`. Identify a user_action ONLY when the work is genuinely non-mechanical and the executor literally cannot do it (secrets the human alone holds, identity-bound infra access, legal/license signatories, manual UI smoke tests on production). If a check is mechanical, make it a task — not a user_action. See the detailed guidance below.
+        - Do not invent tasks that don't trace to a plan step.
+        - How batching works at runtime — shape `depends_on` with this in mind, not just literal sequencing. Tasks that share the same `depends_on` set form one batch (capped at 5). Each batch dispatches as a SINGLE LLM conversation to a SINGLE model, picked by the max(complexity) in that batch. So a c=4 audit plus three c=2 tweaks sharing a batch all run in one turn on the c=4 model. Two consequences you control via DAG shape:
+          - Routing: every task in a batch runs on the highest-tier task's model — bundle a c=2 task beside a c=4 sibling and it runs on the pricier model.
+          - Cognitive load: one conversation holds all of the batch's tasks in working context. The more disparate the tasks, the higher the risk the model loses the thread or claims completion without doing the work. Wide, mixed batches are the dominant quality failure mode.
+        - Three principles for shaping batches — judgment, not arithmetic (there is no mechanical split rule):
+          1. Isolate heavyweights. A c=4 or c=5 task usually deserves its own batch. Chain lighter tasks through it via `depends_on` rather than placing them as siblings.
+          2. Bundle context-related light work. Several c=2/c=3 tasks touching the same files or contracts batch well together.
+          3. Never emit more than 5 actionable parallel siblings. If a step legitimately fans out wider, linearize via `depends_on` so the runtime batcher sees at most 5 at a time.
+        - Do not include `validation` or `coverage_complete` fields - the harness computes those.
+        - The FINAL task MUST run tests; harness validation will reject finalize output without it.
+        - `tasks` must be an ordered array of task objects. Every task object must include:
+          - `id`: short stable task ID like `T1`
+          - `description`: concrete work item
+          - `depends_on`: array of earlier task IDs or `[]`
+          - `status`: always `"pending"` at finalize time
+          - `executor_notes`: always `""` at finalize time
+          - `reviewer_verdict`: always `""` at finalize time
+          - `kind`: indicating the type of work. One of:
+            - `code`: writes or modifies source files (executor must produce `files_changed`).
+            - `test`: writes or modifies test files, or runs the test suite (executor must produce `files_changed` in tests/ OR `commands_run` containing pytest/test invocations).
+            - `audit`: read-only investigation — grep, code review, schema inspection (executor evidence is `executor_notes` describing findings; no `files_changed` expected).
+            - `research`: external research or non-code investigation (executor evidence is `executor_notes`).
+            - `docs`: writes documentation files (executor must produce `files_changed`).
+            If unsure, default to `code`.
+          - `complexity`: integer 1–5 complexity score. This score routes the task to a
+            model at execution time, so adjudicate it deliberately — do not guess. Use the rubric:
+            - 1 = trivial, mechanical, single-file change with no logic to reason about
+                  (rename, constant bump, comment, import). A weak model cannot get it wrong.
+            - 2 = simple, localized change plus the obvious test update; one file or two,
+                  logic is linear and the failure mode is obvious.
+            - 3 = multi-file change with non-trivial logic, control flow, or data shape the
+                  executor must hold in its head; correctness is not self-evident from the diff.
+            - 4 = a wrong implementation would be NON-LOCAL and not caught by an obvious test:
+                  the error propagates through a shared contract or invariant that code you did
+                  NOT edit relies on. Touching several files is NOT sufficient on its own — a
+                  mechanical multi-file change whose failure is local and test-evident is tier 2-3.
+            - 5 = fundamental system-invariant change with high regression risk: concurrency that
+                  cascades, a schema/wire-format others build on, a state machine, or a security/
+                  auth boundary. ONLY when a subtle error would pass the full suite and corrupt
+                  state or break a system-wide contract — not merely "important" or central code.
+            Score on the hardest REALISTIC aspect of the task, not a worst-case imagining. When
+            genuinely torn between two tiers, choose the LOWER one UNLESS you can name the specific
+            cascading, test-evading failure that earns the higher tier in the justification.
+            You are not the model that executes this task, and the score neither saves nor
+            costs you anything — so do not lowball to seem efficient and do not highball to
+            play safe. Both distort routing: a too-low score sends a hard task to a model
+            that fails it; a too-high score burns a premium model on trivial work. Score
+            what the task honestly requires, no higher and no lower.
+            FLOOR: a task is NEVER below tier 4 only when it GENUINELY changes the semantics of
+            concurrency, a schema/state-machine, a security/auth boundary, or a contract other
+            code actually depends on — because a subtle error there passes tests but is wrong.
+            This floor does NOT apply to mechanical edits that merely sit near such code, or that
+            add a new interface nothing relies on yet; score those on the rubric (usually 2-3).
+          - `complexity_justification`: REQUIRED. One or two sentences that argue, specifically,
+            why this task sits at exactly that tier — cite the concrete files, interfaces, or
+            risk that places it there (e.g. "touches the auth middleware contract used by 4
+            call sites, so a mistake is non-local → tier 4"). A bare restatement of the rubric
+            ("this is complex") is not acceptable; the justification must be defensible against
+            a reviewer who disagrees.
+        - `watch_items` must be an array of strings covering runtime risks, critique concerns, and assumptions to keep visible during execution.
+        - `sense_checks` must be an array with one verification question per task. Every sense-check object must include:
+          - `id`: short stable ID like `SC1`
+          - `task_id`: the related task ID
+          - `question`: reviewer verification question
+          - `verdict`: always `""` at finalize time
+        - `user_actions` should default to `[]`. Emitting a user_action stalls execution on a human gate — it is a load-bearing escape hatch, not a convenience. Prefer to design every step to be fully mechanical: the executor can read files, run commands, query APIs, fetch URLs, parse JSON, edit code, and run tests. If a check is mechanical, write it as a task — not a user_action.
+- Emit a user_action ONLY when the work is *genuinely non-mechanical* and the executor has no path to do it itself: secrets the human alone holds (a real API key the executor cannot mint), infrastructure access bound to the human's identity (cloud console, VPN), legal/license/security-policy judgments that require a human signatory, or out-of-band manual UI smoke tests on production. If you cannot name a specific reason the executor cannot do it, the task is mechanical — make it a task.
+- Anything that touches code, configuration, fixtures, or local files MUST be a task. Reading docs, grepping, editing, running tests, writing SQL, and producing JSON resolution files are tasks. Negative example: writing the migration SQL is a task, not a user_action; verifying a license URL is reachable is a task, not a user_action.
+- When you do emit a user_action, set `requires_human_only_reason` to a specific sentence naming why the executor literally cannot perform it (not just "it's important").
+- If `user_actions` is non-empty, expect that execution will block until the human resolves each one — only emit them when that block is unavoidable.
+- Positive examples (rare, last-resort): `U1: Set ANTHROPIC_API_KEY in .env (before_execute, requires_human_only_reason: "secret the executor cannot mint")`; `U2: Confirm legal sign-off to commit the third-party JSON corpus (before_execute, requires_human_only_reason: "license judgment with legal liability")`.
+        - `meta_commentary` must be a single string with execution guidance, gotchas, or judgment calls that help the executor succeed.
+        - Preserve information that strong existing artifacts already capture well: execution ordering, watch-outs, reviewer checkpoints, and practical context.
+        - The structured output should be self-contained: an executor reading only `finalize.json` should have everything needed to work.
+        - Keep the task count proportional to the work. A simple 1-2 file fix should be 2 tasks: (1) apply the fix, (2) run tests. Do NOT create separate "inspect" or "read" tasks for simple changes — the executor can read and fix in one step. Only create more tasks when the work has genuinely independent stages.
+        - One task is the unit of ONE worker turn: the executor must IMPLEMENT it, VERIFY it, and emit its result envelope inside a single ~15-minute conversation. A task that cannot realistically finish in one turn is mis-sized and WILL fail — the worker reports `blocked: "turn ended before implementation"` or runs out the clock mid-edit. Size every task to fit one turn; raising `complexity` does NOT buy more turns, it only routes to a stronger model for the SAME single turn. When a step is a large mechanical refactor, SPLIT it across tasks instead of bundling: "add the new abstraction + its unit tests" (T1) → "migrate consumer A" (T2, depends_on T1) → "migrate consumer B + parity tests" (T3, depends_on T2). A single task that says "extract this 2000-line file into modules and write tests" or "consolidate the roots AND migrate three registries AND add parity tests" is a god-task — decompose it into one task per consumer/module, each independently completable and verifiable.
+        - - The harness owns test verification — do NOT author a run-until-pass task. If you include a test-related task, scope it to: introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute suite.
+- For code-mode plans, preserve a scoped test contract. Prefer the plan's machine-readable `test_blast_radius`; when it is missing, ensure at least one finalized task carries a concrete scoped pytest command in `commands_run` (for example `pytest tests/test_relevant.py -q`) or mappable `files_changed` paths. Do not rely on an unscoped `pytest` command unless the plan explicitly opts into `test_selection=full`.

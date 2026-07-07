@@ -14,6 +14,7 @@
  *   - /tools/video-editor/harness?scenario=empty
  *   - /tools/video-editor/harness?scenario=package-error
  *   - /tools/video-editor/harness?scenario=repaired-settings
+ *   - /tools/video-editor/harness?scenario=manager-cycle
  *   - /tools/video-editor/harness?scenario=all
  */
 
@@ -267,6 +268,44 @@ test.describe('Extension Harness — Repaired Settings', () => {
       '[data-video-editor-extension-package-id]',
       'repaired-package-card',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+test.describe('Extension Harness — Integrated Manager Cycle', () => {
+  test('disable/enable persists through the repository and re-renders the smoke contribution without page refresh', async ({ page }) => {
+    await goToScenario(page, 'manager-cycle');
+
+    const extensionId = 'com.reigh.smoke.extension-smoke';
+    const packageCard = page.locator(`[data-video-editor-extension-package-id="${extensionId}"]`);
+    const toggle = page.locator(`[data-video-editor-extension-toggle="${extensionId}"]`);
+    const persistedEnablement = page.getByTestId('extension-manager-cycle-persisted-enablement');
+    const packageState = page.getByTestId('extension-manager-cycle-package-state');
+    const smokeContribution = page.getByTestId('extension-smoke-status');
+
+    await expect(packageCard).toBeVisible();
+    await expect(packageCard).toHaveAttribute('data-video-editor-extension-package-state', 'loaded');
+    await expect(packageState).toHaveText('loaded');
+    await expect(persistedEnablement).toHaveText('enabled');
+    await expect(toggle).toHaveAttribute('aria-label', `Disable ${extensionId}`);
+    await expect(smokeContribution).toBeVisible();
+
+    await toggle.click();
+
+    await expect(packageCard).toHaveAttribute('data-video-editor-extension-package-state', 'disabled-by-user');
+    await expect(packageState).toHaveText('disabled-by-user');
+    await expect(persistedEnablement).toHaveText('disabled');
+    await expect(toggle).toHaveAttribute('aria-label', `Enable ${extensionId}`);
+    await expect(smokeContribution).toHaveCount(0);
+
+    await toggle.click();
+
+    await expect(packageCard).toHaveAttribute('data-video-editor-extension-package-state', 'loaded');
+    await expect(packageState).toHaveText('loaded');
+    await expect(persistedEnablement).toHaveText('enabled');
+    await expect(toggle).toHaveAttribute('aria-label', `Disable ${extensionId}`);
+    await expect(smokeContribution).toBeVisible();
   });
 });
 

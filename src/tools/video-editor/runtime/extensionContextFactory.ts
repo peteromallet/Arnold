@@ -21,6 +21,10 @@ import type {
   CreativeContext,
 } from '@/sdk/context';
 import { createCreativeContext, CONTEXT_DISPOSE_SYMBOL } from '@/sdk/context';
+import {
+  attachInternalExtensionRenderSurface,
+  type InternalExtensionRenderSurface,
+} from '@/sdk/internalExtensionRenderSurface';
 import type { CommandHandler, CommandRegistrationOptions } from '@/sdk/commands';
 import type {
   ExtensionChromeService,
@@ -128,6 +132,7 @@ export function createExtensionContext(
   agentTools?: AgentToolRegistrationService,
   shaders?: ShaderRegistrationService,
   settingsServiceOptions?: CreateExtensionSettingsServiceOptions,
+  internalRenderSurface?: InternalExtensionRenderSurface,
 ): ExtensionContext {
   const extensionId = extension.manifest.id as string;
   const manifest = extension.manifest; // Already frozen by defineExtension
@@ -435,6 +440,10 @@ export function createExtensionContext(
   // (localStorage keys) and chrome subscriptions without the extension
   // author needing to know about internal service state.
   // Must be attached BEFORE freezing.
+  if (internalRenderSurface) {
+    attachInternalExtensionRenderSurface(ctx, internalRenderSurface);
+  }
+
   Object.defineProperty(ctx, CONTEXT_DISPOSE_SYMBOL, {
     value: function disposeHostServices(): void {
       disposeSettings();

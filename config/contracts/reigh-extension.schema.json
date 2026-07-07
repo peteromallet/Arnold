@@ -496,7 +496,7 @@
         "kind": { "const": "process" },
         "label": { "type": "string" },
         "order": { "type": "number" },
-        "spec": { "$ref": "#/definitions/ProcessSpec" }
+        "spec": { "$ref": "#/definitions/ProcessManifestEntry" }
       }
     },
 
@@ -622,7 +622,7 @@
       }
     },
 
-    "ProcessSpec": {
+    "ProcessManifestEntry": {
       "type": "object",
       "required": ["id", "label", "spawn", "protocol"],
       "additionalProperties": false,
@@ -982,10 +982,6 @@
         "permission": { "type": "string" },
         "reason": { "type": "string" }
       }
-    },
-
-    "ProcessManifestEntry": {
-      "$ref": "#/definitions/ProcessSpec"
     },
 
     "ExtensionDependency": {

@@ -19,6 +19,7 @@ import { AstridBridgeDataProvider } from '@/tools/video-editor/data/AstridBridge
 import type { DataProvider } from '@/tools/video-editor/data/DataProvider.ts';
 import { SupabaseDataProvider } from '@/tools/video-editor/data/SupabaseDataProvider.ts';
 import { VideoEditorProvider } from '@/tools/video-editor/contexts/VideoEditorProvider.tsx';
+import { getExtensionSmokeExtension } from '@/sdk/smoke/extensionSmoke';
 import { useExtensionLoaderWiring } from '@/tools/video-editor/runtime/useExtensionLoaderWiring';
 import { ReighVideoEditorShell } from '@/tools/video-editor/components/ReighVideoEditorShell.tsx';
 import { useTimelinesList } from '@/tools/video-editor/hooks/useTimelinesList.ts';
@@ -422,6 +423,13 @@ function TimelineList({ onSelect }: { onSelect: (timelineId: string) => void }) 
 
 export default function VideoEditorPage() {
   const { selectedProjectId } = useProjectSelectionContext();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // ---- Smoke extension wiring (prepend when ?extensionSmoke=1) -------------
+  const smokeDirectExtensions = useMemo(() => {
+    const smokeExt = getExtensionSmokeExtension(searchParams);
+    return smokeExt ? [smokeExt] : undefined;
+  }, [searchParams]);
 
   // ---- M14: extension loader wiring (host-owned) --------------------------
   // Resolves direct-local extensions + optional repository state through the
@@ -432,13 +440,12 @@ export default function VideoEditorPage() {
     diagnostics: loaderDiagnostics,
     isResolving: loaderIsResolving,
   } = useExtensionLoaderWiring({
-    directExtensions: undefined,
+    directExtensions: smokeDirectExtensions,
     repository: null,
     bundleStore: null,
   });
   const { userId } = useAuth();
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
   const { localModeAvailable, mode, setMode } = useVideoEditorModePreference();
   const [mountedSaveStatus, setMountedSaveStatus] = useState<SaveStatus>('saved');
   const creatingRef = useRef(false);

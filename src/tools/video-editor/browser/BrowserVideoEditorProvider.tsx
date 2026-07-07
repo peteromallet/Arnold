@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { EditorRuntimeProvider } from '@/tools/video-editor/contexts/EditorRuntimeProvider.tsx';
 import type { DataProvider } from '@/tools/video-editor/data/DataProvider.ts';
@@ -10,6 +10,7 @@ import type {
   VideoEditorHostContext,
 } from '@/tools/video-editor/lib/browser-runtime.ts';
 import type { ExtensionDiagnostic, ReighExtension } from '@reigh/editor-sdk';
+import { getExtensionSmokeExtension } from '@/sdk/smoke/extensionSmoke';
 import { useExtensionLoaderWiring } from '@/tools/video-editor/runtime/useExtensionLoaderWiring';
 import type { ExtensionStateRepository } from '@/tools/video-editor/runtime/extensionStateRepository';
 import type { BundleContentStore } from '@/tools/video-editor/runtime/useExtensionLoaderWiring';
@@ -159,13 +160,25 @@ export function BrowserVideoEditorProvider({
     };
   }, [explicitRepository, explicitBundleStore, userId, timelineId]);
 
+  // ---- Smoke extension wiring (prepend when ?extensionSmoke=1) -------------
+  const effectiveDirectExtensions = useMemo<readonly ReighExtension[] | undefined>(() => {
+    const smokeExt = getExtensionSmokeExtension(window.location.search);
+    if (!smokeExt) {
+      return extensions;
+    }
+    if (!extensions || extensions.length === 0) {
+      return [smokeExt];
+    }
+    return [smokeExt, ...extensions];
+  }, [extensions]);
+
   // ---- M14: extension loader wiring (host-owned) --------------------------
   const {
     resolvedExtensions,
     isResolving: _loaderIsResolving,
     packageStateEntries,
   } = useExtensionLoaderWiring({
-    directExtensions: extensions,
+    directExtensions: effectiveDirectExtensions,
     repository: effectiveRepository ?? null,
     bundleStore: effectiveBundleStore ?? null,
     refreshKey: effectiveRefreshKey,

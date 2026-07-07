@@ -373,8 +373,11 @@ if (failures.length > 0) {
 console.log('[video-editor-sdk-imports] OK: all external video-editor imports use public entrypoints or the approved allowlist.');
 
 // ---------------------------------------------------------------------------
-// Packagability smoke: verify @reigh/editor-sdk can be imported standalone
-// without requiring any deep imports from src/tools/video-editor/*.
+// Monorepo extractability smoke: verify @reigh/editor-sdk can be consumed
+// by external code (monorepo-extractable) without requiring any deep imports
+// from src/tools/video-editor/*. This does NOT assert standalone npm
+// publishability — that is explicitly deferred (see D-136 in
+// extension-platform-supported-deferred.md).
 // ---------------------------------------------------------------------------
 
 import { execSync } from 'node:child_process';
@@ -385,8 +388,14 @@ const SMOKE_LABEL = '[video-editor-sdk-smoke]';
 /**
  * Create a temporary TypeScript fixture that imports only @reigh/editor-sdk,
  * defines a minimal extension, and type-checks cleanly. If tsc fails, the SDK
- * is not packagable — it likely transitively requires video-editor internals
- * that are unavailable to external consumers.
+ * is not monorepo-extractable — it likely transitively requires video-editor
+ * internals that are unavailable to external consumers.
+ *
+ * NOTE: Passing this smoke does NOT imply that @reigh/editor-sdk is a
+ * standalone publishable npm package. Standalone npm publishing is deferred
+ * (see deferred row D-136 in extension-platform-supported-deferred.md).
+ * This smoke only verifies that external code within the monorepo can consume
+ * the SDK through the public alias without deep imports.
  */
 function runPackagabilitySmoke() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reigh-sdk-smoke-'));
@@ -394,8 +403,9 @@ function runPackagabilitySmoke() {
   const tsconfigPath = path.join(tmpDir, 'tsconfig.json');
 
   const fixtureContent = `/**
- * Packagability smoke fixture — must NOT import from src/tools/video-editor/*.
+ * Monorepo extractability smoke fixture — must NOT import from src/tools/video-editor/*.
  * Imports exclusively from @reigh/editor-sdk, the public SDK entrypoint.
+ * NOTE: This does NOT assert standalone npm publishability (deferred — see D-136).
  */
 
 import { defineExtension } from '@reigh/editor-sdk';
@@ -405,7 +415,7 @@ const ext: ReighExtension = defineExtension({
   manifest: {
     id: 'com.reigh.smoke.packagability' as any,
     version: '1.0.0',
-    label: 'Packagability Smoke',
+    label: 'External Consumption Smoke',
     description: 'Temporary fixture verifying the SDK stands alone.',
     apiVersion: 1,
   },
@@ -477,7 +487,7 @@ void ({} as _SmokeCheck);
       return false;
     }
 
-    console.log(`${SMOKE_LABEL} PASSED: @reigh/editor-sdk type-checks standalone with no video-editor deep imports required.`);
+    console.log(`${SMOKE_LABEL} PASSED: @reigh/editor-sdk is monorepo-extractable — it type-checks with no video-editor deep imports required.`);
     return true;
   } catch (err) {
     // The SDK intentionally re-exports some video-editor internals, so tsc may
@@ -515,7 +525,7 @@ void ({} as _SmokeCheck);
     if (output.split('\n').length > 20) {
       console.warn(`${SMOKE_LABEL} ...and ${output.split('\n').length - 20} more lines.`);
     }
-    console.log(`${SMOKE_LABEL} PASSED: smoke fixture imports @reigh/editor-sdk with no direct deep imports into src/tools/video-editor.`);
+    console.log(`${SMOKE_LABEL} PASSED: smoke fixture imports @reigh/editor-sdk with no direct deep imports into src/tools/video-editor (external consumption confirmed).`);
     return true;
   } finally {
     cleanupTmp(tmpDir);
@@ -531,10 +541,12 @@ function cleanupTmp(tmpDir) {
 }
 
 // ---------------------------------------------------------------------------
-// Execute packagability smoke (always runs; failures are fatal)
+// Execute external-consumption smoke (always runs; failures are fatal).
+// NOTE: This verifies monorepo extractability, NOT standalone npm publishability.
+//       Standalone npm publishing is deferred — see D-136 in supported-deferred matrix.
 // ---------------------------------------------------------------------------
 
-console.log(`${SMOKE_LABEL} Running packagability smoke…`);
+console.log(`${SMOKE_LABEL} Running external-consumption smoke (monorepo extractability)…`);
 const smokeOk = runPackagabilitySmoke();
 if (!smokeOk) {
   process.exit(1);
@@ -693,4 +705,4 @@ if (fs.existsSync(externalConsumerPath)) {
   }
 }
 
-console.log('[video-editor-sdk-imports] All checks passed (allowlist + packagability smoke + negative fixtures + external consumer).');
+console.log('[video-editor-sdk-imports] All checks passed (allowlist + external-consumption smoke + negative fixtures + external consumer).');

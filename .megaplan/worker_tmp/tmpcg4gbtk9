@@ -1,0 +1,216 @@
+Execute the approved plan in the repository.
+
+        Project directory:
+        /workspace/extension-foundation-completion/reigh-app
+
+        Brief summary: # Extension Foundation Completion
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Batch framing:
+        - Execute batch 5 of 13.
+        - Actionable task IDs for this batch: ['T5']
+        - Already completed task IDs available as dependency context: ['T1', 'T2', 'T3', 'T4']
+
+        Actionable tasks for this batch:
+        [
+  {
+    "id": "T5",
+    "depends_on": [
+      "T4"
+    ],
+    "status": "pending",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Make the production smoke extension register and render a real stable status-bar contribution in `src/sdk/smoke/extensionSmoke.ts`. Add a renderer that produces `data-testid=\"extension-smoke-status\"` anchored by `EXTENSION_SMOKE_CONTRIBUTION_ID`, use the existing render-id/renderer-registry path if supported, or add the smallest host-owned slot/render registration surface and contract governance needed if no public surface exists; ensure activation cleanup disposes registrations and never mut...",
+    "complexity_justification": "This touches extension runtime registration semantics and possibly SDK/public context contracts used outside the smoke test; a bad cleanup or registration design can leave stale runtime contributions beyond the edited file.",
+    "executor_notes": ""
+  }
+]
+
+        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
+        [
+  {
+    "id": "T1",
+    "depends_on": [],
+    "status": "skipped",
+    "kind": "audit",
+    "complexity": 2,
+    "reviewer_verdict": "deferred_baseline_unavailable",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "This is read-only command triage, but it spans several release gates and must preserve exact failure evidence so later workers do not mistake baseline failures for regressions.",
+    "executor_notes": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative.",
+    "files_changed": [],
+    "commands_run": [],
+    "evidence_files": []
+  },
+  {
+    "id": "T2",
+    "depends_on": [
+      "T1"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Fix contribution-kind drift parsing in `scripts/quality/check-extension-drift.mjs` so the release gate reads the canonical SDK kind source at `src/sdk/video/families/contributionKinds.ts` or correctly follows the current re-export chain. Re-run the drift release gate and fix any genuine reserved-kind manifest failures without weakening release behavior.",
+    "complexity_justification": "The change is localized to one quality script and possibly manifest data it reports; the failure mode is visible in the drift gate output, so it does not require broad system reasoning.",
+    "executor_notes": "Changed KINDS_PATH (src/sdk/video/families/kinds.ts, a deprecated re-export shim) to CANONICAL_KINDS_PATH (src/sdk/video/families/contributionKinds.ts, the canonical authority). The parseSdkContributionKinds function now regex-matches VideoContributionKind type union and VIDEO_CONTRIBUTION_KINDS array from the canonical source instead of falling back to family-maturity.json for kind enumeration. Verified: release gate passes (exit 0, 0 errors, 0 warnings), audit mode passes, existing tests retain same pass/fail profile (pre-existing fixture/doc failures unchanged). No reserved-kind manifest...",
+    "files_changed": [
+      "scripts/quality/check-extension-drift.mjs",
+      "scripts/quality/lib/drift-check-helpers.mjs"
+    ],
+    "commands_run": [
+      "node scripts/quality/check-extension-drift.mjs --release",
+      "node scripts/quality/check-extension-drift.mjs --audit",
+      "node --test scripts/quality/check-extension-drift.test.mjs"
+    ]
+  },
+  {
+    "id": "T3",
+    "depends_on": [
+      "T2"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "This changes the public SDK type contract consumed by manifest types, schemas, examples, and export governance; a subtle alias leak or registry mismatch can pass local type edits while breaking downstream public API expectations.",
+    "executor_notes": "Changed `ProcessManifestEntry` from a `ProcessSpec` alias to its own public-safe interface and made `ProcessContribution.spec` use that public shape. Updated `config/contracts/reigh-extension.schema.json` so process manifest and process contribution schema refs no longer expose `ProcessSpec`. Cleaned `config/contracts/registry.json` to remove forbidden process-internal expected exports and added currently exported public symbols needed for contract-governance parity. Updated public examples to use `ProcessManifestEntry` terminology/typing. Verified with `npm run check:sdk-public-exports --...",
+    "files_changed": [
+      "config/contracts/registry.json",
+      "config/contracts/reigh-extension.schema.json",
+      "src/examples/output-format-sidecar-composed-example.ts",
+      "src/examples/process-example.ts",
+      "src/sdk/video/families/processes.ts"
+    ],
+    "commands_run": [
+      "npm ci",
+      "npm ci --legacy-peer-deps",
+      "npm run check:sdk-public-exports -- --release",
+      "node scripts/quality/check-contract-governance.mjs",
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts src/sdk/index.test.ts src/sdk/examples-governance.test.ts"
+    ]
+  },
+  {
+    "id": "T4",
+    "depends_on": [
+      "T3"
+    ],
+    "status": "done",
+    "kind": "test",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "The work is focused test repair caused by import path and public-surface changes from T3; failures should point directly to the stale import or mock.",
+    "executor_notes": "Verification complete. Ran all 5 vitest files in test:extensions suite (manifest-schema-validation.test.ts, index.test.ts, examples-governance.test.ts, extensionSettingsService.test.ts, extensionSettingsMigration.test.ts) \u2014 1056 tests pass. Also ran boundary tests, family definition tests, conformance gate tests, and production smoke test \u2014 all pass. No test regressions from T3's ProcessManifestEntry refactor. The extension-drift gate passes (0 errors, 0 warnings). SDK public exports gate passes (0 violations). Video-editor SDK imports gate passes. The one pre-existing failure is the family...",
+    "files_changed": [],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/manifest-schema-validation.test.ts src/sdk/examples-governance.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/boundary.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/sdk/video/families/conformanceGate.test.ts src/sdk/video/families/familyDefinitions.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/extensionSettingsService.test.ts src/sdk/extensionSettingsMigration.test.ts",
+      "npm run test:extensions",
+      "npm run check:sdk-public-exports -- --release",
+      "npm run check:video-editor-sdk-imports",
+      "node scripts/quality/check-extension-drift.mjs --release",
+      "npm run test:extensions:production-smoke"
+    ]
+  }
+]
+
+        Prior batch deviations (address if applicable):
+        [
+  "test:extensions exits code 1 due to pre-existing family-conformance warning: 'Family process delegated gap is missing metadata fields: owner, reason, expiration.' This is not a T3 regression \u2014 T3 did not modify familyDefinitions.ts or the process adapter. The warning exists because the family registry says executionMaturity='delegated' but the adapter's manifest.metadata lacks owner/reason/expiration fields.",
+  "Advisory observation mismatch: git status/content hash delta found unclaimed files: .gitattributes",
+  "Advisory audit finding: Executor claimed changed files not present in git status: config/contracts/registry.json, config/contracts/reigh-extension.schema.json, scripts/quality/check-extension-drift.mjs, scripts/quality/lib/drift-check-helpers.mjs, src/examples/output-format-sidecar-composed-example.ts, src/examples/process-example.ts, src/sdk/video/families/processes.ts",
+  "Advisory audit finding: Git status shows changed files not claimed by any task: .gitattributes",
+  "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC11 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC12 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC13 is missing an executor acknowledgment.",
+  "Advisory audit finding: Tasks left pending after execute (executor never started them): T5, T6, T7, T8, T9, T10, T11, T12, T13"
+]
+
+        User action prerequisites:
+        No user_action prerequisites for this batch.
+
+
+        Batch-scoped sense checks:
+        [
+  {
+    "id": "SC5",
+    "task_id": "T5",
+    "verdict": "",
+    "question": "Does the smoke extension register, render, and dispose a real status-bar contribution with `data-testid=\"extension-smoke-status\"` while avoiding raw timeline mutation?"
+  }
+]
+
+
+        ## Execution context (settled - DO NOT re-litigate)
+
+        - SD1: ?extensionSmoke=1 is honored by both BrowserVideoEditorProvider and VideoEditorPage because the stock app path bypasses BrowserVideoEditorProvider. - The plan's Step 6 explicitly handles both entry points. VideoEditorPage calls useExtensionLoaderWiring directly and does not pass through BrowserVideoEditorProvider, so both wiring paths must inject the smoke extensio...
+- SD2: Production smoke renderer uses the existing render-id/renderer-registry path if available; if none exists, the worker adds the smallest host-owned slot/render registration surfa... - The plan's Step 5 conditionally handles both cases. The goal is a stable DOM anchor (data-testid='extension-smoke-status'), not a specific public API design. This keeps scope bounded while still achieving the North St...
+- SD3: Standalone npm publishing for @reigh/editor-sdk is allowed to remain explicitly deferred as long as import-boundary and external-consumer gates pass. - The North Star permits deferral. The SDK remains extractable and importable by external consumers. Steps 8 and 11 update docs and gate wording to honestly distinguish current monorepo extractability from future standa...
+
+        ## Plan execution order rationale
+
+        1. Baseline gate failures first, then contract fixes, then runtime smoke, then E2E/docs.
+2. Do not touch proposal runtime unless the existing proposal vertical test contradicts the repo evidence.
+3. Keep docs updates after code/test changes so claims match the final checkout.
+
+        ## Inter-task guidance from finalize
+
+        Execute the DAG sequentially; the heavy contract/runtime tasks are intentionally isolated so each worker can finish within one turn. T1 baseline evidence matters: later workers should fix in-scope regressions but should not chase unrelated pre-existing failures unless they block the required release gates. The most important judgment calls are to keep smoke rendering minimal and host-owned, preserve exact `?extensionSmoke=1` semantics in both entry paths, and keep docs honest about deferred npm publishing, marketplace, sandboxing, process runtime, and composition-spine capabilities.
+
+        Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations.
+        Robustness level: thorough.
+
+        Requirements:
+        - Execute only the actionable tasks in this batch.
+        - Treat completed tasks as dependency context, not new work.
+        - Return structured JSON only.
+        - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
+        - Template file already written for reference: /workspace/extension-foundation-completion/reigh-app/.megaplan/plans/extension-foundation-20260707-0036/execute_batch_5_output.json
+        - Only produce `task_updates` for these tasks: [T5]
+        - `task_updates[].status` must be one of `done`, `skipped`, `completed`, or `blocked`; never `pending` or `in_progress`.
+        - Only produce `sense_check_acknowledgments` for these sense checks: [SC5]
+        - Do not include updates for tasks or sense checks outside this batch.
+        - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+        - Keep `executor_notes` verification-focused.
+        - Best-effort progress checkpointing: if `/workspace/extension-foundation-completion/reigh-app/.megaplan/plans/extension-foundation-20260707-0036/execution_batch_5.json` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
+        - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
+        - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
+        - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
+
+        Batch JSON response template:
+        ```json
+        {
+  "output": "",
+  "files_changed": [],
+  "commands_run": [],
+  "deviations": [],
+  "task_updates": [
+    {
+      "task_id": "T5",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC5",
+      "executor_note": ""
+    }
+  ]
+}
+        ```

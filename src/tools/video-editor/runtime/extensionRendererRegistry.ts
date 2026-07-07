@@ -16,11 +16,13 @@ import type { DisposeHandle, ExtensionDiagnostic, DiagnosticSeverity } from '@re
 // Public registry shapes
 // ---------------------------------------------------------------------------
 
+export type RegisteredExtensionRenderer = (...args: unknown[]) => unknown;
+
 /** Frozen snapshot of a single render binding. */
 export interface RendererRegistryEntry {
   readonly extensionId: string;
   readonly renderId: string;
-  readonly renderer: (...args: unknown[]) => DisposeHandle | void;
+  readonly renderer: RegisteredExtensionRenderer;
 }
 
 /** Frozen snapshot of the whole registry. */
@@ -31,7 +33,7 @@ export interface RendererRegistrySnapshot {
   readonly diagnostics: readonly ExtensionDiagnostic[];
   /** Lookup helper: get the renderer for a scoped render ID. */
   readonly get: (extensionId: string, renderId: string) =>
-    ((...args: unknown[]) => DisposeHandle | void) | undefined;
+    RegisteredExtensionRenderer | undefined;
 }
 
 /** Subscriber callback receives the latest snapshot after every mutation. */
@@ -53,7 +55,7 @@ export interface RendererRegistry {
   register(
     extensionId: string,
     renderId: string,
-    renderer: (...args: unknown[]) => DisposeHandle | void,
+    renderer: RegisteredExtensionRenderer,
   ): DisposeHandle;
 
   /** Remove a single binding (called by DisposeHandle or host). */
@@ -63,7 +65,7 @@ export interface RendererRegistry {
   resolve(
     extensionId: string,
     renderId: string,
-  ): ((...args: unknown[]) => DisposeHandle | void) | undefined;
+  ): RegisteredExtensionRenderer | undefined;
 
   /** Subscribe to registry mutations. Returns cleanup handle. */
   subscribe(subscriber: RendererRegistrySubscriber): DisposeHandle;
@@ -85,7 +87,7 @@ export interface RendererRegistry {
 interface InternalEntry {
   extensionId: string;
   renderId: string;
-  renderer: (...args: unknown[]) => DisposeHandle | void;
+  renderer: RegisteredExtensionRenderer;
 }
 
 function freezeEntry(e: InternalEntry): RendererRegistryEntry {
@@ -123,7 +125,7 @@ function emitDiagnostic(
 
 export function createRendererRegistry(): RendererRegistry {
   // extensionId → (renderId → renderer)
-  const map = new Map<string, Map<string, (...args: unknown[]) => DisposeHandle | void>>();
+  const map = new Map<string, Map<string, RegisteredExtensionRenderer>>();
   const diagnostics: ExtensionDiagnostic[] = [];
   const subscribers = new Set<RendererRegistrySubscriber>();
 
@@ -140,7 +142,7 @@ export function createRendererRegistry(): RendererRegistry {
     });
   }
 
-  function ensureExtMap(extensionId: string): Map<string, (...args: unknown[]) => DisposeHandle | void> {
+  function ensureExtMap(extensionId: string): Map<string, RegisteredExtensionRenderer> {
     let extMap = map.get(extensionId);
     if (!extMap) {
       extMap = new Map();
@@ -164,7 +166,7 @@ export function createRendererRegistry(): RendererRegistry {
   function register(
     extensionId: string,
     renderId: string,
-    renderer: (...args: unknown[]) => DisposeHandle | void,
+    renderer: RegisteredExtensionRenderer,
   ): DisposeHandle {
     const extMap = ensureExtMap(extensionId);
 
@@ -211,7 +213,7 @@ export function createRendererRegistry(): RendererRegistry {
   function resolve(
     extensionId: string,
     renderId: string,
-  ): ((...args: unknown[]) => DisposeHandle | void) | undefined {
+  ): RegisteredExtensionRenderer | undefined {
     return map.get(extensionId)?.get(renderId);
   }
 

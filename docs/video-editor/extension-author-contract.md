@@ -54,6 +54,7 @@ This contract is backed by the [supported/deferred matrix](./extension-platform-
 | Host slots: header, toolbar, leftPanel, rightPanel, codePanel, writingPanel, stagePanel, timelineFooter, statusBar, dialogs, assetPanel, inspectorPanel | S-020 |
 | Inspector and overlay contributions update on host state changes | S-021 |
 | `SchemaForm` renders and validates common schema subset | S-022 |
+| `ExtensionManager` settings editing uses `SchemaForm` when a `settingsSchema` is declared in the manifest; falls back to raw key-value editing only for schemaless or legacy packages (intentional, not a missing implementation) | T10 |
 | Diagnostic fallback links open `DiagnosticPanel` filtered to failing extension | S-023 |
 | Reserved frontend component slots compile as inert placeholders | S-025 |
 | Frontend closure checklist documented and applied | S-027 |
