@@ -71,6 +71,7 @@ from arnold_pipelines.megaplan.runtime.execution_environment import (
     resolve_execution_environment,
 )
 from arnold_pipelines.megaplan._core import (
+    list_batch_artifacts,
     atomic_write_json,
     resolve_plan_dir,
     save_state_merge_meta,
@@ -343,7 +344,6 @@ from .git_ops import (
     _enable_auto_merge,
     _ensure_milestone_pr,
     _fetch_base_branch,
-    _git_push_env,
     _is_transient_gh_error,
     _is_worktree_dirty,
     _list_open_pr_for_branch,
@@ -913,29 +913,6 @@ def _current_git_head(root: Path) -> str | None:
     if proc.returncode != 0:
         return None
     return proc.stdout.strip() or None
-
-
-def _origin_base_head(root: Path, base_branch: str) -> str | None:
-    proc = subprocess.run(
-        ["git", "rev-parse", f"origin/{base_branch}"],
-        cwd=str(root),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=30,
-    )
-    if proc.returncode != 0:
-        return None
-    return proc.stdout.strip() or None
-
-
-def _resume_needs_init_anchor(root: Path, *, base_branch: str, plan_state: Mapping[str, Any]) -> bool:
-    current_state = str(plan_state.get("current_state") or "").strip().lower()
-    if current_state != "initialized":
-        return False
-    head = _current_git_head(root)
-    base_head = _origin_base_head(root, base_branch)
-    return bool(head and base_head and head == base_head)
 
 
 def _require_validation_checkout_at_ref(
@@ -1786,22 +1763,11 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
     actual_git_head = _best_effort_git_head(project_dir) if project_dir is not None else None
     execution_window_available = actual_git_head is not None
     evidence_nucleus = load_evidence_nucleus(plan_dir, default_head=current_head)
-    resume_cursor = state_payload.get("resume_cursor") if isinstance(state_payload, dict) else None
-    latest_failure = state_payload.get("latest_failure") if isinstance(state_payload, dict) else None
-    blocked_authority_rerun = (
-        state_payload.get("current_state") == STATE_BLOCKED
-        and isinstance(resume_cursor, dict)
-        and resume_cursor.get("phase") == "execute"
-        and resume_cursor.get("retry_strategy") == "rerun_phase"
-        and isinstance(latest_failure, dict)
-        and latest_failure.get("phase") == "execute"
-        and latest_failure.get("kind") == "authority_divergence"
-    )
 
     def _authoritative_batch_task_overrides() -> dict[str, dict[str, Any]]:
         overrides: dict[str, dict[str, Any]] = {}
         for batch_path in sorted(
-            plan_dir.glob("execution_batch_*.json"),
+            list_batch_artifacts(plan_dir),
             key=_execution_batch_sort_key,
         ):
             try:
@@ -1836,6 +1802,20 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
         return overrides
 
     authoritative_batch_overrides = _authoritative_batch_task_overrides()
+    batches = sorted(
+        list_batch_artifacts(plan_dir),
+        key=_execution_batch_sort_key,
+    )
+    if not batches:
+        return False, "no execution_batch_*.json artifact found"
+    latest = batches[-1]
+    try:
+        payload = json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return False, f"{latest.name} could not be read: {error}"
+    if not isinstance(payload, dict):
+        return False, f"{latest.name} payload is not an object"
+
     finalize_path = plan_dir / "finalize.json"
     finalize_payload: dict[str, Any] | None = None
     authoritative_finalize_records: list[dict[str, Any]] | None = None
@@ -1896,48 +1876,24 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                         overlaid_finalize_records.append(merged)
                     authoritative_finalize_records = overlaid_finalize_records
 
-    batches = sorted(
-        plan_dir.glob("execution_batch_*.json"),
-        key=_execution_batch_sort_key,
-    )
-    if not batches and not authoritative_finalize_records:
-        return False, "no execution_batch_*.json artifact found"
-    latest = batches[-1] if batches else None
-    payload: dict[str, Any] | None = None
-    if latest is not None:
-        try:
-            loaded_payload = json.loads(latest.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            return False, f"{latest.name} could not be read: {error}"
-        if not isinstance(loaded_payload, dict):
-            return False, f"{latest.name} payload is not an object"
-        payload = loaded_payload
-
-    # finalize.json is only authoritative when EVERY non-baseline-unavailable
-    # task is genuinely complete. When we have a valid execution window
-    # (``current_head`` is known), a ``pending`` finalize row that no
-    # authoritative execution-batch update corroborates is a stale finalize
-    # snapshot — defer to the execution-batch authority path below instead of
-    # evaluating finalize and rejecting the whole milestone.
-    #
-    # When ``current_head`` is unavailable (e.g. rev-parse failed), there is no
-    # execution-window authority to defer to, so finalize MUST be evaluated
-    # directly and the milestone rejected on its own evidence (see
-    # test_latest_execution_batch_all_tasks_done_prefers_latest_recorded_head_over_stale_baseline).
+    # finalize.json defines the required task universe. A later execution batch
+    # may override stale finalize rows for individual tasks, but it may not
+    # shrink the universe to just the latest touched task. This is the incident
+    # class where T1/T2/T6 completed, T3+ stayed pending, and the chain accepted
+    # the latest execution_batch_N.json anyway.
     if authoritative_finalize_records and batches and execution_window_available:
-        has_pending_without_batch_override = any(
-            _optional_finalize_status(task) == "pending"
-            and str(task.get("id") or "") not in authoritative_batch_overrides
+        pending_without_batch_override = [
+            str(task.get("id") or "")
             for task in authoritative_finalize_records
-        )
-        if has_pending_without_batch_override:
-            if blocked_authority_rerun:
-                return (
-                    False,
-                    "finalize.json retains unresolved pending tasks during "
-                    "authority-divergence execute rerun",
-                )
-            authoritative_finalize_records = None
+            if _optional_finalize_status(task) == "pending"
+            and str(task.get("id") or "") not in authoritative_batch_overrides
+        ]
+        if pending_without_batch_override:
+            return (
+                False,
+                "finalize.json has pending tasks without authoritative execution "
+                f"updates: {', '.join(pending_without_batch_override)}",
+            )
 
     if authoritative_finalize_records:
         finalize_decisions: dict[str, AuthorityDecision] = {}
@@ -1968,9 +1924,6 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
         return True, "finalize.json"
 
     task_records: list[dict[str, Any]] = []
-    if payload is None or latest is None:
-        return False, "no execution_batch_*.json artifact found"
-
     for key in ("task_updates", "tasks"):
         raw_records = payload.get(key)
         if isinstance(raw_records, list):
@@ -1978,12 +1931,10 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
     if not task_records:
         return False, f"{latest.name} has no task records"
 
-    completed_statuses = {"done", "completed", "complete", "passed", "success", "ok"}
     authoritative_task_records = [
         task
         for task in task_records
-        if str(task.get("status") or "").strip().casefold() in completed_statuses
-        and str(task.get("task_id") or task.get("id") or "")
+        if str(task.get("task_id") or task.get("id") or "")
         not in baseline_unavailable_task_ids
     ]
     if authoritative_task_records:
@@ -2045,7 +1996,7 @@ def _best_effort_git_head(project_dir: Path) -> str | None:
 
 def _latest_recorded_execution_head(plan_dir: Path) -> str | None:
     for path in sorted(
-        plan_dir.glob("execution_batch_*.json"),
+        list_batch_artifacts(plan_dir),
         key=_execution_batch_sort_key,
         reverse=True,
     ):
@@ -2499,17 +2450,6 @@ def _chain_completion_guard(
         STATE_BLOCKED,
         STATE_FINALIZED,
     }
-    failed_no_next_step_blocked_execute = False
-    if is_merged_pr and current_state == "failed":
-        latest_failure = plan_state.get("latest_failure")
-        if (
-            isinstance(latest_failure, dict)
-            and latest_failure.get("kind") == "no_next_step"
-            and _latest_execute_result(plan_dir) == "blocked"
-        ):
-            all_done, _all_done_reason = _latest_execution_batch_all_tasks_done(plan_dir)
-            failed_no_next_step_blocked_execute = all_done
-            merged_pr_internal_state_bypass = all_done
     merged_pr_state_bypass_reason = ""
     if (
         implementation_milestone
@@ -2522,17 +2462,10 @@ def _chain_completion_guard(
             f"{STATE_DONE!r}",
         )
     if implementation_milestone and current_state != STATE_DONE and merged_pr_internal_state_bypass:
-        if failed_no_next_step_blocked_execute:
-            merged_pr_state_bypass_reason = (
-                "merged PR milestone; internal plan state 'failed' with "
-                "no_next_step after blocked execute was canonicalized because "
-                "execution authority has all tasks done"
-            )
-        else:
-            merged_pr_state_bypass_reason = (
-                f"merged PR milestone; internal plan state {current_state!r} bypassed "
-                "because PR is merged"
-            )
+        merged_pr_state_bypass_reason = (
+            f"merged PR milestone; internal plan state {current_state!r} bypassed "
+            "because PR is merged"
+        )
 
     if not implementation_milestone:
         return True, "non-implementation completion guard passed"
@@ -2783,43 +2716,6 @@ def _ensure_published_claimed_changes_for_pr_progression(
     )
 
 
-def _finalize_task_statuses_terminal_for_blocked_execute(plan_dir: Path) -> bool:
-    finalize_path = plan_dir / "finalize.json"
-    try:
-        finalize = json.loads(finalize_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
-        return False
-    if not isinstance(finalize, dict):
-        return False
-    tasks = finalize.get("tasks")
-    if not isinstance(tasks, list) or not tasks:
-        return False
-
-    saw_completed_work = False
-    terminal_statuses = {
-        "done",
-        "completed",
-        "complete",
-        "passed",
-        "success",
-        "ok",
-        "skipped",
-        "waived",
-        "not_applicable",
-    }
-    for task in tasks:
-        if not isinstance(task, dict):
-            return False
-        status = str(task.get("status") or "").strip().casefold()
-        if status not in terminal_statuses:
-            return False
-        if task.get("reviewer_verdict") == "deferred_baseline_unavailable":
-            continue
-        if status in {"done", "completed", "complete", "passed", "success", "ok"}:
-            saw_completed_work = True
-    return saw_completed_work
-
-
 def _recover_stale_merged_pr_for_unfinished_plan(
     root: Path,
     spec_path: Path,
@@ -2844,52 +2740,11 @@ def _recover_stale_merged_pr_for_unfinished_plan(
         return None, "missing active plan or milestone branch for stale merged PR recovery"
 
     current_state = plan_state.get("current_state")
-    canonical_state = current_state
-    if current_state == "failed":
-        latest_failure = plan_state.get("latest_failure")
-        if isinstance(latest_failure, dict) and latest_failure.get("kind") == "no_next_step":
-            try:
-                plan_dir = resolve_plan_dir(root, plan_name)
-            except CliError:
-                plan_dir = None
-            if plan_dir is not None and _latest_execute_result(plan_dir) == "blocked":
-                all_done, _reason = _latest_execution_batch_all_tasks_done(plan_dir)
-                if all_done:
-                    canonical_state = STATE_EXECUTED
-                elif _finalize_task_statuses_terminal_for_blocked_execute(plan_dir):
-                    canonical_state = STATE_DONE
-                    _mark_plan_completed_by_chain(
-                        root,
-                        plan_name,
-                        milestone_label=milestone.label,
-                        completion_reason=(
-                            "merged PR milestone completed despite internal "
-                            "failed/no_next_step after blocked execute; finalize "
-                            "tasks were terminal and the baseline checkpoint was deferred"
-                        ),
-                        writer=writer,
-                    )
     if current_state == STATE_DONE:
         return None, f"plan {plan_name} is already {STATE_DONE!r}"
-    if canonical_state == STATE_DONE:
-        state.last_state = STATE_DONE
-        state.metadata["merged_pr_blocked_execute_completion"] = {
-            "recovered_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "milestone": milestone.label,
-            "plan": plan_name,
-            "pr_number": state.pr_number,
-            "plan_current_state": current_state,
-            "canonical_plan_current_state": canonical_state,
-        }
-        chain_spec.save_chain_state(spec_path, state)
-        return (
-            state,
-            f"accepted merged PR #{state.pr_number} for {plan_name}; "
-            "blocked execute had terminal finalize task statuses",
-        )
-    if not isinstance(canonical_state, str) or not canonical_state:
+    if not isinstance(current_state, str) or not current_state:
         return None, f"plan {plan_name} has no usable current_state for stale merged PR recovery"
-    if canonical_state not in {STATE_PREPPED, STATE_FINALIZED, STATE_EXECUTED}:
+    if current_state not in {STATE_PREPPED, STATE_FINALIZED, STATE_EXECUTED}:
         return (
             None,
             f"plan {plan_name} current_state={current_state!r} is not recoverable "
@@ -2950,14 +2805,13 @@ def _recover_stale_merged_pr_for_unfinished_plan(
 
     state.pr_number = None
     state.pr_state = None
-    state.last_state = canonical_state
+    state.last_state = current_state
     state.metadata["stale_merged_pr_recovery"] = {
         "recovered_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "milestone": milestone.label,
         "plan": plan_name,
         "stale_pr_number": old_pr_number,
         "plan_current_state": current_state,
-        "canonical_plan_current_state": canonical_state,
         "dirty_claimed_paths": dirty_claimed,
         "unclaimed_execute_dirty_paths": unrelated_dirty,
     }
@@ -3384,6 +3238,8 @@ def _recover_blocked_execute_if_tasks_done(
     *,
     writer,
 ) -> bool:
+    if outcome.status not in BLOCKED_EXECUTE_OUTCOME_STATUSES:
+        return False
     try:
         plan_dir = resolve_plan_dir(root, outcome.plan)
     except CliError:
@@ -3395,18 +3251,6 @@ def _recover_blocked_execute_if_tasks_done(
         return False
     if _latest_execute_result(plan_dir) != "blocked":
         return False
-    if outcome.status not in BLOCKED_EXECUTE_OUTCOME_STATUSES:
-        if outcome.status != "failed":
-            return False
-        try:
-            state_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            return False
-        if not isinstance(state_payload, dict):
-            return False
-        latest_failure = state_payload.get("latest_failure")
-        if not isinstance(latest_failure, dict) or latest_failure.get("kind") != "no_next_step":
-            return False
 
     all_done, reason = _latest_execution_batch_all_tasks_done(plan_dir)
     if not all_done:
@@ -3707,152 +3551,6 @@ def _rearm_fresh_session_execute_block(
     return True
 
 
-def _quarantine_authority_divergence_execute_artifacts(plan_dir: Path) -> list[str]:
-    """Move stale execute retry artifacts aside before an authority rerun.
-
-    Authority-divergence blocks are created when execute claims terminal
-    success but the latest task evidence does not corroborate completion. A
-    later chain relaunch must retry execute from the plan state, not let the
-    execute worker recover the same malformed scratch/checkpoint files.
-    """
-
-    quarantined: list[str] = []
-
-    def _move_aside(path: Path) -> None:
-        if not path.exists():
-            return
-        target = path.with_name(f"{path.name}.authority-divergence")
-        suffix = 1
-        while target.exists():
-            target = path.with_name(
-                f"{path.name}.authority-divergence.{suffix}"
-            )
-            suffix += 1
-        try:
-            path.replace(target)
-        except OSError:
-            return
-        quarantined.append(path.name)
-
-    for pattern in ("execute_output.json", "execute_batch_*_output.json"):
-        for path in sorted(plan_dir.glob(pattern)):
-            _move_aside(path)
-
-    batches = sorted(
-        plan_dir.glob("execution_batch_*.json"),
-        key=_execution_batch_sort_key,
-    )
-    if batches:
-        latest = batches[-1]
-        try:
-            payload = json.loads(latest.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            payload = None
-        records: list[dict[str, Any]] = []
-        if isinstance(payload, dict):
-            for key in ("task_updates", "tasks"):
-                raw_records = payload.get(key)
-                if isinstance(raw_records, list):
-                    records.extend(
-                        item for item in raw_records if isinstance(item, dict)
-                    )
-        completed_statuses = {
-            "done",
-            "completed",
-            "complete",
-            "passed",
-            "success",
-            "ok",
-        }
-        if not any(
-            str(record.get("status") or "").strip().casefold()
-            in completed_statuses
-            for record in records
-        ):
-            _move_aside(latest)
-
-    return quarantined
-
-
-def _rearm_rerun_phase_execute_authority_block(
-    plan_dir: Path,
-    *,
-    writer,
-) -> bool:
-    """Reset a blocked execute authority-divergence plan for a rerun-phase retry.
-
-    ``megaplan auto`` records uncorroborated execute terminal success as
-    ``current_state=blocked`` with ``resume_cursor={phase: execute,
-    retry_strategy: rerun_phase}``. A later chain relaunch should honor that
-    suspension and re-run execute instead of preserving the stale blocked state.
-    """
-
-    state_path = plan_dir / "state.json"
-    try:
-        state_payload = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return False
-    if not isinstance(state_payload, dict):
-        return False
-    if state_payload.get("current_state") != STATE_BLOCKED:
-        return False
-    if state_payload.get("active_step"):
-        return False
-    resume_cursor = state_payload.get("resume_cursor")
-    if not isinstance(resume_cursor, dict):
-        return False
-    if resume_cursor.get("phase") != "execute":
-        return False
-    if resume_cursor.get("retry_strategy") != "rerun_phase":
-        return False
-    latest_failure = state_payload.get("latest_failure")
-    if not isinstance(latest_failure, dict):
-        return False
-    if latest_failure.get("phase") != "execute":
-        return False
-    if latest_failure.get("kind") != "authority_divergence":
-        return False
-
-    from arnold_pipelines.megaplan._core.state import write_plan_state
-
-    recovery_event = {
-        "recorded_at": datetime.now(timezone.utc).isoformat(),
-        "reason": "chain relaunch honored execute rerun_phase authority-divergence cursor",
-    }
-    quarantined = _quarantine_authority_divergence_execute_artifacts(plan_dir)
-
-    def _patch_blocked_execute(current: dict[str, Any]) -> bool:
-        current.pop("latest_failure", None)
-        current.pop("resume_cursor", None)
-        current.pop("active_step", None)
-        meta = current.setdefault("meta", {})
-        if isinstance(meta, dict):
-            entries = meta.setdefault("rerun_phase_execute_recoveries", [])
-            if isinstance(entries, list):
-                event = dict(recovery_event)
-                if quarantined:
-                    event["quarantined_artifacts"] = list(quarantined)
-                entries.append(event)
-        return True
-
-    write_plan_state(
-        plan_dir,
-        mode="patch-many",
-        patch={"current_state": STATE_FINALIZED},
-        mutation=_patch_blocked_execute,
-    )
-    writer(
-        "[chain] execute authority-divergence recorded a rerun-phase retry; reset "
-        "blocked plan back to finalized so execute can re-run\n"
-    )
-    if quarantined:
-        writer(
-            "[chain] quarantined stale execute retry artifacts: "
-            f"{', '.join(quarantined)}\n"
-        )
-    return True
-
-
 def _drive_plan_with_blocked_execute_recovery(
     root: Path,
     spec_path: Path,
@@ -3978,7 +3676,18 @@ def _awaiting_human_can_retry(root: Path, plan: str | None) -> bool:
 def _plan_current_state_from_payload(root: Path, plan: str | None) -> str | None:
     raw = _plan_state_payload_from_name(root, plan)
     current_state = raw.get("current_state")
-    return current_state if isinstance(current_state, str) else None
+    if not isinstance(current_state, str):
+        return None
+    if current_state in {STATE_FINALIZED, STATE_EXECUTED, STATE_DONE} and _plan_has_live_active_step(raw):
+        active_step = raw.get("active_step")
+        active_phase = (
+            active_step.get("phase") or active_step.get("step")
+            if isinstance(active_step, Mapping)
+            else None
+        )
+        if isinstance(active_phase, str) and active_phase.strip():
+            return active_phase.strip()
+    return current_state
 
 
 def _plan_state_payload_from_name(root: Path, plan: str | None) -> dict[str, Any]:
@@ -4288,37 +3997,6 @@ def _reconcile_chain_from_ground_truth(
             f"#{state.pr_number} is open; waiting for merge\n"
         )
         state.last_state = STATE_AWAITING_PR_MERGE
-
-    if (
-        active_milestone is not None
-        and active_milestone.label not in completed_labels
-        and current_plan_state == STATE_DONE
-    ):
-        can_reconcile_terminal_plan = (
-            not active_uses_pr
-            or (
-                state.pr_number is not None
-                and state.pr_state == "merged"
-            )
-        )
-        if can_reconcile_terminal_plan:
-            writer(
-                f"[chain] reconciled terminal plan {plan_name} into completed "
-                f"milestone {active_milestone.label}\n"
-            )
-            state.completed.append(
-                {
-                    "label": active_milestone.label,
-                    "plan": plan_name,
-                    "status": "done",
-                    "pr_number": state.pr_number,
-                    "pr_state": state.pr_state,
-                }
-            )
-            completed_labels.add(active_milestone.label)
-            next_index = _completed_prefix_index(spec, completed_labels)
-            if next_index != state.current_milestone_index:
-                _mark_chain_after_milestone_advance(spec, state, next_index=next_index)
 
     if active_milestone is not None and active_milestone.label in completed_labels:
         next_index = _completed_prefix_index(spec, completed_labels)
@@ -5469,7 +5147,6 @@ def run_chain(
                     plan_dir = None
                 if plan_dir is not None:
                     _rearm_fresh_session_execute_block(plan_dir, writer=writer)
-                    _rearm_rerun_phase_execute_authority_block(plan_dir, writer=writer)
                 plan_state = _plan_state_payload_from_name(root, plan_name)
                 if _blocked_plan_replay_would_be_redundant(state, plan_state=plan_state):
                     _append_reconciliation_audit(
@@ -5514,25 +5191,6 @@ def run_chain(
                         root, spec_path, branch=milestone.branch, pr_number=state.pr_number
                     )
                     if state.pr_number is None:
-                        if _resume_needs_init_anchor(
-                            root,
-                            base_branch=spec.base_branch,
-                            plan_state=plan_state,
-                        ):
-                            _commit_and_push_phase(
-                                root,
-                                milestone.branch or "",
-                                plan_name,
-                                "init",
-                                writer=writer,
-                                preexisting_dirty_paths=preexisting_dirty_paths,
-                            )
-                            _capture_sync_state(
-                                root,
-                                spec_path,
-                                branch=milestone.branch,
-                                pr_number=None,
-                            )
                         state = chain_spec.load_chain_state(spec_path)
                         state.pr_number = _ensure_milestone_pr(
                             root,
@@ -5653,13 +5311,6 @@ def run_chain(
             raise
 
         def phase_callback(phase: str, _code: int, _out: str, _err: str) -> None:
-            nonlocal state
-            state = _sync_chain_last_state_from_plan(
-                root,
-                spec_path,
-                state,
-                writer=writer,
-            )
             if use_pr and milestone.branch:
                 _commit_and_push_phase(
                     root,
@@ -5672,22 +5323,13 @@ def run_chain(
                 _capture_sync_state(
                     root, spec_path, branch=milestone.branch, pr_number=state.pr_number
                 )
-                if state.pr_number is None:
-                    state.pr_number = _ensure_milestone_pr(
-                        root,
-                        milestone,
-                        base_branch=spec.base_branch,
-                        writer=writer,
-                    )
-                    state.pr_state = "open" if state.pr_number is not None else None
-                    chain_spec.save_chain_state(spec_path, state)
 
         outcome = _drive_plan_with_blocked_execute_recovery(
             root,
             spec_path,
             plan_name,
             spec,
-            on_phase_complete=phase_callback,
+            on_phase_complete=phase_callback if use_pr else None,
             writer=writer,
         )
         if outcome.status == "stalled":
@@ -5920,42 +5562,6 @@ def run_chain(
                 state.pr_state = _enable_auto_merge(
                     root, state.pr_number, writer=writer
                 )
-                chain_spec.save_chain_state(spec_path, state)
-                post_enable_pr_state = _pr_state(
-                    root, state.pr_number, writer=writer
-                )
-                state.pr_state = post_enable_pr_state
-                if post_enable_pr_state == "closed":
-                    chain_spec.save_chain_state(spec_path, state)
-                    log(
-                        f"PR #{state.pr_number} closed during milestone completion; "
-                        "stopping chain"
-                    )
-                    return _stop_for_closed_pr(
-                        spec_path=spec_path,
-                        state=state,
-                        events=events,
-                        spec=spec,
-                        milestone_label=milestone.label,
-                        pr_number=state.pr_number,
-                    )
-                if post_enable_pr_state != "merged":
-                    state.last_state = STATE_AWAITING_PR_MERGE
-                    chain_spec.save_chain_state(spec_path, state)
-                    log(
-                        f"PR #{state.pr_number} auto-merge enabled; "
-                        f"state={post_enable_pr_state}; awaiting merge"
-                    )
-                    return _result(
-                        STATE_AWAITING_PR_MERGE,
-                        state,
-                        events,
-                        spec=spec,
-                        reason=(
-                            f"milestone {milestone.label} PR "
-                            f"#{state.pr_number} is {post_enable_pr_state}"
-                        ),
-                    )
                 chain_spec.save_chain_state(spec_path, state)
         # Completion-verification contract (SHADOW-MODE, fail-open): compute +
         # persist + log a milestone-level verdict. NEVER alters the append,
