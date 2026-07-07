@@ -1757,6 +1757,43 @@ def test_recover_blocked_execute_if_tasks_done_handles_failed_no_next_step_proje
     assert "continuing from executed state" in writer.call_args.args[0]
 
 
+def test_rearm_rerun_phase_execute_authority_block_resets_plan(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "name": "plan-m1",
+        "current_state": "blocked",
+        "config": {"project_dir": str(tmp_path)},
+        "resume_cursor": {"phase": "execute", "retry_strategy": "rerun_phase"},
+        "latest_failure": {
+            "kind": "authority_divergence",
+            "phase": "execute",
+            "message": "execute terminal success lacks corroborated task completion",
+        },
+        "meta": {},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state) + "\n", encoding="utf-8")
+
+    writer = mock.Mock()
+    recovered = chain_module._rearm_rerun_phase_execute_authority_block(
+        plan_dir,
+        writer=writer,
+    )
+
+    assert recovered is True
+    saved = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert saved["current_state"] == "finalized"
+    assert "latest_failure" not in saved
+    assert "resume_cursor" not in saved
+    recoveries = saved.get("meta", {}).get("rerun_phase_execute_recoveries")
+    assert isinstance(recoveries, list) and len(recoveries) == 1
+    writer.assert_called_once()
+    assert "rerun-phase retry" in writer.call_args.args[0]
+
+
 def test_latest_execution_batch_all_tasks_done_ignores_stale_pending_finalize_rows(
     tmp_path: Path,
 ) -> None:
