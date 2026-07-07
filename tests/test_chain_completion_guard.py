@@ -1757,6 +1757,78 @@ def test_recover_blocked_execute_if_tasks_done_handles_failed_no_next_step_proje
     assert "continuing from executed state" in writer.call_args.args[0]
 
 
+def test_stale_merged_pr_recovery_accepts_terminal_blocked_execute_finalize(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    spec_path = _write_chain_spec(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "plan-m1",
+                "current_state": "failed",
+                "history": [{"step": "execute", "result": "blocked"}],
+                "latest_failure": {
+                    "kind": "no_next_step",
+                    "message": "no next_step and no override available",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "baseline_test_failures": None,
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "skipped",
+                        "reviewer_verdict": "deferred_baseline_unavailable",
+                        "executor_notes": "Deferred by harness: baseline unavailable.",
+                    },
+                    {
+                        "id": "T2",
+                        "status": "done",
+                        "executor_notes": "Implemented scoped work.",
+                    },
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="plan-m1",
+        pr_number=158,
+        pr_state="merged",
+    )
+    save_chain_state(spec_path, state)
+    spec = load_spec(spec_path)
+
+    recovered, reason = chain_module._recover_stale_merged_pr_for_unfinished_plan(
+        tmp_path,
+        spec_path,
+        state,
+        spec.milestones[0],
+        json.loads((plan_dir / "state.json").read_text(encoding="utf-8")),
+        writer=lambda _msg: None,
+    )
+
+    assert recovered is not None
+    assert "terminal finalize task statuses" in reason
+    assert recovered.pr_number == 158
+    assert recovered.pr_state == "merged"
+    assert recovered.last_state == "done"
+    saved_plan = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert saved_plan["current_state"] == "done"
+    assert "latest_failure" not in saved_plan
+
+
 def test_rearm_rerun_phase_execute_authority_block_resets_plan(
     tmp_path: Path,
 ) -> None:
