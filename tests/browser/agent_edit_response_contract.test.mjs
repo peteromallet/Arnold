@@ -1454,7 +1454,7 @@ test("normalized projection surface stays closed: no unexpected top-level keys b
     ...CURATED_PROJECTION_FIELDS,
     "raw", // explicit raw mirror
     "endpoint",
-    "__normalized__", // NORMALIZED_RESPONSE_MARKER symbol/string
+    "__agentEditResponseNormalized", // NORMALIZED_RESPONSE_MARKER
   ]);
   for (const key of Object.keys(normalized)) {
     assert.ok(
