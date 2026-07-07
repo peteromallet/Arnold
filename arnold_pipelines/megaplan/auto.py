@@ -3173,14 +3173,23 @@ def _auto_publish_branch_name(plan: str) -> str:
 
 
 def _git_text(root: Path, argv: list[str], *, timeout: int = 120) -> str:
-    result = subprocess.run(
-        argv,
-        cwd=str(root),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=timeout,
-    )
+    try:
+        result = subprocess.run(
+            argv,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout
+        stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr
+        raise CliError(
+            "git_publish_timeout",
+            f"{shlex.join(argv)} timed out after {timeout} seconds",
+            extra={"argv": argv, "stdout": stdout, "stderr": stderr, "timeout": timeout},
+        ) from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         raise CliError(
@@ -3253,15 +3262,20 @@ def _publish_done_plan(
     remote_url = ""
     push_result = None
     if status == "pushed":
-        push_result = _git_text(
-            root,
-            ["git", "push", "--no-verify", "-u", "origin", f"HEAD:{target_branch}"],
-            timeout=180,
-        )
         try:
-            remote_url = _git_text(root, ["git", "remote", "get-url", "origin"])
-        except CliError:
-            remote_url = ""
+            push_result = _git_text(
+                root,
+                ["git", "push", "--no-verify", "-u", "origin", f"HEAD:{target_branch}"],
+                timeout=180,
+            )
+            try:
+                remote_url = _git_text(root, ["git", "remote", "get-url", "origin"])
+            except CliError:
+                remote_url = ""
+        except CliError as error:
+            status = "publish_failed"
+            reason = error.code
+            push_result = error.message
     payload = {
         "schema": "megaplan.auto_publish",
         "schema_version": 1,
@@ -3281,7 +3295,8 @@ def _publish_done_plan(
     _atomic_write_text(plan_dir / "publish.json", json.dumps(payload, indent=2) + "\n")
     writer(
         f"[auto {plan}] publish {payload['status']}: "
-        f"branch={target_branch} commit={commit_sha[:12]}\n"
+        f"branch={target_branch} commit={commit_sha[:12]}"
+        f"{(' reason=' + reason) if reason else ''}\n"
     )
     return payload
 
