@@ -977,3 +977,4 @@ WARNING:root:Failed to generate context summary: Error code: 401 - {'error': {'m
   [tool] (≧◡≦) 📖 /workspace/canonical-run-st...
   [done] ┊ 📖 read      ...d-20260707-0108/gate_output.json  1.6s (2.0s)
 [hermes-worker] Read JSON from template file: /workspace/canonical-run-state-control-plane/arnold/.megaplan/plans/canonical-resolver-and-20260707-0108/gate_output.json
+Captured execution baseline: 0 pre-existing uncommitted paths. Unchanged paths will be excluded from ownership audits.
