@@ -1,1 +1,1 @@
-/workspace/progress-auditor-stage-metrics/Arnold/.megaplan/runtime/editable-engine/arnold_pipelines/megaplan/data/epic_skill.md
+/workspace/arnold/arnold_pipelines/megaplan/data/epic_skill.md
