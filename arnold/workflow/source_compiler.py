@@ -4399,8 +4399,10 @@ def _bind_route_metadata(
 ) -> tuple[Route, ...]:
     step_calls = _step_calls_by_id(block)
     routes_by_visible_key: dict[tuple[str, str, str], list[Route]] = {}
+    routes_by_source_and_label: dict[tuple[str, str], list[Route]] = {}
     for route in routes:
         routes_by_visible_key.setdefault((route.source, route.target, route.label), []).append(route)
+        routes_by_source_and_label.setdefault((route.source, route.label), []).append(route)
 
     replacements: dict[tuple[str, str, str], Route] = {}
     bound_route_ids: dict[str, tuple[str, str, str]] = {}
@@ -4449,6 +4451,20 @@ def _bind_route_metadata(
 
             visible_key = (step_id, target_ref, label)
             matching_routes = routes_by_visible_key.get(visible_key, [])
+            if not matching_routes:
+                label_matches = routes_by_source_and_label.get((step_id, label), [])
+                structural_matches = [
+                    route
+                    for route in label_matches
+                    if (
+                        (target_call := step_calls.get(route.target)) is not None
+                        and target_call.component.id.removeprefix("megaplan:") == target_ref
+                    )
+                ]
+                if len(structural_matches) == 1:
+                    route = structural_matches[0]
+                    visible_key = (route.source, route.target, route.label)
+                    matching_routes = [route]
             if visible_key in seen_keys or len(matching_routes) > 1:
                 diagnostics.append(
                     _route_metadata_diagnostic(
