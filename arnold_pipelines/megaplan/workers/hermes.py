@@ -40,6 +40,7 @@ from arnold_pipelines.megaplan.model_seam import (
     render_prompt_for_dispatch,
     render_step_message,
 )
+from arnold_pipelines.megaplan.execute.status_constants import TERMINAL_TASK_STATUSES
 
 
 def _pre_dispatch_budget_check(
@@ -2729,6 +2730,51 @@ def _reconstruct_execute_payload(
         except ValueError:
             return -1
 
+    def _validated_task_updates(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
+        if not isinstance(payload, dict):
+            return []
+        raw_updates = payload.get("task_updates")
+        if not isinstance(raw_updates, list):
+            return []
+        valid: list[dict[str, Any]] = []
+        for item in raw_updates:
+            if not isinstance(item, dict):
+                continue
+            task_id = item.get("task_id")
+            status = item.get("status")
+            executor_notes = item.get("executor_notes")
+            files_changed = item.get("files_changed")
+            commands_run = item.get("commands_run")
+            if not isinstance(task_id, str) or not task_id.strip():
+                continue
+            if status not in TERMINAL_TASK_STATUSES:
+                continue
+            if not isinstance(executor_notes, str) or not executor_notes.strip():
+                continue
+            if not isinstance(files_changed, list) or not isinstance(commands_run, list):
+                continue
+            valid.append(item)
+        return valid
+
+    def _validated_sense_check_acknowledgments(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
+        if not isinstance(payload, dict):
+            return []
+        raw_acks = payload.get("sense_check_acknowledgments")
+        if not isinstance(raw_acks, list):
+            return []
+        valid: list[dict[str, Any]] = []
+        for item in raw_acks:
+            if not isinstance(item, dict):
+                continue
+            sense_check_id = item.get("sense_check_id")
+            executor_note = item.get("executor_note")
+            if not isinstance(sense_check_id, str) or not sense_check_id.strip():
+                continue
+            if not isinstance(executor_note, str) or not executor_note.strip():
+                continue
+            valid.append(item)
+        return valid
+
     latest_batch_output_payload: dict[str, Any] | None = None
     latest_batch_output_path: Path | None = None
     batch_output_files = sorted(
@@ -2750,38 +2796,32 @@ def _reconstruct_execute_payload(
     task_updates: list[dict[str, Any]] = []
     sense_check_acknowledgments: list[dict[str, Any]] = []
     if latest_batch_output_payload is not None:
-        raw_updates = latest_batch_output_payload.get("task_updates")
-        if isinstance(raw_updates, list):
-            task_updates.extend(
-                item for item in raw_updates if isinstance(item, dict)
-            )
-        raw_acks = latest_batch_output_payload.get("sense_check_acknowledgments")
-        if isinstance(raw_acks, list):
-            sense_check_acknowledgments.extend(
-                item for item in raw_acks if isinstance(item, dict)
-            )
+        task_updates.extend(_validated_task_updates(latest_batch_output_payload))
+        sense_check_acknowledgments.extend(
+            _validated_sense_check_acknowledgments(latest_batch_output_payload)
+        )
 
     # If the scratch output is missing OR it exists but contains no usable task
     # updates, fall back to the latest audited checkpoint rather than
     # reconstructing an empty batch and tripping authority divergence.
     if not task_updates:
-        checkpoint_files = sorted(plan_dir.glob("execution_batch_*.json"), reverse=True)
-        if checkpoint_files:
+        checkpoint_files = sorted(
+            plan_dir.glob("execution_batch_*.json"),
+            key=lambda path: _batch_sort_key(path, "execution_batch_"),
+            reverse=True,
+        )
+        for checkpoint_path in checkpoint_files:
             try:
-                cp_data = json.loads(checkpoint_files[0].read_text(encoding="utf-8"))
+                cp_data = json.loads(checkpoint_path.read_text(encoding="utf-8"))
             except Exception:
-                cp_data = None
-            if isinstance(cp_data, dict):
-                updates = cp_data.get("task_updates")
-                if isinstance(updates, list):
-                    task_updates.extend(
-                        item for item in updates if isinstance(item, dict)
-                    )
-                raw_acks = cp_data.get("sense_check_acknowledgments")
-                if isinstance(raw_acks, list):
-                    sense_check_acknowledgments.extend(
-                        item for item in raw_acks if isinstance(item, dict)
-                    )
+                continue
+            checkpoint_updates = _validated_task_updates(cp_data)
+            if checkpoint_updates:
+                task_updates.extend(checkpoint_updates)
+                sense_check_acknowledgments.extend(
+                    _validated_sense_check_acknowledgments(cp_data)
+                )
+                break
 
     output_text = (
         latest_batch_output_payload.get("output")
