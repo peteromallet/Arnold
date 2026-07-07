@@ -11,6 +11,7 @@ from arnold_pipelines.megaplan.blocker_recovery import (
     find_synthetic_before_execute_gate,
 )
 from arnold_pipelines.megaplan.execute.batch import (
+    _prerequisite_blocked_task_ids,
     _normalize_execute_capture_payload,
     _repair_missing_user_action_gate,
     _resolve_batch_artifact_number,
@@ -196,6 +197,29 @@ def test_harness_artifact_paths_are_removed_from_execute_claims() -> None:
     assert _collect_execute_claimed_paths(
         {"files_changed": ["src/app.py", ".megaplan/plans/run/state.json"]}
     ) == {"src/app.py"}
+
+
+def test_prerequisite_blocked_task_ids_excludes_harness_generated_blocks() -> None:
+    task_ids = _prerequisite_blocked_task_ids(
+        [
+            {
+                "id": "T7",
+                "status": "blocked",
+                "executor_notes": (
+                    "BLOCKED — no files modified.\n"
+                    "[harness] status auto-downgraded: deviation contains budget exhausted"
+                ),
+            },
+            {
+                "id": "T8",
+                "status": "blocked",
+                "executor_notes": "Blocked by explicit prerequisite `ua-1`.",
+            },
+        ],
+        active_task_ids={"T7", "T8"},
+    )
+
+    assert task_ids == {"T8"}
 
 
 def test_pre_existing_contract_ids_skip_hollow_done_evidence(tmp_path: Path) -> None:

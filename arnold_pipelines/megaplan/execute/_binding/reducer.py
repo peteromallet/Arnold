@@ -22,7 +22,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from arnold_pipelines.megaplan._core.scheduler.types import Reduce
-from arnold_pipelines.megaplan.execute import _blocked_task_reason, build_blocking_reasons
+from arnold_pipelines.megaplan.execute import (
+    _blocked_task_reason,
+    _prerequisite_blocked_task_ids,
+    build_blocking_reasons,
+)
 from arnold_pipelines.megaplan.execute.merge import _is_blocking_deviation
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
     corroborated_completed_task_ids,
@@ -144,11 +148,12 @@ def reduce_batch(
             current_code_hash=current_code_hash,
         )
     batch_task_id_set = set(batch_task_ids)
-    batch_blocked_ids = [
-        t.get("id")
-        for t in tracked_tasks
-        if t.get("id") in batch_task_id_set and t.get("status") == "blocked"
-    ]
+    batch_blocked_ids = sorted(
+        _prerequisite_blocked_task_ids(
+            tracked_tasks,
+            active_task_ids=batch_task_id_set,
+        )
+    )
     blocked_task_reason = _blocked_task_reason(batch_blocked_ids)
     if blocked_task_reason:
         blocking_reasons.append(blocked_task_reason)
