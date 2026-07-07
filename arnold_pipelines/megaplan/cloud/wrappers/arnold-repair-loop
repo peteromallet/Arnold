@@ -2653,7 +2653,36 @@ raw_failure_signals = _unique_strings(
 )
 
 failure_classification = _classify_failure(raw_failure_signals, latest_failure, chain_state, plan_runtime_state)
-if state_mismatch.get("detected"):
+resolver_output = {}
+try:
+    from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+
+    resolver_output = resolve_current_target(
+        session,
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+except Exception:
+    resolver_output = {}
+
+stale_kinds = {
+    str(item.get("kind") or "").strip()
+    for item in resolver_output.get("stale_evidence", [])
+    if isinstance(item, dict)
+}
+terminal_plan_states = {"done", "finalized", "complete", "completed"}
+authoritative_plan_state = str(
+    plan_latest_failure.get("current_state")
+    or plan_runtime_state.get("current_state")
+    or ""
+).strip().lower()
+if (
+    stale_state.get("classification") == "NO LATEST FAILURE"
+    and "stale_chain_state_after_terminal_plan" in stale_kinds
+    and authoritative_plan_state in terminal_plan_states
+):
+    failure_classification = "stale_state"
+elif state_mismatch.get("detected"):
     failure_classification = "plan_chain_state_mismatch"
 elif stale_state.get("classification") == "STALE STATE":
     failure_classification = "stale_state"
@@ -2682,16 +2711,7 @@ payload = {
     "user_action_context": user_action_context,
     "execute_attempt_context": execute_attempt_context,
 }
-try:
-    from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
-
-    payload["resolver_output"] = resolve_current_target(
-        session,
-        marker_dir=marker_dir,
-        repair_data_dir=repair_data_dir,
-    )
-except Exception:
-    payload["resolver_output"] = {}
+payload["resolver_output"] = resolver_output
 print(json.dumps(payload, sort_keys=True))
 PY
 }
@@ -2877,6 +2897,14 @@ if classification == "unknown_failure_mode":
         classification = "timeout_or_hang"
     elif "blocked" in combined_signals:
         classification = "blocked_state_or_recovery_error"
+
+terminal_plan_states = {"done", "finalized", "complete", "completed"}
+if (
+    state_classification == "NO LATEST FAILURE"
+    and "stale_chain_state_after_terminal_plan" in stale_kinds
+    and authoritative_plan_state in terminal_plan_states
+):
+    classification = "stale_state"
 
 signal_text = "\n\n".join(str(item).strip() for item in signals[:4] if str(item).strip()) or "(none captured)"
 log_tail = (
