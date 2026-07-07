@@ -337,7 +337,11 @@ test("replay selectors, stage projection, reverse navigation, and clear cleanup 
     controls.prevButton.click();
     assert.equal(controls.stageLabel.textContent, "3/4 — Ready to apply");
     assert.equal(originalGraphCalls.length, 4, "reverse navigation restores the original graph");
-    assert.equal(panel.state.lastAppliedChanges, null, "reverse navigation clears applied-only state");
+    assert.equal(
+      panel.state.lastAppliedChanges?.summary,
+      "Inserted a reroute node.",
+      "reverse navigation preserves lifecycle-owned applied metadata until exit",
+    );
     assert.equal(panel.state.__demoMode, true, "reverse navigation keeps demo mode for review stage");
 
     controls.toolbar.dispatchEvent(keyEvent("ArrowLeft"));
