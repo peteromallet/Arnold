@@ -1,19 +1,20 @@
 {
   "fix_commits": [],
-  "generated_at": "2026-07-07T01:36:24.081230+00:00",
+  "generated_at": "2026-07-07T13:29:44.808770+00:00",
   "kind": "problem_summary",
   "linked_incident_ids": [
+    "inc-canonical-run-state-control-plane",
     "inc-superfixer-alive-but-failed-recovery"
   ],
   "next_review_ts": null,
-  "occurrence_count": 3,
+  "occurrence_count": 4,
   "owner_actor": "repair_system",
   "problem_id": "problem-bef9405c197d",
   "recurred_after_fix": false,
   "schema_version": 1,
   "source": {
-    "digest": "sha256:c96cf6179e6f342d635416e16508e7b6b6e5a4962a84c85614b0e279d828bf8c",
-    "last_seq": 183,
+    "digest": "sha256:8c80f44e6634cba0574620716302c91c608f8e33e973547f4eef72e23785616e",
+    "last_seq": 203,
     "projection": "problems"
   },
   "status": "fixed",

@@ -1,0 +1,31 @@
+{
+  "deadline_ts": null,
+  "evidence_ref_count": 1,
+  "evidence_refs": [
+    {
+      "kind": "verification_record"
+    }
+  ],
+  "generated_at": "2026-07-07T13:29:44.800443+00:00",
+  "incident_id": "inc-canonical-run-state-control-plane",
+  "kind": "incident_summary",
+  "latest_actor": "repair_system",
+  "next_expected_event": null,
+  "outcome": "recovered",
+  "placeholders": {
+    "install_freshness": "unknown",
+    "recurrence": "unknown",
+    "shipped_fix": "unknown"
+  },
+  "problem_ids": [
+    "problem-bef9405c197d"
+  ],
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:8c80f44e6634cba0574620716302c91c608f8e33e973547f4eef72e23785616e",
+    "last_seq": 203,
+    "projection": "incidents"
+  },
+  "state": "verified_recovered",
+  "summary_text": "inc-canonical-run-state-control-plane: repair-data outcome=live_with_fresh_activity kind=chain workspace=/workspace/canonical-run-state-control-plane/arnold"
+}
