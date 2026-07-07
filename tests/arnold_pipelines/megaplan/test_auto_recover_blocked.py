@@ -169,6 +169,36 @@ def test_drive_forwards_live_phase_model_to_phase_subprocess(
     ]
 
 
+def test_execute_compat_consumes_phase_model_flag() -> None:
+    from arnold_pipelines.megaplan.cli import (
+        _consume_execute_compat_flags,
+        _normalize_execute_compat_argv,
+        build_parser,
+    )
+
+    argv = _normalize_execute_compat_argv(
+        [
+            "execute",
+            "--confirm-destructive",
+            "--user-approved",
+            "--retry-blocked-tasks",
+            "--plan",
+            "demo",
+            "--phase-model",
+            "execute=codex:gpt-5.5",
+            "--fresh",
+        ]
+    )
+    args, remaining = build_parser().parse_known_args(argv)
+
+    remaining = _consume_execute_compat_flags(args, remaining)
+
+    assert remaining == []
+    assert args.confirm_destructive is True
+    assert args.user_approved is True
+    assert args.retry_blocked_tasks is True
+    assert args.phase_model == ["execute=codex:gpt-5.5"]
+
 def test_drive_clears_stale_latest_failure_before_phase_redispatch(
     monkeypatch,
     tmp_path: Path,
