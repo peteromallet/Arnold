@@ -1,15 +1,83 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 from arnold_pipelines.megaplan import auto
+from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     ExitKind,
     PhaseResult,
     atomic_write_phase_result,
 )
+
+
+def test_git_text_normalizes_timeout_as_cli_error(monkeypatch, tmp_path: Path) -> None:
+    def fake_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(
+            cmd=kwargs.get("args") or args[0],
+            timeout=kwargs["timeout"],
+            output="partial stdout",
+            stderr="partial stderr",
+        )
+
+    monkeypatch.setattr(auto.subprocess, "run", fake_run)
+
+    try:
+        auto._git_text(tmp_path, ["git", "push"], timeout=3)
+    except CliError as error:
+        assert error.code == "git_publish_timeout"
+        assert "git push timed out after 3 seconds" == error.message
+        assert error.extra["stdout"] == "partial stdout"
+        assert error.extra["stderr"] == "partial stderr"
+    else:
+        raise AssertionError("expected CliError")
+
+
+def test_publish_done_plan_records_push_timeout_without_raising(monkeypatch, tmp_path: Path) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    commands: list[list[str]] = []
+
+    def fake_git_text(root: Path, argv: list[str], *, timeout: int = 120) -> str:
+        commands.append(list(argv))
+        if argv == ["git", "status", "--porcelain"]:
+            return " M changed.txt"
+        if argv == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
+            return "feature"
+        if argv == ["git", "rev-parse", "HEAD"]:
+            return "abc1234567890"
+        if argv[:2] == ["git", "switch"] or argv[:2] == ["git", "add"]:
+            return ""
+        if argv[:2] == ["git", "commit"]:
+            return "committed"
+        if argv[:3] == ["git", "push", "--no-verify"]:
+            raise CliError("git_publish_timeout", "git push timed out after 180 seconds")
+        raise AssertionError(f"unexpected git command: {argv}")
+
+    class Completed:
+        returncode = 1
+
+    monkeypatch.setattr(auto, "_git_text", fake_git_text)
+    monkeypatch.setattr(auto.subprocess, "run", lambda *args, **kwargs: Completed())
+
+    lines: list[str] = []
+    payload = auto._publish_done_plan(
+        plan="demo",
+        plan_dir=plan_dir,
+        root=tmp_path,
+        branch=None,
+        writer=lines.append,
+    )
+
+    assert payload is not None
+    assert payload["status"] == "publish_failed"
+    assert payload["reason"] == "git_publish_timeout"
+    assert payload["push_output"] == "git push timed out after 180 seconds"
+    assert "reason=git_publish_timeout" in lines[-1]
+    assert json.loads((plan_dir / "publish.json").read_text(encoding="utf-8")) == payload
 
 
 def test_drive_forwards_live_phase_model_to_phase_subprocess(
