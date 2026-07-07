@@ -9,7 +9,10 @@ from arnold_pipelines.megaplan.execute.batch import (
     handle_execute_one_batch,
     normalize_tier_map,
 )
-from arnold_pipelines.megaplan.fallback_chains import select_fallback_spec
+from arnold_pipelines.megaplan.fallback_chains import (
+    configured_fallback_chain_for_phase,
+    select_fallback_spec,
+)
 from arnold_pipelines.megaplan.profiles import apply_profile_expansion
 from arnold_pipelines.megaplan.types import (
     CliError,
@@ -124,6 +127,23 @@ def _extract_execute_tier_map(tier_models: object) -> dict[int, str] | None:
     return normalized or None
 
 
+def _execute_phase_model_is_pinned(args: argparse.Namespace, state: PlanState) -> bool:
+    """Return true when execute has an explicit phase-model override.
+
+    A pinned execute model is authoritative for the whole execute phase,
+    including per-batch routing. Chain resumes may carry the pin only in
+    persisted state while profile expansion has already populated
+    ``args.tier_models``; checking both sources prevents stale profile execute
+    tiers from overriding the pin inside ``handle_execute_auto_loop``.
+    """
+
+    phase_models = list(getattr(args, "phase_model", None) or [])
+    state_phase_models = (state.get("config") or {}).get("phase_model")
+    if isinstance(state_phase_models, list):
+        phase_models.extend(entry for entry in state_phase_models if isinstance(entry, str))
+    return configured_fallback_chain_for_phase(phase_models, "execute") is not None
+
+
 def _apply_execute_tier_cap(
     tier_map: dict[int, str] | None,
     max_execute_tier: object,
@@ -202,7 +222,10 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         # per-batch by task complexity.  apply_profile_expansion already
         # strips tier_models.execute when a CLI --phase-model execute=...
         # override is present, so no double-check is needed here.
-        tier_map = _extract_execute_tier_map(getattr(args, "tier_models", None))
+        if _execute_phase_model_is_pinned(args, state):
+            tier_map = None
+        else:
+            tier_map = _extract_execute_tier_map(getattr(args, "tier_models", None))
         tier_map = _apply_execute_tier_cap(
             tier_map,
             getattr(args, "max_execute_tier", None)
