@@ -2761,9 +2761,10 @@ def _reconstruct_execute_payload(
                 item for item in raw_acks if isinstance(item, dict)
             )
 
-    # If the batch scratch file was never filled, fall back to the latest
-    # audited checkpoint rather than replaying unrelated prior batches.
-    if not task_updates and latest_batch_output_path is None:
+    # If the scratch output is missing OR it exists but contains no usable task
+    # updates, fall back to the latest audited checkpoint rather than
+    # reconstructing an empty batch and tripping authority divergence.
+    if not task_updates:
         checkpoint_files = sorted(plan_dir.glob("execution_batch_*.json"), reverse=True)
         if checkpoint_files:
             try:
