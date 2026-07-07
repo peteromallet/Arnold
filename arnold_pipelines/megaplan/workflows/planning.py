@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -31,10 +32,13 @@ from arnold_pipelines.megaplan.workflows.components import (
     M4_LOOP_MAX_ITERATIONS,
     MODEL_ROUTING_POLICY,
     REVISE,
+    TIEBREAKER_CHALLENGER,
     ROBUSTNESS_POLICY,
-    STEP_COMPONENTS_BY_ID,
     SUSPENSION_POLICY,
     TIEBREAKER_DECIDE,
+    TIEBREAKER_DECISION,
+    TIEBREAKER_RESEARCHER,
+    TIEBREAKER_SYNTHESIS,
 )
 
 AUTHORING_SOURCE_PATH = Path(__file__).with_name("workflow.pypeline")
@@ -52,8 +56,79 @@ FRONT_HALF_ROUTING_STEP_IDS = frozenset(
         "critique",
         "gate",
         "revise",
+        "tiebreaker_researcher",
+        "tiebreaker_challenger",
+        "tiebreaker_synthesis",
+        "tiebreaker_decision",
     }
 )
+
+_PIPELINE_STEP_COMPONENTS_LIST = []
+for _component in ALL_STEP_COMPONENTS:
+    if _component.id == "megaplan:revise":
+        _PIPELINE_STEP_COMPONENTS_LIST.append(_component)
+        _PIPELINE_STEP_COMPONENTS_LIST.extend(
+            (
+                TIEBREAKER_RESEARCHER,
+                TIEBREAKER_CHALLENGER,
+                TIEBREAKER_SYNTHESIS,
+                TIEBREAKER_DECISION,
+            )
+        )
+        continue
+    if _component.id in {
+        "megaplan:tiebreaker_run",
+        "megaplan:tiebreaker_decide",
+        "megaplan:tiebreaker_researcher",
+        "megaplan:tiebreaker_challenger",
+        "megaplan:tiebreaker_synthesis",
+        "megaplan:tiebreaker_decision",
+    }:
+        continue
+    _PIPELINE_STEP_COMPONENTS_LIST.append(_component)
+PIPELINE_STEP_COMPONENTS = tuple(_PIPELINE_STEP_COMPONENTS_LIST)
+PIPELINE_STEP_COMPONENTS_BY_ID = {
+    component.id.removeprefix("megaplan:"): component for component in PIPELINE_STEP_COMPONENTS
+}
+
+_LOWERED_STEP_ID_ALIASES = {
+    "blocked_override": "override",
+    "critique-fanout": "critique",
+    "execute-batches": "execute",
+    "fallback_execute": "execute",
+    "fallback_finalize": "finalize",
+    "force_execute": "execute",
+    "force_finalize": "finalize",
+    "gate_abort": "halt",
+    "gate_reprompt_revise": "revise",
+    "gate_retry_revise": "revise",
+    "gate_suspend": "halt",
+    "override_halt": "halt",
+    "override_unknown": "halt",
+    "review-fan-in": "review",
+    "review_deferred_human": "halt",
+    "review_halt": "halt",
+    "review_override": "override",
+    "review_revise": "revise",
+    "tiebreaker_decide": "tiebreaker_decision",
+    "tiebreaker_fallback_override": "override",
+    "tiebreaker_run": "tiebreaker_researcher",
+}
+
+_ROUTE_LABEL_BY_TRANSITION_ID = {
+    "gate": {
+        "gate:abort": "abort",
+        "gate:escalate": "escalate",
+        "gate:iterate": "iterate",
+        "gate:proceed": "proceed",
+        "gate:tiebreaker": "tiebreaker",
+    },
+    "tiebreaker_decision": {
+        "tiebreaker:escalate": "escalate",
+        "tiebreaker:iterate": "iterate",
+        "tiebreaker:proceed": "proceed",
+    },
+}
 
 
 AUTHOR_REVISE = StepComponent(
@@ -96,6 +171,86 @@ AUTHOR_TIEBREAKER_DECIDE = StepComponent(
         ),
     },
 )
+
+
+@lru_cache(maxsize=1)
+def _lowered_workflow() -> Pipeline:
+    return lower_workflow_file(AUTHORING_SOURCE_PATH)
+
+
+def _canonical_step_id(step_id: str) -> str:
+    return _LOWERED_STEP_ID_ALIASES.get(step_id, step_id)
+
+
+def _canonical_lowered_steps(lowered_steps: Sequence[Step]) -> dict[str, Step]:
+    canonical_steps: dict[str, Step] = {}
+    for lowered in lowered_steps:
+        step_id = _canonical_step_id(lowered.id)
+        if step_id not in PIPELINE_STEP_COMPONENTS_BY_ID or step_id in canonical_steps:
+            continue
+        canonical_steps[step_id] = lowered
+    return canonical_steps
+
+
+def _route_id_for_lowered_route(route: Route, *, source: str, target: str) -> str:
+    component = PIPELINE_STEP_COMPONENTS_BY_ID.get(source)
+    if component is not None:
+        bindings = component.metadata.get("route_bindings", ())
+        for binding in bindings:
+            if (
+                str(binding.get("label", "default")) == route.label
+                and _canonical_step_id(str(binding.get("target_ref", ""))) == target
+            ):
+                return str(binding["id"])
+        for binding in bindings:
+            if str(binding.get("label", "default")) == route.label:
+                return str(binding["id"])
+    suffix = target if route.label == "default" else route.label
+    return f"{source}:{suffix}"
+
+
+def _canonical_lowered_routes(lowered_routes: Sequence[Route]) -> tuple[Route, ...]:
+    seen: set[tuple[str, str, str, str | None]] = set()
+    routes: list[Route] = []
+    for lowered in lowered_routes:
+        source = _canonical_step_id(lowered.source)
+        target = _canonical_step_id(lowered.target)
+        if source not in PIPELINE_STEP_COMPONENTS_BY_ID or target not in PIPELINE_STEP_COMPONENTS_BY_ID:
+            continue
+        signature = (source, target, lowered.label, lowered.condition_ref)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        routes.append(
+            Route(
+                id=_route_id_for_lowered_route(lowered, source=source, target=target),
+                source=source,
+                target=target,
+                label=lowered.label,
+                condition_ref=lowered.condition_ref,
+                metadata={},
+            )
+        )
+    return tuple(routes)
+
+
+def _canonical_lowered_route_targets_by_source(lowered_routes: Sequence[Route]) -> dict[str, dict[str, str]]:
+    grouped: dict[str, dict[str, str]] = {}
+    for route in _canonical_lowered_routes(lowered_routes):
+        grouped.setdefault(route.source, {})[route.label] = route.target
+    return grouped
+
+
+def _supported_pipeline_route_labels_by_source() -> dict[str, set[str]]:
+    supported: dict[str, set[str]] = {}
+    for step_id, component in PIPELINE_STEP_COMPONENTS_BY_ID.items():
+        labels = {
+            str(binding.get("label", "default"))
+            for binding in component.metadata.get("route_bindings", ())
+        }
+        if labels:
+            supported[step_id] = labels
+    return supported
 
 
 def _component_io(items: Sequence[Mapping[str, str]], io_type: type[Input] | type[Output]) -> tuple[Any, ...]:
@@ -222,13 +377,34 @@ def _policy_from_config(config: Mapping[str, Any], *, timeout_seconds: float | N
 
 
 def _policy_for_step(step_id: str, *, timeout_seconds: float | None) -> WorkflowPolicy:
-    component = STEP_COMPONENTS_BY_ID[step_id]
+    component = PIPELINE_STEP_COMPONENTS_BY_ID[step_id]
     policy = component.policy or DEFAULT_POLICY
-    return _policy_from_config(policy.config, timeout_seconds=timeout_seconds)
+    canonical_policy = _policy_from_config(policy.config, timeout_seconds=timeout_seconds)
+    route_targets = _canonical_lowered_route_targets_by_source(_lowered_workflow().routes).get(step_id, {})
+    transition_labels = _ROUTE_LABEL_BY_TRANSITION_ID.get(step_id, {})
+    control_transitions = []
+    for transition in canonical_policy.control_transitions:
+        target_ref = transition.target_ref
+        route_label = transition_labels.get(transition.transition_id)
+        if route_label is not None:
+            target_ref = route_targets.get(route_label, target_ref)
+        trigger_ref = transition.trigger_ref
+        if step_id == "tiebreaker_decision" and isinstance(trigger_ref, str):
+            trigger_ref = trigger_ref.replace("tiebreaker_decide.", "tiebreaker_decision.")
+        control_transitions.append(
+            replace(
+                transition,
+                trigger_ref=trigger_ref,
+                target_ref=target_ref,
+            )
+        )
+    if control_transitions == list(canonical_policy.control_transitions):
+        return canonical_policy
+    return replace(canonical_policy, control_transitions=tuple(control_transitions))
 
 
 def _metadata_for_step(step_id: str) -> dict[str, Any]:
-    component = STEP_COMPONENTS_BY_ID[step_id]
+    component = PIPELINE_STEP_COMPONENTS_BY_ID[step_id]
     metadata: dict[str, Any] = {}
     handler_ref = component.metadata.get("handler_ref")
     if isinstance(handler_ref, str):
@@ -291,10 +467,12 @@ def _canonical_steps(
     timeout_seconds: float | None,
     lowered_steps: Sequence[Step] = (),
 ) -> tuple[Step, ...]:
-    lowered_by_id = {step.id: step for step in lowered_steps}
+    lowered_by_id = _canonical_lowered_steps(lowered_steps)
     steps = []
-    for component in ALL_STEP_COMPONENTS:
+    for component in PIPELINE_STEP_COMPONENTS:
         step_id = component.id.removeprefix("megaplan:")
+        if step_id not in lowered_by_id:
+            continue
         canonical = Step(
             id=step_id,
             kind=component.step_type,
@@ -315,39 +493,13 @@ def _canonical_steps(
         steps.append(canonical)
     return tuple(steps)
 
-
-def _lowered_prep_plan_route(lowered_routes: Sequence[Route]) -> Route | None:
-    for route in lowered_routes:
-        if route.source == "prep" and route.target == "plan" and route.label == "default":
-            return replace(route, id="prep:plan")
-    return None
-
-
 def _canonical_routes(*, lowered_routes: Sequence[Route] = ()) -> tuple[Route, ...]:
-    routes: list[Route] = []
-    lowered_prep_plan = _lowered_prep_plan_route(lowered_routes)
-    if lowered_prep_plan is not None:
-        routes.append(lowered_prep_plan)
-    for component in ALL_STEP_COMPONENTS:
-        source = component.id.removeprefix("megaplan:")
-        for binding in component.metadata.get("route_bindings", ()):
-            if lowered_prep_plan is not None and source == "prep" and binding.get("target_ref") == "plan":
-                continue
-            routes.append(
-                Route(
-                    id=str(binding["id"]),
-                    source=source,
-                    target=str(binding["target_ref"]),
-                    label=str(binding.get("label", "default")),
-                    condition_ref=(
-                        str(binding["condition_ref"])
-                        if binding.get("condition_ref") is not None
-                        else None
-                    ),
-                    metadata={},
-                )
-            )
-    return tuple(routes)
+    supported_labels = _supported_pipeline_route_labels_by_source()
+    return tuple(
+        route
+        for route in _canonical_lowered_routes(lowered_routes)
+        if route.label in supported_labels.get(route.source, set())
+    )
 
 
 def _canonical_capabilities() -> tuple[Capability, ...]:
@@ -368,7 +520,7 @@ def build_pipeline(
 ) -> Pipeline:
     """Return the canonical Megaplan planning workflow as a DSL pipeline."""
 
-    lowered = lower_workflow_file(AUTHORING_SOURCE_PATH)
+    lowered = _lowered_workflow()
     return Pipeline(
         id=lowered.id,
         version=lowered.version,
@@ -401,12 +553,13 @@ def lowered_workflow_topology() -> dict[str, Any]:
     source-level ``Route`` declarations and runtime signal handlers.
     """
 
-    lowered = lower_workflow_file(AUTHORING_SOURCE_PATH)
+    lowered = _lowered_workflow()
+    canonical_routes = _canonical_lowered_routes(lowered.routes)
     return {
         "workflow_id": lowered.id,
         "workflow_version": lowered.version,
         "source_path": str(AUTHORING_SOURCE_PATH),
-        "steps": tuple(step.id for step in lowered.steps),
+        "steps": tuple(step.id for step in _canonical_steps(timeout_seconds=None, lowered_steps=lowered.steps)),
         "routes": tuple(
             {
                 "id": route.id,
@@ -415,16 +568,21 @@ def lowered_workflow_topology() -> dict[str, Any]:
                 "label": route.label,
                 "condition_ref": route.condition_ref,
             }
-            for route in lowered.routes
+            for route in canonical_routes
         ),
     }
 
 
-def lowered_route_bindings_by_step() -> dict[str, tuple[dict[str, str | None], ...]]:
+def lowered_route_bindings_by_step(
+    *, step_ids: set[str] | frozenset[str] | None = None
+) -> dict[str, tuple[dict[str, str | None], ...]]:
     """Group source-derived route bindings by source step id."""
 
     grouped: dict[str, list[dict[str, str | None]]] = {}
-    for route in lower_workflow_file(AUTHORING_SOURCE_PATH).routes:
+    wanted_step_ids = None if step_ids is None else set(step_ids)
+    for route in _canonical_lowered_routes(_lowered_workflow().routes):
+        if wanted_step_ids is not None and route.source not in wanted_step_ids:
+            continue
         grouped.setdefault(route.source, []).append(
             {
                 "id": route.id,
@@ -439,7 +597,7 @@ def lowered_route_bindings_by_step() -> dict[str, tuple[dict[str, str | None], .
 def resolve_lowered_route_target_for_signal(source: str, signal: str) -> str | None:
     """Resolve a source-derived route target for a route signal."""
 
-    for route in lower_workflow_file(AUTHORING_SOURCE_PATH).routes:
+    for route in _canonical_lowered_routes(_lowered_workflow().routes):
         if route.source == source and route.label == signal:
             return route.target
     return None

@@ -26,7 +26,10 @@ from arnold_pipelines.megaplan.workflows.components import (
     EXECUTE_BATCH_WORKFLOW,
     REVIEW_PANEL_WORKFLOW,
     REVISE_LOOP_POLICY,
-    TIEBREAKER_WORKFLOW,
+    TIEBREAKER_CHALLENGER,
+    TIEBREAKER_DECISION,
+    TIEBREAKER_RESEARCHER,
+    TIEBREAKER_SYNTHESIS,
 )
 
 
@@ -84,23 +87,99 @@ def planning_workflow(brief: str) -> None:
         elif gate_route_signal == GateOutcome.REPROMPT_DOWNGRADE:
             AUTHORING_REVISE(id="gate_reprompt_revise", gate_payload=gate_route_signal)
         elif gate_route_signal == GateOutcome.TIEBREAKER:
-            decision = TIEBREAKER_WORKFLOW(id="tiebreaker", gate_payload=gate_route_signal)
+            research_findings = TIEBREAKER_RESEARCHER(
+                id="tiebreaker_researcher",
+                gate_payload=gate_route_signal,
+            )
+            challenge_findings = TIEBREAKER_CHALLENGER(
+                id="tiebreaker_challenger",
+                research_findings=research_findings,
+            )
+            tiebreaker_payload = TIEBREAKER_SYNTHESIS(
+                id="tiebreaker_synthesis",
+                research_findings=research_findings,
+                challenge_findings=challenge_findings,
+            )
+            decision = TIEBREAKER_DECISION(
+                id="tiebreaker_decision",
+                tiebreaker_payload=tiebreaker_payload,
+            )
             if decision == TiebreakerOutcome.PROCEED:
-                finalize_payload = AUTHORING_FINALIZE(id="tiebreaker_finalize", gate_payload=decision)
-                parallel_map(
-                    id="tiebreaker-execute-batches",
+                finalize_payload = AUTHORING_FINALIZE(id="finalize", gate_payload=decision)
+                execute_payload = parallel_map(
+                    id="tiebreaker_execute_batches",
                     items="megaplan.execute.batches",
                     step=EXECUTE_BATCH_WORKFLOW,
                     reducer=AUTHORING_EXECUTE,
                     path_template="execute/{index}",
                 )
-                return None
+                review_route_signal = parallel_map(
+                    id="tiebreaker_review_fan_in",
+                    items=execute_payload,
+                    step=REVIEW_PANEL_WORKFLOW,
+                    reducer=AUTHORING_REVIEW,
+                    path_template="review/{item_id}",
+                )
+                if review_route_signal == ReviewOutcome.PASS:
+                    AUTHORING_HALT(id="tiebreaker_halt", review_payload=review_route_signal)
+                    return None
+                elif review_route_signal == ReviewOutcome.REWORK:
+                    AUTHORING_REVISE(id="tiebreaker_review_revise", gate_payload=review_route_signal)
+                    return None
+                elif review_route_signal == ReviewOutcome.BLOCKED:
+                    AUTHORING_OVERRIDE(id="tiebreaker_review_override", gate_payload=review_route_signal)
+                    return None
+                elif review_route_signal == ReviewOutcome.DEFERRED_HUMAN:
+                    AUTHORING_HALT(id="tiebreaker_review_deferred_human", review_payload=review_route_signal)
+                    return None
+                else:
+                    AUTHORING_HALT(id="tiebreaker_review_halt", review_payload=review_route_signal)
+                    return None
             elif decision == TiebreakerOutcome.ITERATE:
-                AUTHORING_REVISE(id="tiebreaker_revise", gate_payload=decision)
-                return None
+                AUTHORING_REVISE(id="revise", gate_payload=decision)
             elif decision == TiebreakerOutcome.ESCALATE:
-                AUTHORING_OVERRIDE(id="tiebreaker_override", gate_payload=decision)
-                return None
+                override_result = AUTHORING_OVERRIDE(id="override", gate_payload=decision)
+                if override_result == OverrideOutcome.ABORT:
+                    AUTHORING_HALT(id="tiebreaker_override_halt", override_result=override_result)
+                    return None
+                elif override_result == OverrideOutcome.FORCE_PROCEED:
+                    finalize_payload = AUTHORING_FINALIZE(id="finalize", gate_payload=override_result)
+                    execute_payload = parallel_map(
+                        id="tiebreaker_override_execute_batches",
+                        items="megaplan.execute.batches",
+                        step=EXECUTE_BATCH_WORKFLOW,
+                        reducer=AUTHORING_EXECUTE,
+                        path_template="execute/{index}",
+                    )
+                    review_route_signal = parallel_map(
+                        id="tiebreaker_override_review_fan_in",
+                        items=execute_payload,
+                        step=REVIEW_PANEL_WORKFLOW,
+                        reducer=AUTHORING_REVIEW,
+                        path_template="review/{item_id}",
+                    )
+                    if review_route_signal == ReviewOutcome.PASS:
+                        AUTHORING_HALT(id="tiebreaker_override_halt_review", review_payload=review_route_signal)
+                        return None
+                    elif review_route_signal == ReviewOutcome.REWORK:
+                        AUTHORING_REVISE(id="tiebreaker_override_review_revise", gate_payload=review_route_signal)
+                        return None
+                    elif review_route_signal == ReviewOutcome.BLOCKED:
+                        AUTHORING_OVERRIDE(id="tiebreaker_override_review_override", gate_payload=review_route_signal)
+                        return None
+                    elif review_route_signal == ReviewOutcome.DEFERRED_HUMAN:
+                        AUTHORING_HALT(id="tiebreaker_override_review_deferred_human", review_payload=review_route_signal)
+                        return None
+                    else:
+                        AUTHORING_HALT(id="tiebreaker_override_review_halt", review_payload=review_route_signal)
+                        return None
+                elif override_result == OverrideOutcome.REPLAN:
+                    AUTHORING_REVISE(id="revise", gate_payload=override_result)
+                else:
+                    AUTHORING_HALT(id="tiebreaker_override_unknown", override_result=override_result)
+                    return None
+            elif decision == TiebreakerOutcome.REPLAN:
+                AUTHORING_REVISE(id="revise", gate_payload=decision)
             else:
                 AUTHORING_OVERRIDE(id="tiebreaker_fallback_override", gate_payload=decision)
                 return None
@@ -111,11 +190,37 @@ def planning_workflow(brief: str) -> None:
                 return None
             elif override_result == OverrideOutcome.FORCE_PROCEED:
                 finalize_payload = AUTHORING_FINALIZE(id="override_finalize", gate_payload=override_result)
-                AUTHORING_EXECUTE(id="override_execute", finalize_payload=finalize_payload)
-                return None
+                execute_payload = parallel_map(
+                    id="override_execute_batches",
+                    items="megaplan.execute.batches",
+                    step=EXECUTE_BATCH_WORKFLOW,
+                    reducer=AUTHORING_EXECUTE,
+                    path_template="execute/{index}",
+                )
+                review_route_signal = parallel_map(
+                    id="override_review_fan_in",
+                    items=execute_payload,
+                    step=REVIEW_PANEL_WORKFLOW,
+                    reducer=AUTHORING_REVIEW,
+                    path_template="review/{item_id}",
+                )
+                if review_route_signal == ReviewOutcome.PASS:
+                    AUTHORING_HALT(id="override_halt_review", review_payload=review_route_signal)
+                    return None
+                elif review_route_signal == ReviewOutcome.REWORK:
+                    AUTHORING_REVISE(id="override_review_revise", gate_payload=review_route_signal)
+                    return None
+                elif review_route_signal == ReviewOutcome.BLOCKED:
+                    AUTHORING_OVERRIDE(id="override_review_override", gate_payload=review_route_signal)
+                    return None
+                elif review_route_signal == ReviewOutcome.DEFERRED_HUMAN:
+                    AUTHORING_HALT(id="override_review_deferred_human", review_payload=review_route_signal)
+                    return None
+                else:
+                    AUTHORING_HALT(id="override_review_halt", review_payload=review_route_signal)
+                    return None
             elif override_result == OverrideOutcome.REPLAN:
-                AUTHORING_REVISE(id="override_revise", gate_payload=override_result)
-                return None
+                AUTHORING_REVISE(id="override_replan_revise", gate_payload=override_result)
             else:
                 AUTHORING_HALT(id="override_unknown", override_result=override_result)
                 return None

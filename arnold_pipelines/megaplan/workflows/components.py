@@ -100,7 +100,11 @@ RUNTIME_BRANCH_VOCABULARY = MappingProxyType(
             "retry_gate",
             "reprompt_downgrade",
         ),
-        "tiebreaker_decide": ("proceed", "iterate", "escalate"),
+        "tiebreaker_researcher": ("completed",),
+        "tiebreaker_challenger": ("completed",),
+        "tiebreaker_synthesis": ("completed",),
+        "tiebreaker_decision": ("proceed", "iterate", "escalate", "replan"),
+        "tiebreaker_decide": ("proceed", "iterate", "escalate", "replan"),  # compatibility bridge
         "review": ("pass", "rework", "blocked", "force_proceeded", "deferred_human"),
         "override": ("abort", "force_proceed", "replan"),
         "revise": ("completed",),
@@ -449,6 +453,71 @@ TIEBREAKER_DECIDE_OUTPUT_SCHEMA = _schema(
         "decision": {"type": "string", "description": "Tiebreaker resolution decision"},
     },
 )
+TIEBREAKER_RESEARCHER_INPUT_SCHEMA = _schema(
+    export_name="TIEBREAKER_RESEARCHER_INPUT_SCHEMA",
+    schema_id="tiebreaker_researcher:input",
+    schema_type="input",
+    fields={
+        "gate_payload": {"type": "object", "description": "Gate payload triggering tiebreaker"},
+    },
+)
+TIEBREAKER_RESEARCHER_OUTPUT_SCHEMA = _schema(
+    export_name="TIEBREAKER_RESEARCHER_OUTPUT_SCHEMA",
+    schema_id="tiebreaker_researcher:output",
+    schema_type="output",
+    fields={
+        "research_findings": {"type": "object", "description": "Researcher analysis findings"},
+    },
+)
+TIEBREAKER_CHALLENGER_INPUT_SCHEMA = _schema(
+    export_name="TIEBREAKER_CHALLENGER_INPUT_SCHEMA",
+    schema_id="tiebreaker_challenger:input",
+    schema_type="input",
+    fields={
+        "research_findings": {"type": "object", "description": "Researcher findings to challenge"},
+    },
+)
+TIEBREAKER_CHALLENGER_OUTPUT_SCHEMA = _schema(
+    export_name="TIEBREAKER_CHALLENGER_OUTPUT_SCHEMA",
+    schema_id="tiebreaker_challenger:output",
+    schema_type="output",
+    fields={
+        "challenge_findings": {"type": "object", "description": "Challenger analysis findings"},
+    },
+)
+TIEBREAKER_SYNTHESIS_INPUT_SCHEMA = _schema(
+    export_name="TIEBREAKER_SYNTHESIS_INPUT_SCHEMA",
+    schema_id="tiebreaker_synthesis:input",
+    schema_type="input",
+    fields={
+        "research_findings": {"type": "object", "description": "Researcher findings for synthesis"},
+        "challenge_findings": {"type": "object", "description": "Challenger findings for synthesis"},
+    },
+)
+TIEBREAKER_SYNTHESIS_OUTPUT_SCHEMA = _schema(
+    export_name="TIEBREAKER_SYNTHESIS_OUTPUT_SCHEMA",
+    schema_id="tiebreaker_synthesis:output",
+    schema_type="output",
+    fields={
+        "tiebreaker_payload": {"type": "object", "description": "Synthesized tiebreaker analysis payload"},
+    },
+)
+TIEBREAKER_DECISION_INPUT_SCHEMA = _schema(
+    export_name="TIEBREAKER_DECISION_INPUT_SCHEMA",
+    schema_id="tiebreaker_decision:input",
+    schema_type="input",
+    fields={
+        "tiebreaker_payload": {"type": "object", "description": "Tiebreaker analysis for decision"},
+    },
+)
+TIEBREAKER_DECISION_OUTPUT_SCHEMA = _schema(
+    export_name="TIEBREAKER_DECISION_OUTPUT_SCHEMA",
+    schema_id="tiebreaker_decision:output",
+    schema_type="output",
+    fields={
+        "decision": {"type": "string", "description": "Tiebreaker resolution decision"},
+    },
+)
 FINALIZE_INPUT_SCHEMA = _schema(
     export_name="FINALIZE_INPUT_SCHEMA",
     schema_id="finalize:input",
@@ -541,6 +610,8 @@ EXECUTE_PROMPT = _prompt("execute")
 REVIEW_PROMPT = _prompt("review")
 TIEBREAKER_RESEARCHER_PROMPT = _prompt("tiebreaker_researcher")
 TIEBREAKER_CHALLENGER_PROMPT = _prompt("tiebreaker_challenger")
+TIEBREAKER_SYNTHESIS_PROMPT = _prompt("tiebreaker_synthesis")
+TIEBREAKER_DECISION_PROMPT = _prompt("tiebreaker_decision")
 
 CRITIQUE_TYPED_REDUCER_OUTCOMES = {
     "critique": ("completed",),
@@ -641,7 +712,10 @@ DEFAULT_POLICY = _policy(
             "prep",
             "plan",
             "critique",
-            "tiebreaker_run",
+            "tiebreaker_run",  # bridge-only compatibility
+            "tiebreaker_researcher",
+            "tiebreaker_challenger",
+            "tiebreaker_synthesis",
             "finalize",
             "execute",
             "halt",
@@ -747,7 +821,7 @@ GATE_POLICY = _policy(
                 "transition_id": "gate:tiebreaker",
                 "transition_type": "override",
                 "trigger_ref": "gate.recommendation",
-                "target_ref": "tiebreaker_run",
+                "target_ref": "tiebreaker_researcher",
                 "policy_ref": "megaplan:gate",
             },
             {
@@ -975,37 +1049,45 @@ TIEBREAKER_POLICY = _policy(
             {
                 "transition_id": "tiebreaker:iterate",
                 "transition_type": "override",
-                "trigger_ref": "tiebreaker_decide.decision",
+                "trigger_ref": "tiebreaker_decision.decision",
                 "target_ref": "critique",
                 "policy_ref": "megaplan:tiebreaker",
             },
             {
                 "transition_id": "tiebreaker:proceed",
                 "transition_type": "override",
-                "trigger_ref": "tiebreaker_decide.decision",
+                "trigger_ref": "tiebreaker_decision.decision",
                 "target_ref": "finalize",
                 "policy_ref": "megaplan:tiebreaker",
             },
             {
                 "transition_id": "tiebreaker:escalate",
                 "transition_type": "escalation",
-                "trigger_ref": "tiebreaker_decide.decision",
+                "trigger_ref": "tiebreaker_decision.decision",
                 "target_ref": "override",
+                "policy_ref": "megaplan:tiebreaker",
+            },
+            {
+                "transition_id": "tiebreaker:replan",
+                "transition_type": "override",
+                "trigger_ref": "tiebreaker_decision.decision",
+                "target_ref": "revise",
                 "policy_ref": "megaplan:tiebreaker",
             },
         ),
     },
     metadata={
-        "canonical_carriers": ("tiebreaker_decide",),
+        "canonical_carriers": ("tiebreaker_decision", "tiebreaker_decide"),
         "route_surface": {
             "run_completion_route": {
                 "route_signal": "default",
-                "target_ref": "tiebreaker_decide",
+                "target_ref": "tiebreaker_decision",
                 "failure_behavior": "complete_decision_cycle_with_recorded_artifacts",
             },
             "decision_routes": {
                 "pick": {"route_signal": "proceed", "target_ref": "finalize"},
-                "replan": {"route_signal": "iterate", "target_ref": "critique-fanout"},
+                "replan": {"route_signal": "replan", "target_ref": "revise"},
+                "reiterate": {"route_signal": "iterate", "target_ref": "critique-fanout"},
                 "escalate": {"route_signal": "escalate", "target_ref": "override"},
             },
             "fallback_route_signal": "escalate",
@@ -1346,6 +1428,10 @@ MODEL_ROUTING_POLICY = _policy(
                     "revise",
                     "tiebreaker_run",
                     "tiebreaker_decide",
+                    "tiebreaker_researcher",
+                    "tiebreaker_challenger",
+                    "tiebreaker_synthesis",
+                    "tiebreaker_decision",
                     "finalize",
                     "execute",
                     "review",
@@ -1544,7 +1630,7 @@ GATE = _step(
             "id": "gate:tiebreaker",
             "label": "tiebreaker",
             "condition_ref": "tiebreaker",
-            "target_ref": "tiebreaker_run",
+            "target_ref": "tiebreaker_researcher",
         },
         {"id": "gate:override", "label": "escalate", "condition_ref": "escalate", "target_ref": "override"},
         {"id": "gate:halt", "label": "abort", "condition_ref": "abort", "target_ref": "halt"},
@@ -1624,11 +1710,106 @@ TIEBREAKER_DECIDE = _step(
             "condition_ref": "escalate",
             "target_ref": "override",
         },
+        {
+            "id": "tiebreaker_decide:revise_replan",
+            "label": "replan",
+            "condition_ref": "tiebreaker:replan",
+            "target_ref": "revise",
+        },
     ),
     capability_ids=("megaplan:planning",),
     metadata={"loop_until_ref": "tiebreaker_resolved"},
     input_schema=TIEBREAKER_DECIDE_INPUT_SCHEMA,
     output_schema=TIEBREAKER_DECIDE_OUTPUT_SCHEMA,
+)
+# ── Canonical four-phase tiebreaker child identities ──
+TIEBREAKER_RESEARCHER = _step(
+    export_name="TIEBREAKER_RESEARCHER",
+    step_id="tiebreaker_researcher",
+    kind="megaplan:tiebreaker_researcher",
+    prompt=TIEBREAKER_RESEARCHER_PROMPT,
+    handler_ref=f"{HANDLER_MODULE}:handle_tiebreaker_run",  # bridge: reuses legacy handler as phase body
+    inputs=({"name": "gate_payload", "value_ref": "gate.gate_payload"},),
+    outputs=({"name": "research_findings"},),
+    policy=DEFAULT_POLICY,
+    route_bindings=(
+        {"id": "tiebreaker_researcher:challenger", "label": "default", "target_ref": "tiebreaker_challenger"},
+    ),
+    input_schema=TIEBREAKER_RESEARCHER_INPUT_SCHEMA,
+    output_schema=TIEBREAKER_RESEARCHER_OUTPUT_SCHEMA,
+)
+TIEBREAKER_CHALLENGER = _step(
+    export_name="TIEBREAKER_CHALLENGER",
+    step_id="tiebreaker_challenger",
+    kind="megaplan:tiebreaker_challenger",
+    prompt=TIEBREAKER_CHALLENGER_PROMPT,
+    handler_ref=f"{HANDLER_MODULE}:handle_tiebreaker_run",  # bridge: reuses legacy handler as phase body
+    inputs=({"name": "research_findings", "value_ref": "tiebreaker_researcher.research_findings"},),
+    outputs=({"name": "challenge_findings"},),
+    policy=DEFAULT_POLICY,
+    route_bindings=(
+        {"id": "tiebreaker_challenger:synthesis", "label": "default", "target_ref": "tiebreaker_synthesis"},
+    ),
+    input_schema=TIEBREAKER_CHALLENGER_INPUT_SCHEMA,
+    output_schema=TIEBREAKER_CHALLENGER_OUTPUT_SCHEMA,
+)
+TIEBREAKER_SYNTHESIS = _step(
+    export_name="TIEBREAKER_SYNTHESIS",
+    step_id="tiebreaker_synthesis",
+    kind="megaplan:tiebreaker_synthesis",
+    prompt=TIEBREAKER_SYNTHESIS_PROMPT,
+    handler_ref=f"{HANDLER_MODULE}:handle_tiebreaker_run",  # bridge: reuses legacy handler as phase body
+    inputs=(
+        {"name": "research_findings", "value_ref": "tiebreaker_researcher.research_findings"},
+        {"name": "challenge_findings", "value_ref": "tiebreaker_challenger.challenge_findings"},
+    ),
+    outputs=({"name": "tiebreaker_payload"},),
+    policy=DEFAULT_POLICY,
+    route_bindings=(
+        {"id": "tiebreaker_synthesis:decision", "label": "default", "target_ref": "tiebreaker_decision"},
+    ),
+    input_schema=TIEBREAKER_SYNTHESIS_INPUT_SCHEMA,
+    output_schema=TIEBREAKER_SYNTHESIS_OUTPUT_SCHEMA,
+)
+TIEBREAKER_DECISION = _step(
+    export_name="TIEBREAKER_DECISION",
+    step_id="tiebreaker_decision",
+    kind="megaplan:tiebreaker_decision",
+    prompt=TIEBREAKER_DECISION_PROMPT,
+    handler_ref=f"{HANDLER_MODULE}:handle_tiebreaker_decide",  # bridge: reuses legacy handler as phase body
+    inputs=({"name": "tiebreaker_payload", "value_ref": "tiebreaker_synthesis.tiebreaker_payload"},),
+    outputs=({"name": "decision"},),
+    policy=TIEBREAKER_POLICY,
+    route_bindings=(
+        {
+            "id": "tiebreaker_decision:critique",
+            "label": "iterate",
+            "condition_ref": "tiebreaker:loop",
+            "target_ref": "revise",
+        },
+        {
+            "id": "tiebreaker_decision:finalize",
+            "label": "proceed",
+            "condition_ref": "proceed",
+            "target_ref": "finalize",
+        },
+        {
+            "id": "tiebreaker_decision:override",
+            "label": "escalate",
+            "condition_ref": "escalate",
+            "target_ref": "override",
+        },
+        {
+            "id": "tiebreaker_decision:revise_replan",
+            "label": "replan",
+            "condition_ref": "tiebreaker:replan",
+            "target_ref": "revise",
+        },
+    ),
+    capability_ids=("megaplan:planning",),
+    metadata={"loop_until_ref": "tiebreaker_resolved"},
+    input_schema=TIEBREAKER_DECISION_INPUT_SCHEMA,
+    output_schema=TIEBREAKER_DECISION_OUTPUT_SCHEMA,
 )
 FINALIZE = _step(
     export_name="FINALIZE",
@@ -1889,18 +2070,32 @@ SOURCE_TIEBREAKER_WORKFLOW = _workflow(
     metadata={
         "policy_refs": ("megaplan:tiebreaker", "megaplan:model-routing"),
         "child_steps": ("tiebreaker_run", "tiebreaker_decide"),
+        # Canonical four-phase child identities — these are the semantic authority
+        # for the tiebreaker subworkflow. The legacy child_steps tuple above is a
+        # compatibility bridge retained for existing tests and migration tooling.
+        "canonical_child_phases": (
+            "tiebreaker_researcher",
+            "tiebreaker_challenger",
+            "tiebreaker_synthesis",
+            "tiebreaker_decision",
+        ),
         "topology_contract": {
             "kind": "child_workflow",
             "entry_step_id": "tiebreaker_run",
             "decision_step_id": "tiebreaker_decide",
+            # Canonical four-phase topology — semantic authority for lowered routes.
+            "canonical_entry_step_id": "tiebreaker_researcher",
+            "canonical_decision_step_id": "tiebreaker_decision",
             "run_completion_route": {
                 "route_signal": "default",
                 "target_ref": "tiebreaker_decide",
                 "failure_behavior": "complete_decision_cycle_with_recorded_artifacts",
             },
+            # Canonical four-phase target — semantic authority for lowered routes.
+            "canonical_run_completion_target_ref": "tiebreaker_decision",
             "decision_routes": (
                 {"action": "pick", "route_signal": "proceed", "target_ref": "finalize"},
-                {"action": "replan", "route_signal": "iterate", "target_ref": "critique-fanout"},
+                {"action": "replan", "route_signal": "iterate", "target_ref": "revise"},
                 {"action": "escalate", "route_signal": "escalate", "target_ref": "override"},
             ),
             "fallback_route_signal": "escalate",
@@ -2140,8 +2335,12 @@ ALL_STEP_COMPONENTS = (
     CRITIQUE,
     GATE,
     REVISE,
-    TIEBREAKER_RUN,
-    TIEBREAKER_DECIDE,
+    TIEBREAKER_RUN,  # bridge-only: legacy carrier, no route authority
+    TIEBREAKER_DECIDE,  # bridge-only: legacy carrier, no route authority
+    TIEBREAKER_RESEARCHER,
+    TIEBREAKER_CHALLENGER,
+    TIEBREAKER_SYNTHESIS,
+    TIEBREAKER_DECISION,
     FINALIZE,
     EXECUTE,
     REVIEW,
@@ -2157,6 +2356,8 @@ PROMPT_COMPONENTS = (
     REVISE_PROMPT,
     TIEBREAKER_RESEARCHER_PROMPT,
     TIEBREAKER_CHALLENGER_PROMPT,
+    TIEBREAKER_SYNTHESIS_PROMPT,
+    TIEBREAKER_DECISION_PROMPT,
     FINALIZE_PROMPT,
     EXECUTE_PROMPT,
     REVIEW_PROMPT,
@@ -2219,10 +2420,18 @@ SCHEMA_COMPONENTS = (
     GATE_OUTPUT_SCHEMA,
     REVISE_INPUT_SCHEMA,
     REVISE_OUTPUT_SCHEMA,
-    TIEBREAKER_RUN_INPUT_SCHEMA,
-    TIEBREAKER_RUN_OUTPUT_SCHEMA,
-    TIEBREAKER_DECIDE_INPUT_SCHEMA,
-    TIEBREAKER_DECIDE_OUTPUT_SCHEMA,
+    TIEBREAKER_RUN_INPUT_SCHEMA,  # bridge-only: legacy schema
+    TIEBREAKER_RUN_OUTPUT_SCHEMA,  # bridge-only: legacy schema
+    TIEBREAKER_DECIDE_INPUT_SCHEMA,  # bridge-only: legacy schema
+    TIEBREAKER_DECIDE_OUTPUT_SCHEMA,  # bridge-only: legacy schema
+    TIEBREAKER_RESEARCHER_INPUT_SCHEMA,
+    TIEBREAKER_RESEARCHER_OUTPUT_SCHEMA,
+    TIEBREAKER_CHALLENGER_INPUT_SCHEMA,
+    TIEBREAKER_CHALLENGER_OUTPUT_SCHEMA,
+    TIEBREAKER_SYNTHESIS_INPUT_SCHEMA,
+    TIEBREAKER_SYNTHESIS_OUTPUT_SCHEMA,
+    TIEBREAKER_DECISION_INPUT_SCHEMA,
+    TIEBREAKER_DECISION_OUTPUT_SCHEMA,
     FINALIZE_INPUT_SCHEMA,
     FINALIZE_OUTPUT_SCHEMA,
     EXECUTE_INPUT_SCHEMA,
@@ -2299,13 +2508,19 @@ __all__ = [
     "SUSPEND",
     "SUSPEND_OUTPUT_SCHEMA",
     "SUSPENSION_POLICY",
+    "TIEBREAKER_CHALLENGER",
     "TIEBREAKER_CHALLENGER_PROMPT",
     "TIEBREAKER_DECIDE",
     "TIEBREAKER_DECIDE_INPUT_SCHEMA",
     "TIEBREAKER_DECIDE_OUTPUT_SCHEMA",
+    "TIEBREAKER_DECISION",
+    "TIEBREAKER_DECISION_PROMPT",
     "TIEBREAKER_POLICY",
+    "TIEBREAKER_RESEARCHER",
     "TIEBREAKER_RESEARCHER_PROMPT",
     "TIEBREAKER_RUN",
     "TIEBREAKER_RUN_INPUT_SCHEMA",
     "TIEBREAKER_RUN_OUTPUT_SCHEMA",
+    "TIEBREAKER_SYNTHESIS",
+    "TIEBREAKER_SYNTHESIS_PROMPT",
 ]
