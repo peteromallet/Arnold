@@ -133,6 +133,7 @@ _COLLECTION_ERROR_KEYWORDS = (
     "Interrupted:",
     "errors during collection",
 )
+_NODE_TEST_RESULT_RE = re.compile(r"^(ok|not ok)\s+\d+\s+-\s+(.+?)\s*$")
 
 
 def _dedupe_preserving_order(items: Iterable[str]) -> list[str]:
@@ -221,6 +222,38 @@ def _parse_pytest_output(stdout: str, exit_code: int | None = None) -> dict[str,
     }
 
 
+def _parse_node_test_output(stdout: str) -> dict[str, Any]:
+    """Extract pass/fail identities from ``node --test`` TAP output."""
+    collected_ids: list[str] = []
+    failures: list[str] = []
+    passes: list[str] = []
+
+    for line in stdout.splitlines():
+        match = _NODE_TEST_RESULT_RE.match(line.strip())
+        if not match:
+            continue
+        nodeid = match.group(2).strip()
+        if not nodeid:
+            continue
+        collected_ids.append(nodeid)
+        if match.group(1) == "ok":
+            passes.append(nodeid)
+        else:
+            failures.append(nodeid)
+
+    collected_ids = _dedupe_preserving_order(collected_ids)
+    passes = _dedupe_preserving_order(passes)
+    failures = _dedupe_preserving_order(failures)
+    return {
+        "collected": len(collected_ids),
+        "collected_ids": collected_ids,
+        "failures": failures,
+        "passes": passes,
+        "collection_errors": [],
+        "parse_ok": bool(collected_ids),
+    }
+
+
 def _run_collect_only(project_dir: Path, command: str) -> list[str]:
     """Fallback: run ``pytest --collect-only -q`` to enumerate all test ids.
 
@@ -278,6 +311,14 @@ def _pytest_command(command: str | None) -> str:
         if flag not in present:
             parts.append(flag)
     return " ".join(shlex.quote(p) for p in parts)
+
+
+def _is_node_test_command(command: str) -> bool:
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return False
+    return len(parts) >= 2 and Path(parts[0]).name == "node" and parts[1] == "--test"
 
 
 def _raw_log_path(project_dir: Path, config: dict[str, Any], run_id: str) -> Path:
@@ -512,10 +553,14 @@ def run_suite(
     )
     duration = time.monotonic() - t0
     log_fh.close()
-    parsed = _parse_pytest_output(
-        raw_log_path.read_text(encoding="utf-8"),
-        exit_code=exit_code,
-    )
+    raw_output = raw_log_path.read_text(encoding="utf-8")
+    if _is_node_test_command(command):
+        parsed = _parse_node_test_output(raw_output)
+    else:
+        parsed = _parse_pytest_output(
+            raw_output,
+            exit_code=exit_code,
+        )
     status = _status_from_exit(exit_code, timed_out)
     collected_ids, collections_parse_ok, status = _parsed_collection_state(
         project_dir, command, exit_code, timed_out, parsed, status

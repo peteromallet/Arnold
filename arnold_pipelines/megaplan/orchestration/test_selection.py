@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -415,6 +416,18 @@ def compute_default_blast_radius(
 
 
 compute_test_blast_radius = compute_default_blast_radius
+
+
+def _scoped_command_for_paths(paths: list[str]) -> str:
+    """Build a scoped baseline command for a homogeneous selector set.
+
+    ``node --test`` suites are path-oriented too, but forcing them through
+    pytest turns a valid JS baseline into a guaranteed collection error.
+    """
+    normalized = [path.strip() for path in paths if isinstance(path, str) and path.strip()]
+    if normalized and all(path.endswith((".mjs", ".cjs", ".js")) for path in normalized):
+        return "node --test " + " ".join(shlex.quote(path) for path in normalized)
+    return "pytest " + " ".join(shlex.quote(path) for path in normalized)
 
 
 def merge_blast_radius_floor(
@@ -923,7 +936,7 @@ def resolve_baseline_test_selection(
             "command_override": None,
         }
 
-    scoped_command = "pytest " + " ".join(shlex.quote(p) for p in unique_paths)
+    scoped_command = _scoped_command_for_paths(unique_paths)
     reason = f"Scoped to {len(unique_paths)} path selector(s) from plan metadata"
     if always_run_paths:
         reason += f"; folded in {len(always_run_paths)} always_run path(s)"
