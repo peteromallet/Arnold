@@ -16,6 +16,7 @@ import pytest
 
 from arnold_pipelines.megaplan.cloud import status_format as sf
 from arnold_pipelines.megaplan.cloud import status_snapshot as ss
+from arnold_pipelines.megaplan.run_state.model import CanonicalRunState, CanonicalState
 
 
 NOW = datetime(2026, 7, 4, 22, 13, 15, tzinfo=timezone.utc)
@@ -710,6 +711,189 @@ def test_legacy_status_classification_unchanged_by_canonical(monkeypatch, fx):
                 assert entry["status"] == "repairing"
             elif name == "blk":
                 assert entry["status"] == "blocked"
+
+
+@pytest.mark.parametrize(
+    ("state", "expected_status", "expect_drift"),
+    [
+        (CanonicalState.RUNNING, "running", True),
+        (CanonicalState.REPAIRING, "repairing", True),
+        (CanonicalState.RETRYABLE_EXECUTION_BLOCK, "attention", True),
+        (CanonicalState.REAL_IMPLEMENTATION_BLOCK, "attention", True),
+        (CanonicalState.HUMAN_ACTION_REQUIRED, "blocked", False),
+        (CanonicalState.COMPLETED, "complete", True),
+        (CanonicalState.STALE_DERIVED_STATE, "attention", True),
+        (CanonicalState.BROKEN_STATE_MACHINE, "attention", True),
+    ],
+)
+def test_non_unknown_canonical_status_mapping_overrides_legacy(
+    monkeypatch,
+    fx,
+    state: CanonicalState,
+    expected_status: str,
+    expect_drift: bool,
+):
+    monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "1")
+    workspace = fx.add_session("blk", plan_name="planBlk")
+    plan_dir = workspace / ".megaplan" / "plans" / "planBlk"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    fx.add_chain_health("blk", current_plan_name="planBlk", last_state="awaiting_human")
+    fx.add_needs_human("blk")
+
+    events: list[dict[str, object]] = []
+
+    def _fake_resolve_run_state(_evidence):
+        return CanonicalRunState(
+            canonical_state=state,
+            reason=f"{state.name} from test",
+            stale_sources=("needs_human",) if expect_drift else (),
+        )
+
+    def _fake_emit(kind, plan_dir, *, phase=None, payload=None, store=None):
+        record = {"kind": kind, "plan_dir": plan_dir, "payload": payload or {}}
+        events.append(record)
+        return record
+
+    monkeypatch.setattr(ss, "resolve_run_state", _fake_resolve_run_state)
+    monkeypatch.setattr(ss, "emit", _fake_emit)
+
+    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
+    entry = _by_session(snap, "blk")
+
+    assert entry["status"] == expected_status
+    assert entry["canonical_state"] == state.name
+    if state is CanonicalState.COMPLETED:
+        assert entry["should_run"] is False
+    if expect_drift:
+        assert len(events) == 1
+        assert events[0]["kind"] == ss.EventKind.DRIFT_DETECTED
+        assert events[0]["plan_dir"] == plan_dir
+        payload = events[0]["payload"]
+        assert payload["expected"] == expected_status
+        assert payload["actual"] == "blocked"
+        assert payload["canonical_state"] == state.name
+        assert payload["session"] == "blk"
+        assert payload["workspace"] == str(workspace)
+        assert payload["current_plan"] == "planBlk"
+    else:
+        assert events == []
+
+
+def test_unknown_canonical_status_falls_back_to_legacy(monkeypatch, fx):
+    monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "1")
+    fx.add_session("blk", plan_name="planBlk")
+    fx.add_chain_health("blk", current_plan_name="planBlk", last_state="awaiting_human")
+    fx.add_needs_human("blk")
+
+    monkeypatch.setattr(
+        ss,
+        "resolve_run_state",
+        lambda _evidence: CanonicalRunState(
+            canonical_state=CanonicalState.UNKNOWN,
+            reason="insufficient evidence",
+        ),
+    )
+
+    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
+    entry = _by_session(snap, "blk")
+
+    assert entry["status"] == "blocked"
+    assert entry["canonical_state"] == "UNKNOWN"
+
+
+def test_live_pr_probe_overrides_stored_chain_health_pr_fields(monkeypatch, fx):
+    fx.add_session("pr", plan_name="planPr")
+    fx.add_chain_health("pr", current_plan_name="planPr", pr_number=42, pr_state="closed")
+
+    seen: list[object] = []
+
+    def _fake_probe(workspace, pr_number):
+        seen.append(pr_number)
+        return {"available": True, "pr_number": 84, "state": "open"}
+
+    monkeypatch.setattr(ss, "_probe_live_pr_state", _fake_probe)
+
+    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
+    entry = _by_session(snap, "pr")
+
+    assert seen == [42]
+    assert entry["pr_number"] == 84
+    assert entry["pr_state"] == "open"
+
+
+def test_live_pr_probe_failure_falls_back_to_stored_chain_health_fields(monkeypatch, fx):
+    fx.add_session("pr", plan_name="planPr")
+    fx.add_chain_health("pr", current_plan_name="planPr", pr_number=42, pr_state="closed")
+
+    monkeypatch.setattr(
+        ss,
+        "_probe_live_pr_state",
+        lambda workspace, pr_number: {
+            "available": False,
+            "pr_number": pr_number,
+            "reason": "gh_pr_view_failed",
+        },
+    )
+
+    snap = fx.build(watchdog_report_path=fx.root / "absent.json")
+    entry = _by_session(snap, "pr")
+
+    assert entry["pr_number"] == 42
+    assert entry["pr_state"] == "closed"
+
+
+def test_probe_live_pr_state_shells_out_to_gh_view_via_monkeypatched_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    calls: list[tuple[list[str], str]] = []
+
+    def _fake_run(cmd, **kwargs):
+        calls.append((list(cmd), kwargs["cwd"]))
+        return type(
+            "Proc",
+            (),
+            {
+                "returncode": 0,
+                "stdout": json.dumps(
+                    {"number": 42, "state": "OPEN", "isDraft": False, "mergedAt": None}
+                ),
+                "stderr": "",
+            },
+        )()
+
+    monkeypatch.setattr(ss.subprocess, "run", _fake_run)
+
+    result = ss._probe_live_pr_state(workspace, 42)
+
+    assert calls == [
+        (
+            ["gh", "pr", "view", "42", "--json", "number,state,isDraft,mergedAt"],
+            str(workspace),
+        )
+    ]
+    assert result == {"available": True, "pr_number": 42, "state": "open"}
+
+
+def test_probe_live_pr_state_failure_returns_unavailable_without_real_gh_call(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    def _fake_run(cmd, **kwargs):
+        return type("Proc", (), {"returncode": 1, "stdout": "", "stderr": "gh unavailable"})()
+
+    monkeypatch.setattr(ss.subprocess, "run", _fake_run)
+
+    result = ss._probe_live_pr_state(workspace, 42)
+
+    assert result["available"] is False
+    assert result["pr_number"] == 42
+    assert result["reason"] == "gh_pr_view_failed"
 
 
 # ---------------------------------------------------------------------------

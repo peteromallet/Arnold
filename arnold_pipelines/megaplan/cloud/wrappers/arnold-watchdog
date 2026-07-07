@@ -1098,6 +1098,7 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     project_repair_custody,
 )
 from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
+from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
 
 session, workspace_raw, remote_spec_raw, run_kind, plan_name, marker_dir_raw, repair_data_dir_raw = sys.argv[1:]
 workspace = Path(workspace_raw)
@@ -1218,9 +1219,18 @@ if not target:
         "needs_human": {"path": str(needs_human_path), "present": needs_human_path.exists()},
     }
 
+event_plan_dir = marker_dir / ".dispatch-events" / (session or "_unknown-session")
+if resolved_plan_name:
+    event_plan_dir = workspace / ".megaplan" / "plans" / resolved_plan_name
+try:
+    canonical_run_state = resolve_run_state(target or {})
+except Exception:
+    canonical_run_state = None
+
 projection = project_repair_custody(
     plan_state=plan_state,
     current_target=target,
+    canonical_run_state=canonical_run_state,
     marker_dir=marker_dir,
     repair_data_dir=repair_data_dir,
 )
@@ -1258,6 +1268,7 @@ if not projection.get("active_request_ids"):
     projection = project_repair_custody(
         plan_state=plan_state,
         current_target=target,
+        canonical_run_state=canonical_run_state,
         marker_dir=marker_dir,
         repair_data_dir=repair_data_dir,
     )
@@ -1274,6 +1285,8 @@ if needs_human_path.exists():
     )
 
 decision = classify_repair_dispatch(
+    canonical_run_state=canonical_run_state,
+    event_plan_dir=event_plan_dir,
     plan_state=plan_state,
     current_target=target,
     human_blocker_classification=human_blocker,

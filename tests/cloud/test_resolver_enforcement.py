@@ -17,6 +17,7 @@ import pytest
 
 from arnold_pipelines.megaplan.cloud.feature_flags import resolver_enforcement_enabled
 from arnold_pipelines.megaplan.cloud.repair_contract import (
+    CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING,
     DISPATCH_DECISION_BROKEN_SUPERFIXER,
     DISPATCH_DECISION_HUMAN_REQUIRED,
     DISPATCH_DECISION_L1,
@@ -206,7 +207,18 @@ def _custody(request_id: str = "", active_repair: bool = False) -> dict[str, Any
     }
 
 
-def _real_custody_projection(tmp_path: Path, target: dict[str, Any]) -> dict[str, Any]:
+def _event_plan_dir(tmp_path: Path) -> Path:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    return plan_dir
+
+
+def _real_custody_projection(
+    tmp_path: Path,
+    target: dict[str, Any],
+    *,
+    canonical_run_state=None,
+) -> dict[str, Any]:
     marker_dir = tmp_path / "markers"
     repair_data_dir = marker_dir / "repair-data"
     marker_dir.mkdir(parents=True, exist_ok=True)
@@ -233,6 +245,7 @@ def _real_custody_projection(tmp_path: Path, target: dict[str, Any]) -> dict[str
                 "latest_failure": {"kind": "blocked_recovery_not_resolved"},
             },
             current_target=target,
+            canonical_run_state=canonical_run_state,
             marker_dir=marker_dir,
             repair_data_dir=repair_data_dir,
         )
@@ -261,63 +274,70 @@ class TestResolverStates:
 
 
 class TestDispatchEnforcement:
-    def test_awf018_dispatches_l1_with_active_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ARNOLD_RESOLVER_ENFORCEMENT", "1")
+    def test_awf018_dispatches_l1_with_active_request(self, tmp_path: Path) -> None:
         decision = classify_repair_dispatch(
+            canonical_run_state=resolve_run_state(_awf018_target()),
+            event_plan_dir=_event_plan_dir(tmp_path),
             plan_state=_plan_state(failure_kind="route_metadata_mismatch"),
             current_target=_awf018_target(),
             custody_projection=_custody("req-awf018-001"),
         )
         assert decision.decision == DISPATCH_DECISION_L1
 
-    def test_budget_dispatches_l1_with_active_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ARNOLD_RESOLVER_ENFORCEMENT", "1")
+    def test_budget_dispatches_l1_with_active_request(self, tmp_path: Path) -> None:
         decision = classify_repair_dispatch(
+            canonical_run_state=resolve_run_state(_budget_target()),
+            event_plan_dir=_event_plan_dir(tmp_path),
             plan_state=_plan_state(failure_kind="budget_exhausted"),
             current_target=_budget_target(),
             custody_projection=_custody("req-budget-001"),
         )
         assert decision.decision == DISPATCH_DECISION_L1
 
-    def test_broken_state_machine_routes_to_broken_superfixer(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ARNOLD_RESOLVER_ENFORCEMENT", "1")
+    def test_broken_state_machine_routes_to_broken_superfixer(self, tmp_path: Path) -> None:
         decision = classify_repair_dispatch(
+            canonical_run_state=resolve_run_state(_broken_target()),
+            event_plan_dir=_event_plan_dir(tmp_path),
             plan_state=_plan_state(failure_kind="repeated_blocker"),
             current_target=_broken_target(),
             custody_projection=_custody("req-broken-001"),
         )
         assert decision.decision == DISPATCH_DECISION_BROKEN_SUPERFIXER
 
-    def test_typed_human_gate_routes_to_human_required(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ARNOLD_RESOLVER_ENFORCEMENT", "1")
+    def test_typed_human_gate_routes_to_human_required(self, tmp_path: Path) -> None:
         decision = classify_repair_dispatch(
+            canonical_run_state=resolve_run_state(_approval_gate_target()),
+            event_plan_dir=_event_plan_dir(tmp_path),
             plan_state=_plan_state(failure_kind="approval_needed"),
             current_target=_approval_gate_target(),
             custody_projection=_custody("req-approval-001"),
         )
         assert decision.decision == DISPATCH_DECISION_HUMAN_REQUIRED
 
-    def test_active_repair_suppresses_double_dispatch(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ARNOLD_RESOLVER_ENFORCEMENT", "1")
+    def test_active_repair_suppresses_double_dispatch(self, tmp_path: Path) -> None:
         decision = classify_repair_dispatch(
+            canonical_run_state=resolve_run_state(_awf018_target()),
+            event_plan_dir=_event_plan_dir(tmp_path),
             plan_state=_plan_state(failure_kind="route_metadata_mismatch"),
             current_target=_awf018_target(),
             custody_projection=_custody("req-awf018-002", active_repair=True),
         )
         assert decision.decision != DISPATCH_DECISION_L1
 
-    def test_enforcement_off_preserves_legacy_human_required(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("ARNOLD_RESOLVER_ENFORCEMENT", raising=False)
+    def test_missing_canonical_provenance_fails_closed(self, tmp_path: Path) -> None:
         decision = classify_repair_dispatch(
+            canonical_run_state=None,
+            event_plan_dir=_event_plan_dir(tmp_path),
             plan_state=_plan_state(failure_kind="route_metadata_mismatch"),
             current_target=_awf018_target(),
             custody_projection=_custody("req-awf018-003"),
         )
-        assert decision.decision == DISPATCH_DECISION_HUMAN_REQUIRED
+        assert decision.decision == DISPATCH_DECISION_BROKEN_SUPERFIXER
 
-    def test_enforcement_on_returns_no_action_without_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ARNOLD_RESOLVER_ENFORCEMENT", "1")
+    def test_machine_actionable_canonical_state_without_request_returns_no_action(self, tmp_path: Path) -> None:
         decision = classify_repair_dispatch(
+            canonical_run_state=resolve_run_state(_awf018_target()),
+            event_plan_dir=_event_plan_dir(tmp_path),
             plan_state=_plan_state(failure_kind="route_metadata_mismatch"),
             current_target=_awf018_target(),
             custody_projection=_custody(),
@@ -326,6 +346,24 @@ class TestDispatchEnforcement:
 
 
 class TestCustodyObserveMetadata:
+    def test_canonical_machine_actionable_state_keeps_repairable_bucket(self, tmp_path: Path) -> None:
+        projection = _real_custody_projection(
+            tmp_path,
+            _awf018_target(),
+            canonical_run_state=resolve_run_state(_awf018_target()),
+        )
+        assert projection["custody_bucket"] == CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING
+
+    def test_canonical_machine_actionable_state_ignores_legacy_needs_human_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        projection = _real_custody_projection(
+            tmp_path,
+            _awf018_target(needs_human={"present": True, "summary": "legacy blocker metadata"}),
+            canonical_run_state=resolve_run_state(_awf018_target()),
+        )
+        assert projection["custody_bucket"] == CUSTODY_BUCKET_REPAIRABLE_NOT_REPAIRING
+
     def test_observe_adds_canonical_metadata(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "1")
         projection = _real_custody_projection(tmp_path, _awf018_target())
@@ -348,4 +386,3 @@ class TestEnforcementFlag:
     def test_explicit_off_value_is_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ARNOLD_RESOLVER_ENFORCEMENT", "off")
         assert resolver_enforcement_enabled() is False
-
