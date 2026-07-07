@@ -47,6 +47,7 @@ REPAIR_RECURRENCE_WINDOW_SECS="${CLOUD_WATCHDOG_REPAIR_RECURRENCE_WINDOW_SECS:-2
 REPAIR_BUDGET_SECS="${CLOUD_WATCHDOG_REPAIR_BUDGET_SECS:-7200}"
 REPAIR_ITERATION_MAX="${CLOUD_WATCHDOG_REPAIR_ITERATION_MAX:-3}"
 DISCORD_DM_BIN="${DISCORD_DM_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-discord-dm}"
+SNAPSHOT_PATH="${CLOUD_WATCHDOG_SNAPSHOT_PATH:-/workspace/.megaplan/status/cloud-status.json}"
 
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
@@ -4121,6 +4122,117 @@ print("- Investigate: arnold_pipelines/megaplan/chain/__init__.py and arnold_pip
 PY
 }
 
+render_canonical_block() {
+  # Read the status snapshot and extract canonical resolver fields for this
+  # session.  Returns empty when ARNOLD_RESOLVER_OBSERVE is disabled, the
+  # snapshot is missing/unreadable, or the session has no canonical data.
+  # This is observe-only — it never changes repair-loop success accounting.
+  python3 - "$SNAPSHOT_PATH" "$SESSION" "$ARNOLD_SRC" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+snapshot_path = pathlib.Path(sys.argv[1])
+session = sys.argv[2]
+arnold_src = sys.argv[3]
+
+# Gate: only enrich when observe mode is on.
+observe = os.environ.get("ARNOLD_RESOLVER_OBSERVE", "1").strip().lower()
+if observe in ("0", "false", "no", "off"):
+    sys.exit(0)
+
+if not snapshot_path.exists():
+    sys.exit(0)
+
+try:
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    sys.exit(0)
+
+sessions = snapshot.get("sessions") if isinstance(snapshot.get("sessions"), list) else []
+entry = None
+for item in sessions:
+    if isinstance(item, dict) and item.get("session") == session:
+        entry = item
+        break
+
+if entry is None:
+    sys.exit(0)
+
+canonical_state = entry.get("canonical_state")
+canonical_reason = entry.get("canonical_reason")
+canonical_resolver = entry.get("canonical_resolver") if isinstance(entry.get("canonical_resolver"), dict) else {}
+
+if not canonical_state and not canonical_resolver:
+    sys.exit(0)
+
+confidence = canonical_resolver.get("confidence", "medium")
+source_of_truth = canonical_resolver.get("source_of_truth") or []
+stale_sources = canonical_resolver.get("stale_sources") or []
+next_action = canonical_resolver.get("next_action", "")
+reason = canonical_resolver.get("reason") or canonical_reason or ""
+fingerprint = ""
+ev = canonical_resolver.get("evidence") or []
+for item in ev:
+    if isinstance(item, dict) and item.get("key") == "root_cause_fingerprint":
+        fingerprint = str(item.get("value") or "").strip()
+        break
+running = canonical_resolver.get("running", False)
+repairable = canonical_resolver.get("repairable", False)
+human_required = entry.get("canonical_human_required") or canonical_resolver.get("human_required", False)
+human_gate = entry.get("canonical_human_gate") or canonical_resolver.get("human_gate")
+
+print("## CANONICAL STATE (observe-only resolver)")
+print(f"- canonical_state: {canonical_state}")
+if confidence:
+    print(f"- confidence: {confidence}")
+if source_of_truth:
+    print(f"- source_of_truth: {', '.join(str(s) for s in source_of_truth)}")
+if stale_sources:
+    print(f"- stale_sources (do NOT trust): {', '.join(str(s) for s in stale_sources)}")
+if fingerprint:
+    print(f"- root_cause_fingerprint: {fingerprint}")
+if reason:
+    print(f"- reason: {reason}")
+if next_action:
+    print(f"- next_action: {next_action}")
+if running:
+    print("- running: true — a live worker is active; do NOT kill or restart it")
+if repairable:
+    print("- repairable: true — automated repair is indicated by resolver")
+if human_required:
+    gate_label = f" (gate: {human_gate})" if human_gate else ""
+    print(f"- human_required: true{gate_label} — resolver believes human intervention is required")
+
+# Context distinction: unattempted target implementation vs. generic engine repair.
+legacy_status = str(entry.get("status") or "").lower()
+operator_next = str(entry.get("operator_next") or "").lower()
+plan_state = entry.get("plan_state") if isinstance(entry.get("plan_state"), dict) else {}
+active_step = bool(plan_state.get("active_step"))
+deferred_tasks = plan_state.get("deferred") if isinstance(plan_state.get("deferred"), list) else []
+pending_tasks = plan_state.get("pending") if isinstance(plan_state.get("pending"), list) else []
+total_incomplete = len(deferred_tasks) + len(pending_tasks)
+
+if canonical_state in ("REAL_IMPLEMENTATION_BLOCK",) and not active_step and total_incomplete > 0:
+    print()
+    print("### CONTEXT: Unattempted Target Implementation Work")
+    print("This session has real implementation blockers (e.g. route-metadata mismatch, AWF018) and")
+    print(f"unattempted tasks ({total_incomplete} incomplete). The repair loop should NOT attempt")
+    print("generic engine repair. Instead, verify whether the target implementation work is correctly")
+    print("scoped and whether the blocker can be cleared by resolving the route/metadata issue.")
+    print("Do NOT patch engine code unless there is clear evidence of an engine bug independent of")
+    print("the route/metadata problem.")
+elif canonical_state in ("BROKEN_STATE_MACHINE", "RETRYABLE_EXECUTION_BLOCK"):
+    print()
+    print("### CONTEXT: Engine Repair Required")
+    print("This session is classified as an engine-level issue (not unattempted target work).")
+    print("Focus on finding and fixing the root cause in the Arnold engine/source code.")
+    if fingerprint:
+        print(f"The root-cause fingerprint '{fingerprint}' may help identify the pattern.")
+PY
+}
+
 write_dev_prompt() {
   set +a
   local prompt_path="$1"
@@ -4128,10 +4240,11 @@ write_dev_prompt() {
   local dispatch_model="$3"
   local report_path="$4"
   local recurrence_mode="${5:-0}"
-  local failure_summary chain_health_block recurrence_block mode_tasks
+  local failure_summary chain_health_block recurrence_block canonical_block mode_tasks
   failure_summary="$(render_failure_summary "$DATA_FILE")"
   chain_health_block="$(render_chain_health_block)"
   recurrence_block="$(render_recurrence_block)"
+  canonical_block="$(render_canonical_block)"
   if [[ "$recurrence_mode" == "1" ]]; then
     mode_tasks="$(cat <<EOF
 9. This is a recurring problem. Do NOT pick the likely fix. Do NOT repeat the prior approaches listed above.
@@ -4161,9 +4274,11 @@ You are the watchdog repair-loop dev-fix agent for a stopped Arnold cloud sessio
 $failure_summary
 $chain_health_block
 $recurrence_block
+$canonical_block
 
 **IF A "CHAIN HEALTH EVIDENCE" BLOCK IS PRESENT ABOVE: the root cause is a CHAIN-DRIVER code bug (completion guard / state progression / authority_divergence cycle) in arnold_pipelines/megaplan/chain/, NOT a plan bug. Read the recurring chain-log lines and the completion-guard verdict in that block, then fix the chain driver there. Do NOT chase the plan's latest_failure -- for a chain-level cycle the plan is a victim, not the cause.**
 **IF A "RECURRENCE EVIDENCE" BLOCK IS PRESENT ABOVE: recurrence means the symptom came back after prior fixes. Do NOT reuse those approaches. Move into root-cause mode and trace the precise mechanism that regenerates the stop.**
+**IF A "CANONICAL STATE" BLOCK IS PRESENT ABOVE: the resolver has classified this session. Use the canonical_state, stale_sources, root_cause_fingerprint, and next_action hints to guide your investigation. The CONTEXT section distinguishes unattempted target implementation work from engine repair — follow the guidance there.**
 
 Session: $SESSION
 Workspace: $WORKSPACE
@@ -4218,12 +4333,14 @@ write_kimi_prompt() {
   local prompt_path="$1"
   local relaunch_command="$2"
   local report_path="$3"
-  local failure_summary
+  local failure_summary canonical_block
   failure_summary="$(render_failure_summary "$DATA_FILE")"
+  canonical_block="$(render_canonical_block)"
   cat > "$prompt_path" <<EOF
 You are the focused Kimi launch/diagnosis turn in the watchdog repair loop.
 
 $failure_summary
+$canonical_block
 
 Session: $SESSION
 Workspace: $WORKSPACE
@@ -4237,6 +4354,7 @@ Relaunch command: $relaunch_command
 
 Task:
 1. Start from the inline incident snapshot above. Read the repair data JSON and pointed files only if you need more detail.
+   **If a CANONICAL STATE block is present above: the resolver has classified this session. Use the canonical_state, stale_sources, root_cause_fingerprint, and next_action hints to guide diagnosis. The CONTEXT section distinguishes unattempted target implementation work from engine repair — follow the guidance there.**
    Classification guide: LIVE FAILURE means no success since latest_failure was recorded; STALE STATE means latest_failure predates success or the current block is a 0ms same-hash replay and state should be cleared/re-driven instead of source-fixed.
    For run_kind=plan, diagnose from the named plan's state/events/log/user actions; missing chain artifacts are expected.
 2. Try to start the run safely. Prefer the exact relaunch command above if the session is not already up.

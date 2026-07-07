@@ -29,10 +29,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
+from arnold_pipelines.megaplan.cloud.feature_flags import resolver_observe_enabled
 from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
 from arnold_pipelines.megaplan.cloud.session_markers import (
     is_canonical_session_marker_path,
 )
+from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
 
 # --- canonical paths -------------------------------------------------------
 
@@ -346,6 +348,104 @@ def _session_progress(
 # --- per-session classification -------------------------------------------
 
 
+def _build_resolver_evidence(
+    *,
+    chain_health: Mapping[str, Any] | None,
+    needs_human: Mapping[str, Any] | None,
+    repair_progress: Mapping[str, Any] | None,
+    watchdog_item: Mapping[str, Any],
+    liveness: Mapping[str, bool],
+    chain_complete: bool,
+) -> dict[str, Any]:
+    """Map already-gathered status-snapshot evidence into resolver-compatible shape.
+
+    This is read-only and purely derived from evidence ``_build_session_entry``
+    already loaded — no additional filesystem I/O.
+    """
+    ch = chain_health or {}
+    nh = needs_human or {}
+    wi = watchdog_item or {}
+    is_live = bool(liveness.get("tmux") or liveness.get("process"))
+
+    # Authority completion: a terminal "done" plan state
+    plan_current_state = "done" if chain_complete else (ch.get("current_plan_name") or "")
+
+    # Chain last_state — defer to watchdog verdict when chain-health is frozen
+    chain_last_state = "done" if chain_complete else (ch.get("last_state") or "")
+    wd_status = str(wi.get("status", "")).lower()
+    if not chain_last_state and wd_status:
+        chain_last_state = wd_status
+
+    # Needs-human structured evidence
+    nh_present = bool(nh)
+    nh_evidence: dict[str, Any] = {"present": nh_present}
+    if nh_present:
+        nh_evidence.update(
+            {
+                "summary": nh.get("summary", ""),
+                "path": nh.get("path", ""),
+                "recorded_at": nh.get("recorded_at", ""),
+                "escalation_label": nh.get("escalation_label", ""),
+                "gate_type": nh.get("gate_type", ""),
+                "human_gate": nh.get("human_gate", ""),
+                "gate": nh.get("gate", ""),
+                "category": nh.get("category", ""),
+                "gate_kind": nh.get("gate_kind", ""),
+                "kind": nh.get("kind", ""),
+                "blocked_task_id": nh.get("current", ""),
+                "plan_refs": nh.get("plan_refs", []),
+            }
+        )
+
+    # Repair-progress items
+    rp_items: list[dict[str, Any]] = []
+    if isinstance(repair_progress, Mapping) and repair_progress:
+        rp_items = [dict(repair_progress)]
+
+    return {
+        "schema_version": 1,
+        "session": "",
+        "target_id": "snapshot-observe",
+        "authoritative_source": "status_snapshot_observe",
+        "target_session": "",
+        "current_refs": {},
+        "marker": {},
+        "plan_state": {
+            "current_state": plan_current_state,
+            "fingerprint": ch.get("fingerprint", ""),
+            "mtime": ch.get("mtime", 0.0),
+        },
+        "chain_state": {
+            "last_state": chain_last_state,
+            "fingerprint": ch.get("fingerprint", ""),
+            "mtime": ch.get("mtime", 0.0),
+        },
+        "event_cursors": {
+            "latest_gate_kind": wi.get("status", ""),
+        },
+        "tmux_process": {
+            "live_status": "alive" if is_live else "stopped",
+        },
+        "needs_human": nh_evidence,
+        "repair_progress": {
+            "present": bool(repair_progress),
+            "items": rp_items,
+        },
+        "chain_log": {},
+        "active_step_heartbeat": {},
+        "sibling_sessions": [],
+        "ignored_artifacts": [],
+        "stale_evidence": [],
+        "rationale": ["resolver observe via status_snapshot"],
+        "diagnostic_codes": {
+            "escalation_label": nh.get("escalation_label", ""),
+            "event_signature_labels": [],
+            "discord_status": "",
+            "retry_strategy": "",
+        },
+    }
+
+
 def _build_session_entry(
     marker: Mapping[str, Any],
     *,
@@ -408,7 +508,33 @@ def _build_session_entry(
         now=now,
     )
 
-    return {
+    # --- observe-only canonical resolver fields (additive, never mutates legacy) ---
+    canonical_state: str | None = None
+    canonical_reason: str | None = None
+    canonical_human_required: bool | None = None
+    canonical_human_gate: str | None = None
+    canonical_resolver_dict: dict[str, Any] | None = None
+    if resolver_observe_enabled():
+        try:
+            resolver_evidence = _build_resolver_evidence(
+                chain_health=chain_health,
+                needs_human=needs_human,
+                repair_progress=repair_progress,
+                watchdog_item=watchdog_item,
+                liveness=liveness,
+                chain_complete=chain_complete,
+            )
+            result = resolve_run_state(resolver_evidence)
+            canonical_state = result.canonical_state.name
+            canonical_reason = result.reason
+            canonical_human_required = result.human_required
+            canonical_human_gate = result.human_gate.name if result.human_gate else None
+            canonical_resolver_dict = result.to_dict()
+        except Exception:
+            # Resolver failure must never affect the legacy snapshot output.
+            canonical_resolver_dict = None
+
+    entry: dict[str, Any] = {
         "session": session,
         "display_name": session,
         "workspace": str(workspace) if workspace else "",
@@ -444,6 +570,19 @@ def _build_session_entry(
             "superseded_by": superseding_sibling,
         },
     }
+
+    # Attach canonical resolver fields when observe is enabled and the resolver
+    # produced a result.  These are flat keys so callers don't need to drill into
+    # a nested object, but they are also self-contained in canonical_resolver_dict
+    # for consumers that want the full structured result.
+    if canonical_resolver_dict is not None:
+        entry["canonical_state"] = canonical_state
+        entry["canonical_reason"] = canonical_reason
+        entry["canonical_human_required"] = canonical_human_required
+        entry["canonical_human_gate"] = canonical_human_gate
+        entry["canonical_resolver"] = canonical_resolver_dict
+
+    return entry
 
 
 def _classify_session(

@@ -5674,6 +5674,123 @@ else:
 PY
 }
 
+# ---------------------------------------------------------------------------
+# ARNOLD_RESOLVER_ENFORCEMENT gating for watchdog needs-human escalation
+# ---------------------------------------------------------------------------
+#
+# T10: Gate both watchdog needs-human escalation paths (awaiting-human and
+# manual-review) behind ARNOLD_RESOLVER_ENFORCEMENT. When enforcement is OFF
+# (the default), UNKNOWN, or a typed human gate, the legacy notify / marker
+# behavior is preserved unchanged. Only machine-actionable canonical states
+# (REAL_IMPLEMENTATION_BLOCK, RETRYABLE_EXECUTION_BLOCK, BROKEN_STATE_MACHINE)
+# without a typed human gate are suppressed in favor of the existing machine
+# repair/replan path (dispatch_kimi_repair).
+
+resolver_needs_human_verdict() {
+  # Consult the canonical resolver to decide whether a watchdog needs-human
+  # escalation should be suppressed in favor of the machine repair/replan path.
+  #
+  # Honours ARNOLD_RESOLVER_ENFORCEMENT (default OFF). When enforcement is OFF,
+  # or the canonical state is UNKNOWN, HUMAN_ACTION_REQUIRED (with a typed
+  # human gate), or any other non-machine-actionable state, this prints nothing
+  # so the caller preserves legacy behavior. When enforcement is ON and the
+  # resolver classifies the run as a machine-actionable block
+  # (REAL_IMPLEMENTATION_BLOCK / RETRYABLE_EXECUTION_BLOCK /
+  # BROKEN_STATE_MACHINE) WITHOUT a typed human gate, it prints
+  # "suppress:<STATE_NAME>" so the caller routes to machine repair instead of
+  # notifying a human or preserving a needs-human marker.
+  #
+  # Read-only: never mutates state. Any resolver/flag failure degrades to the
+  # empty (legacy) verdict so a resolver fault can never suppress a real human
+  # escalation.
+  local session="$1"
+  local current_target_observation="${2:-}"
+  if [[ -z "$current_target_observation" ]]; then
+    return 0
+  fi
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$current_target_observation" <<'PY' 2>>"${LOG:-/dev/null}" || true
+import json
+import sys
+
+from arnold_pipelines.megaplan.cloud.feature_flags import resolver_enforcement_enabled
+from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
+
+MACHINE_ACTIONABLE_STATES = {
+    "REAL_IMPLEMENTATION_BLOCK",
+    "RETRYABLE_EXECUTION_BLOCK",
+    "BROKEN_STATE_MACHINE",
+}
+
+raw = sys.argv[1] if len(sys.argv) > 1 else ""
+try:
+    evidence = json.loads(raw) if raw else {}
+except Exception:
+    evidence = {}
+
+# Legacy behavior is preserved unless enforcement is explicitly enabled.
+if not resolver_enforcement_enabled():
+    sys.exit(0)
+
+try:
+    result = resolve_run_state(evidence)
+except Exception:
+    # Resolver failure must never suppress a human escalation.
+    sys.exit(0)
+
+state = result.canonical_state.name
+human_gate = result.human_gate.name if result.human_gate is not None else None
+
+# Only machine-actionable implementation/execution/broken blocks without a
+# typed human gate are suppressed. Typed human gates (HUMAN_ACTION_REQUIRED),
+# UNKNOWN, and any other state preserve the legacy notify/marker path.
+if state in MACHINE_ACTIONABLE_STATES and human_gate is None:
+    print("suppress:{}".format(state))
+PY
+}
+
+route_resolver_machine_repair() {
+  # Route a needs-human escalation to the existing machine repair/replan path
+  # (dispatch_kimi_repair) instead of notifying a human or preserving a
+  # needs-human marker. Called only when resolver_needs_human_verdict returned
+  # a machine-actionable canonical state under ARNOLD_RESOLVER_ENFORCEMENT.
+  # Mirrors the existing watchdog repair-dispatch accounting (repair_running /
+  # repair_dispatched / repair_unavailable) so reporting stays consistent with
+  # the other repair dispatch branches. Always returns 0 so the caller returns
+  # immediately after routing.
+  local report_items="$1"
+  local session="$2"
+  local workspace="$3"
+  local remote_spec="$4"
+  local canonical_state="$5"
+  local human_summary="$6"
+  local repair_busy
+  log "resolver enforcement suppressing user-facing needs-human for machine-actionable canonical_state=$canonical_state session=$session summary=$human_summary"
+  repair_busy="$(repair_loop_busy_state "$session")"
+  if [[ "$repair_busy" == "same_session" ]]; then
+    log "resolver enforcement machine repair already running session=$session canonical_state=$canonical_state summary=$human_summary"
+    report_item "$report_items" "$session" "repair" "repair_running" "resolver-enforcement machine repair already running: $human_summary" "$workspace" "$remote_spec"
+    return 0
+  fi
+  if [[ "$repair_busy" == "other_session" ]]; then
+    log "resolver enforcement machine repair waiting turn; another repair loop running session=$session canonical_state=$canonical_state summary=$human_summary"
+    report_item "$report_items" "$session" "repair" "repair_running" "resolver-enforcement another repair loop already running; waiting turn" "$workspace" "$remote_spec"
+    return 0
+  fi
+  if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+    if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
+      log "resolver enforcement machine repair waiting turn; another repair loop running session=$session canonical_state=$canonical_state summary=$human_summary"
+      report_item "$report_items" "$session" "repair" "repair_running" "resolver-enforcement another repair loop already running; waiting turn" "$workspace" "$remote_spec"
+    else
+      log "resolver enforcement background-dispatched machine repair session=$session canonical_state=$canonical_state summary=$human_summary"
+      report_item "$report_items" "$session" "repair" "repair_dispatched" "resolver-enforcement machine repair dispatched: $human_summary" "$workspace" "$remote_spec"
+    fi
+    return 0
+  fi
+  log "resolver enforcement machine repair unavailable session=$session canonical_state=$canonical_state summary=$human_summary"
+  report_item "$report_items" "$session" "repair" "repair_unavailable" "resolver-enforcement machine repair unavailable: $human_summary" "$workspace" "$remote_spec"
+  return 0
+}
+
 session_terminal_status() {
   local session="$1"
   local workspace="$2"
@@ -5921,6 +6038,9 @@ PY
   if [[ -n "$current_target_observation" ]]; then
     log "current-target observe session=$session evidence=$current_target_observation"
   fi
+
+  local resolver_human_verdict
+  resolver_human_verdict="$(resolver_needs_human_verdict "$session" "$current_target_observation")"
 
   local terminal_status terminal_observe terminal_summary
   terminal_status="$(session_terminal_status "$session" "$workspace" "$remote_spec" "$run_kind" "$current_target_observation" "$MARKER_DIR" 2>>"${LOG:-/dev/null}" || true)"
@@ -6187,6 +6307,10 @@ PY
     if [[ -n "${PLAN_STATUS_PUSHED_COMMITS:-}" ]]; then
       human_summary="$human_summary; commits=${PLAN_STATUS_PUSHED_COMMITS}"
     fi
+    if [[ "$resolver_human_verdict" == suppress:* ]]; then
+      route_resolver_machine_repair "$report_items" "$session" "$workspace" "$remote_spec" "${resolver_human_verdict#suppress:}" "$human_summary"
+      return 0
+    fi
     if [[ -f "$(repair_needs_human_path "$session")" ]]; then
       local stale_marker_plans
       stale_marker_plans="$(repair_needs_human_matches_current_plan "$session" "${PLAN_STATUS_PLAN_NAME:-}" 2>/dev/null)" || {
@@ -6245,6 +6369,10 @@ PY
     fi
     if [[ -n "${PLAN_STATUS_PUSHED_COMMITS:-}" ]]; then
       human_summary="$human_summary; commits=${PLAN_STATUS_PUSHED_COMMITS}"
+    fi
+    if [[ "$resolver_human_verdict" == suppress:* ]]; then
+      route_resolver_machine_repair "$report_items" "$session" "$workspace" "$remote_spec" "${resolver_human_verdict#suppress:}" "$human_summary"
+      return 0
     fi
     if [[ "${PLAN_STATUS_FAILURE_KIND:-}" == "blocked_recovery_not_resolved" ]]; then
       repair_busy="$(repair_loop_busy_state "$session")"

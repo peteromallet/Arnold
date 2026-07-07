@@ -5,7 +5,7 @@
       "incident_id": "inc-demo-session",
       "message": "Repeated repair_attempt events did not add a new hypothesis or state change",
       "recommendation": "system.integrity_repair",
-      "seq": 6,
+      "seq": 7,
       "severity": "error"
     },
     {
@@ -13,16 +13,16 @@
       "incident_id": "incident-42",
       "message": "Repeated repair_attempt events did not add a new hypothesis or state change",
       "recommendation": "system.integrity_repair",
-      "seq": 2,
+      "seq": 3,
       "severity": "error"
     }
   ],
   "problems": [
     {
-      "first_seen_seq": 0,
+      "first_seen_seq": 1,
       "first_seen_ts": "2026-07-03T20:59:15.263244+00:00",
       "fix_commits": [],
-      "last_seen_seq": 129,
+      "last_seen_seq": 148,
       "last_seen_ts": "2026-07-05T02:26:40.559591+00:00",
       "linked_incident_ids": [
         "incident-42"
@@ -38,17 +38,17 @@
       "title": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project"
     },
     {
-      "first_seen_seq": 4,
+      "first_seen_seq": 5,
       "first_seen_ts": "2026-07-03T21:24:24.562997+00:00",
       "fix_commits": [],
-      "last_seen_seq": 133,
+      "last_seen_seq": 152,
       "last_seen_ts": "2026-07-05T02:27:07.042669+00:00",
       "linked_incident_ids": [
         "inc-demo-session"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome repairing plan demo plan kind chain workspace transient path",
-      "occurrence_count": 94,
+      "occurrence_count": 106,
       "owner_actor": "meta_repair",
       "problem_id": "problem-6e386e382223",
       "recurred_after_fix": false,
@@ -57,17 +57,36 @@
       "title": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace"
     },
     {
-      "first_seen_seq": 8,
+      "first_seen_seq": 134,
+      "first_seen_ts": "2026-07-04T16:05:39.851549+00:00",
+      "fix_commits": [],
+      "last_seen_seq": 146,
+      "last_seen_ts": "2026-07-05T01:37:26.792536+00:00",
+      "linked_incident_ids": [
+        "inc-demo-session"
+      ],
+      "next_review_ts": null,
+      "normalized_signature": "repair data outcome repairing plan demo plan kind plan workspace private var folders w b tthv m c dbyzvk gn t pytest of peteromalley pytest test repair loop serializes sa ws",
+      "occurrence_count": 3,
+      "owner_actor": "meta_repair",
+      "problem_id": "problem-6eaee57d9632",
+      "recurred_after_fix": false,
+      "scope": "repair_system",
+      "status": "open",
+      "title": "repair-data outcome=repairing plan=demo-plan kind=plan workspace=/private/var/folders/_w/b3tthv192m77c760dbyzvk200000gn/T/pytest-of-peteromalley/pytest-46/test_repair_loop_serializes_sa0/ws"
+    },
+    {
+      "first_seen_seq": 9,
       "first_seen_ts": "2026-07-03T21:24:28.137736+00:00",
       "fix_commits": [],
-      "last_seen_seq": 134,
+      "last_seen_seq": 153,
       "last_seen_ts": "2026-07-05T02:27:08.197168+00:00",
       "linked_incident_ids": [
         "inc-demo-session"
       ],
       "next_review_ts": null,
       "normalized_signature": "repair data outcome discord escalated plan demo plan kind chain workspace transient path",
-      "occurrence_count": 22,
+      "occurrence_count": 25,
       "owner_actor": "meta_repair",
       "problem_id": "problem-9e338df241c5",
       "recurred_after_fix": false,
@@ -76,10 +95,10 @@
       "title": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace"
     },
     {
-      "first_seen_seq": 135,
+      "first_seen_seq": 154,
       "first_seen_ts": "2026-07-05T02:27:34.712582+00:00",
       "fix_commits": [],
-      "last_seen_seq": 135,
+      "last_seen_seq": 154,
       "last_seen_ts": "2026-07-05T02:27:34.712582+00:00",
       "linked_incident_ids": [
         "inc-demo-session"
@@ -98,10 +117,10 @@
   "projection": "problems",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:abaf9e44e48e13bf63653897e34fc0ff2c3e615f700c22087f5c9216985302f9",
-    "event_count": 136,
-    "journal_line_count": 136,
-    "last_seq": 135,
+    "digest": "sha256:a2389812996362afec7f8920e27e24879e03bae8fc4f96504849110bc707a706",
+    "event_count": 154,
+    "journal_line_count": 154,
+    "last_seq": 154,
     "malformed_line_count": 0
   }
 }

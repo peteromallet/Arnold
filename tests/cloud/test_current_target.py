@@ -958,5 +958,4 @@ def test_repair_progress_sidecar_includes_mtime(tmp_path: Path) -> None:
     assert items[0]["status"] == "waiting"
     assert isinstance(items[0]["mtime"], float) and items[0]["mtime"] > 0
 def _chain_state_path(workspace: Path, spec_path: Path) -> Path:
-    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
-    return workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+    return chain_spec._state_path_for(spec_path)
