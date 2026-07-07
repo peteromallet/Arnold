@@ -1,0 +1,5 @@
+# Allowed Trust Model Statements
+
+No sandbox isolation exists for V1 extensions.
+Manifest permissions are non-enforced declarative access disclosures only, not runtime permission enforcement.
+A future isolation or brokered-host-API epic may add permission gates later.

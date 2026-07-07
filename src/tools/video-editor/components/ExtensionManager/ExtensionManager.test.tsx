@@ -696,6 +696,98 @@ describe('ExtensionManager — persistent trust warning', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Access disclosure tests
+// ---------------------------------------------------------------------------
+
+describe('ExtensionManager — package access disclosures', () => {
+  beforeEach(() => {
+    mockUseVideoEditorRuntime.mockReset();
+  });
+
+  const accessDisclosureReason =
+    'Calls a local indexing service, reads project files, inspects environment-provided settings, and starts local analysis processes.';
+  const accessDisclosurePackage = {
+    manifest: {
+      id: 'ext.access',
+      version: '1.0.0',
+      label: 'Access Package',
+      permissions: [
+        {
+          reason: accessDisclosureReason,
+          posture: {
+            network: true,
+            filesystem: true,
+            env: true,
+            processes: true,
+          },
+        },
+      ],
+    },
+  };
+
+  it('renders declared access posture and reason without grant language', () => {
+    mockUseVideoEditorRuntime.mockReturnValue({
+      extensionRuntime: makeRuntime(
+        [
+          { extensionId: 'ext.access', packageState: 'loaded', label: 'Access Package' },
+        ],
+        [accessDisclosurePackage],
+      ),
+      extensionStateRepository: makeRepository(),
+      triggerExtensionRefresh: vi.fn(),
+    });
+
+    render(<ExtensionManager />);
+
+    const disclosure = document.querySelector(
+      '[data-video-editor-extension-access-disclosures="ext.access"]',
+    );
+    expect(disclosure).toBeInTheDocument();
+    expect(disclosure).toHaveTextContent('Access disclosures');
+    expect(disclosure).toHaveTextContent('Disclosed access:');
+    expect(disclosure).toHaveTextContent('Network');
+    expect(disclosure).toHaveTextContent('Filesystem');
+    expect(disclosure).toHaveTextContent('Environment');
+    expect(disclosure).toHaveTextContent('Processes');
+    expect(disclosure).toHaveTextContent('Declaration reason:');
+    expect(disclosure).toHaveTextContent(accessDisclosureReason);
+    expect(disclosure).not.toHaveTextContent(/granted capability/i);
+
+    const warning = screen.getByRole('note', { name: 'Extension trust warning' });
+    expect(warning).toHaveTextContent('Extensions run as trusted, unsandboxed code.');
+    expect(warning).toHaveTextContent('Manifest permissions are declarative and are not enforced at runtime.');
+  });
+
+  it('does not render package access disclosures when no declarations exist', () => {
+    mockUseVideoEditorRuntime.mockReturnValue({
+      extensionRuntime: makeRuntime(
+        [
+          { extensionId: 'ext.no-access', packageState: 'loaded', label: 'No Access Package' },
+        ],
+        [
+          {
+            manifest: {
+              id: 'ext.no-access',
+              version: '1.0.0',
+              label: 'No Access Package',
+            },
+          },
+        ],
+      ),
+      extensionStateRepository: makeRepository(),
+      triggerExtensionRefresh: vi.fn(),
+    });
+
+    render(<ExtensionManager />);
+
+    expect(
+      document.querySelector('[data-video-editor-extension-access-disclosures="ext.no-access"]'),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('note', { name: 'Extension trust warning' })).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Settings persistence tests (T7)
 // ---------------------------------------------------------------------------
 

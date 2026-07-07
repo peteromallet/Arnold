@@ -1,7 +1,7 @@
 # Trust And Security Posture — Reigh Video Editor V1
 
 **Status:** Active (M5)
-**Last updated:** 2026-06-24
+**Last updated:** 2026-07-07
 **Scope:** Honest description of the current trusted/unsandboxed execution posture. This document records what *is* — not what is planned or aspirational. The posture described here is the locked V1 posture.
 
 ---
@@ -24,11 +24,11 @@ There is **no sandbox, no iframe isolation, no CSP subdivision, and no process b
 
 ---
 
-## 2. Permission Model
+## 2. Access Disclosure Model
 
-### 2.1 Manifest permissions are descriptive only
+### 2.1 Manifest permissions are declarative access disclosures
 
-The `permissions` field in `reigh-extension.json` is validated and frozen by `defineExtension()`, but it is **purely descriptive metadata**. An extension that declares `network: false` can still call `fetch()`. The field exists so extension authors can document their intent today, and so the schema is stable when capability enforcement is introduced in a later milestone.
+The `permissions` field in `reigh-extension.json` remains named for manifest compatibility, but each entry is a **non-enforced declarative access disclosure**. The field is validated and frozen by `defineExtension()`, but it is descriptive metadata only. An extension that declares `network: false` can still call `fetch()`. The field exists so extension authors can document their intent today, and so the schema is stable if a future isolation or brokered-host-API epic introduces real capability enforcement.
 
 **There is no runtime permission enforcement, no permission broker, and no capability-based gating in V1.**
 
@@ -45,9 +45,9 @@ interface ExtensionPermissionDeclaration {
 }
 ```
 
-### 2.2 What permissions are NOT
+### 2.2 What access disclosures are NOT
 
-- They are **not** enforced at runtime.
+- They are **not enforced at runtime**.
 - They are **not** presented to users as a permission prompt.
 - They are **not** used to gate browser API access.
 - They are **not** a sandbox declaration.
@@ -151,7 +151,7 @@ V1 explicitly does **not** provide:
 | Feature | Status |
 |---|---|
 | Sandbox / iframe isolation | **Not present.** Extensions run in the same JS context as the host. |
-| Permission enforcement / broker | **Not present.** Permissions are descriptive metadata only. |
+| Permission enforcement / broker | **Not present.** Manifest permissions are non-enforced declarative access disclosures only. |
 | Code signing / integrity verification at load time | **Not present.** Source vetting is human review only. |
 | Marketplace / extension registry | **Not present.** Extensions are statically bundled or loaded from local source. |
 | Remote extension installation or update | **Not present.** No remote fetch, no CDN, no dynamic `import()`. |
@@ -163,11 +163,11 @@ V1 explicitly does **not** provide:
 
 ---
 
-## 10. When Will Enforcement Arrive?
+## 10. Future Isolation Or Brokered Enforcement Epic
 
-Sandboxing, permission enforcement, integrity verification, and user-facing permission prompts are tracked as future work beyond M5. Before extensions can be safely loaded from untrusted sources, all four must exist:
+Sandboxing, brokered host APIs, permission enforcement, integrity verification, and user-facing permission prompts are deferred to a future isolation or brokered-host-API epic beyond M5. Before extensions can be safely loaded from untrusted sources, all four must exist:
 
-1. Capability enforcement (the `permissions` field gates actual browser API access).
+1. Capability enforcement (manifest access disclosures gate host-mediated browser API access).
 2. Process isolation (separate JavaScript realm with capability-based host proxy).
 3. Integrity verification (content hashing and signature verification for remote sources).
 4. User-facing permission prompts (host presents permission dialog before granting capabilities).
@@ -195,4 +195,5 @@ Until then, the posture is explicit: **every extension is trusted code with the 
 
 | Date | Change |
 |---|---|
+| 2026-07-07 | Reframed manifest `permissions` entries as non-enforced declarative access disclosures and explicitly deferred true isolation or brokered enforcement to a future epic. |
 | 2026-06-24 | Initial trust and security posture document for M5. Covers execution model, permission posture, error containment, diagnostic provenance, recovery keys, boundary audit, inventory truthfulness, and explicit non-provision of sandbox/marketplace/install/update. |

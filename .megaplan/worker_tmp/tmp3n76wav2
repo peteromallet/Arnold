@@ -1,0 +1,1340 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+Review the implementation against the success criteria.
+
+        Project directory:
+        /workspace/extension-reality-convergence-epic/reigh-app
+
+        Brief summary: # M1: Trust Model Truth
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: Trust Model Truth
+
+## Overview
+The milestone should make the extension trust model truthful across SDK types, JSON schema, examples, docs, quality gates, and the Extension Manager. The repository evidence confirms the core drift: `src/sdk/manifest.ts` defines permission declarations as `{ reason, posture }`, while `config/contracts/reigh-extension.schema.json` still defines the legacy `{ permission, reason }` shape. `PackageCard` already receives `manifest`, so per-extension disclosures can be rendered without new runtime plumbing.
+
+This is a bridge toward the Epic North Star, not a contradiction: it preserves trusted local, unsandboxed extension execution and makes disclosure honest without adding fake permission enforcement, isolation, marketplace trust, or third-party safety claims.
+
+## Phase 1: Contract and Example
+
+### Step 1: Unify the permission declaration contract (`src/sdk/manifest.ts`, `config/contracts/reigh-extension.schema.json`)
+**Scope:** Small  
+**Complexity:** 2
+1. Treat the TypeScript `{ reason, posture?: { network?, filesystem?, env?, processes? } }` shape as canonical because SDK consumers and docs already align with it.
+2. Update the JSON schema `ExtensionPermissionDeclaration` to require `reason`, allow optional `posture`, restrict posture keys to `network`, `filesystem`, `env`, and `processes`, and reject the legacy `permission` field via `additionalProperties: false`.
+3. Reword nearby SDK comments from “permission metadata” toward “declarative access disclosure metadata” if needed, without changing runtime behavior.
+
+### Step 2: Add a checked-in example disclosure (`src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json`)
+**Scope:** Small  
+**Complexity:** 1
+1. Add a `permissions` array using the unified shape to the flagship local example.
+2. Use truthful disclosure wording: a human-readable `reason` plus actual posture booleans. Avoid approval, grant, blocking, sandbox, or enforcement language.
+
+## Phase 2: Manager UI
+
+### Step 3: Render per-extension access disclosures (`src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx`)
+**Scope:** Medium  
+**Complexity:** 3
+1. Read `manifest?.permissions` inside `PackageCard`, where the manifest is already available.
+2. Render a compact per-package disclosure section only when declarations exist.
+3. Label posture flags as disclosed access, not granted capabilities. Suggested labels: Network, Filesystem, Environment, Processes.
+4. Preserve `ExtensionTrustWarningBanner` as the global warning that extensions are trusted local code and declarations are not runtime-enforced.
+
+### Step 4: Test disclosure rendering (`src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx`)
+**Scope:** Medium  
+**Complexity:** 3
+1. Add or extend a manager fixture whose manifest includes at least one permissions entry.
+2. Assert the package card renders the disclosure reason and posture labels.
+3. Keep assertions for the trusted/unsandboxed/non-enforced warning copy.
+
+## Phase 3: Regression Gates and Docs
+
+### Step 5: Add schema and SDK contract tests (`src/sdk/manifest-schema-validation.test.ts`, `src/sdk/__tests__/sdk-boundary.test.ts`, `src/sdk/smoke/barrel-import-smoke.test.ts`)
+**Scope:** Medium  
+**Complexity:** 3
+1. Update schema-validation tests so `{ reason, posture }` passes and `{ permission, reason }` fails.
+2. Ensure SDK boundary and smoke tests still construct `ExtensionPermissionDeclaration` with the unified shape.
+3. Do not add a legacy compatibility shim unless an existing checked-in manifest or runtime consumer proves it is needed; current evidence says none do.
+
+### Step 6: Add a trust-model truth quality gate (`scripts/quality/check-trust-model-truth.mjs`, `scripts/quality/check-trust-model-truth.test.mjs`, `package.json`)
+**Scope:** Medium  
+**Complexity:** 4
+1. Create a companion script rather than overloading `check-extension-drift.mjs`, because this gate checks trust claims rather than contribution drift.
+2. Scan SDK touchpoints, schema, Extension Manager UI, relevant extension docs, examples, and quality scripts.
+3. Fail on active claims of sandboxing, runtime permission enforcement, marketplace or third-party safety, untrusted extension support, permission checks, capability gates, or isolation unless paired with explicit negation or future-deferral wording.
+4. Add tests or fixtures proving one active claim fails and one deferred/non-enforced claim passes.
+5. Wire the script into the existing quality command path without weakening existing gates.
+
+### Step 7: Tighten trust docs (`docs/extensions/trust-and-security.md`, `docs/video-editor/extensions-trust-envelope.md`, `src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts`)
+**Scope:** Small  
+**Complexity:** 2
+1. Ensure docs describe manifest entries as declarative access disclosures using the unified `{ reason, posture }` shape.
+2. Explicitly defer true untrusted-extension enforcement to a future isolation or brokered-host-API epic.
+3. Update the readiness-doc test if the new deferral wording should become executable proof.
+
+## Phase 4: Validation
+
+### Step 8: Run targeted checks, then the broader quality gate
+**Scope:** Medium  
+**Complexity:** 2
+1. Run schema tests after Phase 1.
+2. Run Extension Manager tests after Phase 2.
+3. Run the new trust-model quality script and its tests after Phase 3.
+4. Finish with the existing extension-facing tests and quality command.
+
+## Execution Order
+1. Unify schema and SDK wording first, because this is the contract root.
+2. Add the example manifest after the schema accepts the canonical shape.
+3. Add UI rendering once test fixtures can carry the canonical declaration.
+4. Add the quality gate after code, docs, and UI wording are stable.
+5. Run focused tests early, then the broader quality command.
+
+## Validation Order
+1. Manifest schema validation: canonical shape passes and legacy shape fails.
+2. SDK boundary and smoke tests: public type exports remain stable.
+3. Extension Manager tests: per-package disclosures render and warning copy remains non-enforcing.
+4. Trust-model quality script tests: active unsupported claims fail; negated/deferred claims pass.
+5. Existing quality/readiness command: current release checks remain intact.
+
+
+        Review execution context (`finalize.json` + `execution.json`, prompt projection only):
+        {
+  "tasks": [
+    {
+      "id": "T1",
+      "depends_on": [],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Unify the manifest permission/access-disclosure contract by updating `config/contracts/reigh-extension.schema.json` to accept the canonical `{ reason, posture?: { network?, filesystem?, env?, processes? } }` shape, reject legacy `permission`, and adjust nearby `src/sdk/manifest.ts` comments toward declarative access disclosure wording without changing runtime behavior.",
+      "complexity_justification": "This changes the JSON schema contract that extension manifests validate against while keeping the SDK type as the authority, so a subtle mismatch can affect examples, runtime loading, docs, and tests outside the edited files. The work is small in file count, but it is a shared wire-format boundar...",
+      "executor_notes": "Updated the JSON schema permission declaration to require reason, allow optional posture with only network/filesystem/env/processes booleans, and reject legacy permission via additionalProperties:false. Adjusted nearby SDK comments to describe permissions as declarative access disclosures without changing runtime behavior. Added focused manifest schema validation coverage for canonical acceptance, legacy rejection, unsupported posture key rejection, and structural invariants. Focused Vitest file was attempted once but dependency startup failed before tests ran; static schema-shape verificat...",
+      "files_changed": [
+        "config/contracts/reigh-extension.schema.json",
+        "src/sdk/manifest.ts",
+        "src/sdk/manifest-schema-validation.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts",
+        "node -e \"const fs=require('fs'); const schema=JSON.parse(fs.readFileSync('config/contracts/reigh-extension.schema.json','utf8')); const d=schema.definitions.ExtensionPermissionDeclaration; if (!d) throw new Error('missing ExtensionPermissionDeclaration'); if (d.additionalProperties !== false) throw new Error('permission allows extra props'); if (JSON.stringify(d.required)!==JSON.stringify(['reason'])) throw new Error('reason is not required'); const keys=Object.keys(d.properties).sort().join(','); if (keys !== 'posture,reason') throw new Error('unexpected permission keys: '+keys); const posture=d.properties.posture; if (posture.additionalProperties !== false) throw new Error('posture allows extra props'); const postureKeys=Object.keys(posture.properties).sort().join(','); if (postureKeys !== 'env,filesystem,network,processes') throw new Error('unexpected posture keys: '+postureKeys); console.log('schema permission disclosure shape OK');\""
+      ]
+    },
+    {
+      "id": "T2",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 1,
+      "reviewer_verdict": "",
+      "description": "Add a checked-in canonical `permissions` disclosure array to `src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json` using truthful `reason` wording and posture booleans, with no approval, grant, sandbox, enforcement, or blocking language.",
+      "complexity_justification": "This is a localized JSON fixture/example edit after the schema shape is established. The main judgment is wording discipline, and the failure mode is obvious in schema validation or text review.",
+      "executor_notes": "Added a checked-in canonical permissions disclosure to flagship-local with only reason and posture keys. The reason describes actual host API use and avoids approval, grant, sandbox, enforcement, blocking, marketplace safety, and third-party safety wording; static verification passed.",
+      "files_changed": [
+        "src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json"
+      ],
+      "commands_run": [
+        "node -e \"const fs=require('fs'); const path='src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json'; const manifest=JSON.parse(fs.readFileSync(path,'utf8')).manifest; if (!Array.isArray(manifest.permissions) || manifest.permissions.length !== 1) throw new Error('expected one permissions disclosure'); const entry=manifest.permissions[0]; if (Object.keys(entry).sort().join(',') !== 'posture,reason') throw new Error('unexpected disclosure keys: '+Object.keys(entry)); if (typeof entry.reason !== 'string' || !entry.reason.trim()) throw new Error('missing reason'); const forbidden=/\\\\b(approval|approve|approved|grant|granted|sandbox|sandboxing|enforcement|enforce|blocking|blocked|block|marketplace safety|third-party safety)\\\\b/i; if (forbidden.test(entry.reason)) throw new Error('forbidden wording in reason: '+entry.reason); const posture=entry.posture; const expected=['env','filesystem','network','processes']; if (!posture || Object.keys(posture).sort().join(',') !== expected.join(',')) throw new Error('unexpected posture keys: '+JSON.stringify(posture)); for (const key of expected) if (typeof posture[key] !== 'boolean') throw new Error('posture '+key+' is not boolean'); console.log('flagship disclosure OK');\""
+      ]
+    },
+    {
+      "id": "T3",
+      "depends_on": [
+        "T2"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Render compact per-package declared access disclosures in `src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx` from `manifest?.permissions`, showing the declaration reason and concise posture labels such as Network, Filesystem, Environment, and Processes as disclosed access rather than granted capabilities.",
+      "complexity_justification": "This touches a user-facing React component and must fit existing PackageCard rendering without implying enforcement or disturbing the global warning banner. The data flow is already present, but UI copy and conditional rendering need careful local reasoning.",
+      "executor_notes": "PackageCard now derives labels from manifest.permissions posture booleans and renders Access disclosures only when declarations exist, using Disclosed access and Declaration reason copy. Added component coverage for rendering Network/Environment labels without grant-language and for omitting the section when no declarations exist while preserving the global trust warning.",
+      "files_changed": [
+        "src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx",
+        "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx src/sdk/__tests__/sdk-boundary.test.ts src/sdk/smoke/barrel-import-smoke.test.ts",
+        "git diff --check -- src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx src/sdk/__tests__/sdk-boundary.test.ts src/sdk/smoke/barrel-import-smoke.test.ts",
+        "node -e \"const fs=require('fs'); const ui=fs.readFileSync('src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx','utf8'); for (const s of ['Access disclosures','Disclosed access:','Declaration reason:','Network','Filesystem','Environment','Processes']) if (!ui.includes(s)) throw new Error('missing UI disclosure text: '+s); if (/granted capability/i.test(ui)) throw new Error('UI implies granted capability'); const files=['src/sdk/__tests__/sdk-boundary.test.ts','src/sdk/smoke/barrel-import-smoke.test.ts']; for (const file of files) { const text=fs.readFileSync(file,'utf8'); if (!text.includes('ExtensionPermissionDeclaration')) throw new Error('missing permission declaration coverage in '+file); if (!/reason:\\s*['\\\"]/.test(text) || !/posture:\\s*\\{[\\s\\S]*network:[\\s\\S]*filesystem:[\\s\\S]*env:[\\s\\S]*processes:/.test(text)) throw new Error('canonical reason/posture coverage missing in '+file); if (/permission:\\s*['\\\"](?:network|filesystem|env|processes)/.test(text)) throw new Error('legacy permission shape present in '+file); } console.log('access disclosure UI and SDK canonical-shape coverage OK');\""
+      ]
+    },
+    {
+      "id": "T4",
+      "depends_on": [
+        "T3"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Extend `src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx` so a package fixture includes a canonical disclosure, then assert the disclosure reason and posture labels render while the existing trusted/unsandboxed/non-enforced warning copy remains covered.",
+      "complexity_justification": "The test must integrate with existing Extension Manager fixtures and assertions rather than merely snapshotting copy. It is still bounded to one test file plus fixture data, and failures should be local to the UI behavior.",
+      "executor_notes": "Extended Extension Manager access-disclosure test coverage with a canonical package fixture using reason plus posture booleans for network, filesystem, env, and processes. Assertions now cover the rendered disclosure reason, all posture labels, absence of grant-language copy, and the existing trusted/unsandboxed/non-enforced warning. Focused Vitest could not start because vitest/config is unresolved; static coverage-shape and whitespace checks passed.",
+      "files_changed": [
+        "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+        "git diff --check -- src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+        "node -e \"const fs=require('fs'); const path='src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx'; const text=fs.readFileSync(path,'utf8'); for (const s of ['accessDisclosureReason','permissions: [','reason: accessDisclosureReason','posture: {','network: true','filesystem: true','env: true','processes: true','Access disclosures','Disclosed access:','Network','Filesystem','Environment','Processes','Declaration reason:','Extensions run as trusted, unsandboxed code.','Manifest permissions are declarative and are not enforced at runtime.']) if (!text.includes(s)) throw new Error('missing expected test coverage: '+s); if (/permission:\\\\s*['\\\"](?:network|filesystem|env|processes)/.test(text)) throw new Error('legacy permission shape found'); console.log('ExtensionManager disclosure test shape OK');\""
+      ]
+    },
+    {
+      "id": "T5",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Update `src/sdk/manifest-schema-validation.test.ts` so the canonical `{ reason, posture }` declaration validates and the legacy `{ permission, reason }` declaration fails against `config/contracts/reigh-extension.schema.json`.",
+      "complexity_justification": "This is a direct schema regression test for the contract changed in T1. The expected pass/fail cases are explicit, so the implementation is localized and test-evident.",
+      "executor_notes": "Updated manifest schema validation coverage so checked-in manifests are Ajv-validated, canonical permissions with reason/posture are accepted, and a legacy declaration containing permission plus reason fails due to additionalProperties without relying on a missing reason error. Focused Vitest could not start because vitest/config is not installed/resolvable; static schema verification passed.",
+      "files_changed": [
+        "src/sdk/manifest-schema-validation.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts",
+        "node -e \"const fs=require('fs'); const schema=JSON.parse(fs.readFileSync('config/contracts/reigh-extension.schema.json','utf8')); const def=schema.definitions.ExtensionPermissionDeclaration; if (!def) throw new Error('missing permission definition'); if (def.additionalProperties !== false) throw new Error('permission allows extra props'); if (JSON.stringify(def.required)!==JSON.stringify(['reason'])) throw new Error('reason is not the only required field'); const keys=Object.keys(def.properties).sort(); if (keys.join(',') !== 'posture,reason') throw new Error('legacy or missing permission keys: '+keys.join(',')); if ('permission' in def.properties) throw new Error('legacy permission field is allowed'); const posture=def.properties.posture; if (posture.additionalProperties !== false) throw new Error('posture allows extra props'); const postureKeys=Object.keys(posture.properties).sort().join(','); if (postureKeys !== 'env,filesystem,network,processes') throw new Error('unexpected posture keys: '+postureKeys); console.log('schema canonical permission disclosure OK');\""
+      ]
+    },
+    {
+      "id": "T6",
+      "depends_on": [
+        "T5"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Update SDK boundary coverage in `src/sdk/__tests__/sdk-boundary.test.ts` and `src/sdk/smoke/barrel-import-smoke.test.ts` so any `ExtensionPermissionDeclaration` examples or type constructions use the canonical `{ reason, posture }` shape and continue to prove public SDK exports remain stable.",
+      "complexity_justification": "The SDK boundary test is large and guards public import behavior, so the executor must update type-level examples without accidentally weakening boundary assertions. The data-shape change is straightforward, but locating the right public-contract assertions requires care.",
+      "executor_notes": "Updated ExtensionPermissionDeclaration constructions in SDK boundary and barrel smoke coverage to use canonical reason/posture examples across public barrel and direct manifest imports, including all supported posture keys and no legacy permission field.",
+      "files_changed": [
+        "src/sdk/__tests__/sdk-boundary.test.ts",
+        "src/sdk/smoke/barrel-import-smoke.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx src/sdk/__tests__/sdk-boundary.test.ts src/sdk/smoke/barrel-import-smoke.test.ts",
+        "git diff --check -- src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx src/sdk/__tests__/sdk-boundary.test.ts src/sdk/smoke/barrel-import-smoke.test.ts",
+        "node -e \"const fs=require('fs'); const ui=fs.readFileSync('src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx','utf8'); for (const s of ['Access disclosures','Disclosed access:','Declaration reason:','Network','Filesystem','Environment','Processes']) if (!ui.includes(s)) throw new Error('missing UI disclosure text: '+s); if (/granted capability/i.test(ui)) throw new Error('UI implies granted capability'); const files=['src/sdk/__tests__/sdk-boundary.test.ts','src/sdk/smoke/barrel-import-smoke.test.ts']; for (const file of files) { const text=fs.readFileSync(file,'utf8'); if (!text.includes('ExtensionPermissionDeclaration')) throw new Error('missing permission declaration coverage in '+file); if (!/reason:\\s*['\\\"]/.test(text) || !/posture:\\s*\\{[\\s\\S]*network:[\\s\\S]*filesystem:[\\s\\S]*env:[\\s\\S]*processes:/.test(text)) throw new Error('canonical reason/posture coverage missing in '+file); if (/permission:\\s*['\\\"](?:network|filesystem|env|processes)/.test(text)) throw new Error('legacy permission shape present in '+file); } console.log('access disclosure UI and SDK canonical-shape coverage OK');\""
+      ]
+    },
+    {
+      "id": "T7",
+      "depends_on": [
+        "T4",
+        "T6"
+      ],
+      "status": "done",
+      "kind": "docs",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This is mostly wording across two docs plus an existing executable docs test, with no new runtime path. The risk is terminology drift, and the relevant phrases are directly reviewable.",
+      "executor_notes": "Updated trust-and-security and extensions-trust-envelope wording to describe manifest permissions as non-enforced declarative access disclosures and defer true isolation or brokered enforcement to a future epic. Extended the readiness docs test to assert that wording across both docs. Focused Vitest could not start because vitest/config is unresolved; static wording and whitespace verification passed.",
+      "files_changed": [
+        "docs/extensions/trust-and-security.md",
+        "docs/video-editor/extensions-trust-envelope.md",
+        "src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts",
+        "git diff --check -- docs/extensions/trust-and-security.md docs/video-editor/extensions-trust-envelope.md src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts",
+        "node -e \"const fs=require('fs'); const files=['docs/extensions/trust-and-security.md','docs/video-editor/extensions-trust-envelope.md','src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts']; for (const file of files) { const text=fs.readFileSync(file,'utf8'); for (const pattern of [/declarative access disclosure/i,/non-enforced/i,/future isolation or brokered-host-API epic/i]) { if (!pattern.test(text)) throw new Error(file+' missing '+pattern); } } const trust=fs.readFileSync('docs/extensions/trust-and-security.md','utf8'); for (const pattern of [/trusted, unsandboxed code/i,/no runtime permission enforcement/i,/no permission broker/i,/not enforced at runtime/i]) if (!pattern.test(trust)) throw new Error('trust doc missing '+pattern); const envelope=fs.readFileSync('docs/video-editor/extensions-trust-envelope.md','utf8'); for (const pattern of [/no brokered host API/i,/No runtime enforcement/i,/full browser-renderer privileges/i]) if (!pattern.test(envelope)) throw new Error('trust envelope missing '+pattern); const test=fs.readFileSync('src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts','utf8'); for (const s of ['extensions-trust-envelope.md','non-enforced declarative access disclosure','future isolation or brokered-host-API epic','no brokered host API']) if (!test.includes(s)) throw new Error('readiness test missing '+s); console.log('T7 docs and readiness assertions OK');\""
+      ]
+    },
+    {
+      "id": "T8",
+      "depends_on": [
+        "T7"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Create `scripts/quality/check-trust-model-truth.mjs` as a focused trust-claim regression gate that scans SDK touchpoints, schema, Extension Manager UI, relevant extension docs, examples, and quality scripts for active claims of sandboxing, runtime permission enforcement, marketplace or third-party safety, untrusted extension support, permission checks, capability gates, or isolation unless explicitly negated or future-deferred.",
+      "complexity_justification": "This is a new repository-wide quality gate whose false positives or false negatives can block releases or allow North Star violations across docs, SDK, UI, and examples. It is intentionally separate from contribution drift logic, and the hard part is encoding claim/negation handling without creat...",
+      "executor_notes": "Created scripts/quality/check-trust-model-truth.mjs as a standalone release-mode gate. The gate scans SDK, schema, Extension Manager UI, relevant docs, examples, and quality scripts for active sandboxing, runtime permission-enforcement, marketplace/third-party safety, untrusted-extension, permission-check, capability-gate, and isolation claims while allowing explicit negation or future deferral. Verified the real repo scan passes, a temporary active-claim fixture fails, a negated/deferred fixture passes, and whitespace/checkpoint JSON checks pass.",
+      "files_changed": [
+        "scripts/quality/check-trust-model-truth.mjs"
+      ],
+      "commands_run": [
+        "node scripts/quality/check-trust-model-truth.mjs",
+        "node - <<'NODE' ... temporary fixture verification for active-claim failure and negated/deferred pass ... NODE",
+        "git diff --check -- scripts/quality/check-trust-model-truth.mjs",
+        "node -e \"JSON.parse(require('fs').readFileSync('.megaplan/plans/m1-trust-model-truth-outcome-20260707-1958/execution_batch_6.json','utf8')); console.log('checkpoint JSON OK')\""
+      ]
+    },
+    {
+      "id": "T9",
+      "depends_on": [
+        "T8"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Add `scripts/quality/check-trust-model-truth.test.mjs` with fixtures proving one active unsupported trust claim fails and one explicit negation/deferred/non-enforced statement passes, then wire the new gate into `package.json` as its own script and into the existing `quality:check` command path without weakening existing checks.",
+      "complexity_justification": "This adds focused tests and package-script wiring for the new gate, but it depends on the gate behavior defined in T8 and should be caught by explicit pass/fail fixtures. The package.json edit is mechanical; the meaningful risk is fixture coverage matching the gate semantics.",
+      "executor_notes": "Added check-trust-model-truth Node coverage with checked-in fixture roots: an active sandbox/permission-check/granted-capability claim fails in release mode, and explicit no-sandbox/non-enforced/future-deferred wording passes. Added package.json check:trust-model-truth as a separate release-mode script and inserted it into quality:check. Final verification passed for the full new Node test file, npm run check:trust-model-truth, whitespace diff check, and checkpoint JSON parse.",
+      "files_changed": [
+        "package.json",
+        "scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/extensions/trust.txt",
+        "scripts/quality/__fixtures__/trust-model-truth/allowed-statements/docs/extensions/trust.txt",
+        "scripts/quality/check-trust-model-truth.test.mjs"
+      ],
+      "commands_run": [
+        "node --test scripts/quality/check-trust-model-truth.test.mjs (final pass)",
+        "npm run check:trust-model-truth",
+        "git diff --check -- package.json scripts/quality/check-trust-model-truth.test.mjs scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/extensions/trust.txt scripts/quality/__fixtures__/trust-model-truth/allowed-statements/docs/extensions/trust.txt",
+        "node -e \"JSON.parse(require('fs').readFileSync('.megaplan/plans/m1-trust-model-truth-outcome-20260707-1958/execution_batch_7.json','utf8')); console.log('checkpoint JSON OK')\""
+      ]
+    },
+    {
+      "id": "T10",
+      "depends_on": [
+        "T9"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Run the targeted validation commands for schema, SDK boundary/smoke, Extension Manager, readiness docs, and the new trust-model gate, then run the broader extension-facing and quality commands. Do not try to fix unrelated baseline failures; report any new failures against the changed surfaces.",
+      "complexity_justification": "This is command execution and result triage over known selectors rather than implementation work. The commands are broad enough to catch integration issues, but any failure should map back to the prior tasks or be reported as baseline drift.",
+      "executor_notes": "Ran all targeted and broader validation commands once from the project directory. Trust-model validation passed: `node --test scripts/quality/check-trust-model-truth.test.mjs` passed all 4 tests, `npm run check:trust-model-truth` scanned 140 files in release mode and passed, and a temporary reproduction script confirmed active unsupported trust claims fail while explicit non-enforcement/future wording passes. Vitest-backed targeted selectors failed at config startup because `vitest/config` is unresolved; `npm run test:sdk-boundary` failed because `vitest` is not found. `npm run test:extensi...",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts src/sdk/smoke/barrel-import-smoke.test.ts src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts",
+        "npm run test:sdk-boundary",
+        "node --test scripts/quality/check-trust-model-truth.test.mjs",
+        "npm run check:trust-model-truth",
+        "npm run test:extensions",
+        "npm run quality:check",
+        "node .megaplan/plans/m1-trust-model-truth-outcome-20260707-1958/t10_trust_model_repro.mjs"
+      ]
+    }
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "verdict": "",
+      "question": "Does the schema now require `reason`, allow only the four supported optional posture keys, reject legacy `permission`, and match the SDK type/comments without introducing runtime enforcement?",
+      "executor_note": "Yes. The schema now requires reason, has no permission property, permits only posture.network/filesystem/env/processes as optional booleans, rejects any other posture key through additionalProperties:false, and the SDK comments now frame the field as declarative access disclosure without adding runtime enforcement."
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "verdict": "",
+      "question": "Does the flagship local example include a canonical disclosure that validates and avoids wording that implies approval, grant, sandboxing, enforcement, blocking, marketplace safety, or third-party safety?",
+      "executor_note": "Yes. The flagship-local example now includes a canonical reason/posture disclosure, and the disclosure reason avoids wording that implies approval, grant, sandboxing, enforcement, blocking, marketplace safety, or third-party safety."
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "verdict": "",
+      "question": "Does PackageCard render disclosures only when declarations exist, label posture as disclosed access, and preserve the global trust warning as the non-enforced trusted-local-code explanation?",
+      "executor_note": "Acknowledged: PackageCard renders the disclosure section only for non-empty manifest.permissions, labels posture values under Disclosed access, shows the declaration reason, and leaves the global trusted unsandboxed/non-enforced warning unchanged."
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "verdict": "",
+      "question": "Do Extension Manager tests assert the per-package disclosure reason and posture labels while still covering the unsandboxed/non-enforced trust warning copy?",
+      "executor_note": "Yes. The Extension Manager test now asserts per-package disclosure reason and all posture labels (Network, Filesystem, Environment, Processes) while continuing to assert the persistent trusted, unsandboxed, non-enforced trust warning copy."
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "verdict": "",
+      "question": "Do schema validation tests prove the canonical declaration passes and the legacy `permission` field fails?",
+      "executor_note": "Yes. The test file now contains an explicit canonical reason/posture acceptance case and an isolated legacy permission-plus-reason rejection case against the schema. The focused test command could not start locally because vitest/config is missing."
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "verdict": "",
+      "question": "Do SDK boundary and smoke tests still exercise public `ExtensionPermissionDeclaration` access through the supported SDK surface using the canonical shape?",
+      "executor_note": "Acknowledged: SDK boundary and barrel smoke tests still exercise ExtensionPermissionDeclaration through @reigh/editor-sdk and the canonical direct manifest path using the supported reason/posture shape."
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "verdict": "",
+      "question": "Do the docs and readiness-doc assertions explicitly describe non-enforced declarative access disclosures and defer true isolation or brokered enforcement to a future epic?",
+      "executor_note": "Yes. The two trust docs now explicitly call manifest permissions non-enforced declarative access disclosures and defer true isolation or brokered host-API enforcement to a future epic; the readiness docs test asserts those phrases."
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "verdict": "",
+      "question": "Does the new quality gate scan the intended trust-model surfaces and distinguish active unsupported claims from explicit negation or future-deferral wording without depending on contribution drift logic?",
+      "executor_note": "The new gate is independent from contribution drift logic, scans the intended trust-model surfaces, reports active unsupported claims, and accepts explicit denial/non-enforcement or future-deferral wording."
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "verdict": "",
+      "question": "Do the gate tests include both a failing active-claim fixture and a passing negated/deferred/non-enforced fixture, and is the gate wired into `quality:check` as a separate script?",
+      "executor_note": "Yes. The new test covers a failing active unsupported trust claim fixture, a passing explicit negation/deferred/non-enforced fixture, and asserts quality:check invokes check:trust-model-truth as a separate package script."
+    },
+    {
+      "id": "SC10",
+      "task_id": "T10",
+      "verdict": "",
+      "question": "Did the executor run the targeted selectors plus `npm run test:extensions` and `npm run quality:check`, then report only new failures or clear passes relative to baseline?",
+      "executor_note": "Acknowledged. The targeted selectors plus `npm run test:extensions` and `npm run quality:check` were run once. Trust-model checks passed; the remaining failures were startup/tooling dependency failures (`vitest`, `tsx`, `typescript`) rather than new changed-surface assertion failures."
+    }
+  ],
+  "task_updates": [
+    {
+      "task_id": "T1",
+      "status": "done",
+      "executor_notes": "Updated the JSON schema permission declaration to require reason, allow optional posture with only network/filesystem/env/processes booleans, and reject legacy permission via additionalProperties:false. Adjusted nearby SDK comments to describe permissions as declarative access disclosures without changing runtime behavior. Added focused manifest schema validation coverage for canonical acceptance, legacy rejection, unsupported posture key rejection, and structural invariants. Focused Vitest file was attempted once but dependency startup failed before tests ran; static schema-shape verificat...",
+      "files_changed": [
+        "config/contracts/reigh-extension.schema.json",
+        "src/sdk/manifest.ts",
+        "src/sdk/manifest-schema-validation.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts",
+        "node -e \"const fs=require('fs'); const schema=JSON.parse(fs.readFileSync('config/contracts/reigh-extension.schema.json','utf8')); const d=schema.definitions.ExtensionPermissionDeclaration; if (!d) throw new Error('missing ExtensionPermissionDeclaration'); if (d.additionalProperties !== false) throw new Error('permission allows extra props'); if (JSON.stringify(d.required)!==JSON.stringify(['reason'])) throw new Error('reason is not required'); const keys=Object.keys(d.properties).sort().join(','); if (keys !== 'posture,reason') throw new Error('unexpected permission keys: '+keys); const posture=d.properties.posture; if (posture.additionalProperties !== false) throw new Error('posture allows extra props'); const postureKeys=Object.keys(posture.properties).sort().join(','); if (postureKeys !== 'env,filesystem,network,processes') throw new Error('unexpected posture keys: '+postureKeys); console.log('schema permission disclosure shape OK');\""
+      ]
+    },
+    {
+      "task_id": "T2",
+      "status": "done",
+      "executor_notes": "Added a checked-in canonical permissions disclosure to flagship-local with only reason and posture keys. The reason describes actual host API use and avoids approval, grant, sandbox, enforcement, blocking, marketplace safety, and third-party safety wording; static verification passed.",
+      "files_changed": [
+        "src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json"
+      ],
+      "commands_run": [
+        "node -e \"const fs=require('fs'); const path='src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json'; const manifest=JSON.parse(fs.readFileSync(path,'utf8')).manifest; if (!Array.isArray(manifest.permissions) || manifest.permissions.length !== 1) throw new Error('expected one permissions disclosure'); const entry=manifest.permissions[0]; if (Object.keys(entry).sort().join(',') !== 'posture,reason') throw new Error('unexpected disclosure keys: '+Object.keys(entry)); if (typeof entry.reason !== 'string' || !entry.reason.trim()) throw new Error('missing reason'); const forbidden=/\\\\b(approval|approve|approved|grant|granted|sandbox|sandboxing|enforcement|enforce|blocking|blocked|block|marketplace safety|third-party safety)\\\\b/i; if (forbidden.test(entry.reason)) throw new Error('forbidden wording in reason: '+entry.reason); const posture=entry.posture; const expected=['env','filesystem','network','processes']; if (!posture || Object.keys(posture).sort().join(',') !== expected.join(',')) throw new Error('unexpected posture keys: '+JSON.stringify(posture)); for (const key of expected) if (typeof posture[key] !== 'boolean') throw new Error('posture '+key+' is not boolean'); console.log('flagship disclosure OK');\""
+      ]
+    },
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "Updated manifest schema validation coverage so checked-in manifests are Ajv-validated, canonical permissions with reason/posture are accepted, and a legacy declaration containing permission plus reason fails due to additionalProperties without relying on a missing reason error. Focused Vitest could not start because vitest/config is not installed/resolvable; static schema verification passed.",
+      "files_changed": [
+        "src/sdk/manifest-schema-validation.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts",
+        "node -e \"const fs=require('fs'); const schema=JSON.parse(fs.readFileSync('config/contracts/reigh-extension.schema.json','utf8')); const def=schema.definitions.ExtensionPermissionDeclaration; if (!def) throw new Error('missing permission definition'); if (def.additionalProperties !== false) throw new Error('permission allows extra props'); if (JSON.stringify(def.required)!==JSON.stringify(['reason'])) throw new Error('reason is not the only required field'); const keys=Object.keys(def.properties).sort(); if (keys.join(',') !== 'posture,reason') throw new Error('legacy or missing permission keys: '+keys.join(',')); if ('permission' in def.properties) throw new Error('legacy permission field is allowed'); const posture=def.properties.posture; if (posture.additionalProperties !== false) throw new Error('posture allows extra props'); const postureKeys=Object.keys(posture.properties).sort().join(','); if (postureKeys !== 'env,filesystem,network,processes') throw new Error('unexpected posture keys: '+postureKeys); console.log('schema canonical permission disclosure OK');\""
+      ]
+    },
+    {
+      "task_id": "T3",
+      "status": "done",
+      "executor_notes": "PackageCard now derives labels from manifest.permissions posture booleans and renders Access disclosures only when declarations exist, using Disclosed access and Declaration reason copy. Added component coverage for rendering Network/Environment labels without grant-language and for omitting the section when no declarations exist while preserving the global trust warning.",
+      "files_changed": [
+        "src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx",
+        "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx src/sdk/__tests__/sdk-boundary.test.ts src/sdk/smoke/barrel-import-smoke.test.ts",
+        "git diff --check -- src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx src/sdk/__tests__/sdk-boundary.test.ts src/sdk/smoke/barrel-import-smoke.test.ts",
+        "node -e \"const fs=require('fs'); const ui=fs.readFileSync('src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx','utf8'); for (const s of ['Access disclosures','Disclosed access:','Declaration reason:','Network','Filesystem','Environment','Processes']) if (!ui.includes(s)) throw new Error('missing UI disclosure text: '+s); if (/granted capability/i.test(ui)) throw new Error('UI implies granted capability'); const files=['src/sdk/__tests__/sdk-boundary.test.ts','src/sdk/smoke/barrel-import-smoke.test.ts']; for (const file of files) { const text=fs.readFileSync(file,'utf8'); if (!text.includes('ExtensionPermissionDeclaration')) throw new Error('missing permission declaration coverage in '+file); if (!/reason:\\s*['\\\"]/.test(text) || !/posture:\\s*\\{[\\s\\S]*network:[\\s\\S]*filesystem:[\\s\\S]*env:[\\s\\S]*processes:/.test(text)) throw new Error('canonical reason/posture coverage missing in '+file); if (/permission:\\s*['\\\"](?:network|filesystem|env|processes)/.test(text)) throw new Error('legacy permission shape present in '+file); } console.log('access disclosure UI and SDK canonical-shape coverage OK');\""
+      ]
+    },
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "Updated ExtensionPermissionDeclaration constructions in SDK boundary and barrel smoke coverage to use canonical reason/posture examples across public barrel and direct manifest imports, including all supported posture keys and no legacy permission field.",
+      "files_changed": [
+        "src/sdk/__tests__/sdk-boundary.test.ts",
+        "src/sdk/smoke/barrel-import-smoke.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx src/sdk/__tests__/sdk-boundary.test.ts src/sdk/smoke/barrel-import-smoke.test.ts",
+        "git diff --check -- src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx src/sdk/__tests__/sdk-boundary.test.ts src/sdk/smoke/barrel-import-smoke.test.ts",
+        "node -e \"const fs=require('fs'); const ui=fs.readFileSync('src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx','utf8'); for (const s of ['Access disclosures','Disclosed access:','Declaration reason:','Network','Filesystem','Environment','Processes']) if (!ui.includes(s)) throw new Error('missing UI disclosure text: '+s); if (/granted capability/i.test(ui)) throw new Error('UI implies granted capability'); const files=['src/sdk/__tests__/sdk-boundary.test.ts','src/sdk/smoke/barrel-import-smoke.test.ts']; for (const file of files) { const text=fs.readFileSync(file,'utf8'); if (!text.includes('ExtensionPermissionDeclaration')) throw new Error('missing permission declaration coverage in '+file); if (!/reason:\\s*['\\\"]/.test(text) || !/posture:\\s*\\{[\\s\\S]*network:[\\s\\S]*filesystem:[\\s\\S]*env:[\\s\\S]*processes:/.test(text)) throw new Error('canonical reason/posture coverage missing in '+file); if (/permission:\\s*['\\\"](?:network|filesystem|env|processes)/.test(text)) throw new Error('legacy permission shape present in '+file); } console.log('access disclosure UI and SDK canonical-shape coverage OK');\""
+      ]
+    },
+    {
+      "task_id": "T4",
+      "status": "done",
+      "executor_notes": "Extended Extension Manager access-disclosure test coverage with a canonical package fixture using reason plus posture booleans for network, filesystem, env, and processes. Assertions now cover the rendered disclosure reason, all posture labels, absence of grant-language copy, and the existing trusted/unsandboxed/non-enforced warning. Focused Vitest could not start because vitest/config is unresolved; static coverage-shape and whitespace checks passed.",
+      "files_changed": [
+        "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+        "git diff --check -- src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+        "node -e \"const fs=require('fs'); const path='src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx'; const text=fs.readFileSync(path,'utf8'); for (const s of ['accessDisclosureReason','permissions: [','reason: accessDisclosureReason','posture: {','network: true','filesystem: true','env: true','processes: true','Access disclosures','Disclosed access:','Network','Filesystem','Environment','Processes','Declaration reason:','Extensions run as trusted, unsandboxed code.','Manifest permissions are declarative and are not enforced at runtime.']) if (!text.includes(s)) throw new Error('missing expected test coverage: '+s); if (/permission:\\\\s*['\\\"](?:network|filesystem|env|processes)/.test(text)) throw new Error('legacy permission shape found'); console.log('ExtensionManager disclosure test shape OK');\""
+      ]
+    },
+    {
+      "task_id": "T7",
+      "status": "done",
+      "executor_notes": "Updated trust-and-security and extensions-trust-envelope wording to describe manifest permissions as non-enforced declarative access disclosures and defer true isolation or brokered enforcement to a future epic. Extended the readiness docs test to assert that wording across both docs. Focused Vitest could not start because vitest/config is unresolved; static wording and whitespace verification passed.",
+      "files_changed": [
+        "docs/extensions/trust-and-security.md",
+        "docs/video-editor/extensions-trust-envelope.md",
+        "src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts",
+        "git diff --check -- docs/extensions/trust-and-security.md docs/video-editor/extensions-trust-envelope.md src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts",
+        "node -e \"const fs=require('fs'); const files=['docs/extensions/trust-and-security.md','docs/video-editor/extensions-trust-envelope.md','src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts']; for (const file of files) { const text=fs.readFileSync(file,'utf8'); for (const pattern of [/declarative access disclosure/i,/non-enforced/i,/future isolation or brokered-host-API epic/i]) { if (!pattern.test(text)) throw new Error(file+' missing '+pattern); } } const trust=fs.readFileSync('docs/extensions/trust-and-security.md','utf8'); for (const pattern of [/trusted, unsandboxed code/i,/no runtime permission enforcement/i,/no permission broker/i,/not enforced at runtime/i]) if (!pattern.test(trust)) throw new Error('trust doc missing '+pattern); const envelope=fs.readFileSync('docs/video-editor/extensions-trust-envelope.md','utf8'); for (const pattern of [/no brokered host API/i,/No runtime enforcement/i,/full browser-renderer privileges/i]) if (!pattern.test(envelope)) throw new Error('trust envelope missing '+pattern); const test=fs.readFileSync('src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts','utf8'); for (const s of ['extensions-trust-envelope.md','non-enforced declarative access disclosure','future isolation or brokered-host-API epic','no brokered host API']) if (!test.includes(s)) throw new Error('readiness test missing '+s); console.log('T7 docs and readiness assertions OK');\""
+      ]
+    },
+    {
+      "task_id": "T8",
+      "status": "done",
+      "executor_notes": "Created scripts/quality/check-trust-model-truth.mjs as a standalone release-mode gate. The gate scans SDK, schema, Extension Manager UI, relevant docs, examples, and quality scripts for active sandboxing, runtime permission-enforcement, marketplace/third-party safety, untrusted-extension, permission-check, capability-gate, and isolation claims while allowing explicit negation or future deferral. Verified the real repo scan passes, a temporary active-claim fixture fails, a negated/deferred fixture passes, and whitespace/checkpoint JSON checks pass.",
+      "files_changed": [
+        "scripts/quality/check-trust-model-truth.mjs"
+      ],
+      "commands_run": [
+        "node scripts/quality/check-trust-model-truth.mjs",
+        "node - <<'NODE' ... temporary fixture verification for active-claim failure and negated/deferred pass ... NODE",
+        "git diff --check -- scripts/quality/check-trust-model-truth.mjs",
+        "node -e \"JSON.parse(require('fs').readFileSync('.megaplan/plans/m1-trust-model-truth-outcome-20260707-1958/execution_batch_6.json','utf8')); console.log('checkpoint JSON OK')\""
+      ]
+    },
+    {
+      "task_id": "T9",
+      "status": "done",
+      "executor_notes": "Added check-trust-model-truth Node coverage with checked-in fixture roots: an active sandbox/permission-check/granted-capability claim fails in release mode, and explicit no-sandbox/non-enforced/future-deferred wording passes. Added package.json check:trust-model-truth as a separate release-mode script and inserted it into quality:check. Final verification passed for the full new Node test file, npm run check:trust-model-truth, whitespace diff check, and checkpoint JSON parse.",
+      "files_changed": [
+        "package.json",
+        "scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/extensions/trust.txt",
+        "scripts/quality/__fixtures__/trust-model-truth/allowed-statements/docs/extensions/trust.txt",
+        "scripts/quality/check-trust-model-truth.test.mjs"
+      ],
+      "commands_run": [
+        "node --test scripts/quality/check-trust-model-truth.test.mjs (final pass)",
+        "npm run check:trust-model-truth",
+        "git diff --check -- package.json scripts/quality/check-trust-model-truth.test.mjs scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/extensions/trust.txt scripts/quality/__fixtures__/trust-model-truth/allowed-statements/docs/extensions/trust.txt",
+        "node -e \"JSON.parse(require('fs').readFileSync('.megaplan/plans/m1-trust-model-truth-outcome-20260707-1958/execution_batch_7.json','utf8')); console.log('checkpoint JSON OK')\""
+      ]
+    },
+    {
+      "task_id": "T10",
+      "status": "done",
+      "executor_notes": "Ran all targeted and broader validation commands once from the project directory. Trust-model validation passed: `node --test scripts/quality/check-trust-model-truth.test.mjs` passed all 4 tests, `npm run check:trust-model-truth` scanned 140 files in release mode and passed, and a temporary reproduction script confirmed active unsupported trust claims fail while explicit non-enforcement/future wording passes. Vitest-backed targeted selectors failed at config startup because `vitest/config` is unresolved; `npm run test:sdk-boundary` failed because `vitest` is not found. `npm run test:extensi...",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts src/sdk/smoke/barrel-import-smoke.test.ts src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts",
+        "npm run test:sdk-boundary",
+        "node --test scripts/quality/check-trust-model-truth.test.mjs",
+        "npm run check:trust-model-truth",
+        "npm run test:extensions",
+        "npm run quality:check",
+        "node .megaplan/plans/m1-trust-model-truth-outcome-20260707-1958/t10_trust_model_repro.mjs"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC1",
+      "executor_note": "Yes. The schema now requires reason, has no permission property, permits only posture.network/filesystem/env/processes as optional booleans, rejects any other posture key through additionalProperties:false, and the SDK comments now frame the field as declarative access disclosure without adding runtime enforcement."
+    },
+    {
+      "sense_check_id": "SC2",
+      "executor_note": "Yes. The flagship-local example now includes a canonical reason/posture disclosure, and the disclosure reason avoids wording that implies approval, grant, sandboxing, enforcement, blocking, marketplace safety, or third-party safety."
+    },
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "Yes. The test file now contains an explicit canonical reason/posture acceptance case and an isolated legacy permission-plus-reason rejection case against the schema. The focused test command could not start locally because vitest/config is missing."
+    },
+    {
+      "sense_check_id": "SC3",
+      "executor_note": "Acknowledged: PackageCard renders the disclosure section only for non-empty manifest.permissions, labels posture values under Disclosed access, shows the declaration reason, and leaves the global trusted unsandboxed/non-enforced warning unchanged."
+    },
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "Acknowledged: SDK boundary and barrel smoke tests still exercise ExtensionPermissionDeclaration through @reigh/editor-sdk and the canonical direct manifest path using the supported reason/posture shape."
+    },
+    {
+      "sense_check_id": "SC4",
+      "executor_note": "Yes. The Extension Manager test now asserts per-package disclosure reason and all posture labels (Network, Filesystem, Environment, Processes) while continuing to assert the persistent trusted, unsandboxed, non-enforced trust warning copy."
+    },
+    {
+      "sense_check_id": "SC7",
+      "executor_note": "Yes. The two trust docs now explicitly call manifest permissions non-enforced declarative access disclosures and defer true isolation or brokered host-API enforcement to a future epic; the readiness docs test asserts those phrases."
+    },
+    {
+      "sense_check_id": "SC8",
+      "executor_note": "The new gate is independent from contribution drift logic, scans the intended trust-model surfaces, reports active unsupported claims, and accepts explicit denial/non-enforcement or future-deferral wording."
+    },
+    {
+      "sense_check_id": "SC9",
+      "executor_note": "Yes. The new test covers a failing active unsupported trust claim fixture, a passing explicit negation/deferred/non-enforced fixture, and asserts quality:check invokes check:trust-model-truth as a separate package script."
+    },
+    {
+      "sense_check_id": "SC10",
+      "executor_note": "Acknowledged. The targeted selectors plus `npm run test:extensions` and `npm run quality:check` were run once. Trust-model checks passed; the remaining failures were startup/tooling dependency failures (`vitest`, `tsx`, `typescript`) rather than new changed-surface assertion failures."
+    }
+  ],
+  "output": "Aggregated execute batches: completed 8/8. Batch 1: Batch 1 completed T1. Schema permission declarations now use the canonical declarative access disclosure shape and SDK comments match the non-enforced trust-model wording. Checkpoint written to .megaplan/plans/m1-trust-model-truth-outcome-20260707-1958/execution_batch_1.json. Batch 2: Batch 2 completed: added the flagship-local canonical access disclosure and updated schema validation coverage for canonical and legacy permission declarations. Checkpoint written to .megaplan/plans/m1-trust-model-truth-outcome-20260707-1958/execution_batch_2.json. Batch 3: Batch 3 completed T3 and T6. Package cards now render compact per-package access disclosures from canonical manifest permissions, and SDK boundary/smoke examples exercise the canonical reason/posture shape. Batch 4: Extended Extension Manager disclosure coverage so a package fixture carries a canonical reason/posture declaration, the rendered disclosure reason and all posture labels are asserted, and the persistent trusted/unsandboxed/non-enforced warning copy remains covered. Wrote the batch checkpoint to .megaplan/plans/m1-trust-model-truth-outcome-20260707-1958/execution_batch_4.json. Batch 5: Batch 5 completed T7. The trust docs now frame manifest permissions as non-enforced declarative access disclosures using the canonical reason/posture shape and explicitly defer true isolation or brokered enforcement to a future epic; the readiness docs test now asserts that wordi...",
+  "deviations": [
+    "Focused Vitest command was attempted once but could not start because local workspace dependencies are not installed; npx could not resolve vitest/config from the project. Static schema-shape verification passed.",
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: config/contracts/reigh-extension.schema.json, src/sdk/manifest-schema-validation.test.ts, src/sdk/manifest.ts",
+    "Advisory audit finding: Executor claimed changed files not present in git status: config/contracts/reigh-extension.schema.json, src/sdk/manifest-schema-validation.test.ts, src/sdk/manifest.ts",
+    "Advisory audit finding: Sense check SC2 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC3 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment.",
+    "Advisory audit finding: Tasks left pending after execute (executor never started them): T2, T3, T4, T5, T6, T7, T8, T9, T10",
+    "Focused Vitest command was run once in the foreground but could not start because local dependencies are not installed/resolvable: vitest/config was missing. Static JSON/schema verification passed.",
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: src/sdk/manifest-schema-validation.test.ts, src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json",
+    "Advisory audit finding: Executor claimed changed files not present in git status: config/contracts/reigh-extension.schema.json, src/sdk/manifest-schema-validation.test.ts, src/sdk/manifest.ts, src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json",
+    "Advisory audit finding: Sense check SC3 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+    {
+      "omitted_count": 44,
+      "reason": "prompt projection"
+    }
+  ],
+  "files_changed": [
+    "config/contracts/reigh-extension.schema.json",
+    "src/sdk/manifest.ts",
+    "src/sdk/manifest-schema-validation.test.ts",
+    "src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json",
+    "src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx",
+    "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+    "src/sdk/__tests__/sdk-boundary.test.ts",
+    "src/sdk/smoke/barrel-import-smoke.test.ts",
+    "docs/extensions/trust-and-security.md",
+    "docs/video-editor/extensions-trust-envelope.md",
+    "src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts",
+    "scripts/quality/check-trust-model-truth.mjs",
+    "package.json",
+    "scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/extensions/trust.txt",
+    "scripts/quality/__fixtures__/trust-model-truth/allowed-statements/docs/extensions/trust.txt",
+    "scripts/quality/check-trust-model-truth.test.mjs"
+  ],
+  "commands_run": [
+    "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts",
+    "node -e \"const fs=require('fs'); const schema=JSON.parse(fs.readFileSync('config/contracts/reigh-extension.schema.json','utf8')); const d=schema.definitions.ExtensionPermissionDeclaration; if (!d) throw new Error('missing ExtensionPermissionDeclaration'); if (d.additionalProperties !== false) thr...",
+    "node -e \"JSON.parse(require('fs').readFileSync('.megaplan/plans/m1-trust-model-truth-outcome-20260707-1958/execution_batch_1.json','utf8')); console.log('checkpoint JSON OK')\"",
+    "node -e \"const fs=require('fs'); const path='src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json'; const manifest=JSON.parse(fs.readFileSync(path,'utf8')).manifest; if (!Array.isArray(manifest.permissions) || manifest.permissions.length !== 1) throw new Error('expected...",
+    "node -e \"const fs=require('fs'); const schema=JSON.parse(fs.readFileSync('config/contracts/reigh-extension.schema.json','utf8')); const def=schema.definitions.ExtensionPermissionDeclaration; if (!def) throw new Error('missing permission definition'); if (def.additionalProperties !== false) throw...",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx src/sdk/__tests__/sdk-boundary.test.ts src/sdk/smoke/barrel-import-smoke.test.ts",
+    "git diff --check -- src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx src/sdk/__tests__/sdk-boundary.test.ts src/sdk/smoke/barrel-import-smoke.test.ts",
+    "node -e \"const fs=require('fs'); const ui=fs.readFileSync('src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx','utf8'); for (const s of ['Access disclosures','Disclosed access:','Declaration reason:','Network','Filesystem','Environment','Processes']) if (!ui.includes(s)) thro...",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+    "git diff --check -- src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+    "node -e \"const fs=require('fs'); const path='src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx'; const text=fs.readFileSync(path,'utf8'); for (const s of ['accessDisclosureReason','permissions: [','reason: accessDisclosureReason','posture: {','network: true','filesystem...",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts",
+    "git diff --check -- docs/extensions/trust-and-security.md docs/video-editor/extensions-trust-envelope.md src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts",
+    "node -e \"const fs=require('fs'); const files=['docs/extensions/trust-and-security.md','docs/video-editor/extensions-trust-envelope.md','src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts']; for (const file of files) { const text=fs.readFileSync(file,'utf8'); for (const pattern of [/declar...",
+    "node scripts/quality/check-trust-model-truth.mjs",
+    "node - <<'NODE' ... temporary fixture verification for active-claim failure and negated/deferred pass ... NODE",
+    "git diff --check -- scripts/quality/check-trust-model-truth.mjs",
+    "node -e \"JSON.parse(require('fs').readFileSync('.megaplan/plans/m1-trust-model-truth-outcome-20260707-1958/execution_batch_6.json','utf8')); console.log('checkpoint JSON OK')\"",
+    "node --test scripts/quality/check-trust-model-truth.test.mjs (failed while authoring fixture: heading included allowed denial context)",
+    "node --test scripts/quality/check-trust-model-truth.test.mjs (failed while authoring fixture: line included allowed future-context term)",
+    {
+      "omitted_count": 12,
+      "reason": "prompt projection"
+    }
+  ],
+  "watch_items": [
+    "Preserve the settled decision that the manifest field remains `permissions`; only the entry semantics and UI/docs language become declarative access disclosures.",
+    "Do not add runtime permission checks, sandboxing, iframe/Worker/process isolation, brokered APIs, marketplace install/update/delete flows, code signing, dependency resolution, or remote trust behavior in this milestone.",
+    "Avoid wording that implies access declarations are approved, granted, enforced, blocked, capability-gated, sandboxed, marketplace-vetted, third-party-safe, or suitable for untrusted extension code.",
+    "Keep `ExtensionTrustWarningBanner` as the global trusted-local-code warning and put per-extension posture details in `PackageCard` where `manifest` is already available.",
+    "The trust-model quality gate should be a companion script, not an overload of `check-extension-drift.mjs`; sharing a small helper is acceptable only if existing script structure clearly supports it.",
+    "Wire the new gate into the existing top-level `quality:check` path; adding a standalone script alone is insufficient for the milestone.",
+    "Quality-gate scanning must allow explicit negation and future deferral, or the docs required by the North Star will become impossible to write.",
+    "If validation exposes pre-existing baseline failures, preserve them as baseline context rather than broadening the milestone into unrelated repairs."
+  ],
+  "user_actions": [],
+  "meta_commentary": "Execute in the DAG order and keep the schema contract as the root: TypeScript `ExtensionPermissionDeclaration` is canonical, schema catches up, examples/docs/UI explain declarations as truthful non-enforced access disclosures. The main alignment risks are language drift and accidentally implying real isolation; every code, docs, UI, and quality-gate change should preserve trusted local unsandboxed execution while making that fact visible."
+}
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-07T20:09:21Z",
+  "hash": "sha256:91a830051a109c503bca7d134dbee0b2949b024b4428ae2557775c235d67e827",
+  "questions": [
+    "Should the manifest field remain named `permissions` for compatibility while UI/docs call entries \u201caccess disclosures,\u201d or should this milestone introduce a manifest-level rename/deprecation with a compatibility shim?",
+    "Should the new trust-model quality gate be wired into top-level `quality:check` immediately, or introduced as a separate script first and added to CI in a follow-up?",
+    "If `flagship-local` does not naturally use network/filesystem/env/processes, which truthful posture flag should the example disclose?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "The JSON schema accepts the canonical `{ reason, posture }` permission/access disclosure shape and rejects the legacy `{ permission, reason }` shape.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "At least one checked-in example extension declares access disclosures using the canonical shape and validates against the updated schema.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The Extension Manager renders per-extension declared access disclosures from `manifest.permissions` without presenting them as enforced, granted, sandboxed, or permission-checked capabilities.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "inspect_runtime_ui",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The global trust warning remains visible and states that extensions run as trusted local/unsandboxed code and that manifest declarations are not enforced at runtime.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "inspect_runtime_ui"
+      ]
+    },
+    {
+      "criterion": "A regression gate fails on active claims of sandboxing, runtime permission enforcement, marketplace or third-party safety, untrusted extension support, permission checks, capability gates, or isolation, while allowing explicit negation or future-deferral wording.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Documentation explicitly defers true untrusted-extension enforcement to a future isolation or brokered-host-API epic.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Existing extension-facing tests named by the brief continue to pass after the contract, UI, docs, example, and quality-gate changes.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The quality gate remains separate from contribution drift logic unless a small shared helper is clearly simpler in the existing script structure.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "UI disclosure copy uses concise labels and avoids terms that imply authorization, blocking, or runtime checks.",
+      "priority": "should",
+      "requires": [
+        "inspect_runtime_ui",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "No runtime permission checks, iframe/Worker/process isolation, marketplace flow, code signing, dependency resolution, or remote trust behavior is added in this milestone.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "read_files"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The TypeScript `{ reason, posture }` shape is canonical because existing SDK consumers and docs already align with it, and no checked-in manifest uses the divergent schema-only `permission` field.",
+    "The manifest field can remain named `permissions` for compatibility in this milestone, while docs/UI describe entries as non-enforcing access disclosures.",
+    "Per-extension disclosure belongs in `PackageCard`; the trust banner remains a generic global warning rather than becoming the primary disclosure surface.",
+    "A new companion script `scripts/quality/check-trust-model-truth.mjs` is cleaner than extending `scripts/quality/check-extension-drift.mjs`.",
+    "Any scope narrowing here is a bridge, not a contradiction: real untrusted-runtime enforcement and isolation remain explicitly deferred by the North Star."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/sdk/manifest-schema-validation.test.ts",
+        "reason": "Direct schema contract proof for the permission/access disclosure shape."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/__tests__/sdk-boundary.test.ts",
+        "reason": "Public SDK type boundary coverage for ExtensionPermissionDeclaration."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/smoke/barrel-import-smoke.test.ts",
+        "reason": "Barrel/direct import smoke coverage for the declaration type."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+        "reason": "UI disclosure and trust warning rendering coverage."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts",
+        "reason": "Executable proof for trust-and-security documentation wording."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/manifest.ts",
+      "config/contracts/reigh-extension.schema.json",
+      "src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json",
+      "src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx",
+      "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+      "src/sdk/manifest-schema-validation.test.ts",
+      "src/sdk/__tests__/sdk-boundary.test.ts",
+      "src/sdk/smoke/barrel-import-smoke.test.ts",
+      "scripts/quality/check-trust-model-truth.mjs",
+      "scripts/quality/check-trust-model-truth.test.mjs",
+      "package.json",
+      "docs/extensions/trust-and-security.md",
+      "docs/video-editor/extensions-trust-envelope.md",
+      "src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts"
+    ],
+    "always_run": [
+      "npm run quality:check"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: config/contracts/reigh-extension.schema.json, package.json, scripts/quality/check-trust-model-truth.mjs, scripts/quality/check-trust-model-truth.test.mjs, src/sdk/__tests__/sdk-boundary.test.ts, src/sdk/manifest-schema-validation.test.ts, src/sdk/manifest.ts, src/sdk/smoke/barrel-import-smoke.test.ts, src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx, src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx, src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json, src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts. Ignored documentation-only change(s) for selector derivation: docs/extensions/trust-and-security.md, docs/video-editor/extensions-trust-envelope.md. Candidate: The change crosses SDK contracts, schema, UI, examples, docs, and quality gates. Scoped selectors give fast signal, while the full quality command remains the final guard against trust-model drift. Dropped nonexistent pytest path(s) from plan-time baseline metadata: scripts/quality/check-trust-model-truth.test.mjs, scripts/quality/check-trust-model-truth.mjs.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "scripts/quality/check-trust-model-truth.test.mjs",
+      "scripts/quality/check-trust-model-truth.mjs"
+    ]
+  },
+  "structure_warnings": [
+    "Each step section should reference at least one file in backticks."
+  ]
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "PROCEED",
+  "passed": true,
+  "rationale_brief": "The plan is thorough, well-phased (4 phases, 8 steps in correct dependency order), and fully aligned with the Epic North Star. It correctly identifies the SDK/schema drift (TypeScript canonical {reason, posture} vs schema legacy {permission, reason}) and proposes concrete, testable fixes. All referenced source files exist.",
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "The manifest field name remains 'permissions' for compatibility; docs and UI describe entries as declarative access disclosures rather than enforced permissions.",
+      "rationale": "No checked-in manifest uses the legacy {permission, reason} shape, so no migration shim is needed. Renaming the field now would create churn without benefit. The truthful language in UI/docs is what delivers the milestone outcome."
+    },
+    {
+      "id": "SD2",
+      "decision": "The trust-model truth quality gate is introduced as a separate companion script (scripts/quality/check-trust-model-truth.mjs) rather than extending check-extension-drift.mjs.",
+      "rationale": "check-extension-drift.mjs focuses on contribution kind/placement/schema/docs enumeration drift, not trust-model language claims. Separating concerns keeps each script fast, focused, and independently testable."
+    },
+    {
+      "id": "SD3",
+      "decision": "The TypeScript { reason, posture?: { network?, filesystem?, env?, processes? } } shape is canonical because existing SDK consumers and docs already align with it.",
+      "rationale": "The JSON schema is the outlier. Updating the schema to match the SDK avoids breaking existing consumers and preserves the truthful disclosure model."
+    },
+    {
+      "id": "SD4",
+      "decision": "Per-extension access disclosures are rendered inside PackageCard (where manifest is already available), not in the global ExtensionTrustWarningBanner.",
+      "rationale": "PackageCard already receives manifest, so no new runtime plumbing is needed. The banner remains the global trusted-local-code warning; per-package cards show specific declared posture."
+    }
+  ],
+  "warnings": [
+    "The plan metadata notes a structure warning that each step section should reference at least one file in backticks. This is cosmetic and does not affect plan correctness or executability.",
+    "Criterion 2 ('inspect_runtime_ui') and criterion 7 ('subjective_judgment') require human verification during execution \u2014 these are noted but not blocking.",
+    "The plan introduces a new quality script (check-trust-model-truth.mjs) but does not explicitly wire it into the top-level quality:check command in the plan steps. Step 6 says 'Wire the script into the existing quality command path' \u2014 the executor should ensure this is done in package.json under the quality:check script to satisfy the regression gate criterion."
+  ],
+  "orchestrator_guidance": "First iteration; follow gate recommendation: PROCEED.",
+  "carried_flags": [],
+  "iteration": 1,
+  "produced_at": "2026-07-07T20:17:10Z"
+}
+
+        Settled decisions (verify the executor implemented these correctly):
+- SD1: The manifest field name remains 'permissions' for compatibility; docs and UI describe entries as declarative access disclosures rather than enforced permissions. (No checked-in manifest uses the legacy {permission, reason} shape, so no migration shim is needed. Renaming the field now would create churn without benefit. The truthful language in UI/docs is what delivers the milestone outcome.)
+- SD2: The trust-model truth quality gate is introduced as a separate companion script (scripts/quality/check-trust-model-truth.mjs) rather than extending check-extension-drift.mjs. (check-extension-drift.mjs focuses on contribution kind/placement/schema/docs enumeration drift, not trust-model language claims. Separating concerns keeps each script fast, focused, and independently testable.)
+- SD3: The TypeScript { reason, posture?: { network?, filesystem?, env?, processes? } } shape is canonical because existing SDK consumers and docs already align with it. (The JSON schema is the outlier. Updating the schema to match the SDK avoids breaking existing consumers and preserves the truthful disclosure model.)
+- SD4: Per-extension access disclosures are rendered inside PackageCard (where manifest is already available), not in the global ExtensionTrustWarningBanner. (PackageCard already receives manifest, so no new runtime plumbing is needed. The banner remains the global trusted-local-code warning; per-package cards show specific declared posture.)
+
+
+Critique flags to re-verify against the final diff:
+            [
+  {
+    "id": "verifiability-0",
+    "concern": "Criterion 2: requires human verification (inspect_runtime_ui).",
+    "severity": "minor",
+    "status": "open"
+  },
+  {
+    "id": "verifiability-1",
+    "concern": "Criterion 3: requires human verification (inspect_runtime_ui).",
+    "severity": "minor",
+    "status": "open"
+  },
+  {
+    "id": "verifiability-2",
+    "concern": "Criterion 7: requires human verification (subjective_judgment).",
+    "severity": "minor",
+    "status": "open"
+  },
+  {
+    "id": "verifiability-3",
+    "concern": "Criterion 8: requires human verification (inspect_runtime_ui, subjective_judgment).",
+    "severity": "minor",
+    "status": "open"
+  }
+]
+
+            For each flag above that was raised during critique, verify whether the final diff actually addresses the concern.
+            A flag is resolved only if the final diff contains code that directly addresses the concern.
+            Do not trust pre-execute promises or plan claims; check the diff itself.
+            Add resolved flag IDs to `verified_flag_ids`.
+            Add flag IDs that are unresolved only by prose judgment, without a deterministic pre/post failing check, to `disputed_flag_ids`.
+            For any unresolved flag that is backed by a deterministic pre/post failing check, add a `rework_items` entry with a typed `target`, `issue`, `expected`, `actual`, `evidence_file`, `flag_id`, `source: "review_flag_reverify"`, and `deterministic_check`. Use `target.kind: "task"` with `task_id` for a single finalize task, `target.kind: "bulk"` with `task_ids` for a bulk operation that maps to multiple finalize tasks, or `target.kind: "manifest"` with `task_ids` for manifest-backed routes. Only use legacy `task_id: "REVIEW"` when the finding is a review blocker with no routable finalize target; execute treats that as telemetry/blocker compatibility, not runnable rework.
+
+        Historical execution audit context (`execution_audit.json`, prompt projection only):
+        {
+  "skipped": false,
+  "reason": "",
+  "findings": [
+    "Executor claimed changed files not present in git status: config/contracts/reigh-extension.schema.json, docs/extensions/trust-and-security.md, docs/video-editor/extensions-trust-envelope.md, package.json, scripts/quality/check-trust-model-truth.mjs, scripts/quality/check-trust-model-truth.test.mjs, src/sdk/__tests__/sdk-boundary.test.ts, src/sdk/manifest-schema-validation.test.ts, src/sdk/manifest.ts, src/sdk/smoke/barrel-import-smoke.test.ts, src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx, src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx..."
+  ],
+  "files_in_diff": [
+    "config/contracts/reigh-extension.schema.json",
+    "docs/extensions/trust-and-security.md",
+    "docs/video-editor/extensions-trust-envelope.md",
+    "package.json",
+    "scripts/quality/__fixtures__/trust-model-truth/",
+    "scripts/quality/check-trust-model-truth.mjs",
+    "scripts/quality/check-trust-model-truth.test.mjs",
+    "src/sdk/__tests__/sdk-boundary.test.ts",
+    "src/sdk/manifest-schema-validation.test.ts",
+    "src/sdk/manifest.ts",
+    "src/sdk/smoke/barrel-import-smoke.test.ts",
+    "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+    "src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx",
+    "src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json",
+    "src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts"
+  ],
+  "files_claimed": [
+    "config/contracts/reigh-extension.schema.json",
+    "docs/extensions/trust-and-security.md",
+    "docs/video-editor/extensions-trust-envelope.md",
+    "package.json",
+    "scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/extensions/trust.txt",
+    "scripts/quality/__fixtures__/trust-model-truth/allowed-statements/docs/extensions/trust.txt",
+    "scripts/quality/check-trust-model-truth.mjs",
+    "scripts/quality/check-trust-model-truth.test.mjs",
+    "src/sdk/__tests__/sdk-boundary.test.ts",
+    "src/sdk/manifest-schema-validation.test.ts",
+    "src/sdk/manifest.ts",
+    "src/sdk/smoke/barrel-import-smoke.test.ts",
+    "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+    "src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx",
+    "src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json",
+    "src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts"
+  ]
+}
+
+        Fresh review-time evidence (`review_evidence.json`):
+        {
+  "projection": "bounded_prompt_summary",
+  "full_artifact": "review_evidence.json",
+  "schema": "megaplan.review_evidence",
+  "schema_version": 1,
+  "evidence_contract_version": 1,
+  "mode": "shadow",
+  "subject": {
+    "kind": "plan",
+    "name": "plan",
+    "to_state": "done",
+    "from_state": "executed",
+    "phase": "review",
+    "plan_name": "plan",
+    "milestone_label": null
+  },
+  "accepted": false,
+  "would_block": false,
+  "failures": [
+    "green_suite: verification suite ran but delta is not computable (collection parse failure in baseline or verification)"
+  ],
+  "providers_used": [
+    "phase_coverage",
+    "landed_diff",
+    "worker_did_work",
+    "green_suite",
+    "execution_acceptance_contract",
+    "review_disposition",
+    "declared_noop"
+  ],
+  "legacy_evidence_count": 0,
+  "unknown_evidence_count": 1,
+  "would_block_reasons": [
+    "green_suite: verification suite ran but delta is not computable (collection parse failure in baseline or verification)"
+  ],
+  "artifact": "review_evidence.json",
+  "generated_at": "2026-07-07T20:51:09Z",
+  "phase": "review",
+  "iteration": 1,
+  "base_sha": "2fd3f80912ca8eb160526bcfe202762d3189ae6c",
+  "head_sha": "e46d0daa594273fa828f774c59c5c36144cfe5fc",
+  "invocation_id": "55e588048ecc4162",
+  "provider_diagnostics": {
+    "phase_coverage": {
+      "ok": true
+    },
+    "landed_diff": {
+      "ok": true
+    },
+    "worker_did_work": {
+      "ok": true
+    },
+    "green_suite": {
+      "ok": true
+    },
+    "execution_acceptance_contract": {
+      "ok": true
+    },
+    "review_disposition": {
+      "ok": true
+    },
+    "declared_noop": {
+      "ok": true
+    }
+  },
+  "diagnostics": {
+    "base_sha": {
+      "ok": true,
+      "source": "state.meta.chain_policy.milestone_base_sha"
+    },
+    "head_sha": {
+      "ok": true,
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "source": "git_rev_parse_head"
+    },
+    "invocation_id": {
+      "ok": true,
+      "source": "state.meta.current_invocation_id"
+    }
+  },
+  "evidence": [
+    {
+      "kind": "phase_coverage",
+      "status": "satisfied",
+      "summary": "all batch tasks done",
+      "trust_class": "judgment",
+      "provider": "PhaseCoverageProvider",
+      "provider_version": "1",
+      "source": "phase_result.json",
+      "subject": "plan",
+      "artifact": {
+        "path": "phase_result.json",
+        "sha256": "sha256:53e6c1607f166539871ddec12756b16349e7a946f0158fd5452c051524fddaee",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "phase": "execute",
+        "exit_kind": "success",
+        "reason": "finalize.json",
+        "evidence_id": "sha256:c2abde909342d4ed4ca2fd384461fa62ff1d76c0f6a7592fb439a348121e4311"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "landed_diff",
+      "status": "satisfied",
+      "summary": "diff present and claim-consistent",
+      "trust_class": "judgment",
+      "provider": "LandedDiffProvider",
+      "provider_version": "1",
+      "source": "execution_evidence.validate_execution_evidence",
+      "subject": "plan",
+      "artifact": {
+        "path": "finalize.json",
+        "sha256": "sha256:0499dc3496ff147b518e2a2cd64a66f61ed5f91ce2740edd7a59790d7bf2f3b6",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "preview": "{\n  \"findings\": [\n    \"Git status shows changed files not claimed by any task: package-lock.json, src/tools/video-editor/runtime/families/processAdapter.ts\"\n  ],\n  \"files_in_diff\": [\n    \"config/contracts/reigh-extension.schema.json\",\n    \"docs/extensions/trust-and-security.md\",\n    \"docs/video-editor/extensions-trust-envelope.md\",\n    \"package-lock.json\",\n    \"package.json\",\n    \"scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/extensions/trust.txt\",\n    \"scripts/quality/__fixtures__/trust-model-truth/allowed-statements/docs/extensions/trust.txt\",\n    \"scripts/quality/check-trust-model-truth.mjs\",\n    \"scripts/quality/check-trust-model-truth.test.mjs\",\n    \"src/sdk/__tests__/sdk-boundary.test.ts\",\n    \"src/sdk/manifest-schema-validation.test.ts\",\n    \"src/sdk/manifest.ts\",\n    \"src/sdk/smoke/barrel-import-smoke.test.ts\",\n    \"src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx\",\n    \"src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx\",\n    \"src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json\",\n    \"src/tools/video-editor/runtime/families/processAdapter.ts\",\n    \"src/tools/video-editor/ru\n\n[truncated 1,564 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "worker_did_work",
+      "status": "satisfied",
+      "summary": "worker activity present",
+      "trust_class": "evidence",
+      "provider": "WorkerDidWorkProvider",
+      "provider_version": "1",
+      "source": "execution_batch_*.json",
+      "subject": "plan",
+      "artifacts": [
+        {
+          "path": "execution_batch_1.json",
+          "sha256": "sha256:8eb1c5b19a294127b81eb0cd44430152880dc96ba795244fa9c2b436a7628023",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_2.json",
+          "sha256": "sha256:f326b97ee1dc2c2f6b6a0cb0e7a54e41cf77ab897b85520db00a596dc6083ccd",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_3.json",
+          "sha256": "sha256:2b1f47308f0d91aa6b44f73991ab77c275f711470ccf16dce16c1c9406e3ba81",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_4.json",
+          "sha256": "sha256:0d84c91c0822856ab57cb080af142ff17d49cb3df9699ac2f4d75288a99ef902",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_5.json",
+          "sha256": "sha256:95190bc2b8051577d2fb79fb8a154a6c4105095541409c94388e05e271905eaf",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_6.json",
+          "sha256": "sha256:82423ab89cbe2de5101b47603a9442910e1cdd0f35213f910e5fa25f2e56fc45",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_7.json",
+          "sha256": "sha256:cca5d25ea5164e83edc03d275a40d078f803ca7e4643620191fce3694e7c9345",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_8.json",
+          "sha256": "sha256:ad91141d70b3c6752d030fd5f7d0b5fbb6b0cb2309384ba695003415b6b04541",
+          "artifact_type": "application/json"
+        }
+      ],
+      "details_preview": {
+        "files_changed": 36,
+        "commands_run": 66,
+        "sections_written": 0,
+        "batches": 8,
+        "batch_artifacts": [
+          "execution_batch_1.json",
+          "execution_batch_2.json",
+          "execution_batch_3.json",
+          "execution_batch_4.json",
+          "execution_batch_5.json",
+          "execution_batch_6.json",
+          "execution_batch_7.json",
+          "execution_batch_8.json"
+        ],
+        "activity_source": "execution_batch_records",
+        "evidence_id": "sha256:9b8dff0fbd2f70ea511ace46dd3393df8085ac811b51c07dae1974406632ae42"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "green_suite",
+      "status": "unsatisfied",
+      "summary": "verification suite ran but delta is not computable (collection parse failure in baseline or verification)",
+      "trust_class": "evidence",
+      "provider": "GreenSuiteProvider",
+      "provider_version": "1",
+      "source": "verification:e7145d586a54",
+      "subject": "plan:plan",
+      "observed_at": "1783457469.0708075",
+      "code_hash": "sha256:5702f02d98d1467d394f94213c8856cfcdc918fb8f3dcd1e02370163354d85ee",
+      "artifact": {
+        "path": "verification/raw_e7145d586a54.log",
+        "sha256": "sha256:6b9e57bb2bdaaa5cf49b2ffbb8a13b21602499beb1a43aab0e87fa1ed84bda76",
+        "artifact_type": "text/plain"
+      },
+      "artifacts": [
+        {
+          "path": "verification/raw_e7145d586a54.log",
+          "sha256": "sha256:6b9e57bb2bdaaa5cf49b2ffbb8a13b21602499beb1a43aab0e87fa1ed84bda76",
+          "artifact_type": "text/plain"
+        },
+        {
+          "path": "verification/suite_runs.ndjson",
+          "sha256": "sha256:c9399af1ea77b1b3d3713ec2ee2c135b3343458dffa7c0e61ca8831429441473",
+          "artifact_type": "application/x-ndjson"
+        }
+      ],
+      "details_preview": {
+        "preview": "{\n  \"run_id\": \"e7145d586a54\",\n  \"phase\": \"verification\",\n  \"command\": \"/root/.pyenv/versions/3.11.11/bin/python -m pytest src/sdk/manifest-schema-validation.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/sdk/smoke/barrel-import-smoke.test.ts src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts --tb=no -q --no-header -rA\",\n  \"duration\": 0.264625264913775,\n  \"collected\": 0,\n  \"collected_ids\": [],\n  \"failure_count\": 0,\n  \"failures\": [\n    \"runner_error\"\n  ],\n  \"pass_count\": 0,\n  \"status\": \"runner_error\",\n  \"exit_code\": 4,\n  \"code_hash\": \"sha256:5702f02d98d1467d394f94213c8856cfcdc918fb8f3dcd1e02370163354d85ee\",\n  \"collections_parse_ok\": false,\n  \"collection_errors\": [],\n  \"raw_log_path\": \"/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m1-trust-model-truth-outcome-20260707-1958/verification/raw_e7145d586a54.log\",\n  \"freshness_cache_hit\": false,\n  \"baseline_test_command\": null,\n  \"baseline_test_note\": \"Baseline capture failed: runner error (exit code: 4)\",\n  \"delta\": {\n    \"computable\": false,\n    \"newly_failing\": [],\n    \"newly_passing\": [],\n    \"still_red\": [],\n    \"still_gre\n\n[truncated 1,034 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "execution_acceptance_contract",
+      "status": "unknown",
+      "summary": "execute acceptance contract could not be verified because suite evidence is runner_error",
+      "trust_class": "evidence",
+      "provider": "ExecuteAcceptanceContractProvider",
+      "provider_version": "1",
+      "source": "gate.json|gate_signals_v*.json + verification/suite_runs.ndjson",
+      "subject": "plan",
+      "details_preview": {
+        "preview": "{\n  \"contract\": {\n    \"scope\": \"execute\",\n    \"verification_mode\": \"verification_suite\",\n    \"required_checks\": [\n      {\n        \"id\": \"issue_hints\",\n        \"question\": \"Did the work fully address the issue hints, user notes, and approved plan requirements?\",\n        \"reason\": \"plan_v1.meta.json question #3; flagships-local/reigh-extension.json has no permissions array and its description lists toolbar/status-bar UI, settings, diagnostics, chrome toasts \\u2014 none of which imply network/filesystem/env/processes access; Step 2 directs adding a permissions array without specifying which posture flags apply.\",\n        \"complexity\": 3\n      },\n      {\n        \"id\": \"correctness\",\n        \"question\": \"Are the proposed changes technically correct?\",\n        \"reason\": \"`src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx` builds `manifestLookup` from `extensionRuntime.extensions` only, while `PackageStateInventoryEntry` in `src/tools/video-editor/runtime/extensionSurface.ts` has no manifest/permissions field for non-loaded entries.\",\n        \"complexity\": 4,\n        \"attention\": \"high_complexity_unverifiable\"\n      },\n      {\n        \"id\": \"scope\",\n        \"question\n\n[truncated 1,722 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "review_disposition",
+      "status": "not_applicable",
+      "summary": "no review.json (review may have been skipped)",
+      "trust_class": "judgment",
+      "provider": "ReviewDispositionProvider",
+      "provider_version": "1",
+      "subject": "plan",
+      "details_preview": {
+        "evidence_id": "sha256:519e446830e0c539cd39205827fa57231e722b8cf892a97834d8200a3ebfdc63"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "declared_noop",
+      "status": "not_applicable",
+      "summary": "no declared no-op/waiver artifact (absence is not a failure)",
+      "trust_class": "claim",
+      "provider": "DeclaredNoopProvider",
+      "provider_version": "1",
+      "source": "completion/noop.json|completion_noop.json",
+      "subject": "plan",
+      "details_preview": {
+        "evidence_id": "sha256:c5a9ab90387234220c35d0514efb5fab48bd80d5d3066b982919aa7d976625c8"
+      },
+      "details_full_location": "review_evidence.json"
+    }
+  ],
+  "evidence_count": 7,
+  "green_suite": {
+    "delta": {
+      "computable": false,
+      "newly_failing": 0,
+      "newly_passing": 0,
+      "still_red": 0,
+      "still_green": 0,
+      "deleted_tests": 0,
+      "added_tests": 0,
+      "flakes": 0,
+      "tests_collected": 0,
+      "duration": 0.264625264913775,
+      "flake_retry_skipped": false,
+      "flake_retry_reason": ""
+    }
+  }
+}
+
+        Your output template is at: /workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m1-trust-model-truth-outcome-20260707-1958/review_output.json
+        Read this file first — it contains the expected JSON structure with pre-populated `task_verdicts`, `sense_check_verdicts`, and `criteria`.
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Git diff summary:
+        ?? .megaplan/epics/m1-trust-model-truth-outcome-20260707-1958/
+
+        Requirements:
+        - Verify each success criterion explicitly.
+        - Fresh repository inspection and `review_evidence.json` outrank stale execution-time claims from `execution_audit.json`, `finalize.json`, and executor notes.
+        - Use repository tools to inspect relevant files and run focused verification commands when behavior or tests are part of a criterion; include concrete repository-backed evidence for every criterion verdict.
+        - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
+          - `must` criteria are hard gates only when backed by a deterministic runnable check that failed on the pre-execute baseline and still fails after execution. Ungrounded prose concerns are advisory.
+          - `should` criteria are quality targets. If the spirit is met but the letter is not, mark `pass` with evidence explaining the gap. Only mark `fail` if the intent was clearly missed. A `should` failure alone does NOT require `needs_rework`.
+          - `info` criteria are for human reference. Mark them `waived` with a note — do not evaluate them.
+          - If a criterion has `requires` capabilities that are not satisfiable by container workers (e.g., `drive_browser`, `subjective_judgment`), mark it `deferred_human` — NOT `fail` or `waived`. Deferred-human criteria do NOT count toward `needs_rework`.
+          - If a criterion (any priority) cannot be verified in this context (e.g., requires manual testing or runtime observation), mark it `waived` with an explanation.
+        - Set `review_verdict` to `needs_rework` only for a rework item with `deterministic_check: {"command": "...", "baseline_status": "failed", "post_status": "failed"}`. Use `approved` for prose-only concerns; record those as advisory issues instead.
+        - Set `review_completion_status` to `"incomplete"` when you could not inspect the repository or run verification commands; otherwise set it to `"complete"`.
+        - The decisions listed above were settled at the gate stage. Verify that the executor implemented each settled decision correctly. Flag deviations from these decisions, but do not question the decisions themselves.
+        - baseline_test_failures in finalize.json lists tests that were already failing before execution. Do not flag these as rework items unless the executor introduced new failures in those same tests.
+        - Cross-reference each task's `files_changed` and `commands_run` against the git diff and any audit findings.
+        - Review every `sense_check` explicitly and treat perfunctory acknowledgments as a reason to dig deeper.
+        - Follow this JSON shape exactly:
+        ```json
+        {
+          "review_verdict": "approved",
+          "review_completion_status": "complete",
+          "criteria": [
+            {
+              "name": "All existing tests pass",
+              "priority": "must",
+              "pass": "pass",
+              "evidence": "Test suite ran green — 42 passed, 0 failed."
+            },
+            {
+              "name": "File under ~300 lines",
+              "priority": "should",
+              "pass": "pass",
+              "evidence": "File is 375 lines — above the target but reasonable given the component's responsibilities. Spirit met."
+            },
+            {
+              "name": "Manual smoke tests pass",
+              "priority": "info",
+              "pass": "waived",
+              "evidence": "Cannot be verified in automated review. Noted for manual QA."
+            }
+          ],
+          "issues": [],
+          "rework_items": [],
+          "summary": "Approved. All must criteria pass. The should criterion on line count is close enough given the component scope.",
+          "task_verdicts": [
+            {
+              "task_id": "T6",
+              "reviewer_verdict": "Pass. Claimed handler changes and command evidence match the repo state.",
+              "evidence_files": ["megaplan/handlers.py", "megaplan/evaluation.py"]
+            }
+          ],
+          "sense_check_verdicts": [
+            {
+              "sense_check_id": "SC6",
+              "verdict": "Confirmed. The execute blocker only fires when both evidence arrays are empty."
+            }
+          ]
+        }
+        ```
+        - `rework_items` must be an array of structured rework directives. When `review_verdict` is `needs_rework`, populate one entry per issue with:
+          - `target`: typed route for the rework. Use `{"kind": "task", "task_id": "T6"}` for one finalize task, `{"kind": "bulk", "id": "bulk-1", "task_ids": ["T6", "T7"]}` for bulk-operation findings, or `{"kind": "manifest", "id": "manifest-path-or-ref", "task_ids": ["T6"]}` for manifest-backed findings.
+          - `task_id`: legacy compatibility only. It may mirror the single task target, or be `"REVIEW"` only for review blockers with no runnable finalize target.
+          - `issue`: what is wrong
+          - `expected`: what correct behavior looks like
+          - `actual`: what was observed
+          - `evidence_file`: file path supporting the finding
+          - `flag_id`: critique/review flag ID when applicable, otherwise `null`
+          - `source`: short machine-readable source tag when applicable, otherwise `null`
+          - `deterministic_check` (required for blocking rework): object with `command`, `baseline_status`, and `post_status`
+        - `issues` must still be populated as a flat one-line-per-item summary derived from `rework_items` (for backward compatibility). When approved, blocking `rework_items` should be empty; prose-only concerns may be summarized in `issues`.
+        - When the work needs another execute pass, keep the same shape and change only `review_verdict` to `needs_rework`; make `issues`, `rework_items`, `summary`, and task verdicts specific enough for the executor to act on directly.

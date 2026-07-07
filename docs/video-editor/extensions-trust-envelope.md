@@ -3,8 +3,8 @@
 ## Status
 
 **Milestone:** M1–M15 (Extension Layer Epic — V1 trusted-local runtime complete)
-**Last updated:** 2026-06-20
-**Posture:** Honest trusted-local. Extensions execute with **full browser-renderer privileges** in the same JavaScript context as the Reigh editor. No sandboxing, no process isolation, no capability-based enforcement exists in V1.
+**Last updated:** 2026-07-07
+**Posture:** Honest trusted-local. Extensions execute with **full browser-renderer privileges** in the same JavaScript context as the Reigh editor. No sandboxing, no process isolation, no brokered host API, and no capability-based enforcement exists in V1.
 
 ---
 
@@ -15,7 +15,7 @@ In M1, every extension is a **trusted-local extension**. This means:
 - The extension source is **vetted by the project owner / developer** before it is added.
 - At runtime the extension runs **in the same browser JavaScript context** as the Reigh video editor (same thread, same origin, same DOM).
 - There is **no sandbox, no iframe isolation, no CSP subdivision, and no process boundary** between the extension and the host.
-- The `permissions` field in the manifest is **purely descriptive** — it documents the extension author's intent but has no runtime enforcement. See [§ 3](#3-permission-metadata-descriptive-until-sandboxing-exists).
+- The `permissions` field in the manifest is a **non-enforced declarative access disclosure**. It documents the extension author's intent but has no runtime enforcement. See [§ 3](#3-declarative-access-disclosures-non-enforced-until-isolation-or-brokered-apis-exist).
 
 > ⚠️ **Warning** (emitted at activation by the flagship local extension):
 > *"Trusted-local extension: this extension executes with full browser-renderer privileges. Review the extension source before enabling it in a shared project."*
@@ -45,13 +45,13 @@ The table below lists each capability surface, its V1 posture, how the host surf
 
 ---
 
-## 3. Permission metadata (descriptive until sandboxing exists)
+## 3. Declarative access disclosures (non-enforced until isolation or brokered APIs exist)
 
 The `ExtensionPermissionDeclaration` type in `@reigh/editor-sdk` has two fields:
 
 ```typescript
 interface ExtensionPermissionDeclaration {
-  /** Human-readable reason the permission is requested. */
+  /** Human-readable reason for the access disclosure. */
   reason: string;
   /** Declared posture: what the extension states it accesses. */
   posture?: {
@@ -68,9 +68,9 @@ In M1:
 - The `permissions` array in an extension manifest is **validated and frozen** by `defineExtension()`.
 - It is carried through runtime normalization as part of the frozen manifest.
 - **No runtime enforcement** is performed — an extension that declares `network: false` can still call `fetch()`.
-- The field exists so extension authors can **document their intent** today, and so the schema is stable when sandboxing / capability enforcement is introduced in a later milestone.
+- The field exists so extension authors can **document their intent** today, and so the schema is stable if a future isolation or brokered-host-API epic introduces real capability enforcement.
 
-**Expected enforcement milestone:** M4 or later, when a sandboxing layer (iframe isolation, CSP subdivision, or a capability-based proxy) is introduced.
+**Expected enforcement milestone:** a future isolation or brokered-host-API epic, when a real sandboxing layer, process boundary, or capability-based proxy is introduced.
 
 ---
 
@@ -109,9 +109,9 @@ Deactivation/disposal is similarly grouped. All lifecycle state transitions (ina
 
 ---
 
-## 6. When will sandboxing arrive?
+## 6. When will isolation or brokered enforcement arrive?
 
-Sandboxing is tracked as future work beyond M1. The current trust model is appropriate for:
+Sandboxing, brokered host APIs, and permission enforcement are tracked as future work beyond M1 in a future isolation or brokered-host-API epic. The current trust model is appropriate for:
 
 - **Personal projects** where the developer authors or vets all extensions.
 - **Internal team workflows** where extensions are shared as source code and reviewed.
@@ -119,7 +119,7 @@ Sandboxing is tracked as future work beyond M1. The current trust model is appro
 
 Before extensions can be safely loaded from untrusted sources (e.g. a marketplace, a URL, or a third-party package registry), the following must exist:
 
-1. **Capability enforcement:** The `permissions` field must gate actual browser API access (network, filesystem, etc.).
+1. **Capability enforcement:** Manifest access disclosures must gate actual host-mediated browser API access (network, filesystem, etc.).
 2. **Process isolation:** Extensions must run in a separate JavaScript realm (iframe, Worker, or ShadowRealm) with a capability-based proxy to the host.
 3. **Integrity verification:** Extensions loaded from remote sources need content hashing and signature verification.
 4. **User-facing permission prompts:** The host must present a permission dialog before granting capabilities.

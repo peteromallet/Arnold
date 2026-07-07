@@ -1,0 +1,465 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Extension Reality Convergence
+Source: `.megaplan/initiatives/extension-reality-convergence-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `5ed92f91a987b5fafb1e8011624176237e2b9fe3164b07cde7fa7d1f59b4baf9`
+
+```md
+# North Star: Extension Reality Convergence
+
+## End State
+
+The Reigh video-editor extension system is truthful and converged across trust, composition authority, and export readiness. Extensions are presented as trusted local code unless a later untrusted-runtime epic adds real isolation. Composition facts used by planner/export/preview flow through a canonical authority spine instead of scattered legacy timeline reads. Export readiness is decided by planner-owned blockers, with guard scans and provider route checks demoted to structured planner inputs.
+
+## Success In One Sentence
+
+From a clean checkout on top of the completed extension-foundation work, Reigh can prove that extension trust claims are honest, the first composition fact family has moved to graph authority, and every user-facing export block originates from canonical planner readiness.
+
+## Immutable Constraints
+
+- Do not implement fake or partial permission enforcement and call it sandboxing.
+- Do not claim marketplace, third-party, or untrusted extension safety.
+- Keep extension code trusted and unsandboxed unless a separate future epic introduces isolation and brokered APIs.
+- Do not delete legacy timeline storage fields before compatibility projection and regression tests exist.
+- Do not let migrated fact families remain authoritative through direct legacy timeline reads.
+- Do not add a second export readiness authority beside the planner.
+- Do not weaken quality gates, docs checks, or release checks to make the epic pass.
+- Preserve existing editor behavior for timelines and packages that do not use migrated composition features.
+- Keep generated-module, provider, and export-guard scans where useful, but make them feed planner readiness instead of bypassing it.
+
+## Required Proof
+
+- SDK, JSON schema, examples, docs, and manager UI agree on the trusted-code/access-disclosure model.
+- A regression gate fails if docs or UI imply sandboxing, runtime permission enforcement, marketplace safety, or third-party safety.
+- The first composition authority ratchet proves shader/ref readiness comes from graph-projected facts, not direct legacy shader fields.
+- A fixture proves legacy-only shader/ref fields do not count as authoritative after projection is disabled.
+- User-facing export/render blocked states are derived from planner blockers.
+- Generated-module artifact state, provider availability, output-format availability, contribution conflicts, shader/material blockers, and live-binding blockers are represented in planner readiness.
+- Quality checks pass from a clean checkout with the convergence gates enabled.
+
+## Explicitly Deferred
+
+- True permission enforcement through iframe, Worker, process, SES-like isolation, or a brokered host API.
+- Marketplace install, remote extension discovery, update/delete flows, code signing, and dependency resolution.
+- Full composition-spine completion beyond the fact families named by this epic.
+- Full process/sidecar runtime hardening unless required as an input to export-readiness diagnostics.
+```
+
+### Current Stage
+Stage: `finalize`
+Plan directory: `/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m1-trust-model-truth-outcome-20260707-1958`
+Current milestone: `m1-trust-model-truth`
+
+### Phase Instruction
+Convert the approved plan into executable tasks while preserving North Star constraints and visible alignment checks.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are DECOMPOSING the approved plan below into an ordered task DAG. The plan has been
+        critiqued, gated, and possibly revised. Do NOT re-evaluate strategy or re-litigate
+        decisions - gate has settled those.
+
+        Project directory:
+        /workspace/extension-reality-convergence-epic/reigh-app
+
+        Brief summary: # M1: Trust Model Truth
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: Trust Model Truth
+
+## Overview
+The milestone should make the extension trust model truthful across SDK types, JSON schema, examples, docs, quality gates, and the Extension Manager. The repository evidence confirms the core drift: `src/sdk/manifest.ts` defines permission declarations as `{ reason, posture }`, while `config/contracts/reigh-extension.schema.json` still defines the legacy `{ permission, reason }` shape. `PackageCard` already receives `manifest`, so per-extension disclosures can be rendered without new runtime plumbing.
+
+This is a bridge toward the Epic North Star, not a contradiction: it preserves trusted local, unsandboxed extension execution and makes disclosure honest without adding fake permission enforcement, isolation, marketplace trust, or third-party safety claims.
+
+## Phase 1: Contract and Example
+
+### Step 1: Unify the permission declaration contract (`src/sdk/manifest.ts`, `config/contracts/reigh-extension.schema.json`)
+**Scope:** Small  
+**Complexity:** 2
+1. Treat the TypeScript `{ reason, posture?: { network?, filesystem?, env?, processes? } }` shape as canonical because SDK consumers and docs already align with it.
+2. Update the JSON schema `ExtensionPermissionDeclaration` to require `reason`, allow optional `posture`, restrict posture keys to `network`, `filesystem`, `env`, and `processes`, and reject the legacy `permission` field via `additionalProperties: false`.
+3. Reword nearby SDK comments from “permission metadata” toward “declarative access disclosure metadata” if needed, without changing runtime behavior.
+
+### Step 2: Add a checked-in example disclosure (`src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json`)
+**Scope:** Small  
+**Complexity:** 1
+1. Add a `permissions` array using the unified shape to the flagship local example.
+2. Use truthful disclosure wording: a human-readable `reason` plus actual posture booleans. Avoid approval, grant, blocking, sandbox, or enforcement language.
+
+## Phase 2: Manager UI
+
+### Step 3: Render per-extension access disclosures (`src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx`)
+**Scope:** Medium  
+**Complexity:** 3
+1. Read `manifest?.permissions` inside `PackageCard`, where the manifest is already available.
+2. Render a compact per-package disclosure section only when declarations exist.
+3. Label posture flags as disclosed access, not granted capabilities. Suggested labels: Network, Filesystem, Environment, Processes.
+4. Preserve `ExtensionTrustWarningBanner` as the global warning that extensions are trusted local code and declarations are not runtime-enforced.
+
+### Step 4: Test disclosure rendering (`src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx`)
+**Scope:** Medium  
+**Complexity:** 3
+1. Add or extend a manager fixture whose manifest includes at least one permissions entry.
+2. Assert the package card renders the disclosure reason and posture labels.
+3. Keep assertions for the trusted/unsandboxed/non-enforced warning copy.
+
+## Phase 3: Regression Gates and Docs
+
+### Step 5: Add schema and SDK contract tests (`src/sdk/manifest-schema-validation.test.ts`, `src/sdk/__tests__/sdk-boundary.test.ts`, `src/sdk/smoke/barrel-import-smoke.test.ts`)
+**Scope:** Medium  
+**Complexity:** 3
+1. Update schema-validation tests so `{ reason, posture }` passes and `{ permission, reason }` fails.
+2. Ensure SDK boundary and smoke tests still construct `ExtensionPermissionDeclaration` with the unified shape.
+3. Do not add a legacy compatibility shim unless an existing checked-in manifest or runtime consumer proves it is needed; current evidence says none do.
+
+### Step 6: Add a trust-model truth quality gate (`scripts/quality/check-trust-model-truth.mjs`, `scripts/quality/check-trust-model-truth.test.mjs`, `package.json`)
+**Scope:** Medium  
+**Complexity:** 4
+1. Create a companion script rather than overloading `check-extension-drift.mjs`, because this gate checks trust claims rather than contribution drift.
+2. Scan SDK touchpoints, schema, Extension Manager UI, relevant extension docs, examples, and quality scripts.
+3. Fail on active claims of sandboxing, runtime permission enforcement, marketplace or third-party safety, untrusted extension support, permission checks, capability gates, or isolation unless paired with explicit negation or future-deferral wording.
+4. Add tests or fixtures proving one active claim fails and one deferred/non-enforced claim passes.
+5. Wire the script into the existing quality command path without weakening existing gates.
+
+### Step 7: Tighten trust docs (`docs/extensions/trust-and-security.md`, `docs/video-editor/extensions-trust-envelope.md`, `src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts`)
+**Scope:** Small  
+**Complexity:** 2
+1. Ensure docs describe manifest entries as declarative access disclosures using the unified `{ reason, posture }` shape.
+2. Explicitly defer true untrusted-extension enforcement to a future isolation or brokered-host-API epic.
+3. Update the readiness-doc test if the new deferral wording should become executable proof.
+
+## Phase 4: Validation
+
+### Step 8: Run targeted checks, then the broader quality gate
+**Scope:** Medium  
+**Complexity:** 2
+1. Run schema tests after Phase 1.
+2. Run Extension Manager tests after Phase 2.
+3. Run the new trust-model quality script and its tests after Phase 3.
+4. Finish with the existing extension-facing tests and quality command.
+
+## Execution Order
+1. Unify schema and SDK wording first, because this is the contract root.
+2. Add the example manifest after the schema accepts the canonical shape.
+3. Add UI rendering once test fixtures can carry the canonical declaration.
+4. Add the quality gate after code, docs, and UI wording are stable.
+5. Run focused tests early, then the broader quality command.
+
+## Validation Order
+1. Manifest schema validation: canonical shape passes and legacy shape fails.
+2. SDK boundary and smoke tests: public type exports remain stable.
+3. Extension Manager tests: per-package disclosures render and warning copy remains non-enforcing.
+4. Trust-model quality script tests: active unsupported claims fail; negated/deferred claims pass.
+5. Existing quality/readiness command: current release checks remain intact.
+
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-07T20:09:21Z",
+  "hash": "sha256:91a830051a109c503bca7d134dbee0b2949b024b4428ae2557775c235d67e827",
+  "questions": [
+    "Should the manifest field remain named `permissions` for compatibility while UI/docs call entries \u201caccess disclosures,\u201d or should this milestone introduce a manifest-level rename/deprecation with a compatibility shim?",
+    "Should the new trust-model quality gate be wired into top-level `quality:check` immediately, or introduced as a separate script first and added to CI in a follow-up?",
+    "If `flagship-local` does not naturally use network/filesystem/env/processes, which truthful posture flag should the example disclose?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "The JSON schema accepts the canonical `{ reason, posture }` permission/access disclosure shape and rejects the legacy `{ permission, reason }` shape.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "At least one checked-in example extension declares access disclosures using the canonical shape and validates against the updated schema.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The Extension Manager renders per-extension declared access disclosures from `manifest.permissions` without presenting them as enforced, granted, sandboxed, or permission-checked capabilities.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "inspect_runtime_ui",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The global trust warning remains visible and states that extensions run as trusted local/unsandboxed code and that manifest declarations are not enforced at runtime.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "inspect_runtime_ui"
+      ]
+    },
+    {
+      "criterion": "A regression gate fails on active claims of sandboxing, runtime permission enforcement, marketplace or third-party safety, untrusted extension support, permission checks, capability gates, or isolation, while allowing explicit negation or future-deferral wording.",
+      "priority": "must",
+      "requires": [
+        "run_shell",
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Documentation explicitly defers true untrusted-extension enforcement to a future isolation or brokered-host-API epic.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Existing extension-facing tests named by the brief continue to pass after the contract, UI, docs, example, and quality-gate changes.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The quality gate remains separate from contribution drift logic unless a small shared helper is clearly simpler in the existing script structure.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "UI disclosure copy uses concise labels and avoids terms that imply authorization, blocking, or runtime checks.",
+      "priority": "should",
+      "requires": [
+        "inspect_runtime_ui",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "No runtime permission checks, iframe/Worker/process isolation, marketplace flow, code signing, dependency resolution, or remote trust behavior is added in this milestone.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "read_files"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The TypeScript `{ reason, posture }` shape is canonical because existing SDK consumers and docs already align with it, and no checked-in manifest uses the divergent schema-only `permission` field.",
+    "The manifest field can remain named `permissions` for compatibility in this milestone, while docs/UI describe entries as non-enforcing access disclosures.",
+    "Per-extension disclosure belongs in `PackageCard`; the trust banner remains a generic global warning rather than becoming the primary disclosure surface.",
+    "A new companion script `scripts/quality/check-trust-model-truth.mjs` is cleaner than extending `scripts/quality/check-extension-drift.mjs`.",
+    "Any scope narrowing here is a bridge, not a contradiction: real untrusted-runtime enforcement and isolation remain explicitly deferred by the North Star."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/sdk/manifest-schema-validation.test.ts",
+        "reason": "Direct schema contract proof for the permission/access disclosure shape."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/__tests__/sdk-boundary.test.ts",
+        "reason": "Public SDK type boundary coverage for ExtensionPermissionDeclaration."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/smoke/barrel-import-smoke.test.ts",
+        "reason": "Barrel/direct import smoke coverage for the declaration type."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+        "reason": "UI disclosure and trust warning rendering coverage."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts",
+        "reason": "Executable proof for trust-and-security documentation wording."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/manifest.ts",
+      "config/contracts/reigh-extension.schema.json",
+      "src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json",
+      "src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx",
+      "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx",
+      "src/sdk/manifest-schema-validation.test.ts",
+      "src/sdk/__tests__/sdk-boundary.test.ts",
+      "src/sdk/smoke/barrel-import-smoke.test.ts",
+      "scripts/quality/check-trust-model-truth.mjs",
+      "scripts/quality/check-trust-model-truth.test.mjs",
+      "package.json",
+      "docs/extensions/trust-and-security.md",
+      "docs/video-editor/extensions-trust-envelope.md",
+      "src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts"
+    ],
+    "always_run": [
+      "npm run quality:check"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: config/contracts/reigh-extension.schema.json, package.json, scripts/quality/check-trust-model-truth.mjs, scripts/quality/check-trust-model-truth.test.mjs, src/sdk/__tests__/sdk-boundary.test.ts, src/sdk/manifest-schema-validation.test.ts, src/sdk/manifest.ts, src/sdk/smoke/barrel-import-smoke.test.ts, src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx, src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx, src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json, src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts. Ignored documentation-only change(s) for selector derivation: docs/extensions/trust-and-security.md, docs/video-editor/extensions-trust-envelope.md. Candidate: The change crosses SDK contracts, schema, UI, examples, docs, and quality gates. Scoped selectors give fast signal, while the full quality command remains the final guard against trust-model drift. Dropped nonexistent pytest path(s) from plan-time baseline metadata: scripts/quality/check-trust-model-truth.test.mjs, scripts/quality/check-trust-model-truth.mjs.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "scripts/quality/check-trust-model-truth.test.mjs",
+      "scripts/quality/check-trust-model-truth.mjs"
+    ]
+  },
+  "structure_warnings": [
+    "Each step section should reference at least one file in backticks."
+  ]
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "PROCEED",
+  "passed": true,
+  "rationale_brief": "The plan is thorough, well-phased (4 phases, 8 steps in correct dependency order), and fully aligned with the Epic North Star. It correctly identifies the SDK/schema drift (TypeScript canonical {reason, posture} vs schema legacy {permission, reason}) and proposes concrete, testable fixes. All referenced source files exist.",
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "The manifest field name remains 'permissions' for compatibility; docs and UI describe entries as declarative access disclosures rather than enforced permissions.",
+      "rationale": "No checked-in manifest uses the legacy {permission, reason} shape, so no migration shim is needed. Renaming the field now would create churn without benefit. The truthful language in UI/docs is what delivers the milestone outcome."
+    },
+    {
+      "id": "SD2",
+      "decision": "The trust-model truth quality gate is introduced as a separate companion script (scripts/quality/check-trust-model-truth.mjs) rather than extending check-extension-drift.mjs.",
+      "rationale": "check-extension-drift.mjs focuses on contribution kind/placement/schema/docs enumeration drift, not trust-model language claims. Separating concerns keeps each script fast, focused, and independently testable."
+    },
+    {
+      "id": "SD3",
+      "decision": "The TypeScript { reason, posture?: { network?, filesystem?, env?, processes? } } shape is canonical because existing SDK consumers and docs already align with it.",
+      "rationale": "The JSON schema is the outlier. Updating the schema to match the SDK avoids breaking existing consumers and preserves the truthful disclosure model."
+    },
+    {
+      "id": "SD4",
+      "decision": "Per-extension access disclosures are rendered inside PackageCard (where manifest is already available), not in the global ExtensionTrustWarningBanner.",
+      "rationale": "PackageCard already receives manifest, so no new runtime plumbing is needed. The banner remains the global trusted-local-code warning; per-package cards show specific declared posture."
+    }
+  ],
+  "warnings": [
+    "The plan metadata notes a structure warning that each step section should reference at least one file in backticks. This is cosmetic and does not affect plan correctness or executability.",
+    "Criterion 2 ('inspect_runtime_ui') and criterion 7 ('subjective_judgment') require human verification during execution \u2014 these are noted but not blocking.",
+    "The plan introduces a new quality script (check-trust-model-truth.mjs) but does not explicitly wire it into the top-level quality:check command in the plan steps. Step 6 says 'Wire the script into the existing quality command path' \u2014 the executor should ensure this is done in package.json under the quality:check script to satisfy the regression gate criterion."
+  ],
+  "orchestrator_guidance": "First iteration; follow gate recommendation: PROCEED.",
+  "carried_flags": [],
+  "iteration": 1,
+  "produced_at": "2026-07-07T20:17:10Z"
+}
+
+        Your output template is at: /workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m1-trust-model-truth-outcome-20260707-1958/finalize_output.json
+        Read this file first — it contains the expected JSON structure (tasks, user_actions, sense_checks, watch_items, meta_commentary).
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Requirements:
+        - Produce structured JSON only.
+        - For each `## Step N:` in the plan, emit 1-N tasks.
+        - For each task, emit one sense_check.
+        - Default `user_actions` to `[]`. Identify a user_action ONLY when the work is genuinely non-mechanical and the executor literally cannot do it (secrets the human alone holds, identity-bound infra access, legal/license signatories, manual UI smoke tests on production). If a check is mechanical, make it a task — not a user_action. See the detailed guidance below.
+        - Do not invent tasks that don't trace to a plan step.
+        - How batching works at runtime — shape `depends_on` with this in mind, not just literal sequencing. Tasks that share the same `depends_on` set form one batch (capped at 5). Each batch dispatches as a SINGLE LLM conversation to a SINGLE model, picked by the max(complexity) in that batch. So a c=4 audit plus three c=2 tweaks sharing a batch all run in one turn on the c=4 model. Two consequences you control via DAG shape:
+          - Routing: every task in a batch runs on the highest-tier task's model — bundle a c=2 task beside a c=4 sibling and it runs on the pricier model.
+          - Cognitive load: one conversation holds all of the batch's tasks in working context. The more disparate the tasks, the higher the risk the model loses the thread or claims completion without doing the work. Wide, mixed batches are the dominant quality failure mode.
+        - Three principles for shaping batches — judgment, not arithmetic (there is no mechanical split rule):
+          1. Isolate heavyweights. A c=4 or c=5 task usually deserves its own batch. Chain lighter tasks through it via `depends_on` rather than placing them as siblings.
+          2. Bundle context-related light work. Several c=2/c=3 tasks touching the same files or contracts batch well together.
+          3. Never emit more than 5 actionable parallel siblings. If a step legitimately fans out wider, linearize via `depends_on` so the runtime batcher sees at most 5 at a time.
+        - Do not include `validation` or `coverage_complete` fields - the harness computes those.
+        - The FINAL task MUST run tests; harness validation will reject finalize output without it.
+        - `tasks` must be an ordered array of task objects. Every task object must include:
+          - `id`: short stable task ID like `T1`
+          - `description`: concrete work item
+          - `depends_on`: array of earlier task IDs or `[]`
+          - `status`: always `"pending"` at finalize time
+          - `executor_notes`: always `""` at finalize time
+          - `reviewer_verdict`: always `""` at finalize time
+          - `kind`: indicating the type of work. One of:
+            - `code`: writes or modifies source files (executor must produce `files_changed`).
+            - `test`: writes or modifies test files, or runs the test suite (executor must produce `files_changed` in tests/ OR `commands_run` containing pytest/test invocations).
+            - `audit`: read-only investigation — grep, code review, schema inspection (executor evidence is `executor_notes` describing findings; no `files_changed` expected).
+            - `research`: external research or non-code investigation (executor evidence is `executor_notes`).
+            - `docs`: writes documentation files (executor must produce `files_changed`).
+            If unsure, default to `code`.
+          - `complexity`: integer 1–5 complexity score. This score routes the task to a
+            model at execution time, so adjudicate it deliberately — do not guess. Use the rubric:
+            - 1 = trivial, mechanical, single-file change with no logic to reason about
+                  (rename, constant bump, comment, import). A weak model cannot get it wrong.
+            - 2 = simple, localized change plus the obvious test update; one file or two,
+                  logic is linear and the failure mode is obvious.
+            - 3 = multi-file change with non-trivial logic, control flow, or data shape the
+                  executor must hold in its head; correctness is not self-evident from the diff.
+            - 4 = a wrong implementation would be NON-LOCAL and not caught by an obvious test:
+                  the error propagates through a shared contract or invariant that code you did
+                  NOT edit relies on. Touching several files is NOT sufficient on its own — a
+                  mechanical multi-file change whose failure is local and test-evident is tier 2-3.
+            - 5 = fundamental system-invariant change with high regression risk: concurrency that
+                  cascades, a schema/wire-format others build on, a state machine, or a security/
+                  auth boundary. ONLY when a subtle error would pass the full suite and corrupt
+                  state or break a system-wide contract — not merely "important" or central code.
+            Score on the hardest REALISTIC aspect of the task, not a worst-case imagining. When
+            genuinely torn between two tiers, choose the LOWER one UNLESS you can name the specific
+            cascading, test-evading failure that earns the higher tier in the justification.
+            You are not the model that executes this task, and the score neither saves nor
+            costs you anything — so do not lowball to seem efficient and do not highball to
+            play safe. Both distort routing: a too-low score sends a hard task to a model
+            that fails it; a too-high score burns a premium model on trivial work. Score
+            what the task honestly requires, no higher and no lower.
+            FLOOR: a task is NEVER below tier 4 only when it GENUINELY changes the semantics of
+            concurrency, a schema/state-machine, a security/auth boundary, or a contract other
+            code actually depends on — because a subtle error there passes tests but is wrong.
+            This floor does NOT apply to mechanical edits that merely sit near such code, or that
+            add a new interface nothing relies on yet; score those on the rubric (usually 2-3).
+          - `complexity_justification`: REQUIRED. One or two sentences that argue, specifically,
+            why this task sits at exactly that tier — cite the concrete files, interfaces, or
+            risk that places it there (e.g. "touches the auth middleware contract used by 4
+            call sites, so a mistake is non-local → tier 4"). A bare restatement of the rubric
+            ("this is complex") is not acceptable; the justification must be defensible against
+            a reviewer who disagrees.
+        - `watch_items` must be an array of strings covering runtime risks, critique concerns, and assumptions to keep visible during execution.
+        - `sense_checks` must be an array with one verification question per task. Every sense-check object must include:
+          - `id`: short stable ID like `SC1`
+          - `task_id`: the related task ID
+          - `question`: reviewer verification question
+          - `verdict`: always `""` at finalize time
+        - `user_actions` should default to `[]`. Emitting a user_action stalls execution on a human gate — it is a load-bearing escape hatch, not a convenience. Prefer to design every step to be fully mechanical: the executor can read files, run commands, query APIs, fetch URLs, parse JSON, edit code, and run tests. If a check is mechanical, write it as a task — not a user_action.
+- Emit a user_action ONLY when the work is *genuinely non-mechanical* and the executor has no path to do it itself: secrets the human alone holds (a real API key the executor cannot mint), infrastructure access bound to the human's identity (cloud console, VPN), legal/license/security-policy judgments that require a human signatory, or out-of-band manual UI smoke tests on production. If you cannot name a specific reason the executor cannot do it, the task is mechanical — make it a task.
+- Anything that touches code, configuration, fixtures, or local files MUST be a task. Reading docs, grepping, editing, running tests, writing SQL, and producing JSON resolution files are tasks. Negative example: writing the migration SQL is a task, not a user_action; verifying a license URL is reachable is a task, not a user_action.
+- When you do emit a user_action, set `requires_human_only_reason` to a specific sentence naming why the executor literally cannot perform it (not just "it's important").
+- If `user_actions` is non-empty, expect that execution will block until the human resolves each one — only emit them when that block is unavoidable.
+- Positive examples (rare, last-resort): `U1: Set ANTHROPIC_API_KEY in .env (before_execute, requires_human_only_reason: "secret the executor cannot mint")`; `U2: Confirm legal sign-off to commit the third-party JSON corpus (before_execute, requires_human_only_reason: "license judgment with legal liability")`.
+        - `meta_commentary` must be a single string with execution guidance, gotchas, or judgment calls that help the executor succeed.
+        - Preserve information that strong existing artifacts already capture well: execution ordering, watch-outs, reviewer checkpoints, and practical context.
+        - The structured output should be self-contained: an executor reading only `finalize.json` should have everything needed to work.
+        - Keep the task count proportional to the work. A simple 1-2 file fix should be 2 tasks: (1) apply the fix, (2) run tests. Do NOT create separate "inspect" or "read" tasks for simple changes — the executor can read and fix in one step. Only create more tasks when the work has genuinely independent stages.
+        - One task is the unit of ONE worker turn: the executor must IMPLEMENT it, VERIFY it, and emit its result envelope inside a single ~15-minute conversation. A task that cannot realistically finish in one turn is mis-sized and WILL fail — the worker reports `blocked: "turn ended before implementation"` or runs out the clock mid-edit. Size every task to fit one turn; raising `complexity` does NOT buy more turns, it only routes to a stronger model for the SAME single turn. When a step is a large mechanical refactor, SPLIT it across tasks instead of bundling: "add the new abstraction + its unit tests" (T1) → "migrate consumer A" (T2, depends_on T1) → "migrate consumer B + parity tests" (T3, depends_on T2). A single task that says "extract this 2000-line file into modules and write tests" or "consolidate the roots AND migrate three registries AND add parity tests" is a god-task — decompose it into one task per consumer/module, each independently completable and verifiable.
+        - - The harness owns test verification — do NOT author a run-until-pass task. If you include a test-related task, scope it to: introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute suite.
+- For code-mode plans, preserve a scoped test contract. Prefer the plan's machine-readable `test_blast_radius`; when it is missing, ensure at least one finalized task carries a concrete scoped pytest command in `commands_run` (for example `pytest tests/test_relevant.py -q`) or mappable `files_changed` paths. Do not rely on an unscoped `pytest` command unless the plan explicitly opts into `test_selection=full`.

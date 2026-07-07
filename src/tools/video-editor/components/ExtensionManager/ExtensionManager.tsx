@@ -928,6 +928,25 @@ function PackageSettingsSection({
 // Package card
 // ---------------------------------------------------------------------------
 
+type PermissionDisclosure = NonNullable<ExtensionManifest['permissions']>[number];
+type PermissionPosture = NonNullable<PermissionDisclosure['posture']>;
+
+const DISCLOSED_ACCESS_LABELS: readonly {
+  key: keyof PermissionPosture;
+  label: string;
+}[] = [
+  { key: 'network', label: 'Network' },
+  { key: 'filesystem', label: 'Filesystem' },
+  { key: 'env', label: 'Environment' },
+  { key: 'processes', label: 'Processes' },
+];
+
+function getDisclosedAccessLabels(disclosure: PermissionDisclosure): readonly string[] {
+  return DISCLOSED_ACCESS_LABELS
+    .filter(({ key }) => disclosure.posture?.[key])
+    .map(({ label }) => label);
+}
+
 function PackageCard({
   entry,
   contributionSummary,
@@ -967,6 +986,7 @@ function PackageCard({
   const diagWarningCount = diagnosticSummary?.warningCount ?? 0;
   const diagInfoCount = diagnosticSummary?.infoCount ?? 0;
   const hasDiagnostics = diagErrorCount > 0 || diagWarningCount > 0 || diagInfoCount > 0;
+  const permissionDisclosures = manifest?.permissions ?? [];
 
   const contribLine = useMemo(() => {
     if (!contributionSummary) return null;
@@ -1154,6 +1174,51 @@ function PackageCard({
           data-video-editor-extension-save-error={extensionId}
         >
           Failed to save: {saveError}
+        </div>
+      )}
+
+      {permissionDisclosures.length > 0 && (
+        <div
+          className="mt-2 rounded border border-border bg-muted/30 px-2 py-1.5 text-[11px]"
+          data-video-editor-extension-access-disclosures={extensionId}
+        >
+          <div className="mb-1 flex items-center gap-1 text-muted-foreground">
+            <Info className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <span className="font-medium text-foreground">Access disclosures</span>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            {permissionDisclosures.map((disclosure, index) => {
+              const labels = getDisclosedAccessLabels(disclosure);
+              const key = `${index}-${disclosure.reason}`;
+              return (
+                <div
+                  key={key}
+                  className="flex flex-col gap-1"
+                  data-video-editor-extension-access-disclosure="true"
+                >
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className="text-muted-foreground/70">Disclosed access:</span>
+                    {labels.length > 0 ? (
+                      labels.map((label) => (
+                        <span
+                          key={label}
+                          className="inline-flex items-center rounded border border-border bg-background/60 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                        >
+                          {label}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-muted-foreground/70">No broad access disclosed</span>
+                    )}
+                  </div>
+                  <div className="text-muted-foreground/80">
+                    <span className="text-muted-foreground/70">Declaration reason:</span>{' '}
+                    <span>{disclosure.reason}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

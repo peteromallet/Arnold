@@ -628,17 +628,33 @@ describe('M2a barrel-import smoke — manifest / validation', () => {
   it('ExtensionPermissionDeclaration is importable from the barrel', () => {
     const perm: ExtensionPermissionDeclaration = {
       reason: 'Needs network access for API calls',
-      posture: { network: true },
+      posture: {
+        network: true,
+        filesystem: false,
+        env: true,
+        processes: false,
+      },
     };
     expect(perm.reason).toBe('Needs network access for API calls');
     expect(perm.posture?.network).toBe(true);
+    expect(perm.posture?.filesystem).toBe(false);
+    expect(perm.posture?.env).toBe(true);
+    expect(perm.posture?.processes).toBe(false);
   });
 
   it('ExtensionPermissionDeclaration is importable from canonical direct path', () => {
     const perm: ExtensionPermissionDeclaration_Direct = {
       reason: 'Direct import test',
+      posture: {
+        network: false,
+        filesystem: true,
+        env: false,
+        processes: true,
+      },
     };
     expect(perm.reason).toBe('Direct import test');
+    expect(perm.posture?.filesystem).toBe(true);
+    expect(perm.posture?.processes).toBe(true);
   });
 
   it('InstalledExtensionPackage is importable from the barrel', () => {

@@ -167,6 +167,8 @@ describe('T5: Manifest schema validation (Ajv-backed)', () => {
         for (const key of Object.keys(mf.manifest)) {
           expect(knownTopLevel.has(key)).toBe(true);
         }
+
+        expect(validateFn(mf.manifest)).toBe(true);
       });
     }
   });
@@ -401,6 +403,85 @@ describe('T5: Manifest schema validation (Ajv-backed)', () => {
     });
   });
 
+  describe('Permission access disclosure contract', () => {
+    it('accepts canonical reason plus optional posture access flags', () => {
+      const manifest = {
+        ...baseValidManifest(),
+        permissions: [
+          {
+            reason: 'Fetch remote reference metadata and invoke local analysis tools.',
+            posture: {
+              network: true,
+              filesystem: true,
+              env: false,
+              processes: true,
+            },
+          },
+          {
+            reason: 'No elevated access declared for this helper.',
+          },
+        ],
+      };
+
+      expect(validateFn(manifest)).toBe(true);
+    });
+
+    it('rejects legacy permission field on a declaration that otherwise has reason', () => {
+      const manifest = {
+        ...baseValidManifest(),
+        permissions: [
+          {
+            permission: 'network',
+            reason: 'Legacy permission name is no longer part of the contract.',
+          },
+        ],
+      };
+
+      expect(validateFn(manifest)).toBe(false);
+      const errors = validateFn.errors ?? [];
+      expect(errors.some((error) => error.keyword === 'additionalProperties')).toBe(true);
+      expect(errors.some((error) => error.keyword === 'required')).toBe(false);
+    });
+
+    it('rejects declarations without reason', () => {
+      const manifest = {
+        ...baseValidManifest(),
+        permissions: [
+          {
+            posture: { network: true },
+          },
+        ],
+      };
+
+      expect(validateFn(manifest)).toBe(false);
+      const errors = validateFn.errors ?? [];
+      expect(errors.some((error) => error.keyword === 'required')).toBe(true);
+    });
+
+    it('rejects unsupported posture keys', () => {
+      const manifest = {
+        ...baseValidManifest(),
+        permissions: [
+          {
+            reason: 'Attempt to declare unsupported capabilities.',
+            posture: {
+              network: true,
+              camera: true,
+            },
+          },
+        ],
+      };
+
+      expect(validateFn(manifest)).toBe(false);
+      expect((validateFn.errors ?? []).some((error) =>
+        error.keyword === 'additionalProperties'
+        && String((error as { instancePath?: string; dataPath?: string }).instancePath
+          ?? (error as { dataPath?: string }).dataPath
+          ?? '').includes('posture'),
+      )).toBe(true);
+    });
+  });
+
   // -- Schema structural checks --------------------------------------------
 
   describe('Schema structural invariants', () => {
@@ -461,6 +542,28 @@ describe('T5: Manifest schema validation (Ajv-backed)', () => {
       expect(allowedKeys).not.toContain('effects');
       expect(allowedKeys).not.toContain('transitions');
       expect(allowedKeys).not.toContain('agentTools');
+    });
+
+    it('defines ExtensionPermissionDeclaration as canonical access disclosure shape', () => {
+      const defs = schema.definitions as Record<string, unknown>;
+      const permissionDef = defs['ExtensionPermissionDeclaration'] as Record<string, unknown>;
+      expect(permissionDef).toBeDefined();
+      expect(permissionDef.additionalProperties).toBe(false);
+      expect(permissionDef.required).toEqual(['reason']);
+
+      const props = permissionDef.properties as Record<string, unknown>;
+      expect(Object.keys(props).sort()).toEqual(['posture', 'reason']);
+      expect(props).not.toHaveProperty('permission');
+
+      const posture = props.posture as Record<string, unknown>;
+      expect(posture.additionalProperties).toBe(false);
+      const postureProps = posture.properties as Record<string, unknown>;
+      expect(Object.keys(postureProps).sort()).toEqual([
+        'env',
+        'filesystem',
+        'network',
+        'processes',
+      ]);
     });
   });
 

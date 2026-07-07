@@ -86,6 +86,17 @@
         "label": "Flagship agent tool (reserved for M5)"
       }
     ],
+    "permissions": [
+      {
+        "reason": "Reads timeline state, writes extension-scoped project metadata, shows chrome UI, and stores extension settings in the trusted local renderer.",
+        "posture": {
+          "network": false,
+          "filesystem": false,
+          "env": false,
+          "processes": false
+        }
+      }
+    ],
     "settingsDefaults": {
       "toolbar.label": "Flagship",
       "toolbar.enabled": true,

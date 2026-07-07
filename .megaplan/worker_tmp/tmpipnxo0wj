@@ -1,0 +1,182 @@
+Execute the approved plan in the repository.
+
+        Project directory:
+        /workspace/extension-reality-convergence-epic/reigh-app
+
+        Brief summary: # M1: Trust Model Truth
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Batch framing:
+        - Execute batch 2 of 8.
+        - Actionable task IDs for this batch: ['T2', 'T5']
+        - Already completed task IDs available as dependency context: ['T1']
+
+        Actionable tasks for this batch:
+        [
+  {
+    "id": "T2",
+    "depends_on": [
+      "T1"
+    ],
+    "status": "pending",
+    "kind": "code",
+    "complexity": 1,
+    "reviewer_verdict": "",
+    "description": "Add a checked-in canonical `permissions` disclosure array to `src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json` using truthful `reason` wording and posture booleans, with no approval, grant, sandbox, enforcement, or blocking language.",
+    "complexity_justification": "This is a localized JSON fixture/example edit after the schema shape is established. The main judgment is wording discipline, and the failure mode is obvious in schema validation or text review.",
+    "executor_notes": ""
+  },
+  {
+    "id": "T5",
+    "depends_on": [
+      "T1"
+    ],
+    "status": "pending",
+    "kind": "test",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Update `src/sdk/manifest-schema-validation.test.ts` so the canonical `{ reason, posture }` declaration validates and the legacy `{ permission, reason }` declaration fails against `config/contracts/reigh-extension.schema.json`.",
+    "complexity_justification": "This is a direct schema regression test for the contract changed in T1. The expected pass/fail cases are explicit, so the implementation is localized and test-evident.",
+    "executor_notes": ""
+  }
+]
+
+        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
+        [
+  {
+    "id": "T1",
+    "depends_on": [],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Unify the manifest permission/access-disclosure contract by updating `config/contracts/reigh-extension.schema.json` to accept the canonical `{ reason, posture?: { network?, filesystem?, env?, processes? } }` shape, reject legacy `permission`, and adjust nearby `src/sdk/manifest.ts` comments toward declarative access disclosure wording without changing runtime behavior.",
+    "complexity_justification": "This changes the JSON schema contract that extension manifests validate against while keeping the SDK type as the authority, so a subtle mismatch can affect examples, runtime loading, docs, and tests outside the edited files. The work is small in file count, but it is a shared wire-format boundar...",
+    "executor_notes": "Updated the JSON schema permission declaration to require reason, allow optional posture with only network/filesystem/env/processes booleans, and reject legacy permission via additionalProperties:false. Adjusted nearby SDK comments to describe permissions as declarative access disclosures without changing runtime behavior. Added focused manifest schema validation coverage for canonical acceptance, legacy rejection, unsupported posture key rejection, and structural invariants. Focused Vitest file was attempted once but dependency startup failed before tests ran; static schema-shape verificat...",
+    "files_changed": [
+      "config/contracts/reigh-extension.schema.json",
+      "src/sdk/manifest.ts",
+      "src/sdk/manifest-schema-validation.test.ts"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/manifest-schema-validation.test.ts",
+      "node -e \"const fs=require('fs'); const schema=JSON.parse(fs.readFileSync('config/contracts/reigh-extension.schema.json','utf8')); const d=schema.definitions.ExtensionPermissionDeclaration; if (!d) throw new Error('missing ExtensionPermissionDeclaration'); if (d.additionalProperties !== false) throw new Error('permission allows extra props'); if (JSON.stringify(d.required)!==JSON.stringify(['reason'])) throw new Error('reason is not required'); const keys=Object.keys(d.properties).sort().join(','); if (keys !== 'posture,reason') throw new Error('unexpected permission keys: '+keys); const posture=d.properties.posture; if (posture.additionalProperties !== false) throw new Error('posture allows extra props'); const postureKeys=Object.keys(posture.properties).sort().join(','); if (postureKeys !== 'env,filesystem,network,processes') throw new Error('unexpected posture keys: '+postureKeys); console.log('schema permission disclosure shape OK');\""
+    ]
+  }
+]
+
+        Prior batch deviations (address if applicable):
+        [
+  "Focused Vitest command was attempted once but could not start because local workspace dependencies are not installed; npx could not resolve vitest/config from the project. Static schema-shape verification passed.",
+  "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: config/contracts/reigh-extension.schema.json, src/sdk/manifest-schema-validation.test.ts, src/sdk/manifest.ts",
+  "Advisory audit finding: Executor claimed changed files not present in git status: config/contracts/reigh-extension.schema.json, src/sdk/manifest-schema-validation.test.ts, src/sdk/manifest.ts",
+  "Advisory audit finding: Sense check SC2 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC3 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment.",
+  "Advisory audit finding: Tasks left pending after execute (executor never started them): T2, T3, T4, T5, T6, T7, T8, T9, T10"
+]
+
+        User action prerequisites:
+        No user_action prerequisites for this batch.
+
+
+        Batch-scoped sense checks:
+        [
+  {
+    "id": "SC2",
+    "task_id": "T2",
+    "verdict": "",
+    "question": "Does the flagship local example include a canonical disclosure that validates and avoids wording that implies approval, grant, sandboxing, enforcement, blocking, marketplace safety, or third-party safety?"
+  },
+  {
+    "id": "SC5",
+    "task_id": "T5",
+    "verdict": "",
+    "question": "Do schema validation tests prove the canonical declaration passes and the legacy `permission` field fails?"
+  }
+]
+
+
+        ## Execution context (settled - DO NOT re-litigate)
+
+        - SD1: The manifest field name remains 'permissions' for compatibility; docs and UI describe entries as declarative access disclosures rather than enforced permissions. - No checked-in manifest uses the legacy {permission, reason} shape, so no migration shim is needed. Renaming the field now would create churn without benefit. The truthful language in UI/docs is what delivers the miles...
+- SD2: The trust-model truth quality gate is introduced as a separate companion script (scripts/quality/check-trust-model-truth.mjs) rather than extending check-extension-drift.mjs. - check-extension-drift.mjs focuses on contribution kind/placement/schema/docs enumeration drift, not trust-model language claims. Separating concerns keeps each script fast, focused, and independently testable.
+- SD3: The TypeScript { reason, posture?: { network?, filesystem?, env?, processes? } } shape is canonical because existing SDK consumers and docs already align with it. - The JSON schema is the outlier. Updating the schema to match the SDK avoids breaking existing consumers and preserves the truthful disclosure model.
+
+        ## Plan execution order rationale
+
+        1. Unify schema and SDK wording first, because this is the contract root.
+2. Add the example manifest after the schema accepts the canonical shape.
+3. Add UI rendering once test fixtures can carry the canonical declaration.
+4. Add the quality gate after code, docs, and UI wording are stable.
+5. Run focused tests early, then the broader quality command.
+
+        ## Inter-task guidance from finalize
+
+        Execute in the DAG order and keep the schema contract as the root: TypeScript `ExtensionPermissionDeclaration` is canonical, schema catches up, examples/docs/UI explain declarations as truthful non-enforced access disclosures. The main alignment risks are language drift and accidentally implying real isolation; every code, docs, UI, and quality-gate change should preserve trusted local unsandboxed execution while making that fact visible.
+
+        Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations.
+        Robustness level: thorough.
+
+        Requirements:
+        - Execute only the actionable tasks in this batch.
+        - Treat completed tasks as dependency context, not new work.
+        - Return structured JSON only.
+        - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
+        - Template file already written for reference: /workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m1-trust-model-truth-outcome-20260707-1958/execute_batch_2_output.json
+        - Only produce `task_updates` for these tasks: [T2, T5]
+        - `task_updates[].status` must be one of `done`, `skipped`, `completed`, or `blocked`; never `pending` or `in_progress`.
+        - Only produce `sense_check_acknowledgments` for these sense checks: [SC2, SC5]
+        - Do not include updates for tasks or sense checks outside this batch.
+        - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+        - Keep `executor_notes` verification-focused.
+        - Best-effort progress checkpointing: if `/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m1-trust-model-truth-outcome-20260707-1958/execution_batch_2.json` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - All terminal verification commands must run from the Project directory (`/workspace/extension-reality-convergence-epic/reigh-app`) or a descendant. Do not `cd` to `/workspace/arnold`, an editable-engine mirror, or any shared engine checkout for tests; those paths are outside the session worktree and the sandbox will refuse them.
+        - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
+        - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
+        - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
+        - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
+
+        Batch JSON response template:
+        ```json
+        {
+  "output": "",
+  "files_changed": [],
+  "commands_run": [],
+  "deviations": [],
+  "task_updates": [
+    {
+      "task_id": "T2",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    },
+    {
+      "task_id": "T5",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC2",
+      "executor_note": ""
+    },
+    {
+      "sense_check_id": "SC5",
+      "executor_note": ""
+    }
+  ]
+}
+        ```

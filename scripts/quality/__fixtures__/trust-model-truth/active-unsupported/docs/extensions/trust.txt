@@ -1,0 +1,3 @@
+# Active Positive Claim
+
+Extensions run inside sandbox isolation and use permission checks for granted capabilities.

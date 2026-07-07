@@ -42,7 +42,7 @@
     },
     "permissions": {
       "type": "array",
-      "description": "Descriptive permission metadata.",
+      "description": "Declarative access disclosures; trusted-local metadata only, not runtime enforcement.",
       "items": {
         "$ref": "#/definitions/ExtensionPermissionDeclaration"
       }
@@ -977,10 +977,20 @@
 
     "ExtensionPermissionDeclaration": {
       "type": "object",
+      "required": ["reason"],
       "additionalProperties": false,
       "properties": {
-        "permission": { "type": "string" },
-        "reason": { "type": "string" }
+        "reason": { "type": "string" },
+        "posture": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "network": { "type": "boolean" },
+            "filesystem": { "type": "boolean" },
+            "env": { "type": "boolean" },
+            "processes": { "type": "boolean" }
+          }
+        }
       }
     },
 

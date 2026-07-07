@@ -3673,10 +3673,18 @@ describe('SDK packaging types are importable from @reigh/editor-sdk', () => {
   it('ExtensionPermissionDeclaration shape is constructable', () => {
     const perm: ExtensionPermissionDeclaration = {
       reason: 'Needs network access for API calls',
-      posture: { network: true },
+      posture: {
+        network: true,
+        filesystem: false,
+        env: true,
+        processes: false,
+      },
     };
     expect(perm.reason).toContain('network');
     expect(perm.posture?.network).toBe(true);
+    expect(perm.posture?.filesystem).toBe(false);
+    expect(perm.posture?.env).toBe(true);
+    expect(perm.posture?.processes).toBe(false);
   });
 });
 

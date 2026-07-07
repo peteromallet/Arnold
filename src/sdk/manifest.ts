@@ -186,11 +186,11 @@ export interface ManifestValidationResult {
 }
 
 // ---------------------------------------------------------------------------
-// Permission metadata (descriptive until sandboxing exists)
+// Access disclosures (declarative only until sandboxing exists)
 // ---------------------------------------------------------------------------
 
 export interface ExtensionPermissionDeclaration {
-  /** Human-readable reason the permission is requested. */
+  /** Human-readable reason for the declared access. */
   reason: string;
   /** Declared posture: what the extension states it accesses. */
   posture?: {
@@ -238,7 +238,7 @@ export interface ExtensionManifest {
     // M10: agent tool contributions
     | AgentToolContribution
   )[];
-  /** Descriptive permission metadata. */
+  /** Declarative access disclosures; not runtime-enforced in V1. */
   permissions?: readonly ExtensionPermissionDeclaration[];
   /** Process declarations. */
   processes?: readonly ProcessManifestEntry[];
