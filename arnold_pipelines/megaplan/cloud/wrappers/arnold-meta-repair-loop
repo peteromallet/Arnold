@@ -37,11 +37,18 @@ if [[ -f /workspace/.cloud-hot-env ]]; then
   set +a
 fi
 
-WRAPPER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)"
-
 MARKER_DIR="${MEGAPLAN_META_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_DATA_DIR="${MEGAPLAN_META_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
 ARNOLD_SRC="${MEGAPLAN_META_ARNOLD_SRC:-/workspace/arnold}"
+SELF_PATH="${MEGAPLAN_META_SELF_PATH:-${BASH_SOURCE[0]:-$0}}"
+if command -v readlink >/dev/null 2>&1; then
+  SELF_PATH="$(readlink -f "$SELF_PATH" 2>/dev/null || printf '%s' "$SELF_PATH")"
+fi
+WRAPPER_REPO_ROOT="$(cd "$(dirname "$SELF_PATH")/../../../.." 2>/dev/null && pwd || printf '%s' /)"
+if [[ ! -f "$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop" ]] \
+  && [[ -f "$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-meta-repair-loop" ]]; then
+  WRAPPER_REPO_ROOT="$ARNOLD_SRC"
+fi
 LAUNCHER="${MEGAPLAN_META_LAUNCHER:-/root/.claude/skills/subagent-launcher/launch_hermes_agent.py}"
 SUBAGENT_SKILL="${MEGAPLAN_META_SUBAGENT_SKILL:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md}"
 DEEPSEEK_MODEL="${MEGAPLAN_META_MODEL:-deepseek:deepseek-v4-pro}"
