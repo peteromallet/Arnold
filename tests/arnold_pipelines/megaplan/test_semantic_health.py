@@ -563,13 +563,19 @@ def test_all_boundaries_inspected_present(tmp_path: Path) -> None:
 
 
 def test_cross_boundary_multiple_findings(tmp_path: Path) -> None:
-    """Empty plan dir yields findings for all 11 contracts."""
+    """Empty plan dir yields findings for every declared contract."""
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
     findings = inspect_semantic_health(plan_dir)
-    # Should have state-missing for each of 11 contracts = 11 findings
+    expected_contract_count = len(BOUNDARY_CONTRACTS)
+    expected_receipt_count = sum(1 for contract in BOUNDARY_CONTRACTS if contract.receipt_required)
+    expected_phase_result_count = sum(
+        1 for contract in BOUNDARY_CONTRACTS if contract.phase_result_required
+    )
+
+    # Should have state-missing for each declared contract.
     state_missing = [f for f in findings if f.finding_id.endswith("-state-missing")]
-    assert len(state_missing) == 11
+    assert len(state_missing) == expected_contract_count
 
     # Should have required-artifact findings for prep (research.md, brief.md)
     prep_artifact_findings = [
@@ -578,19 +584,17 @@ def test_cross_boundary_multiple_findings(tmp_path: Path) -> None:
     ]
     assert len(prep_artifact_findings) == 2
 
-    # Should have receipt-missing for contracts with receipt_required=True
-    # 10 out of 11 contracts require receipts (replan_authority does not)
+    # Should have receipt-missing for contracts with receipt_required=True.
     receipt_missing = [
         f for f in findings if f.finding_id.endswith("-receipt-missing")
     ]
-    assert len(receipt_missing) == 10
+    assert len(receipt_missing) == expected_receipt_count
 
-    # Should have phase-result-missing for contracts with phase_result_required=True
-    # 10 out of 11 contracts require phase results (parent_rejoin_promotion does not)
+    # Should have phase-result-missing for contracts with phase_result_required=True.
     pr_missing = [
         f for f in findings if f.finding_id.endswith("-phase-result-missing")
     ]
-    assert len(pr_missing) == 10
+    assert len(pr_missing) == expected_phase_result_count
 
 
 # ── revise_to_critique specific ─────────────────────────────────────────

@@ -1050,7 +1050,7 @@ TIEBREAKER_POLICY = _policy(
                 "transition_id": "tiebreaker:iterate",
                 "transition_type": "override",
                 "trigger_ref": "tiebreaker_decision.decision",
-                "target_ref": "critique",
+                "target_ref": "revise",
                 "policy_ref": "megaplan:tiebreaker",
             },
             {
@@ -1401,6 +1401,54 @@ EXECUTE_POLICY = _policy(
                     "target_ref": "halt",
                     "artifact": "review.json",
                 },
+            },
+            # ------------------------------------------------- explicit branches
+            # Every execute branch point, visible in the workflow policy
+            # component.  ``branch_surface_ref`` points to the comprehensive
+            # typed enumeration in the policy authority
+            # (``EXECUTE_BRANCH_SURFACE``); the inline entries below mirror
+            # the workflow-source-visible subset so a reviewer can read the
+            # full topology without leaving this component.
+            "branch_surface_ref": (
+                "arnold_pipelines.megaplan.execute.policy:EXECUTE_BRANCH_SURFACE"
+            ),
+            "batch_continuation": {
+                "route_signal": "execute",
+                "target_ref": "execute-batches",
+                "transition": "NextExecuteTransition.EXECUTE",
+                "policy_helper": (
+                    "arnold_pipelines.megaplan.execute.policy:"
+                    "resolve_single_batch_next_step"
+                ),
+                "condition": "current batch complete AND more batches remain",
+            },
+            "timeout_retry": {
+                "route_signal": "retry",
+                "target_ref": "execute-batches",
+                "outcome": "BlockedRetryOutcome.RETRY",
+                "governed_by": "EXECUTE_POLICY.config.retry",
+                "budget": {
+                    "max_attempts": 2,
+                    "retry_on": ("timeout", "worker_transient"),
+                },
+            },
+            "aggregate_promotion": {
+                "route_signal": "execute_payload",
+                "reducer_ref": "SOURCE_EXECUTE",
+                "target_ref": "review-fan-in",
+                "condition": "all batch payloads reduced into execute_payload",
+            },
+            "review_handoff": {
+                "route_signal": "review",
+                "target_ref": "review-fan-in",
+                "transition": "NextExecuteTransition.REVIEW",
+                "policy_helper": (
+                    "arnold_pipelines.megaplan.execute.policy:"
+                    "resolve_single_batch_next_step"
+                ),
+                "condition": (
+                    "final batch complete AND all tasks/sense-checks tracked"
+                ),
             },
         },
     },
@@ -1834,7 +1882,6 @@ EXECUTE = _step(
     inputs=({"name": "finalize_payload", "value_ref": "finalize.finalize_payload"},),
     outputs=({"name": "execute_payload"},),
     policy=EXECUTE_POLICY,
-    route_bindings=({"id": "execute:review", "label": "default", "target_ref": "review"},),
     capability_ids=("megaplan:planning",),
     metadata={
         "policy_refs": (

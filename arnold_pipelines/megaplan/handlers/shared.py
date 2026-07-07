@@ -69,6 +69,14 @@ _BOUNDARY_EXPECTED_NEXT_STEP_BY_ID = {
     "revise_to_critique": "critique",
 }
 
+_FRONT_HALF_BOUNDARY_ID_BY_PHASE = {
+    "prep": "prep_to_plan",
+    "plan": "plan_to_critique",
+    "critique": "critique_to_gate",
+    "gate": "gate_to_revise",
+    "revise": "revise_to_critique",
+}
+
 
 def _agent_mode_parts(resolved: AgentMode | tuple[str, str, bool, str | None]) -> tuple[str, str, bool, str | None]:
     if isinstance(resolved, AgentMode):
@@ -451,12 +459,12 @@ def _emit_receipt(
 
 
 def _boundary_contract_by_phase(step: str):
-    from arnold_pipelines.megaplan.workflows.boundary_contracts import BOUNDARY_CONTRACTS
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import BOUNDARY_CONTRACTS_BY_ID
 
-    for contract in BOUNDARY_CONTRACTS:
-        if contract.phase.value == step:
-            return contract
-    return None
+    boundary_id = _FRONT_HALF_BOUNDARY_ID_BY_PHASE.get(step)
+    if boundary_id is None:
+        return None
+    return BOUNDARY_CONTRACTS_BY_ID.get(boundary_id)
 
 
 def _boundary_contract_for_response(

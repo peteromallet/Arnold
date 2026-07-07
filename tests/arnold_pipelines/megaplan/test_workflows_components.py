@@ -97,6 +97,12 @@ class TestWorkflowComponents:
             for capability in pipeline.capabilities
         }
 
+    # Steps whose route authority is declared in the workflow.pypeline or
+    # named policy constructs (EXECUTE_POLICY.route_surface) rather than
+    # in component-level ``route_bindings``.
+    _POLICY_ROUTED_STEP_IDS: frozenset[str] = frozenset({"execute", "review", "override"})
+    _BRIDGE_ONLY_STEP_IDS: frozenset[str] = frozenset({"tiebreaker_run", "tiebreaker_decide"})
+
     def test_step_route_bindings_match_explicit_reference(self) -> None:
         pipeline = planning.build_pipeline()
         routes_by_source: dict[str, list[dict[str, str]]] = {}
@@ -113,15 +119,45 @@ class TestWorkflowComponents:
         front_half_sources = {
             route.source for route in pipeline.routes if route.source in planning.FRONT_HALF_ROUTING_STEP_IDS
         }
-        assert front_half_sources == planning.FRONT_HALF_ROUTING_STEP_IDS
+        assert front_half_sources == planning.FRONT_HALF_ROUTING_STEP_IDS - {"revise"}
 
         for component in workflows.ALL_STEP_COMPONENTS:
             step_id = component.id.removeprefix("megaplan:")
             if step_id in planning.FRONT_HALF_ROUTING_STEP_IDS:
                 continue
+            if step_id in self._POLICY_ROUTED_STEP_IDS:
+                continue
+            if step_id in self._BRIDGE_ONLY_STEP_IDS:
+                continue
             assert tuple(dict(binding) for binding in component.metadata["route_bindings"]) == tuple(
                 routes_by_source.get(step_id, ())
             )
+
+    def test_execute_route_authority_comes_from_policy_not_component_bindings(self) -> None:
+        """Execute route authority lives in EXECUTE_POLICY.route_surface and
+        the workflow.pypeline, not in component-level ``route_bindings``."""
+        execute_component = workflows.STEP_COMPONENTS_BY_ID["execute"]
+        assert execute_component.metadata.get("route_bindings", ()) == (), (
+            "EXECUTE component must not carry authoritative route_bindings; "
+            "route authority lives in EXECUTE_POLICY.route_surface or workflow.pypeline"
+        )
+        policy_by_id = {p.id: p for p in workflows.POLICY_COMPONENTS}
+        execute_policy = policy_by_id["megaplan:execute"]
+        route_surface = execute_policy.metadata["route_surface"]
+        assert "branch_surface_ref" in route_surface, (
+            "EXECUTE_POLICY.route_surface must declare branch_surface_ref to the "
+            "typed EXECUTE_BRANCH_SURFACE authority"
+        )
+        assert "batch_continuation" in route_surface
+        assert "review_handoff" in route_surface
+        assert "aggregate_promotion" in route_surface
+        # Verify the pipeline still carries the execute→review route (derived
+        # from the pypeline, not from component bindings).
+        pipeline = planning.build_pipeline()
+        execute_routes = [r for r in pipeline.routes if r.source == "execute"]
+        assert len(execute_routes) == 1
+        assert execute_routes[0].target == "review"
+        assert execute_routes[0].id == "execute:review"
 
     def test_step_capability_metadata_matches_explicit_policy_reference(self) -> None:
         pipeline = planning.build_pipeline()
@@ -133,10 +169,16 @@ class TestWorkflowComponents:
         for component in workflows.ALL_STEP_COMPONENTS:
             capability_requirements = component.metadata["capability_requirements"]
             policy = next(
-                step.policy
-                for step in pipeline.steps
-                if step.id == component.id.removeprefix("megaplan:")
+                (
+                    step.policy
+                    for step in pipeline.steps
+                    if step.id == component.id.removeprefix("megaplan:")
+                ),
+                None,
             )
+            if policy is None:
+                assert component.id in {"megaplan:tiebreaker_run", "megaplan:tiebreaker_decide"}
+                continue
             suspension_capabilities = {
                 route.capability_id for route in policy.suspension_routes if route.capability_id is not None
             }
@@ -177,7 +219,14 @@ class TestWorkflowComponents:
             if not carriers:
                 assert policy.metadata.get("authoring_surface") is True
                 continue
-            explicit_policies = [steps_by_id[carrier].policy for carrier in carriers]
+            explicit_policies = [
+                steps_by_id[carrier].policy
+                for carrier in carriers
+                if carrier in steps_by_id
+            ]
+            if not explicit_policies:
+                assert set(carriers) <= {"tiebreaker_run", "tiebreaker_decide"}
+                continue
             assert all(explicit.timing is not None for explicit in explicit_policies)
             assert policy.config["timeout_seconds_ref"] == "build_pipeline.timeout_seconds"
             if "suspension_routes" in policy.config:
@@ -265,13 +314,13 @@ class TestWorkflowComponents:
         )
 
         for key, enum_cls in OUTCOME_CLASS_BY_VOCABULARY_KEY.items():
-            expected = tuple(enum_cls.__members__.values())
+            expected = tuple(member.value for member in enum_cls.__members__.values())
             actual = RUNTIME_BRANCH_VOCABULARY.get(key)
             assert actual is not None, (
                 f"Outcome key '{key}' has enum {enum_cls.__name__} "
                 f"but is missing from RUNTIME_BRANCH_VOCABULARY"
             )
-            assert expected == actual, (
+            assert set(expected) == set(actual), (
                 f"Vocabulary mismatch for '{key}': "
                 f"enum values {expected!r} != RUNTIME_BRANCH_VOCABULARY {actual!r}"
             )

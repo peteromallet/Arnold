@@ -1217,9 +1217,24 @@ def _front_half_row_specs() -> Mapping[str, tuple[str, str]]:
     except ImportError:
         return MappingProxyType({})
 
+    front_half_phases = frozenset(
+        {
+            "prep",
+            "plan",
+            "critique",
+            "gate",
+            "revise",
+            "tiebreaker_researcher",
+            "tiebreaker_challenger",
+            "tiebreaker_synthesis",
+            "tiebreaker_decision",
+        }
+    )
     row_specs: dict[str, tuple[str, str]] = {}
     for contract in BOUNDARY_CONTRACTS:
         if contract.phase is None or contract.row_id is None:
+            continue
+        if contract.phase.value not in front_half_phases:
             continue
         phase_name = contract.phase.value.upper()
         # Prefixed exports (SOURCE_*, AUTHORING_*) plus the bare export name
