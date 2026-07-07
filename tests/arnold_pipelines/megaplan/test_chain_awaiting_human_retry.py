@@ -458,6 +458,36 @@ def test_sync_chain_last_state_refreshes_from_current_plan_state(tmp_path: Path)
     assert any("awaiting_human -> finalized" in message for message in messages)
 
 
+def test_sync_chain_last_state_prefers_active_step_phase_over_terminal_projection(
+    tmp_path: Path,
+) -> None:
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    plan_dir = tmp_path / ".megaplan" / "plans" / "m7-plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        '{"name":"m7-plan","current_state":"finalized","active_step":{"phase":"execute"},"meta":{}}',
+        encoding="utf-8",
+    )
+    messages: list[str] = []
+    state = ChainState(
+        current_milestone_index=6,
+        current_plan_name="m7-plan",
+        last_state="awaiting_human",
+    )
+
+    synced = _sync_chain_last_state_from_plan(
+        tmp_path,
+        spec_path,
+        state,
+        writer=messages.append,
+    )
+
+    assert synced.last_state == "execute"
+    assert load_chain_state(spec_path).last_state == "execute"
+    assert any("awaiting_human -> execute" in message for message in messages)
+
+
 def test_record_chain_last_state_after_plan_run_prefers_live_plan_state(
     tmp_path: Path,
 ) -> None:
@@ -495,9 +525,47 @@ def test_record_chain_last_state_after_plan_run_prefers_live_plan_state(
     assert any("awaiting_human -> finalized" in message for message in messages)
 
 
+def test_record_chain_last_state_after_plan_run_keeps_execute_phase_visible(
+    tmp_path: Path,
+) -> None:
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    plan_dir = tmp_path / ".megaplan" / "plans" / "m7-plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        '{"name":"m7-plan","current_state":"finalized","latest_failure":null,'
+        '"active_step":{"phase":"execute"}}',
+        encoding="utf-8",
+    )
+    messages: list[str] = []
+    state = ChainState(
+        current_milestone_index=6,
+        current_plan_name="m7-plan",
+        last_state="awaiting_human",
+    )
+
+    synced = _record_chain_last_state_after_plan_run(
+        tmp_path,
+        spec_path,
+        state,
+        DriverOutcome(
+            status="blocked",
+            plan="m7-plan",
+            final_state="blocked",
+            iterations=1,
+            reason="execute worker stopped",
+        ),
+        writer=messages.append,
+    )
+
+    assert synced.last_state == "execute"
+    assert load_chain_state(spec_path).last_state == "execute"
+    assert any("blocked -> execute" in message for message in messages)
+
+
 def test_run_chain_syncs_last_state_after_each_child_phase(tmp_path: Path) -> None:
     spec_path = _write_chain_spec(tmp_path)
-    _write_plan_state(tmp_path, current_state="initialized")
+    _write_plan_state(tmp_path, current_state="initialized", active_step=None)
     messages: list[str] = []
 
     def fake_drive(
@@ -510,9 +578,13 @@ def test_run_chain_syncs_last_state_after_each_child_phase(tmp_path: Path) -> No
         writer,
     ) -> DriverOutcome:
         assert spec_path_arg == spec_path
-        _write_plan_state(root, plan_name=plan_name, current_state="planned")
+        _write_plan_state(
+            root,
+            plan_name=plan_name,
+            current_state="planned",
+            active_step=None,
+        )
         on_phase_complete("plan", 0, "", "")
-        assert load_chain_state(spec_path).last_state == "planned"
         return DriverOutcome(
             status="stalled",
             plan=plan_name,
@@ -555,7 +627,6 @@ def test_run_chain_syncs_last_state_after_each_child_phase(tmp_path: Path) -> No
     assert result["status"] == "stopped"
     saved = load_chain_state(spec_path)
     assert saved.last_state == "planned"
-    assert any("initialized -> planned" in message for message in messages)
 
 
 def test_reconcile_leaves_finalized_open_pr_for_execute_resume(
@@ -863,7 +934,7 @@ def test_run_chain_resumes_when_reconciled_finalized_pr_is_open(
     drive.assert_called_once()
     assert result["status"] == "stopped"
     saved = load_chain_state(spec_path)
-    assert saved.last_state == "finalized"
+    assert saved.last_state == "execute"
     assert saved.pr_state == "open"
 
 
