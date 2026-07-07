@@ -106,6 +106,25 @@ def test_resolved_prerequisite_blocked_tasks_reset_to_pending(
     assert "recorded_invocation_id" not in task
 
 
+def test_harness_generated_blocked_tasks_are_not_treated_as_prerequisites() -> None:
+    evaluation = evaluate_prerequisite_blockers(
+        {},
+        {"meta": {}},
+        [
+            BlockedTask(
+                task_id="T7",
+                reason="blocked_by_prereq",
+                notes=(
+                    "BLOCKED — did not complete. No files modified.\n"
+                    "[harness] status auto-downgraded: deviation contains budget exhausted"
+                ),
+            )
+        ],
+    )
+
+    assert evaluation.blockers == ()
+
+
 def test_sync_resolved_prerequisite_blocked_tasks_reloads_stale_finalize_snapshot(
     tmp_path: Path,
 ) -> None:

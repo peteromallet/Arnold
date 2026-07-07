@@ -1397,6 +1397,50 @@ def test_latest_execution_batch_all_tasks_done_uses_persisted_execute_baseline_h
     assert reason == "execution_batch_1.json"
 
 
+def test_latest_execution_batch_all_tasks_done_ignores_blocked_batches_with_no_done_claims(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "plan-m1",
+                "current_state": "blocked",
+                "config": {"project_dir": str(tmp_path)},
+                "meta": {"execution_baseline": {"head": base}},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T7",
+                        "status": "blocked",
+                        "executor_notes": (
+                            "BLOCKED — did not complete. No files modified.\n"
+                            "[harness] status auto-downgraded: deviation contains budget exhausted"
+                        ),
+                        "files_changed": [],
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
+
+    assert ok is True
+    assert reason == "execution_batch_1.json"
+
+
 def test_latest_execution_batch_all_tasks_done_ignores_deferred_baseline_batch(
     tmp_path: Path,
 ) -> None:
