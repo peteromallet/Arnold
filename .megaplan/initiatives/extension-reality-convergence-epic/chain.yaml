@@ -1,0 +1,66 @@
+base_branch: local/extension-foundation-completion
+anchors:
+  north_star: NORTHSTAR.md
+milestones:
+- label: m1-trust-model-truth
+  idea: .megaplan/initiatives/extension-reality-convergence-epic/briefs/m1-trust-model-truth.md
+  branch: epic/extension-reality-m1-trust-model-truth
+  profile: partnered-5
+  vendor: codex
+  robustness: thorough
+  depth: high
+  phase_model:
+  - execute=codex:high
+  - loop_execute=codex:high
+  prep_clarify: false
+  notes: Make the trusted-extension model honest across SDK, schema, docs, examples,
+    manager UI, and quality gates without pretending to enforce runtime permissions.
+- label: m2-composition-shader-ref-authority
+  idea: .megaplan/initiatives/extension-reality-convergence-epic/briefs/m2-composition-shader-ref-authority.md
+  branch: epic/extension-reality-m2-composition-shader-ref-authority
+  profile: partnered-5
+  vendor: codex
+  robustness: thorough
+  depth: high
+  phase_model:
+  - execute=codex:high
+  - loop_execute=codex:high
+  prep_clarify: false
+  notes: Ratchet shader/ref facts onto CompositionGraph projection authority while
+    keeping legacy fields as compatibility inputs only.
+- label: m3-export-readiness-convergence
+  idea: .megaplan/initiatives/extension-reality-convergence-epic/briefs/m3-export-readiness-convergence.md
+  branch: epic/extension-reality-m3-export-readiness-convergence
+  profile: partnered-5
+  vendor: codex
+  robustness: thorough
+  depth: high
+  phase_model:
+  - execute=codex:high
+  - loop_execute=codex:high
+  prep_clarify: false
+  notes: Make export readiness planner-owned so guard scans, generated-module artifact
+    state, and provider route checks feed one blocker vocabulary.
+- label: m4-evidence-and-drift-gates
+  idea: .megaplan/initiatives/extension-reality-convergence-epic/briefs/m4-evidence-and-drift-gates.md
+  branch: epic/extension-reality-m4-evidence-and-drift-gates
+  profile: partnered-5
+  vendor: codex
+  robustness: thorough
+  depth: high
+  phase_model:
+  - execute=codex:high
+  - loop_execute=codex:high
+  prep_clarify: false
+  notes: Cleanly prove the epic end state with drift gates for trust claims, migrated
+    composition authority, and planner-owned export blockers.
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+driver:
+  robustness: thorough
+  auto_approve: true
+  max_iterations: 80
+  poll_sleep: 8.0
