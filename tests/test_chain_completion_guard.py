@@ -1757,6 +1757,88 @@ def test_recover_blocked_execute_if_tasks_done_handles_failed_no_next_step_proje
     assert "continuing from executed state" in writer.call_args.args[0]
 
 
+def test_blocked_execute_recovery_respects_unresolved_user_actions(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    _write_chain_spec(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    head = _commit_semantic_change(tmp_path)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "plan-m1",
+                "current_state": "blocked",
+                "history": [{"step": "execute", "result": "blocked"}],
+                "latest_failure": {
+                    "kind": "execution_blocked",
+                    "message": "execute reported blocked tasks awaiting user action: T1",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": head,
+                    }
+                ],
+                "user_actions": [{"id": "UA1", "phase": "before_execute"}],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    writer = mock.Mock()
+    outcome = chain_module.DriverOutcome(
+        plan="plan-m1",
+        status="blocked",
+        final_state="blocked",
+        iterations=1,
+        reason="execute blocked by unresolved user action",
+        last_phase="execute",
+    )
+
+    recovered = chain_module._recover_blocked_execute_if_tasks_done(
+        tmp_path,
+        tmp_path / "chain.yaml",
+        ChainSpec(milestones=[]),
+        outcome,
+        writer=writer,
+    )
+
+    assert recovered is False
+    saved = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert saved["current_state"] == "blocked"
+    writer.assert_called_once()
+    assert "unresolved user action UA1" in writer.call_args.args[0]
+
+
 def test_stale_merged_pr_recovery_accepts_terminal_blocked_execute_finalize(
     tmp_path: Path,
 ) -> None:
