@@ -1000,13 +1000,13 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
                 "suggested_commands"
             ]
             if (
-                state.get("current_state") in {STATE_BLOCKED, "finalized"}
+                state.get("current_state") == STATE_BLOCKED
                 and blocker_recovery.get("has_terminal_blockers") is True
             ):
-                # Keep status pinned until an operator/repairer chooses a real
-                # recovery action. Advertising recover-blocked or execute here
-                # only causes auto loops to spend budget on a command that must
-                # return to the same terminal blocker.
+                # Keep blocked status pinned until an operator/repairer chooses
+                # a real recovery action. Finalized plans still need their
+                # authored execute transition even when finalize emits
+                # pre-execute quality diagnostics.
                 response["next_step"] = None
                 response["valid_next"] = []
                 plan_name = state.get("name")
