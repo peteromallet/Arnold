@@ -1,0 +1,273 @@
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+You are an independent reviewer. Critique the plan against the actual repository.
+
+
+        Project directory:
+        /workspace/extension-reality-convergence-epic/reigh-app
+
+        Brief summary: # M2: Composition Shader/Ref Authority Ratchet
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Plan:
+        # Implementation Plan: M2 Composition Shader/Ref Authority Ratchet
+
+## Overview
+Move shader/ref readiness authority from legacy timeline fields to `CompositionGraph` facts for planner and export paths. The verified repo shape matches the brief's main direction, with one important adjustment: generic reference diagnostics need export-guard blocker mapping too, because `scanCompositionGraphTargetExportBlockers()` currently filters through `isBlockingTargetCompositionDiagnosticCode()`.
+
+This scope is a bridge, not a contradiction, to the North Star. Legacy `clip.app.shader` and `config.app.shaderPostprocess` stay as storage/UI/projector inputs, but planner/export readiness must no longer treat raw legacy fields as authoritative when the graph is absent.
+
+## Main Phase
+
+### Step 1: Promote Graph-Absent Compatibility to Hard Blocks (`src/tools/video-editor/runtime/renderPlanner.ts`, `src/tools/video-editor/runtime/exportGuard.ts`)
+**Complexity: 3**
+1. Change planner `legacyGraphCompatibilityWarning()` from warning to error and ensure it yields route-scoped `RenderBlocker`s.
+2. Change export guard `legacyGraphCompatibilityWarning()` from warning to error and push matching `RenderBlocker`s into `blockers`.
+3. Convert `scanTimelineShaderExportBlockers()` from graph-or-legacy fallback into graph-or-return; legacy metadata with no graph should be represented by the compatibility block, not legacy materializer blockers.
+4. Keep legacy field extraction in `timeline-reader` intact as projector input.
+
+### Step 2: Complete Generic Reference Diagnostic Blocking (`src/tools/video-editor/runtime/composition/diagnostics.ts`, `src/tools/video-editor/runtime/renderPlanner.ts`, `src/tools/video-editor/runtime/exportGuard.ts`)
+**Complexity: 3**
+1. Add generic reference error codes to the blocking target diagnostic set where needed: disabled, duplicate, invalid-package, settings-error, runtime-error, version-incompatible, and unknown.
+2. Extend planner `compositionDiagnosticReason()` so generic reference codes do not fall through unintentionally.
+3. Extend export guard diagnostic-code and blocker-reason mappings for those same generic reference codes.
+4. Use existing `RenderBlockerReason` vocabulary: duplicate/missing/unknown reference failures map to `missing-contribution` or `unknown`; package disabled/invalid/settings/runtime/version failures map to `inactive-extension` unless local tests show a more specific existing reason is already expected.
+
+### Step 3: Mark Legacy Reads as Projector Inputs and Add Architecture Guard (`src/tools/video-editor/lib/timeline-reader.ts`, `src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts`)
+**Complexity: 4**
+1. Add a short source comment near the `snapshot.shaders` extraction for clip shader and postprocess shader metadata stating these legacy reads are projector inputs only.
+2. Add a targeted architecture test scanning migrated planner/export readiness files for forbidden direct reads of `clip.app?.shader`, `config.app?.shaderPostprocess`, `TimelineShaderMetadata`, and `legacyTimelineShaderMetadata`.
+3. Allowlist projector input code and UI/domain display helpers explicitly out of M2 scope.
+4. Keep the guard narrow so UI mutation/display paths are not blocked.
+
+### Step 4: Prove Planner and Export Ratchets (`src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts`, `src/tools/video-editor/runtime/exportGuard.test.ts`)
+**Complexity: 4**
+1. Update the existing planner compatibility test to expect `severity: 'error'` and route blockers.
+2. Add export guard coverage for graph-absent legacy shader metadata producing an error finding and blockers.
+3. Add a legacy-only fixture with raw clip shader and postprocess shader fields but no graph, proving those fields do not satisfy readiness.
+4. Verify graph-present clip and postprocess shader facts still produce the existing materializer blockers through graph-derived summaries.
+
+### Step 5: Prove Projection and Reference-State Coverage (`src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts`, `src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts`, `src/tools/video-editor/runtime/exportGuard.test.ts`)
+**Complexity: 4**
+1. Keep or extend projector coverage proving legacy clip/postprocess shader summaries become graph consumes edges.
+2. Add end-to-end planner/export tests for graph-derived disabled, duplicate, invalid-package, settings-error, runtime-error, version-incompatible, and unknown reference diagnostics.
+3. Reuse existing resolver/projector helpers where possible instead of creating a parallel fixture framework.
+
+### Step 6: Validate in Increasing Blast Radius
+**Complexity: 2**
+1. Run the new architecture test first.
+2. Run focused planner/export/composition tests.
+3. Run the broader video-editor runtime test subset if shared diagnostic or blocker mapping changes ripple.
+4. Run the full relevant package suite before handoff if SDK-exported types or shared constants are changed.
+
+## Execution Order
+1. Change planner/export hard-block behavior first.
+2. Add generic diagnostic blocking/mapping next.
+3. Add the architecture guard after final allowlists are obvious.
+4. Update and add tests for negative and positive authority cases.
+5. Run focused validation, then broaden based on touched shared code.
+
+## Validation Order
+1. `src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts`
+2. `src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts`
+3. `src/tools/video-editor/runtime/exportGuard.test.ts`
+4. `src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts`
+5. Broader video-editor runtime/composition suite if diagnostic constants or blocker mappings affect shared behavior.
+
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-07T21:22:49Z",
+  "hash": "sha256:4592448c36e1d277c0a38a004bc11fe3446496333b55a07e4af34617f03485cf",
+  "questions": [
+    "Should the new architecture guard file be named `shaderRefAuthority.test.ts`, or should it be folded into an existing local contract test if maintainers prefer fewer test files?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Planner emits error findings and route-scoped RenderBlockers when migrated shader/ref facts exist but CompositionGraph is absent.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Export guard emits error findings and RenderBlockers when legacy shader metadata exists but CompositionGraph is absent.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Export guard no longer emits legacy timeline shader materializer blockers as an authority fallback when CompositionGraph is absent.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Generic graph reference errors for disabled, duplicate, invalid-package, settings-error, runtime-error, version-incompatible, and unknown states produce planner and export blockers from graph diagnostics.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Legacy clip shader and postprocess fields still project into CompositionGraph consumes edges and existing graph-present shader workflows keep working.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "A legacy-only no-graph fixture proves raw shader fields do not satisfy planner/export readiness authority.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "A targeted architecture guard prevents new migrated planner/export shader-ref readiness code from directly reading raw legacy shader fields outside the allowlist.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Legacy storage fields and UI-only shader display/mutation paths are not removed or migrated in this milestone.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The implementation remains a narrow authority ratchet without adding sandboxing, marketplace safety claims, live-binding authority, or full material status matrix scope.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Projection disabled/no authority is represented by planner/export receiving no `CompositionGraph`; `timeline-reader` may still populate `snapshot.shaders` as projector input.",
+    "`resolveEffectTransitionContributionEntry()` remains acceptable projector-internal input resolution because downstream planner/export consumers use graph diagnostics, not the contribution index directly.",
+    "No SDK type change is needed unless adding a new blocker reason becomes unavoidable; the plan prefers existing `RenderBlockerReason` values.",
+    "UI reads through timeline-domain/editor components are explicitly out of scope and should be allowlisted or ignored by the architecture guard."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+        "reason": "Planner graph authority, hard-block, and diagnostic reason coverage."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/exportGuard.test.ts",
+        "reason": "Export guard hard-block and graph diagnostic blocker coverage."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "reason": "Projection proof for legacy shader fields into graph consumes edges."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/diagnostics.ts",
+        "reason": "Shared diagnostic blocking set and reference-state code behavior."
+      }
+    ],
+    "changed_surfaces": [
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/exportGuard.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/lib/timeline-reader.ts",
+      "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+      "src/tools/video-editor/runtime/exportGuard.test.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts"
+    ],
+    "always_run": [
+      "focused video-editor runtime planner/export/composition tests",
+      "new shader/ref authority architecture test"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/tools/video-editor/lib/timeline-reader.ts, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts, src/tools/video-editor/runtime/exportGuard.test.ts, src/tools/video-editor/runtime/exportGuard.ts, src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts, src/tools/video-editor/runtime/renderPlanner.ts. Candidate: The blast radius is concentrated in render planning, export guard, and composition diagnostics. Because diagnostic constants are shared, keep a full-suite fallback if focused tests reveal wider coupling. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts"
+    ]
+  },
+  "structure_warnings": [
+    "Each step section should reference at least one file in backticks."
+  ]
+}
+
+        Plan structure warnings from validator:
+        [
+  "Each step section should reference at least one file in backticks."
+]
+
+        Existing flags:
+        []
+
+
+
+        Your output template is at: /workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m2-composition-shader-ref-20260707-2109/critique_check_correctness.json
+Read this file first — it contains 1 check with a question and guidance.
+Investigate only this check, then add your findings to the `findings` array for that check.
+
+Self-monitor for non-convergence before spending more tool calls. This is NOT about duration or difficulty: hard checks that are still making new progress should continue. But if you are spinning — re-reading the same file 3+ times, searching for a file the plan says to CREATE, needing a sibling/external repo or path outside the project root, or making many tool calls without getting closer to a verdict — STOP investigating. Not finding what you need is a finding; emit exactly one non-flagged finding whose detail starts `unverifiable: ` and explains what you could not resolve and exactly why. An unverifiable check is a complete, valid result for this worker; normal code ambiguity that you can inspect should still be flagged per the usual "when in doubt, flag it" rule.
+
+Check ID: correctness
+Question: Are the proposed changes technically correct?
+Guidance: Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases — not just the one reported in the issue.
+
+Each finding needs:
+- "detail": what you specifically checked and what you found (at least a full sentence)
+- "flagged": true if this describes a difference, risk, or tension — even if you think it's justified. false only if purely informational with no possible downside.
+- This check must end with at least one finding. Never leave its `findings` array empty. If you found no issue, add one detailed `flagged: false` finding explaining what you checked and why it appears clear.
+
+When in doubt, flag it — the gate can accept tradeoffs, but it can't act on findings it never sees.
+
+Good: {"detail": "Checked callers of nthroot_mod in solveset.py line 1205 — passes prime moduli only, consistent with the fix.", "flagged": false}
+Good: {"detail": "The fix handles empty tuples but not single-element tuples which need a trailing comma.", "flagged": true}
+Bad: {"detail": "No issue found", "flagged": false}  ← too brief, will be rejected
+Bad: {"detail": "The hints suggest approach X but the plan uses Y. However Y is consistent with X's intent.", "flagged": false}  ← a different approach than the hints IS a flag. You found a divergence — flag it. The gate decides if it's acceptable.
+
+After filling in checks, add any additional concerns to the `flags` array (e.g., security, performance, dependencies).
+Use the standard format (id, concern, category, severity_hint, evidence). This array can be empty.
+
+Workflow: read the file → investigate → read file again → add finding → write file back. Repeat for this check.
+
+        Additional guidelines:
+        - Robustness level: thorough. Use balanced judgment. Flag significant risks, but do not spend flags on minor polish or executor-obvious boilerplate.
+        - Over-engineering: prefer the simplest approach that fully solves the problem.
+        - Reuse existing flag IDs when the same concern is still open.
+        - `verified_flag_ids`: list flag IDs from prior iterations that the revised plan actually resolves (e.g., if the plan was revised to fix FLAG-001, and you confirm the fix is correct, include "FLAG-001"). Only include flags you've verified — don't guess.
+        - Verify that the plan follows the expected structure when validator warnings or the outline suggest drift.
+        - Additional flags may use these categories: correctness, security, completeness, performance, maintainability, other.
+        - Focus on concrete issues, not structural formatting.
+        - Complexity audit: flag (a) missing complexity scores on plan steps, (b) inflated scores that would waste premium models on trivial work, and (c) under-rated work that should not run on cheap models. Use category `completeness`.

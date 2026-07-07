@@ -1,0 +1,285 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Extension Reality Convergence
+Source: `.megaplan/initiatives/extension-reality-convergence-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `5ed92f91a987b5fafb1e8011624176237e2b9fe3164b07cde7fa7d1f59b4baf9`
+
+```md
+# North Star: Extension Reality Convergence
+
+## End State
+
+The Reigh video-editor extension system is truthful and converged across trust, composition authority, and export readiness. Extensions are presented as trusted local code unless a later untrusted-runtime epic adds real isolation. Composition facts used by planner/export/preview flow through a canonical authority spine instead of scattered legacy timeline reads. Export readiness is decided by planner-owned blockers, with guard scans and provider route checks demoted to structured planner inputs.
+
+## Success In One Sentence
+
+From a clean checkout on top of the completed extension-foundation work, Reigh can prove that extension trust claims are honest, the first composition fact family has moved to graph authority, and every user-facing export block originates from canonical planner readiness.
+
+## Immutable Constraints
+
+- Do not implement fake or partial permission enforcement and call it sandboxing.
+- Do not claim marketplace, third-party, or untrusted extension safety.
+- Keep extension code trusted and unsandboxed unless a separate future epic introduces isolation and brokered APIs.
+- Do not delete legacy timeline storage fields before compatibility projection and regression tests exist.
+- Do not let migrated fact families remain authoritative through direct legacy timeline reads.
+- Do not add a second export readiness authority beside the planner.
+- Do not weaken quality gates, docs checks, or release checks to make the epic pass.
+- Preserve existing editor behavior for timelines and packages that do not use migrated composition features.
+- Keep generated-module, provider, and export-guard scans where useful, but make them feed planner readiness instead of bypassing it.
+
+## Required Proof
+
+- SDK, JSON schema, examples, docs, and manager UI agree on the trusted-code/access-disclosure model.
+- A regression gate fails if docs or UI imply sandboxing, runtime permission enforcement, marketplace safety, or third-party safety.
+- The first composition authority ratchet proves shader/ref readiness comes from graph-projected facts, not direct legacy shader fields.
+- A fixture proves legacy-only shader/ref fields do not count as authoritative after projection is disabled.
+- User-facing export/render blocked states are derived from planner blockers.
+- Generated-module artifact state, provider availability, output-format availability, contribution conflicts, shader/material blockers, and live-binding blockers are represented in planner readiness.
+- Quality checks pass from a clean checkout with the convergence gates enabled.
+
+## Explicitly Deferred
+
+- True permission enforcement through iframe, Worker, process, SES-like isolation, or a brokered host API.
+- Marketplace install, remote extension discovery, update/delete flows, code signing, and dependency resolution.
+- Full composition-spine completion beyond the fact families named by this epic.
+- Full process/sidecar runtime hardening unless required as an input to export-readiness diagnostics.
+```
+
+### Current Stage
+Stage: `plan`
+Plan directory: `/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m2-composition-shader-ref-20260707-2109`
+Current milestone: `m2-composition-shader-ref-authority`
+
+### Phase Instruction
+Build a plan that advances the local brief while preserving the North Star. If scope is narrowed, state whether the narrowing is a bridge or a contradiction.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are creating an implementation plan for the following idea.
+
+        Engineering brief produced from the codebase and task details:
+
+        ### Task Summary
+        Ratchet shader/ref fact authority from legacy timeline fields (clip.app.shader, config.app.shaderPostprocess) into CompositionGraph projection. Promote two existing graph-absent compatibility warnings to hard blocking errors in both planner and export guard. Extend the graph projector's input path to accept raw legacy shader fields as projector inputs, translating them into graph shader consumes edges. Add anti-regression guards preventing any new shader/ref readiness code from reading raw legacy fields directly. Fill the non-exhaustive compositionDiagnosticReason switch to handle all generic reference diagnostic codes. Prove the ratchet with tests that legacy-only shader/ref facts are non-authoritative when projection is disabled.
+
+        ### Key Evidence
+        - 19 legacy shader/ref call sites exist across 11 files. 7 are already graph-guarded fallbacks (exportGuard scanTimelineShaderExportBlockers, hasTimelineShaderMetadata; renderPlanner diagnoseSnapshotShaderComposition, graphShaderMaterializerRequirements; shaderValidation projectShaderRefs, validateShaderComposition). 11 are unconditional reads (timeline-reader snapshot() lines 534–536 and 814–816, timeline-domain getTimelineClipShader/getTimelinePostprocessShader, exportGuard isTimelineShaderMetadata/legacyTimelineShaderMetadata). The unconditional reads in timeline-reader feed snapshot.shaders, making them the projector input path — they stay as-is for M2. (source: A1 findings, verified against timeline-reader.ts:534–551, timeline-domain.ts:332–342; relevance: high)
+- Two compatibility warning sites emit severity:'warning' when CompositionGraph is absent but legacy shader facts exist: renderPlanner.ts:934–959 (id 'planner.compositionGraph.legacy-shader-ref-compatibility') and exportGuard.ts:805–823 (id 'exportGuard.compositionGraph.legacy-shader-ref-compatibility'). Both sites push findings only — neither emits a RenderBlocker. M2 promotes both to severity:'error' and adds a RenderBlocker output, converting graph-absent from warned compatibility mode into a hard block. (source: A2 findings, verified against renderPlanner.ts:934–959, 2585–2587; exportGuard.ts:805–823, 393–396; relevance: high)
+- The graph projector selectShaderSummaries (graphProjector.ts:958–970) reads shaders from patchOverlay → runtimeOverlay → snapshot.shaders. The projector does NOT directly consume clip.app.shader or config.app.shaderPostprocess — those fields are serialized into snapshot.shaders by timeline-reader snapshot(). This means the projector input path already exists; M2 only needs to ensure planner/export consume graph-derived facts and the projector's selectShaderSummaries correctly distinguishes clip-scope vs postprocess-scope shaders. (source: A2 findings, verified against graphProjector.ts:958–970, timeline-reader.ts:534–551; relevance: high)
+- All 10 ReferenceState values (missing, disabled, inactive-reserved, invalid-package, duplicate, settings-error, runtime-error, version-incompatible, unknown, resolved) map to diagnostic codes via referenceStateDiagnosticCode() in diagnostics.ts:446–462. The resolver (referenceResolver.ts:93–135) checks all 10 states with correct precedence. buildCompositionDiagnostic (diagnostics.ts:714–744) assigns severity:'error' to disabled, duplicate, invalid-package, settings-error, runtime-error, version-incompatible, and unknown — only missing and inactive-reserved are warnings. Tests cover all 10 states distinctly (referenceResolver.test.ts:57–191). (source: A3 findings, verified against diagnostics.ts:446–462, 714–744; referenceResolver.ts:93–135; referenceResolver.test.ts:57–191; relevance: high)
+- Effect/transition contribution lookup (resolveEffectTransitionContributionEntry in graphProjector.ts:111–165) uses direct ContributionIndex iteration, not CompositionGraph.referenceStates. However, results are merged INTO the graph's referenceStates and diagnostics arrays by projectCompositionGraph (lines 1653–1689), and planner/export guard consume compositionGraph.diagnostics graph-derived. This makes the direct index access a projector-internal implementation detail, not an authority violation. (source: A3 findings, verified against graphProjector.ts:111–165, 1653–1689; relevance: medium)
+- compositionDiagnosticReason() in renderPlanner.ts:823–840 is non-exhaustive. It explicitly handles only MISSING_REF, DISABLED_REF, INACTIVE_RESERVED_REF, UNKNOWN_TARGET_REF, and UNSUPPORTED_RESERVED_TARGET, then delegates to M5. Generic codes like composition/duplicate-ref, composition/invalid-package-ref, composition/settings-error-ref, composition/runtime-error-ref, and composition/version-incompatible-ref fall through to the default returning reason:'unknown'. Severity is still correct (error from buildCompositionDiagnostic), but the planner blocker reason is degraded. (source: A3 findings, verified against renderPlanner.ts:823–840; relevance: medium)
+- No explicit test exists proving that legacy shader fields are non-authoritative when projection is disabled. shaderValidation.test.ts:388–449 proves graph authority when graph IS present, but the complement — that raw legacy fields without projection are not authoritative — is untested. The planner test at renderPlanner.compositionGraph.test.ts:238–259 tests the warning emission (expects severity:'warning'), which M2 must update to severity:'error'. (source: A3 findings, cross-referenced with shaderValidation.test.ts:388–449, renderPlanner.compositionGraph.test.ts:238–259; relevance: high)
+- Four categories of code require M2 attention: (a) The two compatibility warning sites for promotion to blocking error, (b) compositionDiagnosticReason for exhaustive generic-ref-code handling, (c) timeline-reader snapshot() and timeline-domain helpers — documented as projector inputs, no code change needed per scope, (d) UI reads (ShaderInspector, TimelineEditorCore, PropertiesPanel, VisualClip, TimelineRenderer) via getTimelineClipShader/getTimelinePostprocessShader — explicitly OUT of scope per task brief. (source: Consolidated from A1, A2, A3; relevance: high)
+
+        ### Relevant Code
+        | File | Functions | Why |
+| --- | --- | --- |
+| src/tools/video-editor/runtime/renderPlanner.ts | legacyGraphCompatibilityWarning, graphShaderMaterializerRequirements, diagnoseSnapshotShaderComposition, compositionDiagnosticReason, graphDiagnosticFindings, stripSnapshotShaders, planRender | Contains legacyGraphCompatibilityWarning (L934–959) to promote from warning to error+RenderBlocker; graphShaderMaterializerRequirements (L879–932) which only emits requirements when graph present; compositionDiagnosticReason (L823–840) which is non-exhaustive for generic ref codes; graphDiagnosticFindings (L842–877) which consumes graph diagnostics for planner findings; stripSnapshotShaders (L790–801) which already prevents double-reading when graph present. |
+| src/tools/video-editor/runtime/exportGuard.ts | legacyGraphCompatibilityWarning, scanTimelineShaderExportBlockers, hasTimelineShaderMetadata, legacyTimelineShaderMetadata, graphShaderSummaries, scanExportConfig | Contains legacyGraphCompatibilityWarning (L805–823) to promote from warning to error+ExportBlocker; scanTimelineShaderExportBlockers (L740–803) which already uses graphShaderSummaries when graph present and falls back to raw clip.app.shader/config.app.shaderPostprocess when absent; hasTimelineShaderMetadata (L459–468) same dual-path; legacyTimelineShaderMetadata (L440–444) direct legacy field reads. |
+| src/tools/video-editor/lib/timeline-reader.ts | createTimelineReader.snapshot | Contains snapshot() (L497–918) which reads clip.app?.shader (L534–536) and config.app.shaderPostprocess (L814–816) unconditionally, producing TimelineShaderSummary[] in the snapshot. These reads remain as projector inputs for M2 — they are the bridge from legacy storage to the graph projector. Must be annotated/documented as projector-input-only but not changed. |
+| src/tools/video-editor/runtime/composition/graphProjector.ts | selectShaderSummaries, projectCompositionGraph, resolveEffectTransitionContributionEntry, CompositionGraphInput | Contains selectShaderSummaries (L958–970) which selects shaders from patchOverlay→runtimeOverlay→snapshot.shaders; projectCompositionGraph (L1195–1691) which creates shader consumes edges from selected summaries and resolves reference states via resolveCompositionReferences; CompositionGraphInput interface (L205–218) which defines the projector's input contract. |
+| src/tools/video-editor/runtime/composition/diagnostics.ts | referenceStateDiagnosticCode, buildCompositionDiagnostic, BLOCKING_TARGET_COMPOSITION_DIAGNOSTIC_CODES, COMPOSITION_DIAGNOSTIC_CODE | Contains COMPOSITION_DIAGNOSTIC_CODE (L26–195) with all 10 generic ref codes; referenceStateDiagnosticCode (L446–462) mapping states to codes; BLOCKING_TARGET_COMPOSITION_DIAGNOSTIC_CODES (L306–319) — missing generic ref codes but not a real gap since buildCompositionDiagnostic already assigns error severity; buildCompositionDiagnostic (L714–744) which defaults non-missing/non-inactive-reserved generic refs to error severity. |
+| src/tools/video-editor/runtime/composition/shaderValidation.ts | projectShaderRefs, projectGraphShaderRefs, validateShaderComposition | Contains projectShaderRefs (L125–167) — the central authority switch that delegates to projectGraphShaderRefs when graph present, falls back to contributionIndex projection when absent; projectGraphShaderRefs (L216–268) pure-graph shader ref extraction; validateShaderComposition (L312–328) graph-vs-legacy fork. |
+| src/tools/video-editor/runtime/composition/referenceResolver.ts | resolveReferenceStateFromEntries, resolveCompositionReferences | Contains resolveReferenceStateFromEntries (L93–135) with full precedence-ordered state resolution across all 10 ReferenceState values; resolveCompositionReferences (L144–224) which emits diagnostics for non-resolved states. |
+| src/tools/video-editor/lib/timeline-domain.ts | getTimelineClipShader, getTimelinePostprocessShader, isTimelineShaderMetadata | Contains getTimelineClipShader (L332–335) and getTimelinePostprocessShader (L337–342) — unconditional reads of clip.app?.shader and config.app?.shaderPostprocess used by UI components. These are projector inputs and UI display paths, OUT of M2 scope per task brief but must be documented as such. |
+
+        ### Test Expectations
+        - [fail_to_pass] m2-planner-hard-block-graph-absent: planRender emits a blocking error (severity:'error' + RenderBlocker) when compositionGraph is absent but snapshot.shaders exist. Currently emits severity:'warning' with no blocker (tested at renderPlanner.compositionGraph.test.ts L238–259).
+- [fail_to_pass] m2-export-guard-hard-block-graph-absent: scanExportConfig emits a blocking export error when compositionGraph is absent but legacyTimelineShaderMetadata returns true. Currently emits severity:'warning' with no blocker (exportGuard.ts L393–396).
+- [fail_to_pass] m2-legacy-fields-non-authoritative-without-projection: A fixture with raw clip.app.shader and config.app.shaderPostprocess set but projection disabled (no CompositionGraph produced) proves those legacy fields do not satisfy planner/export shader/ref readiness. No existing test covers this case.
+- [fail_to_pass] m2-graph-derived-diagnostics-cover-all-package-state-failures: Graph projection with disabled/duplicate/invalid-package/settings-error/runtime-error/version-incompatible contributions produces diagnostics in compositionGraph.diagnostics, and those diagnostics produce planner/export blockers through graphDiagnosticFindings and scanCompositionGraphTargetExportBlockers. Partial coverage exists in referenceResolver.test.ts for state resolution but no end-to-end planner/export blocker test for generic ref codes.
+- [fail_to_pass] m2-existing-legacy-timelines-work-through-projector: Existing timelines with clip.app.shader/config.app.shaderPostprocess produce valid CompositionGraph via the projector, and planner/export consume graph-derived facts without error. Implicitly covered by existing integration tests (clip-local-shader-canary, postprocess-shader-canary) but must be verified against the hard-block change.
+- [fail_to_pass] m2-anti-regression-guard-no-raw-legacy-reads: A static or targeted regression check (lint rule, architecture test, or runtime assertion) prevents any new shader/ref readiness code (planner/export paths) from reading clip.app.shader, config.app.shaderPostprocess, or TimelineShaderMetadata directly instead of through compositionGraph. No existing guard.
+
+        ### Constraints
+        - Preserve backward compatibility for existing timelines through projection — legacy fields remain as projector inputs via timeline-reader snapshot().
+- Do not wrap existing scanners (scanTimelineShaderExportBlockers, diagnoseSnapshotShaderComposition, projectShaderRefs) in graph-shaped objects while leaving them authoritative — the guard-and-fallback pattern must become guard-and-block, not dual-authority.
+- Do not make planner/export behavior depend on both graph facts and direct legacy reads for migrated facts — after M2, graph-absent is a hard block, not a fallback.
+- Keep diagnostic vocabulary canonical and structured enough for export readiness to consume — all generic ref diagnostic codes already exist in COMPOSITION_DIAGNOSTIC_CODE (diagnostics.ts:26–52).
+- Do not delete legacy storage fields (clip.app.shader, config.app.shaderPostprocess) — they remain as projector inputs and UI mutation targets.
+- Do not touch UI reads (ShaderInspector, TimelineEditorCore, PropertiesPanel, VisualClip, TimelineRenderer) — they are explicitly OUT of scope.
+- Do not introduce live binding graph authority or material status matrix — OUT of scope.
+- Targeted regression guard must only apply to migrated shader/ref readiness code paths, not to UI components or projector input paths.
+
+        ### Suggested Approach
+        Execute as a three-step ratchet. Step 1 — Promote the two legacyGraphCompatibilityWarning sites to hard blocks: change severity from 'warning' to 'error', add RenderBlocker output in the planner variant and ExportBlocker in the export guard variant, update existing tests expecting warning severity. Step 2 — Close the non-exhaustive compositionDiagnosticReason gap by adding explicit cases for DUPLICATE_REF→'missing-contribution', INVALID_PACKAGE_REF/SETTINGS_ERROR_REF/RUNTIME_ERROR_REF/VERSION_INCOMPATIBLE_REF→'inactive-extension', and UNKNOWN_REF→'unknown'. Step 3 — Add the anti-regression guard: annotate timeline-reader snapshot() shader reads with a JSDoc marker (e.g., '@projector-input — DO NOT read for planner/export authority') and add an architecture test or lint rule that fails if new planner/export code directly accesses clip.app.shader, config.app.shaderPostprocess, or TimelineShaderMetadata without going through compositionGraph. Write the five fail-to-pass tests proving each done criterion.
+
+### Open Questions
+- [blocking] Should the timeline-reader snapshot() shader reads (clip.app?.shader at L534–536, config.app.shaderPostprocess at L814–816) be annotated as projector-input-only with a JSDoc marker, or should they be conditionally gated behind a formal 'projectionEnabled' flag that timeline-reader checks before populating snapshot.shaders? The current design has snapshot.shaders populated unconditionally; a flag would let the 'legacy-non-authoritative-without-projection' test fixture produce a snapshot with zero shaders when projection is disabled.
+- [assume_and_proceed] Effect/transition contribution lookup in resolveEffectTransitionContributionEntry (graphProjector.ts:111–165) iterates ContributionIndex directly rather than through graph.referenceStates. Is this considered a remaining non-graph authority path that needs migration, or is it acceptable as a projector-internal detail since results are deposited into graph-owned diagnostics before planner/export consumption? _(assumption: Accept as projector-internal detail. The graph is the output authority — planner and export guard consume compositionGraph.diagnostics, not ContributionIndex directly. The resolution logic inside the projector can use whatever inputs it needs; what matters is that downstream consumers derive shader/ref facts exclusively from the graph. No migration needed here for M2.)_
+
+        The engineering brief above is evidence gathered from the codebase. Treat it as the default working context, challenge its conclusions when the code disagrees, and only do targeted repository lookups when a concrete gap remains. Open questions in the brief are candidate concerns, not mandates — act on ones that materially affect the plan, dismiss immaterial or already-resolved ones with a brief reason, and treat question count as noise.
+
+        Idea:
+# M2: Composition Shader/Ref Authority Ratchet
+
+## Outcome
+
+Move shader/ref facts to CompositionGraph projection authority. Legacy timeline fields remain compatibility inputs, but planner/export readiness for shader/ref facts must consume graph-projected facts instead of direct legacy reads.
+
+## Execution Posture
+
+This is the first real authority migration. Keep the slice narrow and prove it hard. The goal is not to finish the entire composition spine; it is to establish the ratchet pattern with one important fact family.
+
+## Scope
+
+IN:
+- Introduce or complete the minimal `CompositionGraph` contracts needed for shader/ref facts.
+- Add a host projection path from current timeline/config/contribution inputs into graph facts.
+- Represent shader assignment, postprocess shader assignment, contribution references, and reference resolution state as graph-owned facts.
+- Move shader/ref planner and export blockers to graph-derived facts.
+- Keep legacy fields such as `clip.app.shader` and `config.app.shaderPostprocess` as projector inputs only.
+- Add tests proving legacy-only shader/ref facts do not count as authoritative when graph projection is disabled.
+- Add static or targeted regression checks preventing new migrated shader/ref readiness code from reading raw legacy shader fields directly.
+
+OUT:
+- Full target-path schema.
+- Live binding graph authority.
+- Material status matrix beyond what shader/ref blockers need.
+- Process runtime, sidecars, and full output-format route graphing.
+- Deleting legacy storage fields.
+
+## Constraints
+
+- Preserve backward compatibility for existing timelines through projection.
+- Do not wrap existing scanners in graph-shaped objects while leaving them authoritative.
+- Do not make planner/export behavior depend on both graph facts and direct legacy reads for migrated facts.
+- Keep diagnostic vocabulary canonical and structured enough for export readiness to consume.
+
+## Done Criteria
+
+- Planner/export shader/ref readiness fails if graph projection is absent for migrated facts.
+- A fixture with raw legacy shader/ref fields but disabled projection proves those fields are no longer authority.
+- Existing legacy timelines still work through the projector.
+- New diagnostics identify missing, disabled, duplicate, inactive, invalid, or incompatible references through graph-derived state.
+- Tests cover at least clip shader assignment, timeline postprocess shader assignment, contribution reference lookup, and package-state failures.
+
+## Touchpoints
+
+- `src/sdk/index.ts`
+- `src/sdk/video/composition/**`
+- `src/tools/video-editor/runtime/composition/**`
+- `src/tools/video-editor/runtime/FamilyRuntimeAssembly.ts`
+- `src/tools/video-editor/rendering/**`
+- `src/tools/video-editor/lib/renderRouter.ts`
+- `tests/**/video-editor/**`
+- `docs/extensions/**`
+
+
+
+        Project directory:
+        /workspace/extension-reality-convergence-epic/reigh-app
+
+
+
+
+
+        No prior clarification artifact exists. Identify ambiguities, ask clarifying questions, and state your assumptions inside the plan output.
+
+
+
+        Requirements:
+        - If the engineering brief suggests an approach, use it as your starting hypothesis — but before committing, consider if there's a simpler or more fundamental fix. The brief is well-researched input, not a final answer.
+        - If the brief is absent, incomplete, or says "skip", inspect the repository yourself before planning.
+        - Stay focused on the requested idea. If repo exploration surfaces unrelated issues or docs, ignore them and return to the task.
+        - Prefer source code, tests, and directly relevant config files. Avoid `.megaplan/`, prior plan artifacts, and unrelated `docs/` or ops/deployment material unless the task explicitly depends on them.
+        - Stop exploring once you have enough evidence to name the concrete touch points and validation path. Do not keep browsing after you can write the plan.
+        - Produce a concrete implementation plan in markdown.
+        - Define observable success criteria as objects with `criterion` (string) and `priority` (`must`, `should`, or `info`):
+          - `must` — hard gate. The reviewer will block on failure. Use for correctness, functional requirements, and verifiable outcomes (e.g., "all existing tests pass", "API returns 200 for valid input"). Every `must` criterion must have a clear yes/no answer.
+          - `should` — quality target. The reviewer flags but does not block. Use for subjective goals, numeric guidelines, and best-effort improvements (e.g., "file under ~300 lines", "no deeply nested conditionals", "each function has a single responsibility").
+          - `info` — documented for humans, reviewer skips. Use for criteria that cannot be verified in this pipeline (e.g., "13 manual smoke tests pass", "stakeholder sign-off obtained").
+        - Each success criterion should include a `requires` field listing the capabilities needed for verification. Valid capability strings: `run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, `run_linter` (container), `drive_browser`, `inspect_runtime_ui`, `observe_runtime_logs`, `subjective_judgment`, `verify_physical_device` (human). `must` criteria MUST have non-empty `requires`. Example: `{"criterion": "All tests pass", "priority": "must", "requires": ["run_tests"]}`.
+        - Use the `questions` field for ambiguities that would materially change implementation.
+        - Use the `assumptions` field for defaults you are making so planning can proceed now.
+        - Prefer cheap validation steps early.
+        - Keep the plan proportional to the task. A 1-line fix needs a 2-step plan (apply fix + run tests), not a 5-step investigation.
+        - Size each step so it can be implemented AND verified in a single worker turn (~15 min, one model conversation). A step that bundles "create the abstraction AND migrate every consumer AND write all the tests" is too large to finish in one turn and will fail (the worker runs out of time before it can implement, leaving the step blocked). For large mechanical refactors, split along the natural seam — one step to add the new abstraction + its unit tests, then one step per consumer to migrate (the last migration step also adds parity tests) — rather than one giant step. Higher complexity does not earn a step more time; it only routes to a stronger model for the same single turn.
+        - If user notes answer earlier questions, incorporate them into the draft plan instead of re-asking them.
+        - Fix the problem fully. Do not limit scope just to avoid breaking existing tests — update the tests too if needed.
+        - Prefer the simplest, most direct fix. No fallbacks, type conversions, or defensive wrappers without concrete evidence they are needed.
+        - If the task or issue hints suggest a specific approach, follow it. Only deviate with concrete counter-evidence.
+        - Assign every plan step a complexity score 1–5 before finalize. Reason about complexity in the plan markdown (e.g. "Complexity: 2" per step), and surface it informally so the reviewer can audit:
+          - 1 = trivial single-file mechanical change
+          - 2 = simple change with tests to update
+          - 3 = multi-file change with non-trivial logic
+          - 4 = cross-cutting change with architecture implications
+          - 5 = fundamental system change with high regression risk
+        - Populate `changed_surfaces` with every concrete file path your plan will change or create. Include both source files and test files. Use repo-relative paths (e.g., `src/prompts.py`, `tests/test_prompts.py`). This list drives the deterministic test-selection blast radius; be complete. If your plan touches a file, list it.
+        - (Optional) Populate `test_blast_radius` with your own scoped test-selection proposal. This complements the deterministic floor the system computes from `changed_surfaces`. Provide `strategy` ("scoped", "full", or "none"), `selectors` (array of `{"kind": "path", "value": "<path>", "reason": "<why>"}` objects), and a `rationale` string. The system merges your proposal with the deterministic floor; you cannot narrow below the floor, but you can widen with additional selectors or escalate to full. If you intend a scoped finalize baseline while keeping the full suite as a hard gate, set `strategy` to "scoped", include concrete `selectors`, and set `full_suite_fallback` to true; the floor's full-suite requirement will be honored by the fallback without forcing the baseline strategy to "full".
+
+        Plan template — simple format (adapt to the actual repo and scope):
+````md
+# Implementation Plan: [Title]
+
+## Overview
+Summarize the goal, current repository shape, and the constraints that matter.
+
+## Main Phase
+
+### Step 1: Audit the current behavior (`src/prompts.py`)
+**Scope:** Small
+1. **Inspect** the current implementation and call out the exact insertion points (`src/prompts.py:29`).
+
+### Step 2: Add the first change (`src/evaluation.py`)
+**Scope:** Medium
+1. **Implement** the smallest viable change with exact file references (`src/evaluation.py:1`).
+2. **Capture** any tricky behavior with a short example.
+   ```python
+   issues = validate_plan_structure(plan_text)
+   ```
+
+### Step 3: Wire downstream behavior (`src/handlers.py`, `src/workers.py`)
+**Scope:** Medium
+1. **Update** the runtime flow in the touched files (`src/handlers.py:400`, `src/workers.py:199`).
+
+### Step 4: Prove the change (`tests/test_validator.py`, `tests/test_integration.py`)
+**Scope:** Small
+1. **Run** the cheapest targeted checks first (`tests/test_validator.py:1`).
+2. **Finish** with broader verification once the wiring is in place (`tests/test_integration.py:1`).
+
+## Execution Order
+1. Update prompts and mocks before enforcing stricter validation.
+2. Land higher-risk wiring after the validator and tests are ready.
+
+## Validation Order
+1. Start with focused unit tests.
+2. Run the broader suite after the flow changes are in place.
+````
+
+For complex plans, use multiple phases:
+````md
+## Phase 1: Foundation — Dependencies, DB, Types
+
+### Step 1: Install dependencies (`package.json`)
+...
+
+### Step 2: Create database migration (`supabase/migrations/`)
+...
+
+## Phase 2: Core Integration
+
+### Step 3: Port the main component (`src/components/`)
+...
+````
+
+Template guidance:
+- Simple plans: use `## Main Phase` with `### Step N:` sections underneath.
+- Complex plans: use multiple `## Phase N:` sections, each containing `### Step N:` steps. Step numbers are global (not per-phase).
+- The flat `## Step N:` format (without phases) also works for backwards compatibility.
+- Key invariants: one H1 title, one `## Overview`, numbered step sections (`### Step N:` or `## Step N:`), and at least one ordering section.

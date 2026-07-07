@@ -5,7 +5,11 @@ import {
   collectExtensionDeclaredIds,
   scanExportConfig,
 } from '@/tools/video-editor/runtime/exportGuard.ts';
-import { COMPOSITION_DIAGNOSTIC_CODE } from '@/tools/video-editor/runtime/composition/diagnostics.ts';
+import {
+  COMPOSITION_DIAGNOSTIC_CODE,
+  referenceStateDiagnosticCode,
+  referenceStateSeverity,
+} from '@/tools/video-editor/runtime/composition/diagnostics.ts';
 import { createProcessResultAttachRecord } from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
 import { planRender } from '@/tools/video-editor/runtime/renderPlanner.ts';
 import {
@@ -17,7 +21,7 @@ import type {
   InactiveKnownIds,
   ExportGuardResult,
 } from '@/tools/video-editor/runtime/exportGuard.ts';
-import type { CompositionGraph, ExtensionContribution, ExtensionDiagnostic } from '@reigh/editor-sdk';
+import type { CompositionGraph, ExtensionContribution, ExtensionDiagnostic, ReferenceState } from '@reigh/editor-sdk';
 import type {
   EffectRegistryRecord,
   EffectRegistrySnapshot,
@@ -235,9 +239,49 @@ function makeCompositionDiagnostic(
   };
 }
 
+const BLOCKING_REFERENCE_STATE_CASES: ReadonlyArray<{
+  readonly state: ReferenceState;
+  readonly reason: string;
+  readonly packageState?: string;
+}> = [
+  { state: 'disabled', reason: 'inactive-extension', packageState: 'disabled-by-user' },
+  { state: 'duplicate', reason: 'missing-contribution' },
+  { state: 'invalid-package', reason: 'inactive-extension', packageState: 'invalid' },
+  { state: 'settings-error', reason: 'inactive-extension', packageState: 'settings-error' },
+  { state: 'runtime-error', reason: 'inactive-extension', packageState: 'runtime-error' },
+  { state: 'version-incompatible', reason: 'inactive-extension', packageState: 'version-incompatible' },
+  { state: 'unknown', reason: 'unknown' },
+];
+
+function makeReferenceDiagnostic(state: ReferenceState): ExtensionDiagnostic {
+  const code = referenceStateDiagnosticCode(state);
+  if (!code) {
+    throw new Error(`Expected diagnostic code for ${state}`);
+  }
+
+  return makeCompositionDiagnostic(
+    code,
+    {
+      nodeId: `contribution:shader:ext.shader:${state}`,
+      refKey: `shader:ext.shader:${state}`,
+      refState: state,
+      extensionId: 'ext.shader',
+      contributionId: state,
+      resolverState: state,
+      packageState: BLOCKING_REFERENCE_STATE_CASES.find((entry) => entry.state === state)?.packageState,
+      ownerKind: 'shader',
+      ownerId: state,
+    },
+    referenceStateSeverity(state) as 'warning' | 'error',
+  );
+}
+
 function makeCompositionGraph(options: {
   readonly diagnostics?: readonly ExtensionDiagnostic[];
   readonly includeResolvedClipShader?: boolean;
+  readonly includeResolvedPostprocessShader?: boolean;
+  readonly resolvedClipContributionId?: string;
+  readonly resolvedClipShaderId?: string;
 } = {}): CompositionGraph {
   const nodes: CompositionGraph['nodes'][number][] = [
     {
@@ -255,30 +299,59 @@ function makeCompositionGraph(options: {
   const referenceStates: CompositionGraph['referenceStates'][number][] = [];
 
   if (options.includeResolvedClipShader) {
+    const contributionId = options.resolvedClipContributionId ?? 'clip';
+    const shaderId = options.resolvedClipShaderId ?? 'shader.clip';
     nodes.push({
-      id: 'contribution:shader:ext.shader:clip',
+      id: `contribution:shader:ext.shader:${contributionId}`,
       kind: 'contribution',
       ref: {
         kind: 'shader',
         extensionId: 'ext.shader',
-        contributionId: 'clip',
+        contributionId,
       },
     });
     edges.push({
-      id: 'consumes:clip:c1:contribution:shader:ext.shader:clip',
+      id: `consumes:clip:c1:contribution:shader:ext.shader:${contributionId}`,
       kind: 'consumes',
       sourceNodeId: 'clip:c1',
-      targetNodeId: 'contribution:shader:ext.shader:clip',
+      targetNodeId: `contribution:shader:ext.shader:${contributionId}`,
       detail: {
         scope: 'clip',
         clipId: 'c1',
-        shaderId: 'shader.clip',
+        shaderId,
       },
     });
     referenceStates.push({
-      refKey: 'shader:ext.shader:clip',
+      refKey: `shader:ext.shader:${contributionId}`,
       state: 'resolved',
-      nodeIds: ['contribution:shader:ext.shader:clip'],
+      nodeIds: [`contribution:shader:ext.shader:${contributionId}`],
+    });
+  }
+
+  if (options.includeResolvedPostprocessShader) {
+    nodes.push({
+      id: 'contribution:shader:ext.shader:post',
+      kind: 'contribution',
+      ref: {
+        kind: 'shader',
+        extensionId: 'ext.shader',
+        contributionId: 'ext.shader.post',
+      },
+    });
+    edges.push({
+      id: 'consumes:timeline-postprocess:contribution:shader:ext.shader:post',
+      kind: 'consumes',
+      sourceNodeId: 'timeline-postprocess',
+      targetNodeId: 'contribution:shader:ext.shader:post',
+      detail: {
+        scope: 'postprocess',
+        shaderId: 'shader.preview.post',
+      },
+    });
+    referenceStates.push({
+      refKey: 'shader:ext.shader:ext.shader.post',
+      state: 'resolved',
+      nodeIds: ['contribution:shader:ext.shader:post'],
     });
   }
 
@@ -1686,32 +1759,25 @@ describe('scanExportConfig — clip-type registry snapshot', () => {
     expect(result.hasBlockingErrors).toBe(false);
   });
 
-  it('emits exact missing materializer blockers for clip and postprocess shader metadata', () => {
+  it('emits exact missing materializer blockers for graph clip and postprocess shader summaries', () => {
     const clipShaderMessage = 'Shader "shader.preview.clip" cannot export because no shader materializer produced RenderMaterial for clip "c1".';
     const postprocessShaderMessage = 'Shader "shader.preview.post" cannot export because no shader materializer produced RenderMaterial for timeline postprocess.';
-    const clip = makeClip('c1', {
-      app: {
-        shader: {
-          scope: 'clip',
-          extensionId: 'ext.shader',
-          contributionId: 'ext.shader.clip',
-          shaderId: 'shader.preview.clip',
-        },
-      },
+    const graph = makeCompositionGraph({
+      includeResolvedClipShader: true,
+      includeResolvedPostprocessShader: true,
+      resolvedClipContributionId: 'ext.shader.clip',
+      resolvedClipShaderId: 'shader.preview.clip',
     });
-    const config = {
-      ...makeConfig([clip]),
-      app: {
-        shaderPostprocess: {
-          scope: 'postprocess',
-          extensionId: 'ext.shader',
-          contributionId: 'ext.shader.post',
-          shaderId: 'shader.preview.post',
-        },
-      },
-    };
 
-    const result = scanExportConfig(config, builtIn, extIds);
+    const result = scanExportConfig(
+      makeConfig([makeClip('c1')]),
+      builtIn,
+      extIds,
+      undefined,
+      undefined,
+      undefined,
+      graph,
+    );
 
     expect(result.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -1755,7 +1821,7 @@ describe('scanExportConfig — clip-type registry snapshot', () => {
     expect(planRender({ diagnostics: result.findings }).canBrowserExport).toBe(false);
   });
 
-  it('suppresses shader materializer blockers when a completed process attach already returned the matching material', () => {
+  it('blocks graph-absent legacy shader metadata through compatibility only', () => {
     const clip = makeClip('c1', {
       app: {
         shader: {
@@ -1766,15 +1832,74 @@ describe('scanExportConfig — clip-type registry snapshot', () => {
         },
       },
     });
+    const config = {
+      ...makeConfig([clip]),
+      app: {
+        shaderPostprocess: {
+          scope: 'postprocess',
+          extensionId: 'ext.shader',
+          contributionId: 'ext.shader.post',
+          shaderId: 'shader.preview.post',
+        },
+      },
+    };
+
+    const result = scanExportConfig(config, builtIn, extIds);
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'exportGuard.compositionGraph.legacy-shader-ref-compatibility.browser-export',
+        route: 'browser-export',
+        severity: 'error',
+        reason: 'unknown',
+        detail: expect.objectContaining({
+          source: 'composition-graph-compatibility',
+          compatibilityMode: 'legacy-shader-ref',
+        }),
+      }),
+      expect.objectContaining({
+        id: 'exportGuard.compositionGraph.legacy-shader-ref-compatibility.worker-export',
+        route: 'worker-export',
+        severity: 'error',
+        reason: 'unknown',
+      }),
+    ]));
+    expect(result.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'exportGuard.compositionGraph.legacy-shader-ref-compatibility.browser-export',
+        route: 'browser-export',
+        severity: 'error',
+        reason: 'unknown',
+      }),
+      expect.objectContaining({
+        id: 'exportGuard.compositionGraph.legacy-shader-ref-compatibility.worker-export',
+        route: 'worker-export',
+        severity: 'error',
+        reason: 'unknown',
+      }),
+    ]));
+    expect(result.blockers).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ reason: 'missing-material' }),
+    ]));
+    expect(planRender({ diagnostics: result.findings }).canBrowserExport).toBe(false);
+  });
+
+  it('suppresses graph shader materializer blockers when a completed process attach already returned the matching material', () => {
+    const graph = makeCompositionGraph({
+      includeResolvedClipShader: true,
+      resolvedClipContributionId: 'ext.shader.clip',
+      resolvedClipShaderId: 'shader.preview.clip',
+    });
 
     const result = scanExportConfig(
-      makeConfig([clip]),
+      makeConfig([makeClip('c1')]),
       builtIn,
       extIds,
       undefined,
       undefined,
       undefined,
-      undefined,
+      graph,
       [makeProcessAttachRecord()],
     );
 
@@ -1783,26 +1908,21 @@ describe('scanExportConfig — clip-type registry snapshot', () => {
     expect(result.hasBlockingErrors).toBe(false);
   });
 
-  it('keeps shader materializer blockers when the process attach did not return the material', () => {
-    const clip = makeClip('c1', {
-      app: {
-        shader: {
-          scope: 'clip',
-          extensionId: 'ext.shader',
-          contributionId: 'ext.shader.clip',
-          shaderId: 'shader.preview.clip',
-        },
-      },
+  it('keeps graph shader materializer blockers when the process attach did not return the material', () => {
+    const graph = makeCompositionGraph({
+      includeResolvedClipShader: true,
+      resolvedClipContributionId: 'ext.shader.clip',
+      resolvedClipShaderId: 'shader.preview.clip',
     });
 
     const result = scanExportConfig(
-      makeConfig([clip]),
+      makeConfig([makeClip('c1')]),
       builtIn,
       extIds,
       undefined,
       undefined,
       undefined,
-      undefined,
+      graph,
       [makeProcessAttachRecord({ status: 'failed', includeMaterial: false })],
     );
 
@@ -1938,6 +2058,66 @@ describe('scanExportConfig — clip-type registry snapshot', () => {
 describe('scanExportConfig — composition graph target diagnostics', () => {
   const builtIn = collectBuiltInKnownIds();
   const extIds = collectExtensionDeclaredIds([]);
+
+  it.each(BLOCKING_REFERENCE_STATE_CASES)(
+    'promotes graph-derived $state reference diagnostics to export blockers',
+    ({ state, reason }) => {
+      const diagnostic = makeReferenceDiagnostic(state);
+      const graph = makeCompositionGraph({ diagnostics: [diagnostic] });
+
+      const result = scanExportConfig(
+        makeConfig([makeClip('c1')]),
+        builtIn,
+        extIds,
+        undefined,
+        undefined,
+        undefined,
+        graph,
+      );
+
+      expect(result.diagnostics).toEqual([
+        expect.objectContaining({
+          severity: 'error',
+          code: 'export/unresolved-ref',
+          message: `Diagnostic ${diagnostic.code}`,
+          extensionId: 'ext.shader',
+          contributionId: state,
+          detail: expect.objectContaining({
+            source: 'composition-graph',
+            graphDiagnosticCode: diagnostic.code,
+            refKey: `shader:ext.shader:${state}`,
+            refState: state,
+            resolverState: state,
+          }),
+        }),
+      ]);
+      expect(result.findings).toHaveLength(2);
+      expect(result.findings.map((finding) => finding.route).sort()).toEqual(['browser-export', 'worker-export']);
+      expect(result.blockers).toHaveLength(2);
+      expect(result.blockers).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          route: 'browser-export',
+          severity: 'error',
+          reason,
+          extensionId: 'ext.shader',
+          contributionId: state,
+          detail: expect.objectContaining({
+            graphDiagnosticCode: diagnostic.code,
+            refState: state,
+            resolverState: state,
+          }),
+        }),
+        expect.objectContaining({
+          route: 'worker-export',
+          severity: 'error',
+          reason,
+          extensionId: 'ext.shader',
+          contributionId: state,
+        }),
+      ]));
+      expect(result.hasBlockingErrors).toBe(true);
+    },
+  );
 
   it.each([
     {

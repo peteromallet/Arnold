@@ -23,6 +23,8 @@ import {
 import { BUILTIN_CLIP_TYPES } from '@/sdk/video/timeline/clipTypes.ts';
 import type { ResolvedTimelineClip, ResolvedTimelineConfig, TimelineConfig } from '@/tools/video-editor/types/index.ts';
 import {
+  getTimelineClipShader,
+  getTimelinePostprocessShader,
   scanTimelineLiveBindings,
   type TimelineLiveBindingRecord,
 } from '@/tools/video-editor/lib/timeline-domain.ts';
@@ -54,6 +56,8 @@ import {
   isBlockingTargetCompositionDiagnosticCode,
   isBlockingM5CompositionDiagnosticCode,
   m5CompositionBlockerReason,
+  isBlockingReferenceCompositionDiagnosticCode,
+  referenceCompositionBlockerReason,
   isDeterministicCaptureConversionDiagnosticCode,
   isEffectDiagnosticCode,
   isTransitionDiagnosticCode,
@@ -144,7 +148,7 @@ interface ProcessAttachEvidenceIndex {
   readonly attachedShaderContributionKeys: ReadonlySet<string>;
 }
 
-const LEGACY_EXPORT_GRAPH_COMPATIBILITY_WARNING_ID = 'exportGuard.compositionGraph.legacy-shader-ref-compatibility';
+const LEGACY_EXPORT_GRAPH_COMPATIBILITY_BLOCKER_ID = 'exportGuard.compositionGraph.legacy-shader-ref-compatibility';
 const GRAPH_TARGET_BLOCKER_ROUTES: readonly RenderRoute[] = ['browser-export', 'worker-export'];
 
 function shaderContributionKey(
@@ -390,10 +394,7 @@ export function scanExportConfig(
       compositionGraph,
       processAttachEvidence,
     );
-    const compatibilityWarning = legacyGraphCompatibilityWarning(config, compositionGraph);
-    if (compatibilityWarning) {
-      findings.push(compatibilityWarning);
-    }
+    pushLegacyGraphCompatibilityFindingsAndBlockers(config, findings, blockers, compositionGraph);
 
     const allKnown = buildAllKnown(builtIn, extIds, effectRegistrySnapshot, transitionRegistrySnapshot, clipTypeRegistrySnapshot);
 
@@ -437,10 +438,10 @@ function scanLiveBindingExportBlockers(
   }
 }
 
-function legacyTimelineShaderMetadata(config: ResolvedTimelineConfig | null | undefined): boolean {
+function hasLegacyTimelineShaderStorage(config: ResolvedTimelineConfig | null | undefined): boolean {
   if (!config) return false;
-  if (isTimelineShaderMetadata(config.app?.shaderPostprocess, 'postprocess')) return true;
-  return config.clips.some((clip) => isTimelineShaderMetadata(clip.app?.shader, 'clip'));
+  if (getTimelinePostprocessShader(config)) return true;
+  return config.clips.some((clip) => Boolean(getTimelineClipShader(clip)));
 }
 
 function graphShaderSummaries(
@@ -464,12 +465,16 @@ function hasTimelineShaderMetadata(
     return Boolean(graphShaderSummaries(compositionGraph)?.some((shader) => shader.enabled !== false));
   }
 
-  return legacyTimelineShaderMetadata(config);
+  return hasLegacyTimelineShaderStorage(config);
 }
 
 export { hasTimelineShaderMetadata };
 
 function targetCompositionExportCode(code: string): ExportDiagnostic['code'] | undefined {
+  if (isBlockingReferenceCompositionDiagnosticCode(code)) {
+    return 'export/unresolved-ref';
+  }
+
   switch (code) {
     case COMPOSITION_DIAGNOSTIC_CODE.INVALID_TARGET_PATH:
       return 'export/invalid-target-path';
@@ -501,6 +506,12 @@ function targetCompositionExportCode(code: string): ExportDiagnostic['code'] | u
 }
 
 function targetCompositionBlockerReason(code: string): RenderBlockerReason {
+  if (isBlockingReferenceCompositionDiagnosticCode(code)) {
+    return referenceCompositionBlockerReason(
+      code as Parameters<typeof referenceCompositionBlockerReason>[0],
+    ) as RenderBlockerReason;
+  }
+
   switch (code) {
     case COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_TARGET_REF:
       return 'missing-contribution';
@@ -716,58 +727,20 @@ function scanCompositionGraphM5ExportBlockers(
   });
 }
 
-function isTimelineShaderMetadata(
-  value: unknown,
-  scope: ShaderMaterializerRequirementScope,
-): value is {
-  readonly scope: ShaderMaterializerRequirementScope;
-  readonly shaderId: string;
-  readonly extensionId: string;
-  readonly contributionId: string;
-  readonly enabled?: boolean;
-} {
-  return Boolean(
-    value
-    && typeof value === 'object'
-    && !Array.isArray(value)
-    && (value as Record<string, unknown>).scope === scope
-    && typeof (value as Record<string, unknown>).shaderId === 'string'
-    && typeof (value as Record<string, unknown>).extensionId === 'string'
-    && typeof (value as Record<string, unknown>).contributionId === 'string',
-  );
-}
-
 function scanTimelineShaderExportBlockers(
-  config: ResolvedTimelineConfig,
+  _config: ResolvedTimelineConfig,
   diagnostics: ExportDiagnostic[],
   findings: CapabilityFinding[],
   blockers: RenderBlocker[],
   compositionGraph?: CompositionGraph,
   processAttachEvidence?: ProcessAttachEvidenceIndex,
 ): void {
-  if (compositionGraph) {
-    for (const shader of graphShaderSummaries(compositionGraph) ?? []) {
-      if (shader.enabled === false) continue;
-      if (processAttachEvidence?.attachedShaderContributionKeys.has(
-        shaderContributionKey(shader.extensionId, shader.contributionId) ?? '',
-      )) {
-        continue;
-      }
-      pushShaderMaterializerFindingAndBlocker(diagnostics, findings, blockers, {
-        shaderId: shader.shaderId,
-        extensionId: shader.extensionId,
-        contributionId: shader.contributionId,
-        scope: shader.scope,
-        clipId: shader.scope === 'clip' ? shader.clipId : undefined,
-        source: 'composition-graph',
-      });
-    }
+  if (!compositionGraph) {
     return;
   }
 
-  for (const clip of config.clips) {
-    const shader = isTimelineShaderMetadata(clip.app?.shader, 'clip') ? clip.app.shader : undefined;
-    if (!shader || shader.enabled === false) continue;
+  for (const shader of graphShaderSummaries(compositionGraph) ?? []) {
+    if (shader.enabled === false) continue;
     if (processAttachEvidence?.attachedShaderContributionKeys.has(
       shaderContributionKey(shader.extensionId, shader.contributionId) ?? '',
     )) {
@@ -777,49 +750,45 @@ function scanTimelineShaderExportBlockers(
       shaderId: shader.shaderId,
       extensionId: shader.extensionId,
       contributionId: shader.contributionId,
-      scope: 'clip',
-      clipId: clip.id,
-      source: 'timeline-shader-metadata',
-    });
-  }
-
-  const postprocessShader = isTimelineShaderMetadata(config.app?.shaderPostprocess, 'postprocess')
-    ? config.app.shaderPostprocess
-    : undefined;
-  if (postprocessShader && postprocessShader.enabled !== false) {
-    if (processAttachEvidence?.attachedShaderContributionKeys.has(
-      shaderContributionKey(postprocessShader.extensionId, postprocessShader.contributionId) ?? '',
-    )) {
-      return;
-    }
-    pushShaderMaterializerFindingAndBlocker(diagnostics, findings, blockers, {
-      shaderId: postprocessShader.shaderId,
-      extensionId: postprocessShader.extensionId,
-      contributionId: postprocessShader.contributionId,
-      scope: 'postprocess',
-      source: 'timeline-shader-metadata',
+      scope: shader.scope,
+      clipId: shader.scope === 'clip' ? shader.clipId : undefined,
+      source: 'composition-graph',
     });
   }
 }
 
-function legacyGraphCompatibilityWarning(
+function pushLegacyGraphCompatibilityFindingsAndBlockers(
   config: ResolvedTimelineConfig,
+  findings: CapabilityFinding[],
+  blockers: RenderBlocker[],
   compositionGraph: CompositionGraph | undefined,
-): CapabilityFinding | undefined {
-  if (compositionGraph || !legacyTimelineShaderMetadata(config)) {
-    return undefined;
+): void {
+  if (compositionGraph || !hasLegacyTimelineShaderStorage(config)) {
+    return;
   }
 
-  return {
-    id: LEGACY_EXPORT_GRAPH_COMPATIBILITY_WARNING_ID,
-    severity: 'warning',
-    message:
-      'CompositionGraph was not provided; export shader/ref decisions are using legacy compatibility inputs and are not authoritative for M1b.',
-    detail: {
-      source: 'composition-graph-compatibility',
-      compatibilityMode: 'legacy-shader-ref',
-    },
-  };
+  for (const route of GRAPH_TARGET_BLOCKER_ROUTES) {
+    const finding: CapabilityFinding = {
+      id: `${LEGACY_EXPORT_GRAPH_COMPATIBILITY_BLOCKER_ID}.${route}`,
+      severity: 'error',
+      route,
+      reason: 'unknown',
+      message:
+        'CompositionGraph was not provided; export shader/ref decisions require graph authority before export.',
+      detail: {
+        source: 'composition-graph-compatibility',
+        compatibilityMode: 'legacy-shader-ref',
+        renderRoute: route,
+      },
+    };
+    findings.push(finding);
+    blockers.push({
+      ...finding,
+      severity: 'error',
+      route,
+      reason: 'unknown',
+    });
+  }
 }
 
 function pushShaderMaterializerFindingAndBlocker(
@@ -832,7 +801,7 @@ function pushShaderMaterializerFindingAndBlocker(
     readonly contributionId: string;
     readonly scope: ShaderMaterializerRequirementScope;
     readonly clipId?: string;
-    readonly source: 'composition-graph' | 'timeline-shader-metadata';
+    readonly source: 'composition-graph';
   },
 ): void {
   const routes: readonly RenderRoute[] = ['browser-export', 'worker-export'];

@@ -1,0 +1,416 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Extension Reality Convergence
+Source: `.megaplan/initiatives/extension-reality-convergence-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `5ed92f91a987b5fafb1e8011624176237e2b9fe3164b07cde7fa7d1f59b4baf9`
+
+```md
+# North Star: Extension Reality Convergence
+
+## End State
+
+The Reigh video-editor extension system is truthful and converged across trust, composition authority, and export readiness. Extensions are presented as trusted local code unless a later untrusted-runtime epic adds real isolation. Composition facts used by planner/export/preview flow through a canonical authority spine instead of scattered legacy timeline reads. Export readiness is decided by planner-owned blockers, with guard scans and provider route checks demoted to structured planner inputs.
+
+## Success In One Sentence
+
+From a clean checkout on top of the completed extension-foundation work, Reigh can prove that extension trust claims are honest, the first composition fact family has moved to graph authority, and every user-facing export block originates from canonical planner readiness.
+
+## Immutable Constraints
+
+- Do not implement fake or partial permission enforcement and call it sandboxing.
+- Do not claim marketplace, third-party, or untrusted extension safety.
+- Keep extension code trusted and unsandboxed unless a separate future epic introduces isolation and brokered APIs.
+- Do not delete legacy timeline storage fields before compatibility projection and regression tests exist.
+- Do not let migrated fact families remain authoritative through direct legacy timeline reads.
+- Do not add a second export readiness authority beside the planner.
+- Do not weaken quality gates, docs checks, or release checks to make the epic pass.
+- Preserve existing editor behavior for timelines and packages that do not use migrated composition features.
+- Keep generated-module, provider, and export-guard scans where useful, but make them feed planner readiness instead of bypassing it.
+
+## Required Proof
+
+- SDK, JSON schema, examples, docs, and manager UI agree on the trusted-code/access-disclosure model.
+- A regression gate fails if docs or UI imply sandboxing, runtime permission enforcement, marketplace safety, or third-party safety.
+- The first composition authority ratchet proves shader/ref readiness comes from graph-projected facts, not direct legacy shader fields.
+- A fixture proves legacy-only shader/ref fields do not count as authoritative after projection is disabled.
+- User-facing export/render blocked states are derived from planner blockers.
+- Generated-module artifact state, provider availability, output-format availability, contribution conflicts, shader/material blockers, and live-binding blockers are represented in planner readiness.
+- Quality checks pass from a clean checkout with the convergence gates enabled.
+
+## Explicitly Deferred
+
+- True permission enforcement through iframe, Worker, process, SES-like isolation, or a brokered host API.
+- Marketplace install, remote extension discovery, update/delete flows, code signing, and dependency resolution.
+- Full composition-spine completion beyond the fact families named by this epic.
+- Full process/sidecar runtime hardening unless required as an input to export-readiness diagnostics.
+```
+
+### Current Stage
+Stage: `finalize`
+Plan directory: `/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m2-composition-shader-ref-20260707-2109`
+Current milestone: `m2-composition-shader-ref-authority`
+
+### Phase Instruction
+Convert the approved plan into executable tasks while preserving North Star constraints and visible alignment checks.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are DECOMPOSING the approved plan below into an ordered task DAG. The plan has been
+        critiqued, gated, and possibly revised. Do NOT re-evaluate strategy or re-litigate
+        decisions - gate has settled those.
+
+        Project directory:
+        /workspace/extension-reality-convergence-epic/reigh-app
+
+        Brief summary: # M2: Composition Shader/Ref Authority Ratchet
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: M2 Composition Shader/Ref Authority Ratchet
+
+## Overview
+Move shader/ref readiness authority from legacy timeline fields to `CompositionGraph` facts for planner and export paths. The verified repo shape matches the brief's main direction, with one important adjustment: generic reference diagnostics need export-guard blocker mapping too, because `scanCompositionGraphTargetExportBlockers()` currently filters through `isBlockingTargetCompositionDiagnosticCode()`.
+
+This scope is a bridge, not a contradiction, to the North Star. Legacy `clip.app.shader` and `config.app.shaderPostprocess` stay as storage/UI/projector inputs, but planner/export readiness must no longer treat raw legacy fields as authoritative when the graph is absent.
+
+## Main Phase
+
+### Step 1: Promote Graph-Absent Compatibility to Hard Blocks (`src/tools/video-editor/runtime/renderPlanner.ts`, `src/tools/video-editor/runtime/exportGuard.ts`)
+**Complexity: 3**
+1. Change planner `legacyGraphCompatibilityWarning()` from warning to error and ensure it yields route-scoped `RenderBlocker`s.
+2. Change export guard `legacyGraphCompatibilityWarning()` from warning to error and push matching `RenderBlocker`s into `blockers`.
+3. Convert `scanTimelineShaderExportBlockers()` from graph-or-legacy fallback into graph-or-return; legacy metadata with no graph should be represented by the compatibility block, not legacy materializer blockers.
+4. Keep legacy field extraction in `timeline-reader` intact as projector input.
+
+### Step 2: Complete Generic Reference Diagnostic Blocking (`src/tools/video-editor/runtime/composition/diagnostics.ts`, `src/tools/video-editor/runtime/renderPlanner.ts`, `src/tools/video-editor/runtime/exportGuard.ts`)
+**Complexity: 3**
+1. Add generic reference error codes to the blocking target diagnostic set where needed: disabled, duplicate, invalid-package, settings-error, runtime-error, version-incompatible, and unknown.
+2. Extend planner `compositionDiagnosticReason()` so generic reference codes do not fall through unintentionally.
+3. Extend export guard diagnostic-code and blocker-reason mappings for those same generic reference codes.
+4. Use existing `RenderBlockerReason` vocabulary: duplicate/missing/unknown reference failures map to `missing-contribution` or `unknown`; package disabled/invalid/settings/runtime/version failures map to `inactive-extension` unless local tests show a more specific existing reason is already expected.
+
+### Step 3: Mark Legacy Reads as Projector Inputs and Add Architecture Guard (`src/tools/video-editor/lib/timeline-reader.ts`, `src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts`)
+**Complexity: 4**
+1. Add a short source comment near the `snapshot.shaders` extraction for clip shader and postprocess shader metadata stating these legacy reads are projector inputs only.
+2. Add a targeted architecture test scanning migrated planner/export readiness files for forbidden direct reads of `clip.app?.shader`, `config.app?.shaderPostprocess`, `TimelineShaderMetadata`, and `legacyTimelineShaderMetadata`.
+3. Allowlist projector input code and UI/domain display helpers explicitly out of M2 scope.
+4. Keep the guard narrow so UI mutation/display paths are not blocked.
+
+### Step 4: Prove Planner and Export Ratchets (`src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts`, `src/tools/video-editor/runtime/exportGuard.test.ts`)
+**Complexity: 4**
+1. Update the existing planner compatibility test to expect `severity: 'error'` and route blockers.
+2. Add export guard coverage for graph-absent legacy shader metadata producing an error finding and blockers.
+3. Add a legacy-only fixture with raw clip shader and postprocess shader fields but no graph, proving those fields do not satisfy readiness.
+4. Verify graph-present clip and postprocess shader facts still produce the existing materializer blockers through graph-derived summaries.
+
+### Step 5: Prove Projection and Reference-State Coverage (`src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts`, `src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts`, `src/tools/video-editor/runtime/exportGuard.test.ts`)
+**Complexity: 4**
+1. Keep or extend projector coverage proving legacy clip/postprocess shader summaries become graph consumes edges.
+2. Add end-to-end planner/export tests for graph-derived disabled, duplicate, invalid-package, settings-error, runtime-error, version-incompatible, and unknown reference diagnostics.
+3. Reuse existing resolver/projector helpers where possible instead of creating a parallel fixture framework.
+
+### Step 6: Validate in Increasing Blast Radius
+**Complexity: 2**
+1. Run the new architecture test first.
+2. Run focused planner/export/composition tests.
+3. Run the broader video-editor runtime test subset if shared diagnostic or blocker mapping changes ripple.
+4. Run the full relevant package suite before handoff if SDK-exported types or shared constants are changed.
+
+## Execution Order
+1. Change planner/export hard-block behavior first.
+2. Add generic diagnostic blocking/mapping next.
+3. Add the architecture guard after final allowlists are obvious.
+4. Update and add tests for negative and positive authority cases.
+5. Run focused validation, then broaden based on touched shared code.
+
+## Validation Order
+1. `src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts`
+2. `src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts`
+3. `src/tools/video-editor/runtime/exportGuard.test.ts`
+4. `src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts`
+5. Broader video-editor runtime/composition suite if diagnostic constants or blocker mappings affect shared behavior.
+
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-07T21:22:49Z",
+  "hash": "sha256:4592448c36e1d277c0a38a004bc11fe3446496333b55a07e4af34617f03485cf",
+  "questions": [
+    "Should the new architecture guard file be named `shaderRefAuthority.test.ts`, or should it be folded into an existing local contract test if maintainers prefer fewer test files?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Planner emits error findings and route-scoped RenderBlockers when migrated shader/ref facts exist but CompositionGraph is absent.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Export guard emits error findings and RenderBlockers when legacy shader metadata exists but CompositionGraph is absent.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Export guard no longer emits legacy timeline shader materializer blockers as an authority fallback when CompositionGraph is absent.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Generic graph reference errors for disabled, duplicate, invalid-package, settings-error, runtime-error, version-incompatible, and unknown states produce planner and export blockers from graph diagnostics.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Legacy clip shader and postprocess fields still project into CompositionGraph consumes edges and existing graph-present shader workflows keep working.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "A legacy-only no-graph fixture proves raw shader fields do not satisfy planner/export readiness authority.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "A targeted architecture guard prevents new migrated planner/export shader-ref readiness code from directly reading raw legacy shader fields outside the allowlist.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Legacy storage fields and UI-only shader display/mutation paths are not removed or migrated in this milestone.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The implementation remains a narrow authority ratchet without adding sandboxing, marketplace safety claims, live-binding authority, or full material status matrix scope.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Projection disabled/no authority is represented by planner/export receiving no `CompositionGraph`; `timeline-reader` may still populate `snapshot.shaders` as projector input.",
+    "`resolveEffectTransitionContributionEntry()` remains acceptable projector-internal input resolution because downstream planner/export consumers use graph diagnostics, not the contribution index directly.",
+    "No SDK type change is needed unless adding a new blocker reason becomes unavoidable; the plan prefers existing `RenderBlockerReason` values.",
+    "UI reads through timeline-domain/editor components are explicitly out of scope and should be allowlisted or ignored by the architecture guard."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+        "reason": "Planner graph authority, hard-block, and diagnostic reason coverage."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/exportGuard.test.ts",
+        "reason": "Export guard hard-block and graph diagnostic blocker coverage."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "reason": "Projection proof for legacy shader fields into graph consumes edges."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/diagnostics.ts",
+        "reason": "Shared diagnostic blocking set and reference-state code behavior."
+      }
+    ],
+    "changed_surfaces": [
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/exportGuard.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/lib/timeline-reader.ts",
+      "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+      "src/tools/video-editor/runtime/exportGuard.test.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts"
+    ],
+    "always_run": [
+      "focused video-editor runtime planner/export/composition tests",
+      "new shader/ref authority architecture test"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: src/tools/video-editor/lib/timeline-reader.ts, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts, src/tools/video-editor/runtime/exportGuard.test.ts, src/tools/video-editor/runtime/exportGuard.ts, src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts, src/tools/video-editor/runtime/renderPlanner.ts. Candidate: The blast radius is concentrated in render planning, export guard, and composition diagnostics. Because diagnostic constants are shared, keep a full-suite fallback if focused tests reveal wider coupling. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts"
+    ]
+  },
+  "structure_warnings": [
+    "Each step section should reference at least one file in backticks."
+  ]
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "PROCEED",
+  "passed": true,
+  "rationale_brief": "The plan is a clean, well-scoped authority ratchet that directly serves the North Star goal of converging composition facts onto a canonical authority spine. It targets exactly the shader/ref fact family, introduces hard-block behavior when the graph is absent, completes generic reference diagnostic blocking, and adds architecture guards to prevent regression. There are zero unresolved significant flags, no recurring critiques, and no anchor conflicts.",
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "Legacy clip.app.shader and config.app.shaderPostprocess fields remain as storage/UI/projector inputs; planner/export readiness authority for shader/ref facts is moved exclusively to CompositionGraph-projected facts.",
+      "rationale": "Preserves backward compatibility for existing timelines through projection while establishing the ratchet pattern. Aligns with North Star constraint: do not delete legacy storage fields before compatibility projection and regression tests exist."
+    },
+    {
+      "id": "SD2",
+      "decision": "Export guard no longer uses legacy timeline shader materializer blockers as an authority fallback when CompositionGraph is absent; instead the graph-absent compatibility block represents that state.",
+      "rationale": "Enforces single authority source. Legacy metadata with no graph must be represented by the compatibility block, not legacy materializer blockers. Aligns with North Star constraint: do not let migrated fact families remain authoritative through direct legacy timeline reads."
+    },
+    {
+      "id": "SD3",
+      "decision": "Both planner and export guard convert graph-absent compatibility from warning to error (hard block), yielding route-scoped RenderBlockers.",
+      "rationale": "The authority ratchet is proven by making the graph-absent state a hard failure. Warnings would allow legacy authority to remain effective. Aligns with North Star proof requirement: a fixture proves legacy-only shader/ref fields do not count as authoritative after projection is disabled."
+    },
+    {
+      "id": "SD4",
+      "decision": "Generic reference diagnostic codes (disabled, duplicate, invalid-package, settings-error, runtime-error, version-incompatible, unknown) are added to the blocking target diagnostic set, mapped to existing RenderBlockerReason vocabulary where possible.",
+      "rationale": "Closes a gap where export-guard blocker scanning filters through isBlockingTargetCompositionDiagnosticCode() but generic reference states fall through. Ensures complete diagnostic-to-blocker coverage without inventing new vocabulary unless unavoidable."
+    }
+  ],
+  "warnings": [
+    "Criterion 8 ('implementation remains a narrow authority ratchet') is flagged 'should' priority but marked as requiring subjective_judgment \u2014 the executor should self-audit scope discipline during implementation, particularly around diagnostic vocabulary changes that could unintentionally touch live-binding or material status matrix concerns.",
+    "The architecture guard test file (shaderRefAuthority.test.ts) did not yet exist at plan time \u2014 the executor must create it and ensure its allowlist is explicitly scoped to projector inputs and UI/domain display helpers only, as described in Step 3.4.",
+    "Full-suite fallback is triggered if shared diagnostic constants change \u2014 the executor should run the full video-editor suite before declaring M2 complete even if focused tests pass."
+  ],
+  "orchestrator_guidance": "First iteration; follow gate recommendation: PROCEED.",
+  "carried_flags": [],
+  "iteration": 1,
+  "produced_at": "2026-07-07T21:30:04Z"
+}
+
+        Your output template is at: /workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m2-composition-shader-ref-20260707-2109/finalize_output.json
+        Read this file first — it contains the expected JSON structure (tasks, user_actions, sense_checks, watch_items, meta_commentary).
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Requirements:
+        - Produce structured JSON only.
+        - For each `## Step N:` in the plan, emit 1-N tasks.
+        - For each task, emit one sense_check.
+        - Default `user_actions` to `[]`. Identify a user_action ONLY when the work is genuinely non-mechanical and the executor literally cannot do it (secrets the human alone holds, identity-bound infra access, legal/license signatories, manual UI smoke tests on production). If a check is mechanical, make it a task — not a user_action. See the detailed guidance below.
+        - Do not invent tasks that don't trace to a plan step.
+        - How batching works at runtime — shape `depends_on` with this in mind, not just literal sequencing. Tasks that share the same `depends_on` set form one batch (capped at 5). Each batch dispatches as a SINGLE LLM conversation to a SINGLE model, picked by the max(complexity) in that batch. So a c=4 audit plus three c=2 tweaks sharing a batch all run in one turn on the c=4 model. Two consequences you control via DAG shape:
+          - Routing: every task in a batch runs on the highest-tier task's model — bundle a c=2 task beside a c=4 sibling and it runs on the pricier model.
+          - Cognitive load: one conversation holds all of the batch's tasks in working context. The more disparate the tasks, the higher the risk the model loses the thread or claims completion without doing the work. Wide, mixed batches are the dominant quality failure mode.
+        - Three principles for shaping batches — judgment, not arithmetic (there is no mechanical split rule):
+          1. Isolate heavyweights. A c=4 or c=5 task usually deserves its own batch. Chain lighter tasks through it via `depends_on` rather than placing them as siblings.
+          2. Bundle context-related light work. Several c=2/c=3 tasks touching the same files or contracts batch well together.
+          3. Never emit more than 5 actionable parallel siblings. If a step legitimately fans out wider, linearize via `depends_on` so the runtime batcher sees at most 5 at a time.
+        - Do not include `validation` or `coverage_complete` fields - the harness computes those.
+        - The FINAL task MUST run tests; harness validation will reject finalize output without it.
+        - `tasks` must be an ordered array of task objects. Every task object must include:
+          - `id`: short stable task ID like `T1`
+          - `description`: concrete work item
+          - `depends_on`: array of earlier task IDs or `[]`
+          - `status`: always `"pending"` at finalize time
+          - `executor_notes`: always `""` at finalize time
+          - `reviewer_verdict`: always `""` at finalize time
+          - `kind`: indicating the type of work. One of:
+            - `code`: writes or modifies source files (executor must produce `files_changed`).
+            - `test`: writes or modifies test files, or runs the test suite (executor must produce `files_changed` in tests/ OR `commands_run` containing pytest/test invocations).
+            - `audit`: read-only investigation — grep, code review, schema inspection (executor evidence is `executor_notes` describing findings; no `files_changed` expected).
+            - `research`: external research or non-code investigation (executor evidence is `executor_notes`).
+            - `docs`: writes documentation files (executor must produce `files_changed`).
+            If unsure, default to `code`.
+          - `complexity`: integer 1–5 complexity score. This score routes the task to a
+            model at execution time, so adjudicate it deliberately — do not guess. Use the rubric:
+            - 1 = trivial, mechanical, single-file change with no logic to reason about
+                  (rename, constant bump, comment, import). A weak model cannot get it wrong.
+            - 2 = simple, localized change plus the obvious test update; one file or two,
+                  logic is linear and the failure mode is obvious.
+            - 3 = multi-file change with non-trivial logic, control flow, or data shape the
+                  executor must hold in its head; correctness is not self-evident from the diff.
+            - 4 = a wrong implementation would be NON-LOCAL and not caught by an obvious test:
+                  the error propagates through a shared contract or invariant that code you did
+                  NOT edit relies on. Touching several files is NOT sufficient on its own — a
+                  mechanical multi-file change whose failure is local and test-evident is tier 2-3.
+            - 5 = fundamental system-invariant change with high regression risk: concurrency that
+                  cascades, a schema/wire-format others build on, a state machine, or a security/
+                  auth boundary. ONLY when a subtle error would pass the full suite and corrupt
+                  state or break a system-wide contract — not merely "important" or central code.
+            Score on the hardest REALISTIC aspect of the task, not a worst-case imagining. When
+            genuinely torn between two tiers, choose the LOWER one UNLESS you can name the specific
+            cascading, test-evading failure that earns the higher tier in the justification.
+            You are not the model that executes this task, and the score neither saves nor
+            costs you anything — so do not lowball to seem efficient and do not highball to
+            play safe. Both distort routing: a too-low score sends a hard task to a model
+            that fails it; a too-high score burns a premium model on trivial work. Score
+            what the task honestly requires, no higher and no lower.
+            FLOOR: a task is NEVER below tier 4 only when it GENUINELY changes the semantics of
+            concurrency, a schema/state-machine, a security/auth boundary, or a contract other
+            code actually depends on — because a subtle error there passes tests but is wrong.
+            This floor does NOT apply to mechanical edits that merely sit near such code, or that
+            add a new interface nothing relies on yet; score those on the rubric (usually 2-3).
+          - `complexity_justification`: REQUIRED. One or two sentences that argue, specifically,
+            why this task sits at exactly that tier — cite the concrete files, interfaces, or
+            risk that places it there (e.g. "touches the auth middleware contract used by 4
+            call sites, so a mistake is non-local → tier 4"). A bare restatement of the rubric
+            ("this is complex") is not acceptable; the justification must be defensible against
+            a reviewer who disagrees.
+        - `watch_items` must be an array of strings covering runtime risks, critique concerns, and assumptions to keep visible during execution.
+        - `sense_checks` must be an array with one verification question per task. Every sense-check object must include:
+          - `id`: short stable ID like `SC1`
+          - `task_id`: the related task ID
+          - `question`: reviewer verification question
+          - `verdict`: always `""` at finalize time
+        - `user_actions` should default to `[]`. Emitting a user_action stalls execution on a human gate — it is a load-bearing escape hatch, not a convenience. Prefer to design every step to be fully mechanical: the executor can read files, run commands, query APIs, fetch URLs, parse JSON, edit code, and run tests. If a check is mechanical, write it as a task — not a user_action.
+- Emit a user_action ONLY when the work is *genuinely non-mechanical* and the executor has no path to do it itself: secrets the human alone holds (a real API key the executor cannot mint), infrastructure access bound to the human's identity (cloud console, VPN), legal/license/security-policy judgments that require a human signatory, or out-of-band manual UI smoke tests on production. If you cannot name a specific reason the executor cannot do it, the task is mechanical — make it a task.
+- Anything that touches code, configuration, fixtures, or local files MUST be a task. Reading docs, grepping, editing, running tests, writing SQL, and producing JSON resolution files are tasks. Negative example: writing the migration SQL is a task, not a user_action; verifying a license URL is reachable is a task, not a user_action.
+- When you do emit a user_action, set `requires_human_only_reason` to a specific sentence naming why the executor literally cannot perform it (not just "it's important").
+- If `user_actions` is non-empty, expect that execution will block until the human resolves each one — only emit them when that block is unavoidable.
+- Positive examples (rare, last-resort): `U1: Set ANTHROPIC_API_KEY in .env (before_execute, requires_human_only_reason: "secret the executor cannot mint")`; `U2: Confirm legal sign-off to commit the third-party JSON corpus (before_execute, requires_human_only_reason: "license judgment with legal liability")`.
+        - `meta_commentary` must be a single string with execution guidance, gotchas, or judgment calls that help the executor succeed.
+        - Preserve information that strong existing artifacts already capture well: execution ordering, watch-outs, reviewer checkpoints, and practical context.
+        - The structured output should be self-contained: an executor reading only `finalize.json` should have everything needed to work.
+        - Keep the task count proportional to the work. A simple 1-2 file fix should be 2 tasks: (1) apply the fix, (2) run tests. Do NOT create separate "inspect" or "read" tasks for simple changes — the executor can read and fix in one step. Only create more tasks when the work has genuinely independent stages.
+        - One task is the unit of ONE worker turn: the executor must IMPLEMENT it, VERIFY it, and emit its result envelope inside a single ~15-minute conversation. A task that cannot realistically finish in one turn is mis-sized and WILL fail — the worker reports `blocked: "turn ended before implementation"` or runs out the clock mid-edit. Size every task to fit one turn; raising `complexity` does NOT buy more turns, it only routes to a stronger model for the SAME single turn. When a step is a large mechanical refactor, SPLIT it across tasks instead of bundling: "add the new abstraction + its unit tests" (T1) → "migrate consumer A" (T2, depends_on T1) → "migrate consumer B + parity tests" (T3, depends_on T2). A single task that says "extract this 2000-line file into modules and write tests" or "consolidate the roots AND migrate three registries AND add parity tests" is a god-task — decompose it into one task per consumer/module, each independently completable and verifiable.
+        - - The harness owns test verification — do NOT author a run-until-pass task. If you include a test-related task, scope it to: introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute suite.
+- For code-mode plans, preserve a scoped test contract. Prefer the plan's machine-readable `test_blast_radius`; when it is missing, ensure at least one finalized task carries a concrete scoped pytest command in `commands_run` (for example `pytest tests/test_relevant.py -q`) or mappable `files_changed` paths. Do not rely on an unscoped `pytest` command unless the plan explicitly opts into `test_selection=full`.

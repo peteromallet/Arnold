@@ -1,0 +1,119 @@
+Execute the approved plan in the repository.
+
+        Project directory:
+        /workspace/extension-reality-convergence-epic/reigh-app
+
+        Brief summary: # M2: Composition Shader/Ref Authority Ratchet
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Batch framing:
+        - Execute batch 1 of 6.
+        - Actionable task IDs for this batch: ['T1']
+        - Already completed task IDs available as dependency context: []
+
+        Actionable tasks for this batch:
+        [
+  {
+    "id": "T1",
+    "depends_on": [],
+    "status": "pending",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Implement the graph-absent hard block ratchet in planner/export paths: make legacy graph compatibility findings errors, emit route-scoped RenderBlockers, and change scanTimelineShaderExportBlockers() to return without legacy materializer fallback when CompositionGraph is absent. Keep timeline-reader legacy extraction intact.",
+    "complexity_justification": "This changes readiness behavior across renderPlanner.ts and exportGuard.ts, including blocker emission and fallback control flow. The logic is multi-file and authority-sensitive, but focused tests should catch wrong severity/blocker behavior, so it is tier 3 rather than a broader contract tier.",
+    "executor_notes": "",
+    "files_changed": [
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/exportGuard.ts"
+    ],
+    "commands_run": []
+  }
+]
+
+        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
+        []
+
+        Prior batch deviations (address if applicable):
+        None
+
+        User action prerequisites:
+        No user_action prerequisites for this batch.
+
+
+        Batch-scoped sense checks:
+        [
+  {
+    "id": "SC1",
+    "task_id": "T1",
+    "verdict": "",
+    "question": "When legacy shader/ref metadata exists but CompositionGraph is absent, do planner and export guard now emit error-level compatibility findings with route-scoped RenderBlockers, and does export guard avoid legacy materializer fallback blockers?"
+  }
+]
+
+
+        ## Execution context (settled - DO NOT re-litigate)
+
+        - SD1: Legacy clip.app.shader and config.app.shaderPostprocess fields remain as storage/UI/projector inputs; planner/export readiness authority for shader/ref facts is moved exclusivel... - Preserves backward compatibility for existing timelines through projection while establishing the ratchet pattern. Aligns with North Star constraint: do not delete legacy storage fields before compatibility projection...
+- SD2: Export guard no longer uses legacy timeline shader materializer blockers as an authority fallback when CompositionGraph is absent; instead the graph-absent compatibility block r... - Enforces single authority source. Legacy metadata with no graph must be represented by the compatibility block, not legacy materializer blockers. Aligns with North Star constraint: do not let migrated fact families re...
+- SD3: Both planner and export guard convert graph-absent compatibility from warning to error (hard block), yielding route-scoped RenderBlockers. - The authority ratchet is proven by making the graph-absent state a hard failure. Warnings would allow legacy authority to remain effective. Aligns with North Star proof requirement: a fixture proves legacy-only shader...
+
+        ## Plan execution order rationale
+
+        1. Change planner/export hard-block behavior first.
+2. Add generic diagnostic blocking/mapping next.
+3. Add the architecture guard after final allowlists are obvious.
+4. Update and add tests for negative and positive authority cases.
+5. Run focused validation, then broaden based on touched shared code.
+
+        ## Inter-task guidance from finalize
+
+        Execute the tasks serially to avoid conflicting edits in renderPlanner.ts and exportGuard.ts. The key judgment call is preserving a narrow authority ratchet: make graph absence a hard planner/export blocker and complete graph diagnostic blocker mapping, but leave legacy storage/UI/projector behavior in place. The final validation task intentionally lists focused pnpm test commands; adjust only to the repository's actual test runner syntax if package scripts differ, preserving the same file scope and order.
+
+        Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations.
+        Robustness level: thorough.
+
+        Requirements:
+        - Execute only the actionable tasks in this batch.
+        - Treat completed tasks as dependency context, not new work.
+        - Return structured JSON only.
+        - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
+        - Template file already written for reference: /workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m2-composition-shader-ref-20260707-2109/execute_batch_1_output.json
+        - Only produce `task_updates` for these tasks: [T1]
+        - `task_updates[].status` must be one of `done`, `skipped`, `completed`, or `blocked`; never `pending` or `in_progress`.
+        - Only produce `sense_check_acknowledgments` for these sense checks: [SC1]
+        - Do not include updates for tasks or sense checks outside this batch.
+        - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+        - Keep `executor_notes` verification-focused.
+        - Best-effort progress checkpointing: if `/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m2-composition-shader-ref-20260707-2109/execution_batch_1.json` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - All terminal verification commands must run from the Project directory (`/workspace/extension-reality-convergence-epic/reigh-app`) or a descendant. Do not `cd` to `/workspace/arnold`, an editable-engine mirror, or any shared engine checkout for tests; those paths are outside the session worktree and the sandbox will refuse them.
+        - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
+        - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
+        - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
+        - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
+
+        Batch JSON response template:
+        ```json
+        {
+  "output": "",
+  "files_changed": [],
+  "commands_run": [],
+  "deviations": [],
+  "task_updates": [
+    {
+      "task_id": "T1",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC1",
+      "executor_note": ""
+    }
+  ]
+}
+        ```

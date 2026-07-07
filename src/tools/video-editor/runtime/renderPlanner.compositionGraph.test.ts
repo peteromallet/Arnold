@@ -2,10 +2,15 @@ import { describe, expect, it } from 'vitest';
 import type {
   CompositionGraph,
   ExtensionDiagnostic,
+  ReferenceState,
   TimelineShaderSummary,
   TimelineSnapshot,
 } from '@reigh/editor-sdk';
 import { decideRenderRoute } from '@/tools/video-editor/lib/renderRouter.ts';
+import {
+  referenceStateDiagnosticCode,
+  referenceStateSeverity,
+} from '@/tools/video-editor/runtime/composition/diagnostics.ts';
 import { planRender } from '@/tools/video-editor/runtime/renderPlanner.ts';
 import type { VideoEditorShaderDescriptor } from '@/tools/video-editor/runtime/extensionSurface.ts';
 
@@ -61,8 +66,42 @@ function makeDiagnostic(
   };
 }
 
+const BLOCKING_REFERENCE_STATE_CASES: ReadonlyArray<{
+  readonly state: ReferenceState;
+  readonly reason: string;
+  readonly packageState?: string;
+}> = [
+  { state: 'disabled', reason: 'inactive-extension', packageState: 'disabled-by-user' },
+  { state: 'duplicate', reason: 'missing-contribution' },
+  { state: 'invalid-package', reason: 'inactive-extension', packageState: 'invalid' },
+  { state: 'settings-error', reason: 'inactive-extension', packageState: 'settings-error' },
+  { state: 'runtime-error', reason: 'inactive-extension', packageState: 'runtime-error' },
+  { state: 'version-incompatible', reason: 'inactive-extension', packageState: 'version-incompatible' },
+  { state: 'unknown', reason: 'unknown' },
+];
+
+function makeReferenceDiagnostic(state: ReferenceState): ExtensionDiagnostic {
+  const code = referenceStateDiagnosticCode(state);
+  if (!code) {
+    throw new Error(`Expected diagnostic code for ${state}`);
+  }
+
+  return makeDiagnostic(code, referenceStateSeverity(state) as 'warning' | 'error', {
+    nodeId: `contribution:shader:ext.shader:${state}`,
+    refKey: `shader:ext.shader:${state}`,
+    refState: state,
+    extensionId: 'ext.shader',
+    contributionId: state,
+    resolverState: state,
+    packageState: BLOCKING_REFERENCE_STATE_CASES.find((entry) => entry.state === state)?.packageState,
+    ownerKind: 'shader',
+    ownerId: state,
+  });
+}
+
 function makeGraph(options?: {
   readonly includeResolvedClipShader?: boolean;
+  readonly includeResolvedPostprocessShader?: boolean;
   readonly includeMissingPostprocessShader?: boolean;
   readonly diagnostics?: readonly ExtensionDiagnostic[];
 }): CompositionGraph {
@@ -105,6 +144,33 @@ function makeGraph(options?: {
       refKey: 'shader:ext.shader:clip',
       state: 'resolved',
       nodeIds: ['contribution:shader:ext.shader:clip'],
+    });
+  }
+
+  if (options?.includeResolvedPostprocessShader) {
+    graphNodes.push({
+      id: 'contribution:shader:ext.shader:post',
+      kind: 'contribution',
+      ref: {
+        kind: 'shader',
+        extensionId: 'ext.shader',
+        contributionId: 'post',
+      },
+    });
+    edges.push({
+      id: 'edge:resolved-post',
+      kind: 'consumes',
+      sourceNodeId: 'timeline-postprocess',
+      targetNodeId: 'contribution:shader:ext.shader:post',
+      detail: {
+        scope: 'postprocess',
+        shaderId: 'shader.post',
+      },
+    });
+    referenceStates.push({
+      refKey: 'shader:ext.shader:post',
+      state: 'resolved',
+      nodeIds: ['contribution:shader:ext.shader:post'],
     });
   }
 
@@ -235,7 +301,86 @@ describe('renderPlanner compositionGraph authority', () => {
     ]));
   });
 
-  it('emits a compatibility warning when shader planning falls back to legacy inputs', () => {
+  it.each(BLOCKING_REFERENCE_STATE_CASES)(
+    'blocks planner routes for graph-derived $state reference diagnostics',
+    ({ state, reason }) => {
+      const diagnostic = makeReferenceDiagnostic(state);
+      const result = planRender({
+        compositionGraph: makeGraph({ diagnostics: [diagnostic] }),
+      });
+
+      expect(result.canBrowserExport).toBe(false);
+      expect(result.canWorkerExport).toBe(false);
+      expect(result.findings).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          route: 'browser-export',
+          severity: 'error',
+          reason,
+          extensionId: 'ext.shader',
+          contributionId: state,
+          detail: expect.objectContaining({
+            source: 'composition-graph',
+            code: diagnostic.code,
+            refState: state,
+            resolverState: state,
+          }),
+        }),
+        expect.objectContaining({
+          route: 'worker-export',
+          severity: 'error',
+          reason,
+          extensionId: 'ext.shader',
+          contributionId: state,
+        }),
+      ]));
+      expect(result.blockers).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          route: 'browser-export',
+          severity: 'error',
+          reason,
+          extensionId: 'ext.shader',
+          contributionId: state,
+        }),
+        expect.objectContaining({
+          route: 'worker-export',
+          severity: 'error',
+          reason,
+          extensionId: 'ext.shader',
+          contributionId: state,
+        }),
+      ]));
+    },
+  );
+
+  it('uses graph clip and postprocess shader summaries for materializer blockers', () => {
+    const result = planRender({
+      compositionGraph: makeGraph({
+        includeResolvedClipShader: true,
+        includeResolvedPostprocessShader: true,
+      }),
+    });
+
+    expect(result.canBrowserExport).toBe(false);
+    expect(result.canWorkerExport).toBe(false);
+    expect(result.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        route: 'browser-export',
+        reason: 'missing-material',
+        extensionId: 'ext.shader',
+        contributionId: 'clip',
+        message: 'Shader "shader.clip" cannot export because no shader materializer produced RenderMaterial for clip "clip-1".',
+      }),
+      expect.objectContaining({
+        route: 'browser-export',
+        reason: 'missing-material',
+        extensionId: 'ext.shader',
+        contributionId: 'post',
+        message: 'Shader "shader.post" cannot export because no shader materializer produced RenderMaterial for timeline postprocess.',
+      }),
+    ]));
+  });
+
+  it('emits route-scoped compatibility errors and blockers for legacy shader facts without a graph', () => {
     const result = planRender({
       snapshot: snapshotWithShaders([
         {
@@ -250,11 +395,42 @@ describe('renderPlanner compositionGraph authority', () => {
       ]),
     });
 
+    expect(result.canBrowserExport).toBe(false);
+    expect(result.canWorkerExport).toBe(false);
     expect(result.findings).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: 'planner.compositionGraph.legacy-shader-ref-compatibility',
-        severity: 'warning',
+        id: 'planner.compositionGraph.legacy-shader-ref-compatibility.browser-export',
+        route: 'browser-export',
+        severity: 'error',
+        reason: 'unknown',
+        detail: expect.objectContaining({
+          source: 'composition-graph-compatibility',
+          compatibilityMode: 'legacy-shader-ref',
+        }),
       }),
+      expect.objectContaining({
+        id: 'planner.compositionGraph.legacy-shader-ref-compatibility.worker-export',
+        route: 'worker-export',
+        severity: 'error',
+        reason: 'unknown',
+      }),
+    ]));
+    expect(result.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'planner.compositionGraph.legacy-shader-ref-compatibility.browser-export',
+        route: 'browser-export',
+        severity: 'error',
+        reason: 'unknown',
+      }),
+      expect.objectContaining({
+        id: 'planner.compositionGraph.legacy-shader-ref-compatibility.worker-export',
+        route: 'worker-export',
+        severity: 'error',
+        reason: 'unknown',
+      }),
+    ]));
+    expect(result.blockers).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ reason: 'missing-material' }),
     ]));
   });
 });

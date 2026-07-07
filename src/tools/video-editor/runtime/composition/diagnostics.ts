@@ -303,7 +303,18 @@ export interface CompositionDiagnosticDetail {
   repairAction?: Record<string, unknown>;
 }
 
+const BLOCKING_REFERENCE_COMPOSITION_DIAGNOSTIC_CODES = new Set<CompositionDiagnosticCode>([
+  COMPOSITION_DIAGNOSTIC_CODE.DISABLED_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.INVALID_PACKAGE_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.DUPLICATE_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.SETTINGS_ERROR_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.RUNTIME_ERROR_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.VERSION_INCOMPATIBLE_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_REF,
+]);
+
 const BLOCKING_TARGET_COMPOSITION_DIAGNOSTIC_CODES = new Set<CompositionDiagnosticCode>([
+  ...Array.from(BLOCKING_REFERENCE_COMPOSITION_DIAGNOSTIC_CODES),
   COMPOSITION_DIAGNOSTIC_CODE.INVALID_TARGET_PATH,
   COMPOSITION_DIAGNOSTIC_CODE.UNSUPPORTED_RESERVED_TARGET,
   COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_TARGET_REF,
@@ -554,6 +565,35 @@ export function referenceStateToTransitionDiagnosticCode(
 
 export function isBlockingTargetCompositionDiagnosticCode(code: string): code is CompositionDiagnosticCode {
   return BLOCKING_TARGET_COMPOSITION_DIAGNOSTIC_CODES.has(code as CompositionDiagnosticCode);
+}
+
+/**
+ * Type guard: returns `true` when `code` is a generic CompositionGraph
+ * reference diagnostic that should block planner/export readiness.
+ */
+export function isBlockingReferenceCompositionDiagnosticCode(code: string): code is CompositionDiagnosticCode {
+  return BLOCKING_REFERENCE_COMPOSITION_DIAGNOSTIC_CODES.has(code as CompositionDiagnosticCode);
+}
+
+/**
+ * Map a generic CompositionGraph reference diagnostic to its canonical
+ * planner/export blocker reason.
+ */
+export function referenceCompositionBlockerReason(code: CompositionDiagnosticCode): string {
+  switch (code) {
+    case COMPOSITION_DIAGNOSTIC_CODE.DISABLED_REF:
+    case COMPOSITION_DIAGNOSTIC_CODE.INVALID_PACKAGE_REF:
+    case COMPOSITION_DIAGNOSTIC_CODE.SETTINGS_ERROR_REF:
+    case COMPOSITION_DIAGNOSTIC_CODE.RUNTIME_ERROR_REF:
+    case COMPOSITION_DIAGNOSTIC_CODE.VERSION_INCOMPATIBLE_REF:
+      return 'inactive-extension';
+    case COMPOSITION_DIAGNOSTIC_CODE.DUPLICATE_REF:
+      return 'missing-contribution';
+    case COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_REF:
+      return 'unknown';
+    default:
+      return 'unknown';
+  }
 }
 
 // ---------------------------------------------------------------------------

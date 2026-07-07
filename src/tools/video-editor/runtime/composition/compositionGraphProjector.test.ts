@@ -278,6 +278,65 @@ function outputMaterialRuntime(contributionIdx: ContributionIndex) {
 }
 
 describe('compositionGraphProjector', () => {
+  it('projects legacy clip and postprocess shader summaries into consumes edges', () => {
+    const graph = project({
+      snapshot: timelineSnapshot({
+        shaders: [
+          shaderSummary({
+            id: 'clip-1:shader:shader.legacyClip',
+            shaderId: 'shader.legacyClip',
+            scope: 'clip',
+            clipId: 'clip-1',
+            contributionId: 'clip-glow',
+          }),
+          shaderSummary({
+            id: 'postprocess:shader:shader.legacyPost',
+            shaderId: 'shader.legacyPost',
+            scope: 'postprocess',
+            clipId: undefined,
+            contributionId: 'post-grade',
+          }),
+        ],
+      }),
+    });
+
+    expect(graph.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'consumes:clip:clip-1:contribution:shader:com.example.shader:clip-glow:clip-1:shader:shader.legacyClip',
+        kind: 'consumes',
+        sourceNodeId: 'clip:clip-1',
+        targetNodeId: 'contribution:shader:com.example.shader:clip-glow',
+        detail: expect.objectContaining({
+          shaderId: 'shader.legacyClip',
+          clipId: 'clip-1',
+          refKey: 'shader:com.example.shader:clip-glow',
+          scope: 'clip',
+        }),
+      }),
+      expect.objectContaining({
+        id: 'consumes:timeline-postprocess:contribution:shader:com.example.shader:post-grade:postprocess:shader:shader.legacyPost',
+        kind: 'consumes',
+        sourceNodeId: TIMELINE_POSTPROCESS_NODE_ID,
+        targetNodeId: 'contribution:shader:com.example.shader:post-grade',
+        detail: expect.objectContaining({
+          shaderId: 'shader.legacyPost',
+          refKey: 'shader:com.example.shader:post-grade',
+          scope: 'postprocess',
+        }),
+      }),
+    ]));
+    expect(graph.referenceStates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        refKey: 'shader:com.example.shader:clip-glow',
+        state: 'resolved',
+      }),
+      expect.objectContaining({
+        refKey: 'shader:com.example.shader:post-grade',
+        state: 'resolved',
+      }),
+    ]));
+  });
+
   it('projects clip, timeline-postprocess, and contribution nodes plus shader consumes edges', () => {
     const graph = project();
 

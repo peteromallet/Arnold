@@ -22,6 +22,8 @@ import {
   isBlockingTargetCompositionDiagnosticCode,
   isBlockingM5CompositionDiagnosticCode,
   m5CompositionBlockerReason,
+  isBlockingReferenceCompositionDiagnosticCode,
+  referenceCompositionBlockerReason,
 } from '@/tools/video-editor/runtime/composition/diagnostics.ts';
 import {
   canonicalRenderRoutes,
@@ -214,7 +216,7 @@ const GRAPH_PLANNER_ROUTES = [
   'worker-export',
 ] as const satisfies readonly RenderRoute[];
 
-const LEGACY_GRAPH_COMPATIBILITY_WARNING_ID = 'planner.compositionGraph.legacy-shader-ref-compatibility';
+const LEGACY_GRAPH_COMPATIBILITY_BLOCKER_ID = 'planner.compositionGraph.legacy-shader-ref-compatibility';
 
 const PROCESS_NON_DEGRADED_CAPABILITY_IDS = new Set([
   'process-health/non-degraded',
@@ -825,11 +827,15 @@ function compositionDiagnosticReason(code: string): RenderBlockerReason {
     case COMPOSITION_DIAGNOSTIC_CODE.MISSING_REF:
     case COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_TARGET_REF:
       return 'missing-contribution';
-    case COMPOSITION_DIAGNOSTIC_CODE.DISABLED_REF:
     case COMPOSITION_DIAGNOSTIC_CODE.INACTIVE_RESERVED_REF:
     case COMPOSITION_DIAGNOSTIC_CODE.UNSUPPORTED_RESERVED_TARGET:
       return 'inactive-extension';
     default: {
+      if (isBlockingReferenceCompositionDiagnosticCode(code)) {
+        return referenceCompositionBlockerReason(
+          code as Parameters<typeof referenceCompositionBlockerReason>[0],
+        ) as RenderBlockerReason;
+      }
       // Delegate M5-specific blocker reasons
       if (isBlockingM5CompositionDiagnosticCode(code)) {
         return m5CompositionBlockerReason(code as Parameters<typeof m5CompositionBlockerReason>[0]) as RenderBlockerReason;
@@ -931,31 +937,36 @@ function graphShaderMaterializerRequirements(
   return requirements;
 }
 
-function legacyGraphCompatibilityWarning(
+function legacyGraphCompatibilityFindings(
   snapshot: TimelineSnapshot | null | undefined,
   requirements: readonly CapabilityRequirement[] | undefined,
   compositionGraph: CompositionGraph | undefined,
-): CapabilityFinding | undefined {
+): CapabilityFinding[] {
   if (compositionGraph) {
-    return undefined;
+    return [];
   }
 
   const hasLegacyShaderFacts = Boolean(snapshot?.shaders?.some((shader) => shader.enabled !== false))
     || Boolean(requirements?.some(isShaderMaterializerRequirement));
   if (!hasLegacyShaderFacts) {
-    return undefined;
+    return [];
   }
 
-  return {
-    id: LEGACY_GRAPH_COMPATIBILITY_WARNING_ID,
-    severity: 'warning',
-    message:
-      'CompositionGraph was not provided; planner shader/ref decisions are using legacy compatibility inputs and are not authoritative for M1b.',
-    detail: {
-      source: 'composition-graph-compatibility',
-      compatibilityMode: 'legacy-shader-ref',
-    },
-  };
+  return GRAPH_PLANNER_ROUTES.map((route): CapabilityFinding => {
+    return {
+      id: `${LEGACY_GRAPH_COMPATIBILITY_BLOCKER_ID}.${route}`,
+      severity: 'error',
+      route,
+      reason: 'unknown',
+      message:
+        'CompositionGraph was not provided; planner shader/ref decisions require graph authority before export.',
+      detail: {
+        source: 'composition-graph-compatibility',
+        compatibilityMode: 'legacy-shader-ref',
+        renderRoute: route,
+      },
+    };
+  });
 }
 
 function createShaderDescriptorMap(
@@ -977,6 +988,12 @@ function isShaderMaterializerRequirement(requirement: CapabilityRequirement): bo
   return requirement.sourceRef.source === 'extension'
     && requirement.requiredCapabilities.includes('shader-materializer')
     && requirement.requiredCapabilities.includes('render-material');
+}
+
+function filterLegacyShaderMaterializerRequirements(
+  requirements: readonly CapabilityRequirement[],
+): CapabilityRequirement[] {
+  return requirements.filter((requirement) => !isShaderMaterializerRequirement(requirement));
 }
 
 function processOperationSupportsMaterializerRoute(
@@ -2500,17 +2517,16 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
     input.extensionRuntime?.contributionIndex,
     compositionGraph,
   );
+  const legacyAwareRequirements = input.requirements
+    ?? (compositionGraph
+      ? (nonShaderSnapshot ? getCapabilityRequirements(nonShaderSnapshot) : [])
+      : (shaderComposition.snapshot ? getCapabilityRequirements(shaderComposition.snapshot) : []));
   const requirements = compositionGraph
     ? [
-        ...(input.requirements
-          ?? (nonShaderSnapshot
-            ? getCapabilityRequirements(nonShaderSnapshot)
-            : [])),
+        ...legacyAwareRequirements,
         ...graphShaderMaterializerRequirements(shaderComposition.shaders, compositionGraph),
       ]
-    : (input.requirements ?? (shaderComposition.snapshot
-      ? getCapabilityRequirements(shaderComposition.snapshot)
-      : []));
+    : filterLegacyShaderMaterializerRequirements(legacyAwareRequirements);
   const outputFormats = input.outputFormats ?? input.extensionRuntime?.outputFormats ?? [];
   const plannedOutputFormats = input.request?.outputFormatId
     ? outputFormats.filter((format) => format.id === input.request?.outputFormatId)
@@ -2520,9 +2536,9 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
   const processStatusById = createProcessStatusMap(input.processStatuses);
   const processById = createProcessDescriptorMap(processes);
   const shaderBySourceRef = createShaderDescriptorMap(shaders);
-  const legacyCompatibilityWarning = legacyGraphCompatibilityWarning(
+  const legacyCompatibilityFindings = legacyGraphCompatibilityFindings(
     input.snapshot,
-    requirements,
+    legacyAwareRequirements,
     compositionGraph,
   );
   const projectedAttachRecords = projectProcessAttachRecords(input.processResultAttachRecords);
@@ -2582,9 +2598,7 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
   }));
   collectRenderGroups(acc, input.snapshot, materialRuntime);
   acc.findings.push(...shaderComposition.findings);
-  if (legacyCompatibilityWarning) {
-    acc.findings.push(legacyCompatibilityWarning);
-  }
+  acc.findings.push(...legacyCompatibilityFindings);
   acc.findings.push(...(input.diagnostics ?? []));
 
   if (input.request?.outputFormatId && !outputFormats.some((format) => format.id === input.request?.outputFormatId)) {

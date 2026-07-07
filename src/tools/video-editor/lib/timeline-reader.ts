@@ -531,6 +531,8 @@ export function createTimelineReader(
         const generatedMeta: GeneratedObjectMeta | undefined =
           extractGeneratedMeta(clip.app);
 
+        // Legacy shader storage is read here only to project snapshot.shaders;
+        // planner/export readiness must use CompositionGraph authority.
         const clipShader = isClipShaderMetadata(clip.app?.shader)
           ? clip.app.shader
           : undefined;
@@ -811,6 +813,8 @@ export function createTimelineReader(
       const app: Record<string, unknown> = config.app !== undefined
         ? { ...config.app }
         : {};
+      // Legacy shader storage is read here only to project snapshot.shaders;
+      // planner/export readiness must use CompositionGraph authority.
       const postprocessShader = isPostprocessShaderMetadata(app.shaderPostprocess)
         ? app.shaderPostprocess
         : undefined;

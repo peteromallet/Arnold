@@ -1,0 +1,242 @@
+Execute the approved plan in the repository.
+
+        Project directory:
+        /workspace/extension-reality-convergence-epic/reigh-app
+
+        Brief summary: # M2: Composition Shader/Ref Authority Ratchet
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Batch framing:
+        - Execute batch 6 of 6.
+        - Actionable task IDs for this batch: ['T6']
+        - Already completed task IDs available as dependency context: ['T1', 'T2', 'T3', 'T4', 'T5']
+
+        Actionable tasks for this batch:
+        [
+  {
+    "id": "T6",
+    "depends_on": [
+      "T5"
+    ],
+    "status": "pending",
+    "kind": "test",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "This is mechanical validation with named focused test files and possible suite broadening only if shared diagnostic changes show ripple. It requires interpreting pass/fail output but does not require new implementation logic, so tier 2 is appropriate.",
+    "executor_notes": "",
+    "files_changed": [],
+    "commands_run": [
+      "pnpm test src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts",
+      "pnpm test src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+    ]
+  }
+]
+
+        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
+        [
+  {
+    "id": "T2",
+    "depends_on": [
+      "T1"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Complete generic CompositionGraph reference diagnostic blocking and blocker reason mapping for disabled, duplicate, invalid-package, settings-error, runtime-error, version-incompatible, and unknown reference states in diagnostics, planner, and export guard.",
+    "complexity_justification": "This updates a shared diagnostic-code set plus planner/export mapping functions, so the executor must keep code/reason parity across three files. The failure modes are concrete missing blockers or wrong reasons and are testable with focused planner/export tests, keeping it tier 3.",
+    "executor_notes": "Generic CompositionGraph reference diagnostics for disabled, duplicate, invalid-package, settings-error, runtime-error, version-incompatible, and unknown are now in the blocking target set. Planner and export guard both use shared generic reference blocker reason mapping; export guard emits export/unresolved-ref for those graph diagnostics and route-scoped blockers. Focused Vitest could not start because local dependencies are absent; static mapping assertions and git diff whitespace check passed.",
+    "files_changed": [
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/exportGuard.ts"
+    ],
+    "commands_run": [
+      "npx --yes vitest@4.0.18 run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/exportGuard.test.ts",
+      "node static assertion script for generic reference blocker mapping",
+      "git diff --check -- src/tools/video-editor/runtime/composition/diagnostics.ts src/tools/video-editor/runtime/renderPlanner.ts src/tools/video-editor/runtime/exportGuard.ts"
+    ]
+  },
+  {
+    "id": "T1",
+    "depends_on": [],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Implement the graph-absent hard block ratchet in planner/export paths: make legacy graph compatibility findings errors, emit route-scoped RenderBlockers, and change scanTimelineShaderExportBlockers() to return without legacy materializer fallback when CompositionGraph is absent. Keep timeline-reader legacy extraction intact.",
+    "complexity_justification": "This changes readiness behavior across renderPlanner.ts and exportGuard.ts, including blocker emission and fallback control flow. The logic is multi-file and authority-sensitive, but focused tests should catch wrong severity/blocker behavior, so it is tier 3 rather than a broader contract tier.",
+    "executor_notes": "Planner now emits route-scoped error compatibility findings for graph-absent legacy shader/ref facts and filters legacy shader materializer requirements when CompositionGraph is absent. Export guard now emits route-scoped error compatibility findings/blockers and scanTimelineShaderExportBlockers() returns immediately without CompositionGraph, so legacy timeline shader metadata no longer produces materializer fallback blockers. TypeScript compile could not start because local dependencies are absent; git diff whitespace check, static assertion script, and checkpoint JSON parse passed.",
+    "files_changed": [
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/exportGuard.ts"
+    ],
+    "commands_run": [
+      "npx tsc --noEmit --pretty false",
+      "git diff --check -- src/tools/video-editor/runtime/renderPlanner.ts src/tools/video-editor/runtime/exportGuard.ts",
+      "node static assertion script for graph-absent compatibility/blocker behavior"
+    ]
+  },
+  {
+    "id": "T4",
+    "depends_on": [
+      "T3"
+    ],
+    "status": "done",
+    "kind": "test",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Update planner/export ratchet tests: expect graph-absent compatibility severity error and route blockers, add export guard coverage for graph-absent legacy shader metadata, add a legacy-only no-graph fixture proving raw clip/postprocess shader fields do not satisfy readiness, and keep graph-present clip/postprocess shader facts producing existing materializer blockers through graph summaries.",
+    "complexity_justification": "These tests encode the core authority invariant across planner and export behavior, and a wrong fixture could accidentally preserve legacy authority while still looking superficially correct. The risk is non-local to future consumers of readiness semantics, which warrants tier 4.",
+    "executor_notes": "Planner tests now expect graph-absent legacy shader facts to emit route-scoped error compatibility findings/blockers with no missing-material fallback, and graph-present clip/postprocess shader summaries to keep producing materializer blockers. Export guard tests now cover graph-present clip/postprocess materializer blockers via graph summaries, graph-absent raw legacy clip/postprocess metadata producing compatibility blockers only, and process attach suppression/failed attach behavior through graph summaries. Focused Vitest could not start because local dependencies are absent; whitespace...",
+    "files_changed": [
+      "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+      "src/tools/video-editor/runtime/exportGuard.test.ts"
+    ],
+    "commands_run": [
+      "git diff --check -- src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/exportGuard.test.ts",
+      "npx --yes vitest@4.0.18 run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/exportGuard.test.ts",
+      "node static assertion script for T4 graph authority test coverage",
+      "git diff --check -- src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/exportGuard.test.ts .megaplan/plans/m2-composition-shader-ref-20260707-2109/execution_batch_4.json"
+    ]
+  },
+  {
+    "id": "T5",
+    "depends_on": [
+      "T4"
+    ],
+    "status": "done",
+    "kind": "test",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Add projection and reference-state coverage: prove legacy clip/postprocess shader summaries still project into CompositionGraph consumes edges, and add planner/export coverage for graph-derived disabled, duplicate, invalid-package, settings-error, runtime-error, version-incompatible, and unknown reference diagnostics using existing resolver/projector helpers where possible.",
+    "complexity_justification": "This expands end-to-end coverage across projector, planner, and export tests for a shared diagnostic contract. Subtle mistakes in fixture setup or code/reason pairing can make graph diagnostics appear covered while export filtering still drops blockers, so tier 4 is justified.",
+    "executor_notes": "Added projector coverage proving legacy-shaped clip and postprocess shader summaries still become CompositionGraph consumes edges and resolved reference states. Added planner and export table coverage for graph-derived disabled, duplicate, invalid-package, settings-error, runtime-error, version-incompatible, and unknown generic reference diagnostics, including route blockers and export/unresolved-ref mapping. Whitespace validation, static coverage assertions, and checkpoint JSON parse passed; focused Vitest was attempted once but failed at config startup because local vitest is absent.",
+    "files_changed": [
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+      "src/tools/video-editor/runtime/exportGuard.test.ts"
+    ],
+    "commands_run": [
+      "git diff --check -- src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/exportGuard.test.ts",
+      "npx --yes vitest@4.0.18 run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/exportGuard.test.ts",
+      "node static coverage assertion script for T5 projector/planner/export coverage",
+      "node -e \"JSON.parse(require('fs').readFileSync('.megaplan/plans/m2-composition-shader-ref-20260707-2109/execution_batch_5.json','utf8')); console.log('checkpoint json ok')\"",
+      "git diff --check -- src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts src/tools/video-editor/runtime/exportGuard.test.ts .megaplan/plans/m2-composition-shader-ref-20260707-2109/execution_batch_5.json"
+    ]
+  },
+  {
+    "id": "T3",
+    "depends_on": [
+      "T2"
+    ],
+    "status": "done",
+    "kind": "test",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Mark legacy shader reads as projector-only inputs and add the narrow shader/ref authority architecture guard. Add a source comment near snapshot.shaders extraction in timeline-reader, then create shaderRefAuthority.test.ts to forbid migrated planner/export readiness code from direct reads of clip.app?.shader, config.app?.shaderPostprocess, TimelineShaderMetadata, and legacyTimelineShaderMetadata outside explicit projector/UI/domain allowlists.",
+    "complexity_justification": "The comment is trivial, but the architecture test must scan the right migrated readiness files while avoiding UI/projector false positives. It is a targeted guard with allowlist design risk, but not a system-wide invariant change beyond this milestone scope.",
+    "executor_notes": "Added projector-only comments beside timeline-reader legacy clip/postprocess shader extraction and created shaderRefAuthority.test.ts. Export guard now uses timeline-domain helpers for legacy shader storage detection, leaving migrated planner/export readiness files free of direct raw clip/postprocess shader reads, TimelineShaderMetadata references, and legacyTimelineShaderMetadata references. Vitest startup failed due absent local dependencies; the static guard assertion, git diff whitespace check, and checkpoint JSON parse passed.",
+    "files_changed": [
+      "src/tools/video-editor/lib/timeline-reader.ts",
+      "src/tools/video-editor/runtime/exportGuard.ts",
+      "src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts"
+    ],
+    "commands_run": [
+      "npx --yes vitest@4.0.18 run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts",
+      "node static assertion script for shader/ref authority guard",
+      "git diff --check -- src/tools/video-editor/lib/timeline-reader.ts src/tools/video-editor/runtime/exportGuard.ts src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts"
+    ]
+  }
+]
+
+        Prior batch deviations (address if applicable):
+        [
+  "Focused Vitest could not start because config/testing/vitest.config.ts imports vitest from the local project dependency graph, and local dependencies are absent.",
+  "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/exportGuard.test.ts, src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts",
+  "Advisory audit finding: Executor claimed changed files not present in git status: src/tools/video-editor/lib/timeline-reader.ts, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts, src/tools/video-editor/runtime/exportGuard.test.ts, src/tools/video-editor/runtime/exportGuard.ts, src/tools/video-editor/runtime/renderPlanner.compositionGraph.test.ts, src/tools/video-editor/runtime/renderPlanner.ts",
+  "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+  "Advisory audit finding: Tasks left pending after execute (executor never started them): T6"
+]
+
+        User action prerequisites:
+        No user_action prerequisites for this batch.
+
+
+        Batch-scoped sense checks:
+        [
+  {
+    "id": "SC6",
+    "task_id": "T6",
+    "verdict": "",
+    "question": "Did the scoped validation commands run in the approved order with no new failures beyond any recorded baseline, and was broader validation run if shared diagnostic changes rippled?"
+  }
+]
+
+
+        ## Execution context (settled - DO NOT re-litigate)
+
+        - SD1: Legacy clip.app.shader and config.app.shaderPostprocess fields remain as storage/UI/projector inputs; planner/export readiness authority for shader/ref facts is moved exclusivel... - Preserves backward compatibility for existing timelines through projection while establishing the ratchet pattern. Aligns with North Star constraint: do not delete legacy storage fields before compatibility projection...
+- SD2: Export guard no longer uses legacy timeline shader materializer blockers as an authority fallback when CompositionGraph is absent; instead the graph-absent compatibility block r... - Enforces single authority source. Legacy metadata with no graph must be represented by the compatibility block, not legacy materializer blockers. Aligns with North Star constraint: do not let migrated fact families re...
+- SD3: Both planner and export guard convert graph-absent compatibility from warning to error (hard block), yielding route-scoped RenderBlockers. - The authority ratchet is proven by making the graph-absent state a hard failure. Warnings would allow legacy authority to remain effective. Aligns with North Star proof requirement: a fixture proves legacy-only shader...
+
+        ## Plan execution order rationale
+
+        1. Change planner/export hard-block behavior first.
+2. Add generic diagnostic blocking/mapping next.
+3. Add the architecture guard after final allowlists are obvious.
+4. Update and add tests for negative and positive authority cases.
+5. Run focused validation, then broaden based on touched shared code.
+
+        ## Inter-task guidance from finalize
+
+        Execute the tasks serially to avoid conflicting edits in renderPlanner.ts and exportGuard.ts. The key judgment call is preserving a narrow authority ratchet: make graph absence a hard planner/export blocker and complete graph diagnostic blocker mapping, but leave legacy storage/UI/projector behavior in place. The final validation task intentionally lists focused pnpm test commands; adjust only to the repository's actual test runner syntax if package scripts differ, preserving the same file scope and order.
+
+        Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations.
+        Robustness level: thorough.
+
+        Requirements:
+        - Execute only the actionable tasks in this batch.
+        - Treat completed tasks as dependency context, not new work.
+        - Return structured JSON only.
+        - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
+        - Template file already written for reference: /workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m2-composition-shader-ref-20260707-2109/execute_batch_6_output.json
+        - Only produce `task_updates` for these tasks: [T6]
+        - `task_updates[].status` must be one of `done`, `skipped`, `completed`, or `blocked`; never `pending` or `in_progress`.
+        - Only produce `sense_check_acknowledgments` for these sense checks: [SC6]
+        - Do not include updates for tasks or sense checks outside this batch.
+        - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+        - Keep `executor_notes` verification-focused.
+        - Best-effort progress checkpointing: if `/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m2-composition-shader-ref-20260707-2109/execution_batch_6.json` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - All terminal verification commands must run from the Project directory (`/workspace/extension-reality-convergence-epic/reigh-app`) or a descendant. Do not `cd` to `/workspace/arnold`, an editable-engine mirror, or any shared engine checkout for tests; those paths are outside the session worktree and the sandbox will refuse them.
+        - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
+        - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
+        - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
+        - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
+
+        Batch JSON response template:
+        ```json
+        {
+  "output": "",
+  "files_changed": [],
+  "commands_run": [],
+  "deviations": [],
+  "task_updates": [
+    {
+      "task_id": "T6",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC6",
+      "executor_note": ""
+    }
+  ]
+}
+        ```
