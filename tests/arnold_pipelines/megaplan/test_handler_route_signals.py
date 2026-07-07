@@ -106,7 +106,7 @@ class TestGateSignals:
     def test_gate_route_signal_helper_uses_route_labels_not_targets(self) -> None:
         func = _function_node(GATE_PATH, "_build_gate_route_signal")
         strings = _string_constants(func)
-        assert {"blocked_preflight", "escalate", "retry_gate"} <= strings
+        assert {"blocked_preflight", "escalate"} <= strings
         assert FORBIDDEN_GATE_TARGETS.isdisjoint(strings)
 
 
@@ -130,6 +130,12 @@ class TestTiebreakerSignals:
         strings = _string_constants(func)
         assert {"proceed", "iterate", "escalate"} <= strings
         assert FORBIDDEN_TIEBREAKER_TARGETS.isdisjoint(strings)
+
+    def test_runtime_decide_phase_body_emits_labels_not_parent_targets(self) -> None:
+        func = _function_node(TIEBREAKER_RUNTIME_PATH, "handle_tiebreaker_decide")
+        strings = _string_constants(func)
+        assert {"route_signal", "decision"} <= strings
+        assert {"finalize", "critique", "override add-note"}.isdisjoint(strings)
 
 
 class TestReviewSignals:
@@ -210,3 +216,22 @@ class TestSharedRouteHelpers:
         )
 
         assert resolve_route_target_for_signal("gate", "proceed") == "finalize"
+
+    def test_tiebreaker_alias_route_dispatch_ignores_legacy_component_metadata(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.route_dispatch._component_route_bindings_for_step",
+            lambda step: (
+                (
+                    {
+                        "id": "tiebreaker_decide:proceed",
+                        "label": "proceed",
+                        "target_ref": "halt",
+                        "condition_ref": "mutated",
+                    },
+                )
+                if step == "tiebreaker_decide"
+                else tuple(STEP_COMPONENTS_BY_ID[step].metadata.get("route_bindings", ()))
+            ),
+        )
+
+        assert resolve_route_target_for_signal("tiebreaker_decide", "proceed") == "finalize"

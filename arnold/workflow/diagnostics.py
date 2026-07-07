@@ -142,6 +142,7 @@ class DiagnosticCode(StrEnum):
     BOUNDARY_EVIDENCE_STALE = "AWF249_BOUNDARY_EVIDENCE_STALE"
     UNKNOWN_OUTCOME_TYPE = "AWF250_UNKNOWN_OUTCOME_TYPE"
     INVALID_OUTCOME_MEMBER = "AWF251_INVALID_OUTCOME_MEMBER"
+    TIEBREAKER_SHAPE_VIOLATION = "AWF252_TIEBREAKER_SHAPE_VIOLATION"
 
 
 class DiagnosticFamily(StrEnum):
@@ -222,6 +223,7 @@ class DiagnosticFamily(StrEnum):
     BOUNDARY_EVIDENCE_STALE = "boundary_evidence_stale"
     UNKNOWN_OUTCOME_TYPE = "unknown_outcome_type"
     INVALID_OUTCOME_MEMBER = "invalid_outcome_member"
+    TIEBREAKER_SHAPE_VIOLATION = "tiebreaker_shape_violation"
 
 
 @dataclass(frozen=True)
@@ -737,6 +739,12 @@ DIAGNOSTIC_CODE_SPECS = (
         DiagnosticFamily.INVALID_OUTCOME_MEMBER,
         "branch route comparison references an invalid outcome member",
         "compare route branches to a declared member of the imported outcome enum",
+    ),
+    _v2_spec(
+        DiagnosticCode.TIEBREAKER_SHAPE_VIOLATION,
+        DiagnosticFamily.TIEBREAKER_SHAPE_VIOLATION,
+        "tiebreaker is not source-visible as four explicit researcher/challenger/synthesis/decision phases with row-level evidence",
+        "replace a single TIEBREAKER_WORKFLOW call or handler wrapper with four individually authored step calls (researcher, challenger, synthesis, decision) each backed by structured semantic evidence",
     ),
 )
 

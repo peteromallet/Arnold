@@ -78,6 +78,10 @@ class MegaplanManifestBackend(LocalJournalBackend):
         "finalize",
         "execute",
         "review",
+        "tiebreaker_researcher",
+        "tiebreaker_challenger",
+        "tiebreaker_synthesis",
+        "tiebreaker_decision",
         "tiebreaker_run",
         "tiebreaker_decide",
         "override",
@@ -157,6 +161,10 @@ class MegaplanManifestBackend(LocalJournalBackend):
             "finalize": handlers.handle_finalize,
             "execute": handlers.handle_execute,
             "review": handlers.handle_review,
+            "tiebreaker_researcher": handlers.handle_tiebreaker_run,
+            "tiebreaker_challenger": handlers.handle_tiebreaker_run,
+            "tiebreaker_synthesis": handlers.handle_tiebreaker_run,
+            "tiebreaker_decision": handlers.handle_tiebreaker_decide,
             "tiebreaker_run": handlers.handle_tiebreaker_run,
             "tiebreaker_decide": handlers.handle_tiebreaker_decide,
             "override": handlers.handle_override,
@@ -173,19 +181,15 @@ class MegaplanManifestBackend(LocalJournalBackend):
     def _route_binding_for_signal(self, node_id: str, route_signal: object) -> tuple[str, str] | None:
         if not isinstance(route_signal, str) or not route_signal:
             return None
-        try:
-            from arnold_pipelines.megaplan.workflows.components import STEP_COMPONENTS_BY_ID
+        from arnold_pipelines.megaplan.route_dispatch import resolve_route_binding_for_signal
 
-            component = STEP_COMPONENTS_BY_ID[node_id]
-        except Exception:
+        binding = resolve_route_binding_for_signal(node_id, route_signal)
+        if binding is None:
             return None
-        for binding in component.metadata.get("route_bindings", ()):
-            if not isinstance(binding, Mapping) or binding.get("label") != route_signal:
-                continue
-            route_id = binding.get("id")
-            target_ref = binding.get("target_ref")
-            if isinstance(route_id, str) and route_id and isinstance(target_ref, str) and target_ref:
-                return route_id, target_ref
+        route_id = binding.get("id")
+        target_ref = binding.get("target_ref")
+        if isinstance(route_id, str) and route_id and isinstance(target_ref, str) and target_ref:
+            return route_id, target_ref
         return None
 
     def _response_to_outcome(
@@ -235,7 +239,6 @@ class MegaplanManifestBackend(LocalJournalBackend):
         next_step = response.get("next_step")
         recommendation = response.get("recommendation")
         override_action = response.get("override_action")
-        decision = response.get("decision")
         review_verdict = response.get("review_verdict")
         route_signal = response.get("route_signal")
 
@@ -270,21 +273,6 @@ class MegaplanManifestBackend(LocalJournalBackend):
                     "ABORT": "gate:halt",
                 }.get(recommendation)
             return "gate:finalize"
-
-        if node_id == "tiebreaker_decide":
-            if isinstance(decision, str):
-                return {
-                    "ITERATE": "tiebreaker_decide:critique",
-                    "PROCEED": "tiebreaker_decide:finalize",
-                    "ESCALATE": "tiebreaker_decide:override",
-                }.get(decision)
-            if isinstance(recommendation, str):
-                return {
-                    "ITERATE": "tiebreaker_decide:critique",
-                    "PROCEED": "tiebreaker_decide:finalize",
-                    "ESCALATE": "tiebreaker_decide:override",
-                }.get(recommendation)
-            return None
 
         if node_id == "revise":
             if isinstance(next_step, str) and next_step in {"revise:loop", "critique"}:

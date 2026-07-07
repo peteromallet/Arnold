@@ -30,10 +30,16 @@
             133,
             139,
             145,
-            153
+            153,
+            181,
+            187,
+            193
           ],
           "latest_outcome": "discord_escalated",
           "types": [
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
             "repair_attempt",
             "repair_attempt",
             "repair_attempt",
@@ -173,10 +179,34 @@
             150,
             151,
             152,
-            154
+            154,
+            177,
+            178,
+            179,
+            180,
+            183,
+            184,
+            185,
+            186,
+            189,
+            190,
+            191,
+            192
           ],
           "latest_outcome": "attempted",
           "types": [
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
             "repair_attempt",
             "repair_attempt",
             "repair_attempt",
@@ -293,7 +323,7 @@
       "claims": [],
       "deadline_ts": null,
       "decisions": [],
-      "event_count": 135,
+      "event_count": 150,
       "events": [
         {
           "actor": "meta_repair",
@@ -3399,9 +3429,414 @@
           "timestamp": "2026-07-05T02:27:34.712582+00:00",
           "trigger": null,
           "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-05dc6a694ede",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 177,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-07T02:16:12.789760+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-1f8c46b28f57",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 178,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-07T02:16:13.465900+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-df6c9f52ca71",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 179,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-07T02:16:14.052068+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-10d1fc0f7c74",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 180,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-07T02:16:15.807249+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "ira-399e65e09359",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 181,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-07T02:16:17.036897+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-21a2802bfd52",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 183,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-07T02:21:20.562148+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-dc8c4ee4bab8",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 184,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-07T02:21:21.145117+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-996af47787d4",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 185,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-07T02:21:21.718352+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-093d963138e6",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 186,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-07T02:21:23.505614+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "ira-5cc67914dee6",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 187,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-07T02:21:24.708292+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-6bb63d0eda1e",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 189,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-07T02:26:39.044507+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-3f5b6bc2fba5",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 190,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-07T02:26:39.658411+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-f151ad90f6fd",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 191,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-07T02:26:40.282805+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-6bde6cb89361",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 192,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-07T02:26:42.016641+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-discord_escalated",
+          "deadline_ts": null,
+          "event_id": "ira-f8531c8abec3",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 193,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace",
+          "timestamp": "2026-07-07T02:26:43.093500+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
         }
       ],
       "evidence_refs": [
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
         {
           "data": {},
           "kind": "verification_record"
@@ -3946,12 +4381,12 @@
       "first_seq": 5,
       "first_timestamp": "2026-07-03T21:24:24.562997+00:00",
       "incident_id": "inc-demo-session",
-      "last_seq": 154,
-      "last_timestamp": "2026-07-05T02:27:34.712582+00:00",
+      "last_seq": 193,
+      "last_timestamp": "2026-07-07T02:26:43.093500+00:00",
       "latest_actor": "immediate_repair",
       "latest_kind": "incident.repair_attempt",
       "next_expected_event": "repair_attempt.verification",
-      "outcome": "attempted",
+      "outcome": "discord_escalated",
       "placeholders": {
         "install_freshness": "unknown",
         "recurrence": "repeated_attempts_without_new_evidence",
@@ -3967,11 +4402,41 @@
         "demo-session"
       ],
       "state": "repair_attempt",
-      "summary": "repair-data outcome=repairing plan=demo-plan kind=plan workspace=/tmp/pytest-of-root/pytest-701/test_repair_loop_serializes_sa0/ws"
+      "summary": "repair-data outcome=discord_escalated plan=demo-plan kind=chain workspace=/tmp/workspace"
     },
     {
       "actions": [],
       "attempts": [
+        {
+          "attempt_id": "megaplan-native-parity-corrective-attempted-15",
+          "event_seqs": [
+            170
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "megaplan-native-parity-corrective-attempted-16",
+          "event_seqs": [
+            174
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "megaplan-native-parity-corrective-attempted-17",
+          "event_seqs": [
+            196
+          ],
+          "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
         {
           "attempt_id": "megaplan-native-parity-corrective-attempted-4",
           "event_seqs": [
@@ -3988,6 +4453,26 @@
             165
           ],
           "latest_outcome": "attempted",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "megaplan-native-parity-corrective-discord_escalated-17",
+          "event_seqs": [
+            167
+          ],
+          "latest_outcome": "discord_escalated",
+          "types": [
+            "repair_attempt"
+          ]
+        },
+        {
+          "attempt_id": "megaplan-native-parity-corrective-discord_escalated-20",
+          "event_seqs": [
+            171
+          ],
+          "latest_outcome": "discord_escalated",
           "types": [
             "repair_attempt"
           ]
@@ -4206,9 +4691,237 @@
             "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
           },
           "seq": 164
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+            "repair_actor": "meta_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+          },
+          "seq": 168
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+          },
+          "seq": 169
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+            "repair_actor": "meta_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+          },
+          "seq": 173
+        },
+        {
+          "decision": {
+            "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+          },
+          "seq": 195
+        },
+        {
+          "decision": {
+            "corroboration": [
+              "execution_blocked: execute blocked by quality gates",
+              "chain last_state=blocked current_plan=s3-tiebreaker-and-replan-20260706-2045",
+              "chain log repeats status_stopped 9x L225..L8647",
+              "repair data has 3 repair iterations",
+              "repair data repeats same failure signature 3x"
+            ],
+            "hypothesis": "ESCALATE\n\nThis is a live blocked chain, not stale state. Primary ledger evidence says `stale_state_evidence.latest_failure_is_stale=false`, `stale_block_replay=false`, the incident summary is still `state=repair_attempt`, and the latest projected event is `immediate_repair` `discord_escalated` at `2026-07-07T00:42:22Z` with `next_expected_event=repair_attempt.verification`. Chain state still shows `last_state=blocked`, `current_plan_name=s3-tiebreaker-and-replan-20260706-2045`, `completed_count=3`.\n\nPipeline friction map: watchdog is alive and re-dispatching; immediate repair is repeating the same blocked signature; meta-repair launched but produced no verdict; GitHub publication has not happened. Corroboration matches that: the chain log repeats `status:\"stopped\"` 9 times (`L225..L8647`) with repeated `m3-tiebreaker-replan-native` starts (`L8298`, `L8644`, `L8985`), and repair-data records the same blocked failure signature 3 times across 3 iterations.\n\nThe operator-facing blocker is explicit in the primary audit: `incident_audit.next_expected_event=github_sync.publish` with finding `github_sync_publish_due`. That is consistent with local git state: branch `megaplan/s2-5-boundary-evidence-20260706-0751` has an unpublished local commit (`cbad8d78`) and chain state has `last_pushed_commit=null`. No user action gate exists: `user_actions.md` reports no human actions recorded.\n\nReconciled contradiction: `meta_record_count=0` does not prove a ledger bug. The meta-run exists (`20260706T213345Z`), but its captured response had no `FIXED`/`ESCALATE`/`NO_FIX` verdict; the current `arnold-meta-repair-loop` intentionally exits before persisting a launch-failure meta record in that case so recursion is not poisoned. That is corroborative friction, not the primary blocker.\n\nHypothesis: the session is genuinely blocked on the S3 tiebreaker/route-binding/topology alignment work, and the repair system is cycling around that live blocker while publication/ledger sync remains overdue.\n\nHighest-leverage next action: publish the current branch state, then reconcile the blocked S3 workspace outcome in the incident ledger rather than clearing state or patching Arnold repair code.",
+            "reconciler_findings": [
+              {
+                "code": "project_progress_observed",
+                "layer": "project_progress",
+                "message": "Projection state is bounded and ready for reconciliation.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "watchdog_observed",
+                "layer": "watchdog",
+                "message": "Watchdog evidence is fresh enough for this audit cycle.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "immediate_repair_observed",
+                "layer": "immediate_repair",
+                "message": "immediate_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "meta_repair_observed",
+                "layer": "meta_repair",
+                "message": "meta_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "install_sync_observed",
+                "layer": "install_sync",
+                "message": "Install-sync placeholders do not indicate a blocking mismatch.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "github_sync_publish_due",
+                "layer": "github_sync",
+                "message": "The persistent problem meets the GitHub sync threshold but no publication attempt was observed.",
+                "recommendation": "github_sync.publish",
+                "severity": "warn",
+                "status": "warn"
+              },
+              {
+                "code": "live_process_observed",
+                "layer": "live_process",
+                "message": "Live-process corroboration is present or not required for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "claims_current",
+                "layer": "stale_claim",
+                "message": "Claim deadlines are not currently stale.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "evidence_present",
+                "layer": "missing_evidence",
+                "message": "No missing evidence references were detected in the bounded brief.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "recurrence_clear",
+                "layer": "recurrence",
+                "message": "No recurrence signal is currently projected for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              }
+            ],
+            "reconciler_next_expected_event": "github_sync.publish"
+          },
+          "seq": 197
+        },
+        {
+          "decision": {
+            "corroboration": [
+              "execution_blocked: execute blocked by quality gates",
+              "chain last_state=blocked current_plan=s3-tiebreaker-and-replan-20260706-2045",
+              "chain log repeats status_stopped 9x L225..L8647",
+              "repair data has 3 repair iterations",
+              "repair data repeats same failure signature 3x"
+            ],
+            "hypothesis": "ESCALATE\n\nThis is a live blocked chain, not stale state. Primary ledger evidence says `stale_state_evidence.latest_failure_is_stale=false`, `stale_block_replay=false`, the incident summary is still `state=repair_attempt`, and the latest projected event is `immediate_repair` `discord_escalated` at `2026-07-07T00:42:22Z` with `next_expected_event=repair_attempt.verification`. Chain state still shows `last_state=blocked`, `current_plan_name=s3-tiebreaker-and-replan-20260706-2045`, `completed_count=3`.\n\nPipeline friction map: watchdog is alive and re-dispatching; immediate repair is repeating the same blocked signature; meta-repair launched but produced no verdict; GitHub publication has not happened. Corroboration matches that: the chain log repeats `status:\"stopped\"` 9 times (`L225..L8647`) with repeated `m3-tiebreaker-replan-native` starts (`L8298`, `L8644`, `L8985`), and repair-data records the same blocked failure signature 3 times across 3 iterations.\n\nThe operator-facing blocker is explicit in the primary audit: `incident_audit.next_expected_event=github_sync.publish` with finding `github_sync_publish_due`. That is consistent with local git state: branch `megaplan/s2-5-boundary-evidence-20260706-0751` has an unpublished local commit (`cbad8d78`) and chain state has `last_pushed_commit=null`. No user action gate exists: `user_actions.md` reports no human actions recorded.\n\nReconciled contradiction: `meta_record_count=0` does not prove a ledger bug. The meta-run exists (`20260706T213345Z`), but its captured response had no `FIXED`/`ESCALATE`/`NO_FIX` verdict; the current `arnold-meta-repair-loop` intentionally exits before persisting a launch-failure meta record in that case so recursion is not poisoned. That is corroborative friction, not the primary blocker.\n\nHypothesis: the session is genuinely blocked on the S3 tiebreaker/route-binding/topology alignment work, and the repair system is cycling around that live blocker while publication/ledger sync remains overdue.\n\nHighest-leverage next action: publish the current branch state, then reconcile the blocked S3 workspace outcome in the incident ledger rather than clearing state or patching Arnold repair code.",
+            "reconciler_findings": [
+              {
+                "code": "project_progress_observed",
+                "layer": "project_progress",
+                "message": "Projection state is bounded and ready for reconciliation.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "watchdog_observed",
+                "layer": "watchdog",
+                "message": "Watchdog evidence is fresh enough for this audit cycle.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "immediate_repair_observed",
+                "layer": "immediate_repair",
+                "message": "immediate_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "meta_repair_observed",
+                "layer": "meta_repair",
+                "message": "meta_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "install_sync_observed",
+                "layer": "install_sync",
+                "message": "Install-sync placeholders do not indicate a blocking mismatch.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "github_sync_publish_due",
+                "layer": "github_sync",
+                "message": "The persistent problem meets the GitHub sync threshold but no publication attempt was observed.",
+                "recommendation": "github_sync.publish",
+                "severity": "warn",
+                "status": "warn"
+              },
+              {
+                "code": "live_process_observed",
+                "layer": "live_process",
+                "message": "Live-process corroboration is present or not required for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "claims_current",
+                "layer": "stale_claim",
+                "message": "Claim deadlines are not currently stale.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "evidence_present",
+                "layer": "missing_evidence",
+                "message": "No missing evidence references were detected in the bounded brief.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "recurrence_clear",
+                "layer": "recurrence",
+                "message": "No recurrence signal is currently projected for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              }
+            ],
+            "reconciler_next_expected_event": "github_sync.publish"
+          },
+          "seq": 198
         }
       ],
-      "event_count": 12,
+      "event_count": 26,
       "events": [
         {
           "actor": "watchdog",
@@ -4756,6 +5469,640 @@
           "timestamp": "2026-07-06T05:18:09.586858+00:00",
           "trigger": null,
           "type": "verified_recovered"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "megaplan-native-parity-corrective-discord_escalated-17",
+          "deadline_ts": null,
+          "event_id": "ira-55c552dae9e0",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 167,
+          "session_id": "megaplan-native-parity-corrective",
+          "summary": "repair-data outcome=discord_escalated kind=chain workspace=/workspace/megaplan-native-parity-corrective/Arnold",
+          "timestamp": "2026-07-06T20:53:23.823473+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+            "repair_actor": "meta_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+          },
+          "event_id": "wdd-7ecd71e27290",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+              "repair_actor": "meta_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "meta_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 168,
+          "session_id": "megaplan-native-parity-corrective",
+          "summary": "meta-repair background-dispatched",
+          "timestamp": "2026-07-06T21:33:47.276842+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+          },
+          "event_id": "wdd-38c819cc8594",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 169,
+          "session_id": "megaplan-native-parity-corrective",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-07T00:18:50.275792+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "megaplan-native-parity-corrective-attempted-15",
+          "deadline_ts": null,
+          "event_id": "ira-97ff5f4abb85",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 170,
+          "session_id": "megaplan-native-parity-corrective",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/megaplan-native-parity-corrective/Arnold",
+          "timestamp": "2026-07-07T00:19:01.051681+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "megaplan-native-parity-corrective-discord_escalated-20",
+          "deadline_ts": null,
+          "event_id": "ira-3614903be53e",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "discord_escalated",
+          "parent": [],
+          "problem_id": null,
+          "seq": 171,
+          "session_id": "megaplan-native-parity-corrective",
+          "summary": "repair-data outcome=discord_escalated kind=chain workspace=/workspace/megaplan-native-parity-corrective/Arnold",
+          "timestamp": "2026-07-07T00:42:22.308004+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-011d48321965",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "stopped",
+              "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "stopped",
+          "parent": [],
+          "problem_id": null,
+          "seq": 172,
+          "session_id": "megaplan-native-parity-corrective",
+          "summary": "session stopped and needs repair attention",
+          "timestamp": "2026-07-07T01:34:57.132274+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+            "repair_actor": "meta_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+          },
+          "event_id": "wdd-5c491a6d39c1",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+              "repair_actor": "meta_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "meta_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 173,
+          "session_id": "megaplan-native-parity-corrective",
+          "summary": "meta-repair background-dispatched",
+          "timestamp": "2026-07-07T01:35:12.891885+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "megaplan-native-parity-corrective-attempted-16",
+          "deadline_ts": null,
+          "event_id": "ira-e388f0c9df41",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 174,
+          "session_id": "megaplan-native-parity-corrective",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/megaplan-native-parity-corrective/Arnold",
+          "timestamp": "2026-07-07T01:44:21.078611+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "repair_system",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "vr-33a6d251ddcb",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.verified_recovered",
+          "next_expected_event": null,
+          "outcome": "recovered",
+          "parent": [],
+          "problem_id": null,
+          "seq": 175,
+          "session_id": "megaplan-native-parity-corrective",
+          "summary": "repair-data outcome=live_with_fresh_activity kind=chain workspace=/workspace/megaplan-native-parity-corrective/Arnold",
+          "timestamp": "2026-07-07T01:45:07.883491+00:00",
+          "trigger": null,
+          "type": "verified_recovered"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "wd-35f0f24ac619",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "retrying_failure",
+              "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+            }
+          ],
+          "kind": "incident.detection",
+          "next_expected_event": "watchdog.dispatch",
+          "outcome": "retrying_failure",
+          "parent": [],
+          "problem_id": null,
+          "seq": 194,
+          "session_id": "megaplan-native-parity-corrective",
+          "summary": "session unhealthy and needs repair attention: retrying_failure",
+          "timestamp": "2026-07-07T02:33:10.287019+00:00",
+          "trigger": null,
+          "type": "detection"
+        },
+        {
+          "actor": "watchdog",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+            "repair_actor": "immediate_repair",
+            "status": "dispatched",
+            "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+          },
+          "event_id": "wdd-4df841a5e412",
+          "evidence": [
+            {
+              "kind": "watchdog_observation",
+              "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+              "repair_actor": "immediate_repair",
+              "status": "dispatched",
+              "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+            }
+          ],
+          "kind": "incident.dispatch",
+          "next_expected_event": "immediate_repair.repair_attempt",
+          "outcome": "dispatched",
+          "parent": [],
+          "problem_id": null,
+          "seq": 195,
+          "session_id": "megaplan-native-parity-corrective",
+          "summary": "repair loop background-dispatched",
+          "timestamp": "2026-07-07T02:33:11.730468+00:00",
+          "trigger": null,
+          "type": "dispatch"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "megaplan-native-parity-corrective-attempted-17",
+          "deadline_ts": null,
+          "event_id": "ira-7683a75d8035",
+          "evidence": [
+            {
+              "data": {},
+              "kind": "verification_record"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 196,
+          "session_id": "megaplan-native-parity-corrective",
+          "summary": "repair-data outcome=repairing kind=chain workspace=/workspace/megaplan-native-parity-corrective/Arnold",
+          "timestamp": "2026-07-07T02:33:23.522922+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "six_hour_auditor",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "corroboration": [
+              "execution_blocked: execute blocked by quality gates",
+              "chain last_state=blocked current_plan=s3-tiebreaker-and-replan-20260706-2045",
+              "chain log repeats status_stopped 9x L225..L8647",
+              "repair data has 3 repair iterations",
+              "repair data repeats same failure signature 3x"
+            ],
+            "hypothesis": "ESCALATE\n\nThis is a live blocked chain, not stale state. Primary ledger evidence says `stale_state_evidence.latest_failure_is_stale=false`, `stale_block_replay=false`, the incident summary is still `state=repair_attempt`, and the latest projected event is `immediate_repair` `discord_escalated` at `2026-07-07T00:42:22Z` with `next_expected_event=repair_attempt.verification`. Chain state still shows `last_state=blocked`, `current_plan_name=s3-tiebreaker-and-replan-20260706-2045`, `completed_count=3`.\n\nPipeline friction map: watchdog is alive and re-dispatching; immediate repair is repeating the same blocked signature; meta-repair launched but produced no verdict; GitHub publication has not happened. Corroboration matches that: the chain log repeats `status:\"stopped\"` 9 times (`L225..L8647`) with repeated `m3-tiebreaker-replan-native` starts (`L8298`, `L8644`, `L8985`), and repair-data records the same blocked failure signature 3 times across 3 iterations.\n\nThe operator-facing blocker is explicit in the primary audit: `incident_audit.next_expected_event=github_sync.publish` with finding `github_sync_publish_due`. That is consistent with local git state: branch `megaplan/s2-5-boundary-evidence-20260706-0751` has an unpublished local commit (`cbad8d78`) and chain state has `last_pushed_commit=null`. No user action gate exists: `user_actions.md` reports no human actions recorded.\n\nReconciled contradiction: `meta_record_count=0` does not prove a ledger bug. The meta-run exists (`20260706T213345Z`), but its captured response had no `FIXED`/`ESCALATE`/`NO_FIX` verdict; the current `arnold-meta-repair-loop` intentionally exits before persisting a launch-failure meta record in that case so recursion is not poisoned. That is corroborative friction, not the primary blocker.\n\nHypothesis: the session is genuinely blocked on the S3 tiebreaker/route-binding/topology alignment work, and the repair system is cycling around that live blocker while publication/ledger sync remains overdue.\n\nHighest-leverage next action: publish the current branch state, then reconcile the blocked S3 workspace outcome in the incident ledger rather than clearing state or patching Arnold repair code.",
+            "reconciler_findings": [
+              {
+                "code": "project_progress_observed",
+                "layer": "project_progress",
+                "message": "Projection state is bounded and ready for reconciliation.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "watchdog_observed",
+                "layer": "watchdog",
+                "message": "Watchdog evidence is fresh enough for this audit cycle.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "immediate_repair_observed",
+                "layer": "immediate_repair",
+                "message": "immediate_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "meta_repair_observed",
+                "layer": "meta_repair",
+                "message": "meta_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "install_sync_observed",
+                "layer": "install_sync",
+                "message": "Install-sync placeholders do not indicate a blocking mismatch.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "github_sync_publish_due",
+                "layer": "github_sync",
+                "message": "The persistent problem meets the GitHub sync threshold but no publication attempt was observed.",
+                "recommendation": "github_sync.publish",
+                "severity": "warn",
+                "status": "warn"
+              },
+              {
+                "code": "live_process_observed",
+                "layer": "live_process",
+                "message": "Live-process corroboration is present or not required for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "claims_current",
+                "layer": "stale_claim",
+                "message": "Claim deadlines are not currently stale.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "evidence_present",
+                "layer": "missing_evidence",
+                "message": "No missing evidence references were detected in the bounded brief.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "recurrence_clear",
+                "layer": "recurrence",
+                "message": "No recurrence signal is currently projected for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              }
+            ],
+            "reconciler_next_expected_event": "github_sync.publish"
+          },
+          "event_id": "sha-79e1e4d530ef",
+          "evidence": [
+            {
+              "kind": "incident_summary",
+              "path": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-native-parity-corrective.json",
+              "session_id": "megaplan-native-parity-corrective"
+            },
+            {
+              "kind": "problem_summary",
+              "path": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/incident-ledger/summaries/problems/problem-3b7df8021d2b.json",
+              "session_id": "megaplan-native-parity-corrective"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260706T192910Z-audit.json",
+              "session_id": "megaplan-native-parity-corrective"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260706T132854Z-audit.json",
+              "session_id": "megaplan-native-parity-corrective"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260706T072844Z-audit.json",
+              "session_id": "megaplan-native-parity-corrective"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-report.json",
+              "session_id": "megaplan-native-parity-corrective"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-reports/20260707T012827Z.json",
+              "session_id": "megaplan-native-parity-corrective"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-reports/20260707T003646Z.json",
+              "session_id": "megaplan-native-parity-corrective"
+            },
+            {
+              "kind": "incident_brief",
+              "session_id": "megaplan-native-parity-corrective",
+              "status": "2026-07-07T00:42:22.308004+00:00"
+            }
+          ],
+          "kind": "incident.six_hour_auditor.diagnosis",
+          "next_expected_event": "six_hour_auditor.audit_complete",
+          "outcome": "diagnosed",
+          "parent": [],
+          "problem_id": "problem-3b7df8021d2b",
+          "seq": 197,
+          "session_id": "megaplan-native-parity-corrective",
+          "summary": "Audit found 1 blocking layer(s) for inc-megaplan-native-parity-corrective: github_sync:github_sync_publish_due.",
+          "timestamp": "2026-07-07T02:34:56.117816+00:00",
+          "trigger": null,
+          "type": "six_hour_auditor.diagnosis"
+        },
+        {
+          "actor": "six_hour_auditor",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "decision": {
+            "corroboration": [
+              "execution_blocked: execute blocked by quality gates",
+              "chain last_state=blocked current_plan=s3-tiebreaker-and-replan-20260706-2045",
+              "chain log repeats status_stopped 9x L225..L8647",
+              "repair data has 3 repair iterations",
+              "repair data repeats same failure signature 3x"
+            ],
+            "hypothesis": "ESCALATE\n\nThis is a live blocked chain, not stale state. Primary ledger evidence says `stale_state_evidence.latest_failure_is_stale=false`, `stale_block_replay=false`, the incident summary is still `state=repair_attempt`, and the latest projected event is `immediate_repair` `discord_escalated` at `2026-07-07T00:42:22Z` with `next_expected_event=repair_attempt.verification`. Chain state still shows `last_state=blocked`, `current_plan_name=s3-tiebreaker-and-replan-20260706-2045`, `completed_count=3`.\n\nPipeline friction map: watchdog is alive and re-dispatching; immediate repair is repeating the same blocked signature; meta-repair launched but produced no verdict; GitHub publication has not happened. Corroboration matches that: the chain log repeats `status:\"stopped\"` 9 times (`L225..L8647`) with repeated `m3-tiebreaker-replan-native` starts (`L8298`, `L8644`, `L8985`), and repair-data records the same blocked failure signature 3 times across 3 iterations.\n\nThe operator-facing blocker is explicit in the primary audit: `incident_audit.next_expected_event=github_sync.publish` with finding `github_sync_publish_due`. That is consistent with local git state: branch `megaplan/s2-5-boundary-evidence-20260706-0751` has an unpublished local commit (`cbad8d78`) and chain state has `last_pushed_commit=null`. No user action gate exists: `user_actions.md` reports no human actions recorded.\n\nReconciled contradiction: `meta_record_count=0` does not prove a ledger bug. The meta-run exists (`20260706T213345Z`), but its captured response had no `FIXED`/`ESCALATE`/`NO_FIX` verdict; the current `arnold-meta-repair-loop` intentionally exits before persisting a launch-failure meta record in that case so recursion is not poisoned. That is corroborative friction, not the primary blocker.\n\nHypothesis: the session is genuinely blocked on the S3 tiebreaker/route-binding/topology alignment work, and the repair system is cycling around that live blocker while publication/ledger sync remains overdue.\n\nHighest-leverage next action: publish the current branch state, then reconcile the blocked S3 workspace outcome in the incident ledger rather than clearing state or patching Arnold repair code.",
+            "reconciler_findings": [
+              {
+                "code": "project_progress_observed",
+                "layer": "project_progress",
+                "message": "Projection state is bounded and ready for reconciliation.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "watchdog_observed",
+                "layer": "watchdog",
+                "message": "Watchdog evidence is fresh enough for this audit cycle.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "immediate_repair_observed",
+                "layer": "immediate_repair",
+                "message": "immediate_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "meta_repair_observed",
+                "layer": "meta_repair",
+                "message": "meta_repair is not the current blocker in this audit snapshot.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "install_sync_observed",
+                "layer": "install_sync",
+                "message": "Install-sync placeholders do not indicate a blocking mismatch.",
+                "recommendation": "repair_attempt.verification",
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "github_sync_publish_due",
+                "layer": "github_sync",
+                "message": "The persistent problem meets the GitHub sync threshold but no publication attempt was observed.",
+                "recommendation": "github_sync.publish",
+                "severity": "warn",
+                "status": "warn"
+              },
+              {
+                "code": "live_process_observed",
+                "layer": "live_process",
+                "message": "Live-process corroboration is present or not required for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "claims_current",
+                "layer": "stale_claim",
+                "message": "Claim deadlines are not currently stale.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "evidence_present",
+                "layer": "missing_evidence",
+                "message": "No missing evidence references were detected in the bounded brief.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              },
+              {
+                "code": "recurrence_clear",
+                "layer": "recurrence",
+                "message": "No recurrence signal is currently projected for this incident.",
+                "recommendation": null,
+                "severity": "ok",
+                "status": "ok"
+              }
+            ],
+            "reconciler_next_expected_event": "github_sync.publish"
+          },
+          "event_id": "shc-bcbd78b648cb",
+          "evidence": [
+            {
+              "kind": "incident_summary",
+              "path": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-native-parity-corrective.json",
+              "session_id": "megaplan-native-parity-corrective"
+            },
+            {
+              "kind": "problem_summary",
+              "path": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/incident-ledger/summaries/problems/problem-3b7df8021d2b.json",
+              "session_id": "megaplan-native-parity-corrective"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260706T192910Z-audit.json",
+              "session_id": "megaplan-native-parity-corrective"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260706T132854Z-audit.json",
+              "session_id": "megaplan-native-parity-corrective"
+            },
+            {
+              "kind": "audit_report_path",
+              "path": "/workspace/audit-reports/20260706T072844Z-audit.json",
+              "session_id": "megaplan-native-parity-corrective"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-report.json",
+              "session_id": "megaplan-native-parity-corrective"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-reports/20260707T012827Z.json",
+              "session_id": "megaplan-native-parity-corrective"
+            },
+            {
+              "kind": "watchdog_report_path",
+              "path": "/workspace/watchdog-reports/20260707T003646Z.json",
+              "session_id": "megaplan-native-parity-corrective"
+            },
+            {
+              "kind": "incident_brief",
+              "session_id": "megaplan-native-parity-corrective",
+              "status": "2026-07-07T00:42:22.308004+00:00"
+            }
+          ],
+          "kind": "incident.six_hour_auditor.audit_complete",
+          "next_expected_event": "github_sync.publish",
+          "outcome": "escalated",
+          "parent": [
+            "sha-79e1e4d530ef"
+          ],
+          "problem_id": "problem-3b7df8021d2b",
+          "seq": 198,
+          "session_id": "megaplan-native-parity-corrective",
+          "summary": "Audit found 1 blocking layer(s) for inc-megaplan-native-parity-corrective: github_sync:github_sync_publish_due.",
+          "timestamp": "2026-07-07T02:34:56.122211+00:00",
+          "trigger": null,
+          "type": "six_hour_auditor.audit_complete"
         }
       ],
       "evidence_refs": [
@@ -4772,6 +6119,60 @@
           "kind": "verification_record"
         },
         {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "data": {},
+          "kind": "verification_record"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260706T072844Z-audit.json",
+          "session_id": "megaplan-native-parity-corrective"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260706T072844Z-audit.json",
+          "session_id": "megaplan-native-parity-corrective"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260706T132854Z-audit.json",
+          "session_id": "megaplan-native-parity-corrective"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260706T132854Z-audit.json",
+          "session_id": "megaplan-native-parity-corrective"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260706T192910Z-audit.json",
+          "session_id": "megaplan-native-parity-corrective"
+        },
+        {
+          "kind": "audit_report_path",
+          "path": "/workspace/audit-reports/20260706T192910Z-audit.json",
+          "session_id": "megaplan-native-parity-corrective"
+        },
+        {
           "kind": "incident_brief",
           "session_id": "megaplan-native-parity-corrective",
           "status": "2026-07-06T01:06:05.309505+00:00"
@@ -4780,6 +6181,16 @@
           "kind": "incident_brief",
           "session_id": "megaplan-native-parity-corrective",
           "status": "2026-07-06T01:06:05.309505+00:00"
+        },
+        {
+          "kind": "incident_brief",
+          "session_id": "megaplan-native-parity-corrective",
+          "status": "2026-07-07T00:42:22.308004+00:00"
+        },
+        {
+          "kind": "incident_brief",
+          "session_id": "megaplan-native-parity-corrective",
+          "status": "2026-07-07T00:42:22.308004+00:00"
         },
         {
           "kind": "incident_summary",
@@ -4789,6 +6200,26 @@
         {
           "kind": "incident_summary",
           "path": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-native-parity-corrective.json",
+          "session_id": "megaplan-native-parity-corrective"
+        },
+        {
+          "kind": "incident_summary",
+          "path": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-native-parity-corrective.json",
+          "session_id": "megaplan-native-parity-corrective"
+        },
+        {
+          "kind": "incident_summary",
+          "path": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/incident-ledger/summaries/incidents/inc-megaplan-native-parity-corrective.json",
+          "session_id": "megaplan-native-parity-corrective"
+        },
+        {
+          "kind": "problem_summary",
+          "path": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/incident-ledger/summaries/problems/problem-3b7df8021d2b.json",
+          "session_id": "megaplan-native-parity-corrective"
+        },
+        {
+          "kind": "problem_summary",
+          "path": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/incident-ledger/summaries/problems/problem-3b7df8021d2b.json",
           "session_id": "megaplan-native-parity-corrective"
         },
         {
@@ -4820,6 +6251,27 @@
           "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
           "repair_actor": "immediate_repair",
           "status": "dispatched",
+          "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+          "repair_actor": "immediate_repair",
+          "status": "retrying_failure",
           "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
         },
         {
@@ -4847,7 +6299,28 @@
           "kind": "watchdog_observation",
           "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
           "repair_actor": "immediate_repair",
+          "status": "stopped",
+          "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+          "repair_actor": "immediate_repair",
           "status": "unhealthy",
+          "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+          "repair_actor": "meta_repair",
+          "status": "dispatched",
+          "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
+        },
+        {
+          "kind": "watchdog_observation",
+          "remote_spec": "/workspace/megaplan-native-parity-corrective/Arnold/.megaplan/initiatives/megaplan-native-parity-corrective/chain.yaml",
+          "repair_actor": "meta_repair",
+          "status": "dispatched",
           "workspace": "/workspace/megaplan-native-parity-corrective/Arnold"
         },
         {
@@ -4862,6 +6335,16 @@
         },
         {
           "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-report.json",
+          "session_id": "megaplan-native-parity-corrective"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-report.json",
+          "session_id": "megaplan-native-parity-corrective"
+        },
+        {
+          "kind": "watchdog_report_path",
           "path": "/workspace/watchdog-reports/20260706T010640Z.json",
           "session_id": "megaplan-native-parity-corrective"
         },
@@ -4878,36 +6361,59 @@
         {
           "kind": "watchdog_report_path",
           "path": "/workspace/watchdog-reports/20260706T010642Z.json",
+          "session_id": "megaplan-native-parity-corrective"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-reports/20260707T003646Z.json",
+          "session_id": "megaplan-native-parity-corrective"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-reports/20260707T003646Z.json",
+          "session_id": "megaplan-native-parity-corrective"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-reports/20260707T012827Z.json",
+          "session_id": "megaplan-native-parity-corrective"
+        },
+        {
+          "kind": "watchdog_report_path",
+          "path": "/workspace/watchdog-reports/20260707T012827Z.json",
           "session_id": "megaplan-native-parity-corrective"
         }
       ],
       "first_seq": 155,
       "first_timestamp": "2026-07-05T23:34:02.322711+00:00",
       "incident_id": "inc-megaplan-native-parity-corrective",
-      "last_seq": 166,
-      "last_timestamp": "2026-07-06T05:18:09.586858+00:00",
-      "latest_actor": "repair_system",
-      "latest_kind": "incident.verified_recovered",
-      "next_expected_event": null,
-      "outcome": "recovered",
+      "last_seq": 198,
+      "last_timestamp": "2026-07-07T02:34:56.122211+00:00",
+      "latest_actor": "six_hour_auditor",
+      "latest_kind": "incident.six_hour_auditor.audit_complete",
+      "next_expected_event": "github_sync.publish",
+      "outcome": "escalated",
       "placeholders": {
         "install_freshness": "unknown",
         "recurrence": "unknown",
         "shipped_fix": "unknown"
       },
       "problem_ids": [
+        "problem-3b7df8021d2b",
         "problem-55b5ebf18290",
         "problem-67a765759422",
+        "problem-9eb61fd41e68",
         "problem-ba6e85d2053d",
         "problem-bd43205325d0",
         "problem-bef9405c197d",
-        "problem-e20c45ae0eb0"
+        "problem-e20c45ae0eb0",
+        "problem-fc037a661409"
       ],
       "session_ids": [
         "megaplan-native-parity-corrective"
       ],
-      "state": "verified_recovered",
-      "summary": "repair-data outcome=live_with_fresh_activity kind=chain workspace=/workspace/megaplan-native-parity-corrective/Arnold"
+      "state": "six_hour_auditor.audit_complete",
+      "summary": "Audit found 1 blocking layer(s) for inc-megaplan-native-parity-corrective: github_sync:github_sync_publish_due."
     },
     {
       "actions": [],
@@ -4933,10 +6439,16 @@
             112,
             118,
             147,
-            148
+            148,
+            176,
+            182,
+            188
           ],
           "latest_outcome": "attempted",
           "types": [
+            "repair_attempt",
+            "repair_attempt",
+            "repair_attempt",
             "repair_attempt",
             "repair_attempt",
             "repair_attempt",
@@ -4962,7 +6474,7 @@
       "claims": [],
       "deadline_ts": null,
       "decisions": [],
-      "event_count": 19,
+      "event_count": 22,
       "events": [
         {
           "actor": "meta_repair",
@@ -5552,6 +7064,99 @@
           "timestamp": "2026-07-05T02:26:40.559591+00:00",
           "trigger": null,
           "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-7c3fb2ca15e2",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 176,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-07T02:15:52.445385+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-68b474cabab3",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 182,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-07T02:21:00.157126+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
+        },
+        {
+          "actor": "immediate_repair",
+          "attempt_id": "demo-session-repairing",
+          "deadline_ts": null,
+          "event_id": "ira-98c1e4add8f6",
+          "evidence": [
+            {
+              "data": {
+                "recorded_at": "2026-07-02T20:00:00+00:00"
+              },
+              "kind": "verification_record"
+            },
+            {
+              "ids": [
+                "attempt-demo-0001"
+              ],
+              "kind": "attempt_ids"
+            }
+          ],
+          "kind": "incident.repair_attempt",
+          "next_expected_event": "repair_attempt.verification",
+          "outcome": "attempted",
+          "parent": [],
+          "problem_id": null,
+          "seq": 188,
+          "session_id": "demo-session",
+          "summary": "repair-data outcome=repairing plan=m1-plan kind=chain workspace=/workspace/project",
+          "timestamp": "2026-07-07T02:26:19.115159+00:00",
+          "trigger": null,
+          "type": "repair_attempt"
         }
       ],
       "evidence_refs": [
@@ -5668,6 +7273,42 @@
             "recorded_at": "2026-07-02T20:00:00+00:00"
           },
           "kind": "verification_record"
+        },
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "data": {
+            "recorded_at": "2026-07-02T20:00:00+00:00"
+          },
+          "kind": "verification_record"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
+        },
+        {
+          "ids": [
+            "attempt-demo-0001"
+          ],
+          "kind": "attempt_ids"
         },
         {
           "ids": [
@@ -5787,9 +7428,9 @@
       "first_seq": 1,
       "first_timestamp": "2026-07-03T20:59:15.263244+00:00",
       "incident_id": "incident-42",
-      "last_seq": 148,
-      "last_timestamp": "2026-07-05T02:26:40.559591+00:00",
-      "latest_actor": "meta_repair",
+      "last_seq": 188,
+      "last_timestamp": "2026-07-07T02:26:19.115159+00:00",
+      "latest_actor": "immediate_repair",
       "latest_kind": "incident.repair_attempt",
       "next_expected_event": "repair_attempt.verification",
       "outcome": "attempted",
@@ -5810,6 +7451,24 @@
   ],
   "integrity": [
     {
+      "actual": "sha256:5d63df306a7cb80039a2b6544c81e20892277c2ed731ef4745036dd00317217e",
+      "code": "index_divergence",
+      "expected": "sha256:a7650ef18c56f97a9a28b12bf8db9e78b0a932348ada68efbf4699e99e83f9d3",
+      "message": "incidents projection source metadata diverged for digest: 'sha256:5d63df306a7cb80039a2b6544c81e20892277c2ed731ef4745036dd00317217e' != 'sha256:a7650ef18c56f97a9a28b12bf8db9e78b0a932348ada68efbf4699e99e83f9d3'",
+      "projection": "incidents",
+      "recommendation": "system.integrity_repair",
+      "severity": "error"
+    },
+    {
+      "actual": "sha256:5d63df306a7cb80039a2b6544c81e20892277c2ed731ef4745036dd00317217e",
+      "code": "index_divergence",
+      "expected": "sha256:a7650ef18c56f97a9a28b12bf8db9e78b0a932348ada68efbf4699e99e83f9d3",
+      "message": "problems projection source metadata diverged for digest: 'sha256:5d63df306a7cb80039a2b6544c81e20892277c2ed731ef4745036dd00317217e' != 'sha256:a7650ef18c56f97a9a28b12bf8db9e78b0a932348ada68efbf4699e99e83f9d3'",
+      "projection": "problems",
+      "recommendation": "system.integrity_repair",
+      "severity": "error"
+    },
+    {
       "code": "loop_break_repeated_attempt_no_new_evidence",
       "incident_id": "inc-demo-session",
       "message": "Repeated repair_attempt events did not add a new hypothesis or state change",
@@ -5829,10 +7488,10 @@
   "projection": "incidents",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:ab09fc8081db4dfd6875417b107ce99b006e11418e5e6082e22a7b202593f8c9",
-    "event_count": 166,
-    "journal_line_count": 166,
-    "last_seq": 166,
+    "digest": "sha256:a7650ef18c56f97a9a28b12bf8db9e78b0a932348ada68efbf4699e99e83f9d3",
+    "event_count": 198,
+    "journal_line_count": 198,
+    "last_seq": 198,
     "malformed_line_count": 0
   }
 }

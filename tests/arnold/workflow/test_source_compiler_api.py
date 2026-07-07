@@ -62,6 +62,7 @@ M3_INVALID_FIXTURES = (
     "invalid_m3_single_handler_wrapper",
     "invalid_m3_nonliteral_path_construction",
     "invalid_m3_megaplan_helper_fanout",
+    "invalid_m3_tiebreaker_single_call_carrier",
 )
 
 

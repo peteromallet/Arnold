@@ -9,12 +9,17 @@ from __future__ import annotations
 
 import argparse
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from arnold_pipelines.megaplan.handlers.override import _override_set_model, _override_set_profile
+from arnold_pipelines.megaplan.handlers.override import (
+    _override_replan,
+    _override_set_model,
+    _override_set_profile,
+)
 from arnold_pipelines.megaplan.handlers.structured_output import (
     _strip_unknown_keys,
     classify_scratch,
@@ -291,6 +296,789 @@ class TestTiebreakerOutcomeSemantics:
         from arnold_pipelines.megaplan.handlers._tiebreaker_impl import _route_signal_for_tiebreaker_action
 
         assert _route_signal_for_tiebreaker_action("replan") == "iterate"
+
+    def test_canonical_researcher_bridge_emits_typed_output_without_next_step(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import arnold_pipelines.megaplan.orchestration.tiebreaker_runtime as runtime
+        from arnold_pipelines.megaplan.handlers._tiebreaker_impl import handle_tiebreaker_run
+        from arnold_pipelines.megaplan.planning.state import STATE_TIEBREAKER_PENDING, STATE_TIEBREAKER_READY
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        (plan_dir / "gate.json").write_text(
+            json.dumps({"tiebreaker_question": "Which plan?", "tiebreaker_flag_ids": ["F1"]}),
+            encoding="utf-8",
+        )
+        state = {"name": "demo", "current_state": STATE_TIEBREAKER_PENDING}
+
+        @contextmanager
+        def fake_load_plan_locked(root: Path, plan: str | None, *, step: str):
+            assert step == "tiebreaker-researcher"
+            yield plan_dir, state
+
+        def fake_run_tiebreaker(root: Path, current_plan_dir: Path, current_state: dict[str, Any], args: argparse.Namespace) -> int:
+            assert args.question == "Which plan?"
+            (current_plan_dir / "tiebreaker_researcher.json").write_text(
+                json.dumps({"recommendation": "option-a", "summary": "research"}),
+                encoding="utf-8",
+            )
+            (current_plan_dir / "tiebreaker_challenger.json").write_text(
+                json.dumps({"recommendation": "option-b", "summary": "challenge"}),
+                encoding="utf-8",
+            )
+            (current_plan_dir / "tiebreaker.md").write_text("winner", encoding="utf-8")
+            return 0
+
+        monkeypatch.setattr(runtime, "load_plan_locked", fake_load_plan_locked)
+        monkeypatch.setattr("arnold_pipelines.megaplan._core.workflow_transition", lambda current_state, step: argparse.Namespace(next_state=STATE_TIEBREAKER_READY))
+        monkeypatch.setattr("arnold_pipelines.megaplan.prompts.tiebreaker_orchestrator._run_tiebreaker", fake_run_tiebreaker)
+
+        response = handle_tiebreaker_run(
+            tmp_path,
+            argparse.Namespace(
+                plan="demo",
+                node_id="tiebreaker_researcher",
+                phase_model=[],
+                agent=None,
+                hermes=None,
+                profile=None,
+                fresh=False,
+                persist=False,
+                ephemeral=False,
+            ),
+        )
+
+        assert response["step"] == "tiebreaker_researcher"
+        assert response["route_signal"] == "default"
+        assert response["research_findings"]["recommendation"] == "option-a"
+        assert "next_step" not in response
+        assert state["current_state"] == STATE_TIEBREAKER_READY
+
+    def test_canonical_decision_bridge_emits_lowercase_decision_without_next_step(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import arnold_pipelines.megaplan.orchestration.tiebreaker_runtime as runtime
+        from arnold_pipelines.megaplan.handlers._tiebreaker_impl import handle_tiebreaker_decide
+        from arnold_pipelines.megaplan.planning.state import STATE_CRITIQUED, STATE_TIEBREAKER_READY
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        (plan_dir / "gate.json").write_text(
+            json.dumps({"tiebreaker_question": "Which plan?", "tiebreaker_flag_ids": []}),
+            encoding="utf-8",
+        )
+        (plan_dir / "tiebreaker_researcher.json").write_text(
+            json.dumps({"recommendation": "option-a"}),
+            encoding="utf-8",
+        )
+        (plan_dir / "tiebreaker_challenger.json").write_text(
+            json.dumps({"recommendation": "option-b"}),
+            encoding="utf-8",
+        )
+        state = {
+            "name": "demo",
+            "current_state": STATE_TIEBREAKER_READY,
+            "plan_versions": [
+                {
+                    "version": 1,
+                    "file": "plan_v1.md",
+                    "hash": "sha256:plan",
+                    "timestamp": "2026-01-02T03:04:05Z",
+                }
+            ],
+        }
+        (plan_dir / "plan_v1.md").write_text("# plan\n", encoding="utf-8")
+
+        @contextmanager
+        def fake_load_plan_locked(root: Path, plan: str | None, *, step: str):
+            assert step == "tiebreaker-decision"
+            yield plan_dir, state
+
+        monkeypatch.setattr(runtime, "load_plan_locked", fake_load_plan_locked)
+        monkeypatch.setattr("arnold_pipelines.megaplan.audits.audit_engine.record_tiebreaker_audit", lambda *args, **kwargs: None)
+
+        response = handle_tiebreaker_decide(
+            tmp_path,
+            argparse.Namespace(
+                plan="demo",
+                node_id="tiebreaker_decision",
+                pick="option-a",
+                escalate=False,
+                replan=False,
+                rationale="pick it",
+            ),
+        )
+
+        assert response["step"] == "tiebreaker_decision"
+        assert response["route_signal"] == "proceed"
+        assert response["decision"] == "proceed"
+        assert "next_step" not in response
+        assert state["current_state"] == STATE_CRITIQUED
+
+    def test_legacy_decision_bridge_resolves_iterate_via_lowered_topology(self) -> None:
+        from arnold_pipelines.megaplan.handlers._tiebreaker_impl import _bridge_tiebreaker_next_step
+
+        assert _bridge_tiebreaker_next_step("tiebreaker_decide", "iterate") == "revise"
+        assert _bridge_tiebreaker_next_step("tiebreaker_decide", "escalate") == "override add-note"
+        assert _bridge_tiebreaker_next_step("tiebreaker_decision", "proceed") is None
+
+    def test_tiebreaker_replan_clears_stale_loop_state_without_promoting_parent_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import arnold_pipelines.megaplan.orchestration.tiebreaker_runtime as runtime
+        from arnold_pipelines.megaplan.handlers._tiebreaker_impl import handle_tiebreaker_decide
+        from arnold_pipelines.megaplan.planning.state import STATE_CRITIQUED, STATE_TIEBREAKER_READY
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        (plan_dir / "plan_v3.md").write_text("# plan\n", encoding="utf-8")
+        (plan_dir / "gate.json").write_text(
+            json.dumps({"tiebreaker_question": "Which plan?", "tiebreaker_flag_ids": []}),
+            encoding="utf-8",
+        )
+        (plan_dir / "tiebreaker_researcher.json").write_text(
+            json.dumps({"recommendation": "option-a"}),
+            encoding="utf-8",
+        )
+        (plan_dir / "tiebreaker_challenger.json").write_text(
+            json.dumps({"recommendation": "option-b"}),
+            encoding="utf-8",
+        )
+        state = {
+            "name": "demo",
+            "current_state": STATE_TIEBREAKER_READY,
+            "iteration": 3,
+            "plan_versions": [
+                {
+                    "version": 3,
+                    "file": "plan_v3.md",
+                    "hash": "sha256:plan",
+                    "timestamp": "2026-01-02T03:04:05Z",
+                }
+            ],
+            "meta": {"tiebreaker_count": 2, "user_approved_gate": True},
+            "last_gate": {"recommendation": "TIEBREAKER"},
+            "latest_failure": {"kind": "phase_failed"},
+            "resume_cursor": {"phase": "gate", "retry_strategy": "rerun_phase"},
+            "active_step": {"phase": "tiebreaker_decision"},
+        }
+
+        @contextmanager
+        def fake_load_plan_locked(root: Path, plan: str | None, *, step: str):
+            assert step == "tiebreaker-decision"
+            yield plan_dir, state
+
+        monkeypatch.setattr(runtime, "load_plan_locked", fake_load_plan_locked)
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.audits.audit_engine.record_tiebreaker_audit",
+            lambda *args, **kwargs: None,
+        )
+
+        response = handle_tiebreaker_decide(
+            tmp_path,
+            argparse.Namespace(
+                plan="demo",
+                node_id="tiebreaker_decision",
+                pick=None,
+                escalate=False,
+                replan=True,
+                rationale="start over with the same latest plan",
+            ),
+        )
+
+        decision_data = json.loads(
+            (plan_dir / "tiebreaker_decisions.json").read_text(encoding="utf-8")
+        )
+
+        assert response["route_signal"] == "iterate"
+        assert response["decision"] == "iterate"
+        assert state["current_state"] == STATE_CRITIQUED
+        assert state["last_gate"] == {}
+        assert state["meta"] == {}
+        assert "latest_failure" not in state
+        assert "resume_cursor" not in state
+        assert "active_step" not in state
+        assert decision_data[-1]["plan_file"] == "plan_v3.md"
+        assert decision_data[-1]["plan_iteration"] == 3
+
+
+class TestTiebreakerScenarioOutcomes:
+    """Split-outcome workflow scenarios that coordinate handlers, runtime state,
+    and finalization expectations.
+
+    These tests prove that every tiebreaker branch (proceed, iterate,
+    escalate, replan) lands on the expected ordinary path and that
+    replan rejoins the ordinary planning/critique/gate/finalize path
+    without bypassing finalize semantics after a subsequent proceed.
+    """
+
+    def test_proceed_decision_positions_for_gate_finalize_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Tiebreaker proceed → gate PROCEED → finalize chain intact."""
+        import arnold_pipelines.megaplan.orchestration.tiebreaker_runtime as runtime
+        from arnold_pipelines.megaplan.handlers._tiebreaker_impl import handle_tiebreaker_decide
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+        from arnold_pipelines.megaplan.planning.state import (
+            STATE_CRITIQUED,
+            STATE_GATED,
+            STATE_TIEBREAKER_READY,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        (plan_dir / "gate.json").write_text(
+            json.dumps({"tiebreaker_question": "Which plan?", "tiebreaker_flag_ids": []}),
+            encoding="utf-8",
+        )
+        (plan_dir / "tiebreaker_researcher.json").write_text(
+            json.dumps({"recommendation": "option-a"}),
+            encoding="utf-8",
+        )
+        (plan_dir / "tiebreaker_challenger.json").write_text(
+            json.dumps({"recommendation": "option-b"}),
+            encoding="utf-8",
+        )
+        state = {
+            "name": "demo",
+            "current_state": STATE_TIEBREAKER_READY,
+            "iteration": 1,
+            "config": {},
+            "meta": {},
+            "plan_versions": [
+                {
+                    "version": 1,
+                    "file": "plan_v1.md",
+                    "hash": "sha256:plan",
+                    "timestamp": "2026-01-02T03:04:05Z",
+                }
+            ],
+        }
+        (plan_dir / "plan_v1.md").write_text("# plan\n", encoding="utf-8")
+
+        @contextmanager
+        def fake_load_plan_locked(root: Path, plan: str | None, *, step: str):
+            assert step == "tiebreaker-decision"
+            yield plan_dir, state
+
+        monkeypatch.setattr(runtime, "load_plan_locked", fake_load_plan_locked)
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.audits.audit_engine.record_tiebreaker_audit",
+            lambda *args, **kwargs: None,
+        )
+
+        # Step 1: Tiebreaker picks "proceed"
+        response = handle_tiebreaker_decide(
+            tmp_path,
+            argparse.Namespace(
+                plan="demo",
+                node_id="tiebreaker_decision",
+                pick="option-a",
+                escalate=False,
+                replan=False,
+                rationale="pick it",
+            ),
+        )
+
+        assert response["route_signal"] == "proceed"
+        assert response["decision"] == "proceed"
+        assert state["current_state"] == STATE_CRITIQUED
+
+        # Step 2: Gate with PROCEED — verify finalize path is reachable
+        gate_summary = {
+            "recommendation": "PROCEED",
+            "passed": True,
+            "rationale": "ok",
+            "signals_assessment": "ok",
+            "warnings": [],
+            "criteria_check": {},
+            "preflight_results": {},
+            "unresolved_flags": [],
+            "orchestrator_guidance": "",
+        }
+        gate_outcome = _build_gate_route_signal(
+            state, gate_summary, robustness="standard", plan_dir=tmp_path
+        )
+        assert gate_outcome["result"] == "success"
+        assert gate_outcome["route_signal"] == "proceed"
+        assert state["current_state"] == STATE_GATED
+
+    def test_iterate_signal_from_replan_positions_for_revise_rejoin(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Tiebreaker replan produces iterate signal → state positioned for
+        revise → critique → gate. The 'iterate' route_signal is the canonical
+        signal emitted when the operator triggers replan."""
+        import arnold_pipelines.megaplan.orchestration.tiebreaker_runtime as runtime
+        from arnold_pipelines.megaplan.handlers._tiebreaker_impl import handle_tiebreaker_decide
+        from arnold_pipelines.megaplan.planning.state import (
+            STATE_CRITIQUED,
+            STATE_TIEBREAKER_READY,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        (plan_dir / "gate.json").write_text(
+            json.dumps({"tiebreaker_question": "Which plan?", "tiebreaker_flag_ids": []}),
+            encoding="utf-8",
+        )
+        (plan_dir / "tiebreaker_researcher.json").write_text(
+            json.dumps({"recommendation": "option-a"}),
+            encoding="utf-8",
+        )
+        (plan_dir / "tiebreaker_challenger.json").write_text(
+            json.dumps({"recommendation": "option-b"}),
+            encoding="utf-8",
+        )
+        state = {
+            "name": "demo",
+            "current_state": STATE_TIEBREAKER_READY,
+            "iteration": 1,
+            "config": {},
+            "meta": {},
+            "plan_versions": [
+                {
+                    "version": 1,
+                    "file": "plan_v1.md",
+                    "hash": "sha256:plan",
+                    "timestamp": "2026-01-02T03:04:05Z",
+                }
+            ],
+        }
+        (plan_dir / "plan_v1.md").write_text("# plan\n", encoding="utf-8")
+
+        @contextmanager
+        def fake_load_plan_locked(root: Path, plan: str | None, *, step: str):
+            assert step == "tiebreaker-decision"
+            yield plan_dir, state
+
+        monkeypatch.setattr(runtime, "load_plan_locked", fake_load_plan_locked)
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.audits.audit_engine.record_tiebreaker_audit",
+            lambda *args, **kwargs: None,
+        )
+
+        # replan action → iterate route_signal
+        response = handle_tiebreaker_decide(
+            tmp_path,
+            argparse.Namespace(
+                plan="demo",
+                node_id="tiebreaker_decision",
+                pick=None,
+                escalate=False,
+                replan=True,
+                rationale="iterate back through critique/gate",
+            ),
+        )
+
+        assert response["route_signal"] == "iterate"
+        assert response["decision"] == "iterate"
+        assert state["current_state"] == STATE_CRITIQUED
+        # The iterate signal resolves to "revise" in the lowered topology,
+        # so the workflow is positioned for the normal revise→critique→gate chain.
+
+    def test_escalate_decision_routes_to_awaiting_human(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Tiebreaker escalate → AWAITING_HUMAN_VERIFY state."""
+        import arnold_pipelines.megaplan.orchestration.tiebreaker_runtime as runtime
+        from arnold_pipelines.megaplan.handlers._tiebreaker_impl import handle_tiebreaker_decide
+        from arnold_pipelines.megaplan.planning.state import (
+            STATE_AWAITING_HUMAN_VERIFY,
+            STATE_TIEBREAKER_READY,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        (plan_dir / "gate.json").write_text(
+            json.dumps({"tiebreaker_question": "Which plan?", "tiebreaker_flag_ids": []}),
+            encoding="utf-8",
+        )
+        (plan_dir / "tiebreaker_researcher.json").write_text(
+            json.dumps({"recommendation": "option-a"}),
+            encoding="utf-8",
+        )
+        (plan_dir / "tiebreaker_challenger.json").write_text(
+            json.dumps({"recommendation": "option-b"}),
+            encoding="utf-8",
+        )
+        state = {
+            "name": "demo",
+            "current_state": STATE_TIEBREAKER_READY,
+            "iteration": 1,
+            "config": {},
+            "meta": {},
+            "plan_versions": [
+                {
+                    "version": 1,
+                    "file": "plan_v1.md",
+                    "hash": "sha256:plan",
+                    "timestamp": "2026-01-02T03:04:05Z",
+                }
+            ],
+        }
+        (plan_dir / "plan_v1.md").write_text("# plan\n", encoding="utf-8")
+
+        @contextmanager
+        def fake_load_plan_locked(root: Path, plan: str | None, *, step: str):
+            assert step == "tiebreaker-decision"
+            yield plan_dir, state
+
+        monkeypatch.setattr(runtime, "load_plan_locked", fake_load_plan_locked)
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.audits.audit_engine.record_tiebreaker_audit",
+            lambda *args, **kwargs: None,
+        )
+
+        response = handle_tiebreaker_decide(
+            tmp_path,
+            argparse.Namespace(
+                plan="demo",
+                node_id="tiebreaker_decision",
+                pick=None,
+                escalate=True,
+                replan=False,
+                rationale="escalate to human",
+            ),
+        )
+
+        assert response["route_signal"] == "escalate"
+        assert response["decision"] == "escalate"
+        assert state["current_state"] == STATE_AWAITING_HUMAN_VERIFY
+
+    def test_tiebreaker_replan_rejoins_ordinary_path_and_does_not_bypass_finalize(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Tiebreaker replan → iterate → positioned at critiqued → gate PROCEED →
+        finalize path is reachable, not bypassed."""
+        import arnold_pipelines.megaplan.orchestration.tiebreaker_runtime as runtime
+        from arnold_pipelines.megaplan.handlers._tiebreaker_impl import handle_tiebreaker_decide
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+        from arnold_pipelines.megaplan.planning.state import (
+            STATE_CRITIQUED,
+            STATE_GATED,
+            STATE_TIEBREAKER_READY,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        (plan_dir / "plan_v3.md").write_text("# plan\n", encoding="utf-8")
+        (plan_dir / "gate.json").write_text(
+            json.dumps({"tiebreaker_question": "Which plan?", "tiebreaker_flag_ids": []}),
+            encoding="utf-8",
+        )
+        (plan_dir / "tiebreaker_researcher.json").write_text(
+            json.dumps({"recommendation": "option-a"}),
+            encoding="utf-8",
+        )
+        (plan_dir / "tiebreaker_challenger.json").write_text(
+            json.dumps({"recommendation": "option-b"}),
+            encoding="utf-8",
+        )
+        state = {
+            "name": "demo",
+            "current_state": STATE_TIEBREAKER_READY,
+            "iteration": 3,
+            "config": {},
+            "plan_versions": [
+                {
+                    "version": 3,
+                    "file": "plan_v3.md",
+                    "hash": "sha256:plan",
+                    "timestamp": "2026-01-02T03:04:05Z",
+                }
+            ],
+            "meta": {"tiebreaker_count": 2, "user_approved_gate": True},
+            "last_gate": {"recommendation": "TIEBREAKER"},
+            "latest_failure": {"kind": "phase_failed"},
+            "resume_cursor": {"phase": "gate", "retry_strategy": "rerun_phase"},
+            "active_step": {"phase": "tiebreaker_decision"},
+        }
+
+        @contextmanager
+        def fake_load_plan_locked(root: Path, plan: str | None, *, step: str):
+            assert step == "tiebreaker-decision"
+            yield plan_dir, state
+
+        monkeypatch.setattr(runtime, "load_plan_locked", fake_load_plan_locked)
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.audits.audit_engine.record_tiebreaker_audit",
+            lambda *args, **kwargs: None,
+        )
+
+        # Step 1: Tiebreaker replan
+        response = handle_tiebreaker_decide(
+            tmp_path,
+            argparse.Namespace(
+                plan="demo",
+                node_id="tiebreaker_decision",
+                pick=None,
+                escalate=False,
+                replan=True,
+                rationale="start over",
+            ),
+        )
+
+        assert response["route_signal"] == "iterate"
+        assert response["decision"] == "iterate"
+        assert state["current_state"] == STATE_CRITIQUED
+
+        # Stale loop state is cleared
+        assert state["last_gate"] == {}
+        assert state["meta"] == {}
+        assert "latest_failure" not in state
+        assert "resume_cursor" not in state
+        assert "active_step" not in state
+
+        # Step 2: Gate with PROCEED — prove finalize path is reachable, not bypassed
+        gate_summary = {
+            "recommendation": "PROCEED",
+            "passed": True,
+            "rationale": "good plan",
+            "signals_assessment": "ok",
+            "warnings": [],
+            "criteria_check": {},
+            "preflight_results": {},
+            "unresolved_flags": [],
+            "orchestrator_guidance": "",
+        }
+        gate_outcome = _build_gate_route_signal(
+            state, gate_summary, robustness="standard", plan_dir=tmp_path
+        )
+        assert gate_outcome["result"] == "success"
+        assert gate_outcome["route_signal"] == "proceed"
+        assert state["current_state"] == STATE_GATED
+        # The ordinary finalize path follows STATE_GATED — the replan did not
+        # bypass finalize semantics.
+
+    def test_override_replan_rejoins_ordinary_planning_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Override replan → STATE_PLANNED, ready for ordinary
+        planning → critique → gate → finalize."""
+        from arnold_pipelines.megaplan.handlers.override import _override_replan
+        from arnold_pipelines.megaplan.planning.state import STATE_PLANNED
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        plan_file = plan_dir / "plan_v2.md"
+        plan_file.write_text("# plan\n", encoding="utf-8")
+
+        state = {
+            "name": "demo",
+            "current_state": "gated",
+            "iteration": 2,
+            "config": {},
+            "plan_versions": [
+                {
+                    "version": 2,
+                    "file": "plan_v2.md",
+                    "hash": "sha256:plan",
+                    "timestamp": "2026-01-02T03:04:05Z",
+                }
+            ],
+            "meta": {"tiebreaker_count": 1, "user_approved_gate": True},
+            "last_gate": {"recommendation": "ITERATE"},
+            "latest_failure": {"kind": "phase_failed"},
+            "resume_cursor": {"phase": "execute", "retry_strategy": "fresh_session"},
+            "active_step": {"phase": "execute"},
+        }
+
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.save_state_merge_meta",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.now_utc",
+            lambda: "2026-01-02T03:04:05Z",
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.latest_plan_path",
+            lambda *args, **kwargs: plan_file,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override._warn_best_effort_emit_failure",
+            lambda *args, **kwargs: None,
+        )
+
+        response = _override_replan(
+            tmp_path,
+            plan_dir,
+            state,
+            argparse.Namespace(reason="reset loop", note="preserve current plan"),
+        )
+
+        # Override replan positions at STATE_PLANNED
+        assert response["state"] == STATE_PLANNED
+        assert state["current_state"] == STATE_PLANNED
+
+        # Stale loop state is cleared
+        assert state["last_gate"] == {}
+        assert "latest_failure" not in state
+        assert "resume_cursor" not in state
+        assert "active_step" not in state
+
+        # Plan file is preserved
+        assert response["plan_file"] == str(plan_file)
+        assert state["meta"]["overrides"][-1]["from_state"] == "gated"
+        assert state["meta"]["overrides"][-1]["plan_file"] == "plan_v2.md"
+
+        # From STATE_PLANNED, the ordinary path is:
+        # planned → critique → gate → (proceed) → finalize → execute → review
+
+    def test_override_replan_then_gate_finalize_does_not_bypass_finalize(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Override replan → planned → critique → gate PROCEED → finalize
+        path is reachable. Proves override replan does not bypass finalize
+        semantics after a subsequent proceed."""
+        from arnold_pipelines.megaplan.handlers.override import _override_replan
+        from arnold_pipelines.megaplan.handlers.gate import _build_gate_route_signal
+        from arnold_pipelines.megaplan.planning.state import (
+            STATE_GATED,
+            STATE_PLANNED,
+        )
+
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        plan_file = plan_dir / "plan_v2.md"
+        plan_file.write_text("# plan\n", encoding="utf-8")
+
+        state = {
+            "name": "demo",
+            "current_state": "gated",
+            "iteration": 2,
+            "config": {},
+            "plan_versions": [
+                {
+                    "version": 2,
+                    "file": "plan_v2.md",
+                    "hash": "sha256:plan",
+                    "timestamp": "2026-01-02T03:04:05Z",
+                }
+            ],
+            "meta": {},
+            "last_gate": {"recommendation": "PROCEED"},
+            "latest_failure": {"kind": "phase_failed"},
+            "resume_cursor": {"phase": "execute", "retry_strategy": "fresh_session"},
+            "active_step": {"phase": "execute"},
+        }
+
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.save_state_merge_meta",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.now_utc",
+            lambda: "2026-01-02T03:04:05Z",
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.latest_plan_path",
+            lambda *args, **kwargs: plan_file,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override._warn_best_effort_emit_failure",
+            lambda *args, **kwargs: None,
+        )
+
+        # Step 1: Override replan → STATE_PLANNED
+        replan_response = _override_replan(
+            tmp_path,
+            plan_dir,
+            state,
+            argparse.Namespace(reason="replan from gated", note=None),
+        )
+
+        assert replan_response["state"] == STATE_PLANNED
+        assert state["current_state"] == STATE_PLANNED
+        assert "latest_failure" not in state
+        assert "resume_cursor" not in state
+        assert "active_step" not in state
+
+        # Step 2: After planning/critique, gate with PROCEED —
+        # prove finalize path is reachable, not bypassed
+        state["current_state"] = "critiqued"
+        gate_summary = {
+            "recommendation": "PROCEED",
+            "passed": True,
+            "rationale": "good plan after replan",
+            "signals_assessment": "ok",
+            "warnings": [],
+            "criteria_check": {},
+            "preflight_results": {},
+            "unresolved_flags": [],
+            "orchestrator_guidance": "",
+        }
+        gate_outcome = _build_gate_route_signal(
+            state, gate_summary, robustness="standard", plan_dir=tmp_path
+        )
+        assert gate_outcome["result"] == "success"
+        assert gate_outcome["route_signal"] == "proceed"
+        assert state["current_state"] == STATE_GATED
+        # The ordinary finalize path follows — replan did not bypass finalize.
+
+
+class TestOverrideReplanBehavior:
+    def test_override_replan_clears_stale_loop_state_and_records_plan_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        plan_file = plan_dir / "plan_v2.md"
+        plan_file.write_text("# plan\n", encoding="utf-8")
+
+        state = {
+            "name": "demo",
+            "current_state": "failed",
+            "iteration": 2,
+            "plan_versions": [
+                {
+                    "version": 2,
+                    "file": "plan_v2.md",
+                    "hash": "sha256:plan",
+                    "timestamp": "2026-01-02T03:04:05Z",
+                }
+            ],
+            "meta": {"tiebreaker_count": 1, "user_approved_gate": True},
+            "last_gate": {"recommendation": "ITERATE"},
+            "latest_failure": {"kind": "phase_failed"},
+            "resume_cursor": {"phase": "execute", "retry_strategy": "fresh_session"},
+            "active_step": {"phase": "execute"},
+        }
+
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.save_state_merge_meta",
+            lambda *args, **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.now_utc",
+            lambda: "2026-01-02T03:04:05Z",
+        )
+        monkeypatch.setattr(
+            "arnold_pipelines.megaplan.handlers.override.latest_plan_path",
+            lambda *args, **kwargs: plan_file,
+        )
+
+        response = _override_replan(
+            tmp_path,
+            plan_dir,
+            state,
+            argparse.Namespace(reason="reset loop", note="preserve current plan"),
+        )
+
+        assert response["state"] == "planned"
+        assert response["plan_file"] == str(plan_file)
+        assert state["current_state"] == "planned"
+        assert state["last_gate"] == {}
+        assert state["meta"]["overrides"][-1]["from_state"] == "failed"
+        assert state["meta"]["overrides"][-1]["plan_file"] == "plan_v2.md"
+        assert state["meta"]["notes"][-1]["note"] == "preserve current plan"
+        assert "tiebreaker_count" not in state["meta"]
+        assert "user_approved_gate" not in state["meta"]
+        assert "latest_failure" not in state
+        assert "resume_cursor" not in state
+        assert "active_step" not in state
 
 
 class TestOverrideFallbackChains:

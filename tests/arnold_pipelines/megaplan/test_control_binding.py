@@ -90,3 +90,67 @@ def test_set_model_replaces_encoded_chain_with_scalar_spec() -> None:
     override_entry = meta_delta.value["overrides"][-1]
     assert override_entry["previous_spec"] == '__fallback_json__:["codex:gpt-5.5","claude:claude-sonnet-4-6"]'
     assert override_entry["new_spec"] == "claude:claude-opus-4-7"
+
+
+def test_replan_transition_clears_stale_loop_state_and_records_latest_plan(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.planning.control_binding.latest_plan_path",
+        lambda plan_dir, state: plan_dir / "plan_v4.md",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.planning.control_binding.now_utc",
+        lambda: "2026-01-02T03:04:05Z",
+    )
+
+    state = {
+        "name": "demo",
+        "current_state": "failed",
+        "config": {},
+        "iteration": 4,
+        "plan_versions": [
+            {
+                "version": 4,
+                "file": "plan_v4.md",
+                "hash": "sha256:plan",
+                "timestamp": "2026-01-02T03:04:05Z",
+            }
+        ],
+        "meta": {"tiebreaker_count": 2, "user_approved_gate": True},
+        "last_gate": {"recommendation": "ITERATE"},
+        "latest_failure": {"kind": "phase_failed"},
+        "resume_cursor": {"phase": "execute", "retry_strategy": "fresh_session"},
+        "active_step": {"phase": "execute"},
+    }
+
+    result = planning_control_binding().apply_transition(
+        planning_run_state_view(state),
+        ControlTransition(
+            op="override",
+            target_id="replan",
+            payload={
+                "plan_dir": str(Path.cwd()),
+                "reason": "reset loop",
+                "note": "preserve current plan",
+            },
+        ),
+    )
+
+    assert result.accepted is True
+    assert result.artifacts["plan_file"].endswith("plan_v4.md")
+    assert result.artifacts["remove_state_keys"] == (
+        "active_step",
+        "latest_failure",
+        "resume_cursor",
+    )
+
+    current_state_delta = next(delta for delta in result.state_deltas if delta.key == "current_state")
+    last_gate_delta = next(delta for delta in result.state_deltas if delta.key == "last_gate")
+    meta_delta = next(delta for delta in result.state_deltas if delta.key == "meta")
+
+    assert current_state_delta.value == "planned"
+    assert last_gate_delta.value == {}
+    assert meta_delta.value["overrides"][-1]["from_state"] == "failed"
+    assert meta_delta.value["overrides"][-1]["plan_file"] == "plan_v4.md"
+    assert meta_delta.value["notes"][-1]["note"] == "preserve current plan"
+    assert "tiebreaker_count" not in meta_delta.value
+    assert "user_approved_gate" not in meta_delta.value

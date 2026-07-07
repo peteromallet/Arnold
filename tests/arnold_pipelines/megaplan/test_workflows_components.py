@@ -34,8 +34,12 @@ class TestWorkflowComponents:
             "critique",
             "gate",
             "revise",
-            "tiebreaker_run",
-            "tiebreaker_decide",
+            "tiebreaker_run",  # bridge-only: legacy carrier
+            "tiebreaker_decide",  # bridge-only: legacy carrier
+            "tiebreaker_researcher",
+            "tiebreaker_challenger",
+            "tiebreaker_synthesis",
+            "tiebreaker_decision",
             "finalize",
             "execute",
             "review",
@@ -675,8 +679,12 @@ class TestSubworkflowSchemaDeclarations:
                 "critique:input", "critique:output",
                 "gate:input", "gate:output",
                 "revise:input", "revise:output",
-                "tiebreaker_run:input", "tiebreaker_run:output",
-                "tiebreaker_decide:input", "tiebreaker_decide:output",
+                "tiebreaker_run:input", "tiebreaker_run:output",  # bridge-only
+                "tiebreaker_decide:input", "tiebreaker_decide:output",  # bridge-only
+                "tiebreaker_researcher:input", "tiebreaker_researcher:output",
+                "tiebreaker_challenger:input", "tiebreaker_challenger:output",
+                "tiebreaker_synthesis:input", "tiebreaker_synthesis:output",
+                "tiebreaker_decision:input", "tiebreaker_decision:output",
                 "finalize:input", "finalize:output",
                 "execute:input", "execute:output",
                 "review:input", "review:output",
@@ -688,12 +696,12 @@ class TestSubworkflowSchemaDeclarations:
         actual_ids = [s.id for s in SCHEMA_COMPONENTS]
         assert actual_ids == expected_ids, f"Schema IDs mismatch:\n  got: {actual_ids}\n  expected: {expected_ids}"
 
-    def test_schema_count_is_24(self) -> None:
-        """There are 24 schema components: 11 input + 13 output (HALT and SUSPEND have no input)."""
+    def test_schema_count_is_32(self) -> None:
+        """There are 32 schema components: 15 input + 17 output (HALT and SUSPEND have no input)."""
         from arnold_pipelines.megaplan.workflows import SCHEMA_COMPONENTS
 
-        assert len(SCHEMA_COMPONENTS) == 24, (
-            f"Expected 24 schema components, got {len(SCHEMA_COMPONENTS)}"
+        assert len(SCHEMA_COMPONENTS) == 32, (
+            f"Expected 32 schema components, got {len(SCHEMA_COMPONENTS)}"
         )
 
     def test_schema_types_are_input_or_output(self) -> None:
@@ -842,12 +850,13 @@ class TestPolicyPlacement:
         assert workflows.TIEBREAKER_POLICY.metadata["route_surface"] == {
             "run_completion_route": {
                 "route_signal": "default",
-                "target_ref": "tiebreaker_decide",
+                "target_ref": "tiebreaker_decision",
                 "failure_behavior": "complete_decision_cycle_with_recorded_artifacts",
             },
             "decision_routes": {
                 "pick": {"route_signal": "proceed", "target_ref": "finalize"},
-                "replan": {"route_signal": "iterate", "target_ref": "critique-fanout"},
+                "replan": {"route_signal": "replan", "target_ref": "revise"},
+                "reiterate": {"route_signal": "iterate", "target_ref": "critique-fanout"},
                 "escalate": {"route_signal": "escalate", "target_ref": "override"},
             },
             "fallback_route_signal": "escalate",
