@@ -418,7 +418,9 @@ def build_parser() -> argparse.ArgumentParser:
     # Also add aliases for other COMMAND_HANDLERS that are reached via main()
     # but never registered in the parser.
     for _cmd in ("introspect", "trace", "doctor", "record-tag"):
-        subparsers.add_parser(_cmd)
+        observability_parser = subparsers.add_parser(_cmd)
+        observability_parser.add_argument("--project-dir", default=None)
+        observability_parser.add_argument("--plan")
 
     return parser
 from .status_view import (

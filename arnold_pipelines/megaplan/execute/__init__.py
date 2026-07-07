@@ -1,5 +1,7 @@
 """Execute policy package — canonical plugin-local execute surface."""
 
+from . import policy as policy
+
 from arnold_pipelines.megaplan.execute.batch import (
     BatchResult,
     _active_sense_check_ids,
@@ -61,6 +63,7 @@ from arnold_pipelines.megaplan.execute.merge import (
 
 __all__ = [
     "BatchResult",
+    "policy",
     "build_blocking_reasons",
     "build_monitor_hint",
     "handle_execute_auto_loop",
