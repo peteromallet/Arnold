@@ -96,6 +96,10 @@ def test_publish_done_plan_records_push_timeout_without_raising(monkeypatch, tmp
             return "committed"
         if argv[:3] == ["git", "push", "--no-verify"]:
             raise CliError("git_publish_timeout", "git push timed out after 180 seconds")
+        if argv[:4] == ["git", "ls-remote", "--heads", "origin"]:
+            return ""
+        if argv == ["git", "remote", "get-url", "origin"]:
+            return ""
         raise AssertionError(f"unexpected git command: {argv}")
 
     class Completed:
@@ -117,8 +121,51 @@ def test_publish_done_plan_records_push_timeout_without_raising(monkeypatch, tmp
     assert payload["status"] == "publish_failed"
     assert payload["reason"] == "git_publish_timeout"
     assert payload["push_output"] == "git push timed out after 180 seconds"
-    assert "reason=git_publish_timeout" in lines[-1]
+    assert "publish publish_failed" in lines[-1]
     assert json.loads((plan_dir / "publish.json").read_text(encoding="utf-8")) == payload
+
+
+def test_publish_done_plan_accepts_push_timeout_when_remote_has_commit(monkeypatch, tmp_path: Path) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+
+    def fake_git_text(root: Path, argv: list[str], *, timeout: int = 120) -> str:
+        if argv == ["git", "status", "--porcelain"]:
+            return " M changed.txt"
+        if argv == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
+            return "feature"
+        if argv == ["git", "rev-parse", "HEAD"]:
+            return "abc1234567890"
+        if argv[:2] == ["git", "switch"] or argv[:2] == ["git", "add"]:
+            return ""
+        if argv[:2] == ["git", "commit"]:
+            return "committed"
+        if argv[:3] == ["git", "push", "--no-verify"]:
+            raise CliError("git_publish_timeout", "git push timed out after 180 seconds")
+        if argv[:4] == ["git", "ls-remote", "--heads", "origin"]:
+            return "abc1234567890\trefs/heads/megaplan/demo"
+        if argv == ["git", "remote", "get-url", "origin"]:
+            return "git@github.com:example/repo.git"
+        raise AssertionError(f"unexpected git command: {argv}")
+
+    class Completed:
+        returncode = 1
+
+    monkeypatch.setattr(auto, "_git_text", fake_git_text)
+    monkeypatch.setattr(auto.subprocess, "run", lambda *args, **kwargs: Completed())
+
+    payload = auto._publish_done_plan(
+        plan="demo",
+        plan_dir=plan_dir,
+        root=tmp_path,
+        branch=None,
+        writer=lambda _: None,
+    )
+
+    assert payload is not None
+    assert payload["status"] == "pushed"
+    assert payload["reason"] == "remote_verified_after_push_error"
+    assert payload["push_output"] == "git push timed out after 180 seconds"
 
 
 def test_drive_forwards_live_phase_model_to_phase_subprocess(

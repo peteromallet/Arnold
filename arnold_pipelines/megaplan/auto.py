@@ -3194,14 +3194,25 @@ def _auto_publish_branch_name(plan: str) -> str:
 
 
 def _git_text(root: Path, argv: list[str], *, timeout: int = 120) -> str:
-    result = subprocess.run(
-        argv,
-        cwd=str(root),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=timeout,
-    )
+    try:
+        result = subprocess.run(
+            argv,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise CliError(
+            "git_publish_timeout",
+            f"{shlex.join(argv)} timed out after {timeout} seconds",
+            extra={
+                "argv": argv,
+                "stdout": exc.stdout,
+                "stderr": exc.stderr,
+            },
+        ) from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         raise CliError(
@@ -3215,6 +3226,18 @@ def _git_text(root: Path, argv: list[str], *, timeout: int = 120) -> str:
 
 def _git_has_changes(root: Path) -> bool:
     return bool(_git_text(root, ["git", "status", "--porcelain"]))
+
+
+def _remote_branch_head(root: Path, branch: str) -> str | None:
+    try:
+        output = _git_text(root, ["git", "ls-remote", "--heads", "origin", branch], timeout=60)
+    except CliError:
+        return None
+    for line in output.splitlines():
+        parts = line.split()
+        if parts:
+            return parts[0].strip() or None
+    return None
 
 
 def _publish_done_plan(
@@ -3274,11 +3297,22 @@ def _publish_done_plan(
     remote_url = ""
     push_result = None
     if status == "pushed":
-        push_result = _git_text(
-            root,
-            ["git", "push", "--no-verify", "-u", "origin", f"HEAD:{target_branch}"],
-            timeout=180,
-        )
+        try:
+            push_result = _git_text(
+                root,
+                ["git", "push", "--no-verify", "-u", "origin", f"HEAD:{target_branch}"],
+                timeout=180,
+            )
+        except CliError as exc:
+            remote_head = _remote_branch_head(root, target_branch)
+            if remote_head == commit_sha:
+                status = "pushed"
+                reason = "remote_verified_after_push_error"
+                push_result = exc.message
+            else:
+                status = "publish_failed"
+                reason = exc.code
+                push_result = exc.message
         try:
             remote_url = _git_text(root, ["git", "remote", "get-url", "origin"])
         except CliError:
