@@ -1,1 +1,1 @@
-/workspace/megaplan-native-parity-corrective/Arnold/arnold_pipelines/megaplan/data/superfixer_debug_skill.md
+/workspace/extension-reality-chain-restart-continuation/arnold/.megaplan/runtime/editable-engine/arnold_pipelines/megaplan/data/superfixer_debug_skill.md
