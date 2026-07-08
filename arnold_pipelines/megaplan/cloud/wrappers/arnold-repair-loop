@@ -867,6 +867,36 @@ except Exception:
 marker_path = pathlib.Path(sys.argv[1])
 data_path = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else None
 session = str(marker_payload.get("session") or "").strip()
+
+
+def chain_health_block_reason() -> str:
+    if not session:
+        return ""
+    candidates: list[pathlib.Path] = [marker_path.parent / f"{session}.chain-health.progress.json"]
+    if data_path is not None:
+        candidates.append(data_path.parent / f"{session}.chain-health.json")
+    for candidate in candidates:
+        payload = load_json(str(candidate))
+        if not payload or payload.get("chain_complete") is not False:
+            continue
+        status = str(payload.get("status") or payload.get("issue_kind") or "chain_health_failure").strip()
+        try:
+            completed_count = int(payload.get("completed_count") or 0)
+        except Exception:
+            completed_count = 0
+        try:
+            milestone_count = int(payload.get("milestone_count") or 0)
+        except Exception:
+            milestone_count = 0
+        pr_state = str(payload.get("pr_state") or "").strip().lower()
+        if milestone_count and completed_count < milestone_count:
+            return f"chain_health:{status}:{completed_count}/{milestone_count}"
+        if pr_state and pr_state not in {"merged", "closed"}:
+            return f"chain_health:{status}:{pr_state}"
+        return f"chain_health:{status}"
+    return ""
+
+
 if session:
     record = resolve_current_target(
         session,
@@ -890,6 +920,10 @@ if session:
 text = json.dumps(marker_payload, sort_keys=True)
 if "workspace_drift:" in text or "sandbox_refused_outside_project_root" in text:
     print("workspace_drift")
+    raise SystemExit(0)
+chain_health_reason = chain_health_block_reason()
+if chain_health_reason:
+    print(chain_health_reason)
     raise SystemExit(0)
 workspace = pathlib.Path(str(marker_payload.get("workspace") or ""))
 if workspace.exists():
