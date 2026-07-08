@@ -18,6 +18,7 @@ from arnold_pipelines.megaplan.chain import (
 )
 from arnold_pipelines.megaplan.chain.spec import ChainState, load_spec
 from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_PR_MERGE
+from arnold_pipelines.megaplan.run_state import CanonicalRunState, CanonicalState
 
 
 def _git(root: Path, *args: str) -> str:
@@ -205,6 +206,19 @@ def _write_execute_authority_plan(root: Path, *, base_sha: str) -> Path:
 
 def _record() -> dict[str, object]:
     return {"label": "m1", "plan": "plan-m1", "status": "done"}
+
+
+def _canonical(state: CanonicalState, **overrides: object) -> CanonicalRunState:
+    payload: dict[str, object] = {
+        "canonical_state": state,
+        "confidence": "high",
+        "source_of_truth": ("test",),
+        "repairable": False,
+        "running": False,
+        "reason": state.name,
+    }
+    payload.update(overrides)
+    return CanonicalRunState(**payload)
 
 
 def _write_chain_spec(root: Path) -> Path:
@@ -957,6 +971,263 @@ def test_run_chain_recovers_unclaimed_dirty_paths_from_active_execute(
         "src/scratch.py"
     ]
     assert "src/scratch.py" not in _git(tmp_path, "status", "--porcelain")
+
+
+def test_run_chain_recovers_stale_merged_pr_for_canonical_eligible_states(
+    tmp_path: Path,
+) -> None:
+    cases = (
+        (
+            "running",
+            "awaiting_human",
+            {"active_step": {"phase": "execute", "run_id": "worker-1"}},
+            "authority_divergence",
+            "RUNNING",
+        ),
+        (
+            "retryable",
+            "blocked",
+            {
+                "resume_cursor": {"phase": "execute", "retry_strategy": "fresh_session"},
+                "latest_failure": {
+                    "phase": "execute",
+                    "kind": "execution_blocked",
+                    "message": "budget exhausted",
+                },
+            },
+            "authority_divergence",
+            "RETRYABLE_EXECUTION_BLOCK",
+        ),
+    )
+
+    for name, current_state, plan_overrides, last_state, expected_canonical_state in cases:
+        root = tmp_path / name
+        root.mkdir()
+        base = _init_repo(root)
+        spec_path = _write_chain_spec(root)
+        _git(root, "add", "chain.yaml", "idea.md", "NORTHSTAR.md")
+        _git(root, "commit", "-m", "track chain inputs")
+        plan_dir = _write_plan(
+            root,
+            current_state=current_state,
+            base_sha=base,
+            finalize_tasks=[{"id": "T1", "status": "done", "files_changed": ["src/app.py"]}],
+            execution_batch=False,
+        )
+        state_path = plan_dir / "state.json"
+        state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+        state_payload.update(plan_overrides)
+        state_path.write_text(json.dumps(state_payload) + "\n", encoding="utf-8")
+        (plan_dir / "finalize.json").write_text(
+            json.dumps(
+                {"tasks": [{"id": "T1", "status": "done", "files_changed": ["src/app.py"]}]}
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (root / "src" / "app.py").write_text("print('local only')\n", encoding="utf-8")
+        save_chain_state(
+            spec_path,
+            ChainState(
+                current_milestone_index=0,
+                current_plan_name="plan-m1",
+                last_state=last_state,
+                pr_number=122,
+                pr_state="merged",
+            ),
+        )
+
+        def fake_commit_and_push(
+            repo_root: Path,
+            branch: str,
+            plan: str,
+            phase: str,
+            *,
+            writer,
+            preexisting_dirty_paths: list[Path] | None = None,
+        ) -> None:
+            assert branch == "test/m1"
+            assert plan == "plan-m1"
+            assert phase == "stale-merged-pr-recovery"
+            _git(repo_root, "add", "src/app.py")
+            _git(repo_root, "commit", "-m", f"recover stale merged pr {name}")
+
+        with (
+            patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
+            patch(
+                "arnold_pipelines.megaplan.chain._refresh_base_branch",
+                lambda *args, **kwargs: None,
+            ),
+            patch("arnold_pipelines.megaplan.chain._pr_state", return_value="merged"),
+            patch("arnold_pipelines.megaplan.chain._plan_state", return_value=current_state),
+            patch(
+                "arnold_pipelines.megaplan.chain._commit_and_push_phase",
+                side_effect=fake_commit_and_push,
+            ) as commit_and_push,
+            patch("arnold_pipelines.megaplan.chain._checkout_milestone_branch"),
+            patch("arnold_pipelines.megaplan.chain._capture_sync_state"),
+            patch("arnold_pipelines.megaplan.chain._ensure_milestone_pr", return_value=123),
+            patch(
+                "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+                return_value=chain_module.DriverOutcome(
+                    status="finalized",
+                    plan="plan-m1",
+                    final_state="finalized",
+                    iterations=1,
+                    reason="still executing",
+                ),
+            ) as drive,
+            patch("arnold_pipelines.megaplan.chain._run_milestone_validations_blocking") as validate,
+        ):
+            result = run_chain(
+                spec_path,
+                root,
+                writer=lambda _msg: None,
+                mode="execute",
+            )
+
+        validate.assert_not_called()
+        commit_and_push.assert_called_once()
+        drive.assert_called_once()
+        saved = load_chain_state(spec_path)
+        assert result["status"] == "stopped"
+        assert saved.pr_number == 123
+        assert saved.pr_state == "open"
+        assert (
+            saved.metadata["stale_merged_pr_recovery"]["canonical_state"]
+            == expected_canonical_state
+        )
+        assert "src/app.py" not in _git(root, "status", "--porcelain")
+
+
+def test_recover_stale_merged_pr_accepts_canonical_repairing_state(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    spec_path = _write_chain_spec(tmp_path)
+    _git(tmp_path, "add", "chain.yaml", "idea.md", "NORTHSTAR.md")
+    _git(tmp_path, "commit", "-m", "track chain inputs")
+    _write_plan(
+        tmp_path,
+        current_state="awaiting_human",
+        finalize_tasks=[{"id": "T1", "status": "done", "files_changed": ["src/app.py"]}],
+        execution_batch=False,
+    )
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="plan-m1",
+        last_state="authority_divergence",
+        pr_number=122,
+        pr_state="merged",
+    )
+    spec = load_spec(spec_path)
+
+    recovered_state, recovery_reason = chain_module._recover_stale_merged_pr_for_unfinished_plan(
+        tmp_path,
+        spec_path,
+        state,
+        spec.milestones[0],
+        {"current_state": "awaiting_human"},
+        canonical_run_state=_canonical(CanonicalState.REPAIRING, repairable=True),
+        writer=lambda _msg: None,
+    )
+
+    assert recovered_state is not None
+    assert recovered_state.pr_number is None
+    assert recovered_state.metadata["stale_merged_pr_recovery"]["canonical_state"] == "REPAIRING"
+    assert "cleared stale PR cursor" in recovery_reason
+
+
+def test_run_chain_blocks_stale_merged_pr_recovery_for_unsafe_canonical_states(
+    tmp_path: Path,
+) -> None:
+    cases = (
+        (
+            "stale-derived",
+            "blocked",
+            {"active_step": {"phase": "execute", "run_id": "worker-1"}},
+            "authority_divergence",
+            "STALE_DERIVED_STATE",
+            "stale derived state",
+        ),
+        (
+            "implementation-block",
+            "awaiting_human",
+            {
+                "latest_failure": {
+                    "phase": "execute",
+                    "kind": "route_metadata_mismatch",
+                    "message": "AWF018 route mismatch",
+                }
+            },
+            "authority_divergence",
+            "REAL_IMPLEMENTATION_BLOCK",
+            "not eligible",
+        ),
+    )
+
+    for name, current_state, plan_overrides, last_state, expected_canonical_state, reason_fragment in cases:
+        root = tmp_path / name
+        root.mkdir()
+        base = _init_repo(root)
+        spec_path = _write_chain_spec(root)
+        _git(root, "add", "chain.yaml", "idea.md", "NORTHSTAR.md")
+        _git(root, "commit", "-m", "track chain inputs")
+        plan_dir = _write_plan(
+            root,
+            current_state=current_state,
+            base_sha=base,
+            finalize_tasks=[{"id": "T1", "status": "done", "files_changed": ["src/app.py"]}],
+            execution_batch=False,
+        )
+        state_path = plan_dir / "state.json"
+        state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+        state_payload.update(plan_overrides)
+        state_path.write_text(json.dumps(state_payload) + "\n", encoding="utf-8")
+        (plan_dir / "finalize.json").write_text(
+            json.dumps(
+                {"tasks": [{"id": "T1", "status": "done", "files_changed": ["src/app.py"]}]}
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (root / "src" / "app.py").write_text("print('local only')\n", encoding="utf-8")
+        save_chain_state(
+            spec_path,
+            ChainState(
+                current_milestone_index=0,
+                current_plan_name="plan-m1",
+                last_state=last_state,
+                pr_number=122,
+                pr_state="merged",
+            ),
+        )
+
+        with (
+            patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
+            patch(
+                "arnold_pipelines.megaplan.chain._refresh_base_branch",
+                lambda *args, **kwargs: None,
+            ),
+            patch("arnold_pipelines.megaplan.chain._pr_state", return_value="merged"),
+            patch("arnold_pipelines.megaplan.chain._plan_state", return_value=current_state),
+            patch("arnold_pipelines.megaplan.chain._commit_and_push_phase") as commit_and_push,
+            patch("arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery") as drive,
+        ):
+            result = run_chain(
+                spec_path,
+                root,
+                writer=lambda _msg: None,
+                mode="execute",
+            )
+
+        commit_and_push.assert_not_called()
+        drive.assert_not_called()
+        saved = load_chain_state(spec_path)
+        assert result["status"] == "blocked"
+        assert saved.last_state == "authority_divergence"
+        assert f"canonical_state='{expected_canonical_state}'" in result["reason"]
+        assert reason_fragment in result["reason"]
 
 
 def test_completion_guard_failure_uses_retry_ladder(tmp_path: Path) -> None:
@@ -1844,6 +2115,74 @@ def test_successful_completion_guard_passes(tmp_path: Path) -> None:
 
     assert ok is True
     assert "completion guard passed" in reason
+
+
+def test_canonical_stale_derived_state_blocks_done_completion_guard(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    _commit_semantic_change(tmp_path)
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+
+    ok, reason = _chain_completion_guard(
+        tmp_path,
+        _record(),
+        implementation_milestone=True,
+        canonical_run_state=_canonical(CanonicalState.STALE_DERIVED_STATE),
+    )
+
+    assert ok is False
+    assert "current_state='done'" in reason
+    assert "canonical_state='STALE_DERIVED_STATE'" in reason
+    assert "stale derived state" in reason
+
+
+def test_canonical_nonterminal_repair_states_block_done_completion_guard(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    _commit_semantic_change(tmp_path)
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+
+    for canonical_run_state in (
+        _canonical(CanonicalState.RUNNING, running=True),
+        _canonical(CanonicalState.REPAIRING, repairable=True),
+        _canonical(CanonicalState.RETRYABLE_EXECUTION_BLOCK, repairable=True),
+    ):
+        ok, reason = _chain_completion_guard(
+            tmp_path,
+            _record(),
+            implementation_milestone=True,
+            canonical_run_state=canonical_run_state,
+        )
+
+        assert ok is False
+        assert "current_state='done'" in reason
+        assert f"canonical_state='{canonical_run_state.canonical_state.name}'" in reason
+        assert "nonterminal under canonical custody" in reason
+
+
+def test_append_completed_with_guard_threads_canonical_run_state(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    _commit_semantic_change(tmp_path)
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+    state = ChainState()
+
+    appended, reason = _append_completed_with_guard(
+        tmp_path,
+        state,
+        _record(),
+        implementation_milestone=True,
+        canonical_run_state=_canonical(CanonicalState.REPAIRING, repairable=True),
+        writer=lambda _msg: None,
+    )
+
+    assert appended is False
+    assert state.completed == []
+    assert state.last_state == "authority_divergence"
+    assert "canonical_state='REPAIRING'" in reason
 
 
 def test_merged_pr_completion_blocks_when_published_diff_is_megaplan_only(

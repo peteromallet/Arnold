@@ -1422,6 +1422,38 @@ def verify_retrigger_success(
     return verification_record
 
 
+def derive_meta_repair_effective_outcome(
+    *,
+    verdict: str,
+    install_sync_status: str = "",
+    post_retrigger_verification: Mapping[str, Any] | None = None,
+) -> str:
+    """Choose the persisted meta-repair outcome.
+
+    A model verdict of ``FIXED`` is only authoritative after verifier
+    acceptance. Rejected verifier results persist as non-success while the
+    detailed verdict and rejection evidence stay in
+    ``post_retrigger_verification``.
+    """
+
+    normalized_verdict = str(verdict or "").strip()
+    if not normalized_verdict.startswith("FIXED"):
+        return normalized_verdict or "UNKNOWN"
+
+    if str(install_sync_status or "").strip().lower() == "failed":
+        return "install_sync_failed"
+
+    verification = dict(post_retrigger_verification or {})
+    accepted = bool(verification.get("accepted"))
+    outcome = str(verification.get("outcome") or "").strip().lower()
+
+    if accepted:
+        return outcome or normalized_verdict
+    if outcome and outcome not in SUCCESS_OUTCOMES:
+        return outcome
+    return "verifier_rejected"
+
+
 # ---------------------------------------------------------------------------
 # Convenience: combined load + classify + prompt
 # ---------------------------------------------------------------------------
@@ -1498,6 +1530,7 @@ def evaluate_meta_repair_triggers(
 
 
 __all__ = [
+    "derive_meta_repair_effective_outcome",
     "META_REPAIR_BUDGET_SECS",
     "MetaRepairClassification",
     "MetaRepairRecord",

@@ -39,7 +39,8 @@ def _selected_phase_specs(phase_models: list[str]) -> dict[str, str]:
         if not isinstance(entry, str) or "=" not in entry:
             continue
         phase, chain = decode_phase_model_value(entry)
-        selected[phase] = chain.selected()
+        if phase not in selected:
+            selected[phase] = chain.selected()
     return selected
 
 DEFAULT_AGENT_ROUTING: dict[str, str] = build_default_agent_routing()
@@ -1059,15 +1060,6 @@ def apply_profile_expansion(
             prep_models=prep_models,
         )
 
-        if tier_models:
-            for phase in ("execute", "critique"):
-                if phase in cli_steps:
-                    tier_models.pop(phase, None)
-        args.tier_models = tier_models
-        args.routing_degradations = routing_degradations
-        args.prep_models = prep_models
-        args.prep_model_resolver_trace = prep_trace
-
         for pm in profile_to_phase_models(resolved):
             if "=" not in pm:
                 continue
@@ -1076,6 +1068,15 @@ def apply_profile_expansion(
                 continue
             phase_models.append(pm)
             profile_steps.add(step)
+        if tier_models:
+            suppressed_tier_steps = {"execute", "critique"} & cli_steps
+            suppressed_tier_steps.update({"execute"} & profile_steps)
+            for phase in suppressed_tier_steps:
+                tier_models.pop(phase, None)
+        args.tier_models = tier_models
+        args.routing_degradations = routing_degradations
+        args.prep_models = prep_models
+        args.prep_model_resolver_trace = prep_trace
         args.profile = profile_name
     elif state is not None:
         config = state.get("config") or {}

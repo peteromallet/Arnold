@@ -27,6 +27,7 @@ from arnold_pipelines.megaplan.cloud.meta_repair import (
     build_meta_repair_prompt,
     classify_repair_system_failure,
     compute_meta_deadline,
+    derive_meta_repair_effective_outcome,
     evaluate_meta_repair_triggers,
     is_model_tool_launch_failure_status,
     is_meta_budget_exhausted,
@@ -1423,6 +1424,32 @@ class TestMetaRepairRecordShape:
 
 
 class TestPersistMetaRepairRecord:
+    @pytest.mark.parametrize(
+        ("verdict", "install_sync_status", "verification", "expected"),
+        [
+            ("FIXED", "applied", {"accepted": True, "outcome": COMPLETE}, COMPLETE),
+            ("FIXED", "applied", {"accepted": False, "outcome": PARTIAL_LIVENESS}, PARTIAL_LIVENESS),
+            ("FIXED", "applied", {"accepted": False, "outcome": COMPLETE}, "verifier_rejected"),
+            ("FIXED", "failed", {"accepted": False, "outcome": COMPLETE}, "install_sync_failed"),
+            ("NO_FIX", "", {}, "NO_FIX"),
+        ],
+    )
+    def test_derive_effective_outcome_requires_verifier_acceptance(
+        self,
+        verdict: str,
+        install_sync_status: str,
+        verification: dict[str, object],
+        expected: str,
+    ) -> None:
+        assert (
+            derive_meta_repair_effective_outcome(
+                verdict=verdict,
+                install_sync_status=install_sync_status,
+                post_retrigger_verification=verification,
+            )
+            == expected
+        )
+
     def test_persist_creates_meta_directory_and_file(self, tmp_path: Path) -> None:
         repair_dir = tmp_path / "repair-data"
         repair_dir.mkdir(parents=True)

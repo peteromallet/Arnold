@@ -168,6 +168,19 @@ def _target_summary(target):
     }
 
 
+def _lock_summary(lock_evidence):
+    if lock_evidence is None:
+        return None
+    owner = getattr(lock_evidence, "owner", None)
+    owner = owner if isinstance(owner, dict) else {}
+    lock_dir = getattr(lock_evidence, "lock_dir", None)
+    return {
+        "status": getattr(lock_evidence, "status", None),
+        "lock_dir": str(lock_dir) if lock_dir is not None else "",
+        "owner_session": str(owner.get("session") or ""),
+    }
+
+
 calls = {}
 sentinel = SimpleNamespace(
     kind="sentinel",
@@ -205,20 +218,37 @@ def _project_repair_custody(*, plan_state, current_target, canonical_run_state=N
 
 
 def _classify_repair_dispatch(*, canonical_run_state=None, event_plan_dir=None, current_target=None, custody_projection=None, **_kwargs):
-    decision = "broken_superfixer" if canonical_run_state is None else "dispatch_l1_repair"
-    dispatch_intent = "broken_superfixer" if canonical_run_state is None else "dispatch_l1"
+    lock_evidence = _kwargs.get("lock_evidence")
+    lock_summary = _lock_summary(lock_evidence)
+    lock_status = lock_summary["status"] if isinstance(lock_summary, dict) else ""
+    if canonical_run_state is None:
+        decision = "broken_superfixer"
+        dispatch_intent = "broken_superfixer"
+    elif lock_status in {"acquired", "busy", "claimed", "already_claimed"}:
+        decision = "repairing"
+        dispatch_intent = "queue_only"
+    else:
+        decision = "dispatch_l1_repair"
+        dispatch_intent = "dispatch_l1"
     calls["dispatch"] = {
         "canonical_kind": getattr(canonical_run_state, "kind", None),
         "decision": decision,
         "event_plan_dir": str(event_plan_dir) if event_plan_dir is not None else "",
         "target": _target_summary(current_target if isinstance(current_target, dict) else {}),
         "active_request_ids": list((custody_projection or {}).get("active_request_ids") or []),
+        "lock_evidence": lock_summary,
     }
     _write_capture()
     return SimpleNamespace(
         decision=decision,
         dispatch_intent=dispatch_intent,
-        custody_bucket="repairable_not_repairing" if canonical_run_state is not None else "human_required",
+        custody_bucket=(
+            "human_required"
+            if canonical_run_state is None
+            else "repairing"
+            if lock_status in {"acquired", "busy", "claimed", "already_claimed"}
+            else "repairable_not_repairing"
+        ),
         rationale=("patched",) if canonical_run_state is not None else ("canonical provenance missing",),
         blocker_id="bid-1",
         request_id="req-1",
@@ -380,6 +410,7 @@ def test_trigger_passes_canonical_provenance_into_custody_and_dispatch(tmp_path:
     assert capture["dispatch"]["canonical_kind"] == "sentinel"
     assert capture["dispatch"]["target"] == capture["resolve_input"]
     assert capture["dispatch"]["event_plan_dir"] == str(workspace / ".megaplan" / "plans" / "m3")
+    assert capture["dispatch"]["lock_evidence"]["status"] == "missing"
     assert observe["dispatch_decision"] == "dispatch_l1_repair"
 
 
@@ -428,8 +459,12 @@ def test_trigger_does_not_launch_when_request_claim_is_already_held(tmp_path: Pa
 
     assert result.returncode == 0, result.stderr
     assert not (tmp_path / "repair-args.json").exists()
-    claim_event = next(event for event in _events(result) if event["event"] == "repair_trigger_claim")
-    assert claim_event["status"] == "already_claimed"
+    observe = next(event for event in _events(result) if event["event"] == "repair_trigger_observe")
+    terminal = next(event for event in _events(result) if event["event"] == "repair_trigger")
+    assert observe["request_id"] == queued["request"]["request_id"]
+    assert observe["dispatch_decision"] == "repairing"
+    assert observe["dispatch_intent"] == "queue_only"
+    assert terminal["status"] == "no_actionable_requests"
     assert {item["decision"] for item in _decisions(marker_dir)} == {"accepted"}
 
 
@@ -447,6 +482,46 @@ def test_trigger_keeps_accepted_request_visible_until_dispatchable(tmp_path: Pat
     assert observe["request_id"] == queued["request"]["request_id"]
     assert observe["dispatch_intent"] == "dispatch_l1"
     assert {item["decision"] for item in _decisions(marker_dir)} == {"accepted"}
+
+
+def test_trigger_passes_busy_lock_evidence_and_suppresses_duplicate_dispatch(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    _write_marker(marker_dir, workspace)
+    queued = _enqueue(marker_dir, workspace)
+    queue_dir = repair_requests.repair_queue_dir(marker_dir)
+    claim = repair_requests.claim_active_repair_request(
+        queue_dir,
+        blocker_id="bid-1",
+        request_id="req-existing",
+        actor="fixture",
+        session="other-session",
+        pid=os.getpid(),
+    )
+    assert claim.claimed
+    owner_path = claim.lock_dir / "owner.json"
+    owner_before = owner_path.read_text(encoding="utf-8")
+    env_overrides, capture_path = _patched_dispatch_env(tmp_path, mode="capture")
+
+    result = _run_trigger(marker_dir, _repair_stub(tmp_path), enabled=True, env_overrides=env_overrides)
+
+    assert result.returncode == 0, result.stderr
+    capture = json.loads(capture_path.read_text(encoding="utf-8"))
+    observe = next(event for event in _events(result) if event["event"] == "repair_trigger_observe")
+    terminal = next(event for event in _events(result) if event["event"] == "repair_trigger")
+    assert capture["dispatch"]["lock_evidence"] == {
+        "status": "busy",
+        "lock_dir": str(repair_requests.active_repair_claim_lock_dir(queue_dir, "bid-1")),
+        "owner_session": "other-session",
+    }
+    assert owner_path.read_text(encoding="utf-8") == owner_before
+    assert observe["dispatch_decision"] == "repairing"
+    assert observe["dispatch_intent"] == "queue_only"
+    assert observe["custody_bucket"] == "repairing"
+    assert terminal["status"] == "no_actionable_requests"
+    assert not (tmp_path / "repair-args.json").exists()
+    assert {item["decision"] for item in _decisions(marker_dir)} == {"accepted"}
+    assert observe["request_id"] == queued["request"]["request_id"]
 
 
 def test_trigger_loads_hot_env_for_systemd_latency_path(tmp_path: Path) -> None:
