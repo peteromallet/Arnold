@@ -1,3 +1,7 @@
+---
+superseded_by: custody-control-plane
+---
+
 # M5 - Meta-Repair And Auditor Intelligence
 
 ## Objective

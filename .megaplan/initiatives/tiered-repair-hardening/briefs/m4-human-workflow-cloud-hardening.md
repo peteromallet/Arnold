@@ -1,3 +1,7 @@
+---
+superseded_by: custody-control-plane
+---
+
 # M4 - Human Workflow And Cloud Hardening
 
 ## Objective

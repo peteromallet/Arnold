@@ -4,8 +4,8 @@ Covers:
 - JSON persistence (repair-data + index.json)
 - Index updates per session
 - Incident event append for meaningful transitions
-- Legacy outcome mapping (repairing → meta_repair_attempt,
-  success → verified_recovered, terminal non-success → meta_repair_attempt)
+- Legacy outcome mapping (repairing / non-success → immediate_repair attempt,
+  success → verified_recovered)
 - No duplicate event on no-op save (same outcome)
 """
 
@@ -133,7 +133,7 @@ def test_save_repair_data_updates_index_json(tmp_path: Path) -> None:
 
 
 def test_first_save_emits_event_for_repairing_outcome(tmp_path: Path) -> None:
-    """First-ever save with outcome='repairing' appends a meta_repair_attempt event."""
+    """First-ever save with outcome='repairing' appends an immediate_repair attempt event."""
     repair_dir = tmp_path / "repair-data"
     repair_dir.mkdir()
     path = repair_dir / "demo-session.repair-data.json"
@@ -146,7 +146,7 @@ def test_first_save_emits_event_for_repairing_outcome(tmp_path: Path) -> None:
     event = events[0]
     payload_inner = event["payload"]
     assert payload_inner["type"] == "repair_attempt"
-    assert payload_inner["actor"] == "meta_repair"
+    assert payload_inner["actor"] == "immediate_repair"
     assert payload_inner["outcome"] == "attempted"
     assert payload_inner["incident_id"] == "inc-100"
     assert payload_inner.get("session_id") == "demo-session"
@@ -235,16 +235,16 @@ def test_noop_save_preserves_index_but_not_events(tmp_path: Path) -> None:
         # Terminal success → verified_recovered
         (COMPLETE, "verified_recovered", "repair_system", "recovered"),
         (PROGRESSED, "verified_recovered", "repair_system", "recovered"),
-        (LIVE_WITH_FRESH_ACTIVITY, "verified_recovered", "repair_system", "recovered"),
+        (LIVE_WITH_FRESH_ACTIVITY, "repair_attempt", "immediate_repair", LIVE_WITH_FRESH_ACTIVITY),
         (TRUE_HUMAN_BLOCKER, "verified_recovered", "repair_system", "recovered"),
-        # Non-terminal repairing → meta_repair_attempt with outcome="attempted"
-        (REPAIRING, "repair_attempt", "meta_repair", "attempted"),
-        # Terminal non-success → meta_repair_attempt with original outcome
-        (REPAIR_TIMEOUT, "repair_attempt", "meta_repair", REPAIR_TIMEOUT),
-        (REPAIR_EXHAUSTED, "repair_attempt", "meta_repair", REPAIR_EXHAUSTED),
-        (NEEDS_HUMAN, "repair_attempt", "meta_repair", NEEDS_HUMAN),
-        (PARTIAL_LIVENESS, "repair_attempt", "meta_repair", PARTIAL_LIVENESS),
-        (DISCORD_ESCALATED, "repair_attempt", "meta_repair", DISCORD_ESCALATED),
+        # Non-terminal repairing → immediate_repair attempt with outcome="attempted"
+        (REPAIRING, "repair_attempt", "immediate_repair", "attempted"),
+        # Terminal non-success → immediate_repair attempt with original outcome
+        (REPAIR_TIMEOUT, "repair_attempt", "immediate_repair", REPAIR_TIMEOUT),
+        (REPAIR_EXHAUSTED, "repair_attempt", "immediate_repair", REPAIR_EXHAUSTED),
+        (NEEDS_HUMAN, "repair_attempt", "immediate_repair", NEEDS_HUMAN),
+        (PARTIAL_LIVENESS, "repair_attempt", "immediate_repair", PARTIAL_LIVENESS),
+        (DISCORD_ESCALATED, "repair_attempt", "immediate_repair", DISCORD_ESCALATED),
     ],
 )
 def test_legacy_outcome_mapping(
@@ -345,6 +345,7 @@ def test_bridge_append_six_hour_auditor_diagnosis_creates_event(tmp_path: Path) 
         ("recovered", None),
         ("escalated", "github_sync.publish"),
         ("audit_cycle_complete", "six_hour_auditor.diagnosis"),
+        ("auditor_human_escalation", None),
     ],
 )
 def test_bridge_append_six_hour_auditor_audit_complete_allows_expected_handoffs(

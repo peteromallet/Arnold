@@ -1,3 +1,7 @@
+---
+superseded_by: custody-control-plane
+---
+
 # Tiered Repair Hardening
 
 This initiative turns the tiered repair/audit design into five aggressive two-week megaplan sprints.

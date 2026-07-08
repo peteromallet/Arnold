@@ -1,3 +1,7 @@
+---
+superseded_by: custody-control-plane
+---
+
 # Tiered Repair Hardening North Star
 
 Make cloud megaplan repair trustworthy enough to run without constant human babysitting.

@@ -33,7 +33,7 @@ The "derived-state-drift" failure class is mechanically impossible: custody laye
 
 - `ARNOLD_RESOLVER_OBSERVE=1` / `ENFORCEMENT=0` feature flags during rollout (observe before enforce).
 - Legacy derived-state fields kept during migration, with `stale_sources` surfacing disagreement.
-- The 3 duplicate initiatives' sessions remain until their facets are folded in (m4 retires them).
+- Bridge retirement completed on 2026-07-08: the 3 duplicate initiatives are superseded, merge-disabled, and retirement-logged.
 
 ## Drift Signals
 

@@ -751,8 +751,110 @@ def test_resolve_current_target_disabled_observe_returns_stub(tmp_path: Path, mo
     assert record["authoritative_source"] == "resolver_observe_disabled"
     assert record["chain_log"] == {}
     assert record["active_step_heartbeat"] == {}
+    assert record["ci_health"] == {
+        "status": "unavailable",
+        "available": False,
+        "source": "current_target",
+        "repo_root": "",
+        "base_branch": "main",
+        "reason": "resolver_observe_disabled",
+    }
     assert "mtime" not in record["plan_state"]  # stub is empty dict
     assert "fingerprint" not in record["plan_state"]
+
+
+def test_resolve_current_target_reports_ci_health_unavailable_without_repo_context(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "demo.json").write_text(
+        json.dumps({"session": "demo", "workspace": str(workspace), "plan_name": "p1"}),
+        encoding="utf-8",
+    )
+
+    record = resolve_current_target("demo", marker_dir=marker_dir)
+
+    assert record["ci_health"] == {
+        "status": "unavailable",
+        "available": False,
+        "source": "current_target",
+        "repo_root": "",
+        "base_branch": "main",
+        "reason": "repo_context_unavailable",
+    }
+
+
+def test_resolve_current_target_reports_ci_health_unavailable_when_gh_is_missing(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "demo.json").write_text(
+        json.dumps({"session": "demo", "workspace": str(workspace), "plan_name": "p1"}),
+        encoding="utf-8",
+    )
+
+    def missing_gh(_repo_root: Path, *, base_branch: str) -> dict[str, object]:
+        raise FileNotFoundError(base_branch)
+
+    record = resolve_current_target(
+        "demo",
+        marker_dir=marker_dir,
+        repo_root=workspace,
+        base_branch="stack/base",
+        ci_health_collector=missing_gh,
+    )
+
+    assert record["ci_health"] == {
+        "status": "unavailable",
+        "available": False,
+        "source": "current_target",
+        "repo_root": str(workspace),
+        "base_branch": "stack/base",
+        "reason": "gh_unavailable",
+    }
+
+
+def test_resolve_current_target_collects_ci_health_when_repo_context_is_available(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "demo.json").write_text(
+        json.dumps({"session": "demo", "workspace": str(workspace), "plan_name": "p1"}),
+        encoding="utf-8",
+    )
+    calls: list[tuple[Path, str]] = []
+
+    def collector(repo_root: Path, *, base_branch: str) -> dict[str, object]:
+        calls.append((repo_root, base_branch))
+        return {
+            "status": "red",
+            "available": True,
+            "base_branch": base_branch,
+            "failing_run_count": 2,
+            "reason": "mocked",
+        }
+
+    record = resolve_current_target(
+        "demo",
+        marker_dir=marker_dir,
+        repo_root=workspace,
+        base_branch="main",
+        ci_health_collector=collector,
+    )
+
+    assert calls == [(workspace, "main")]
+    assert record["ci_health"] == {
+        "status": "red",
+        "available": True,
+        "source": "current_target",
+        "repo_root": str(workspace),
+        "base_branch": "main",
+        "failing_run_count": 2,
+        "reason": "mocked",
+    }
 
 
 def test_resolve_current_target_includes_evidence_mtime_and_fingerprint(tmp_path: Path) -> None:

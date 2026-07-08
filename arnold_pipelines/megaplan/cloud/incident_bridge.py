@@ -56,6 +56,7 @@ _AUDIT_COMPLETE_OUTCOMES = {
     "recovered",
     "escalated",
     "audit_cycle_complete",
+    "auditor_human_escalation",
 }
 
 _SIX_HOUR_AUDITOR_HANDOFFS = {

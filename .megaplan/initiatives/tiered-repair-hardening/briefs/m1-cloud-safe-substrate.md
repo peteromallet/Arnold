@@ -1,3 +1,7 @@
+---
+superseded_by: custody-control-plane
+---
+
 # M1 - Cloud-Safe Repair Substrate
 
 ## Objective

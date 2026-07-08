@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
+
+import pytest
 
 from arnold_pipelines.megaplan.cloud.six_hour_auditor import (
     AuditorConfig,
     audit_incident,
+    audit_projection_input,
     build_audit_input,
 )
 from arnold_pipelines.megaplan.incident import IncidentLedger
@@ -31,6 +35,166 @@ def _event(**overrides: object) -> dict[str, object]:
     }
     event.update(overrides)
     return event
+
+
+def _payload(defaults: dict[str, object], **overrides: object) -> dict[str, object]:
+    payload = deepcopy(defaults)
+    payload.update(overrides)
+    return payload
+
+
+def _placeholders(**overrides: object) -> dict[str, object]:
+    return _payload(
+        {
+            "install_freshness": "unknown",
+            "recurrence": "unknown",
+            "shipped_fix": "unknown",
+        },
+        **overrides,
+    )
+
+
+def _brief(**overrides: object) -> dict[str, object]:
+    return _payload(
+        {
+            "found": True,
+            "incident_id": "inc-audit-1",
+            "summary": "Repair chain stalled",
+            "outcome": "started",
+            "next_expected_event": "immediate_repair.repair_attempt",
+            "deadline_status": "on_track",
+            "claims": [],
+            "evidence": [],
+            "placeholders": _placeholders(),
+            "last_timestamp": "2026-07-03T19:45:00Z",
+        },
+        **overrides,
+    )
+
+
+def _incident(**overrides: object) -> dict[str, object]:
+    return _payload(
+        {
+            "incident_id": "inc-audit-1",
+            "session_ids": ["session-audit-1"],
+            "state": "repairing",
+            "outcome": "started",
+            "next_expected_event": "immediate_repair.repair_attempt",
+            "placeholders": _placeholders(),
+            "last_timestamp": "2026-07-03T19:45:00Z",
+        },
+        **overrides,
+    )
+
+
+def _problem(**overrides: object) -> dict[str, object]:
+    return _payload(
+        {
+            "problem_id": "prob-audit-1",
+            "status": "open",
+            "occurrence_count": 1,
+            "recurred_after_fix": False,
+        },
+        **overrides,
+    )
+
+
+def _resolver_state(**overrides: object) -> dict[str, object]:
+    return _payload(
+        {
+            "canonical_state": "RUNNING",
+            "confidence": "high",
+            "source_of_truth": ["live_process", "plan_state"],
+            "stale_sources": [],
+            "next_action": "immediate_repair.repair_attempt",
+            "reason": "live immediate repair heartbeat observed",
+            "repairable": True,
+            "running": True,
+            "root_cause_fingerprint": {"kind": "live_process", "value": "session-audit-1"},
+            "evidence": {"active_step_heartbeat": {"active": True}},
+        },
+        **overrides,
+    )
+
+
+def _current_target(**overrides: object) -> dict[str, object]:
+    return _payload(
+        {
+            "authoritative_source": "plan_state",
+            "current_refs": {
+                "current_plan_name": "progress-auditor-stage-20260703-1945",
+                "plan_current_state": "running",
+            },
+            "plan_state": {"present": True},
+            "chain_state": {"present": True},
+            "active_step_heartbeat": {"active": True},
+            "stale_evidence": [],
+        },
+        **overrides,
+    )
+
+
+def _process(actor: str = "immediate_repair", **overrides: object) -> dict[str, object]:
+    return _payload(
+        {
+            "actor": actor,
+            "session_id": "session-audit-1",
+            "started_at": "2026-07-03T19:30:00Z",
+        },
+        **overrides,
+    )
+
+
+def _snapshot(**overrides: object) -> dict[str, object]:
+    return _payload(
+        {
+            "now": "2026-07-03T20:00:00Z",
+            "watchdog": {"last_reported_at": "2026-07-03T19:50:00Z"},
+            "processes": [_process()],
+            "meta_repair": {"evidence_refs": []},
+            "github_sync": {},
+            "repair_attempts": [],
+        },
+        **overrides,
+    )
+
+
+def _projection_input(**overrides: object) -> dict[str, object]:
+    return _payload(
+        {
+            "brief": _brief(),
+            "incident": _incident(),
+            "problem": _problem(),
+            "resolver_state": _resolver_state(),
+            "current_target": _current_target(),
+            "audit_history": [],
+            "ci_health": {"status": "green", "source": "mock"},
+            "engine_tree": {"status": "clean", "source": "mock"},
+        },
+        **overrides,
+    )
+
+
+def _drift_finding(result: dict[str, object], *, source_pair: str) -> dict[str, object]:
+    findings = result.get("findings")
+    assert isinstance(findings, list)
+    return next(
+        finding
+        for finding in findings
+        if isinstance(finding, dict)
+        and finding.get("code") == "DRIFT_DETECTED"
+        and finding.get("source_pair") == source_pair
+    )
+
+
+def _finding(result: dict[str, object], *, code: str) -> dict[str, object]:
+    findings = result.get("findings")
+    assert isinstance(findings, list)
+    return next(
+        finding
+        for finding in findings
+        if isinstance(finding, dict) and finding.get("code") == code
+    )
 
 
 def test_build_audit_input_resolves_brief_incident_and_problem(tmp_path: Path) -> None:
@@ -202,3 +366,295 @@ def test_audit_incident_flags_missing_meta_repair_evidence_and_stale_watchdog() 
     assert "watchdog_report_stale" in finding_codes
     assert "meta_repair_missing_evidence" in finding_codes
     assert result["audit_complete"]["outcome"] == "escalated"
+
+
+def test_resolver_drift_detection() -> None:
+    result = audit_projection_input(
+        _projection_input(
+            brief=_brief(
+                outcome="recovered",
+                next_expected_event="audit_cycle_complete",
+            ),
+            incident=_incident(
+                state="repairing",
+                outcome="started",
+                next_expected_event="immediate_repair.repair_attempt",
+            ),
+            resolver_state=_resolver_state(
+                canonical_state="RUNNING",
+                confidence="high",
+                next_action="immediate_repair.repair_attempt",
+            ),
+        ),
+        live_process_snapshot=_snapshot(
+            processes=[_process(actor="immediate_repair")],
+        ),
+        now="2026-07-03T20:00:00Z",
+    )
+
+    finding = _drift_finding(result, source_pair="resolver_vs_ledger")
+    assert finding["layer"] == "reconciler"
+    assert finding["status"] == "error"
+    assert finding["severity"] == "error"
+    assert finding["contradiction"] == "resolver_canonical_state_conflicts_with_ledger_outcome"
+    assert finding["observed"] == {
+        "resolver_canonical_state": "RUNNING",
+        "brief_outcome": "recovered",
+        "incident_state": "repairing",
+    }
+    assert finding["expected"] == {
+        "brief_outcome": "started",
+        "incident_state": "repairing",
+        "next_expected_event": "immediate_repair.repair_attempt",
+    }
+
+
+def test_cross_source_drift_brief_vs_incident() -> None:
+    result = audit_projection_input(
+        _projection_input(
+            brief=_brief(
+                outcome="recovered",
+                next_expected_event="audit_cycle_complete",
+            ),
+            incident=_incident(
+                state="repairing",
+                outcome="started",
+                next_expected_event="meta_repair.repair_attempt",
+            ),
+        ),
+        live_process_snapshot=_snapshot(
+            processes=[_process(actor="meta_repair")],
+        ),
+        now="2026-07-03T20:00:00Z",
+    )
+
+    finding = _drift_finding(result, source_pair="brief_vs_incident")
+    assert finding["layer"] == "reconciler"
+    assert finding["status"] == "error"
+    assert finding["severity"] == "error"
+    assert finding["contradiction"] == "brief_outcome_conflicts_with_incident_state"
+    assert finding["observed"] == {
+        "brief_outcome": "recovered",
+        "incident_state": "repairing",
+        "incident_outcome": "started",
+    }
+    assert finding["expected"] == {
+        "brief_outcome": "started",
+        "incident_state": "repairing",
+        "incident_outcome": "started",
+    }
+
+
+@pytest.mark.parametrize(
+    ("next_expected_event", "observed_actor"),
+    [
+        ("watchdog.dispatch", "meta_repair"),
+        ("github_sync.publish", "watchdog"),
+        ("install_sync.retry", "github_sync"),
+        ("immediate_repair.repair_attempt", "install_sync"),
+        ("meta_repair.repair_attempt", "immediate_repair"),
+    ],
+)
+def test_cross_source_drift_brief_vs_snapshot_all_layers(
+    next_expected_event: str,
+    observed_actor: str,
+) -> None:
+    result = audit_projection_input(
+        _projection_input(
+            brief=_brief(next_expected_event=next_expected_event),
+            incident=_incident(next_expected_event=next_expected_event),
+        ),
+        live_process_snapshot=_snapshot(
+            processes=[_process(actor=observed_actor)],
+        ),
+        now="2026-07-03T20:00:00Z",
+    )
+
+    finding = _drift_finding(result, source_pair="brief_vs_snapshot")
+    assert finding["layer"] == "reconciler"
+    assert finding["status"] == "error"
+    assert finding["severity"] == "error"
+    assert finding["contradiction"] == "next_expected_actor_conflicts_with_live_process"
+    assert finding["observed"] == {
+        "next_expected_event": next_expected_event,
+        "snapshot_actor": observed_actor,
+    }
+    assert finding["expected"] == {
+        "snapshot_actor": next_expected_event.split(".", 1)[0],
+    }
+
+
+def test_false_fixed_l2_caught() -> None:
+    result = audit_projection_input(
+        _projection_input(
+            brief=_brief(
+                outcome="recovered",
+                next_expected_event="audit_cycle_complete",
+                placeholders=_placeholders(shipped_fix="fixed"),
+            ),
+            incident=_incident(
+                state="repairing",
+                outcome="started",
+                next_expected_event="immediate_repair.repair_attempt",
+                placeholders=_placeholders(shipped_fix="fixed"),
+            ),
+            resolver_state=_resolver_state(
+                canonical_state="RUNNING",
+                confidence="high",
+                next_action="immediate_repair.repair_attempt",
+            ),
+        ),
+        live_process_snapshot=_snapshot(
+            processes=[_process(actor="immediate_repair")],
+        ),
+        now="2026-07-03T20:00:00Z",
+    )
+
+    finding = _drift_finding(result, source_pair="l2_fix_vs_resolver")
+    assert finding["layer"] == "reconciler"
+    assert finding["status"] == "error"
+    assert finding["severity"] == "error"
+    assert finding["contradiction"] == "false_fixed_l2_result"
+    assert finding["observed"] == {
+        "brief_outcome": "recovered",
+        "incident_state": "repairing",
+        "resolver_canonical_state": "RUNNING",
+        "snapshot_actor": "immediate_repair",
+    }
+    assert finding["expected"] == {
+        "brief_outcome": "started",
+        "incident_state": "repairing",
+        "next_expected_event": "immediate_repair.repair_attempt",
+    }
+    assert result["audit_complete"]["outcome"] == "escalated"
+    assert result["next_expected_event"] == "immediate_repair.repair_attempt"
+
+
+def test_resolver_low_confidence_gate() -> None:
+    result = audit_projection_input(
+        _projection_input(
+            brief=_brief(
+                outcome="recovered",
+                next_expected_event="audit_cycle_complete",
+            ),
+            incident=_incident(
+                state="repairing",
+                outcome="started",
+                next_expected_event="immediate_repair.repair_attempt",
+            ),
+            resolver_state=_resolver_state(
+                canonical_state="UNKNOWN",
+                confidence="low",
+                next_action="manual_review",
+                repairable=False,
+                running=False,
+                reason="insufficient authoritative evidence",
+            ),
+        ),
+        live_process_snapshot=_snapshot(
+            processes=[],
+        ),
+        now="2026-07-03T20:00:00Z",
+    )
+
+    finding = _finding(result, code="resolver_low_confidence")
+    assert finding["layer"] == "resolver_confidence"
+    assert finding["status"] == "error"
+    assert finding["severity"] == "error"
+    assert finding["recommendation"] == "auditor_escalate_to_human"
+    assert finding["observed"] == {
+        "resolver_confidence": "low",
+        "resolver_canonical_state": "UNKNOWN",
+        "resolver_next_action": "manual_review",
+    }
+    assert result["audit_complete"]["outcome"] == "auditor_human_escalation"
+    assert result["next_expected_event"] == "auditor_escalate_to_human"
+
+
+def test_lying_resolver_caught() -> None:
+    result = audit_projection_input(
+        _projection_input(
+            resolver_state=_resolver_state(
+                canonical_state="RUNNING",
+                confidence="high",
+                stale_sources=[],
+                next_action="requeue_or_retry",
+                root_cause_fingerprint={"kind": "budget_exhausted", "value": "session-audit-1"},
+                evidence={"budget_exhausted": {"tokens_spent": 4096}},
+            ),
+        ),
+        live_process_snapshot=_snapshot(
+            processes=[],
+        ),
+        now="2026-07-03T20:00:00Z",
+    )
+
+    finding = _finding(result, code="resolver_semantic_invalid")
+    assert finding["layer"] == "resolver_semantics"
+    assert finding["status"] == "error"
+    assert finding["severity"] == "error"
+    assert finding["recommendation"] == "auditor_escalate_to_human"
+    assert finding["invalid_reasons"] == [
+        "wrong_canonical_state_for_evidence",
+        "missing_stale_sources",
+        "wrong_root_cause_fingerprint_kind",
+        "next_action_mismatch",
+    ]
+    assert result["audit_complete"]["outcome"] == "auditor_human_escalation"
+    assert result["next_expected_event"] == "auditor_escalate_to_human"
+
+
+def test_auditor_recursion_guard() -> None:
+    result = audit_projection_input(
+        _projection_input(
+            brief=_brief(
+                next_expected_event="meta_repair.repair_attempt",
+                deadline_status="overdue",
+            ),
+            incident=_incident(
+                next_expected_event="meta_repair.repair_attempt",
+            ),
+            audit_history=[
+                {
+                    "audit_complete": {
+                        "outcome": "escalated",
+                        "next_expected_event": "meta_repair.repair_attempt",
+                    },
+                    "findings": [
+                        {
+                            "code": "watchdog_report_stale",
+                            "layer": "watchdog",
+                            "status": "error",
+                            "severity": "error",
+                            "recommendation": "watchdog.dispatch",
+                            "observed_at": "2026-07-03T12:00:00Z",
+                            "message": "ignore volatile prose",
+                        },
+                        {
+                            "code": "meta_repair_missing_evidence",
+                            "layer": "missing_evidence",
+                            "status": "error",
+                            "severity": "error",
+                            "recommendation": "meta_repair.repair_attempt",
+                        },
+                    ],
+                }
+            ],
+        ),
+        live_process_snapshot=_snapshot(
+            watchdog={"last_reported_at": "2026-07-03T12:00:00Z"},
+            processes=[],
+            meta_repair={"evidence_refs": []},
+        ),
+        now="2026-07-03T20:00:00Z",
+    )
+
+    finding = _finding(result, code="auditor_recursion_guard")
+    assert finding["layer"] == "auditor_recursion"
+    assert finding["status"] == "error"
+    assert finding["severity"] == "error"
+    assert finding["recommendation"] == "auditor_escalate_to_human"
+    assert finding["repeat_count"] == 2
+    assert finding["cycle_detected"] is True
+    assert result["audit_complete"]["outcome"] == "auditor_human_escalation"
+    assert result["next_expected_event"] == "auditor_escalate_to_human"

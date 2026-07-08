@@ -1,3 +1,7 @@
+---
+superseded_by: custody-control-plane
+---
+
 # Incident Control Plane Initiative
 
 Durable input material for implementing the Megaplan incident control plane.
@@ -19,4 +23,3 @@ Prep recommendation:
 - Overall plan difficulty: 5/5; selected profile: `partnered-5`; because bad decomposition or a weak control-plane contract can appear to work locally while preserving the exact class of autonomous-recovery failures this initiative is meant to eliminate.
 - Robustness: `thorough`; because this touches the watchdog/repair/auditor loops and should get stronger critique before execution.
 - Depth: `high`; because the planner must preserve a cross-actor state-machine invariant across wrappers, CLI, cloud runtime, and tests.
-

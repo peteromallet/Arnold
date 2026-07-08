@@ -1,3 +1,7 @@
+---
+superseded_by: custody-control-plane
+---
+
 # M3 - Failure-Triggered Repair
 
 ## Objective
