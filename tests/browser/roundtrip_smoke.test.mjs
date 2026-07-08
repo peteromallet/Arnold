@@ -12439,8 +12439,8 @@ test("VibeComfy comfy_adapter delta apply preflights all supported ops, resolves
         id: 2,
         type: "Sampler",
         mode: 4,
-        widgets: [{ name: "steps" }, { name: "cfg" }],
-        widgets_values: [20, 7],
+        widgets: [{ name: "cfg" }, { name: "steps" }],
+        widgets_values: [7, 20],
         inputs: [
           { name: "text", link: null },
           { name: "image", link: 10 },
@@ -12465,7 +12465,6 @@ test("VibeComfy comfy_adapter delta apply preflights all supported ops, resolves
       deltaOps: [
         { op: "set_node_field", target: ["nodes", "uid-conflict", "widgets_values", 0], value: "ignored-op-value" },
         { op: "set_mode", target: { uid: "consumer", scope_path: [] }, mode: 999 },
-        { op: "reorder", target: { uid: "consumer" }, axis: "widgets", order: ["steps", "cfg"] },
         {
           op: "add_node",
           scope_path: "producer-b",
@@ -12488,7 +12487,7 @@ test("VibeComfy comfy_adapter delta apply preflights all supported ops, resolves
     });
 
     assert.equal(result.capability.strategy, "harness-serialize-configure");
-    assert.equal(result.plan.length, 7);
+    assert.equal(result.plan.length, 6);
     assert.equal(harness.graphClearCalls.length, 1);
     assert.equal(harness.graphConfigureCalls.length, 1);
     assert.equal(harness.loadGraphDataCalls.length, 0, "delta apply should not fall back to loadGraphData");
@@ -12502,8 +12501,8 @@ test("VibeComfy comfy_adapter delta apply preflights all supported ops, resolves
     assert.equal(idNode.widgets_values[0], "keep-id-node", "id match must not win over UID match");
     assert.equal(uidNode.widgets_values[0], "new prompt", "set_node_field should resolve target by UID first");
     assert.equal(consumer.mode, 4, "set_mode should materialize desired mode from candidate graph");
-    assert.deepEqual(consumer.widgets.map((widget) => widget.name), ["steps", "cfg"]);
-    assert.deepEqual(consumer.widgets_values, [20, 7]);
+    assert.deepEqual(consumer.widgets.map((widget) => widget.name), ["cfg", "steps"]);
+    assert.deepEqual(consumer.widgets_values, [7, 20]);
     assert.equal(added.properties.marker, "from-candidate", "add_node should copy payload from candidate graph");
     assert.deepEqual(configured.links, [[10, 3, 0, 2, 1, "IMAGE"]], "link payload should come from candidate graph");
     assert.equal(configured.nodes.some((node) => node.properties?.vibecomfy_uid === "delete-me"), false);
@@ -12695,79 +12694,6 @@ test("VibeComfy comfy_adapter delta apply set_mode mutates only mode and preserv
     assert.equal(vaeNode.mode, 0, "unrelated node mode should be preserved");
 
     harness.assertNoWholeGraphOps("set_mode scoped apply");
-  } finally {
-    await harness.dispose();
-  }
-});
-
-test("VibeComfy comfy_adapter delta apply reorder mutates only target node widget order and preserves values", async () => {
-  const graph = {
-    nodes: [
-      {
-        id: 1,
-        type: "Sampler",
-        widgets: [{ name: "cfg" }, { name: "steps" }, { name: "sampler_name" }],
-        widgets_values: [7, 20, "euler"],
-        pos: [200, 200],
-        properties: { vibecomfy_uid: "sampler-1" },
-      },
-      {
-        id: 2,
-        type: "CLIPLoader",
-        widgets: [{ name: "clip_name1" }, { name: "clip_name2" }],
-        widgets_values: ["sd_xl", "refiner"],
-        pos: [500, 200],
-        properties: { vibecomfy_uid: "clip-1" },
-      },
-    ],
-    links: [],
-  };
-  const candidateGraph = {
-    nodes: [
-      {
-        id: 1,
-        type: "Sampler",
-        widgets: [{ name: "steps" }, { name: "sampler_name" }, { name: "cfg" }],
-        widgets_values: [20, "euler", 7],
-        pos: [200, 200],
-        properties: { vibecomfy_uid: "sampler-1" },
-      },
-      {
-        id: 2,
-        type: "CLIPLoader",
-        widgets: [{ name: "clip_name1" }, { name: "clip_name2" }],
-        widgets_values: ["sd_xl", "refiner"],
-        pos: [500, 200],
-        properties: { vibecomfy_uid: "clip-1" },
-      },
-    ],
-    links: [],
-  };
-  const harness = await createBrowserHarness({ graph, withGraphMutation: true });
-  try {
-    const adapter = await harness.loadAdapter();
-    const result = adapter.applyGraphDeltaInPlace(harness.app, {
-      deltaOps: [
-        { op: "reorder", target: { uid: "sampler-1" }, axis: "widgets", order: ["steps", "sampler_name", "cfg"] },
-      ],
-      candidateGraph,
-    });
-
-    assert.equal(result.capability.strategy, "live-litegraph-mutate");
-    assert.equal(result.plan.length, 1);
-    assert.equal(result.plan[0].op, "reorder");
-
-    const liveNodes = harness.getLiveNodes();
-    const samplerNode = liveNodes.find((n) => n.properties?.vibecomfy_uid === "sampler-1");
-    const clipNode = liveNodes.find((n) => n.properties?.vibecomfy_uid === "clip-1");
-    assert.deepEqual(samplerNode.widgets.map((w) => w.name), ["steps", "sampler_name", "cfg"], "widget order should be reordered");
-    assert.deepEqual(samplerNode.widgets_values, [20, "euler", 7], "widget values should follow reorder");
-    assert.deepEqual(clipNode.widgets.map((w) => w.name), ["clip_name1", "clip_name2"], "unrelated node widget order should be preserved");
-    assert.deepEqual(clipNode.widgets_values, ["sd_xl", "refiner"], "unrelated node widget values should be preserved");
-    assert.deepEqual(samplerNode.pos, [200, 200], "reordered node position should be preserved");
-    assert.deepEqual(clipNode.pos, [500, 200], "unrelated node position should be preserved");
-
-    harness.assertNoWholeGraphOps("reorder scoped apply");
   } finally {
     await harness.dispose();
   }
@@ -13202,41 +13128,6 @@ test("VibeComfy comfy_adapter delta apply throws before mutation when add_node c
     assert.equal(harness.graphAddCalls.length, 0, "graph.add should not be called");
     assert.equal(harness.graphClearCalls.length, 0);
     assert.deepEqual(harness.getCurrentGraph(), graph);
-  } finally {
-    await harness.dispose();
-  }
-});
-
-test("VibeComfy comfy_adapter delta apply throws before mutation when reorder targets a non-existent node", async () => {
-  const graph = {
-    nodes: [
-      {
-        id: 1,
-        type: "Sampler",
-        widgets: [{ name: "cfg" }],
-        widgets_values: [7],
-        pos: [100, 200],
-        properties: { vibecomfy_uid: "sampler-1" },
-      },
-    ],
-    links: [],
-  };
-  const candidateGraph = JSON.parse(JSON.stringify(graph));
-  const harness = await createBrowserHarness({ graph, withGraphMutation: true });
-  try {
-    const adapter = await harness.loadAdapter();
-    assert.throws(
-      () => adapter.applyGraphDeltaInPlace(harness.app, {
-        deltaOps: [
-          { op: "reorder", target: { uid: "no-such-node" }, axis: "widgets", order: ["cfg"] },
-        ],
-        candidateGraph,
-      }),
-      /Could not resolve node/,
-    );
-
-    assert.deepEqual(harness.getCurrentGraph(), graph);
-    assert.equal(harness.graphClearCalls.length, 0);
   } finally {
     await harness.dispose();
   }

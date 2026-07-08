@@ -38,11 +38,13 @@ STRICT_READY_PYTEST := \
 
 ROOT_ALLOWLIST := \
 	.env.example \
+	.gitattributes \
 	.github \
 	.gitignore \
 	.megaplan \
 	.importlinter \
 	.pre-commit-config.yaml \
+	.vscode \
 	LICENSE \
 	Makefile \
 	README.md \

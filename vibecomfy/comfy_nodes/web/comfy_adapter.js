@@ -639,30 +639,6 @@ function upsertLinkInSerializedGraph(graph, link) {
   input.link = link.id;
 }
 
-function reorderByNames(items, names, key = "name") {
-  const normalized = Array.isArray(items) ? items.slice() : [];
-  if (!Array.isArray(names) || names.length !== normalized.length) {
-    throw new Error("Reorder op order does not match the current slot/widget count.");
-  }
-  const remaining = new Map();
-  normalized.forEach((item, index) => {
-    remaining.set(String(item?.[key] ?? index), item);
-  });
-  const reordered = names.map((name) => {
-    const mapKey = String(name);
-    if (!remaining.has(mapKey)) {
-      throw new Error(`Reorder op references unknown ${key} ${mapKey}.`);
-    }
-    const item = remaining.get(mapKey);
-    remaining.delete(mapKey);
-    return item;
-  });
-  if (remaining.size > 0) {
-    throw new Error("Reorder op did not account for every slot/widget.");
-  }
-  return reordered;
-}
-
 function materializeAddNodePayload(candidateGraph, op) {
   // Prefer explicit uid / node_id from canonical add_node ops.
   // Fall back to scope_path for legacy flat op shapes that lack explicit identity.
