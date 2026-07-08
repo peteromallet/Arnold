@@ -1,0 +1,296 @@
+Execute the approved plan in the repository.
+
+        Project directory:
+        /workspace/extension-reality-convergence-epic/reigh-app
+
+        Brief summary: # M4: Evidence And Drift Gates
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Batch framing:
+        - Execute batch 8 of 8.
+        - Actionable task IDs for this batch: ['T9']
+        - Already completed task IDs available as dependency context: ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8']
+
+        Actionable tasks for this batch:
+        [
+  {
+    "id": "T9",
+    "depends_on": [
+      "T8"
+    ],
+    "status": "pending",
+    "kind": "test",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "The work is mostly mechanical evidence collection plus a concise proof-note write-up, with all commands and proof categories specified by the approved plan. It does not change production logic, but it must accurately distinguish passing evidence from any recorded baseline failure.",
+    "executor_notes": "",
+    "commands_run": [
+      "node scripts/quality/check-readiness.mjs --strict",
+      "node scripts/quality/check-trust-model-truth.mjs --release",
+      "npx vitest run --config config/testing/vitest.config.ts scripts/quality/check-trust-model-truth.test.mjs src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx",
+      "npm run check:contract-recheck",
+      "npm run check:deferred-claims",
+      "npm run check:frontend-closure",
+      "npm run check:docs-maturity-sync",
+      "npm run test:readiness",
+      "npm run quality:check"
+    ]
+  }
+]
+
+        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
+        [
+  {
+    "id": "T7",
+    "depends_on": [
+      "T5",
+      "T6"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 6 planner-owned fast-path blocks: update `src/tools/video-editor/hooks/useRenderState.ts` so blocked decisions from `getFastRenderRouteDecision()` are converted into planner diagnostics/blockers before any user-facing `renderStatus` or `renderLog` is set. Preserve current behavior for missing generated Remotion artifacts and worker/external routes, but make the displayed block message come from a `RenderBlocker` returned by `planRender()`. Update `src/tools/video-editor/hooks/useRenderSt...",
+    "complexity_justification": "This is a multi-file behavior change in the render hook and tests, and the executor must preserve route compatibility while moving user-facing blocked provenance to planner blockers. The blast radius is meaningful but testable through the focused render planner, export guard, and hook tests, so i...",
+    "executor_notes": "Updated useRenderState route blocking so preview-only, worker-banodoco, and external route decisions are converted to planner diagnostics with planRender() before renderStatus/renderLog are set; the displayed block log is the returned RenderBlocker.message and the blocker is synced to the diagnostic collection. Updated hook tests to require a render-planner diagnostic and assert renderLog equals that diagnostic message for missing generated Remotion artifacts and worker-unavailable generated module routes. Updated stale renderPlanner shader fixtures to provide CompositionGraph authority req...",
+    "files_changed": [
+      "src/tools/video-editor/hooks/useRenderState.ts",
+      "src/tools/video-editor/hooks/useRenderState.test.tsx",
+      "src/tools/video-editor/runtime/renderPlanner.test.ts"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx",
+      "git diff --check -- src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts"
+    ]
+  },
+  {
+    "id": "T2",
+    "depends_on": [
+      "T1"
+    ],
+    "status": "skipped",
+    "kind": "code",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Step 1 conditional repair: if T1 proves the readiness failure is a parser bug, patch only `extractTestReadinessFiles()` in `scripts/quality/check-readiness.mjs` so it splits the `test:readiness` script, skips `--config` and its value, ignores flags, and returns `.test`/`.spec` paths. If T1 passes or fails for another reason, mark this task skipped with the T1 evidence and do not weaken strict evidence validation.",
+    "complexity_justification": "The only allowed edit is a localized tokenizer fix in `scripts/quality/check-readiness.mjs` with direct readiness commands as verification. The risk is local because the task explicitly forbids relaxing strict rows or changing unrelated evidence requirements.",
+    "executor_notes": "Skipped per conditional task rule. Completed dependency T1 is recorded as skipped/deferred_baseline_unavailable with baseline_test_failures null, no commands run, and no evidence that readiness failed because of extractTestReadinessFiles(). Inspected scripts/quality/check-readiness.mjs: extractTestReadinessFiles() already splits the script, skips --config and its value, ignores flags, and returns .test/.spec paths; node --check passed. No strict readiness evidence validation was weakened.",
+    "files_changed": [],
+    "commands_run": [
+      "node --check scripts/quality/check-readiness.mjs"
+    ]
+  },
+  {
+    "id": "T6",
+    "depends_on": [
+      "T4"
+    ],
+    "status": "done",
+    "kind": "test",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "This is a single-file regression fixture using existing projector helpers and assertions. The risk is bounded to test coverage for an already-defined projection-disable behavior rather than a new production data contract.",
+    "executor_notes": "Added a compositionGraphProjector.test.ts regression fixture for a legacy snapshot shader whose contribution index entry is disabled, projectionEligible false, and projection.projected false. The test asserts no resolved authoritative consumes edge exists for that shader ref, while the projector records the ref as disabled and emits composition/disabled-ref diagnostics. The full compositionGraphProjector.test.ts file passed with 40 tests.",
+    "files_changed": [
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "git diff --check -- src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+    ]
+  },
+  {
+    "id": "T4",
+    "depends_on": [
+      "T3"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 3 trust-model truth gate: expand `scripts/quality/check-trust-model-truth.mjs` target selection so trust-sensitive video-editor docs such as shader execution, planner/export, render, and composition-spine docs are scanned even when filenames lack extension/trust/readiness terms. Add an active unsupported fixture under `scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md`, and extend `scripts/quality/check-trust-model-truth.test.mj...",
+    "complexity_justification": "This changes the release gate's document-selection logic plus fixtures and node:test coverage, so the executor must preserve both negative and allowed trust-claim behavior. The contract is still limited to one quality script and its test fixture tree, so tier 4 is not warranted.",
+    "executor_notes": "Expanded docs/video-editor target selection with an explicit trust-sensitive basename allow-list for shader-execution-model.md, frontend-closure-matrix.md, provider-compatibility-matrix.md, timeline-patch-operations.md, and live-data-bridge-manual-smoke-checklist.txt while preserving existing extension/trust/readiness filename selection. Added active unsupported fixture at scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md and extended node:test assertions to require sandbox-or-isolation and permission-checks findings from that path...",
+    "files_changed": [
+      ".gitignore",
+      "scripts/quality/check-trust-model-truth.mjs",
+      "scripts/quality/check-trust-model-truth.test.mjs",
+      "scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md"
+    ],
+    "commands_run": [
+      "node scripts/quality/check-trust-model-truth.mjs --release",
+      "node --test scripts/quality/check-trust-model-truth.test.mjs",
+      "git diff --check -- .gitignore scripts/quality/check-trust-model-truth.mjs scripts/quality/check-trust-model-truth.test.mjs scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md"
+    ]
+  },
+  {
+    "id": "T3",
+    "depends_on": [
+      "T2"
+    ],
+    "status": "done",
+    "kind": "docs",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Step 2 audit artifacts: create `.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a2-trust-gate-gaps.md` and `a5-docs-matrix-reconciliation.md`. A2 must list trust-sensitive M2/M3 surfaces and whether `check-trust-model-truth.mjs` scans them; A5 must reconcile docs rows that contradict code/tests, starting with D-020, D-021, D-022, and B-002. Keep both notes factual and scoped to trust, composition authority, export readiness, and docs matrices.",
+    "complexity_justification": "This writes two scoped audit notes from local grep/code inspection and does not alter runtime or gate behavior. The work requires judgment about evidence rows, but the surfaces and starting rows are named in the approved plan.",
+    "executor_notes": "Created both required audit notes. A2 inventories trust-sensitive M2/M3-adjacent surfaces and marks current check-trust-model-truth.mjs scan coverage, including skipped video-editor docs such as shader-execution-model.md and frontend-closure-matrix.md. A5 reconciles D-020, D-021, D-022, and B-002 against renderPlanner/exportGuard/useRenderState evidence without reclassifying docs before later code fixes. Verified with trust-gate audit output, file presence/JSON parse, rg content check, line counts, and git diff --check.",
+    "files_changed": [],
+    "commands_run": [
+      "node scripts/quality/check-trust-model-truth.mjs --audit | sed -n '1,80p'",
+      "git diff --check -- .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a2-trust-gate-gaps.md .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a5-docs-matrix-reconciliation.md",
+      "wc -l .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a2-trust-gate-gaps.md .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a5-docs-matrix-reconciliation.md",
+      "node -e \"const fs=require('fs'); for (const f of ['.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/execution_batch_3.json','.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a2-trust-gate-gaps.md','.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a5-docs-matrix-reconciliation.md']) { if (!fs.existsSync(f)) throw new Error(f+' missing'); } JSON.parse(fs.readFileSync('.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/execution_batch_3.json','utf8')); console.log('batch 3 artifacts OK');\""
+    ]
+  },
+  {
+    "id": "T8",
+    "depends_on": [
+      "T7"
+    ],
+    "status": "done",
+    "kind": "docs",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 7 docs reconciliation: after T7 lands, update `docs/video-editor/extension-platform-supported-deferred.md` for D-020, D-021, D-022, and B-002 based on actual code/test evidence; update `docs/video-editor/extension-platform-contract-recheck.md` rows M12-001, M12-002, and M12-007 to match `renderPlanner.ts`, `exportGuard.ts`, and `useRenderState.ts`; and update `docs/video-editor/frontend-closure-matrix.md` only where it repeats stale export blocker or planner-readiness claims. Do not mark...",
+    "complexity_justification": "This reconciles three release-facing docs matrices against code and tests, so the executor must keep status language consistent across multiple checkers. It is documentation-only and guarded by docs scripts, so the risk is claim drift rather than runtime regression.",
+    "executor_notes": "Updated supported/deferred M12 rows so D-020 and D-022 are supported by renderPlanner/exportGuard/TimelineReader evidence, while D-021 remains deferred for complete planner next-action UI coverage. Updated contract-recheck M12-001 and M12-007 to pass/supported, kept M12-002 gap/supported with useRenderState planner-provenance evidence, rewrote B-002 to the remaining UI next-action evidence gap, and refreshed contract statistics from the gate output. Updated frontend closure row 12.2 to describe export/planner blocker diagnostics and planner RenderBlocker log provenance without claiming unsu...",
+    "files_changed": [
+      "docs/video-editor/extension-platform-supported-deferred.md",
+      "docs/video-editor/extension-platform-contract-recheck.md",
+      "docs/video-editor/frontend-closure-matrix.md"
+    ],
+    "commands_run": [
+      "npm run check:contract-recheck",
+      "npm run check:deferred-claims",
+      "npm run check:frontend-closure",
+      "npm run check:docs-maturity-sync",
+      "git diff --check -- docs/video-editor/extension-platform-supported-deferred.md docs/video-editor/extension-platform-contract-recheck.md docs/video-editor/frontend-closure-matrix.md"
+    ]
+  },
+  {
+    "id": "T1",
+    "depends_on": [],
+    "status": "skipped",
+    "kind": "test",
+    "complexity": 1,
+    "reviewer_verdict": "deferred_baseline_unavailable",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "This is a mechanical baseline check of existing readiness commands and one narrow parser-failure triage point. It does not require changing source behavior or reasoning across files.",
+    "executor_notes": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative.",
+    "files_changed": [],
+    "commands_run": [],
+    "evidence_files": []
+  },
+  {
+    "id": "T5",
+    "depends_on": [
+      "T4"
+    ],
+    "status": "done",
+    "kind": "test",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "The primary edit is a localized expansion of a test file's scanned path list, with any exception constrained by the test output. It does not change production authority semantics, and violations are directly observable in the focused test.",
+    "executor_notes": "Expanded MIGRATED_READINESS_FILES in shaderRefAuthority.test.ts from renderPlanner/exportGuard only to the six required readiness paths: renderPlanner.ts, exportGuard.ts, lib/renderRouter.ts, hooks/useRenderState.ts, runtime/composition/routeScopeValidation.ts, and runtime/renderability.ts. Added a length assertion for the six-file gate and no new allowlist entries. Static forbidden-read scan over the six files found no matches; the full shaderRefAuthority.test.ts file passed with 2 tests.",
+    "files_changed": [
+      "src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts"
+    ],
+    "commands_run": [
+      "rg -n \"\\bclip\\.app\\??\\.shader\\b|\\bconfig\\.app\\??\\.shaderPostprocess\\b|\\bTimelineShaderMetadata\\b|\\blegacyTimelineShaderMetadata\\b\" src/tools/video-editor/runtime/renderPlanner.ts src/tools/video-editor/runtime/exportGuard.ts src/tools/video-editor/lib/renderRouter.ts src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/runtime/composition/routeScopeValidation.ts src/tools/video-editor/runtime/renderability.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts",
+      "git diff --check -- src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+    ]
+  }
+]
+
+        Prior batch deviations (address if applicable):
+        [
+  "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: docs/video-editor/extension-platform-contract-recheck.md, docs/video-editor/extension-platform-supported-deferred.md, docs/video-editor/frontend-closure-matrix.md",
+  "Advisory audit finding: Executor claimed changed files not present in git status: .gitignore, docs/video-editor/extension-platform-contract-recheck.md, docs/video-editor/extension-platform-supported-deferred.md, docs/video-editor/frontend-closure-matrix.md, scripts/quality/check-trust-model-truth.mjs, scripts/quality/check-trust-model-truth.test.mjs, src/tools/video-editor/hooks/useRenderState.test.tsx, src/tools/video-editor/hooks/useRenderState.ts, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts, src/tools/video-editor/runtime/renderPlanner.test.ts",
+  "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+  "Advisory audit finding: Tasks left pending after execute (executor never started them): T9"
+]
+
+        User action prerequisites:
+        No user_action prerequisites for this batch.
+
+
+        Batch-scoped sense checks:
+        [
+  {
+    "id": "SC9",
+    "task_id": "T9",
+    "verdict": "",
+    "question": "Does the proof note map all seven North Star required proof items to concrete files/tests/scripts and include truthful final command evidence, with the final validation commands actually run?"
+  }
+]
+
+
+        ## Execution context (settled - DO NOT re-litigate)
+
+        - SD1: The fast-path render bypass remains as an optimization but all user-facing blocked states must originate from planner RenderBlockers - This resolves the anchor tension between the brief's suggestion to document the bypass as a limitation and the North Star requirement that export blocks originate from planner blockers. The plan correctly treats this...
+- SD2: D-020 moves to supported only after the fast-path planner-provenance fix lands; D-021/D-022 depend on A5 evidence and may remain deferred if proof is incomplete - This is the correct ordering constraint. The plan explicitly ties docs reclassification to code changes landing first (Step 7 follows Step 6), preventing the anti-pattern of claiming support before implementation exis...
+- SD3: The proof note belongs in .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md as a milestone artifact, not in the epic initiative directory - The plan explicitly places the proof note in the milestone plan directory. This keeps M4 evidence self-contained and avoids polluting the epic-level initiative directory with per-milestone artifacts. The epic North St...
+
+        ## Plan execution order rationale
+
+        1. Verify readiness and complete A2/A5 audit notes before editing gates.
+2. Land trust and composition drift gates before relying on the final proof note.
+3. Fix export blocker provenance before reclassifying D-020/D-021/D-022 as supported.
+4. Write the proof note last so it cites final files and passing commands, not stale intermediate evidence.
+
+        ## Inter-task guidance from finalize
+
+        Execute the tasks in DAG order and keep batches narrow: T5 and T6 intentionally share composition context after the trust gate, while the render provenance fix is isolated behind them. Treat conditional work in T2 as a real conditional, not a license to touch readiness code unnecessarily. The final proof note must be evidence-driven and must not hide failures behind supported language; if final validation exposes a pre-existing baseline failure, record it explicitly and leave gates intact.
+
+        Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations.
+        Robustness level: thorough.
+
+        Requirements:
+        - Execute only the actionable tasks in this batch.
+        - Treat completed tasks as dependency context, not new work.
+        - Return structured JSON only.
+        - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
+        - Template file already written for reference: /workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/execute_batch_8_output.json
+        - Only produce `task_updates` for these tasks: [T9]
+        - `task_updates[].status` must be one of `done`, `skipped`, `completed`, or `blocked`; never `pending` or `in_progress`.
+        - Only produce `sense_check_acknowledgments` for these sense checks: [SC9]
+        - Do not include updates for tasks or sense checks outside this batch.
+        - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+        - Keep `executor_notes` verification-focused.
+        - Best-effort progress checkpointing: if `/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/execution_batch_8.json` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - All terminal verification commands must run from the Project directory (`/workspace/extension-reality-convergence-epic/reigh-app`) or a descendant. Do not `cd` to `/workspace/arnold`, an editable-engine mirror, or any shared engine checkout for tests; those paths are outside the session worktree and the sandbox will refuse them.
+        - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
+        - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
+        - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
+        - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
+
+        Batch JSON response template:
+        ```json
+        {
+  "output": "",
+  "files_changed": [],
+  "commands_run": [],
+  "deviations": [],
+  "task_updates": [
+    {
+      "task_id": "T9",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC9",
+      "executor_note": ""
+    }
+  ]
+}
+        ```
