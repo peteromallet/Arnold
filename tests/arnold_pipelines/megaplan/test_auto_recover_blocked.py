@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
+import arnold_pipelines.megaplan.chain as chain_module
 from arnold_pipelines.megaplan import auto
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.orchestration.phase_result import (
@@ -53,6 +55,36 @@ def test_read_state_data_reconciles_failed_no_next_after_finalize(tmp_path: Path
     assert state["current_state"] == "finalized"
     assert state["latest_failure"] is None
     assert "resume_cursor" not in state
+
+
+def test_chain_recovers_failed_plan_before_auto_drive(monkeypatch, tmp_path: Path) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "demo"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "failed"}),
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    def fake_run_command(root: Path, cmd: list[str], **_kwargs) -> None:
+        commands.append(cmd)
+        assert root == tmp_path
+
+    monkeypatch.setattr(chain_module, "_run_command", fake_run_command)
+
+    chain_module._recover_failed_plan_before_drive(tmp_path, "demo", writer=lambda _: None)
+
+    assert commands == [
+        [
+            sys.executable,
+            "-P",
+            "-m",
+            "arnold_pipelines.megaplan",
+            "resume",
+            "--plan",
+            "demo",
+        ]
+    ]
 
 
 def test_git_text_normalizes_timeout_as_cli_error(monkeypatch, tmp_path: Path) -> None:

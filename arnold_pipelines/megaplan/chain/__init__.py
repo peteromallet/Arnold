@@ -3604,6 +3604,7 @@ def _drive_plan_with_blocked_execute_recovery(
     on_phase_complete: Callable[[str, int, str, str], None] | None = None,
     writer,
 ) -> DriverOutcome:
+    _recover_failed_plan_before_drive(root, plan, writer=writer)
     outcome = _drive_plan(
         root,
         plan,
@@ -3625,6 +3626,28 @@ def _drive_plan_with_blocked_execute_recovery(
         spec,
         on_phase_complete=on_phase_complete,
         writer=writer,
+    )
+
+
+def _recover_failed_plan_before_drive(root: Path, plan: str, *, writer) -> None:
+    """Let the plan recovery entrypoint clear failed state before chain auto-drive."""
+
+    if _plan_current_state_from_payload(root, plan) != "failed":
+        return
+    writer(f"[chain] plan {plan} is failed; invoking resume before auto-drive\n")
+    _run_command(
+        root,
+        [
+            sys.executable,
+            "-P",
+            "-m",
+            "arnold_pipelines.megaplan",
+            "resume",
+            "--plan",
+            plan,
+        ],
+        writer=writer,
+        error_code="plan_resume_failed",
     )
 
 
