@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { planRender } from '@/tools/video-editor/runtime/renderPlanner.ts';
+import {
+  buildExportReadinessPlan,
+  planRender,
+} from '@/tools/video-editor/runtime/renderPlanner.ts';
 import { projectHostMaterialRuntime } from '@/tools/video-editor/runtime/composition/materialRuntime.ts';
 import { createProcessResultAttachRecord } from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
 import { projectCompositionGraph } from '@/tools/video-editor/runtime/composition/graphProjector.ts';
@@ -11,6 +14,7 @@ import {
 import type {
   CapabilityFinding,
   CapabilityRequirement,
+  ExportDiagnostic,
   RenderArtifact,
   RenderBlocker,
   RenderArtifactSidecarDescriptor,
@@ -132,6 +136,59 @@ function requirement(input: Partial<CapabilityRequirement> & Pick<CapabilityRequ
     determinism: 'deterministic',
     ...input,
   };
+}
+
+function routerRequirement(input: {
+  readonly id: string;
+  readonly route: RenderRoute;
+  readonly clipType: string;
+  readonly reason: RenderBlocker['reason'];
+  readonly legacyReason: string;
+  readonly message: string;
+  readonly requiredCapabilities?: readonly string[];
+}): CapabilityRequirement {
+  return {
+    id: input.id,
+    sourceRef: { source: 'registry', contributionId: input.clipType },
+    route: input.route,
+    requiredCapabilities: input.requiredCapabilities ?? [input.route],
+    determinism: input.route === 'worker-export' ? 'process-dependent' : 'deterministic',
+    blocking: true,
+    routeFit: {
+      route: input.route,
+      fit: 'blocked',
+      reason: input.reason,
+      message: input.message,
+    },
+    findings: [
+      {
+        id: `${input.id}.${input.route}.${input.reason}`,
+        severity: 'error',
+        route: input.route,
+        reason: input.reason,
+        message: input.message,
+        detail: {
+          source: 'render-router',
+          clipType: input.clipType,
+          legacyReason: input.legacyReason,
+        },
+      },
+    ],
+  };
+}
+
+function expectPlannerBlocker(
+  blockers: readonly RenderBlocker[],
+  expected: Pick<RenderBlocker, 'id' | 'route' | 'reason' | 'message'> & {
+    readonly detail?: unknown;
+  },
+): void {
+  const blocker = blockers.find((candidate) => candidate.id === expected.id);
+  expect(blocker).toBeDefined();
+  expect(blocker).toMatchObject({
+    severity: 'error',
+    ...expected,
+  });
 }
 
 interface RenderDependentOutputOptions {
@@ -502,7 +559,643 @@ function attachResult(
   };
 }
 
+function exportDiagnostic(
+  overrides: Pick<ExportDiagnostic, 'code' | 'message' | 'severity'> & Partial<ExportDiagnostic>,
+): ExportDiagnostic {
+  return overrides;
+}
+
 describe('planRender', () => {
+  it('emits router-fed generated-module missing-artifact blockers with complete planner metadata', () => {
+    const message = 'Clip type "generated-remotion-module" cannot be rendered until remotion_module_missing_artifact is resolved.';
+    const result = planRender({
+      requirements: [
+        routerRequirement({
+          id: 'router.clip.0.generated-remotion-module.browser-export',
+          route: 'browser-export',
+          clipType: 'generated-remotion-module',
+          reason: 'missing-material',
+          legacyReason: 'remotion_module_missing_artifact',
+          message,
+        }),
+        routerRequirement({
+          id: 'router.clip.0.generated-remotion-module.worker-export',
+          route: 'worker-export',
+          clipType: 'generated-remotion-module',
+          reason: 'missing-material',
+          legacyReason: 'remotion_module_missing_artifact',
+          message,
+          requiredCapabilities: ['worker-export'],
+        }),
+      ],
+    });
+
+    expectPlannerBlocker(result.blockers, {
+      id: 'router.clip.0.generated-remotion-module.browser-export.browser-export.missing-material',
+      route: 'browser-export',
+      reason: 'missing-material',
+      message,
+      detail: {
+        source: 'render-router',
+        clipType: 'generated-remotion-module',
+        legacyReason: 'remotion_module_missing_artifact',
+      },
+    });
+    expectPlannerBlocker(result.blockers, {
+      id: 'router.clip.0.generated-remotion-module.worker-export.worker-export.missing-material',
+      route: 'worker-export',
+      reason: 'missing-material',
+      message,
+      detail: {
+        source: 'render-router',
+        clipType: 'generated-remotion-module',
+        legacyReason: 'remotion_module_missing_artifact',
+      },
+    });
+    expect(result.canBrowserExport).toBe(false);
+    expect(result.canWorkerExport).toBe(false);
+  });
+
+  it('emits router-fed contributed clip conflict blockers with route and legacy reason metadata', () => {
+    const message = 'Clip type "generated-remotion-module" cannot be rendered until contributed_blocked_worker_route_conflict is resolved.';
+    const result = planRender({
+      requirements: [
+        routerRequirement({
+          id: 'router.generated.contributed-conflict.browser-export',
+          route: 'browser-export',
+          clipType: 'generated-remotion-module',
+          reason: 'route-unsupported',
+          legacyReason: 'contributed_blocked_worker_route_conflict',
+          message,
+        }),
+        routerRequirement({
+          id: 'router.generated.contributed-conflict.worker-export',
+          route: 'worker-export',
+          clipType: 'generated-remotion-module',
+          reason: 'route-unsupported',
+          legacyReason: 'contributed_blocked_worker_route_conflict',
+          message,
+          requiredCapabilities: ['worker-export'],
+        }),
+      ],
+    });
+
+    expectPlannerBlocker(result.blockers, {
+      id: 'router.generated.contributed-conflict.browser-export.browser-export.route-unsupported',
+      route: 'browser-export',
+      reason: 'route-unsupported',
+      message,
+      detail: {
+        source: 'render-router',
+        clipType: 'generated-remotion-module',
+        legacyReason: 'contributed_blocked_worker_route_conflict',
+      },
+    });
+    expectPlannerBlocker(result.blockers, {
+      id: 'router.generated.contributed-conflict.worker-export.worker-export.route-unsupported',
+      route: 'worker-export',
+      reason: 'route-unsupported',
+      message,
+      detail: {
+        source: 'render-router',
+        clipType: 'generated-remotion-module',
+        legacyReason: 'contributed_blocked_worker_route_conflict',
+      },
+    });
+    expect(result.canBrowserExport).toBe(false);
+    expect(result.canWorkerExport).toBe(false);
+  });
+
+  it('emits request-owned worker, disabled-format, and compile-only handler blockers with detail metadata', () => {
+    const disabledFormat: VideoEditorOutputFormatDescriptor = {
+      ...renderDependentOutput({ availableRoutes: ['browser-export'] }),
+      requiresRender: false,
+      disabled: true,
+      disabledReason: 'Encoder is disabled by policy.',
+      routeRequirements: [],
+      processRequirements: [],
+      blockers: [],
+      nextActions: [],
+      capabilities: undefined,
+    };
+    const compileOnlyFormat: VideoEditorOutputFormatDescriptor = {
+      ...disabledFormat,
+      disabled: false,
+    };
+
+    const workerUnavailable = planRender({
+      request: {
+        route: 'worker-export',
+        routeAvailability: [{
+          route: 'worker-export',
+          available: false,
+          providerId: 'worker-banodoco',
+          message: 'Worker render unavailable for route "generated_remotion_module".',
+          detail: { legacyReason: 'generated_remotion_module' },
+        }],
+      },
+    });
+    expectPlannerBlocker(workerUnavailable.blockers, {
+      id: 'planner.request.worker-export.worker-banodoco.unavailable',
+      route: 'worker-export',
+      reason: 'process-dependent',
+      message: 'Worker render unavailable for route "generated_remotion_module".',
+      detail: expect.objectContaining({
+        source: 'render-request',
+        routeAvailability: 'unavailable',
+        providerId: 'worker-banodoco',
+        requestedRoute: 'worker-export',
+        legacyReason: 'generated_remotion_module',
+      }),
+    });
+
+    const disabled = planRender({
+      outputFormats: [disabledFormat],
+      request: { outputFormatId: 'dataset.zip', route: 'browser-export' },
+    });
+    expectPlannerBlocker(disabled.blockers, {
+      id: 'planner.outputFormat.ext.dataset.dataset.zip.browser-export.disabled',
+      route: 'browser-export',
+      reason: 'inactive-extension',
+      message: 'Encoder is disabled by policy.',
+      detail: expect.objectContaining({
+        source: 'render-request',
+        outputFormatId: 'dataset.zip',
+        requestedRoute: 'browser-export',
+        disabled: true,
+      }),
+    });
+
+    const compileOnlyMissing = planRender({
+      outputFormats: [compileOnlyFormat],
+      request: {
+        outputFormatId: 'dataset.zip',
+        route: 'browser-export',
+        compileOnlyHandlerAvailable: false,
+      },
+    });
+    expectPlannerBlocker(compileOnlyMissing.blockers, {
+      id: 'planner.outputFormat.ext.dataset.dataset.zip.browser-export.compile-handler-missing',
+      route: 'browser-export',
+      reason: 'missing-contribution',
+      message: 'Export format "Dataset bundle" has no compile-only output handlers registered.',
+      detail: expect.objectContaining({
+        source: 'render-request',
+        outputFormatId: 'dataset.zip',
+        requestedRoute: 'browser-export',
+        compileOnlyHandlerAvailable: false,
+      }),
+    });
+  });
+
+  it('emits guard-fed unknown contribution and export diagnostic blockers with preserved detail metadata', () => {
+    const liveBindingDiagnostic = exportDiagnostic({
+      severity: 'error',
+      code: 'export/live-binding-unresolved',
+      message: 'Live binding webcam-1 must be baked before export.',
+      extensionId: 'ext.live',
+      contributionId: 'clip.webcam',
+      detail: {
+        clipId: 'clip-live',
+        clipType: 'webcam-live',
+        renderRoute: 'browser-export',
+        sourceId: 'webcam-1',
+      },
+    });
+    const result = buildExportReadinessPlan({
+      guard: {
+        unknownClipTypes: ['clip.unknown'],
+        unknownEffects: ['effect.unknown'],
+        unknownTransitions: ['transition.unknown'],
+        diagnostics: [liveBindingDiagnostic],
+      },
+    });
+
+    expectPlannerBlocker(result.blockers, {
+      id: 'planner.guard.unknown-clip-type.clip.unknown.browser-export',
+      route: 'browser-export',
+      reason: 'missing-contribution',
+      message: 'Unknown clip type "clip.unknown" cannot be exported on browser-export.',
+      detail: expect.objectContaining({
+        source: 'export-guard-compat',
+        code: 'export/unknown-clip-type',
+        contributionKind: 'clip-type',
+        contributionId: 'clip.unknown',
+        renderRoute: 'browser-export',
+      }),
+    });
+    expectPlannerBlocker(result.blockers, {
+      id: 'planner.guard.unknown-effect.effect.unknown.worker-export',
+      route: 'worker-export',
+      reason: 'missing-contribution',
+      message: 'Unknown effect "effect.unknown" cannot be exported on worker-export.',
+      detail: expect.objectContaining({
+        source: 'export-guard-compat',
+        code: 'export/unknown-effect',
+        contributionKind: 'effect',
+        contributionId: 'effect.unknown',
+        renderRoute: 'worker-export',
+      }),
+    });
+    expectPlannerBlocker(result.blockers, {
+      id: 'planner.guard.unknown-transition.transition.unknown.sidecar-export',
+      route: 'sidecar-export',
+      reason: 'missing-contribution',
+      message: 'Unknown transition "transition.unknown" cannot be exported on sidecar-export.',
+      detail: expect.objectContaining({
+        source: 'export-guard-compat',
+        code: 'export/unknown-transition',
+        contributionKind: 'transition',
+        contributionId: 'transition.unknown',
+        renderRoute: 'sidecar-export',
+      }),
+    });
+    expectPlannerBlocker(result.blockers, {
+      id: 'export-guard:export/live-binding-unresolved:ext.live:clip.webcam:clip-live:webcam-live',
+      route: 'browser-export',
+      reason: 'live-unbaked',
+      message: 'Live binding webcam-1 must be baked before export.',
+      detail: expect.objectContaining({
+        source: 'export-guard-compat',
+        code: 'export/live-binding-unresolved',
+        diagnosticDetail: {
+          clipId: 'clip-live',
+          clipType: 'webcam-live',
+          renderRoute: 'browser-export',
+          sourceId: 'webcam-1',
+        },
+      }),
+    });
+  });
+
+  it('emits existing planner-owned output and process blockers with stable blocker fields', () => {
+    const missingOutput = planRender({
+      outputFormats: [renderDependentOutput()],
+      request: { outputFormatId: 'missing.format', route: 'sidecar-export' },
+    });
+    expectPlannerBlocker(missingOutput.blockers, {
+      id: 'planner.outputFormat.missing.format.missing',
+      route: 'sidecar-export',
+      reason: 'missing-contribution',
+      message: 'Output format "missing.format" is not registered.',
+      detail: {
+        source: 'render-request',
+        outputFormatId: 'missing.format',
+      },
+    });
+
+    const unsupportedOutputRoute = planRender({
+      outputFormats: [renderDependentOutput({ availableRoutes: ['sidecar-export'] })],
+      request: { outputFormatId: 'dataset.zip', route: 'browser-export' },
+    });
+    expectPlannerBlocker(unsupportedOutputRoute.blockers, {
+      id: 'planner.outputFormat.ext.dataset.dataset.zip.browser-export.route-unsupported',
+      route: 'browser-export',
+      reason: 'route-unsupported',
+      message: 'Output format "Dataset bundle" is not available on browser-export.',
+      detail: expect.objectContaining({
+        source: 'render-request',
+        outputFormatId: 'dataset.zip',
+        requestedRoute: 'browser-export',
+      }),
+    });
+
+    const processNotInstalled = planRender({
+      outputFormats: [renderDependentOutput()],
+      processes: [processDescriptor()],
+      processStatuses: [{
+        processId: 'dataset-process',
+        state: 'not-installed',
+        installHint: 'Install the dataset bridge.',
+      }],
+      request: { outputFormatId: 'dataset.zip' },
+    });
+    expectPlannerBlocker(processNotInstalled.blockers, {
+      id: 'planner.outputFormat.ext.dataset.dataset.zip.sidecar-export.dataset-process.exportDataset.process-not-installed',
+      route: 'sidecar-export',
+      reason: 'process-not-installed',
+      message: 'Process "dataset-process" is not installed for sidecar-export. Hint: Install the dataset bridge.',
+      detail: expect.objectContaining({
+        source: 'output-format',
+        outputFormatId: 'dataset.zip',
+        outputLabel: 'Dataset bundle',
+        processId: 'dataset-process',
+        operationId: 'exportDataset',
+        routeScope: 'sidecar-export',
+        processProtocol: 'stdio-jsonrpc',
+        installHint: 'Install the dataset bridge.',
+        processState: 'not-installed',
+        lifecycleState: 'not-installed',
+      }),
+    });
+  });
+
+  it('preserves guard-fed unknown IDs as planner-owned missing-contribution blockers', () => {
+    const result = buildExportReadinessPlan({
+      guard: {
+        unknownClipTypes: ['clip.z', 'clip.a'],
+        unknownEffects: ['effect.z', 'effect.a'],
+        unknownTransitions: ['transition.z', 'transition.a'],
+        inactiveExtensionIds: {
+          effectIds: new Set(['effect.reserved']),
+          transitionIds: new Set(['transition.reserved']),
+          clipTypeIds: new Set(['clip.reserved']),
+        },
+      },
+    });
+
+    expect(result.guard.unknownClipTypes).toEqual(['clip.a', 'clip.z']);
+    expect(result.guard.unknownEffects).toEqual(['effect.a', 'effect.z']);
+    expect(result.guard.unknownTransitions).toEqual(['transition.a', 'transition.z']);
+    expect(result.guard.inactiveExtensionIds.effectIds).toEqual(new Set(['effect.reserved']));
+    expect(result.guard.inactiveExtensionIds.transitionIds).toEqual(new Set(['transition.reserved']));
+    expect(result.guard.inactiveExtensionIds.clipTypeIds).toEqual(new Set(['clip.reserved']));
+    expect(result.guard.hasBlockingErrors).toBe(true);
+    expect(result.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'planner.guard.unknown-clip-type.clip.a.browser-export',
+        route: 'browser-export',
+        reason: 'missing-contribution',
+        contributionId: 'clip.a',
+        detail: expect.objectContaining({
+          source: 'export-guard-compat',
+          code: 'export/unknown-clip-type',
+        }),
+      }),
+      expect.objectContaining({
+        id: 'planner.guard.unknown-effect.effect.a.worker-export',
+        route: 'worker-export',
+        reason: 'missing-contribution',
+        contributionId: 'effect.a',
+        detail: expect.objectContaining({
+          source: 'export-guard-compat',
+          code: 'export/unknown-effect',
+        }),
+      }),
+      expect.objectContaining({
+        id: 'planner.guard.unknown-transition.transition.a.sidecar-export',
+        route: 'sidecar-export',
+        reason: 'missing-contribution',
+        contributionId: 'transition.a',
+        detail: expect.objectContaining({
+          source: 'export-guard-compat',
+          code: 'export/unknown-transition',
+        }),
+      }),
+    ]));
+    expect(result.canBrowserExport).toBe(false);
+    expect(result.canWorkerExport).toBe(false);
+    expect(result.canSidecarExport).toBe(false);
+  });
+
+  it('keeps warning-only inactive extension diagnostics non-blocking', () => {
+    const warning = exportDiagnostic({
+      severity: 'warning',
+      code: 'export/unsupported-reserved-target',
+      message: 'Effect effect.reserved is reserved by an inactive extension.',
+      extensionId: 'ext.inactive',
+      contributionId: 'effect.reserved',
+      detail: {
+        effectType: 'effect.reserved',
+        renderRoute: 'browser-export',
+        blockerReason: 'inactive-extension',
+      },
+    });
+
+    const result = buildExportReadinessPlan({
+      guard: {
+        diagnostics: [warning],
+        inactiveExtensionIds: {
+          effectIds: new Set(['effect.reserved']),
+          transitionIds: new Set(['transition.reserved']),
+          clipTypeIds: new Set(['clip.reserved']),
+        },
+      },
+    });
+
+    expect(result.guard.unknownClipTypes).toEqual([]);
+    expect(result.guard.unknownEffects).toEqual([]);
+    expect(result.guard.unknownTransitions).toEqual([]);
+    expect(result.guard.inactiveExtensionIds.effectIds).toEqual(new Set(['effect.reserved']));
+    expect(result.guard.inactiveExtensionIds.transitionIds).toEqual(new Set(['transition.reserved']));
+    expect(result.guard.inactiveExtensionIds.clipTypeIds).toEqual(new Set(['clip.reserved']));
+    expect(result.guard.hasBlockingErrors).toBe(false);
+
+    const finding = result.findings.find((item) => item.detail?.code === 'export/unsupported-reserved-target');
+    expect(finding).toMatchObject({
+      severity: 'warning',
+      route: 'browser-export',
+      message: 'Effect effect.reserved is reserved by an inactive extension.',
+      extensionId: 'ext.inactive',
+      contributionId: 'effect.reserved',
+      detail: {
+        source: 'export-guard-compat',
+        code: 'export/unsupported-reserved-target',
+        diagnosticDetail: {
+          effectType: 'effect.reserved',
+          renderRoute: 'browser-export',
+          blockerReason: 'inactive-extension',
+        },
+      },
+    });
+    expect(finding?.reason).toBeUndefined();
+    expect(result.blockers).toEqual([]);
+    expect(result.canBrowserExport).toBe(true);
+    expect(result.canWorkerExport).toBe(true);
+    expect(result.canSidecarExport).toBe(true);
+  });
+
+  it('maps known and unknown export diagnostics to planner reasons while preserving diagnostic metadata', () => {
+    const knownDiagnostic = exportDiagnostic({
+      severity: 'error',
+      code: 'export/unrenderable-effect',
+      message: 'Effect effect.preview cannot render on worker export.',
+      extensionId: 'ext.effects',
+      contributionId: 'effect.preview',
+      detail: {
+        clipId: 'clip-1',
+        effectType: 'effect.preview',
+        renderRoute: 'worker-export',
+        blockerReason: 'live-unbaked',
+      },
+    });
+    const unknownDiagnostic = exportDiagnostic({
+      severity: 'error',
+      code: 'export/vendor-specific' as `export/${string}`,
+      message: 'Vendor-specific export readiness failed.',
+      extensionId: 'ext.vendor',
+      contributionId: 'vendor.effect',
+      detail: {
+        clipId: 'clip-2',
+        effectType: 'vendor.effect',
+        renderRoute: 'sidecar-export',
+        vendorDetail: 'preserved',
+      },
+    });
+    const liveBindingDiagnostic = exportDiagnostic({
+      severity: 'error',
+      code: 'export/live-binding-unresolved',
+      message: 'Live binding webcam-1 must be baked before export.',
+      extensionId: 'ext.live',
+      contributionId: 'clip.webcam',
+      detail: {
+        clipId: 'clip-live',
+        clipType: 'webcam-live',
+        renderRoute: 'browser-export',
+        sourceId: 'webcam-1',
+      },
+    });
+
+    const result = buildExportReadinessPlan({
+      guard: {
+        diagnostics: [
+          unknownDiagnostic,
+          liveBindingDiagnostic,
+          knownDiagnostic,
+        ],
+      },
+    });
+    const findingForCode = (code: string): CapabilityFinding | undefined =>
+      result.findings.find((finding) => finding.detail?.code === code);
+
+    expect(findingForCode('export/unrenderable-effect')).toMatchObject({
+      severity: 'error',
+      route: 'worker-export',
+      reason: 'route-unsupported',
+      message: 'Effect effect.preview cannot render on worker export.',
+      extensionId: 'ext.effects',
+      contributionId: 'effect.preview',
+      detail: {
+        source: 'export-guard-compat',
+        code: 'export/unrenderable-effect',
+        diagnosticDetail: {
+          clipId: 'clip-1',
+          effectType: 'effect.preview',
+          renderRoute: 'worker-export',
+          blockerReason: 'live-unbaked',
+        },
+      },
+    });
+    expect(findingForCode('export/vendor-specific')).toMatchObject({
+      severity: 'error',
+      route: 'sidecar-export',
+      reason: 'unknown',
+      detail: {
+        source: 'export-guard-compat',
+        code: 'export/vendor-specific',
+        diagnosticDetail: {
+          clipId: 'clip-2',
+          effectType: 'vendor.effect',
+          renderRoute: 'sidecar-export',
+          vendorDetail: 'preserved',
+        },
+      },
+    });
+    expect(findingForCode('export/live-binding-unresolved')).toMatchObject({
+      severity: 'error',
+      route: 'browser-export',
+      reason: 'live-unbaked',
+      detail: {
+        source: 'export-guard-compat',
+        code: 'export/live-binding-unresolved',
+        diagnosticDetail: {
+          clipId: 'clip-live',
+          clipType: 'webcam-live',
+          renderRoute: 'browser-export',
+          sourceId: 'webcam-1',
+        },
+      },
+    });
+    expect(result.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reason: 'route-unsupported', route: 'worker-export' }),
+      expect.objectContaining({ reason: 'unknown', route: 'sidecar-export' }),
+      expect.objectContaining({ reason: 'live-unbaked', route: 'browser-export' }),
+    ]));
+    expect(result.guard.hasBlockingErrors).toBe(true);
+    expect(result.canBrowserExport).toBe(false);
+    expect(result.canWorkerExport).toBe(false);
+    expect(result.canSidecarExport).toBe(false);
+  });
+
+  it('keeps buildExportReadinessPlan wrapper readiness identical to direct planRender reduction', () => {
+    const guardDiagnostic = exportDiagnostic({
+      severity: 'error',
+      code: 'export/live-binding-unresolved',
+      message: 'Live binding webcam-1 must be baked before export.',
+      extensionId: 'ext.live',
+      contributionId: 'clip.webcam',
+      detail: {
+        clipId: 'clip-live',
+        clipType: 'webcam-live',
+        renderRoute: 'browser-export',
+        sourceId: 'webcam-1',
+      },
+    });
+    const adaptedGuardDiagnostic: CapabilityFinding = {
+      id: 'export-guard:export/live-binding-unresolved:ext.live:clip.webcam:clip-live:webcam-live',
+      severity: 'error',
+      route: 'browser-export',
+      reason: 'live-unbaked',
+      message: 'Live binding webcam-1 must be baked before export.',
+      extensionId: 'ext.live',
+      contributionId: 'clip.webcam',
+      detail: {
+        source: 'export-guard-compat',
+        code: 'export/live-binding-unresolved',
+        diagnosticDetail: {
+          clipId: 'clip-live',
+          clipType: 'webcam-live',
+          renderRoute: 'browser-export',
+          sourceId: 'webcam-1',
+        },
+      },
+    };
+    const guardFinding: CapabilityFinding = {
+      id: 'guard.finding.worker-warning',
+      severity: 'warning',
+      route: 'worker-export',
+      reason: 'unknown',
+      message: 'Worker support was not proven by the guard scan.',
+      detail: { source: 'export-guard' },
+    };
+    const guardBlocker: RenderBlocker = {
+      id: 'guard.blocker.sidecar',
+      severity: 'error',
+      route: 'sidecar-export',
+      reason: 'unknown',
+      message: 'Sidecar export was blocked by guard input.',
+      detail: { source: 'export-guard' },
+    };
+
+    const wrapperResult = buildExportReadinessPlan({
+      guard: {
+        diagnostics: [guardDiagnostic],
+        findings: [guardFinding],
+        blockers: [guardBlocker],
+      },
+    });
+    const directResult = planRender({
+      diagnostics: [
+        adaptedGuardDiagnostic,
+        guardFinding,
+        guardBlocker,
+      ],
+    });
+
+    expect(wrapperResult.guard.diagnostics).toEqual([adaptedGuardDiagnostic]);
+    expect(wrapperResult.guard.findings).toEqual([guardFinding]);
+    expect(wrapperResult.guard.blockers).toEqual([guardBlocker]);
+    expect(wrapperResult.findings).toEqual(directResult.findings);
+    expect(wrapperResult.blockers).toEqual(directResult.blockers);
+    expect(wrapperResult.routes).toEqual(directResult.routes);
+    expect(wrapperResult.routePlans).toEqual(directResult.routePlans);
+    expect(wrapperResult.diagnostics).toEqual(directResult.diagnostics);
+    expect(wrapperResult.nextActions).toEqual(directResult.nextActions);
+    expect(wrapperResult.canBrowserExport).toBe(directResult.canBrowserExport);
+    expect(wrapperResult.canWorkerExport).toBe(directResult.canWorkerExport);
+    expect(wrapperResult.canSidecarExport).toBe(directResult.canSidecarExport);
+  });
+
   it('derives route blockers from a public TimelineSnapshot without registry inputs', () => {
     const result = planRender({ snapshot: snapshotWithLiveBinding() });
 
@@ -1070,6 +1763,118 @@ describe('planRender', () => {
         contributionId: 'missing.format',
       }),
     ]);
+  });
+
+  it('blocks only explicitly requested disabled output formats', () => {
+    const disabledFormat: VideoEditorOutputFormatDescriptor = {
+      ...renderDependentOutput({ availableRoutes: ['browser-export'] }),
+      requiresRender: false,
+      disabled: true,
+      disabledReason: 'Encoder is disabled by policy.',
+      routeRequirements: [],
+      processRequirements: [],
+      blockers: [],
+      nextActions: [],
+      capabilities: undefined,
+    };
+
+    const generalPlan = planRender({
+      outputFormats: [disabledFormat],
+    });
+    expect(generalPlan.canBrowserExport).toBe(true);
+    expect(generalPlan.blockers).toEqual([]);
+
+    const requestedPlan = planRender({
+      outputFormats: [disabledFormat],
+      request: { outputFormatId: 'dataset.zip', route: 'browser-export' },
+    });
+    expect(requestedPlan.blockers).toEqual([
+      expect.objectContaining({
+        id: 'planner.outputFormat.ext.dataset.dataset.zip.browser-export.disabled',
+        route: 'browser-export',
+        reason: 'inactive-extension',
+        message: 'Encoder is disabled by policy.',
+        detail: expect.objectContaining({
+          source: 'render-request',
+          outputFormatId: 'dataset.zip',
+          disabled: true,
+        }),
+      }),
+    ]);
+  });
+
+  it('blocks compile-only handler absence only for the requested format', () => {
+    const compileOnlyFormat: VideoEditorOutputFormatDescriptor = {
+      ...renderDependentOutput({ availableRoutes: ['browser-export'] }),
+      requiresRender: false,
+      disabled: false,
+      routeRequirements: [],
+      processRequirements: [],
+      blockers: [],
+      nextActions: [],
+      capabilities: undefined,
+    };
+
+    const generalPlan = planRender({
+      outputFormats: [compileOnlyFormat],
+      request: { compileOnlyHandlerAvailable: false },
+    });
+    expect(generalPlan.blockers).toEqual([]);
+
+    const requestedPlan = planRender({
+      outputFormats: [compileOnlyFormat],
+      request: {
+        outputFormatId: 'dataset.zip',
+        route: 'browser-export',
+        compileOnlyHandlerAvailable: false,
+      },
+    });
+    expect(requestedPlan.blockers).toEqual([
+      expect.objectContaining({
+        id: 'planner.outputFormat.ext.dataset.dataset.zip.browser-export.compile-handler-missing',
+        route: 'browser-export',
+        reason: 'missing-contribution',
+        message: 'Export format "Dataset bundle" has no compile-only output handlers registered.',
+        detail: expect.objectContaining({
+          source: 'render-request',
+          outputFormatId: 'dataset.zip',
+          compileOnlyHandlerAvailable: false,
+        }),
+      }),
+    ]);
+  });
+
+  it('uses request-scoped route availability blockers without blocking unrelated routes', () => {
+    const result = planRender({
+      request: {
+        route: 'worker-export',
+        routeAvailability: [{
+          route: 'worker-export',
+          available: false,
+          providerId: 'worker-banodoco',
+          message: 'Worker render unavailable for route "generated_remotion_module".',
+        }],
+      },
+    });
+
+    expect(result.routePlans.find((routePlan) => routePlan.route === 'worker-export')).toMatchObject({
+      blocked: true,
+      blockers: [
+        expect.objectContaining({
+          id: 'planner.request.worker-export.worker-banodoco.unavailable',
+          route: 'worker-export',
+          reason: 'process-dependent',
+          message: 'Worker render unavailable for route "generated_remotion_module".',
+          detail: expect.objectContaining({
+            source: 'render-request',
+            routeAvailability: 'unavailable',
+            providerId: 'worker-banodoco',
+          }),
+        }),
+      ],
+    });
+    expect(result.routePlans.find((routePlan) => routePlan.route === 'browser-export')?.blocked).toBe(false);
+    expect(result.routePlans.find((routePlan) => routePlan.route === 'sidecar-export')?.blocked).toBe(false);
   });
 
   it('surfaces requested route support and request-level capabilities in route plans', () => {

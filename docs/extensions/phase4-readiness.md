@@ -37,11 +37,17 @@ documents.
   Remotion module, and contributed clip content into `CapabilityRequirement`
   entries, calls `planRender()`, and returns a planner-backed route decision.
 - `src/tools/video-editor/runtime/renderPlanner.ts` is the canonical render
-  readiness reducer. It consumes timeline snapshot requirements, explicit
-  requirements, output format descriptors, process descriptors, shader
-  descriptors, material refs/statuses, render groups, request constraints, and
-  diagnostics, then returns route plans, blockers, diagnostics, next actions,
-  and `canBrowserExport`/`canWorkerExport`.
+  and export readiness reducer. It consumes timeline snapshot requirements,
+  explicit requirements, output format descriptors, process descriptors, shader
+  descriptors, material refs/statuses, render groups, request constraints,
+  diagnostics, and guard scan payloads, then returns route plans, planner
+  blockers, diagnostics, next actions, and
+  `canBrowserExport`/`canWorkerExport`.
+- `src/tools/video-editor/runtime/exportGuard.ts` and `scanExportConfig()` are
+  structured scanners, not readiness authorities. Their payloads are adapted by
+  `buildExportReadinessPlan()` into `planRender()`, and planner `RenderBlocker`
+  records provide the canonical user-facing readiness vocabulary. Original
+  `export/*` codes remain diagnostic metadata for diagnostics/debug views.
 
 ## Render Planner Participation Contract
 
@@ -59,7 +65,8 @@ Required contract:
    convert into equivalent requirements.
 3. Unsupported, preview-only, live-unbaked, missing-material, stale-material,
    process-dependent, missing-contribution, and route-unsupported states must
-   produce actionable `RenderBlocker` records rather than silent fallback.
+   produce actionable planner `RenderBlocker` records rather than silent
+   fallback or guard-owned blocked text.
 4. Route decisions must remain planner-backed. For clip routing,
    `renderRouter.ts` already indexes contributed clip records by `clipTypeId`,
    allows browser export only when the contribution explicitly declares a
@@ -77,6 +84,9 @@ Required contract:
 7. Diagnostics published from planner findings must remain source-scoped so
    Extension Manager and diagnostics surfaces can show package/family blockers
    without confusing them with extension-authored runtime diagnostics.
+8. Guard scans and `export/*` diagnostics may provide scanner detail and
+   diagnostic metadata, but user-facing readiness blockers must be planner
+   blockers.
 
 Promotion is blocked for any family whose content can render, mutate timeline
 state, invoke processes, consume live data, or produce export artifacts without

@@ -37,7 +37,10 @@ import {
 import { projectCompositionGraph } from '@/tools/video-editor/runtime/composition/graphProjector.ts';
 import { createLiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
 import { normalizeExtensionRuntime } from '@/tools/video-editor/runtime/extensionSurface.ts';
-import type { RenderPlannerResult } from '@/tools/video-editor/runtime/renderPlanner.ts';
+import {
+  buildExportReadinessPlan,
+  type RenderPlannerResult,
+} from '@/tools/video-editor/runtime/renderPlanner.ts';
 import type {
   ResolvedTimelineConfig,
   TimelineLiveBinding,
@@ -287,6 +290,7 @@ interface EffectShellState {
   hasConsumesEdge: boolean;
   hasBindsLiveEdge: boolean;
   exportBlocked: boolean;
+  scannerDiagnosticCode: string | null;
   blockerMessage: string | null;
 }
 
@@ -301,6 +305,7 @@ function EffectLiveAcceptanceShell({
     hasConsumesEdge: false,
     hasBindsLiveEdge: false,
     exportBlocked: false,
+    scannerDiagnosticCode: null,
     blockerMessage: null,
   });
 
@@ -322,6 +327,15 @@ function EffectLiveAcceptanceShell({
         undefined,
         graph,
       );
+      const exportReadiness = buildExportReadinessPlan({
+        snapshot,
+        compositionGraph: graph,
+        extensionRuntime: FLAGSHIP_RUNTIME,
+        guard: exportResult,
+      });
+      const liveBindingDiagnostic = exportResult.diagnostics.find((diagnostic) => (
+        diagnostic.code === 'export/live-binding-unresolved'
+      ));
 
       if (cancelled) {
         return;
@@ -343,8 +357,12 @@ function EffectLiveAcceptanceShell({
           && edge.detail?.targetKind === 'effect-param'
           && edge.detail?.targetPath === 'intensity'
         )),
-        exportBlocked: exportResult.hasBlockingErrors,
-        blockerMessage: exportResult.diagnostics.find((diagnostic) => diagnostic.code === 'export/live-binding-unresolved')?.message ?? null,
+        exportBlocked: !exportReadiness.canBrowserExport,
+        scannerDiagnosticCode: liveBindingDiagnostic?.code ?? null,
+        blockerMessage: exportReadiness.blockers.find((blocker) => (
+          blocker.route === 'browser-export'
+          && blocker.reason === 'live-unbaked'
+        ))?.message ?? null,
       });
     }
 
@@ -371,10 +389,10 @@ function EffectLiveAcceptanceShell({
       <div data-testid="ex02-consumes">{String(state.hasConsumesEdge)}</div>
       <div data-testid="ex02-binds-live">{String(state.hasBindsLiveEdge)}</div>
       <div data-testid="ex02-export-blocked">{String(state.exportBlocked)}</div>
-      {state.blockerMessage ? (
+      {state.blockerMessage && state.scannerDiagnosticCode ? (
         <BlockerActionCard
           severity="error"
-          code="export/live-binding-unresolved"
+          code={state.scannerDiagnosticCode}
           message={state.blockerMessage}
           nextAction={{
             kind: 'bake',

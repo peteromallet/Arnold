@@ -280,6 +280,12 @@ function requirementsForBrowserOnlyClip(
       legacyReason: reason,
       message: `Clip type "${clipType ?? 'contributed'}" cannot run on worker export.`,
     }),
+    routeRequirement(`${id}.sidecar-export`, 'sidecar-export', clipType, {
+      blocking: true,
+      reason: 'route-unsupported',
+      legacyReason: reason,
+      message: `Clip type "${clipType ?? 'contributed'}" cannot run on sidecar export.`,
+    }),
   ];
 }
 
@@ -289,18 +295,25 @@ function requirementsForBlockedClip(
   reason: RenderRouteDecision['reason'],
   blockerReason: RenderBlockerReason,
 ): CapabilityRequirement[] {
+  const message = `Clip type "${clipType ?? 'generated'}" cannot be rendered until ${reason} is resolved.`;
   return [
     routeRequirement(`${id}.browser-export`, 'browser-export', clipType, {
       blocking: true,
       reason: blockerReason,
       legacyReason: reason,
-      message: `Clip type "${clipType ?? 'generated'}" cannot be rendered until ${reason} is resolved.`,
+      message,
     }),
     routeRequirement(`${id}.worker-export`, 'worker-export', clipType, {
       blocking: true,
       reason: blockerReason,
       legacyReason: reason,
-      message: `Clip type "${clipType ?? 'generated'}" cannot be rendered until ${reason} is resolved.`,
+      message,
+    }),
+    routeRequirement(`${id}.sidecar-export`, 'sidecar-export', clipType, {
+      blocking: true,
+      reason: blockerReason,
+      legacyReason: reason,
+      message,
     }),
   ];
 }
@@ -316,6 +329,19 @@ function selectPlannerRoute(result: RenderPlannerResult): PlannerRouteDecisionCo
     return { plannerResult: result, selectedPlannerRoute: 'sidecar-export' };
   }
   return { plannerResult: result, selectedPlannerRoute: 'preview' };
+}
+
+function routeForPlannerSelection(
+  planner: PlannerRouteDecisionContext,
+  preferredRoute: RenderRoute,
+): RenderRoute {
+  if (planner.selectedPlannerRoute === 'preview') {
+    return 'preview-only';
+  }
+  if (planner.selectedPlannerRoute === 'sidecar-export') {
+    return 'external';
+  }
+  return preferredRoute;
 }
 
 /** Pure-decision routing — call this from a hook or test. */
@@ -338,7 +364,7 @@ export function decideRenderRoute(
       materialStatuses: plannerInput?.materialStatuses,
     } satisfies RenderPlannerInput));
     return {
-      route: emptyPlanner.selectedPlannerRoute === 'sidecar-export' ? 'external' : 'browser-remotion',
+      route: routeForPlannerSelection(emptyPlanner, 'browser-remotion'),
       hasThemedClip: false,
       hasMediaClip: false,
       hasContributedClip: false,
@@ -359,6 +385,11 @@ export function decideRenderRoute(
   let blockedHasThemedClip = false;
   let blockedHasMediaClip = false;
   let blockedHasContributedClip = false;
+
+  // M3 export-readiness category audit:
+  // Generated-module artifact failures and contributed route conflicts are
+  // router-fed planner requirements; later coverage should assert them through
+  // decision.planner.plannerResult.blockers rather than router reason strings.
 
   clips.forEach((clip, index) => {
     if (blockedReason) return;
@@ -386,7 +417,7 @@ export function decideRenderRoute(
 
     // M9 T11: Check contributed clip records first. Contributed clip
     // code is only allowed in browser-remotion when it explicitly
-    // declares browser-export capability. Worker routes are always
+    // declares browser-export capability. Non-browser export routes are
     // blocked for contributed code (SD1).
     const clipType = clip?.clipType;
     if (typeof clipType === 'string') {
@@ -398,8 +429,8 @@ export function decideRenderRoute(
           requirements.push(...requirementsForBrowserOnlyClip(clipType, requirementId, 'browser_capable_contributed'));
         } else {
           // Contributed clip without browser-export capability is
-          // immediately blocked — worker routes are out of scope
-          // for contributed code and no other route is available.
+          // immediately blocked — non-browser export routes are out
+          // of scope for contributed code and no other route is available.
           requirements.push(...requirementsForBlockedClip(
             clipType,
             requirementId,
@@ -505,7 +536,7 @@ export function decideRenderRoute(
       };
     }
     return {
-      route: 'worker-banodoco',
+      route: routeForPlannerSelection(planner, 'worker-banodoco'),
       hasThemedClip,
       hasMediaClip,
       hasContributedClip: false,
@@ -534,7 +565,7 @@ export function decideRenderRoute(
       // Mixed browser-capable contributed + native → browser-remotion
       // handles both, unless sidecar-export is the selected planner route.
       return {
-        route: planner.selectedPlannerRoute === 'sidecar-export' ? 'external' : 'browser-remotion',
+        route: routeForPlannerSelection(planner, 'browser-remotion'),
         hasThemedClip: false,
         hasMediaClip: true,
         hasContributedClip: true,
@@ -544,7 +575,7 @@ export function decideRenderRoute(
     }
     // Pure browser-capable contributed clips
     return {
-      route: planner.selectedPlannerRoute === 'sidecar-export' ? 'external' : 'browser-remotion',
+      route: routeForPlannerSelection(planner, 'browser-remotion'),
       hasThemedClip: false,
       hasMediaClip: false,
       hasContributedClip: true,
@@ -555,7 +586,7 @@ export function decideRenderRoute(
 
   if (hasThemedClip && hasMediaClip) {
     return {
-      route: 'worker-banodoco',
+      route: routeForPlannerSelection(planner, 'worker-banodoco'),
       hasThemedClip,
       hasMediaClip,
       hasContributedClip: false,
@@ -565,7 +596,7 @@ export function decideRenderRoute(
   }
   if (hasThemedClip) {
     return {
-      route: 'worker-banodoco',
+      route: routeForPlannerSelection(planner, 'worker-banodoco'),
       hasThemedClip,
       hasMediaClip,
       hasContributedClip: false,
@@ -574,7 +605,7 @@ export function decideRenderRoute(
     };
   }
   return {
-    route: planner.selectedPlannerRoute === 'sidecar-export' ? 'external' : 'browser-remotion',
+    route: routeForPlannerSelection(planner, 'browser-remotion'),
     hasThemedClip,
     hasMediaClip,
     hasContributedClip: false,

@@ -11,7 +11,7 @@ import {
   referenceStateSeverity,
 } from '@/tools/video-editor/runtime/composition/diagnostics.ts';
 import { createProcessResultAttachRecord } from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
-import { planRender } from '@/tools/video-editor/runtime/renderPlanner.ts';
+import { buildExportReadinessPlan } from '@/tools/video-editor/runtime/renderPlanner.ts';
 import {
   getVideoFamilyDefinition,
   getVideoFamilyLegacyBridgeStatus,
@@ -60,6 +60,10 @@ function makeConfig(
     clips,
     registry: {},
   };
+}
+
+function buildPlannerReadiness(scan: ExportGuardResult) {
+  return buildExportReadinessPlan({ guard: scan });
 }
 
 function makeProcessDescriptor(): VideoEditorProcessDescriptor {
@@ -962,23 +966,23 @@ describe('scanExportConfig — unknown effects', () => {
     ]);
   });
 
-  it('keeps scan output as planner-compatible compatibility input', () => {
+  it('keeps scan output as planner-wrapper compatibility input', () => {
     const clip = makeClip('c1', {
       clipType: 'media',
       entrance: { type: 'crazy-spin', duration: 0.5 },
     });
     const scan = scanExportConfig(makeConfig([clip]), builtIn, extIds);
-    const planned = planRender({ diagnostics: [...scan.findings, ...scan.blockers] });
+    const planned = buildPlannerReadiness(scan);
 
     expect(planned.canBrowserExport).toBe(false);
     expect(planned.routePlans.find((routePlan) => routePlan.route === 'browser-export')).toMatchObject({
       blocked: true,
-      blockers: [
+      blockers: expect.arrayContaining([
         expect.objectContaining({
           id: 'export.effect.c1.entrance.crazy-spin.missing',
           reason: 'missing-contribution',
         }),
-      ],
+      ]),
     });
   });
 
@@ -1818,7 +1822,7 @@ describe('scanExportConfig — clip-type registry snapshot', () => {
         message: postprocessShaderMessage,
       }),
     ]));
-    expect(planRender({ diagnostics: result.findings }).canBrowserExport).toBe(false);
+    expect(buildPlannerReadiness(result).canBrowserExport).toBe(false);
   });
 
   it('blocks graph-absent legacy shader metadata through compatibility only', () => {
@@ -1882,7 +1886,7 @@ describe('scanExportConfig — clip-type registry snapshot', () => {
     expect(result.blockers).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ reason: 'missing-material' }),
     ]));
-    expect(planRender({ diagnostics: result.findings }).canBrowserExport).toBe(false);
+    expect(buildPlannerReadiness(result).canBrowserExport).toBe(false);
   });
 
   it('suppresses graph shader materializer blockers when a completed process attach already returned the matching material', () => {
@@ -2211,7 +2215,7 @@ describe('scanExportConfig — composition graph target diagnostics', () => {
       },
     },
   ])(
-    'promotes $graphCode to blocking export and planning findings',
+    'emits scanner blockers for $graphCode and planner-wrapper findings',
     ({ graphCode, exportCode, reason, detail }) => {
       const graph = makeCompositionGraph({
         diagnostics: [makeCompositionDiagnostic(graphCode, detail)],
@@ -2258,7 +2262,7 @@ describe('scanExportConfig — composition graph target diagnostics', () => {
       ]));
       expect(result.hasBlockingErrors).toBe(true);
 
-      const planner = planRender({ compositionGraph: graph });
+      const planner = buildPlannerReadiness(result);
       expect(planner.canBrowserExport).toBe(false);
       expect(planner.canWorkerExport).toBe(false);
       expect(planner.findings).toEqual(expect.arrayContaining([
@@ -2268,7 +2272,7 @@ describe('scanExportConfig — composition graph target diagnostics', () => {
           reason,
           detail: expect.objectContaining({
             source: 'composition-graph',
-            code: graphCode,
+            graphDiagnosticCode: graphCode,
             targetKind: detail.targetKind,
             targetPath: detail.targetPath,
           }),
@@ -2379,7 +2383,7 @@ describe('scanExportConfig — composition graph M5 diagnostics', () => {
     };
   }
 
-  it('blocks export for effect error diagnostic (EFFECT_DISABLED_REF) with blockers', () => {
+  it('emits scanner blockers for effect error diagnostic (EFFECT_DISABLED_REF)', () => {
     const graph = makeM5CompositionGraph([
       makeCompositionDiagnostic(
         COMPOSITION_DIAGNOSTIC_CODE.EFFECT_DISABLED_REF,
@@ -2477,7 +2481,7 @@ describe('scanExportConfig — composition graph M5 diagnostics', () => {
     expect(result.hasBlockingErrors).toBe(false);
   });
 
-  it('blocks export for transition error diagnostic (TRANSITION_DISABLED_REF) with blockers', () => {
+  it('emits scanner blockers for transition error diagnostic (TRANSITION_DISABLED_REF)', () => {
     const graph = makeM5CompositionGraph([
       makeCompositionDiagnostic(
         COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_DISABLED_REF,
@@ -2585,8 +2589,8 @@ describe('scanExportConfig — composition graph M5 diagnostics', () => {
     expect(result.hasBlockingErrors).toBe(false);
   });
 
-  it('integrates with planRender: effect error blocks export, resolved clears', () => {
-    // With error diagnostic — export blocked
+  it('feeds M5 scanner output into planner wrapper readiness', () => {
+    // With error diagnostic - planner wrapper marks export blocked.
     const blockedGraph = makeM5CompositionGraph([
       makeCompositionDiagnostic(
         COMPOSITION_DIAGNOSTIC_CODE.EFFECT_DISABLED_REF,
@@ -2605,7 +2609,16 @@ describe('scanExportConfig — composition graph M5 diagnostics', () => {
       ),
     ]);
 
-    const blockedPlanner = planRender({ compositionGraph: blockedGraph });
+    const blockedScan = scanExportConfig(
+      makeConfig([makeClip('c1')]),
+      builtIn,
+      extIds,
+      undefined,
+      undefined,
+      undefined,
+      blockedGraph,
+    );
+    const blockedPlanner = buildPlannerReadiness(blockedScan);
     expect(blockedPlanner.canBrowserExport).toBe(false);
     expect(blockedPlanner.canWorkerExport).toBe(false);
     expect(blockedPlanner.findings).toEqual(expect.arrayContaining([
@@ -2615,19 +2628,28 @@ describe('scanExportConfig — composition graph M5 diagnostics', () => {
         reason: 'inactive-extension',
         detail: expect.objectContaining({
           source: 'composition-graph',
-          code: COMPOSITION_DIAGNOSTIC_CODE.EFFECT_DISABLED_REF,
+          graphDiagnosticCode: COMPOSITION_DIAGNOSTIC_CODE.EFFECT_DISABLED_REF,
         }),
       }),
     ]));
 
-    // With no diagnostics (resolved) — export cleared
+    // With no diagnostics (resolved) - planner wrapper clears export.
     const resolvedGraph = makeM5CompositionGraph([]);
-    const resolvedPlanner = planRender({ compositionGraph: resolvedGraph });
+    const resolvedScan = scanExportConfig(
+      makeConfig([makeClip('c1')]),
+      builtIn,
+      extIds,
+      undefined,
+      undefined,
+      undefined,
+      resolvedGraph,
+    );
+    const resolvedPlanner = buildPlannerReadiness(resolvedScan);
     expect(resolvedPlanner.canBrowserExport).toBe(true);
     expect(resolvedPlanner.canWorkerExport).toBe(true);
   });
 
-  it('blocks export for transition invalid package ref with inactive-extension reason', () => {
+  it('emits inactive-extension scanner blockers for transition invalid package refs', () => {
     const graph = makeM5CompositionGraph([
       makeCompositionDiagnostic(
         COMPOSITION_DIAGNOSTIC_CODE.TRANSITION_INVALID_PACKAGE_REF,
@@ -2720,7 +2742,7 @@ describe('scanExportConfig — composition graph M5 diagnostics', () => {
       'export/effect-unresolved-ref',
       'export/transition-unresolved-ref',
     ]);
-    // Only the effect error blocks
+    // Only the effect error emits scanner blockers.
     expect(result.blockers).toHaveLength(2); // 2 routes for the blocking effect
     expect(result.findings).toHaveLength(4); // 2 routes × 2 diagnostics
     expect(result.hasBlockingErrors).toBe(true);
