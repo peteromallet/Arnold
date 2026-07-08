@@ -6,7 +6,9 @@ and the absence of routing targets/predicates in boundary contracts.
 
 from __future__ import annotations
 
+import json
 from dataclasses import FrozenInstanceError
+from pathlib import Path
 
 import pytest
 
@@ -65,6 +67,20 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     revise_to_critique,
     synthesis_to_decision,
 )
+
+ROOT = Path(__file__).resolve().parents[3]
+BOUNDARY_FIXTURE_ROOT = (
+    ROOT / "docs" / "arnold" / "megaplan-native-representation-boundary-fixtures"
+)
+
+
+def _load_generated_fixture_json(boundary_id: str, filename: str) -> dict[str, object]:
+    payload = json.loads(
+        (BOUNDARY_FIXTURE_ROOT / boundary_id / filename).read_text(encoding="utf-8")
+    )
+    assert isinstance(payload, dict)
+    return payload
+
 
 # ── Registry completeness ──────────────────────────────────────────────────
 
@@ -753,6 +769,50 @@ def test_review_human_verification_and_finalize_contracts_capture_projection() -
         final_projection.details["evidence_surface_ref"]
         == "FINALIZE_POLICY.metadata.route_surface.final_projection_routes"
     )
+
+
+def test_generated_boundary_fixtures_preserve_negative_case_surfaces() -> None:
+    """Generated manifests/semantic-health payloads must expose the same
+    receipt, phase, authority, reducer, and state surfaces that the contracts
+    require for the negative semantic-health cases."""
+    prep_manifest = _load_generated_fixture_json("prep_to_plan", "manifest.json")
+    gate_manifest = _load_generated_fixture_json("gate_to_revise", "manifest.json")
+    gate_health = _load_generated_fixture_json("gate_to_revise", "semantic_health.json")
+    execute_manifest = _load_generated_fixture_json(
+        "execute_aggregate_promotion",
+        "manifest.json",
+    )
+    final_manifest = _load_generated_fixture_json("final_projection", "manifest.json")
+    override_manifest = _load_generated_fixture_json(
+        "override_abort_authority",
+        "manifest.json",
+    )
+
+    assert prep_manifest["artifact_refs"] == list(prep_to_plan.required_artifacts)
+    assert "receipt" in prep_manifest["capability_effects"]
+
+    assert gate_manifest["artifact_refs"] == list(gate_to_revise.required_artifacts)
+    assert gate_manifest["authority_records"]
+    assert [finding["finding_id"] for finding in gate_health["scoped_findings"]] == [
+        "SH-gate_to_revise-phase-result-stale-phase"
+    ]
+    assert [finding["diagnostic_code"] for finding in gate_health["scoped_findings"]] == [
+        "AWF249_BOUNDARY_EVIDENCE_STALE"
+    ]
+
+    assert execute_manifest["artifact_refs"] == list(
+        execute_aggregate_promotion.required_artifacts
+    )
+    assert execute_manifest["reducer_promotion"] is True
+    assert "reducer" in execute_manifest["capability_effects"]
+
+    assert final_manifest["artifact_refs"] == list(final_projection.required_artifacts)
+    assert "state_history" in final_manifest["capability_effects"]
+    assert "external_effect" in final_manifest["capability_effects"]
+
+    assert override_manifest["authority_records"]
+    assert "authority" in override_manifest["capability_effects"]
+    assert override_manifest["artifact_refs"] == []
 
 
 def test_s6_override_authority_contracts_capture_scope_and_evidence_contracts() -> None:

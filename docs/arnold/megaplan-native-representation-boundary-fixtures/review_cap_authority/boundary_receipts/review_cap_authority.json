@@ -1,0 +1,23 @@
+{
+  "artifact_refs": [
+    "review.json"
+  ],
+  "authority_records": [
+    {
+      "actor": "fixture-operator",
+      "authority_version": "arnold.workflow.authority_record.v1",
+      "role": "reviewer"
+    }
+  ],
+  "boundary_id": "review_cap_authority",
+  "history_ref": "review_cap_authorized",
+  "invocation_id": "inv-review_cap_authority",
+  "outcome": "succeeded",
+  "phase_result_ref": "phase_result.json",
+  "receipt_version": "arnold.workflow.boundary_receipt.v1",
+  "row_id": "s5.review_cap_authority.1",
+  "state_observation": {
+    "current_state": "executed"
+  },
+  "workflow_id": "megaplan-review"
+}

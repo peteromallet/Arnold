@@ -1,0 +1,19 @@
+{
+  "authority_record_count": 0,
+  "boundary_id": "execute_resume_anchor",
+  "external_effect_refs": [
+    "effects/execute_resume_anchor.json",
+    "execute:timeout-retry-fresh"
+  ],
+  "fixture_id": "execute_resume_anchor",
+  "phase_result_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_resume_anchor/phase_result.json",
+  "receipt_path": "docs/arnold/megaplan-native-representation-boundary-fixtures/execute_resume_anchor/boundary_receipts/execute_resume_anchor.json",
+  "reducer_promotion": false,
+  "scope_boundary_ids": [
+    "execute_resume_anchor"
+  ],
+  "scoped_error_count": 0,
+  "scoped_findings": [],
+  "scoped_warning_count": 0,
+  "status": "healthy"
+}

@@ -13,6 +13,32 @@ TRACEABILITY_PATH = ROOT / "docs/arnold/megaplan-native-representation-traceabil
 CONFORMANCE_PATH = ROOT / "docs/arnold/megaplan-native-representation-conformance.yaml"
 
 TRACEABILITY_EXPECTATIONS = {
+    "shadow-topology": {
+        "proof_artifacts": (
+            "shadow_topology_diff",
+            "review_signoff",
+            "parity_notes",
+        ),
+        "false_pass_guard_terms": ("handler-backed runtime",),
+        "negative_invariant_terms": ("accepted shadow topology",),
+    },
+    "handler-purity-audit": {
+        "proof_artifacts": (
+            "handler_inventory",
+            "purity_scan",
+            "source_excerpts",
+            "reviewer_signoff",
+        ),
+        "false_pass_guard_terms": ("native nodes", "control flow"),
+        "negative_invariant_terms": (
+            "current_state",
+            "next_step",
+            "workflow_transition",
+            "run_parallel",
+            "auto-loop dispatch",
+            "override action dispatch",
+        ),
+    },
     "human-decision-suspension": {
         "proof_artifacts": (
             "process_death_resume_test",
@@ -105,6 +131,27 @@ TRACEABILITY_EXPECTATIONS = {
 }
 
 CONFORMANCE_EXPECTATIONS = {
+    "shadow-topology": {
+        "carrier_evidence": (
+            "arnold_pipelines/megaplan/workflows/workflow.pypeline",
+        ),
+        "proof_artifacts": (
+            "arnold_pipelines/megaplan/workflows/workflow.pypeline",
+            "tests/arnold_pipelines/megaplan/fixtures/megaplan_m4_topology.yaml",
+            "tests/arnold_pipelines/megaplan/test_compositional_workflow.py",
+        ),
+    },
+    "handler-purity-audit": {
+        "carrier_evidence": (
+            "arnold_pipelines/megaplan/handlers/plan.py",
+            "arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py",
+        ),
+        "proof_artifacts": (
+            "tests/arnold_pipelines/megaplan/test_semantics_carrier.py",
+            "arnold_pipelines/megaplan/handlers/plan.py",
+            "arnold_pipelines/megaplan/handlers/_tiebreaker_impl.py",
+        ),
+    },
     "human-decision-suspension": {
         "carrier_evidence": (
             "arnold_pipelines/megaplan/workflows/workflow.pypeline",
@@ -255,6 +302,10 @@ def test_s6_conformance_rows_use_only_row_level_source_policy_and_boundary_evide
 @pytest.mark.parametrize(
     ("row_id", "field", "bad_path"),
     [
+        ("shadow-topology", "carrier_evidence", "arnold_pipelines/megaplan/pipeline.py"),
+        ("shadow-topology", "proof_artifacts", "arnold_pipelines/megaplan/workflows/workflow.py"),
+        ("handler-purity-audit", "carrier_evidence", "arnold_pipelines/megaplan/workflows/components.py"),
+        ("handler-purity-audit", "proof_artifacts", "arnold_pipelines/megaplan/route_dispatch.py"),
         ("override-action-surface", "carrier_evidence", "arnold_pipelines/megaplan/workflows/components.py"),
         ("override-action-surface", "proof_artifacts", "arnold_pipelines/megaplan/route_dispatch.py"),
         ("execute-approval-gates", "proof_artifacts", "arnold_pipelines/megaplan/runtime/manifest_backend.py"),

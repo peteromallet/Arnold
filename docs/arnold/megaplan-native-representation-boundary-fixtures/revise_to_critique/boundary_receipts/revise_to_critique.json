@@ -1,0 +1,17 @@
+{
+  "artifact_refs": [
+    "revised_plan.md",
+    "revision_log.md"
+  ],
+  "boundary_id": "revise_to_critique",
+  "history_ref": "revise_completed",
+  "invocation_id": "inv-revise_to_critique",
+  "outcome": "succeeded",
+  "phase_result_ref": "phase_result.json",
+  "receipt_version": "arnold.workflow.boundary_receipt.v1",
+  "row_id": "s2.revise.1",
+  "state_observation": {
+    "current_state": "planned"
+  },
+  "workflow_id": "megaplan-review"
+}

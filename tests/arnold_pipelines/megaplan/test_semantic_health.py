@@ -22,6 +22,7 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     BOUNDARY_CONTRACTS,
     BOUNDARY_CONTRACTS_BY_ID,
     critique_to_gate,
+    execute_aggregate_promotion,
     final_projection,
     finalize_artifacts,
     finalize_fallback,
@@ -120,6 +121,17 @@ def _write_boundary_receipt(
     (receipt_dir / f"{boundary_id}.json").write_text(
         json.dumps(receipt.to_dict()), encoding="utf-8"
     )
+
+
+def _patch_boundary_receipt(
+    plan_dir: Path,
+    boundary_id: str,
+    **updates: object,
+) -> None:
+    receipt_path = plan_dir / "boundary_receipts" / f"{boundary_id}.json"
+    payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    payload.update(updates)
+    receipt_path.write_text(json.dumps(payload), encoding="utf-8")
 
 
 def _write_artifact(plan_dir: Path, name: str, content: str = "") -> None:
@@ -1289,6 +1301,211 @@ def test_s5_final_projection_reports_state_history_drift(tmp_path: Path) -> None
 
     by_id = _findings_by_id(inspect_semantic_health(plan_dir))
     assert "SH-final_projection-state-history-drift" in by_id
+
+
+# ── negative boundary case matrix ───────────────────────────────────────
+
+
+def test_missing_receipt_case_stays_distinct(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    _write_state(
+        plan_dir,
+        _make_state(
+            current_state="prepped",
+            history=[{"step": "prep", "result": "success"}],
+            current_phase="prep",
+        ),
+    )
+    _write_phase_result(plan_dir, phase="prep")
+    _write_artifact(plan_dir, "research.md")
+    _write_artifact(plan_dir, "brief.md")
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    case_findings = {
+        fid for fid in by_id if fid.startswith("SH-prep_to_plan-")
+    }
+
+    assert case_findings == {"SH-prep_to_plan-receipt-missing"}
+    assert (
+        by_id["SH-prep_to_plan-receipt-missing"].diagnostic_code
+        == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    )
+
+
+def test_stale_phase_result_case_stays_distinct(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    _write_state(
+        plan_dir,
+        _make_state(
+            current_state="gated",
+            history=[{"step": "gate", "result": "success"}],
+            current_phase="gate",
+        ),
+    )
+    _write_phase_result(plan_dir, phase=None)
+    _write_artifact(plan_dir, "gate_decision.json", "{}")
+    _write_boundary_receipt(
+        plan_dir,
+        gate_to_revise.boundary_id,
+        row_id=gate_to_revise.row_id,
+        authority_records=[
+            {"actor": "gatekeeper", "role": "reviewer", "conditions": []}
+        ],
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    case_findings = {
+        fid for fid in by_id if fid.startswith("SH-gate_to_revise-")
+    }
+
+    assert case_findings == {"SH-gate_to_revise-phase-result-stale-phase"}
+    assert (
+        by_id["SH-gate_to_revise-phase-result-stale-phase"].diagnostic_code
+        == DiagnosticCode.BOUNDARY_EVIDENCE_STALE
+    )
+
+
+def test_artifact_state_divergence_case_stays_distinct(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    _write_state(
+        plan_dir,
+        _make_state(
+            current_state="done",
+            history=[{"step": "final", "result": "success"}],
+            current_phase="finalize",
+        ),
+    )
+    _write_artifact(plan_dir, "finalize.json", "{}")
+    _write_boundary_receipt(
+        plan_dir,
+        final_projection.boundary_id,
+        row_id=final_projection.row_id,
+        state_observation={"current_state": "finalized", "next_step": "execute"},
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    case_findings = {
+        fid for fid in by_id if fid.startswith("SH-final_projection-")
+    }
+
+    assert case_findings == {"SH-final_projection-state-history-drift"}
+    assert (
+        by_id["SH-final_projection-state-history-drift"].diagnostic_code
+        == DiagnosticCode.BOUNDARY_EVIDENCE_STALE
+    )
+
+
+def test_authority_mismatch_case_stays_distinct(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    state = _make_state(current_state="aborted")
+    state["meta"]["overrides"] = [{"action": "abort", "timestamp": "2026-07-08T12:00:00Z"}]
+    _write_state(plan_dir, state)
+    record = build_override_authority_record(
+        "abort",
+        plan_dir=plan_dir,
+        actor="operator",
+        role="human.override",
+        freshness_token="inv-test",
+        expected_freshness_token="inv-test",
+    )
+    record_payload = record.to_dict()
+    record_payload["conditions"] = []
+    record_payload["scope"] = "override.force_proceed"
+    _write_boundary_receipt(
+        plan_dir,
+        override_abort_authority.boundary_id,
+        row_id=override_abort_authority.row_id,
+        authority_records=[record_payload],
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    case_findings = {
+        fid for fid in by_id if fid.startswith("SH-override_abort_authority-")
+    }
+
+    assert case_findings == {
+        "SH-override_abort_authority-authority-scope-mismatch-0"
+    }
+    assert (
+        by_id["SH-override_abort_authority-authority-scope-mismatch-0"].diagnostic_code
+        == DiagnosticCode.BOUNDARY_EVIDENCE_STALE
+    )
+
+
+def test_child_output_without_reducer_promotion_case_stays_distinct(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    _write_state(
+        plan_dir,
+        _make_state(
+            current_state="executed",
+            history=[{"step": "execute", "result": "success"}],
+            current_phase="execute",
+            aggregation_stage="promoted",
+        ),
+    )
+    _write_phase_result(plan_dir, phase="execute")
+    _write_artifact(plan_dir, "execute_payload.json", "{}")
+    _write_artifact(plan_dir, "execution_batch_1.json", "{}")
+    _write_boundary_receipt(
+        plan_dir,
+        execute_aggregate_promotion.boundary_id,
+        row_id=execute_aggregate_promotion.row_id,
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    case_findings = {
+        fid for fid in by_id if fid.startswith("SH-execute_aggregate_promotion-")
+    }
+
+    assert case_findings == {
+        "SH-execute_aggregate_promotion-child-output-without-promotion"
+    }
+    assert (
+        by_id["SH-execute_aggregate_promotion-child-output-without-promotion"].diagnostic_code
+        == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+    )
+
+
+def test_reducer_promotion_without_child_evidence_case_stays_distinct(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    _write_state(
+        plan_dir,
+        _make_state(
+            current_state="executed",
+            history=[{"step": "execute", "result": "success"}],
+            current_phase="execute",
+            aggregation_stage="promoted",
+        ),
+    )
+    _write_phase_result(plan_dir, phase="execute")
+    _write_artifact(plan_dir, "execute_payload.json", "{}")
+    _write_boundary_receipt(
+        plan_dir,
+        execute_aggregate_promotion.boundary_id,
+        row_id=execute_aggregate_promotion.row_id,
+    )
+    _patch_boundary_receipt(
+        plan_dir,
+        execute_aggregate_promotion.boundary_id,
+        reducer_promotion=True,
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    case_findings = {
+        fid for fid in by_id if fid.startswith("SH-execute_aggregate_promotion-")
+    }
+
+    assert case_findings == {
+        "SH-execute_aggregate_promotion-promotion-without-child-evidence"
+    }
+    assert (
+        by_id["SH-execute_aggregate_promotion-promotion-without-child-evidence"].diagnostic_code
+        == DiagnosticCode.BOUNDARY_EVIDENCE_STALE
+    )
 
 
 # ── contract with no phase ──────────────────────────────────────────────

@@ -33,6 +33,8 @@ structural-audit output):
 
 from __future__ import annotations
 
+import pytest
+
 from arnold.manifest.refs import SourceSpan
 from arnold.workflow import check_workflow_source
 from arnold.workflow.boundary_evidence import (
@@ -827,6 +829,77 @@ def test_semantic_finding_with_boundary_evidence_missing_code() -> None:
 
     diag_codes = {d.code for d in result.diagnostics}
     assert DiagnosticCode.BOUNDARY_EVIDENCE_MISSING in diag_codes
+
+
+@pytest.mark.parametrize(
+    ("finding_id", "description", "diagnostic_code"),
+    (
+        (
+            "SH-prep_to_plan-receipt-missing",
+            "prep boundary receipt is missing",
+            DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+        ),
+        (
+            "SH-prep_to_plan-phase-result-stale-phase",
+            "prep boundary phase result is stale",
+            DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+        ),
+        (
+            "SH-prep_to_plan-state-history-drift",
+            "prep boundary artifact/state evidence diverged",
+            DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+        ),
+        (
+            "SH-prep_to_plan-authority-scope-mismatch-0",
+            "prep boundary authority evidence points at the wrong scope",
+            DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+        ),
+        (
+            "SH-prep_to_plan-child-output-without-promotion",
+            "child outputs exist without reducer promotion evidence",
+            DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+        ),
+        (
+            "SH-prep_to_plan-promotion-without-child-evidence",
+            "reducer promotion was recorded without child evidence",
+            DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+        ),
+    ),
+)
+def test_semantic_health_negative_case_findings_forward_expected_boundary_codes(
+    finding_id: str,
+    description: str,
+    diagnostic_code: DiagnosticCode,
+) -> None:
+    """Semantic-health negative fixture IDs must preserve their missing vs stale
+    checker verdict when forwarded as boundary evidence."""
+    contracts = (
+        _bc(S2_PREP_ROW_ID, "prep_to_plan", BoundaryPhase.PREP),
+        _bc(S2_PLAN_ROW_ID, "plan_to_critique", BoundaryPhase.PLAN),
+    )
+    finding = SemanticFinding(
+        finding_id=finding_id,
+        boundary_id="prep_to_plan",
+        description=description,
+        severity=(
+            FindingSeverity.ERROR
+            if diagnostic_code is DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+            else FindingSeverity.WARNING
+        ),
+        diagnostic_code=diagnostic_code,
+    )
+    valid_receipt = _receipt("plan_to_critique", S2_PLAN_ROW_ID)
+
+    result = check_workflow_source(
+        _SOURCE_TEMPLATE,
+        source_path="test.pypeline",
+        boundary_contracts=contracts,
+        boundary_evidence=(finding, valid_receipt),
+    )
+
+    diag_codes = {d.code for d in result.diagnostics}
+    assert diagnostic_code in diag_codes
+    assert DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE not in diag_codes
 
 
 def test_semantic_finding_with_non_boundary_diagnostic_is_not_fowarded() -> None:

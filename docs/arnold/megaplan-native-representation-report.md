@@ -23,7 +23,24 @@ The repo already has many of the ingredients. Existing native pipeline infrastru
 
 This report was produced with five DeepSeek subagents launched through a patched temporary copy of the Hermes launcher. The unmodified launcher/fan script failed against this worktree because it expected the older `arnold.pipelines.megaplan` import path; the temporary launcher changed those imports to the current `arnold.agent` and `arnold_pipelines.megaplan.runtime` modules. The research outputs were then spot-checked against source files before synthesis.
 
-## 2. Current state: explicit-node DSL plus handlers
+## 1.1 Evidence-backed status update (2026-07-08)
+
+The final conformance evidence bundle now records 31 implemented rows backed by
+39 source-checker records, 80 boundary-contract records, 63 boundary receipts,
+80 semantic-health records, 68 phase-result records, and 9 split-outcome
+scenario hashes. The generated conformance ledger treats
+`arnold_pipelines/megaplan/workflows/workflow.pypeline` as the canonical
+authored source, keeps `workflow.py` as compatibility glue only, and excludes
+historical conformance reports from implemented-row authority.
+
+That bundle also carries explicit narrowing records rather than silently
+ignoring residual compatibility risk: the handler-purity scan still records
+retained-handler findings, and the compatibility-quarantine and dead-delete
+mutation records capture the current baseline failures in the conformance gate
+surfaces. The sections below therefore remain useful as the historical
+diagnosis of the pre-corrective false pass, not as the current closure claim.
+
+## 2. Historical pre-corrective state: explicit-node DSL plus handlers
 
 The current Megaplan source authority is split across several files. The
 product-readable authored source is

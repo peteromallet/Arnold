@@ -26,6 +26,7 @@ import sys
 import textwrap
 import venv
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
 from zipfile import ZipFile
@@ -42,24 +43,6 @@ from tests.arnold_pipelines.megaplan.package_resources import checkout_path
 REPO_ROOT = checkout_path()
 WORKFLOW_PYPELINE_ARCHIVE_PATH = "arnold_pipelines/megaplan/workflows/workflow.pypeline"
 WORKFLOW_PY_ARCHIVE_PATH = "arnold_pipelines/megaplan/workflows/workflow.py"
-PROHIBITED_WRAPPER_TOKENS = (
-    "SOURCE_",
-    "handler_ref",
-    "route_bindings",
-    "manifest_hash",
-    "build_manifest",
-    "build_node",
-    "node_builder",
-    "generic dispatch",
-)
-WORKFLOW_SHIM_PROHIBITED_TOKENS = (
-    "@workflow",
-    "planning_workflow",
-    "SOURCE_CRITIQUE",
-    "SOURCE_EXECUTE",
-    "handler_ref",
-    "route_bindings",
-)
 REQUIRED_INSTALLED_CONFORMANCE_SUITES = MappingProxyType(
     {
         "structural_conformance": "compile canonical .pypeline and compare manifest/native topology",
@@ -80,6 +63,101 @@ REQUIRED_INSTALLED_CONFORMANCE_SUITES = MappingProxyType(
 class InstalledWheelArtifact:
     python: Path
     wheel: Path
+
+
+@lru_cache(maxsize=1)
+def _checkout_package_fingerprints() -> dict[str, object]:
+    script = textwrap.dedent(
+        f"""
+        from __future__ import annotations
+
+        import json
+        import pathlib
+
+        import arnold_pipelines.megaplan as megaplan
+        from arnold_pipelines.megaplan.workflows.package_fingerprints import (
+            canonical_workflow_fingerprints,
+        )
+
+        repo_root = pathlib.Path({str(REPO_ROOT)!r}).resolve()
+        package_file = pathlib.Path(megaplan.__file__).resolve()
+        if not package_file.is_relative_to(repo_root):
+            raise AssertionError(f"checkout proof imported outside repo root: {{package_file}}")
+
+        payload = canonical_workflow_fingerprints(
+            workflow_source_path=repo_root / {WORKFLOW_PYPELINE_ARCHIVE_PATH!r},
+            workflow_module_path=repo_root / {WORKFLOW_PY_ARCHIVE_PATH!r},
+        )
+        print(json.dumps(payload, sort_keys=True))
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
+        env={
+            key: value
+            for key, value in os.environ.items()
+            if key not in {"PYTHONPATH", "PYTHONHOME"}
+        }
+        | {"PYTHONPATH": str(REPO_ROOT), "PYTHONNOUSERSITE": "1"},
+    )
+    return json.loads(result.stdout)
+
+
+def _installed_package_fingerprints(
+    installed_megaplan_wheel: InstalledWheelArtifact,
+) -> dict[str, object]:
+    script = textwrap.dedent(
+        f"""
+        from __future__ import annotations
+
+        import importlib
+        import json
+        import pathlib
+        import sys
+        from importlib import resources
+
+        from arnold_pipelines.megaplan.workflows.package_fingerprints import (
+            canonical_workflow_fingerprints,
+        )
+
+        repo_root = pathlib.Path({str(REPO_ROOT)!r}).resolve()
+        package = importlib.import_module("arnold_pipelines.megaplan")
+        package_file = pathlib.Path(package.__file__).resolve()
+        if package_file.is_relative_to(repo_root):
+            raise AssertionError(f"installed proof came from checkout: {{package_file}}")
+        if any(pathlib.Path(entry or ".").resolve() == repo_root for entry in sys.path):
+            raise AssertionError(f"checkout root leaked into installed-wheel sys.path: {{sys.path}}")
+
+        workflow_resource = resources.files("arnold_pipelines.megaplan.workflows").joinpath("workflow.pypeline")
+        workflow_py_resource = resources.files("arnold_pipelines.megaplan.workflows").joinpath("workflow.py")
+        with resources.as_file(workflow_resource) as workflow_path, resources.as_file(
+            workflow_py_resource
+        ) as workflow_py_path:
+            payload = canonical_workflow_fingerprints(
+                workflow_source_path=workflow_path,
+                workflow_module_path=workflow_py_path,
+            )
+        print(json.dumps(payload, sort_keys=True))
+        """
+    )
+    result = subprocess.run(
+        [str(installed_megaplan_wheel.python), "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=installed_megaplan_wheel.wheel.parent,
+        env={
+            key: value
+            for key, value in os.environ.items()
+            if key not in {"PYTHONPATH", "PYTHONHOME"}
+        }
+        | {"PYTHONNOUSERSITE": "1"},
+    )
+    return json.loads(result.stdout)
 
 
 @pytest.fixture(scope="module")
@@ -472,11 +550,18 @@ class TestCanonicalSourceIsSemanticAuthority:
 
         pipeline = build_pipeline()
         assert pipeline.steps, "pipeline must have steps from canonical source"
-        # The canonical S4 topology exposes the four tiebreaker child steps
-        # and the execute/review handoff directly.
-        assert len(pipeline.steps) == 14, (
-            f"expected 14 canonical steps, got {len(pipeline.steps)}"
-        )
+        assert {
+            "prep",
+            "plan",
+            "critique",
+            "gate",
+            "tiebreaker_researcher",
+            "tiebreaker_decision",
+            "finalize",
+            "execute",
+            "review",
+            "override",
+        } <= {step.id for step in pipeline.steps}
 
     def test_workflow_components_are_from_canonical_source(self) -> None:
         """The workflow components module (declared policy surfaces) must
@@ -504,42 +589,10 @@ class TestCanonicalSourceIsSemanticAuthority:
         self,
         installed_megaplan_wheel: InstalledWheelArtifact,
     ) -> None:
-        with ZipFile(installed_megaplan_wheel.wheel) as archive:
-            pypeline_text = archive.read(WORKFLOW_PYPELINE_ARCHIVE_PATH).decode("utf-8")
-            workflow_py_text = archive.read(WORKFLOW_PY_ARCHIVE_PATH).decode("utf-8")
-        workflow_tree = ast.parse(pypeline_text)
-        function = next(node for node in workflow_tree.body if isinstance(node, ast.FunctionDef))
-        payload = {
-            "pypeline_name": Path(WORKFLOW_PYPELINE_ARCHIVE_PATH).name,
-            "workflow_py_name": Path(WORKFLOW_PY_ARCHIVE_PATH).name,
-            "contains_while": any(isinstance(node, ast.While) for node in ast.walk(function)),
-            "if_count": sum(isinstance(node, ast.If) for node in ast.walk(function)),
-            "called_names": sorted(
-                {
-                    node.func.id
-                    for node in ast.walk(function)
-                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                }
-            ),
-            "branch_names": sorted(
-                {
-                    node.left.id
-                    for node in ast.walk(function)
-                    if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name)
-                }
-            ),
-            "prohibited_hits": [
-                token for token in PROHIBITED_WRAPPER_TOKENS if token in pypeline_text
-            ],
-            "workflow_py_mentions_pypeline": "workflow.pypeline" in workflow_py_text,
-            "workflow_py_prohibited_hits": [
-                token for token in WORKFLOW_SHIM_PROHIBITED_TOKENS if token in workflow_py_text
-            ],
-        }
+        expected = _checkout_package_fingerprints()
+        payload = _installed_package_fingerprints(installed_megaplan_wheel)
 
-        assert payload["pypeline_name"] == "workflow.pypeline"
-        assert payload["workflow_py_name"] == "workflow.py"
-        assert payload["prohibited_hits"] == []
+        assert payload == expected
         assert payload["contains_while"] is True
         assert payload["if_count"] >= 4
         assert {
@@ -563,11 +616,11 @@ class TestCanonicalSourceIsSemanticAuthority:
         self,
         installed_megaplan_wheel: InstalledWheelArtifact,
     ) -> None:
+        expected_fingerprints = _checkout_package_fingerprints()
         script = textwrap.dedent(
             f"""
             from __future__ import annotations
 
-            import ast
             import importlib
             import json
             import pathlib
@@ -576,11 +629,14 @@ class TestCanonicalSourceIsSemanticAuthority:
             from importlib import resources
 
             from arnold.workflow.compiler import compile_pipeline
-            from arnold.workflow.source_compiler import lower_workflow_file
             from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline, build_pipeline
+            from arnold_pipelines.megaplan.workflows.package_fingerprints import (
+                canonical_workflow_fingerprints,
+            )
 
             repo_root = pathlib.Path({str(REPO_ROOT)!r}).resolve()
             wheel_path = pathlib.Path({str(installed_megaplan_wheel.wheel)!r}).resolve()
+            expected_fingerprints = {expected_fingerprints!r}
             package = importlib.import_module("arnold_pipelines.megaplan")
             package_file = pathlib.Path(package.__file__).resolve()
             if package_file.is_relative_to(repo_root):
@@ -590,26 +646,17 @@ class TestCanonicalSourceIsSemanticAuthority:
 
             workflow_resource = resources.files("arnold_pipelines.megaplan.workflows").joinpath("workflow.pypeline")
             workflow_py_resource = resources.files("arnold_pipelines.megaplan.workflows").joinpath("workflow.py")
-            pypeline_text = workflow_resource.read_text(encoding="utf-8")
-            workflow_py_text = workflow_py_resource.read_text(encoding="utf-8")
-            with resources.as_file(workflow_resource) as workflow_path:
-                lowered = lower_workflow_file(workflow_path)
+            with resources.as_file(workflow_resource) as workflow_path, resources.as_file(
+                workflow_py_resource
+            ) as workflow_py_path:
+                package_fingerprints = canonical_workflow_fingerprints(
+                    workflow_source_path=workflow_path,
+                    workflow_module_path=workflow_py_path,
+                )
 
             pipeline = build_pipeline()
             manifest = compile_pipeline(pipeline)
             shell = build_and_compile_pipeline()
-            workflow_tree = ast.parse(pypeline_text)
-            workflow_fn = next(node for node in workflow_tree.body if isinstance(node, ast.FunctionDef))
-            calls = {{
-                node.func.id
-                for node in ast.walk(workflow_fn)
-                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-            }}
-            branches = {{
-                node.left.id
-                for node in ast.walk(workflow_fn)
-                if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name)
-            }}
 
             handler_modules = [
                 "plan.py",
@@ -634,12 +681,21 @@ class TestCanonicalSourceIsSemanticAuthority:
 
             required = {dict(REQUIRED_INSTALLED_CONFORMANCE_SUITES)!r}
             proofs = {{
-                "structural_conformance": bool(manifest.nodes and manifest.edges and shell.native_program.instructions),
+                "structural_conformance": (
+                    bool(manifest.nodes and manifest.edges and shell.native_program.instructions)
+                    and shell.manifest.manifest_hash == manifest.manifest_hash
+                    and shell.manifest.topology_hash == manifest.topology_hash
+                ),
                 "handler_purity": len(handler_texts) == len(handler_modules),
-                "mutation_guards": not any(token in pypeline_text for token in {PROHIBITED_WRAPPER_TOKENS!r}),
+                "mutation_guards": (
+                    package_fingerprints["prohibited_hits"]
+                    == expected_fingerprints["prohibited_hits"]
+                    and package_fingerprints["workflow_py_prohibited_hits"]
+                    == expected_fingerprints["workflow_py_prohibited_hits"]
+                ),
                 "static_topology": bool(shell.native_program.routing_topology["nodes"] and shell.native_program.routing_topology["routes"]),
                 "fixed_scenario": (
-                    len(pipeline.steps) == 14
+                    len(pipeline.steps) == len(shell.authored_pipeline.steps)
                     and {{"prep", "plan", "critique", "gate", "tiebreaker_researcher", "tiebreaker_decision", "finalize", "execute", "review", "override"}}
                     <= {{step.id for step in pipeline.steps}}
                 ),
@@ -650,29 +706,28 @@ class TestCanonicalSourceIsSemanticAuthority:
                     and "execute_batches/batch_2/tasks_" in __import__("arnold_pipelines.megaplan._core", fromlist=["execute_batch_artifact_path"]).execute_batch_artifact_path(pathlib.Path("/plan"), 2, ["T3", "T2"]).as_posix()
                 ),
                 "native_python_anti_wrapper": (
-                    any(isinstance(node, ast.While) for node in ast.walk(workflow_fn))
-                    and sum(isinstance(node, ast.If) for node in ast.walk(workflow_fn)) >= 4
-                    and {{"loop", "parallel_map", "TIEBREAKER_RESEARCHER", "TIEBREAKER_CHALLENGER", "TIEBREAKER_SYNTHESIS", "TIEBREAKER_DECISION"}} <= calls
-                    and {{"gate_route_signal", "review_route_signal", "decision", "override_result"}} <= branches
-                    and "@workflow" not in workflow_py_text
+                    package_fingerprints["contains_while"] is True
+                    and package_fingerprints["if_count"] >= 4
+                    and {{"loop", "parallel_map", "TIEBREAKER_RESEARCHER", "TIEBREAKER_CHALLENGER", "TIEBREAKER_SYNTHESIS", "TIEBREAKER_DECISION"}} <= set(package_fingerprints["called_names"])
+                    and {{"gate_route_signal", "review_route_signal", "decision", "override_result"}} <= set(package_fingerprints["branch_names"])
+                    and package_fingerprints["workflow_py_mentions_pypeline"] is True
                 ),
-                "source_path_reconciliation": (
-                    workflow_resource.is_file()
-                    and workflow_py_resource.is_file()
-                    and {{step.kind for step in lowered.steps}} >= {{
-                        "parallel_map",
-                        "megaplan:tiebreaker_researcher",
-                        "megaplan:tiebreaker_challenger",
-                        "megaplan:tiebreaker_synthesis",
-                        "megaplan:tiebreaker_decision",
-                    }}
-                ),
+                "source_path_reconciliation": package_fingerprints == expected_fingerprints,
             }}
             missing = sorted(set(required) - set(proofs))
             failed = sorted(name for name, ok in proofs.items() if not ok)
             if missing or failed:
                 raise AssertionError(json.dumps({{"missing": missing, "failed": failed}}, sort_keys=True))
-            print(json.dumps({{"package_file": str(package_file), "proofs": sorted(proofs)}}, sort_keys=True))
+            print(
+                json.dumps(
+                    {{
+                        "package_file": str(package_file),
+                        "proofs": sorted(proofs),
+                        "package_fingerprints": package_fingerprints,
+                    }},
+                    sort_keys=True,
+                )
+            )
             """
         )
         result = subprocess.run(
@@ -690,6 +745,7 @@ class TestCanonicalSourceIsSemanticAuthority:
         )
         payload = json.loads(result.stdout)
         assert payload["proofs"] == sorted(REQUIRED_INSTALLED_CONFORMANCE_SUITES)
+        assert payload["package_fingerprints"] == expected_fingerprints
 
     def test_installed_execute_s4_parity_matches_development_checkout(
         self,

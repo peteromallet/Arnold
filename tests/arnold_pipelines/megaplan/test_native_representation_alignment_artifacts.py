@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,52 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     payload = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(payload, dict)
     return payload
+
+
+def _sha256(path: Path) -> str:
+    return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+
+
+def _write_evidence_bundle_fixture(path: Path, records: list[dict[str, Any]]) -> None:
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "arnold.megaplan_native_representation.evidence_bundle.v1",
+                "records": records,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _checker_evidence_record(
+    *,
+    repo_root: Path,
+    row_id: str,
+    semantic_carrier: str,
+    carrier_path: str,
+    proof_artifact_path: str,
+    policy_object: str | None = None,
+) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "row_id": row_id,
+        "semantic_carrier": semantic_carrier,
+        "kind": "source_checker",
+        "checker": "tests.native_representation_alignment",
+        "carrier_path": carrier_path,
+        "carrier_sha256": _sha256(repo_root / carrier_path),
+        "proof_artifact_path": proof_artifact_path,
+        "proof_artifact_sha256": _sha256(repo_root / proof_artifact_path),
+    }
+    if policy_object is not None:
+        record["policy_object"] = policy_object
+    else:
+        record["source_span"] = {
+            "path": carrier_path,
+            "start_line": 1,
+            "end_line": 1,
+        }
+    return record
 
 
 def _write_conformance_traceability_fixture(path: Path, row_ids: list[str]) -> None:
@@ -287,11 +334,24 @@ def test_final_conformance_gate_is_milestone_validation_stage() -> None:
 def test_final_conformance_yaml_validator_accepts_complete_ledger(tmp_path: Path) -> None:
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
+    evidence_bundle_path = tmp_path / "evidence.yaml"
     (tmp_path / "proof-one.md").write_text("# Proof one\n", encoding="utf-8")
     (tmp_path / "carrier-one.pypeline").write_text("# carrier one\n", encoding="utf-8")
     (tmp_path / "proof-two.md").write_text("# Proof two\n", encoding="utf-8")
     (tmp_path / "blocking-proof.md").write_text("# Blocking proof\n", encoding="utf-8")
     _write_conformance_traceability_fixture(traceability_path, ["row-one", "row-two"])
+    _write_evidence_bundle_fixture(
+        evidence_bundle_path,
+        [
+            _checker_evidence_record(
+                repo_root=tmp_path,
+                row_id="row-one",
+                semantic_carrier="canonical_source",
+                carrier_path="carrier-one.pypeline",
+                proof_artifact_path="proof-one.md",
+            )
+        ],
+    )
     conformance_path.write_text(
         yaml.safe_dump(
             {
@@ -328,6 +388,7 @@ def test_final_conformance_yaml_validator_accepts_complete_ledger(tmp_path: Path
             repo_root=tmp_path,
             conformance_path=conformance_path,
             traceability_path=traceability_path,
+            evidence_bundle_path=evidence_bundle_path,
         )
         == []
     )
@@ -336,7 +397,9 @@ def test_final_conformance_yaml_validator_accepts_complete_ledger(tmp_path: Path
 def test_final_conformance_yaml_validator_rejects_false_pass(tmp_path: Path) -> None:
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
+    evidence_bundle_path = tmp_path / "evidence.yaml"
     _write_conformance_traceability_fixture(traceability_path, ["row-one", "row-two"])
+    _write_evidence_bundle_fixture(evidence_bundle_path, [])
     conformance_path.write_text(
         yaml.safe_dump(
             {
@@ -361,6 +424,7 @@ def test_final_conformance_yaml_validator_rejects_false_pass(tmp_path: Path) -> 
         repo_root=tmp_path,
         conformance_path=conformance_path,
         traceability_path=traceability_path,
+        evidence_bundle_path=evidence_bundle_path,
     )
 
     assert any("missing deferred fields" in error for error in errors)
@@ -374,8 +438,10 @@ def test_final_conformance_yaml_validator_requires_carrier_evidence_for_implemen
 ) -> None:
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
+    evidence_bundle_path = tmp_path / "evidence.yaml"
     (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
     _write_conformance_traceability_fixture(traceability_path, ["row-one"])
+    _write_evidence_bundle_fixture(evidence_bundle_path, [])
     conformance_path.write_text(
         yaml.safe_dump(
             {
@@ -400,6 +466,7 @@ def test_final_conformance_yaml_validator_requires_carrier_evidence_for_implemen
         repo_root=tmp_path,
         conformance_path=conformance_path,
         traceability_path=traceability_path,
+        evidence_bundle_path=evidence_bundle_path,
     )
 
     assert any("missing implemented fields: carrier_evidence" in error for error in errors)
@@ -410,9 +477,22 @@ def test_final_conformance_yaml_validator_rejects_non_code_canonical_source(
 ) -> None:
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
+    evidence_bundle_path = tmp_path / "evidence.yaml"
     (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
     (tmp_path / "report.md").write_text("# Report\n", encoding="utf-8")
     _write_conformance_traceability_fixture(traceability_path, ["row-one"])
+    _write_evidence_bundle_fixture(
+        evidence_bundle_path,
+        [
+            _checker_evidence_record(
+                repo_root=tmp_path,
+                row_id="row-one",
+                semantic_carrier="canonical_source",
+                carrier_path="report.md",
+                proof_artifact_path="proof.md",
+            )
+        ],
+    )
     conformance_path.write_text(
         yaml.safe_dump(
             {
@@ -438,6 +518,7 @@ def test_final_conformance_yaml_validator_rejects_non_code_canonical_source(
         repo_root=tmp_path,
         conformance_path=conformance_path,
         traceability_path=traceability_path,
+        evidence_bundle_path=evidence_bundle_path,
     )
 
     assert any("canonical_source requires one of ['.pypeline']" in error for error in errors)
@@ -448,9 +529,23 @@ def test_final_conformance_yaml_validator_accepts_declared_policy_artifact(
 ) -> None:
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
+    evidence_bundle_path = tmp_path / "evidence.yaml"
     (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
     (tmp_path / "policy.yaml").write_text("policy: true\n", encoding="utf-8")
     _write_conformance_traceability_fixture(traceability_path, ["row-one"])
+    _write_evidence_bundle_fixture(
+        evidence_bundle_path,
+        [
+            _checker_evidence_record(
+                repo_root=tmp_path,
+                row_id="row-one",
+                semantic_carrier="declared_policy",
+                carrier_path="policy.yaml",
+                proof_artifact_path="proof.md",
+                policy_object="policy.contract",
+            )
+        ],
+    )
     conformance_path.write_text(
         yaml.safe_dump(
             {
@@ -477,9 +572,230 @@ def test_final_conformance_yaml_validator_accepts_declared_policy_artifact(
             repo_root=tmp_path,
             conformance_path=conformance_path,
             traceability_path=traceability_path,
+            evidence_bundle_path=evidence_bundle_path,
         )
         == []
     )
+
+
+def test_final_conformance_yaml_validator_requires_matching_checker_evidence(
+    tmp_path: Path,
+) -> None:
+    traceability_path = tmp_path / "traceability.yaml"
+    conformance_path = tmp_path / "conformance.yaml"
+    evidence_bundle_path = tmp_path / "evidence.yaml"
+    (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
+    (tmp_path / "carrier.pypeline").write_text("# carrier\n", encoding="utf-8")
+    _write_conformance_traceability_fixture(traceability_path, ["row-one"])
+    _write_evidence_bundle_fixture(evidence_bundle_path, [])
+    conformance_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "arnold.megaplan_native_representation.conformance.v1",
+                "target_report": "docs/arnold/megaplan-native-representation-report.md",
+                "traceability": "docs/arnold/megaplan-native-representation-traceability.yaml",
+                "rows": [
+                    {
+                        "id": "row-one",
+                        "status": "implemented",
+                        "semantic_carrier": "canonical_source",
+                        "carrier_evidence": ["carrier.pypeline"],
+                        "proof_categories": ["source_excerpt"],
+                        "proof_artifacts": ["proof.md"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    errors = validate_conformance_ledger(
+        repo_root=tmp_path,
+        conformance_path=conformance_path,
+        traceability_path=traceability_path,
+        evidence_bundle_path=evidence_bundle_path,
+    )
+
+    assert any("implemented rows require current checker evidence" in error for error in errors)
+    assert any("carrier_evidence path 'carrier.pypeline' lacks matching current checker evidence" in error for error in errors)
+
+
+def test_final_conformance_yaml_validator_rejects_path_only_evidence_bundle_records(
+    tmp_path: Path,
+) -> None:
+    traceability_path = tmp_path / "traceability.yaml"
+    conformance_path = tmp_path / "conformance.yaml"
+    evidence_bundle_path = tmp_path / "evidence.yaml"
+    (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
+    (tmp_path / "carrier.pypeline").write_text("# carrier\n", encoding="utf-8")
+    _write_conformance_traceability_fixture(traceability_path, ["row-one"])
+    evidence_bundle_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "arnold.megaplan_native_representation.evidence_bundle.v1",
+                "records": [
+                    {
+                        "row_id": "row-one",
+                        "semantic_carrier": "canonical_source",
+                        "kind": "source_checker",
+                        "checker": "tests.native_representation_alignment",
+                        "carrier_path": "carrier.pypeline",
+                        "proof_artifact_path": "proof.md",
+                        "source_span": {
+                            "path": "carrier.pypeline",
+                            "start_line": 1,
+                            "end_line": 1,
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    conformance_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "arnold.megaplan_native_representation.conformance.v1",
+                "target_report": "docs/arnold/megaplan-native-representation-report.md",
+                "traceability": "docs/arnold/megaplan-native-representation-traceability.yaml",
+                "rows": [
+                    {
+                        "id": "row-one",
+                        "status": "implemented",
+                        "semantic_carrier": "canonical_source",
+                        "carrier_evidence": ["carrier.pypeline"],
+                        "proof_categories": ["source_excerpt"],
+                        "proof_artifacts": ["proof.md"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    errors = validate_conformance_ledger(
+        repo_root=tmp_path,
+        conformance_path=conformance_path,
+        traceability_path=traceability_path,
+        evidence_bundle_path=evidence_bundle_path,
+    )
+
+    assert any("carrier_sha256 must be a sha256:<hex> string" in error for error in errors)
+
+
+def test_final_conformance_yaml_validator_rejects_stale_checker_evidence_hashes(
+    tmp_path: Path,
+) -> None:
+    traceability_path = tmp_path / "traceability.yaml"
+    conformance_path = tmp_path / "conformance.yaml"
+    evidence_bundle_path = tmp_path / "evidence.yaml"
+    (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
+    carrier_path = tmp_path / "carrier.pypeline"
+    carrier_path.write_text("# carrier\n", encoding="utf-8")
+    _write_conformance_traceability_fixture(traceability_path, ["row-one"])
+    _write_evidence_bundle_fixture(
+        evidence_bundle_path,
+        [
+            _checker_evidence_record(
+                repo_root=tmp_path,
+                row_id="row-one",
+                semantic_carrier="canonical_source",
+                carrier_path="carrier.pypeline",
+                proof_artifact_path="proof.md",
+            )
+        ],
+    )
+    carrier_path.write_text("# carrier changed\n", encoding="utf-8")
+    conformance_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "arnold.megaplan_native_representation.conformance.v1",
+                "target_report": "docs/arnold/megaplan-native-representation-report.md",
+                "traceability": "docs/arnold/megaplan-native-representation-traceability.yaml",
+                "rows": [
+                    {
+                        "id": "row-one",
+                        "status": "implemented",
+                        "semantic_carrier": "canonical_source",
+                        "carrier_evidence": ["carrier.pypeline"],
+                        "proof_categories": ["source_excerpt"],
+                        "proof_artifacts": ["proof.md"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    errors = validate_conformance_ledger(
+        repo_root=tmp_path,
+        conformance_path=conformance_path,
+        traceability_path=traceability_path,
+        evidence_bundle_path=evidence_bundle_path,
+    )
+
+    assert any(
+        "lacks current checker evidence with matching hashes and proof artifacts" in error
+        for error in errors
+    )
+
+
+def test_final_conformance_yaml_validator_rejects_historical_reports_as_authority(
+    tmp_path: Path,
+) -> None:
+    traceability_path = tmp_path / "traceability.yaml"
+    conformance_path = tmp_path / "conformance.yaml"
+    evidence_bundle_path = tmp_path / "evidence.yaml"
+    docs_dir = tmp_path / "docs/arnold"
+    docs_dir.mkdir(parents=True)
+    (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
+    report_path = docs_dir / "megaplan-native-representation-conformance-report.md"
+    report_path.write_text("# Historical report\n", encoding="utf-8")
+    _write_conformance_traceability_fixture(traceability_path, ["row-one"])
+    _write_evidence_bundle_fixture(
+        evidence_bundle_path,
+        [
+            _checker_evidence_record(
+                repo_root=tmp_path,
+                row_id="row-one",
+                semantic_carrier="declared_policy",
+                carrier_path="docs/arnold/megaplan-native-representation-conformance-report.md",
+                proof_artifact_path="proof.md",
+                policy_object="historical.report",
+            )
+        ],
+    )
+    conformance_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "arnold.megaplan_native_representation.conformance.v1",
+                "target_report": "docs/arnold/megaplan-native-representation-report.md",
+                "traceability": "docs/arnold/megaplan-native-representation-traceability.yaml",
+                "rows": [
+                    {
+                        "id": "row-one",
+                        "status": "implemented",
+                        "semantic_carrier": "declared_policy",
+                        "carrier_evidence": [
+                            "docs/arnold/megaplan-native-representation-conformance-report.md"
+                        ],
+                        "proof_categories": ["source_excerpt"],
+                        "proof_artifacts": ["proof.md"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    errors = validate_conformance_ledger(
+        repo_root=tmp_path,
+        conformance_path=conformance_path,
+        traceability_path=traceability_path,
+        evidence_bundle_path=evidence_bundle_path,
+    )
+
+    assert any("historical conformance report as authority" in error for error in errors)
 
 
 def test_final_conformance_yaml_validator_uses_traceability_target_report(
@@ -487,9 +803,22 @@ def test_final_conformance_yaml_validator_uses_traceability_target_report(
 ) -> None:
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
+    evidence_bundle_path = tmp_path / "evidence.yaml"
     (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
     (tmp_path / "carrier.pypeline").write_text("# carrier\n", encoding="utf-8")
     _write_conformance_traceability_fixture(traceability_path, ["row-one"])
+    _write_evidence_bundle_fixture(
+        evidence_bundle_path,
+        [
+            _checker_evidence_record(
+                repo_root=tmp_path,
+                row_id="row-one",
+                semantic_carrier="canonical_source",
+                carrier_path="carrier.pypeline",
+                proof_artifact_path="proof.md",
+            )
+        ],
+    )
     traceability = yaml.safe_load(traceability_path.read_text(encoding="utf-8"))
     traceability["target_report"] = "docs/arnold/custom-native-target.md"
     traceability_path.write_text(yaml.safe_dump(traceability), encoding="utf-8")
@@ -519,6 +848,7 @@ def test_final_conformance_yaml_validator_uses_traceability_target_report(
             repo_root=tmp_path,
             conformance_path=conformance_path,
             traceability_path=traceability_path,
+            evidence_bundle_path=evidence_bundle_path,
         )
         == []
     )
@@ -529,9 +859,22 @@ def test_final_conformance_yaml_validator_rejects_stale_target_report(
 ) -> None:
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
+    evidence_bundle_path = tmp_path / "evidence.yaml"
     (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
     (tmp_path / "carrier.pypeline").write_text("# carrier\n", encoding="utf-8")
     _write_conformance_traceability_fixture(traceability_path, ["row-one"])
+    _write_evidence_bundle_fixture(
+        evidence_bundle_path,
+        [
+            _checker_evidence_record(
+                repo_root=tmp_path,
+                row_id="row-one",
+                semantic_carrier="canonical_source",
+                carrier_path="carrier.pypeline",
+                proof_artifact_path="proof.md",
+            )
+        ],
+    )
     traceability = yaml.safe_load(traceability_path.read_text(encoding="utf-8"))
     traceability["target_report"] = "docs/arnold/custom-native-target.md"
     traceability_path.write_text(yaml.safe_dump(traceability), encoding="utf-8")
@@ -560,6 +903,7 @@ def test_final_conformance_yaml_validator_rejects_stale_target_report(
         repo_root=tmp_path,
         conformance_path=conformance_path,
         traceability_path=traceability_path,
+        evidence_bundle_path=evidence_bundle_path,
     )
 
     assert any(
@@ -573,9 +917,22 @@ def test_final_conformance_yaml_validator_requires_traceability_proof_categories
 ) -> None:
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
+    evidence_bundle_path = tmp_path / "evidence.yaml"
     (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
     (tmp_path / "carrier.pypeline").write_text("# carrier\n", encoding="utf-8")
     _write_conformance_traceability_fixture(traceability_path, ["row-one"])
+    _write_evidence_bundle_fixture(
+        evidence_bundle_path,
+        [
+            _checker_evidence_record(
+                repo_root=tmp_path,
+                row_id="row-one",
+                semantic_carrier="canonical_source",
+                carrier_path="carrier.pypeline",
+                proof_artifact_path="proof.md",
+            )
+        ],
+    )
     traceability = yaml.safe_load(traceability_path.read_text(encoding="utf-8"))
     traceability["rows"][0]["proof_artifacts"] = ["source_excerpt", "rendered_route"]
     traceability_path.write_text(yaml.safe_dump(traceability), encoding="utf-8")
@@ -604,6 +961,7 @@ def test_final_conformance_yaml_validator_requires_traceability_proof_categories
         repo_root=tmp_path,
         conformance_path=conformance_path,
         traceability_path=traceability_path,
+        evidence_bundle_path=evidence_bundle_path,
     )
 
     assert any(
@@ -617,9 +975,22 @@ def test_final_conformance_yaml_validator_rejects_unknown_proof_categories(
 ) -> None:
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
+    evidence_bundle_path = tmp_path / "evidence.yaml"
     (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
     (tmp_path / "carrier.pypeline").write_text("# carrier\n", encoding="utf-8")
     _write_conformance_traceability_fixture(traceability_path, ["row-one"])
+    _write_evidence_bundle_fixture(
+        evidence_bundle_path,
+        [
+            _checker_evidence_record(
+                repo_root=tmp_path,
+                row_id="row-one",
+                semantic_carrier="canonical_source",
+                carrier_path="carrier.pypeline",
+                proof_artifact_path="proof.md",
+            )
+        ],
+    )
     conformance_path.write_text(
         yaml.safe_dump(
             {
@@ -645,6 +1016,7 @@ def test_final_conformance_yaml_validator_rejects_unknown_proof_categories(
         repo_root=tmp_path,
         conformance_path=conformance_path,
         traceability_path=traceability_path,
+        evidence_bundle_path=evidence_bundle_path,
     )
 
     assert any(
@@ -658,9 +1030,22 @@ def test_final_conformance_yaml_validator_uses_required_row_field_contract(
 ) -> None:
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
+    evidence_bundle_path = tmp_path / "evidence.yaml"
     (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
     (tmp_path / "carrier.pypeline").write_text("# carrier\n", encoding="utf-8")
     _write_conformance_traceability_fixture(traceability_path, ["row-one"])
+    _write_evidence_bundle_fixture(
+        evidence_bundle_path,
+        [
+            _checker_evidence_record(
+                repo_root=tmp_path,
+                row_id="row-one",
+                semantic_carrier="canonical_source",
+                carrier_path="carrier.pypeline",
+                proof_artifact_path="proof.md",
+            )
+        ],
+    )
     traceability = yaml.safe_load(traceability_path.read_text(encoding="utf-8"))
     traceability["final_conformance_gate"]["machine_readable_report"][
         "required_row_fields"
@@ -691,6 +1076,7 @@ def test_final_conformance_yaml_validator_uses_required_row_field_contract(
         repo_root=tmp_path,
         conformance_path=conformance_path,
         traceability_path=traceability_path,
+        evidence_bundle_path=evidence_bundle_path,
     )
 
     assert any("missing required fields: reviewer_signoff" in error for error in errors)
@@ -701,11 +1087,24 @@ def test_final_conformance_yaml_validator_uses_status_specific_field_contract(
 ) -> None:
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
+    evidence_bundle_path = tmp_path / "evidence.yaml"
     (tmp_path / "proof-one.md").write_text("# Proof one\n", encoding="utf-8")
     (tmp_path / "carrier-one.pypeline").write_text("# carrier one\n", encoding="utf-8")
     (tmp_path / "proof-two.md").write_text("# Proof two\n", encoding="utf-8")
     (tmp_path / "blocking-proof.md").write_text("# Blocking proof\n", encoding="utf-8")
     _write_conformance_traceability_fixture(traceability_path, ["row-one", "row-two"])
+    _write_evidence_bundle_fixture(
+        evidence_bundle_path,
+        [
+            _checker_evidence_record(
+                repo_root=tmp_path,
+                row_id="row-one",
+                semantic_carrier="canonical_source",
+                carrier_path="carrier-one.pypeline",
+                proof_artifact_path="proof-one.md",
+            )
+        ],
+    )
     traceability = yaml.safe_load(traceability_path.read_text(encoding="utf-8"))
     machine_report = traceability["final_conformance_gate"]["machine_readable_report"]
     machine_report["implemented_required_row_fields"].append("implementation_notes")
@@ -746,6 +1145,7 @@ def test_final_conformance_yaml_validator_uses_status_specific_field_contract(
         repo_root=tmp_path,
         conformance_path=conformance_path,
         traceability_path=traceability_path,
+        evidence_bundle_path=evidence_bundle_path,
     )
 
     assert any(
@@ -760,9 +1160,23 @@ def test_final_conformance_yaml_validator_uses_traceability_suffix_contract(
 ) -> None:
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
+    evidence_bundle_path = tmp_path / "evidence.yaml"
     (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
     (tmp_path / "policy.custom").write_text("policy=true\n", encoding="utf-8")
     _write_conformance_traceability_fixture(traceability_path, ["row-one"])
+    _write_evidence_bundle_fixture(
+        evidence_bundle_path,
+        [
+            _checker_evidence_record(
+                repo_root=tmp_path,
+                row_id="row-one",
+                semantic_carrier="declared_policy",
+                carrier_path="policy.custom",
+                proof_artifact_path="proof.md",
+                policy_object="custom.policy",
+            )
+        ],
+    )
     traceability = yaml.safe_load(traceability_path.read_text(encoding="utf-8"))
     traceability["final_conformance_gate"]["machine_readable_report"][
         "carrier_evidence_suffixes"
@@ -794,6 +1208,7 @@ def test_final_conformance_yaml_validator_uses_traceability_suffix_contract(
             repo_root=tmp_path,
             conformance_path=conformance_path,
             traceability_path=traceability_path,
+            evidence_bundle_path=evidence_bundle_path,
         )
         == []
     )
