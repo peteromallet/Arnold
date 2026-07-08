@@ -1,1 +1,1 @@
-/workspace/arnold/arnold_pipelines/megaplan/data/bakeoff_skill.md
+/workspace/arnold-chain-guard-min/arnold_pipelines/megaplan/data/bakeoff_skill.md
