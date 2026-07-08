@@ -60,6 +60,17 @@ Prevention patch state:
   - `python3 -m pytest tests/docs/test_m5_generated_scans.py -q` -> 10 passed after doc wording fix.
 - Before the doc amend, PR #191 CI failed only on `docs/arnold/package-authoring-contract.md:237 '@step'`. After the amend, CI should rerun. Check current status and fix if needed.
 
+Fresh status checked from the local handoff thread on 2026-07-08 after launch:
+- PR #191 is still open, mergeable, and at head `e4592338c628dec16d688ec6a1880fd5c541e8f5`.
+- Full CI run `28946584997`, job `85881927542`, completed with failure.
+- The failure is no longer the focused docs wording issue. It is broader CI/conformance fallout on the PR merge ref, including:
+  - `tests/test_pipeline_run_cli.py::test_global_registry_restores_builtin_after_mutation`
+  - `tests/arnold/workflow/test_m5_inventory_scanners.py::test_inventory_main_passes`
+  - multiple `run_conformance_suite()` green-suite assertions now failing on stale package-name / legacy-reference gates
+  - `tests/arnold/conformance/test_conformance_gates.py::test_current_tree_wires_conformance_suite_and_legacy_reference_gate`
+  - `tests/arnold/conformance/test_deleted_surfaces.py::test_source_tree_lacks_deleted_inventory_paths`, with `arnold_pipelines/megaplan/cli/parser.py` still present
+- Treat this as the current first obstruction: determine whether the PR branch introduced these failures via the doc/skill wording and parser surface, or whether the branch is behind a base conformance migration. Fix or reconcile only what is required to merge #191 safely.
+
 ## Root Cause To Preserve In Your Reasoning
 
 `extension-reality-convergence-epic` previously appeared complete but was not. The chain accepted non-authoritative M3 publication evidence:
