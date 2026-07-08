@@ -1,1 +1,1 @@
-/workspace/custody-control-plane-240c2cca/arnold/.megaplan/runtime/editable-engine/arnold_pipelines/megaplan/data/epic_skill.md
+/workspace/custody-control-plane-240c2cca/arnold/arnold_pipelines/megaplan/data/epic_skill.md
