@@ -113,6 +113,19 @@ class OverrideOutcome(StrEnum):
     REPLAN = "replan"
 
 
+class OverridePolicyRoute(StrEnum):
+    """Declared native policy routes for override actions outside direct branches.
+
+    These routes remain source-visible in ``workflow.pypeline`` even when the
+    action resumes through persisted state or recovery policy instead of a
+    direct ``OverrideOutcome`` branch.
+    """
+
+    ADOPT_EXECUTION = "adopt_execution"
+    RECOVER_BLOCKED = "recover_blocked"
+    RESUME_CLARIFY = "resume_clarify"
+
+
 class ExecuteOutcome(StrEnum):
     """Closed routing vocabulary for the execute step.
 
@@ -221,6 +234,7 @@ __all__ = [
     "GateOutcome",
     "HaltOutcome",
     "OverrideOutcome",
+    "OverridePolicyRoute",
     "PrepOutcome",
     "ReviewOutcome",
     "ReviewDecisionResult",

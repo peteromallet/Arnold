@@ -140,10 +140,11 @@ rows:
     proof_categories:
       - process_death_resume_test
       - rendered_suspension_points
+      - boundary_receipt_test
     proof_artifacts:
       - arnold_pipelines/megaplan/workflows/workflow.pypeline
-      - tests/arnold/conformance/test_platform_e2e.py
-      - docs/arnold/operations.md
+      - tests/arnold_pipelines/megaplan/test_resume_routing.py
+      - tests/arnold_pipelines/megaplan/test_semantic_health.py
   - id: finalize-fallback-routes
     status: implemented
     semantic_carrier: declared_policy
@@ -172,16 +173,17 @@ rows:
     status: implemented
     semantic_carrier: declared_policy
     carrier_evidence:
-      - docs/arnold/security.md
-      - docs/arnold/operations.md
+      - arnold_pipelines/megaplan/workflows/workflow.pypeline
+      - arnold_pipelines/megaplan/workflows/boundary_contracts.py
     proof_categories:
       - approval_tests
       - no_review_golden
       - deferred_human_golden
+      - boundary_receipt_test
     proof_artifacts:
-      - docs/arnold/security.md
-      - docs/arnold/operations.md
-      - tests/arnold/conformance/test_platform_e2e.py
+      - arnold_pipelines/megaplan/workflows/workflow.pypeline
+      - tests/arnold_pipelines/megaplan/test_workflows_planning.py
+      - tests/arnold_pipelines/megaplan/test_boundary_contracts.py
   - id: execute-review-rework-loop
     status: implemented
     semantic_carrier: canonical_source
@@ -210,27 +212,35 @@ rows:
     status: implemented
     semantic_carrier: declared_policy
     carrier_evidence:
-      - docs/arnold/native-platform.md
+      - arnold_pipelines/megaplan/workflows/workflow.pypeline
+      - arnold_pipelines/megaplan/workflows/boundary_contracts.py
     proof_categories:
       - infra_retry_golden
       - repeated_failure_cap_golden
       - force_proceed_block_tests
+      - authority_boundary_test
     proof_artifacts:
-      - docs/arnold/native-platform.md
-      - tests/arnold/conformance/test_platform_e2e.py
-      - tests/arnold_pipelines/megaplan/test_chain_pr_platform_conformance.py
+      - arnold_pipelines/megaplan/workflows/workflow.pypeline
+      - tests/arnold_pipelines/megaplan/test_workflows_planning.py
+      - tests/arnold_pipelines/megaplan/test_boundary_contracts.py
+      - tests/arnold_pipelines/megaplan/test_s6_override_routing.py
   - id: override-action-surface
     status: implemented
     semantic_carrier: declared_policy
     carrier_evidence:
-      - docs/arnold/security.md
+      - arnold_pipelines/megaplan/workflows/workflow.pypeline
+      - arnold_pipelines/megaplan/workflows/override_matrix.py
+      - arnold_pipelines/megaplan/workflows/boundary_contracts.py
     proof_categories:
       - override_matrix
       - action_route_tests
+      - authority_boundary_test
     proof_artifacts:
-      - docs/arnold/security.md
-      - tests/arnold/conformance/test_platform_e2e.py
-      - tests/arnold_pipelines/megaplan/test_chain_pr_platform_conformance.py
+      - arnold_pipelines/megaplan/workflows/override_matrix.py
+      - arnold_pipelines/megaplan/workflows/workflow.pypeline
+      - tests/arnold_pipelines/megaplan/test_override_action_matrix.py
+      - tests/arnold_pipelines/megaplan/test_s6_override_routing.py
+      - tests/arnold_pipelines/megaplan/test_boundary_contracts.py
   - id: timeout-deadline-policy
     status: implemented
     semantic_carrier: declared_policy
@@ -297,15 +307,19 @@ rows:
     status: implemented
     semantic_carrier: declared_policy
     carrier_evidence:
-      - docs/arnold/operations.md
+      - arnold_pipelines/megaplan/workflows/events.py
+      - arnold_pipelines/megaplan/workflows/workflow.pypeline
     proof_categories:
       - event_replay_test
       - liveness_policy_test
       - status_projection_parity
+      - cursor_projection_test
     proof_artifacts:
-      - docs/arnold/operations.md
-      - tests/arnold/conformance/test_platform_e2e.py
-      - tests/arnold_pipelines/megaplan/test_chain_pr_platform_conformance.py
+      - arnold_pipelines/megaplan/workflows/events.py
+      - tests/arnold_pipelines/megaplan/test_s6_auto_event_consumption.py
+      - tests/arnold_pipelines/megaplan/test_workflow_events.py
+      - tests/arnold_pipelines/megaplan/test_observability_events_projection.py
+      - tests/arnold_pipelines/megaplan/test_status_cli.py
   - id: path-addressed-checkpoints
     status: implemented
     semantic_carrier: canonical_source
@@ -367,10 +381,12 @@ rows:
     proof_categories:
       - path_reconciliation_table
       - import_smoke_test
+      - native_shell_negative_test
     proof_artifacts:
+      - arnold_pipelines/megaplan/workflows/workflow.pypeline
       - tests/arnold_pipelines/megaplan/test_source_path_reconciliation.py
       - tests/arnold_pipelines/megaplan/test_installed_package_composition_smoke.py
-      - tests/arnold_pipelines/megaplan/package_resources.py
+      - tests/arnold_pipelines/megaplan/test_native_contract.py
   - id: behavior-parity
     status: implemented
     semantic_carrier: canonical_source

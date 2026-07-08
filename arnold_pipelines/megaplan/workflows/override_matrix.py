@@ -44,6 +44,8 @@ class OverrideActionEntry(NamedTuple):
     description: str
     route_signal: str | None
     target_ref: str | None
+    declared_target_ref: str | None
+    policy_route_ref: str | None
     effect_id: str | None
     dispatch_surface: str
     control_routed: bool
@@ -55,6 +57,7 @@ _DECLARED_OVERRIDE_AUTHORITY: Mapping[str, Mapping[str, object]] = {
         "description": "Terminate the plan immediately via the halt node.",
         "route_signal": "abort",
         "target_ref": "halt",
+        "declared_target_ref": "halt",
         "dispatch_surface": "workflow.route_binding",
         "control_routed": True,
     },
@@ -71,7 +74,9 @@ _DECLARED_OVERRIDE_AUTHORITY: Mapping[str, Mapping[str, object]] = {
         "description": "Adopt an already-complete execution artifact and resume at review.",
         "route_signal": "adopt_execution",
         "target_ref": "review",
-        "dispatch_surface": "workflow.state_resume",
+        "declared_target_ref": "review",
+        "policy_route_ref": "megaplan.override.adopt_execution",
+        "dispatch_surface": "workflow.native_policy",
         "control_routed": False,
     },
     "force-proceed": {
@@ -79,6 +84,7 @@ _DECLARED_OVERRIDE_AUTHORITY: Mapping[str, Mapping[str, object]] = {
         "description": "Skip gate or review blockers and proceed directly to finalize or done.",
         "route_signal": "force_proceed",
         "target_ref": "finalize",
+        "declared_target_ref": "finalize",
         "dispatch_surface": "workflow.route_binding",
         "control_routed": True,
     },
@@ -86,7 +92,9 @@ _DECLARED_OVERRIDE_AUTHORITY: Mapping[str, Mapping[str, object]] = {
         "family": "terminal_route",
         "description": "Recover from a blocked state by restoring the declared recovery predecessor.",
         "route_signal": "recover_blocked",
-        "dispatch_surface": "policy.recovery_resume",
+        "declared_target_ref": "recovery_predecessor",
+        "policy_route_ref": "megaplan.override.recover_blocked",
+        "dispatch_surface": "workflow.native_policy",
         "control_routed": True,
     },
     "replan": {
@@ -94,6 +102,7 @@ _DECLARED_OVERRIDE_AUTHORITY: Mapping[str, Mapping[str, object]] = {
         "description": "Re-enter the planning loop via revise.",
         "route_signal": "replan",
         "target_ref": "revise",
+        "declared_target_ref": "revise",
         "dispatch_surface": "workflow.route_binding",
         "control_routed": True,
     },
@@ -102,7 +111,9 @@ _DECLARED_OVERRIDE_AUTHORITY: Mapping[str, Mapping[str, object]] = {
         "description": "Resume from a prep clarification halt and continue at the plan step.",
         "route_signal": "resume_clarify",
         "target_ref": "plan",
-        "dispatch_surface": "workflow.state_resume",
+        "declared_target_ref": "plan",
+        "policy_route_ref": "megaplan.override.resume_clarify",
+        "dispatch_surface": "workflow.native_policy",
         "control_routed": True,
     },
     "set-model": {
@@ -159,6 +170,16 @@ def _build_matrix() -> tuple[OverrideActionEntry, ...]:
                 target_ref=(
                     str(declared["target_ref"])
                     if declared.get("target_ref") is not None
+                    else None
+                ),
+                declared_target_ref=(
+                    str(declared["declared_target_ref"])
+                    if declared.get("declared_target_ref") is not None
+                    else None
+                ),
+                policy_route_ref=(
+                    str(declared["policy_route_ref"])
+                    if declared.get("policy_route_ref") is not None
                     else None
                 ),
                 effect_id=(

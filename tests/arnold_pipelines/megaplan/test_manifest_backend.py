@@ -85,7 +85,11 @@ class TestManifestBackendDispatch:
         assert outcome.state == NodeState.FAILED
         assert "boom" in (outcome.error or "")
 
-    def test_gate_recommendation_emits_control_transition(self, tmp_path: Path, monkeypatch: Any) -> None:
+    def test_gate_recommendation_is_preserved_without_routing_authority(
+        self,
+        tmp_path: Path,
+        monkeypatch: Any,
+    ) -> None:
         from arnold_pipelines.megaplan.runtime.manifest_backend import MegaplanManifestBackend
 
         plan_dir = tmp_path / "plans" / "test"
@@ -97,10 +101,9 @@ class TestManifestBackendDispatch:
         node = make_node("gate")
         ctx = make_context("gate")
         outcome = backend._execute_node_payload(ctx.coordinate, node, ctx)
-        assert outcome.branch_edge_id == "gate:revise"
-        assert len(outcome.control_signals) == 1
-        signal = outcome.control_signals[0]
-        assert signal.target.node_ref == "revise"
+        assert outcome.branch_edge_id is None
+        assert outcome.control_signals == ()
+        assert outcome.outputs["recommendation"] == "ITERATE"
 
     def test_canonical_tiebreaker_decision_dispatches_through_handler_nodes(
         self,
@@ -120,7 +123,9 @@ class TestManifestBackendDispatch:
         outcome = backend._execute_node_payload(ctx.coordinate, node, ctx)
 
         assert outcome.state == NodeState.COMPLETED
-        assert outcome.branch_edge_id == "tiebreaker_decision:finalize"
+        assert outcome.branch_edge_id is None
+        assert outcome.control_signals == ()
+        assert outcome.outputs["route_signal"] == "proceed"
         assert fake.calls[0][1].node_id == "tiebreaker_decision"
 
     def test_build_megaplan_registries(self) -> None:
@@ -130,84 +135,65 @@ class TestManifestBackendDispatch:
         assert isinstance(registries, ExecutionRegistries)
 
 
-class TestBackendBranchSelection:
-    def test_branch_edge_from_next_step(self, tmp_path: Path) -> None:
+class TestBackendDecisionTranslatorFence:
+    def test_legacy_decision_translators_are_deleted(self, tmp_path: Path) -> None:
         from arnold_pipelines.megaplan.runtime.manifest_backend import MegaplanManifestBackend
 
         backend = MegaplanManifestBackend(plan_dir=tmp_path / "plan")
-        assert backend._branch_edge_id("gate", {"next_step": "revise"}) == "gate:revise"
+        for attr in (
+            "_branch_edge_id",
+            "_response_to_outcome",
+            "_build_control_signals",
+            "_suspension_route_id",
+            "_route_binding_for_signal",
+        ):
+            assert not hasattr(backend, attr)
 
-    def test_branch_edge_from_recommendation(self, tmp_path: Path) -> None:
+    def test_handler_decision_fields_remain_output_only(self, tmp_path: Path, monkeypatch: Any) -> None:
         from arnold_pipelines.megaplan.runtime.manifest_backend import MegaplanManifestBackend
 
-        backend = MegaplanManifestBackend(plan_dir=tmp_path / "plan")
-        assert backend._branch_edge_id("gate", {"recommendation": "PROCEED"}) == "gate:finalize"
-
-    def test_branch_edge_from_route_signal(self, tmp_path: Path) -> None:
-        from arnold_pipelines.megaplan.runtime.manifest_backend import MegaplanManifestBackend
-
-        backend = MegaplanManifestBackend(plan_dir=tmp_path / "plan")
-        assert backend._branch_edge_id("gate", {"route_signal": "blocked_preflight"}) == "gate:blocked"
-
-    def test_tiebreaker_branch_edge_from_route_signal(self, tmp_path: Path) -> None:
-        from arnold_pipelines.megaplan.runtime.manifest_backend import MegaplanManifestBackend
-
-        backend = MegaplanManifestBackend(plan_dir=tmp_path / "plan")
-        assert backend._branch_edge_id("tiebreaker_decision", {"route_signal": "proceed"}) == "tiebreaker_decision:finalize"
-        assert backend._branch_edge_id("tiebreaker_decision", {"route_signal": "iterate"}) == "tiebreaker_decision:critique"
-        assert backend._branch_edge_id("tiebreaker_decision", {"route_signal": "escalate"}) == "tiebreaker_decision:override"
-
-    def test_legacy_tiebreaker_alias_uses_canonical_source_routes(self, tmp_path: Path, monkeypatch: Any) -> None:
-        from arnold_pipelines.megaplan.runtime.manifest_backend import MegaplanManifestBackend
-
-        backend = MegaplanManifestBackend(plan_dir=tmp_path / "plan")
-        monkeypatch.setattr(
-            "arnold_pipelines.megaplan.route_dispatch._component_route_bindings_for_step",
-            lambda step: (
-                (
-                    {
-                        "id": "tiebreaker_decide:proceed",
-                        "label": "proceed",
-                        "target_ref": "halt",
-                        "condition_ref": "mutated",
-                    },
-                )
-                if step == "tiebreaker_decide"
-                else ()
-            ),
+        plan_dir = tmp_path / "plans" / "test"
+        plan_dir.mkdir(parents=True)
+        backend = MegaplanManifestBackend(plan_dir=plan_dir)
+        fake = FakeHandler(
+            response={
+                "success": True,
+                "route_signal": "revise",
+                "recommendation": "ITERATE",
+                "override_action": "replan",
+                "next_step": "revise",
+                "review_verdict": "needs_rework",
+            }
         )
+        monkeypatch.setattr(backend, "_resolve_handler", lambda _node_id: fake)
 
-        assert backend._branch_edge_id("tiebreaker_decide", {"route_signal": "proceed"}) == "tiebreaker_decision:finalize"
-        control_signals = backend._build_control_signals("tiebreaker_decide", {"route_signal": "proceed"})
-        assert len(control_signals) == 1
-        assert control_signals[0].target.node_ref == "finalize"
+        ctx = make_context("finalize")
+        outcome = backend._execute_node_payload(ctx.coordinate, make_node("finalize"), ctx)
+        assert outcome.state == NodeState.COMPLETED
+        assert outcome.branch_edge_id is None
+        assert outcome.suspension_route_id is None
+        assert outcome.control_signals == ()
+        assert outcome.outputs["route_signal"] == "revise"
+        assert outcome.outputs["recommendation"] == "ITERATE"
+        assert outcome.outputs["override_action"] == "replan"
+        assert outcome.outputs["next_step"] == "revise"
+        assert outcome.outputs["review_verdict"] == "needs_rework"
 
-    def test_review_and_finalize_route_signals_use_quarantined_adapter_bindings(self, tmp_path: Path) -> None:
-        from arnold_pipelines.megaplan.runtime.manifest_backend import MegaplanManifestBackend
-        from arnold_pipelines.megaplan.workflows import components
-
-        backend = MegaplanManifestBackend(plan_dir=tmp_path / "plan")
-
-        finalize_quarantine = components.FINALIZE.metadata["compatibility_quarantine"]
-        assert finalize_quarantine["kind"] == "non_authoritative_adapter_metadata"
-        assert "FINALIZE_POLICY.metadata.route_surface" in finalize_quarantine["canonical_refs"]
-        assert "route_bindings" in finalize_quarantine["preserved_fields"]
-        assert backend._branch_edge_id("finalize", {"route_signal": "revise"}) == "finalize:revise"
-        finalize_signals = backend._build_control_signals("finalize", {"route_signal": "revise"})
-        assert len(finalize_signals) == 1
-        assert finalize_signals[0].target.node_ref == "revise"
-
-        review_quarantine = components.REVIEW.metadata["compatibility_quarantine"]
-        assert review_quarantine["kind"] == "non_authoritative_adapter_metadata"
-        assert "REVIEW_POLICY.metadata.route_surface" in review_quarantine["canonical_refs"]
-        assert "route_bindings" in review_quarantine["preserved_fields"]
-        assert backend._branch_edge_id("review", {"route_signal": "rework"}) == "review:revise"
-        review_signals = backend._build_control_signals("review", {"route_signal": "rework"})
-        assert len(review_signals) == 1
-        assert review_signals[0].target.node_ref == "execute"
-
-    def test_suspension_route_for_human_state(self, tmp_path: Path) -> None:
+    def test_human_waiting_state_suspends_without_selecting_a_route(
+        self,
+        tmp_path: Path,
+        monkeypatch: Any,
+    ) -> None:
         from arnold_pipelines.megaplan.runtime.manifest_backend import MegaplanManifestBackend
 
-        backend = MegaplanManifestBackend(plan_dir=tmp_path / "plan")
-        assert backend._suspension_route_id("gate", {"state": "awaiting_human"}) == "gate:human"
+        plan_dir = tmp_path / "plans" / "test"
+        plan_dir.mkdir(parents=True)
+        backend = MegaplanManifestBackend(plan_dir=plan_dir)
+        fake = FakeHandler(response={"success": True, "state": "awaiting_human"})
+        monkeypatch.setattr(backend, "_resolve_handler", lambda _node_id: fake)
+
+        ctx = make_context("gate")
+        outcome = backend._execute_node_payload(ctx.coordinate, make_node("gate"), ctx)
+        assert outcome.state == NodeState.SUSPENDED
+        assert outcome.suspension_route_id is None
+        assert outcome.branch_edge_id is None

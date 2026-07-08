@@ -28,6 +28,7 @@ from arnold.workflow.semantic_evidence import (
 from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     BOUNDARY_CONTRACTS,
     BOUNDARY_CONTRACTS_BY_ID,
+    OVERRIDE_AUTHORITY_CONTRACTS,
     challenger_to_synthesis,
     critique_to_gate,
     decision_to_parent,
@@ -43,6 +44,14 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     finalize_artifacts,
     finalize_fallback,
     gate_to_revise,
+    override_abort_authority,
+    override_adopt_execution_authority,
+    override_force_proceed_authority,
+    override_human_gate_authority,
+    override_recover_blocked_authority,
+    override_replan_authority,
+    override_resume_clarify_authority,
+    override_suspension_authority,
     parent_rejoin_promotion,
     plan_to_critique,
     prep_to_plan,
@@ -61,8 +70,8 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
 
 
 def test_registry_defines_exactly_twenty_seven_contracts() -> None:
-    """The registry must contain exactly the twenty-seven S2+S3+S4+S5 contracts."""
-    assert len(BOUNDARY_CONTRACTS) == 27
+    """The registry must contain the twenty-seven legacy contracts plus eight S6 override contracts."""
+    assert len(BOUNDARY_CONTRACTS) == 35
 
 
 def test_registry_by_id_has_no_duplicates() -> None:
@@ -106,6 +115,14 @@ def test_named_contracts_are_in_registry() -> None:
         finalize_artifacts.boundary_id,
         finalize_fallback.boundary_id,
         final_projection.boundary_id,
+        override_abort_authority.boundary_id,
+        override_force_proceed_authority.boundary_id,
+        override_replan_authority.boundary_id,
+        override_recover_blocked_authority.boundary_id,
+        override_resume_clarify_authority.boundary_id,
+        override_adopt_execution_authority.boundary_id,
+        override_suspension_authority.boundary_id,
+        override_human_gate_authority.boundary_id,
     }
     registry_ids = {c.boundary_id for c in BOUNDARY_CONTRACTS}
     assert named_ids == registry_ids
@@ -147,6 +164,29 @@ def test_boundary_ids_match_expected() -> None:
     assert finalize_artifacts.boundary_id == "finalize_artifacts"
     assert finalize_fallback.boundary_id == "finalize_fallback"
     assert final_projection.boundary_id == "final_projection"
+    assert override_abort_authority.boundary_id == "override_abort_authority"
+    assert (
+        override_force_proceed_authority.boundary_id
+        == "override_force_proceed_authority"
+    )
+    assert override_replan_authority.boundary_id == "override_replan_authority"
+    assert (
+        override_recover_blocked_authority.boundary_id
+        == "override_recover_blocked_authority"
+    )
+    assert (
+        override_resume_clarify_authority.boundary_id
+        == "override_resume_clarify_authority"
+    )
+    assert (
+        override_adopt_execution_authority.boundary_id
+        == "override_adopt_execution_authority"
+    )
+    assert (
+        override_suspension_authority.boundary_id
+        == "override_suspension_authority"
+    )
+    assert override_human_gate_authority.boundary_id == "override_human_gate_authority"
 
 
 # ── Row ID correctness ─────────────────────────────────────────────────────
@@ -403,6 +443,7 @@ def test_gate_to_revise_requires_authority() -> None:
         "replan_authority",
         "execute_approval",
         "review_cap_authority",
+        *(contract.boundary_id for contract in OVERRIDE_AUTHORITY_CONTRACTS),
     }
     for contract in BOUNDARY_CONTRACTS:
         if contract.boundary_id in authority_boundaries:
@@ -712,3 +753,58 @@ def test_review_human_verification_and_finalize_contracts_capture_projection() -
         final_projection.details["evidence_surface_ref"]
         == "FINALIZE_POLICY.metadata.route_surface.final_projection_routes"
     )
+
+
+def test_s6_override_authority_contracts_capture_scope_and_evidence_contracts() -> None:
+    """S6 override authority contracts must stay authority-only and specify durable evidence."""
+    assert len(OVERRIDE_AUTHORITY_CONTRACTS) == 8
+
+    expected = {
+        "override_abort_authority": ("abort", "override.abort", ("state.json",)),
+        "override_force_proceed_authority": (
+            "force-proceed",
+            "override.force_proceed",
+            ("state.json",),
+        ),
+        "override_replan_authority": ("replan", "override.replan", ("state.json",)),
+        "override_recover_blocked_authority": (
+            "recover-blocked",
+            "override.recover_blocked",
+            ("state.json",),
+        ),
+        "override_resume_clarify_authority": (
+            "resume-clarify",
+            "override.resume_clarify",
+            ("state.json",),
+        ),
+        "override_adopt_execution_authority": (
+            "adopt-execution",
+            "override.adopt_execution",
+            ("state.json", "execution.json", "finalize.json"),
+        ),
+        "override_suspension_authority": (
+            "suspension-waiver",
+            "override.suspension_waiver",
+            ("state.json", "human_verifications.json"),
+        ),
+        "override_human_gate_authority": (
+            "human-gate",
+            "override.human_gate",
+            ("state.json", "approval_record.json"),
+        ),
+    }
+
+    for contract in OVERRIDE_AUTHORITY_CONTRACTS:
+        transition, scope, required_refs = expected[contract.boundary_id]
+        assert contract.phase is None
+        assert contract.required_artifacts == ()
+        assert contract.receipt_required is False
+        assert contract.authority_required is True
+        assert contract.details["authority_transition"] == transition
+        assert contract.details["authority_scope"] == scope
+        assert contract.details["required_evidence_refs"] == required_refs
+        assert contract.details["evidence_hashes_ref"] == (
+            "authority_records[].details.evidence_hashes"
+        )
+        assert contract.details["freshness_token_ref"] == "state.meta.current_invocation_id"
+        assert contract.details["actor_role_ref"] == "authority_records[].{actor,role}"

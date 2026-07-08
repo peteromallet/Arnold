@@ -26,6 +26,7 @@ import re
 import sys
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from functools import lru_cache
 from importlib import import_module
 from pathlib import Path
 from types import MappingProxyType
@@ -110,6 +111,14 @@ _MEGAPLAN_FINALIZE_EXPORTS = frozenset({"FINALIZE", "SOURCE_FINALIZE", "AUTHORIN
 _MEGAPLAN_REVIEW_POLICY_EXPORT = "REVIEW_POLICY"
 _MEGAPLAN_FINALIZE_POLICY_EXPORT = "FINALIZE_POLICY"
 _MEGAPLAN_REVIEW_WORKFLOW_EXPORT = "SOURCE_REVIEW_PANEL_WORKFLOW"
+_MEGAPLAN_AUTHORING_SOURCE_FILE = "workflow.pypeline"
+_MEGAPLAN_DECLARED_STEP_INTERFACES_EXPORT = "DECLARED_STEP_INTERFACES"
+_MEGAPLAN_DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS_EXPORT = "DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS"
+_MEGAPLAN_WORKFLOW_ID_BY_TOPOLOGY_EXPORT = {
+    "SOURCE_EXECUTE_BATCH_WORKFLOW": "execute_batch",
+    "SOURCE_REVIEW_PANEL_WORKFLOW": "review_panel",
+    "SOURCE_TIEBREAKER_WORKFLOW": "tiebreaker_child",
+}
 _MEGAPLAN_S5_REVIEW_ROW_IDS = frozenset(
     {
         S5_REVIEW_CHILD_OUTPUTS_ROW_ID,
@@ -965,30 +974,106 @@ def _visible_review_rework_cycle_call(
     return None
 
 
-def _megaplan_policy_route_surface(export_name: str) -> Mapping[str, Any]:
+@lru_cache(maxsize=1)
+def _megaplan_authoring_source_path() -> Path | None:
+    try:
+        module = import_module(_MEGAPLAN_COMPONENT_MODULE)
+    except Exception:
+        return None
+    module_file = getattr(module, "__file__", None)
+    if not isinstance(module_file, str):
+        return None
+    source_path = Path(module_file).with_name(_MEGAPLAN_AUTHORING_SOURCE_FILE)
+    return source_path if source_path.is_file() else None
+
+
+@lru_cache(maxsize=1)
+def _megaplan_literal_source_declarations() -> Mapping[str, Any]:
+    source_path = _megaplan_authoring_source_path()
+    if source_path is None:
+        return MappingProxyType({})
+    try:
+        module = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+    except Exception:
+        return MappingProxyType({})
+
+    declarations: dict[str, Any] = {}
+    for node in module.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        try:
+            value = ast.literal_eval(node.value)
+        except (ValueError, SyntaxError):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                declarations[target.id] = value
+    return MappingProxyType(declarations)
+
+
+def _megaplan_declared_step_interfaces() -> Mapping[str, Mapping[str, Any]]:
+    declared = _megaplan_literal_source_declarations().get(
+        _MEGAPLAN_DECLARED_STEP_INTERFACES_EXPORT,
+        {},
+    )
+    return declared if isinstance(declared, Mapping) else MappingProxyType({})
+
+
+def _megaplan_declared_workflow_topology_contracts() -> Mapping[str, Mapping[str, Any]]:
+    declared = _megaplan_literal_source_declarations().get(
+        _MEGAPLAN_DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS_EXPORT,
+        {},
+    )
+    return declared if isinstance(declared, Mapping) else MappingProxyType({})
+
+
+def _megaplan_step_declared_interface(component: StepComponent) -> Mapping[str, Any]:
+    if component.provenance.module != _MEGAPLAN_COMPONENT_MODULE:
+        return MappingProxyType({})
+    step_id = component.id.removeprefix("megaplan:")
+    declared = _megaplan_declared_step_interfaces().get(step_id, {})
+    return declared if isinstance(declared, Mapping) else MappingProxyType({})
+
+
+def _megaplan_export_metadata(export_name: str) -> Mapping[str, Any]:
     try:
         module = import_module(_MEGAPLAN_COMPONENT_MODULE)
     except Exception:
         return MappingProxyType({})
-    policy = getattr(module, export_name, None)
-    metadata = getattr(policy, "metadata", None)
-    if not isinstance(metadata, Mapping):
-        return MappingProxyType({})
-    route_surface = metadata.get("route_surface")
+    export = getattr(module, export_name, None)
+    metadata = getattr(export, "metadata", None)
+    return metadata if isinstance(metadata, Mapping) else MappingProxyType({})
+
+
+def _megaplan_policy_route_surface(export_name: str) -> Mapping[str, Any]:
+    route_surface = _megaplan_export_metadata(export_name).get("route_surface")
     return route_surface if isinstance(route_surface, Mapping) else MappingProxyType({})
 
 
-def _megaplan_review_topology_contract() -> Mapping[str, Any]:
-    try:
-        module = import_module(_MEGAPLAN_COMPONENT_MODULE)
-    except Exception:
-        return MappingProxyType({})
-    workflow_component = getattr(module, _MEGAPLAN_REVIEW_WORKFLOW_EXPORT, None)
-    metadata = getattr(workflow_component, "metadata", None)
-    if not isinstance(metadata, Mapping):
-        return MappingProxyType({})
-    topology_contract = metadata.get("topology_contract")
+def _megaplan_workflow_topology_contract(export_name: str) -> Mapping[str, Any]:
+    workflow_id = _MEGAPLAN_WORKFLOW_ID_BY_TOPOLOGY_EXPORT.get(export_name)
+    if workflow_id is not None:
+        declared = _megaplan_declared_workflow_topology_contracts().get(workflow_id, {})
+        if isinstance(declared, Mapping):
+            return declared
+    topology_contract = _megaplan_export_metadata(export_name).get("topology_contract")
     return topology_contract if isinstance(topology_contract, Mapping) else MappingProxyType({})
+
+
+def _megaplan_review_topology_contract() -> Mapping[str, Any]:
+    return _megaplan_workflow_topology_contract(_MEGAPLAN_REVIEW_WORKFLOW_EXPORT)
+
+
+def _megaplan_workflow_fanout_contract(export_name: str) -> Mapping[str, Any]:
+    topology_contract = _megaplan_workflow_topology_contract(export_name)
+    fanout_contract = topology_contract.get("fanout_contract")
+    return fanout_contract if isinstance(fanout_contract, Mapping) else MappingProxyType({})
+
+
+def _megaplan_workflow_fan_in_contract(export_name: str) -> Mapping[str, Any]:
+    topology_contract = _megaplan_workflow_topology_contract(export_name)
+    fan_in_contract = topology_contract.get("fan_in_contract")
+    return fan_in_contract if isinstance(fan_in_contract, Mapping) else MappingProxyType({})
 
 
 def _review_topology_contract_owns_cap_thresholds(contract: Mapping[str, Any]) -> bool:
@@ -5066,13 +5151,26 @@ def _lower_step_call(
 
 
 def _lower_step_metadata(step: ParsedStepCall) -> dict[str, Any]:
+    declared = _megaplan_step_declared_interface(step.component)
     metadata: dict[str, Any] = {}
     for key in _LOWERED_STEP_METADATA_KEYS:
-        value = step.component.metadata.get(key)
+        value = declared.get(key, step.component.metadata.get(key))
         if key == "handler_ref" and isinstance(value, str) and value:
             metadata[key] = value
         elif key == "terminal" and isinstance(value, bool):
             metadata[key] = value
+    policy_refs = declared.get("policy_refs")
+    if isinstance(policy_refs, Sequence) and not isinstance(policy_refs, (str, bytes)):
+        normalized = tuple(str(item) for item in policy_refs if isinstance(item, str) and item)
+        if normalized:
+            metadata["policy_refs"] = normalized
+    override_actions = declared.get("override_actions")
+    if isinstance(override_actions, Sequence) and not isinstance(override_actions, (str, bytes)):
+        normalized = tuple(
+            str(item) for item in override_actions if isinstance(item, str) and item
+        )
+        if normalized:
+            metadata["override_actions"] = normalized
     return metadata
 
 
@@ -5080,7 +5178,11 @@ def _lower_step_capabilities(
     step: ParsedStepCall,
     diagnostics: list[AuthoringDiagnostic],
 ) -> tuple[Capability, ...]:
-    raw_capabilities = step.component.metadata.get("capability_requirements", ())
+    declared = _megaplan_step_declared_interface(step.component)
+    raw_capabilities = declared.get(
+        "capability_requirements",
+        step.component.metadata.get("capability_requirements", ()),
+    )
     if raw_capabilities in (None, ()):
         return ()
     if (

@@ -71,6 +71,7 @@ def test_drive_clears_stale_latest_failure_before_phase_redispatch(
             {
                 "name": "demo",
                 "current_state": "initialized",
+                "config": {"with_prep": True},
                 "latest_failure": {
                     "kind": "phase_failed",
                     "phase": "prep",
@@ -298,18 +299,27 @@ def test_drive_keeps_quality_failure_on_terminal_quality_block(
     assert state["resume_cursor"] == {"phase": "review", "retry_strategy": "manual_review"}
 
 
-def test_drive_preflights_resume_clarify_state_mismatch(
+def test_drive_ignores_legacy_resume_clarify_hint_and_uses_recovery_projection(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
     plan_dir = tmp_path / "demo"
     plan_dir.mkdir()
     (plan_dir / "state.json").write_text(
-        json.dumps({"name": "demo", "current_state": "blocked"}),
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "blocked",
+                "resume_cursor": {
+                    "phase": "execute",
+                    "retry_strategy": "manual_review",
+                },
+            }
+        ),
         encoding="utf-8",
     )
 
-    captured_failures: list[dict[str, object]] = []
+    run_calls = 0
 
     def fake_status(plan: str, **kwargs):
         assert plan == "demo"
@@ -321,31 +331,30 @@ def test_drive_preflights_resume_clarify_state_mismatch(
         }
 
     def fake_run_planning_phase(args, **kwargs):
-        raise AssertionError("resume-clarify should be rejected before dispatch")
+        nonlocal run_calls
+        run_calls += 1
+        assert args == [
+            "override",
+            "recover-blocked",
+            "--reason",
+            "megaplan auto: recover blocked plan after blocker resolution",
+            "--plan",
+            "demo",
+        ]
+        return (0, "", "")
 
     monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
     monkeypatch.setattr(auto, "_status", fake_status)
     monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
-    monkeypatch.setattr(auto, "_record_lifecycle_failure", lambda **kwargs: captured_failures.append(kwargs))
     monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
 
-    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=80, poll_sleep=0)
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=1, poll_sleep=0)
 
-    assert outcome.status == "blocked"
+    assert outcome.status == "cap"
     assert outcome.final_state == "blocked"
     assert outcome.iterations == 1
-    assert outcome.last_phase == "resume-clarify"
-    assert outcome.blocking_reasons == ["control_binding_mismatch"]
-    assert "resume-clarify requires state 'awaiting_human_verify', got 'blocked'" in outcome.reason
-    failure = captured_failures[-1]
-    assert failure["kind"] == "control_binding_mismatch"
-    assert failure["phase"] == "resume-clarify"
-    assert failure["resume_cursor"] == {
-        "phase": "resume-clarify",
-        "retry_strategy": "repair_control_binding",
-    }
-    assert failure["metadata"]["required_state"] == "awaiting_human_verify"
-    assert failure["metadata"]["actual_state"] == "blocked"
+    assert outcome.last_phase == "recover-blocked"
+    assert run_calls == 1
 
 
 def test_drive_breaks_repeated_control_invalid_transition(
@@ -355,7 +364,16 @@ def test_drive_breaks_repeated_control_invalid_transition(
     plan_dir = tmp_path / "demo"
     plan_dir.mkdir()
     (plan_dir / "state.json").write_text(
-        json.dumps({"name": "demo", "current_state": "critiqued"}),
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "blocked",
+                "resume_cursor": {
+                    "phase": "execute",
+                    "retry_strategy": "manual_review",
+                },
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -365,7 +383,7 @@ def test_drive_breaks_repeated_control_invalid_transition(
     def fake_status(plan: str, **kwargs):
         assert plan == "demo"
         return {
-            "state": "critiqued",
+            "state": "blocked",
             "next_step": "override force-proceed",
             "valid_next": ["override force-proceed"],
             "progress": {},
@@ -374,7 +392,14 @@ def test_drive_breaks_repeated_control_invalid_transition(
     def fake_run_planning_phase(args, **kwargs):
         nonlocal run_calls
         run_calls += 1
-        assert args == ["override", "force-proceed", "--plan", "demo"]
+        assert args == [
+            "override",
+            "recover-blocked",
+            "--reason",
+            "megaplan auto: recover blocked plan after blocker resolution",
+            "--plan",
+            "demo",
+        ]
         return (
             1,
             "",
@@ -382,7 +407,7 @@ def test_drive_breaks_repeated_control_invalid_transition(
                 {
                     "success": False,
                     "error": "invalid_transition",
-                    "message": "routed override rejected",
+                    "message": "recover-blocked rejected",
                 }
             ),
         )
@@ -398,12 +423,12 @@ def test_drive_breaks_repeated_control_invalid_transition(
     assert outcome.status == "blocked"
     assert outcome.final_state == "blocked"
     assert outcome.iterations == 2
-    assert outcome.last_phase == "force-proceed"
+    assert outcome.last_phase == "recover-blocked"
     assert outcome.blocking_reasons == ["invalid_transition_loop"]
     assert run_calls == 2
     failure = captured_failures[-1]
     assert failure["kind"] == "invalid_transition_loop"
-    assert failure["phase"] == "force-proceed"
+    assert failure["phase"] == "recover-blocked"
     assert failure["metadata"]["count"] == 2
     assert failure["metadata"]["max_attempts"] == 2
 
@@ -672,7 +697,7 @@ def test_drive_iteration_cap_preserves_original_resume_cursor_after_recover_bloc
     }
 
 
-def test_drive_bails_on_repeated_finalize_failure_signature(
+def test_drive_blocks_when_observed_cursor_disagrees_with_forward_projection(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -709,13 +734,15 @@ def test_drive_bails_on_repeated_finalize_failure_signature(
             "next_step": "revise",
             "valid_next": ["revise"],
             "progress": {},
+            "workflow_cursor": {
+                "phase": "gate",
+                "dispatch_phase": "gate",
+                "next_dispatch_phases": ["revise"],
+            },
         }
 
     def fake_run_planning_phase(args, **kwargs):
-        nonlocal run_calls
-        run_calls += 1
-        assert args == ["revise", "--plan", "demo"]
-        return (0, "", "")
+        raise AssertionError("cursor mismatch must stop before dispatch")
 
     def fake_record_failure(**kwargs):
         captured_failures.append(dict(kwargs))
@@ -736,18 +763,18 @@ def test_drive_bails_on_repeated_finalize_failure_signature(
 
     assert outcome.status == "blocked"
     assert outcome.final_state == "blocked"
-    assert outcome.iterations == 3
-    assert outcome.blocking_reasons == ["repeated_failure_signature"]
-    assert run_calls == 2
+    assert outcome.iterations == 1
+    assert outcome.blocking_reasons == ["workflow_cursor_mismatch"]
+    assert run_calls == 0
     assert captured_failures
     failure = captured_failures[-1]
-    assert failure["kind"] == "repeated_failure_signature"
+    assert failure["kind"] == "workflow_cursor_mismatch"
     assert failure["current_state"] == "blocked"
     assert failure["resume_cursor"] == {
-        "phase": "finalize",
-        "retry_strategy": "repair_repeated_failure",
+        "phase": "gate",
+        "retry_strategy": "repair_workflow_projection",
     }
-    assert failure["metadata"]["count"] == 3
+    assert failure["metadata"]["observed_phase_source"] is None
 
 
 def test_drive_stall_marks_manual_review_origin_auto_stall(

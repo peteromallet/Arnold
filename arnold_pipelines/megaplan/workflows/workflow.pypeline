@@ -7,6 +7,7 @@ from arnold.workflow.authoring import loop, workflow
 from arnold_pipelines.megaplan.outcomes import (
     GateOutcome,
     OverrideOutcome,
+    OverridePolicyRoute,
     ReviewOutcome,
     TiebreakerOutcome,
 )
@@ -31,6 +32,357 @@ from arnold_pipelines.megaplan.workflows.components import (
     TIEBREAKER_RESEARCHER,
     TIEBREAKER_SYNTHESIS,
 )
+
+DECLARED_OVERRIDE_POLICY_ROUTES = {
+    "adopt-execution": {
+        "route_signal": OverridePolicyRoute.ADOPT_EXECUTION,
+        "target_ref": "review",
+        "declared_target_ref": "review",
+        "policy_route_ref": "megaplan.override.adopt_execution",
+        "description": "Resume from an adopted execution artifact at the review fan-in.",
+    },
+    "recover-blocked": {
+        "route_signal": OverridePolicyRoute.RECOVER_BLOCKED,
+        "declared_target_ref": "recovery_predecessor",
+        "policy_route_ref": "megaplan.override.recover_blocked",
+        "target_rule": "recovery_predecessor",
+        "description": "Recover to the predecessor phase declared by the native recovery policy.",
+    },
+    "resume-clarify": {
+        "route_signal": OverridePolicyRoute.RESUME_CLARIFY,
+        "target_ref": "plan",
+        "declared_target_ref": "plan",
+        "policy_route_ref": "megaplan.override.resume_clarify",
+        "description": "Resume a prep clarification halt at the plan step.",
+    },
+}
+
+DECLARED_OVERRIDE_OUTCOME_TARGETS = {
+    "abort": {
+        "route_signal": OverrideOutcome.ABORT,
+        "target_ref": "halt",
+        "terminal_state_ref": "aborted",
+        "description": "Terminate the workflow through the halt node and land in the aborted terminal state.",
+    },
+    "force-proceed": {
+        "route_signal": OverrideOutcome.FORCE_PROCEED,
+        "target_refs": ("finalize", "execute"),
+        "terminal_state_ref": "done",
+        "description": "Drive the native finalize/execute path, or land in done when the override exits the review loop.",
+    },
+    "replan": {
+        "route_signal": OverrideOutcome.REPLAN,
+        "target_ref": "revise",
+        "reentry_target_ref": "critique",
+        "description": "Re-enter the planning loop by routing through revise and back to the critique reentry.",
+    },
+}
+
+DECLARED_STEP_INTERFACES = {
+    "prep": {
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_prep",
+        "route_bindings": (
+            {"id": "prep:plan", "label": "default", "target_ref": "plan"},
+        ),
+    },
+    "plan": {
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_plan",
+        "route_bindings": (
+            {"id": "plan:critique", "label": "default", "target_ref": "critique"},
+        ),
+    },
+    "critique": {
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_critique",
+        "route_bindings": (
+            {"id": "critique:gate", "label": "default", "target_ref": "gate"},
+        ),
+    },
+    "gate": {
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_gate",
+        "capability_requirements": (
+            {"id": "human:gate", "route": "default", "required": False},
+        ),
+        "route_bindings": (
+            {"id": "gate:finalize", "label": "proceed", "condition_ref": "proceed", "target_ref": "finalize"},
+            {"id": "gate:revise", "label": "iterate", "condition_ref": "iterate", "target_ref": "revise"},
+            {
+                "id": "gate:tiebreaker",
+                "label": "tiebreaker",
+                "condition_ref": "tiebreaker",
+                "target_ref": "tiebreaker_researcher",
+            },
+            {"id": "gate:override", "label": "escalate", "condition_ref": "escalate", "target_ref": "override"},
+            {"id": "gate:halt", "label": "abort", "condition_ref": "abort", "target_ref": "halt"},
+            {"id": "gate:suspend", "label": "suspend", "condition_ref": "suspend", "target_ref": "halt"},
+            {
+                "id": "gate:blocked",
+                "label": "blocked_preflight",
+                "condition_ref": "blocked",
+                "target_ref": "override",
+            },
+            {
+                "id": "gate:force_proceed",
+                "label": "force_proceed",
+                "condition_ref": "force_proceed",
+                "target_ref": "finalize",
+            },
+        ),
+    },
+    "revise": {
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_revise",
+        "capability_requirements": (
+            {"id": "megaplan:planning", "route": "default", "required": True},
+        ),
+        "route_bindings": (
+            {
+                "id": "revise:critique",
+                "label": "default",
+                "condition_ref": "revise:loop",
+                "target_ref": "critique",
+            },
+        ),
+    },
+    "tiebreaker_researcher": {
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
+        "route_bindings": (
+            {
+                "id": "tiebreaker_researcher:challenger",
+                "label": "default",
+                "target_ref": "tiebreaker_challenger",
+            },
+        ),
+    },
+    "tiebreaker_challenger": {
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
+        "route_bindings": (
+            {
+                "id": "tiebreaker_challenger:synthesis",
+                "label": "default",
+                "target_ref": "tiebreaker_synthesis",
+            },
+        ),
+    },
+    "tiebreaker_synthesis": {
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
+        "route_bindings": (
+            {
+                "id": "tiebreaker_synthesis:decision",
+                "label": "default",
+                "target_ref": "tiebreaker_decision",
+            },
+        ),
+    },
+    "tiebreaker_decision": {
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_decide",
+        "capability_requirements": (
+            {"id": "megaplan:planning", "route": "default", "required": True},
+        ),
+        "route_bindings": (
+            {
+                "id": "tiebreaker_decision:critique",
+                "label": "iterate",
+                "condition_ref": "tiebreaker:loop",
+                "target_ref": "tiebreaker_iterate_revise",
+            },
+            {
+                "id": "tiebreaker_decision:finalize",
+                "label": "proceed",
+                "condition_ref": "proceed",
+                "target_ref": "tiebreaker_finalize",
+            },
+            {
+                "id": "tiebreaker_decision:override",
+                "label": "escalate",
+                "condition_ref": "escalate",
+                "target_ref": "tiebreaker_override",
+            },
+            {
+                "id": "tiebreaker_decision:revise_replan",
+                "label": "replan",
+                "condition_ref": "tiebreaker:replan",
+                "target_ref": "tiebreaker_replan_revise",
+            },
+        ),
+    },
+    "finalize": {
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_finalize",
+        "policy_refs": (
+            "megaplan:default",
+            "megaplan:finalize",
+            "megaplan:artifact-contract",
+        ),
+        "route_bindings": (
+            {"id": "finalize:execute", "label": "default", "target_ref": "execute"},
+            {"id": "finalize:revise", "label": "revise", "condition_ref": "revise", "target_ref": "revise"},
+        ),
+    },
+    "execute": {
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_execute",
+        "capability_requirements": (
+            {"id": "megaplan:planning", "route": "default", "required": True},
+        ),
+        "policy_refs": (
+            "megaplan:execute",
+            "megaplan:model-routing",
+            "megaplan:artifact-contract",
+            "megaplan:suspension",
+        ),
+    },
+    "review": {
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_review",
+        "capability_requirements": (
+            {"id": "human:review", "route": "default", "required": False},
+        ),
+        "policy_refs": (
+            "megaplan:review",
+            "megaplan:artifact-contract",
+            "megaplan:suspension",
+        ),
+        "route_bindings": (
+            {"id": "review:halt", "label": "default", "condition_ref": "pass", "target_ref": "halt"},
+            {"id": "review:revise", "label": "rework", "condition_ref": "rework", "target_ref": "execute"},
+        ),
+    },
+    "halt": {
+        "terminal": True,
+    },
+    "override": {
+        "handler_ref": "arnold_pipelines.megaplan.handlers:handle_override",
+        "policy_refs": (
+            "megaplan:override",
+            "megaplan:model-routing",
+        ),
+        "override_actions": (
+            "abort",
+            "add-note",
+            "adopt-execution",
+            "force-proceed",
+            "recover-blocked",
+            "replan",
+            "resume-clarify",
+            "set-model",
+            "set-profile",
+            "set-robustness",
+            "set-vendor",
+        ),
+        "route_bindings": (
+            {"id": "override:halt", "label": "abort", "condition_ref": "abort", "target_ref": "halt"},
+            {
+                "id": "override:finalize",
+                "label": "force_proceed",
+                "condition_ref": "force_proceed",
+                "target_ref": "finalize",
+            },
+            {"id": "override:revise", "label": "replan", "condition_ref": "replan", "target_ref": "revise"},
+        ),
+    },
+}
+
+DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS = {
+    "tiebreaker_child": {
+        "kind": "child_workflow",
+        "entry_step_id": "tiebreaker_run",
+        "decision_step_id": "tiebreaker_decide",
+        "canonical_entry_step_id": "tiebreaker_researcher",
+        "canonical_decision_step_id": "tiebreaker_decision",
+        "run_completion_route": {
+            "route_signal": "default",
+            "target_ref": "tiebreaker_decide",
+            "failure_behavior": "complete_decision_cycle_with_recorded_artifacts",
+        },
+        "canonical_run_completion_target_ref": "tiebreaker_decision",
+        "decision_routes": (
+            {"action": "pick", "route_signal": "proceed", "target_ref": "finalize"},
+            {"action": "replan", "route_signal": "iterate", "target_ref": "critique-fanout"},
+            {"action": "escalate", "route_signal": "escalate", "target_ref": "override"},
+        ),
+        "fallback_route_signal": "escalate",
+    },
+    "execute_batch": {
+        "kind": "execute_batch_child",
+        "approval_gate": {
+            "required_ref": "state.meta.user_approved_gate",
+            "confirmation_ref": "args.confirm_destructive",
+        },
+        "approval_gates": {
+            "destructive_confirmation": {
+                "required_unless": "prose_mode",
+                "signal_ref": "args.confirm_destructive",
+                "failure_code": "missing_confirmation",
+            },
+            "operator_approval": {
+                "required_unless": "state.config.auto_approve",
+                "signal_ref": "state.meta.user_approved_gate",
+                "grant_signal_ref": "args.user_approved",
+                "failure_code": "missing_approval",
+            },
+            "mutating_preflight": {
+                "policy_ref": (
+                    "arnold_pipelines.megaplan.runtime.execution_environment:"
+                    "preflight_mutating_phase"
+                ),
+                "phase": "execute",
+            },
+        },
+        "fanout_contract": {
+            "parallel_map_id": "execute-batches",
+            "fanout_ref": "megaplan.execute.batches",
+            "step_ref": "SOURCE_EXECUTE_BATCH_WORKFLOW",
+            "reducer_ref": "SOURCE_EXECUTE",
+            "path_template": "execute/{index}",
+            "route_signal": "execute_payload",
+        },
+        "retry_and_reentry": {
+            "review_rework_reexecution": "force_fresh_execute_session",
+            "blocked_retry": "force_fresh_execute_session",
+            "blocked_route": {
+                "route_signal": "blocked",
+                "recoverable_state": "blocked",
+                "resume_phase": "execute",
+            },
+        },
+        "post_batch_routes": (
+            {"route_signal": "review_required", "target_ref": "review-fan-in"},
+            {"route_signal": "no_review", "target_ref": "halt"},
+            {"route_signal": "deferred_human", "target_ref": "halt"},
+        ),
+    },
+    "review_panel": {
+        "kind": "review_fan_in",
+        "criteria_ref": "review.criteria",
+        "route_signal_ref": "review.route_signal",
+        "no_review_route_signal": "pass",
+        "fan_in_contract": {
+            "parallel_map_id": "review-fan-in",
+            "fan_in_ref": "review.checks",
+            "step_ref": "SOURCE_REVIEW_PANEL_WORKFLOW",
+            "reducer_ref": "SOURCE_REVIEW",
+            "path_template": "review/{item_id}",
+            "route_signal": "review_route_signal",
+        },
+        "rework_cycle": {
+            "route_signal": "rework",
+            "target_ref": "execute",
+            "fresh_execute_session": True,
+        },
+        "retry_and_cap": {
+            "infrastructure_retry": "review",
+            "cap_exhausted_non_blocking": "force_proceeded",
+            "cap_exhausted_with_blockers": "recoverable_block",
+        },
+        "escalation": {
+            "policy_ref": "megaplan:override",
+            "actions": ("recover-blocked", "force-proceed"),
+        },
+        "reducer_routes": (
+            {"route_signal": "pass", "target_ref": "halt"},
+            {"route_signal": "rework", "target_ref": "execute"},
+            {"route_signal": "blocked", "target_ref": "halt"},
+            {"route_signal": "force_proceeded", "target_ref": "halt"},
+            {"route_signal": "deferred_human", "target_ref": "halt"},
+        ),
+    },
+}
 
 
 @workflow(id="megaplan", version="m4-phase3", policy=DEFAULT_POLICY)

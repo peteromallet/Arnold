@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from arnold_pipelines.megaplan.control_interface import DECLARED_OVERRIDE_POLICY_TARGETS
 from arnold_pipelines.megaplan.planning.control_binding import (
     planning_control_binding,
     planning_run_state_view,
@@ -29,6 +30,46 @@ def test_blocked_review_recovery_does_not_project_illegal_rerun() -> None:
     targets = binding.recover_targets(planning_run_state_view(state))
 
     assert [target.id for target in targets] == ["recover-blocked"]
+    assert targets[0].metadata["target_ref"] == "recovery_predecessor"
+    assert targets[0].metadata["policy_route_ref"] == "megaplan.override.recover_blocked"
+    assert "target_state" not in targets[0].metadata
+
+
+def test_resume_clarify_projection_uses_declared_policy_target() -> None:
+    state = {
+        "name": "demo",
+        "current_state": "awaiting_human_verify",
+        "config": {},
+        "clarification": {"source": "prep"},
+        "meta": {},
+    }
+
+    targets = planning_control_binding().recover_targets(planning_run_state_view(state))
+
+    assert [target.id for target in targets] == ["resume-clarify"]
+    assert targets[0].metadata["target_ref"] == "plan"
+    assert targets[0].metadata["policy_route_ref"] == "megaplan.override.resume_clarify"
+    assert targets[0].metadata["target_state"] == "prepped"
+
+
+def test_control_interface_declares_native_policy_targets_without_cursor_authority() -> None:
+    assert DECLARED_OVERRIDE_POLICY_TARGETS == {
+        "adopt-execution": {
+            "route_signal": "adopt_execution",
+            "target_ref": "review",
+            "policy_route_ref": "megaplan.override.adopt_execution",
+        },
+        "recover-blocked": {
+            "route_signal": "recover_blocked",
+            "target_ref": "recovery_predecessor",
+            "policy_route_ref": "megaplan.override.recover_blocked",
+        },
+        "resume-clarify": {
+            "route_signal": "resume_clarify",
+            "target_ref": "plan",
+            "policy_route_ref": "megaplan.override.resume_clarify",
+        },
+    }
 
 
 def test_set_profile_preserves_encoded_phase_model_chains(monkeypatch) -> None:

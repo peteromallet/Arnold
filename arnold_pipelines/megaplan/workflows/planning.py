@@ -7,6 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from arnold.workflow import source_compiler as workflow_source_compiler
 from arnold.manifest import (
     AuthorityRequirement,
     BudgetPolicy,
@@ -24,6 +25,7 @@ from arnold.manifest import (
 from arnold.workflow.authoring import ComponentProvenance, StepComponent
 from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
 from arnold.workflow.source_compiler import lower_workflow_file
+from arnold_pipelines.megaplan.workflows import components as workflow_components_module
 from arnold_pipelines.megaplan.workflows.components import (
     ALL_STEP_COMPONENTS,
     ARTIFACT_CONTRACT_POLICY,
@@ -89,6 +91,20 @@ for _component in ALL_STEP_COMPONENTS:
 PIPELINE_STEP_COMPONENTS = tuple(_PIPELINE_STEP_COMPONENTS_LIST)
 PIPELINE_STEP_COMPONENTS_BY_ID = {
     component.id.removeprefix("megaplan:"): component for component in PIPELINE_STEP_COMPONENTS
+}
+_POLICY_ROUTE_SURFACE_EXPORTS_BY_STEP_ID = {
+    "execute": "EXECUTE_POLICY",
+    "finalize": "FINALIZE_POLICY",
+    "gate": "GATE_POLICY",
+    "override": "OVERRIDE_POLICY",
+    "review": "REVIEW_POLICY",
+    "tiebreaker_decision": "TIEBREAKER_POLICY",
+}
+_WORKFLOW_TOPOLOGY_EXPORTS_BY_WORKFLOW_ID = {
+    "critique_panel": "SOURCE_CRITIQUE_PANEL_WORKFLOW",
+    "execute_batch": "SOURCE_EXECUTE_BATCH_WORKFLOW",
+    "review_panel": "SOURCE_REVIEW_PANEL_WORKFLOW",
+    "tiebreaker_child": "SOURCE_TIEBREAKER_WORKFLOW",
 }
 
 _LOWERED_STEP_ID_ALIASES = {
@@ -238,7 +254,7 @@ def _route_id_for_lowered_route(
     route_label = route.label if label is None else label
     component = PIPELINE_STEP_COMPONENTS_BY_ID.get(source)
     if component is not None:
-        bindings = component.metadata.get("route_bindings", ())
+        bindings = declared_step_route_bindings(source) or component.metadata.get("route_bindings", ())
         for binding in bindings:
             if (
                 str(binding.get("label", "default")) == route_label
@@ -320,7 +336,9 @@ def _supported_pipeline_route_labels_by_source() -> dict[str, set[str]]:
     for step_id, component in PIPELINE_STEP_COMPONENTS_BY_ID.items():
         labels = {
             str(binding.get("label", "default"))
-            for binding in component.metadata.get("route_bindings", ())
+            for binding in (
+                declared_step_route_bindings(step_id) or component.metadata.get("route_bindings", ())
+            )
         }
         if labels:
             supported[step_id] = labels
@@ -333,6 +351,91 @@ def _component_io(items: Sequence[Mapping[str, str]], io_type: type[Input] | typ
         kwargs = dict(item)
         values.append(io_type(**kwargs))
     return tuple(values)
+
+
+def declared_step_interface(step_id: str) -> Mapping[str, Any]:
+    component = PIPELINE_STEP_COMPONENTS_BY_ID.get(step_id)
+    if component is None:
+        return {}
+    return workflow_source_compiler._megaplan_step_declared_interface(component)
+
+
+def declared_handler_binding(step_id: str) -> str | None:
+    handler_ref = declared_step_interface(step_id).get("handler_ref")
+    return handler_ref if isinstance(handler_ref, str) and handler_ref else None
+
+
+def declared_step_policy_refs(step_id: str) -> tuple[str, ...]:
+    policy_refs = declared_step_interface(step_id).get("policy_refs")
+    if isinstance(policy_refs, Sequence) and not isinstance(policy_refs, (str, bytes)):
+        return tuple(str(policy_ref) for policy_ref in policy_refs if isinstance(policy_ref, str))
+    return ()
+
+
+def declared_step_capabilities(step_id: str) -> tuple[Capability, ...]:
+    raw_capabilities = declared_step_interface(step_id).get("capability_requirements")
+    if not isinstance(raw_capabilities, Sequence) or isinstance(raw_capabilities, (str, bytes)):
+        return ()
+    capabilities: list[Capability] = []
+    for raw_capability in raw_capabilities:
+        if not isinstance(raw_capability, Mapping):
+            continue
+        capability_id = raw_capability.get("id")
+        route = raw_capability.get("route", "default")
+        required = raw_capability.get("required", True)
+        if isinstance(capability_id, str) and isinstance(route, str) and isinstance(required, bool):
+            capabilities.append(Capability(id=capability_id, route=route, required=required))
+    return tuple(capabilities)
+
+
+def declared_step_route_bindings(step_id: str) -> tuple[Mapping[str, Any], ...]:
+    raw_bindings = declared_step_interface(step_id).get("route_bindings")
+    if not isinstance(raw_bindings, Sequence) or isinstance(raw_bindings, (str, bytes)):
+        return ()
+    return tuple(binding for binding in raw_bindings if isinstance(binding, Mapping))
+
+
+def declared_route_surface(step_id: str) -> Mapping[str, Any]:
+    if step_id == "critique":
+        route_surface = getattr(workflow_components_module, "CRITIQUE_ROUTE_SURFACE", {})
+        return route_surface if isinstance(route_surface, Mapping) else {}
+    export_name = _POLICY_ROUTE_SURFACE_EXPORTS_BY_STEP_ID.get(step_id)
+    if export_name is None:
+        return {}
+    return workflow_source_compiler._megaplan_policy_route_surface(export_name)
+
+
+def declared_workflow_topology_contract(workflow_id: str) -> Mapping[str, Any]:
+    export_name = _WORKFLOW_TOPOLOGY_EXPORTS_BY_WORKFLOW_ID.get(workflow_id)
+    if export_name is None:
+        return {}
+    return workflow_source_compiler._megaplan_workflow_topology_contract(export_name)
+
+
+def declared_fanout_contract(*, step_id: str | None = None, workflow_id: str | None = None) -> Mapping[str, Any]:
+    if step_id is not None:
+        route_surface = declared_route_surface(step_id)
+        fanout_contract = route_surface.get("fanout_contract")
+        if isinstance(fanout_contract, Mapping):
+            return fanout_contract
+    if workflow_id is None:
+        return {}
+    topology_contract = declared_workflow_topology_contract(workflow_id)
+    fanout_contract = topology_contract.get("fanout_contract")
+    return fanout_contract if isinstance(fanout_contract, Mapping) else {}
+
+
+def declared_fan_in_contract(*, step_id: str | None = None, workflow_id: str | None = None) -> Mapping[str, Any]:
+    if step_id is not None:
+        route_surface = declared_route_surface(step_id)
+        fan_in_contract = route_surface.get("fan_in_contract")
+        if isinstance(fan_in_contract, Mapping):
+            return fan_in_contract
+    if workflow_id is None:
+        return {}
+    topology_contract = declared_workflow_topology_contract(workflow_id)
+    fan_in_contract = topology_contract.get("fan_in_contract")
+    return fan_in_contract if isinstance(fan_in_contract, Mapping) else {}
 
 
 def _policy_from_config(config: Mapping[str, Any], *, timeout_seconds: float | None) -> WorkflowPolicy:
@@ -479,18 +582,19 @@ def _policy_for_step(step_id: str, *, timeout_seconds: float | None) -> Workflow
 
 def _metadata_for_step(step_id: str) -> dict[str, Any]:
     component = PIPELINE_STEP_COMPONENTS_BY_ID[step_id]
+    declared = declared_step_interface(step_id)
     metadata: dict[str, Any] = {}
-    handler_ref = component.metadata.get("handler_ref")
+    handler_ref = declared.get("handler_ref", component.metadata.get("handler_ref"))
     if isinstance(handler_ref, str):
         metadata["handler_ref"] = handler_ref
-    if component.metadata.get("terminal") is True:
+    if declared.get("terminal", component.metadata.get("terminal")) is True:
         metadata["terminal"] = True
     if step_id == "revise":
         metadata["max_iterations"] = M4_LOOP_MAX_ITERATIONS
     for key in ("policy_refs", "override_actions"):
-        value = component.metadata.get(key)
-        if value:
-            metadata[key] = value
+        value = declared.get(key, component.metadata.get(key))
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)) and value:
+            metadata[key] = tuple(value)
     return metadata
 
 

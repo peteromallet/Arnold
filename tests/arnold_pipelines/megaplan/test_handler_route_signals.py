@@ -3,7 +3,12 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from arnold_pipelines.megaplan.route_dispatch import resolve_route_target_for_signal
+import pytest
+
+from arnold_pipelines.megaplan.route_dispatch import (
+    LegacyRouteDispatchDisabled,
+    resolve_route_target_for_signal,
+)
 from arnold_pipelines.megaplan.workflows.components import STEP_COMPONENTS_BY_ID
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -367,52 +372,26 @@ class TestSharedRouteHelpers:
         calls = _called_names(_function_node(SHARED_PATH, "_finish_step"))
         assert "workflow_transition" not in calls
 
-    def test_shared_finish_step_uses_workflow_route_dispatch_helper(self) -> None:
+    def test_shared_finish_step_uses_source_derived_route_projection(self) -> None:
         calls = _called_names(_function_node(SHARED_PATH, "_finish_step"))
-        assert "resolve_route_target_for_signal" in calls
+        assert "resolve_lowered_route_target_for_signal" in calls
+        assert "resolve_route_target_for_signal" not in calls
 
-    def test_workflow_route_dispatch_helper_reads_declared_route_bindings(self) -> None:
+    def test_workflow_route_dispatch_helper_is_legacy_fenced(self) -> None:
         source = ROUTE_DISPATCH_PATH.read_text(encoding="utf-8")
-        assert "STEP_COMPONENTS_BY_ID" in source
-        assert "route_bindings" in source
+        assert "STEP_COMPONENTS_BY_ID" not in source
+        assert "_component_route_bindings_for_step" not in source
+        assert "_declared_route_bindings_for_step" not in source
 
-    def test_front_half_route_dispatch_ignores_component_route_metadata_mutation(self, monkeypatch) -> None:
-        monkeypatch.setattr(
-            "arnold_pipelines.megaplan.route_dispatch._component_route_bindings_for_step",
-            lambda step: (
-                (
-                    {
-                        "id": "gate:proceed",
-                        "label": "proceed",
-                        "target_ref": "halt",
-                        "condition_ref": "mutated",
-                    },
-                )
-                if step == "gate"
-                else tuple(STEP_COMPONENTS_BY_ID[step].metadata.get("route_bindings", ()))
-            ),
-        )
+    def test_front_half_route_dispatch_requires_explicit_legacy_opt_in(self) -> None:
+        with pytest.raises(LegacyRouteDispatchDisabled):
+            resolve_route_target_for_signal("gate", "proceed")
 
-        assert resolve_route_target_for_signal("gate", "proceed") == "finalize"
+    def test_front_half_route_dispatch_explicit_legacy_opt_in_uses_source_declared_binding(self) -> None:
+        assert resolve_route_target_for_signal("gate", "proceed", allow_legacy=True) == "finalize"
 
-    def test_tiebreaker_alias_route_dispatch_ignores_legacy_component_metadata(self, monkeypatch) -> None:
-        monkeypatch.setattr(
-            "arnold_pipelines.megaplan.route_dispatch._component_route_bindings_for_step",
-            lambda step: (
-                (
-                    {
-                        "id": "tiebreaker_decide:proceed",
-                        "label": "proceed",
-                        "target_ref": "halt",
-                        "condition_ref": "mutated",
-                    },
-                )
-                if step == "tiebreaker_decide"
-                else tuple(STEP_COMPONENTS_BY_ID[step].metadata.get("route_bindings", ()))
-            ),
-        )
-
-        assert resolve_route_target_for_signal("tiebreaker_decide", "proceed") == "finalize"
+    def test_tiebreaker_alias_route_dispatch_explicit_legacy_opt_in_uses_source_declared_binding(self) -> None:
+        assert resolve_route_target_for_signal("tiebreaker_decide", "proceed", allow_legacy=True) == "finalize"
 
 
 class TestExecuteSignals:
