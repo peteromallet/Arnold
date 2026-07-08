@@ -1555,7 +1555,84 @@ def _load_turn_delta_ops(
     if isinstance(delta_ops, Mapping):
         return None
 
-    return None
+    return _infer_delta_ops_from_legacy_field_changes(response)
+
+
+def _iter_legacy_field_changes(payload: Mapping[str, Any]) -> Iterator[Mapping[str, Any]]:
+    seen_ids: set[int] = set()
+
+    def emit_items(items: Any) -> Iterator[Mapping[str, Any]]:
+        if not isinstance(items, list):
+            return
+        for item in items:
+            if not isinstance(item, Mapping):
+                continue
+            identity = id(item)
+            if identity in seen_ids:
+                continue
+            seen_ids.add(identity)
+            yield item
+
+    yield from emit_items(payload.get("field_changes"))
+    outcome = payload.get("outcome")
+    if isinstance(outcome, Mapping):
+        yield from emit_items(outcome.get("changes"))
+    batch_turns = payload.get("batch_turns")
+    for turn in batch_turns if isinstance(batch_turns, list) else ():
+        if isinstance(turn, Mapping):
+            yield from emit_items(turn.get("field_changes"))
+    change_details = payload.get("change_details")
+    if isinstance(change_details, Mapping):
+        detail_turns = change_details.get("batch_turns")
+        for turn in detail_turns if isinstance(detail_turns, list) else ():
+            if isinstance(turn, Mapping):
+                yield from emit_items(turn.get("field_changes"))
+
+
+def _infer_delta_ops_from_legacy_field_changes(
+    response: Mapping[str, Any],
+) -> tuple[dict[str, Any], ...] | None:
+    """Recover scoped link intent from pre-delta response artifacts.
+
+    Only explicit link field changes are promoted. Literal/widget changes remain
+    V1 because field changes do not faithfully encode every edit operation kind.
+    """
+    ops: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    unsupported_change_seen = False
+    for change in _iter_legacy_field_changes(response):
+        target_uid = change.get("uid")
+        field_path = change.get("field_path")
+        new_value = change.get("new")
+        if target_uid is None or not isinstance(field_path, str) or not field_path:
+            unsupported_change_seen = True
+            continue
+        if not isinstance(new_value, Mapping):
+            unsupported_change_seen = True
+            continue
+        source_uid = new_value.get("uid")
+        output_slot = new_value.get("output_slot")
+        if source_uid is None or output_slot is None:
+            unsupported_change_seen = True
+            continue
+        source_scope = new_value.get("scope_path", "")
+        target_scope = change.get("scope_path", "")
+        if not isinstance(source_scope, str) or not isinstance(target_scope, str):
+            unsupported_change_seen = True
+            continue
+        op = {
+            "op": "upsert_link",
+            "from": [source_scope, str(source_uid), output_slot],
+            "to": [target_scope, str(target_uid), field_path],
+        }
+        key = json.dumps(op, sort_keys=True, separators=(",", ":"))
+        if key in seen:
+            continue
+        seen.add(key)
+        ops.append(op)
+    if unsupported_change_seen:
+        return None
+    return tuple(ops) if ops else None
 
 
 def _load_turn_delta_ops_diagnostic(
@@ -2681,6 +2758,9 @@ def _mutate_turn_state(
                 },
             )
         agent_edit_protocol = turn_record.get("agent_edit_protocol")
+        if scope == "accept" and agent_edit_protocol != "v2_delta":
+            if _load_turn_delta_ops(session_dir=session_dir, turn_id=turn_id) is not None:
+                agent_edit_protocol = "v2_delta"
         expected_baseline: ExpectedBaseline | None = None
         v2_whole_graph_hash_diagnostic: dict[str, Any] | None = None
         if scope == "accept":

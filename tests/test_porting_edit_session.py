@@ -1359,6 +1359,52 @@ class TestAvailableNodeSignatures:
 
     # -- formatted output --------------------------------------------------
 
+    def test_formatted_signature_uses_authorable_alias_for_hyphenated_class_type(self) -> None:
+        from vibecomfy.porting.emitter import emit_available_node_signatures, format_signature_rows
+        from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
+
+        provider = self._fake_provider(
+            {
+                "MiDaS-DepthMapPreprocessor": NodeSchema(
+                    class_type="MiDaS-DepthMapPreprocessor",
+                    pack="controlnet_aux",
+                    inputs={
+                        "image": InputSpec(type="IMAGE", required=True),
+                        "resolution": InputSpec(type="INT", default=512),
+                    },
+                    outputs=[OutputSpec(type="IMAGE", name="image")],
+                ),
+            }
+        )
+
+        rows = emit_available_node_signatures(
+            provider,
+            focus_types=["MiDaS-DepthMapPreprocessor"],
+        )
+        formatted = format_signature_rows(rows)
+
+        assert "def MiDaS_DepthMapPreprocessor(" in formatted
+        assert "# class_type: MiDaS-DepthMapPreprocessor" in formatted
+        assert "def MiDaS-DepthMapPreprocessor(" not in formatted
+
+    def test_formatted_signature_disambiguates_colliding_constructor_aliases(self) -> None:
+        from vibecomfy.porting.emitter import emit_available_node_signatures, format_signature_rows
+        from vibecomfy.schema import NodeSchema
+
+        provider = self._fake_provider(
+            {
+                "A-B": NodeSchema(class_type="A-B", pack="p", inputs={}, outputs=[]),
+                "A_B": NodeSchema(class_type="A_B", pack="p", inputs={}, outputs=[]),
+            }
+        )
+
+        rows = emit_available_node_signatures(provider)
+        formatted = format_signature_rows(rows)
+
+        assert "def A_B(" in formatted
+        assert "def A_B_2(" in formatted
+        assert "# class_type: A-B" in formatted
+
     def test_format_signature_rows_basic(self) -> None:
         from vibecomfy.porting.emitter import (
             InputSignatureField,
@@ -1381,8 +1427,7 @@ class TestAvailableNodeSignatures:
 
         text = format_signature_rows(rows)
         assert "# authoring: literal fields: seed; socket inputs: model" in text
-        assert "# raw class: KSampler" in text
-        assert "def ksampler(model: MODEL, seed: INT = ...) -> latent:LATENT:" in text
+        assert "def KSampler(model: MODEL, seed: INT = ...) -> latent:LATENT:" in text
 
     def test_format_signature_rows_no_outputs(self) -> None:
         from vibecomfy.porting.emitter import (
@@ -1402,8 +1447,7 @@ class TestAvailableNodeSignatures:
         ]
 
         text = format_signature_rows(rows)
-        assert "# raw class: SaveImage" in text
-        assert "def saveimage(images: IMAGE) -> None:" in text
+        assert "def SaveImage(images: IMAGE) -> None:" in text
 
     def test_format_signature_rows_show_pack(self) -> None:
         from vibecomfy.porting.emitter import (
@@ -1423,7 +1467,7 @@ class TestAvailableNodeSignatures:
 
         text = format_signature_rows(rows, show_pack=True)
         assert "# pack: comfy_custom" in text
-        assert "def foo() -> None:" in text
+        assert "def Foo() -> None:" in text
 
     def test_format_signature_rows_show_confidence(self) -> None:
         from vibecomfy.porting.emitter import (
@@ -1453,8 +1497,8 @@ class TestAvailableNodeSignatures:
         # High confidence (1.0) should NOT show annotation
         assert "confidence: 1.00" not in text
         # Both class types should still appear
-        assert "def highconf() -> None:" in text
-        assert "def lowconf() -> None:" in text
+        assert "def HighConf() -> None:" in text
+        assert "def LowConf() -> None:" in text
 
     def test_format_signature_rows_deterministic(self) -> None:
         from vibecomfy.porting.emitter import (
@@ -1474,7 +1518,7 @@ class TestAvailableNodeSignatures:
         assert text1 == text2
         # Should be sorted A, M, Z
         lines = [line for line in text1.split("\n") if line.startswith("def ")]
-        assert lines == ["def a() -> None:", "def m() -> None:", "def z() -> None:"]
+        assert lines == ["def A() -> None:", "def M() -> None:", "def Z() -> None:"]
 
     def test_format_signature_rows_slot_name_codec(self) -> None:
         from vibecomfy.porting.emitter import (
@@ -1496,7 +1540,7 @@ class TestAvailableNodeSignatures:
 
         text = format_signature_rows(rows)
         # 'in' → 'in_', 'class' → 'class_'
-        assert "def kwargsnode(in_: IMAGE, class_: STRING = ...) -> None:" in text
+        assert "def KwargsNode(in_: IMAGE, class_: STRING = ...) -> None:" in text
 
     def test_format_signature_rows_uses_python_identifier_alias_for_class_type(self) -> None:
         from vibecomfy.porting.emitter import (
@@ -1513,8 +1557,8 @@ class TestAvailableNodeSignatures:
         ]
 
         text = format_signature_rows(rows)
-        assert "# raw class: MiDaS-DepthMapPreprocessor" in text
-        assert "def midas_depthmappreprocessor() -> None:" in text
+        assert "# class_type: MiDaS-DepthMapPreprocessor" in text
+        assert "def MiDaS_DepthMapPreprocessor() -> None:" in text
 
     def test_format_signature_rows_omits_raw_class_comment_when_alias_matches(self) -> None:
         from vibecomfy.porting.emitter import (
@@ -1531,9 +1575,8 @@ class TestAvailableNodeSignatures:
         ]
 
         text = format_signature_rows(rows)
-        # CheckpointLoaderSimple → checkpointloadersimple (alias differs)
-        assert "# raw class: CheckpointLoaderSimple" in text
-        assert "def checkpointloadersimple() -> None:" in text
+        assert "# class_type: CheckpointLoaderSimple" not in text
+        assert "def CheckpointLoaderSimple() -> None:" in text
 
     def test_node_signature_row_frozen(self) -> None:
         from vibecomfy.porting.emitter import (
@@ -1626,7 +1669,7 @@ class TestAvailableNodeSignatures:
         ]
         text = format_signature_rows(rows)
         assert (
-            'def vaeloader(vae_name: COMBO["ae.safetensors", "flux_vae.safetensors"]) -> None:'
+            'def VAELoader(vae_name: COMBO["ae.safetensors", "flux_vae.safetensors"]) -> None:'
             in text
         )
 
@@ -1679,7 +1722,7 @@ class TestAvailableNodeSignatures:
             ),
         ]
         text = format_signature_rows(rows)
-        assert "def samplercustomadvanced() -> output:LATENT, denoised_output:LATENT:" in text
+        assert "def SamplerCustomAdvanced() -> output:LATENT, denoised_output:LATENT:" in text
 
     def test_output_name_equals_type_renders_addressable_name(self) -> None:
         from vibecomfy.porting.emitter import (
@@ -1700,7 +1743,7 @@ class TestAvailableNodeSignatures:
             ),
         ]
         text = format_signature_rows(rows)
-        assert "def vaedecode(samples: LATENT, vae: VAE) -> image:IMAGE:" in text
+        assert "def VAEDecode(samples: LATENT, vae: VAE) -> image:IMAGE:" in text
         assert "-> IMAGE:IMAGE:" not in text
 
 
@@ -3924,6 +3967,51 @@ def _primitive_session():
         {"src": "src", "widget": "widget", "dst": "dst", "helper": "helper"}
     )
     return session
+
+
+def test_add_node_resolves_authorable_alias_for_hyphenated_class_type() -> None:
+    from vibecomfy.porting.edit.ops import AddNodeOp
+    from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
+
+    session = _primitive_session()
+    session.schema_provider._schemas["MiDaS-DepthMapPreprocessor"] = NodeSchema(
+        class_type="MiDaS-DepthMapPreprocessor",
+        pack="controlnet_aux",
+        inputs={
+            "image": InputSpec(type="IMAGE", required=True),
+            "resolution": InputSpec(type="INT", default=512),
+        },
+        outputs=[OutputSpec(type="IMAGE", name="image")],
+    )
+    session.render()
+
+    result = session.apply_batch(
+        "depth = MiDaS_DepthMapPreprocessor(image=src.in_, resolution=512)\n"
+    )
+
+    assert result.ok is True
+    assert len(result.landed_ops) == 1
+    op = result.landed_ops[0]
+    assert isinstance(op, AddNodeOp)
+    assert op.class_type == "MiDaS-DepthMapPreprocessor"
+
+
+def test_add_node_resolves_disambiguated_authoring_alias_collision() -> None:
+    from vibecomfy.porting.edit.ops import AddNodeOp
+    from vibecomfy.schema import NodeSchema
+
+    session = _primitive_session()
+    session.schema_provider._schemas["A-B"] = NodeSchema(class_type="A-B", pack="p", inputs={}, outputs=[])
+    session.schema_provider._schemas["A_B"] = NodeSchema(class_type="A_B", pack="p", inputs={}, outputs=[])
+    session.render()
+
+    result = session.apply_batch("collided = A_B_2()\n")
+
+    assert result.ok is True
+    assert len(result.landed_ops) == 1
+    op = result.landed_ops[0]
+    assert isinstance(op, AddNodeOp)
+    assert op.class_type == "A_B"
 
 
 # =====================================================================

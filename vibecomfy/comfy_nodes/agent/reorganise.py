@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -8,6 +9,7 @@ from vibecomfy.porting.reorganise import (
     LayoutCompileOptions,
     ReorganisePreviewOptions,
     apply_layout_candidate_patch_to_ui,
+    assess_reorganise_workflow,
     preview_reorganise_workflow,
 )
 
@@ -91,12 +93,12 @@ def build_reorganise_agent_response(
     evidence_path = state.turn_dir / _EVIDENCE_ARTIFACT
 
     write_json_artifact(plan_path, _plan_payload(result))
-    write_json_artifact(metrics_path, _metrics_payload(result))
 
     patch_apply = None
     patch_apply_error: dict[str, Any] | None = None
     candidate_payload: dict[str, Any] | None = None
     has_candidate = False
+    candidate_assessment = None
     if result.ok and result.candidate_patch is not None:
         try:
             patch_apply = apply_layout_candidate_patch_to_ui(state.graph, result.candidate_patch)
@@ -118,10 +120,17 @@ def build_reorganise_agent_response(
             )
             if has_candidate:
                 write_json_artifact(state.candidate_ui_path, patch_apply.ui_json)
+                candidate_assessment = assess_reorganise_workflow(
+                    deepcopy(patch_apply.ui_json),
+                    sidecar_envelope=result.sidecar_envelope,
+                    projection_options=result.options.projection_options,
+                )
             else:
                 state.ui_payload = None
     else:
         state.ui_payload = None
+
+    write_json_artifact(metrics_path, _metrics_payload(result, after=candidate_assessment))
 
     evidence_payload = _evidence_payload(
         result,
@@ -131,7 +140,11 @@ def build_reorganise_agent_response(
         has_candidate=has_candidate,
     )
     write_json_artifact(evidence_path, evidence_payload)
-    report_text = _render_report(result, candidate_written=has_candidate)
+    report_text = _render_report(
+        result,
+        candidate_written=has_candidate,
+        after=candidate_assessment,
+    )
     report_path.write_text(report_text, encoding="utf-8")
 
     artifact_paths: dict[str, str] = {
@@ -178,7 +191,7 @@ def build_reorganise_agent_response(
         "status": "ok" if has_candidate else "failed",
         "report": report_text,
         "apply_data": result.apply_data.to_json(),
-        "metrics": _metrics_payload(result),
+        "metrics": _metrics_payload(result, after=candidate_assessment),
         "evidence": evidence_payload,
     }
 
@@ -294,11 +307,11 @@ def prepare_post_edit_reorganise_candidate(
 
     projection_path.write_text(result.projection.text, encoding="utf-8")
     write_json_artifact(plan_path, _plan_payload(result))
-    write_json_artifact(metrics_path, _metrics_payload(result))
 
     patch_apply = None
     patch_apply_error: dict[str, Any] | None = None
     has_candidate = False
+    candidate_assessment = None
     if result.ok and result.candidate_patch is not None:
         try:
             patch_apply = apply_layout_candidate_patch_to_ui(source_ui, result.candidate_patch)
@@ -320,7 +333,13 @@ def prepare_post_edit_reorganise_candidate(
             if has_candidate:
                 state.ui_payload = candidate_ui
                 write_json_artifact(state.candidate_ui_path, candidate_ui)
+                candidate_assessment = assess_reorganise_workflow(
+                    deepcopy(candidate_ui),
+                    sidecar_envelope=result.sidecar_envelope,
+                    projection_options=result.options.projection_options,
+                )
 
+    write_json_artifact(metrics_path, _metrics_payload(result, after=candidate_assessment))
     evidence_payload = _evidence_payload(
         result,
         patch_apply,
@@ -329,7 +348,10 @@ def prepare_post_edit_reorganise_candidate(
         has_candidate=has_candidate,
     )
     write_json_artifact(evidence_path, evidence_payload)
-    report_path.write_text(_render_report(result, candidate_written=has_candidate), encoding="utf-8")
+    report_path.write_text(
+        _render_report(result, candidate_written=has_candidate, after=candidate_assessment),
+        encoding="utf-8",
+    )
 
     artifact_paths = {
         "post_edit_reorganisation_projection": str(projection_path),
@@ -462,10 +484,16 @@ def _plan_payload(result: Any) -> dict[str, Any]:
     })
 
 
-def _metrics_payload(result: Any) -> dict[str, Any]:
+def _metrics_payload(result: Any, *, after: Any | None = None) -> dict[str, Any]:
+    before_assessment = result.assessment.to_json()
+    after_assessment = after.assessment.to_json() if after is not None else None
     payload: dict[str, Any] = {
-        "assessment": result.assessment.to_json(),
+        "assessment": after_assessment or before_assessment,
+        "before_assessment": before_assessment,
+        "after_assessment": after_assessment,
         "graph_summary": result.graph_summary.to_json(),
+        "before_graph_summary": result.graph_summary.to_json(),
+        "after_graph_summary": after.graph_summary.to_json() if after is not None else None,
         "projection": {
             "token_estimate": result.projection.token_estimate,
             "scope_count": result.projection.scope_count,
@@ -512,8 +540,10 @@ def _evidence_payload(
     })
 
 
-def _render_report(result: Any, *, candidate_written: bool) -> str:
-    assessment = result.assessment.to_json()
+def _render_report(result: Any, *, candidate_written: bool, after: Any | None = None) -> str:
+    before_assessment = result.assessment.to_json()
+    after_assessment = after.assessment.to_json() if after is not None else None
+    assessment = after_assessment or before_assessment
     lines = [
         "# Reorganisation Report",
         "",
@@ -528,9 +558,16 @@ def _render_report(result: Any, *, candidate_written: bool) -> str:
         "## Assessment",
         "",
         f"- Verdict: {assessment['verdict']}",
+        f"- Assessed graph: {'candidate' if after_assessment is not None else 'source'}",
         f"- Issues: {len(assessment['issues'])}",
         f"- Diagnostics: {len(assessment['diagnostics'])}",
     ]
+    if after_assessment is not None:
+        lines.extend(
+            [
+                f"- Source verdict before reorganise: {before_assessment['verdict']}",
+            ]
+        )
     if result.compile_diagnostics:
         lines.extend(["", "## Compile Diagnostics", ""])
         for diagnostic in result.compile_diagnostics[:20]:

@@ -1072,6 +1072,37 @@ class TestGraphDescribeFlow:
         assert result.report.implementation is not None
         assert result.graph is not None
 
+    @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_simple_edit)
+    @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_edit)
+    @mock.patch("vibecomfy.executor.core.handle_agent_edit", side_effect=_fake_handle_agent_edit)
+    def test_executor_forwards_submit_freshness_fields(
+        self,
+        mock_edit: mock.MagicMock,
+        mock_reply: mock.MagicMock,
+        mock_classify: mock.MagicMock,
+        profile_dir: Path,
+    ) -> None:
+        """Revise/adapt turns preserve browser freshness fields for durable apply CAS."""
+        request = ExecutorRequest(
+            query="switch to depth",
+            graph={"nodes": [{"id": 1, "type": "ControlNetLoaderAdvanced"}], "links": []},
+            session_id="session-1",
+            profile="default",
+            idempotency_key="submit-key",
+            client_graph_hash="client-graph-hash",
+            client_structural_graph_hash="client-structural-hash",
+            client_live_canvas_token="client-live-token",
+        )
+
+        result = run_executor(request)
+
+        assert result.ok is True
+        payload = mock_edit.call_args[0][0]
+        assert payload["session_id"] == "session-1"
+        assert payload["client_graph_hash"] == "client-graph-hash"
+        assert payload["client_structural_graph_hash"] == "client-structural-hash"
+        assert payload["client_live_canvas_token"] == "client-live-token"
+
     @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_graph_describe)
     @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_graph_describe)
     @mock.patch("vibecomfy.executor.core.handle_agent_edit", side_effect=_fake_handle_agent_edit)

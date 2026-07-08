@@ -208,6 +208,7 @@ test("replay selectors, stage projection, reverse navigation, and clear cleanup 
         chatMessages: [{ role: "agent", text: "stale message" }],
         transcriptMessages: [{ role: "agent", text: "stale transcript" }],
         candidateGraph: { nodes: [{ id: 99 }], links: [] },
+        candidateBaselineGraph: { nodes: [{ id: 98 }], links: [] },
         candidateReport: { stale: true },
         applyAllowed: true,
         applyEligibility: { applyable: false, reason: "stale" },
@@ -370,6 +371,11 @@ test("replay selectors, stage projection, reverse navigation, and clear cleanup 
     );
     assert.equal(panel.state.phase, PANEL_STATE.AWAITING_REVIEW, "clear restores the panel phase");
     assert.deepEqual(panel.state.candidateGraph, { nodes: [{ id: 99 }], links: [] }, "clear restores candidate graph");
+    assert.deepEqual(
+      panel.state.candidateBaselineGraph,
+      { nodes: [{ id: 98 }], links: [] },
+      "clear restores candidate baseline graph",
+    );
     assert.deepEqual(
       panel.state.applyEligibility,
       { applyable: false, reason: "stale" },

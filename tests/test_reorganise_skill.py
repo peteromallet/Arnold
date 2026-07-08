@@ -91,6 +91,11 @@ def test_explicit_reorganise_skill_runs_inside_durable_agent_turn(tmp_path) -> N
     assert result["report"]["evidence"]["layout_only_structural_noop"] is True
     assert result["report"]["evidence"]["candidate_available"] is True
     assert result["report"]["evidence"]["full_ui_payload_hash_changed"] is True
+    metrics = result["report"]["metrics"]
+    assert metrics["before_assessment"] is not None
+    assert metrics["after_assessment"] is not None
+    assert metrics["assessment"] == metrics["after_assessment"]
+    assert "Assessed graph: candidate" in result["report"]["report"]
     patch_apply = result["report"]["evidence"]["patch_apply"]
     assert patch_apply["structural_hash_before"] == patch_apply["structural_hash_after"]
 
@@ -113,6 +118,30 @@ def test_explicit_reorganise_skill_runs_inside_durable_agent_turn(tmp_path) -> N
     assert persisted["candidate"]["graph"] == result["candidate"]["graph"]
     state = read_state(tmp_path / "reorganise-session")
     assert state["turns"][result["turn_id"]]["state"] == "candidate"
+
+
+def test_reorganise_accepts_litegraph_indexed_geometry(tmp_path) -> None:
+    graph = _ui()
+    graph["nodes"][0]["size"] = {"0": 315, "1": 122}
+    graph["nodes"][1]["pos"] = {"0": 123.5, "1": 456.5}
+
+    result = handle_agent_edit(
+        {
+            "task": "Reorganise this workflow",
+            "route": "reorganise",
+            "executor_route": "reorganise",
+            "graph": graph,
+            "session_id": "reorganise-indexed-geometry",
+            "idempotency_key": "reorganise-indexed-geometry-once",
+        },
+        schema_provider=object(),
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["route"] == "reorganise"
+    assert result["outcome"]["kind"] == "candidate"
+    assert result["candidate"]["state"] == "candidate"
 
 
 def test_reorganise_metrics_thaw_mappingproxy_diagnostics() -> None:
@@ -167,12 +196,15 @@ def test_candidate_mode_reorganise_uses_durable_candidate_lifecycle(
     monkeypatch,
 ) -> None:
     from vibecomfy.comfy_nodes.agent import edit as agent_edit_module
+    from vibecomfy.comfy_nodes.agent import reorganise as agent_reorganise_module
     from vibecomfy.comfy_nodes.agent.routes import _handle_agent_edit_accept
 
     monkeypatch.setenv("VIBECOMFY_REORGANISE_AUTO", "candidate")
     before = _ui()
     functional = _ui_with_branch()
     functional_hash = payload_hash(functional)
+    reorganised = json.loads(json.dumps(functional))
+    reorganised["nodes"][0]["pos"] = [320, 120]
 
     def _fake_functional_candidate(state, context, **_kwargs):
         state.ui_payload = functional
@@ -186,6 +218,29 @@ def test_candidate_mode_reorganise_uses_durable_candidate_lifecycle(
         agent_edit_module,
         "_run_batch_repl_product_path",
         _fake_functional_candidate,
+    )
+
+    def _fake_prepare_reorganise_candidate(state, context, *, source_ui, decision):
+        state.ui_payload = reorganised
+        state.candidate_ui_path.write_text(json.dumps(reorganised), encoding="utf-8")
+        return {
+            **decision.to_json(),
+            "advisory": False,
+            "candidate_prepared": True,
+            "functional_candidate_graph_hash": payload_hash(source_ui),
+            "reorganised_candidate_graph_hash": payload_hash(reorganised),
+            "message": "Prepared a layout-only reorganise candidate for the edited workflow.",
+            "evidence": {
+                "layout_only_structural_noop": True,
+                "candidate_available": True,
+            },
+            "artifacts": {"candidate_ui": str(state.candidate_ui_path)},
+        }
+
+    monkeypatch.setattr(
+        agent_reorganise_module,
+        "prepare_post_edit_reorganise_candidate",
+        _fake_prepare_reorganise_candidate,
     )
     payload = {
         "task": "add a preview branch",
@@ -215,6 +270,7 @@ def test_candidate_mode_reorganise_uses_durable_candidate_lifecycle(
     assert result["layout_reorganisation"]["evidence"]["layout_only_structural_noop"] is True
     assert result["candidate_graph_hash"] != functional_hash
     assert result["candidate"]["graph"] == result["graph"]
+    assert result["candidate"]["graph"] == reorganised
 
     turn_dir = tmp_path / "auto-reorganise-session" / "turns" / result["turn_id"]
     persisted = json.loads((turn_dir / "response.json").read_text(encoding="utf-8"))

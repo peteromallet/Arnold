@@ -54,6 +54,9 @@ class TestExecutorRequest:
         assert req.session_id is None
         assert req.profile is None
         assert req.idempotency_key is None
+        assert req.client_graph_hash is None
+        assert req.client_structural_graph_hash is None
+        assert req.client_live_canvas_token is None
 
     def test_full_request(self) -> None:
         graph = {"nodes": []}
@@ -63,11 +66,17 @@ class TestExecutorRequest:
             session_id="sess-1",
             profile="default",
             idempotency_key="idem-1",
+            client_graph_hash="graph-hash",
+            client_structural_graph_hash="structural-hash",
+            client_live_canvas_token="live-token",
         )
         assert req.graph == graph
         assert req.session_id == "sess-1"
         assert req.profile == "default"
         assert req.idempotency_key == "idem-1"
+        assert req.client_graph_hash == "graph-hash"
+        assert req.client_structural_graph_hash == "structural-hash"
+        assert req.client_live_canvas_token == "live-token"
 
     def test_to_dict_minimal(self) -> None:
         req = ExecutorRequest(query="hello")
@@ -82,6 +91,9 @@ class TestExecutorRequest:
             session_id="sess-1",
             profile="default",
             idempotency_key="idem-1",
+            client_graph_hash="graph-hash",
+            client_structural_graph_hash="structural-hash",
+            client_live_canvas_token="live-token",
         )
         d = req.to_dict()
         assert d["query"] == "set seed"
@@ -89,6 +101,9 @@ class TestExecutorRequest:
         assert d["session_id"] == "sess-1"
         assert d["profile"] == "default"
         assert d["idempotency_key"] == "idem-1"
+        assert d["client_graph_hash"] == "graph-hash"
+        assert d["client_structural_graph_hash"] == "structural-hash"
+        assert d["client_live_canvas_token"] == "live-token"
 
     def test_from_payload_minimal(self) -> None:
         req = ExecutorRequest.from_payload({"query": "hello"})
@@ -102,9 +117,15 @@ class TestExecutorRequest:
             "session_id": "s1",
             "profile": "default",
             "idempotency_key": "ik1",
+            "client_graph_hash": "graph-hash",
+            "client_structural_graph_hash": "structural-hash",
+            "client_live_canvas_token": "live-token",
         })
         assert req.graph == graph
         assert req.session_id == "s1"
+        assert req.client_graph_hash == "graph-hash"
+        assert req.client_structural_graph_hash == "structural-hash"
+        assert req.client_live_canvas_token == "live-token"
 
     def test_from_payload_missing_query_raises(self) -> None:
         with pytest.raises(ValueError, match="non-empty string"):

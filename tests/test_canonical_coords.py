@@ -67,3 +67,11 @@ def test_snap_pos_empty() -> None:
 
 def test_snap_size_already_int() -> None:
     assert snap_size([3, 7]) == [3, 7]
+
+
+def test_snap_size_accepts_litegraph_indexed_object() -> None:
+    assert snap_size({"0": 315, "1": 122.5}) == [315, 122]
+
+
+def test_snap_pos_accepts_litegraph_indexed_object() -> None:
+    assert snap_pos({"1": 20.3, "0": 10.5}) == [10, 20]

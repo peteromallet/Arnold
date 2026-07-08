@@ -1183,6 +1183,12 @@ def _run_implement(
         payload["research_brief"] = research_brief
     if request.session_id:
         payload["session_id"] = request.session_id
+    if request.client_graph_hash:
+        payload["client_graph_hash"] = request.client_graph_hash
+    if request.client_structural_graph_hash:
+        payload["client_structural_graph_hash"] = request.client_structural_graph_hash
+    if request.client_live_canvas_token:
+        payload["client_live_canvas_token"] = request.client_live_canvas_token
 
     try:
         result = handle_agent_edit(payload, client_id=client_id)

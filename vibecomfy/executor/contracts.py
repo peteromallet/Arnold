@@ -640,6 +640,9 @@ class ExecutorRequest:
     session_id: str | None = None
     profile: str | None = None
     idempotency_key: str | None = None
+    client_graph_hash: str | None = None
+    client_structural_graph_hash: str | None = None
+    client_live_canvas_token: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"query": self.query}
@@ -651,6 +654,12 @@ class ExecutorRequest:
             payload["profile"] = self.profile
         if self.idempotency_key is not None:
             payload["idempotency_key"] = self.idempotency_key
+        if self.client_graph_hash is not None:
+            payload["client_graph_hash"] = self.client_graph_hash
+        if self.client_structural_graph_hash is not None:
+            payload["client_structural_graph_hash"] = self.client_structural_graph_hash
+        if self.client_live_canvas_token is not None:
+            payload["client_live_canvas_token"] = self.client_live_canvas_token
         return payload
 
     @classmethod
@@ -674,12 +683,28 @@ class ExecutorRequest:
         idempotency_key = payload.get("idempotency_key")
         if idempotency_key is not None and not isinstance(idempotency_key, str):
             raise ValueError("ExecutorRequest `idempotency_key` must be a string or null.")
+        client_graph_hash = payload.get("client_graph_hash")
+        if client_graph_hash is not None and not isinstance(client_graph_hash, str):
+            raise ValueError("ExecutorRequest `client_graph_hash` must be a string or null.")
+        client_structural_graph_hash = payload.get("client_structural_graph_hash")
+        if client_structural_graph_hash is not None and not isinstance(
+            client_structural_graph_hash, str
+        ):
+            raise ValueError(
+                "ExecutorRequest `client_structural_graph_hash` must be a string or null."
+            )
+        client_live_canvas_token = payload.get("client_live_canvas_token")
+        if client_live_canvas_token is not None and not isinstance(client_live_canvas_token, str):
+            raise ValueError("ExecutorRequest `client_live_canvas_token` must be a string or null.")
         return cls(
             query=query.strip(),
             graph=graph,
             session_id=session_id,
             profile=profile,
             idempotency_key=idempotency_key,
+            client_graph_hash=client_graph_hash,
+            client_structural_graph_hash=client_structural_graph_hash,
+            client_live_canvas_token=client_live_canvas_token,
         )
 
 

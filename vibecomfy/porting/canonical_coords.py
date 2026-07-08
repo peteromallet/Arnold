@@ -7,7 +7,8 @@ banker's rounding per IEEE 754, so snap_coord is a one-liner.
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 
 def snap_coord(value: float | int) -> int:
@@ -19,11 +20,29 @@ def snap_coord(value: float | int) -> int:
     return round(value)
 
 
-def snap_pos(seq: Sequence[float | int]) -> list[int]:
+def _coord_values(seq: Sequence[float | int] | Mapping[Any, float | int]) -> list[float | int]:
+    """Return coordinate values from ComfyUI geometry arrays or indexed objects."""
+    if isinstance(seq, Mapping):
+        indexed: list[tuple[int, float | int]] = []
+        for key, value in seq.items():
+            if isinstance(key, int):
+                index = key
+            elif isinstance(key, str) and key.isdecimal():
+                index = int(key)
+            else:
+                raise TypeError(f"coordinate mapping key must be an integer index, got {key!r}")
+            indexed.append((index, value))
+        return [value for _, value in sorted(indexed)]
+    if isinstance(seq, (str, bytes)):
+        raise TypeError("coordinate sequence must not be a string")
+    return list(seq)
+
+
+def snap_pos(seq: Sequence[float | int] | Mapping[Any, float | int]) -> list[int]:
     """Snap a position sequence (x, y) to whole pixels."""
-    return [snap_coord(v) for v in seq]
+    return [snap_coord(v) for v in _coord_values(seq)]
 
 
-def snap_size(seq: Sequence[float | int]) -> list[int]:
+def snap_size(seq: Sequence[float | int] | Mapping[Any, float | int]) -> list[int]:
     """Snap a size sequence (width, height) to whole pixels."""
-    return [snap_coord(v) for v in seq]
+    return [snap_coord(v) for v in _coord_values(seq)]

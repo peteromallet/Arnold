@@ -17,6 +17,7 @@ from vibecomfy.porting.layout.placement import (
     infer_add_node_anchor_hint,
 )
 from vibecomfy.identity.codec import to_raw_name
+from vibecomfy.porting.authoring_names import class_type_for_constructor_name
 from vibecomfy.porting.authoring_surface import input_spec_is_socket_only
 from vibecomfy.schema import schema_for, socket_types_compatible
 
@@ -1073,12 +1074,15 @@ class _ResolveMixin:
                 )
             ]
 
-        # Reverse-resolve authoring alias (e.g. `checkpointloader_simple` → `CheckpointLoader-Simple`)
         resolved_class_type = _resolve_class_type_from_alias(class_type, self.schema_provider)
         if resolved_class_type is not None and resolved_class_type != class_type:
             class_type = resolved_class_type
-
         schema = schema_for(self.schema_provider, class_type)
+        if schema is None:
+            raw_class_type = class_type_for_constructor_name(self.schema_provider, class_type)
+            if raw_class_type is not None:
+                class_type = raw_class_type
+                schema = schema_for(self.schema_provider, class_type)
         schema_inputs = getattr(schema, "inputs", {}) or {}
         fake_target_node = _ResolvedGraphName(
             name=target_name,

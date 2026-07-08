@@ -5495,6 +5495,128 @@ def test_v2_accept_evidence_derives_old_values_from_submit_graph_when_fieldchang
     assert accepted["candidate_graph_hash"] == candidate_graph_hash
 
 
+def test_accept_upgrades_legacy_link_field_changes_to_scoped_delta_ops(
+    tmp_path: Path,
+) -> None:
+    """Pre-delta link-only responses should not force whole-graph Apply."""
+    root = tmp_path / "sessions"
+    session_dir = root / "s1"
+
+    submit_graph = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "ImagePadKJ",
+                "properties": {"vibecomfy_uid": "old-source"},
+                "outputs": [{"name": "images", "slot_index": 0, "type": "IMAGE", "links": [10]}],
+            },
+            {
+                "id": 2,
+                "type": "ImageResizeKJv2",
+                "properties": {"vibecomfy_uid": "new-source"},
+                "outputs": [{"name": "IMAGE", "slot_index": 0, "type": "IMAGE", "links": []}],
+            },
+            {
+                "id": 3,
+                "type": "WanVaceToVideo",
+                "properties": {"vibecomfy_uid": "target-vace"},
+                "inputs": [{"name": "reference_image", "type": "IMAGE", "link": 10}],
+            },
+        ],
+        "links": [[10, 1, 0, 3, 0, "IMAGE"]],
+        "last_link_id": 10,
+    }
+    request = {
+        "graph": submit_graph,
+        "client_graph_hash": "client-legacy-link",
+        "client_live_canvas_token": "live:rev:1:legacy-link",
+        "task": "rewire reference image",
+    }
+    allocation = allocate_turn(session_root=root, session_id="s1", request_payload=request)
+    turn_id = str(allocation.context.turn_id)
+    (allocation.turn_dir / "request.json").write_text(json.dumps(request), encoding="utf-8")
+    (allocation.turn_dir / "original.ui.json").write_text(json.dumps(submit_graph), encoding="utf-8")
+
+    candidate_graph = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "ImagePadKJ",
+                "properties": {"vibecomfy_uid": "old-source"},
+                "outputs": [{"name": "images", "slot_index": 0, "type": "IMAGE", "links": []}],
+            },
+            {
+                "id": 2,
+                "type": "ImageResizeKJv2",
+                "properties": {"vibecomfy_uid": "new-source"},
+                "outputs": [{"name": "IMAGE", "slot_index": 0, "type": "IMAGE", "links": [11]}],
+            },
+            {
+                "id": 3,
+                "type": "WanVaceToVideo",
+                "properties": {"vibecomfy_uid": "target-vace"},
+                "inputs": [{"name": "reference_image", "type": "IMAGE", "link": 11}],
+            },
+        ],
+        "links": [[11, 2, 0, 3, 0, "IMAGE"]],
+        "last_link_id": 11,
+    }
+    legacy_changes = [
+        {
+            "uid": "target-vace",
+            "field_path": "reference_image",
+            "old": {"scope_path": "", "uid": "old-source", "output_slot": 0},
+            "new": {"scope_path": "", "uid": "new-source", "output_slot": "IMAGE"},
+        }
+    ]
+    record_idempotent_response(
+        session_root=root,
+        session_id="s1",
+        scope="edit",
+        idempotency_key=None,
+        request_hash=allocation.request_hash,
+        response={
+            "ok": True,
+            "turn_id": turn_id,
+            "graph": candidate_graph,
+            "change_details": {"batch_turns": [{"field_changes": legacy_changes}]},
+        },
+        response_path=allocation.turn_dir / "response.json",
+        operation="edit",
+        turn_id=turn_id,
+    )
+    assert read_state(session_dir)["turns"][turn_id]["agent_edit_protocol"] == "v1"
+
+    inferred = _load_turn_delta_ops(session_dir=session_dir, turn_id=turn_id)
+    assert inferred == (
+        {
+            "op": "upsert_link",
+            "from": ["", "new-source", "IMAGE"],
+            "to": ["", "target-vace", "reference_image"],
+        },
+    )
+
+    accepted = accept_turn(
+        session_root=root,
+        session_id="s1",
+        turn_id=turn_id,
+        client_graph_hash=request["client_graph_hash"],
+        request_payload={
+            "turn_id": turn_id,
+            "action": "accept",
+            "live_graph": submit_graph,
+            "submit_graph_hash": payload_hash(request["graph"]),
+            "candidate_graph_hash": payload_hash(candidate_graph),
+            "client_live_canvas_token": "live:rev:1:legacy-link",
+        },
+    )
+
+    assert isinstance(accepted, dict)
+    assert accepted["ok"] is True
+    assert accepted["delta_ops"] == list(inferred)
+    assert accepted["scoped_accept_verification"]["ok"] is True
+
+
 def test_v2_accept_evidence_delta_ops_wins_over_fieldchange(
     tmp_path: Path,
 ) -> None:

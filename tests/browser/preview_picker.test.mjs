@@ -56,6 +56,20 @@ function makeScenarioResponse(overrides = {}) {
       change_details: {
         summary: "Added a demo output node.",
         statements: [{ op_kind: "add_node", message: "Added Output node" }],
+        batch_turns: [
+          {
+            turn_number: 1,
+            field_changes: [
+              {
+                uid: "uid-1",
+                title: "Input",
+                field_path: "seed",
+                old: 1,
+                new: 5,
+              },
+            ],
+          },
+        ],
       },
       ...overrides,
     },
@@ -193,14 +207,27 @@ test("Load & Play stages demo replay from before-send to review", async () => {
     const headerRight = harness.document.createElement("div");
     const appliedGraphs = [];
     const scheduledRenders = [];
+    const canvasDraws = [];
     const panel = {
       shell,
       state: makePanelState(),
     };
+    const appWithCanvasRepaintProbe = {
+      ...harness.app,
+      graph: {
+        ...(harness.app.graph || {}),
+        setDirtyCanvas: (...args) => canvasDraws.push({ method: "setDirtyCanvas", args }),
+      },
+      canvas: {
+        ...(harness.app.canvas || {}),
+        setDirty: (...args) => canvasDraws.push({ method: "setDirty", args }),
+        draw: (...args) => canvasDraws.push({ method: "draw", args }),
+      },
+    };
     const controls = picker.installPreviewPicker(panel, {
       headerRight,
       helpers: {
-        app: harness.app,
+        app: appWithCanvasRepaintProbe,
         applyGraphCandidateInPlace: (appArg, graph, opts) => {
           appliedGraphs.push({
             app: appArg,
@@ -276,6 +303,15 @@ test("Load & Play stages demo replay from before-send to review", async () => {
     );
     assert.deepEqual(panel.state.transcriptMessages, panel.state.chatMessages, "transcript mirrors chat");
     assert.equal(panel.state.changeDetails.summary, "Added a demo output node.", "change details stored");
+    assert.equal(
+      panel.state.lastSubmitFieldChanges.batchTurnChanges[0].changes[0].uid,
+      "uid-1",
+      "demo change_details feeds normalized preview field changes",
+    );
+    await waitFor(
+      () => canvasDraws.some((entry) => entry.method === "draw"),
+      { label: "preview overlay repaint" },
+    );
 
     assert.equal(scheduledRenders.at(-1).reason, "demo-picker");
     assert.ok(scheduledRenders.at(-1).sections.includes(RENDER_SECTIONS.THREAD));

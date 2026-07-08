@@ -189,6 +189,7 @@ class _DescribeMixin:
         formatted:
             When ``True``, return a formatted text string instead of a list of rows.
         """
+        from vibecomfy.porting.authoring_names import constructor_aliases_for_schema_provider
         from vibecomfy.porting.emitter import emit_available_node_signatures, format_signature_rows as fmt_rows
 
         rows = emit_available_node_signatures(
@@ -198,7 +199,10 @@ class _DescribeMixin:
             compatible_output_type=compatible_output_type,
         )
         if formatted:
-            formatted_rows = fmt_rows(rows)
+            formatted_rows = fmt_rows(
+                rows,
+                class_type_aliases=constructor_aliases_for_schema_provider(self.schema_provider),
+            )
             if not focus_types and (compatible_input_type or compatible_output_type) and rows:
                 index = self._format_compatibility_search_index(
                     rows,

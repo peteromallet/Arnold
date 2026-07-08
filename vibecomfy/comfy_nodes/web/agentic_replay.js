@@ -549,6 +549,7 @@ export function installAgenticReplay(panel, options = {}) {
       baselineRebaselineId: state.baselineRebaselineId || null,
       baselineGraphSourcePath: state.baselineGraphSourcePath || null,
       candidateGraph: clonePlainData(state.candidateGraph || null),
+      candidateBaselineGraph: clonePlainData(state.candidateBaselineGraph || null),
       candidateGraphHash: state.candidateGraphHash || null,
       candidateReport: clonePlainData(state.candidateReport || null),
       serverSubmitGraphHash: state.serverSubmitGraphHash || null,

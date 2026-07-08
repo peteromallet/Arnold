@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
+from vibecomfy.porting.authoring_names import constructor_aliases_for_class_types
 from vibecomfy.porting.authoring_surface import input_spec_is_literal_widget
 
 READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT = "avoidable_positional_output"
@@ -259,6 +260,7 @@ def format_signature_rows(
     *,
     show_pack: bool = False,
     show_confidence: bool = False,
+    class_type_aliases: Mapping[str, str] | None = None,
 ) -> str:
     """Format a list of ``NodeSignatureRow`` as a deterministic text catalog.
 
@@ -274,6 +276,7 @@ def format_signature_rows(
     """
     from vibecomfy.identity.codec import to_python_identifier
 
+    aliases = dict(class_type_aliases or constructor_aliases_for_class_types(row.class_type for row in rows))
     lines: list[str] = []
     for row in sorted(rows, key=lambda r: r.class_type):
         prefix_parts: list[str] = []
@@ -333,10 +336,12 @@ def format_signature_rows(
 
         params = ", ".join(param_parts)
         returns = ", ".join(return_parts) if return_parts else "None"
-        class_ident = to_python_identifier(row.class_type)
-        if class_ident != row.class_type:
-            prefix_parts.append(f"# raw class: {row.class_type}")
-        sig = f"def {class_ident}({params}) -> {returns}:"
+        constructor_name = aliases.get(row.class_type) or constructor_aliases_for_class_types(
+            [row.class_type]
+        )[row.class_type]
+        if constructor_name != row.class_type:
+            prefix_parts.append(f"# class_type: {row.class_type}")
+        sig = f"def {constructor_name}({params}) -> {returns}:"
 
         comment_parts = prefix_parts + suffix_parts
         if comment_parts:

@@ -23,6 +23,7 @@ import { PANEL_STATE, RENDER_SECTIONS } from "./agent_edit_lifecycle.js";
 import {
   commitApplyResolved,
   commitLifecycleReset,
+  normalizeCommitFieldChangesFromSubmit,
   commitOptimisticSubmit,
   commitTerminalResponse,
   commitTranscriptRehydrate,
@@ -360,6 +361,31 @@ export function installPreviewPicker(panel, options = {}) {
     delete currentPanel.state._previewDiffGraphHash;
   }
 
+  function requestPreviewOverlayRepaint() {
+    const repaint = () => {
+      try {
+        const graph = helpers.app?.graph;
+        if (typeof graph?.setDirtyCanvas === "function") {
+          graph.setDirtyCanvas(true, true);
+        }
+        if (typeof helpers.app?.canvas?.setDirty === "function") {
+          helpers.app.canvas.setDirty(true, true);
+        }
+        if (typeof helpers.app?.canvas?.draw === "function") {
+          helpers.app.canvas.draw(true, true);
+        }
+      } catch (error) {
+        console.warn("[vibecomfy] demo preview repaint failed:", error);
+      }
+    };
+
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(repaint);
+      return;
+    }
+    setTimeout(repaint, 0);
+  }
+
   function commitDemoTranscript(currentPanel, payload, messages, latestCandidate = null) {
     commitTranscriptRehydrate(currentPanel, {
       messages,
@@ -441,6 +467,7 @@ export function installPreviewPicker(panel, options = {}) {
         outcome: { kind: "candidate" },
         eligibility: payload.eligibility,
         report: loadedScenario.report || {},
+        change_details: payload.changeDetails || null,
       };
       commitTerminalResponse(currentPanel, {
         result: terminalResult,
@@ -450,6 +477,7 @@ export function installPreviewPicker(panel, options = {}) {
         applyEligibility: payload.eligibility,
         queueAllowed: false,
         changeDetails: payload.changeDetails,
+        lastSubmitFieldChanges: normalizeCommitFieldChangesFromSubmit(terminalResult),
         debugPayload: {
           source: "demo",
           stage,
@@ -476,6 +504,7 @@ export function installPreviewPicker(panel, options = {}) {
     updateStageButtons();
     showError("");
     schedulePanelRender(currentPanel);
+    requestPreviewOverlayRepaint();
   }
 
   async function loadAndPlay() {
