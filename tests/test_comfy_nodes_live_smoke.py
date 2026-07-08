@@ -41,6 +41,15 @@ def _candidate_graph_from(graph: dict) -> dict:
         extra = {}
     extra["vibecomfy_live_smoke"] = {"applied": True}
     candidate["extra"] = extra
+    nodes = candidate.get("nodes")
+    if isinstance(nodes, list) and nodes:
+        first = nodes[0]
+        if isinstance(first, dict):
+            properties = first.get("properties")
+            if not isinstance(properties, dict):
+                properties = {}
+            properties["vibecomfy_live_smoke_applied"] = True
+            first["properties"] = properties
     return candidate
 
 
@@ -97,6 +106,14 @@ def _open_panel(page) -> str:
             if (mode) return `command:${mode}`;
           }
 
+          const opener = document.querySelector(
+            '.vibecomfy\\\\.agent-edit-tab-button, #vibecomfy-agent-launcher, [aria-label="Open the VibeComfy agent edit panel"]'
+          );
+          if (opener && typeof opener.click === "function") {
+            opener.click();
+            return "button";
+          }
+
           const panelRoot = document.getElementById("vibecomfy-agent-panel-root");
           if (panelRoot) {
             panelRoot.dataset.open = "1";
@@ -125,6 +142,12 @@ def test_live_comfyui_agent_panel_smoke() -> None:
                 )
             raise
         context = browser.new_context(viewport={"width": 1600, "height": 1000})
+        context.add_init_script(
+            """
+              localStorage.setItem("vibecomfy_agent_provider", "deepseek");
+              localStorage.setItem("vibecomfy_research_contribution_enabled", "0");
+            """
+        )
         page = context.new_page()
 
         page.on(
@@ -142,10 +165,15 @@ def test_live_comfyui_agent_panel_smoke() -> None:
                 body=json.dumps(
                     {
                         "ok": True,
+                        "ready": True,
+                        "readiness": "ready",
                         "requested_route": "deepseek",
                         "route": "deepseek",
+                        "provider": "deepseek",
                         "provider_available": True,
                         "model": "deepseek-chat",
+                        "message": "Provider ready.",
+                        "error": None,
                         "route_options": {
                             "auto": {
                                 "requested_route": "auto",
@@ -201,11 +229,30 @@ def test_live_comfyui_agent_panel_smoke() -> None:
                         "session_id": "live-smoke-session",
                         "turn_id": "0001",
                         "baseline_turn_id": "0000",
+                        "outcome": {
+                            "kind": "candidate",
+                            "changes": [],
+                        },
+                        "candidate": {
+                            "state": "candidate",
+                            "graph": candidate,
+                            "graph_hash": "live-smoke-candidate-hash",
+                            "submit_graph_hash": payload.get("client_graph_hash"),
+                            "turn_identity": {
+                                "session_id": "live-smoke-session",
+                                "turn_id": "0001",
+                                "baseline_turn_id": "0000",
+                            },
+                        },
+                        "apply_eligibility": {
+                            "applyable": True,
+                            "reason": "applyable",
+                            "warnings": [],
+                        },
                         "canvas_apply_allowed": True,
                         "apply_allowed": True,
                         "queue_allowed": True,
                         "message": "Stubbed live smoke candidate ready.",
-                        "graph": candidate,
                         "report": {
                             "change": {
                                 "content_edits": {
@@ -263,11 +310,26 @@ def test_live_comfyui_agent_panel_smoke() -> None:
                 ),
             )
 
+        def _handle_chat(route):
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "ok": True,
+                        "exists": True,
+                        "session_id": "live-smoke-session",
+                        "messages": [],
+                    }
+                ),
+            )
+
         page.route("**/vibecomfy/agent/status**", _handle_status)
         page.route("**/vibecomfy/agent/credentials", _handle_credentials)
+        page.route("**/vibecomfy/agent-edit/chat**", _handle_chat)
         page.route("**/vibecomfy/agent-edit/accept", _handle_accept)
         page.route("**/vibecomfy/agent-edit/reject", _handle_reject)
-        page.route("**/vibecomfy/agent-edit", _handle_submit)
+        page.route("**/vibecomfy/agent-executor", _handle_submit)
 
         page.goto(_BASE_URL, wait_until="networkidle", timeout=60000)
         page.wait_for_function(
@@ -298,16 +360,36 @@ def test_live_comfyui_agent_panel_smoke() -> None:
             """() => document.getElementById("vibecomfy-agent-panel-root")?.dataset.open === "1" """,
             timeout=15000,
         )
+        page.evaluate(
+            """() => {
+              document.getElementById("vibecomfy-agent-panel-research-contribution-no")?.click();
+            }"""
+        )
+        page.wait_for_function(
+            """() => !document.getElementById("vibecomfy-agent-panel-welcome-overlay")""",
+            timeout=15000,
+        )
 
         page.locator("#vibecomfy-agent-panel-prompt").fill("live smoke stub candidate")
         page.locator("#vibecomfy-agent-panel-submit").click()
         page.wait_for_function(
-            """() => document.getElementById("vibecomfy-agent-panel-status")?.textContent === "AWAITING_REVIEW" """,
+            """() => {
+              const text = document.getElementById("vibecomfy-agent-panel-status")?.textContent;
+              return text === "Review Changes" || text === "AWAITING_REVIEW";
+            }""",
             timeout=30000,
         )
         page.locator("#vibecomfy-agent-panel-apply").click()
         page.wait_for_function(
-            """() => (window.__vibecomfyLiveSmoke?.loadGraphDataCalls?.length || 0) >= 1 """,
+            """() => {
+              const app = window.comfyAPI?.app?.app || window.app;
+              const graph = app?.graph?.serialize?.();
+              return (
+                document.getElementById("vibecomfy-agent-panel-status")?.textContent === "Ready" &&
+                graph?.extra?.vibecomfy_live_smoke?.applied === true &&
+                (graph?.nodes || []).some((node) => node?.properties?.vibecomfy_live_smoke_applied === true)
+              );
+            }""",
             timeout=30000,
         )
 
@@ -320,9 +402,17 @@ def test_live_comfyui_agent_panel_smoke() -> None:
         assert accept_payload["session_id"] == "live-smoke-session"
         assert accept_payload["turn_id"] == "0001"
 
-        load_calls = page.evaluate("() => window.__vibecomfyLiveSmoke.loadGraphDataCalls")
-        assert len(load_calls) == 1
-        assert load_calls[0] == captured["candidate"]
+        applied_graph = page.evaluate(
+            """() => {
+              const app = window.comfyAPI?.app?.app || window.app;
+              return app?.graph?.serialize?.();
+            }"""
+        )
+        assert applied_graph["extra"]["vibecomfy_live_smoke"]["applied"] is True
+        assert any(
+            node.get("properties", {}).get("vibecomfy_live_smoke_applied") is True
+            for node in applied_graph.get("nodes", [])
+        )
 
         actionable_console_errors = [
             entry
