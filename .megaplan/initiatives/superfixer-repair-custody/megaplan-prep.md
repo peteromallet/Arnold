@@ -1,3 +1,7 @@
+---
+superseded_by: custody-control-plane
+---
+
 # Megaplan Prep: Superfixer Repair Custody
 
 ## Input

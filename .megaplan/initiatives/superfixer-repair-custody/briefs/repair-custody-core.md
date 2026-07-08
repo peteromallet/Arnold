@@ -1,3 +1,7 @@
+---
+superseded_by: custody-control-plane
+---
+
 # Repair Custody Core
 
 ## Outcome

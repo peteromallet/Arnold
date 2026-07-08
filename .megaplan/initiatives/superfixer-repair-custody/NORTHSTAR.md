@@ -1,3 +1,7 @@
+---
+superseded_by: custody-control-plane
+---
+
 # Superfixer Repair Custody North Star
 
 The superfixer must not lose custody of repairable work.

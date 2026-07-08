@@ -1,3 +1,7 @@
+---
+superseded_by: custody-control-plane
+---
+
 # Megaplan Incident Control Plane Plan
 
 Date: 2026-07-03

@@ -345,6 +345,7 @@ def test_bridge_append_six_hour_auditor_diagnosis_creates_event(tmp_path: Path) 
         ("recovered", None),
         ("escalated", "github_sync.publish"),
         ("audit_cycle_complete", "six_hour_auditor.diagnosis"),
+        ("auditor_human_escalation", None),
     ],
 )
 def test_bridge_append_six_hour_auditor_audit_complete_allows_expected_handoffs(

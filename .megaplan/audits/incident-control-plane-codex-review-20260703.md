@@ -1,3 +1,7 @@
+---
+superseded_by: custody-control-plane
+---
+
 # Incident Control Plane Codex Review Synthesis
 
 Date: 2026-07-03

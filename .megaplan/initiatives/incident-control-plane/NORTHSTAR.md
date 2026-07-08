@@ -1,3 +1,7 @@
+---
+superseded_by: custody-control-plane
+---
+
 # North Star
 
 Megaplan autonomous recovery has one coherent incident control plane.
@@ -36,4 +40,3 @@ Actors do not mutate hidden state. They append events. Current state, active cla
 The current cloud recovery system can appear active while missing the reason a repairer did not repair, whether a meta-repairer ran, whether a source fix reached the active runtime, or whether stale state is being replayed as truth.
 
 This initiative removes that class of failure by making every recovery step explicit, queryable, and tied back to evidence.
-

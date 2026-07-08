@@ -1,3 +1,7 @@
+---
+superseded_by: custody-control-plane
+---
+
 # Codex Challenge Synthesis
 
 Five Codex challenge passes were run before committing this chain shape. The reviewers agreed that the original eight-stage implementation inventory is directionally right, but the executable sprint order needed adjustment.

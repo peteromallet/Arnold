@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,52 @@ _LAYER_ORDER = (
     "stale_claim",
     "missing_evidence",
     "recurrence",
+    "reconciler",
+    "resolver_confidence",
+    "resolver_semantics",
+    "auditor_recursion",
+    "ci_health",
+    "engine_tree",
+)
+
+_RECONCILER_SUPPORTED_ACTORS = frozenset(
+    {
+        "watchdog",
+        "github_sync",
+        "install_sync",
+        "immediate_repair",
+        "meta_repair",
+    }
+)
+_RECONCILER_ACTIVE_CANONICAL_STATES = frozenset({"RUNNING", "REPAIRING"})
+_RECONCILER_ACTIVE_INCIDENT_STATES = frozenset({"running", "repairing", "blocked"})
+_RECONCILER_ACTIVE_OUTCOMES = frozenset({"started", "running", "repairing", "blocked", "retrying"})
+_RECONCILER_RECOVERED_OUTCOMES = frozenset(
+    {
+        "recovered",
+        "completed",
+        "fixed",
+        "verified_recovered",
+        "audit_cycle_complete",
+    }
+)
+_AUDITOR_RECURSION_VOLATILE_KEYS = frozenset(
+    {
+        "message",
+        "observed_at",
+        "recorded_at",
+        "summary",
+    }
+)
+_AUDITOR_RECURSION_STALE_CODES = frozenset(
+    {
+        "live_process_absent",
+        "meta_repair_missing_evidence",
+        "missing_evidence_refs",
+        "project_progress_stalled",
+        "stale_claim_detected",
+        "watchdog_report_stale",
+    }
 )
 
 
@@ -63,14 +110,24 @@ def audit_projection_input(
     config: AuditorConfig | None = None,
 ) -> dict[str, Any]:
     """Audit a projection-backed incident snapshot without mutating side state."""
-    brief = projection_input.get("brief") if isinstance(projection_input.get("brief"), dict) else {}
-    incident = projection_input.get("incident") if isinstance(projection_input.get("incident"), dict) else {}
-    problem = projection_input.get("problem") if isinstance(projection_input.get("problem"), dict) else {}
+    normalized_input = _normalize_projection_input(projection_input)
+    brief = normalized_input["brief"]
+    incident = normalized_input["incident"]
+    problem = normalized_input["problem"]
     snapshot = live_process_snapshot if isinstance(live_process_snapshot, dict) else {}
     cfg = config or AuditorConfig()
     effective_now = now or snapshot.get("now") or brief.get("last_timestamp") or incident.get("last_timestamp")
 
     findings = [
+        *_reconciler_drift_findings(
+            brief=brief,
+            incident=incident,
+            resolver_state=normalized_input["resolver_state"],
+            snapshot=snapshot,
+        ),
+        *_resolver_audit_findings(
+            resolver_state=normalized_input["resolver_state"],
+        ),
         _project_progress_finding(brief, incident, effective_now),
         _watchdog_finding(brief, snapshot, effective_now, cfg),
         _repair_layer_finding("immediate_repair", brief, incident, snapshot, effective_now, cfg),
@@ -82,14 +139,27 @@ def audit_projection_input(
         _missing_evidence_finding(brief, incident, snapshot),
         _recurrence_finding(incident, problem),
     ]
+    recursion_finding = _auditor_recursion_finding(
+        brief=brief,
+        incident=incident,
+        current_target=normalized_input["current_target"],
+        audit_history=normalized_input["audit_history"],
+        findings=findings,
+    )
+    if recursion_finding is not None:
+        findings.append(recursion_finding)
 
     unhealthy = [finding for finding in findings if finding["status"] != "ok"]
     primary = _primary_finding(unhealthy)
     diagnosis_summary = _diagnosis_summary(brief, unhealthy)
     next_expected_event = _next_expected_event(primary, brief, incident, problem)
-    outcome = "escalated" if unhealthy else "audit_cycle_complete"
-    if not unhealthy and str(brief.get("outcome") or "") == "recovered":
-        outcome = "audit_cycle_complete"
+    if _requires_human_escalation(unhealthy):
+        outcome = "auditor_human_escalation"
+        next_expected_event = "auditor_escalate_to_human"
+    else:
+        outcome = "escalated" if unhealthy else "audit_cycle_complete"
+        if not unhealthy and str(brief.get("outcome") or "") == "recovered":
+            outcome = "audit_cycle_complete"
 
     return {
         "incident_id": brief.get("incident_id") or incident.get("incident_id"),
@@ -153,6 +223,573 @@ def _project_progress_finding(
         message="Projection state is bounded and ready for reconciliation.",
         recommendation=None,
     )
+
+
+def _reconciler_drift_findings(
+    *,
+    brief: dict[str, Any],
+    incident: dict[str, Any],
+    resolver_state: dict[str, Any],
+    snapshot: dict[str, Any],
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+
+    resolver_finding = _resolver_vs_ledger_drift_finding(
+        brief=brief,
+        incident=incident,
+        resolver_state=resolver_state,
+    )
+    if resolver_finding is not None:
+        findings.append(resolver_finding)
+
+    brief_incident_finding = _brief_vs_incident_drift_finding(
+        brief=brief,
+        incident=incident,
+    )
+    if brief_incident_finding is not None:
+        findings.append(brief_incident_finding)
+
+    brief_snapshot_finding = _brief_vs_snapshot_drift_finding(
+        brief=brief,
+        incident=incident,
+        snapshot=snapshot,
+    )
+    if brief_snapshot_finding is not None:
+        findings.append(brief_snapshot_finding)
+
+    l2_fix_finding = _l2_fix_vs_resolver_drift_finding(
+        brief=brief,
+        incident=incident,
+        resolver_state=resolver_state,
+        snapshot=snapshot,
+    )
+    if l2_fix_finding is not None:
+        findings.append(l2_fix_finding)
+
+    return findings
+
+
+def _resolver_audit_findings(
+    *,
+    resolver_state: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not resolver_state:
+        return []
+
+    findings: list[dict[str, Any]] = []
+
+    confidence_finding = _resolver_confidence_finding(resolver_state=resolver_state)
+    if confidence_finding is not None:
+        findings.append(confidence_finding)
+
+    semantic_finding = _resolver_semantic_finding(resolver_state=resolver_state)
+    if semantic_finding is not None:
+        findings.append(semantic_finding)
+
+    return findings
+
+
+def _resolver_confidence_finding(
+    *,
+    resolver_state: dict[str, Any],
+) -> dict[str, Any] | None:
+    resolver_confidence = _normalized_text(resolver_state.get("confidence")).lower()
+    if resolver_confidence != "low":
+        return None
+
+    return _finding(
+        "resolver_low_confidence",
+        layer="resolver_confidence",
+        status="error",
+        severity="error",
+        message="Resolver confidence is too low to accept automated custody recovery.",
+        recommendation="auditor_escalate_to_human",
+        observed={
+            "resolver_confidence": resolver_confidence,
+            "resolver_canonical_state": _resolver_canonical_state_name(resolver_state),
+            "resolver_next_action": _normalized_text(resolver_state.get("next_action")),
+        },
+    )
+
+
+def _resolver_semantic_finding(
+    *,
+    resolver_state: dict[str, Any],
+) -> dict[str, Any] | None:
+    if _normalized_text(resolver_state.get("confidence")).lower() == "low":
+        return None
+
+    canonical_state = _resolver_canonical_state_name(resolver_state)
+    evidence_kinds = _resolver_evidence_kinds(resolver_state)
+    expected_canonical_states = _expected_canonical_states_for_evidence(evidence_kinds)
+    stale_sources = _resolver_stale_sources(resolver_state)
+    next_action = _normalized_text(resolver_state.get("next_action"))
+    root_cause = resolver_state.get("root_cause_fingerprint")
+    root_cause_kind = _resolver_root_cause_kind(root_cause)
+    invalid_reasons: list[str] = []
+
+    if expected_canonical_states and canonical_state and canonical_state not in expected_canonical_states:
+        invalid_reasons.append("wrong_canonical_state_for_evidence")
+
+    if "wrong_canonical_state_for_evidence" in invalid_reasons and not stale_sources:
+        invalid_reasons.append("missing_stale_sources")
+
+    expected_root_cause_kinds = _expected_root_cause_kinds_for_canonical_state(canonical_state)
+    if root_cause_kind and expected_root_cause_kinds and root_cause_kind not in expected_root_cause_kinds:
+        invalid_reasons.append("wrong_root_cause_fingerprint_kind")
+
+    if next_action and not _next_action_matches_canonical_state(canonical_state, next_action):
+        invalid_reasons.append("next_action_mismatch")
+
+    if not invalid_reasons:
+        return None
+
+    return _finding(
+        "resolver_semantic_invalid",
+        layer="resolver_semantics",
+        status="error",
+        severity="error",
+        message="Resolver output is semantically incompatible with its supporting evidence.",
+        recommendation="auditor_escalate_to_human",
+        invalid_reasons=invalid_reasons,
+        observed={
+            "resolver_canonical_state": canonical_state,
+            "resolver_next_action": next_action,
+            "root_cause_fingerprint_kind": root_cause_kind,
+            "stale_sources": stale_sources,
+        },
+        expected={
+            "canonical_states": sorted(expected_canonical_states) if expected_canonical_states else [],
+            "root_cause_fingerprint_kinds": sorted(expected_root_cause_kinds),
+        },
+    )
+
+
+def _resolver_vs_ledger_drift_finding(
+    *,
+    brief: dict[str, Any],
+    incident: dict[str, Any],
+    resolver_state: dict[str, Any],
+) -> dict[str, Any] | None:
+    resolver_canonical_state = _resolver_canonical_state_name(resolver_state)
+    brief_outcome = _normalized_text(brief.get("outcome")).lower()
+    incident_state = _normalized_text(incident.get("state")).lower()
+    expected_brief_outcome = _expected_brief_outcome_from_incident(incident)
+    next_expected_event = _normalized_text(incident.get("next_expected_event") or brief.get("next_expected_event"))
+
+    if resolver_canonical_state not in _RECONCILER_ACTIVE_CANONICAL_STATES:
+        return None
+    if brief_outcome not in _RECONCILER_RECOVERED_OUTCOMES:
+        return None
+    if not incident_state or not _incident_represents_active_work(incident):
+        return None
+    if not expected_brief_outcome:
+        return None
+
+    return _drift_detected_finding(
+        source_pair="resolver_vs_ledger",
+        contradiction="resolver_canonical_state_conflicts_with_ledger_outcome",
+        observed={
+            "resolver_canonical_state": resolver_canonical_state,
+            "brief_outcome": brief_outcome,
+            "incident_state": incident_state,
+        },
+        expected={
+            "brief_outcome": expected_brief_outcome,
+            "incident_state": incident_state,
+            "next_expected_event": next_expected_event,
+        },
+        recommendation=next_expected_event or None,
+    )
+
+
+def _brief_vs_incident_drift_finding(
+    *,
+    brief: dict[str, Any],
+    incident: dict[str, Any],
+) -> dict[str, Any] | None:
+    brief_outcome = _normalized_text(brief.get("outcome")).lower()
+    incident_state = _normalized_text(incident.get("state")).lower()
+    incident_outcome = _normalized_text(incident.get("outcome")).lower()
+    expected_brief_outcome = _expected_brief_outcome_from_incident(incident)
+
+    if brief_outcome not in _RECONCILER_RECOVERED_OUTCOMES:
+        return None
+    if not incident_state or not _incident_represents_active_work(incident):
+        return None
+    if not expected_brief_outcome or brief_outcome == expected_brief_outcome:
+        return None
+
+    return _drift_detected_finding(
+        source_pair="brief_vs_incident",
+        contradiction="brief_outcome_conflicts_with_incident_state",
+        observed={
+            "brief_outcome": brief_outcome,
+            "incident_state": incident_state,
+            "incident_outcome": incident_outcome,
+        },
+        expected={
+            "brief_outcome": expected_brief_outcome,
+            "incident_state": incident_state,
+            "incident_outcome": incident_outcome,
+        },
+        recommendation=None,
+    )
+
+
+def _brief_vs_snapshot_drift_finding(
+    *,
+    brief: dict[str, Any],
+    incident: dict[str, Any],
+    snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    next_expected_event = _normalized_text(brief.get("next_expected_event") or incident.get("next_expected_event"))
+    expected_actor = _expected_actor_for_event(next_expected_event)
+    observed_actor = _observed_snapshot_actor(snapshot, session_ids=_session_ids(incident))
+
+    if expected_actor is None or observed_actor is None or expected_actor == observed_actor:
+        return None
+
+    return _drift_detected_finding(
+        source_pair="brief_vs_snapshot",
+        contradiction="next_expected_actor_conflicts_with_live_process",
+        observed={
+            "next_expected_event": next_expected_event,
+            "snapshot_actor": observed_actor,
+        },
+        expected={
+            "snapshot_actor": expected_actor,
+        },
+        recommendation=next_expected_event or None,
+    )
+
+
+def _l2_fix_vs_resolver_drift_finding(
+    *,
+    brief: dict[str, Any],
+    incident: dict[str, Any],
+    resolver_state: dict[str, Any],
+    snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    placeholders = _incident_placeholders(brief, incident)
+    shipped_fix = _normalized_text(placeholders.get("shipped_fix")).lower()
+    install_freshness = _normalized_text(placeholders.get("install_freshness")).lower()
+    resolver_canonical_state = _resolver_canonical_state_name(resolver_state)
+    brief_outcome = _normalized_text(brief.get("outcome")).lower()
+    incident_state = _normalized_text(incident.get("state")).lower()
+    expected_brief_outcome = _expected_brief_outcome_from_incident(incident)
+    next_expected_event = _normalized_text(incident.get("next_expected_event") or brief.get("next_expected_event"))
+    observed_actor = _observed_snapshot_actor(snapshot, session_ids=_session_ids(incident))
+
+    if resolver_canonical_state not in _RECONCILER_ACTIVE_CANONICAL_STATES:
+        return None
+    if brief_outcome not in _RECONCILER_RECOVERED_OUTCOMES:
+        return None
+    if not incident_state or not _incident_represents_active_work(incident):
+        return None
+    if observed_actor is None or expected_brief_outcome is None:
+        return None
+    if shipped_fix != "fixed" and install_freshness != "fresh":
+        return None
+
+    return _drift_detected_finding(
+        source_pair="l2_fix_vs_resolver",
+        contradiction="false_fixed_l2_result",
+        observed={
+            "brief_outcome": brief_outcome,
+            "incident_state": incident_state,
+            "resolver_canonical_state": resolver_canonical_state,
+            "snapshot_actor": observed_actor,
+        },
+        expected={
+            "brief_outcome": expected_brief_outcome,
+            "incident_state": incident_state,
+            "next_expected_event": next_expected_event,
+        },
+        recommendation=next_expected_event or None,
+    )
+
+
+def _normalize_projection_input(projection_input: Any) -> dict[str, Any]:
+    source = projection_input if isinstance(projection_input, dict) else {}
+    return {
+        "brief": _coerce_mapping(source.get("brief")),
+        "incident": _coerce_mapping(source.get("incident")),
+        "problem": _coerce_mapping(source.get("problem")),
+        "resolver_state": _coerce_resolver_state(source.get("resolver_state")),
+        "current_target": _coerce_current_target(source.get("current_target")),
+        "audit_history": _coerce_audit_history(source.get("audit_history")),
+        "ci_health": _coerce_ci_health(source.get("ci_health")),
+        "engine_tree": _coerce_engine_tree(source.get("engine_tree")),
+    }
+
+
+def _coerce_resolver_state(value: Any) -> dict[str, Any]:
+    return _coerce_mapping(value)
+
+
+def _coerce_current_target(value: Any) -> dict[str, Any]:
+    return _coerce_mapping(value)
+
+
+def _coerce_audit_history(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _coerce_ci_health(value: Any) -> dict[str, Any]:
+    return _coerce_mapping(value)
+
+
+def _coerce_engine_tree(value: Any) -> dict[str, Any]:
+    return _coerce_mapping(value)
+
+
+def _drift_detected_finding(
+    *,
+    source_pair: str,
+    contradiction: str,
+    observed: dict[str, Any],
+    expected: dict[str, Any],
+    recommendation: str | None,
+) -> dict[str, Any]:
+    return _finding(
+        "DRIFT_DETECTED",
+        layer="reconciler",
+        status="error",
+        severity="error",
+        message=f"Cross-source reconciler drift detected for {source_pair}.",
+        recommendation=recommendation,
+        drift_reason=f"{source_pair}:{contradiction}",
+        source_pair=source_pair,
+        contradiction=contradiction,
+        observed=observed,
+        expected=expected,
+    )
+
+
+def _resolver_canonical_state_name(resolver_state: dict[str, Any]) -> str:
+    return _normalized_text(resolver_state.get("canonical_state")).upper()
+
+
+def _expected_brief_outcome_from_incident(incident: dict[str, Any]) -> str | None:
+    incident_outcome = _normalized_text(incident.get("outcome")).lower()
+    if incident_outcome:
+        return incident_outcome
+    if _incident_represents_active_work(incident):
+        return "started"
+    return None
+
+
+def _incident_represents_active_work(incident: dict[str, Any]) -> bool:
+    incident_state = _normalized_text(incident.get("state")).lower()
+    incident_outcome = _normalized_text(incident.get("outcome")).lower()
+    next_expected_event = _normalized_text(incident.get("next_expected_event"))
+    expected_actor = _expected_actor_for_event(next_expected_event)
+    return (
+        incident_state in _RECONCILER_ACTIVE_INCIDENT_STATES
+        or incident_outcome in _RECONCILER_ACTIVE_OUTCOMES
+        or expected_actor in _RECONCILER_SUPPORTED_ACTORS
+    )
+
+
+def _incident_placeholders(brief: dict[str, Any], incident: dict[str, Any]) -> dict[str, Any]:
+    incident_placeholders = incident.get("placeholders")
+    if isinstance(incident_placeholders, dict):
+        return incident_placeholders
+    brief_placeholders = brief.get("placeholders")
+    return brief_placeholders if isinstance(brief_placeholders, dict) else {}
+
+
+def _session_ids(incident: dict[str, Any]) -> list[str]:
+    session_ids = incident.get("session_ids")
+    if not isinstance(session_ids, list):
+        return []
+    return [str(session_id) for session_id in session_ids if isinstance(session_id, str) and session_id]
+
+
+def _observed_snapshot_actor(snapshot: dict[str, Any], *, session_ids: list[str]) -> str | None:
+    process_actor = _snapshot_process_actor(snapshot, session_ids=session_ids)
+    if process_actor is not None:
+        return process_actor
+    repair_attempt_actor = _snapshot_repair_attempt_actor(snapshot)
+    if repair_attempt_actor is not None:
+        return repair_attempt_actor
+    github_sync = snapshot.get("github_sync")
+    if isinstance(github_sync, dict) and _normalized_text(github_sync.get("last_attempt_at")):
+        return "github_sync"
+    return None
+
+
+def _snapshot_process_actor(snapshot: dict[str, Any], *, session_ids: list[str]) -> str | None:
+    processes = snapshot.get("processes")
+    if not isinstance(processes, list):
+        return None
+    candidates: list[dict[str, Any]] = []
+    for process in processes:
+        if not isinstance(process, dict):
+            continue
+        actor = _normalized_text(process.get("actor"))
+        if actor not in _RECONCILER_SUPPORTED_ACTORS:
+            continue
+        process_session_id = _normalized_text(process.get("session_id"))
+        if session_ids and process_session_id and process_session_id not in session_ids:
+            continue
+        candidates.append(process)
+    if not candidates:
+        return None
+    chosen = sorted(
+        candidates,
+        key=lambda item: (
+            _normalized_text(item.get("actor")),
+            _normalized_text(item.get("session_id")),
+            _normalized_text(item.get("started_at")),
+        ),
+    )[0]
+    actor = _normalized_text(chosen.get("actor"))
+    return actor if actor in _RECONCILER_SUPPORTED_ACTORS else None
+
+
+def _snapshot_repair_attempt_actor(snapshot: dict[str, Any]) -> str | None:
+    attempts = snapshot.get("repair_attempts")
+    if not isinstance(attempts, list):
+        return None
+    for attempt in reversed(attempts):
+        if not isinstance(attempt, dict):
+            continue
+        actor = _repair_attempt_actor(attempt)
+        if actor is not None:
+            return actor
+    return None
+
+
+def _repair_attempt_actor(attempt: dict[str, Any]) -> str | None:
+    for field in ("actor", "layer", "phase"):
+        actor = _normalized_text(attempt.get(field))
+        if actor in _RECONCILER_SUPPORTED_ACTORS:
+            return actor
+    next_expected_event = _normalized_text(attempt.get("next_expected_event"))
+    return _expected_actor_for_event(next_expected_event)
+
+
+def _expected_actor_for_event(next_expected_event: str) -> str | None:
+    actor = next_expected_event.split(".", 1)[0].strip() if next_expected_event else ""
+    return actor if actor in _RECONCILER_SUPPORTED_ACTORS else None
+
+
+def _resolver_evidence_kinds(resolver_state: dict[str, Any]) -> set[str]:
+    kinds: set[str] = set()
+    root_cause_kind = _resolver_root_cause_kind(resolver_state.get("root_cause_fingerprint"))
+    if root_cause_kind:
+        kinds.add(root_cause_kind)
+
+    evidence = resolver_state.get("evidence")
+    if isinstance(evidence, dict):
+        for key in evidence:
+            if isinstance(key, str) and key:
+                kinds.add(key)
+
+    return kinds
+
+
+def _resolver_root_cause_kind(value: Any) -> str:
+    if isinstance(value, dict):
+        kind = value.get("kind")
+        return _normalized_text(kind).lower()
+    return ""
+
+
+def _resolver_stale_sources(resolver_state: dict[str, Any]) -> list[str]:
+    stale_sources = resolver_state.get("stale_sources")
+    if not isinstance(stale_sources, list):
+        return []
+    return [source for source in stale_sources if isinstance(source, str) and source]
+
+
+def _expected_canonical_states_for_evidence(evidence_kinds: set[str]) -> set[str]:
+    expected: set[str] = set()
+    if evidence_kinds & {"active_step_heartbeat", "live_process"}:
+        expected.update({"RUNNING", "REPAIRING"})
+    if evidence_kinds & {"budget_exhausted", "retryable_execution", "mechanical_blocker"}:
+        expected.add("RETRYABLE_EXECUTION_BLOCK")
+    if evidence_kinds & {"broken_state_machine", "missing_workspace", "broken_repeat_count"}:
+        expected.add("BROKEN_STATE_MACHINE")
+    if evidence_kinds & {"awf018", "route_metadata_mismatch", "real_implementation_block"}:
+        expected.add("REAL_IMPLEMENTATION_BLOCK")
+    if evidence_kinds & {
+        "approval",
+        "explicit_approval",
+        "credential",
+        "credential_account",
+        "needs_human",
+        "policy",
+        "quota",
+        "rate_limit",
+        "true_blocker",
+        "user_action",
+        "verification",
+    }:
+        expected.add("HUMAN_ACTION_REQUIRED")
+    return expected
+
+
+def _expected_root_cause_kinds_for_canonical_state(canonical_state: str) -> set[str]:
+    return {
+        "RUNNING": {"active_step_heartbeat", "live_process"},
+        "REPAIRING": {"active_step_heartbeat", "live_process"},
+        "RETRYABLE_EXECUTION_BLOCK": {"budget_exhausted", "retryable_execution", "mechanical_blocker"},
+        "BROKEN_STATE_MACHINE": {"broken_state_machine", "broken_repeat_count", "missing_workspace"},
+        "REAL_IMPLEMENTATION_BLOCK": {"awf018", "real_implementation_block", "route_metadata_mismatch"},
+        "HUMAN_ACTION_REQUIRED": {
+            "approval",
+            "credential",
+            "credential_account",
+            "needs_human",
+            "policy",
+            "quota",
+            "rate_limit",
+            "true_blocker",
+            "user_action",
+            "verification",
+        },
+        "UNKNOWN": set(),
+        "COMPLETED": set(),
+        "STALE_DERIVED_STATE": set(),
+    }.get(canonical_state, set())
+
+
+def _next_action_matches_canonical_state(canonical_state: str, next_action: str) -> bool:
+    if canonical_state in {"RUNNING", "REPAIRING"}:
+        return next_action not in {
+            "auditor_escalate_to_human",
+            "await_human_action",
+            "escalate_broken_state_machine",
+            "inspect_evidence",
+            "machine_repair_or_replan",
+            "manual_review",
+            "no_action_run_complete",
+            "requeue_or_retry",
+            "trust_live_worker_suppress_stale_label",
+        }
+
+    valid_actions = {
+        "BROKEN_STATE_MACHINE": {"escalate_broken_state_machine"},
+        "COMPLETED": {"audit_cycle_complete", "no_action_run_complete"},
+        "HUMAN_ACTION_REQUIRED": {"await_human_action", "manual_review"},
+        "REAL_IMPLEMENTATION_BLOCK": {"machine_repair_or_replan"},
+        "RETRYABLE_EXECUTION_BLOCK": {"requeue_or_retry"},
+        "STALE_DERIVED_STATE": {"trust_live_worker_suppress_stale_label"},
+        "UNKNOWN": {"inspect_evidence", "manual_review"},
+    }
+    allowed = valid_actions.get(canonical_state)
+    if allowed is None:
+        return True
+    return next_action in allowed
+
+
+def _normalized_text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
 
 
 def _watchdog_finding(
@@ -417,6 +1054,75 @@ def _recurrence_finding(
     )
 
 
+def _auditor_recursion_finding(
+    *,
+    brief: dict[str, Any],
+    incident: dict[str, Any],
+    current_target: dict[str, Any],
+    audit_history: list[dict[str, Any]],
+    findings: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not audit_history:
+        return None
+
+    current_non_ok = _auditor_recursion_non_ok_findings(findings)
+    current_fingerprints = _auditor_recursion_fingerprint_map(current_non_ok)
+    if not current_fingerprints:
+        return None
+
+    current_next_expected_event = _normalized_text(
+        brief.get("next_expected_event") or incident.get("next_expected_event")
+    )
+    repeated_fingerprint_keys: set[str] = set()
+    repeat_count = 1
+
+    for historical_audit in reversed(audit_history):
+        historical_fingerprints = _auditor_recursion_fingerprint_map(
+            _auditor_recursion_history_findings(historical_audit)
+        )
+        shared_fingerprint_keys = set(current_fingerprints).intersection(historical_fingerprints)
+        if not shared_fingerprint_keys:
+            break
+
+        historical_next_expected_event = _audit_history_next_expected_event(historical_audit)
+        if (
+            current_next_expected_event
+            and historical_next_expected_event
+            and current_next_expected_event != historical_next_expected_event
+            and not _l2_fix_claimed(brief, incident)
+        ):
+            break
+
+        repeated_fingerprint_keys.update(shared_fingerprint_keys)
+        repeat_count += 1
+
+    cycle_detected = repeat_count >= 2 and bool(repeated_fingerprint_keys)
+    post_l2_fix_recurrence = cycle_detected and _l2_fix_claimed(brief, incident)
+    stale_evidence_detected = _auditor_stale_evidence_detected(
+        current_non_ok,
+        current_target=current_target,
+    )
+
+    if not cycle_detected and not post_l2_fix_recurrence:
+        return None
+
+    return _finding(
+        "auditor_recursion_guard",
+        layer="auditor_recursion",
+        status="error",
+        severity="error",
+        message="Repeated non-ok auditor findings indicate a self-reinforcing L3 cycle.",
+        recommendation="auditor_escalate_to_human",
+        cycle_detected=cycle_detected,
+        post_l2_fix_recurrence=post_l2_fix_recurrence,
+        stale_evidence_detected=stale_evidence_detected,
+        repeat_count=repeat_count,
+        repeated_findings=sorted(
+            current_fingerprints[fingerprint_key] for fingerprint_key in repeated_fingerprint_keys
+        ),
+    )
+
+
 def _diagnosis_summary(brief: dict[str, Any], unhealthy: list[dict[str, Any]]) -> str:
     if not unhealthy:
         return f"Audit completed for {brief.get('incident_id') or 'incident'} with no blocking reconciler findings."
@@ -446,21 +1152,29 @@ def _next_expected_event(
     return candidate if isinstance(candidate, str) and candidate else None
 
 
+def _requires_human_escalation(findings: list[dict[str, Any]]) -> bool:
+    return any(finding.get("recommendation") == "auditor_escalate_to_human" for finding in findings)
+
+
 def _primary_finding(findings: list[dict[str, Any]]) -> dict[str, Any] | None:
     if not findings:
         return None
     severity_rank = {"error": 0, "warn": 1, "ok": 2}
     layer_rank = {
-        "watchdog": 0,
-        "stale_claim": 1,
-        "missing_evidence": 2,
-        "meta_repair": 3,
-        "immediate_repair": 4,
-        "install_sync": 5,
-        "github_sync": 6,
-        "recurrence": 7,
-        "project_progress": 8,
-        "live_process": 9,
+        "auditor_recursion": 0,
+        "reconciler": 1,
+        "resolver_confidence": 2,
+        "resolver_semantics": 3,
+        "watchdog": 4,
+        "stale_claim": 5,
+        "missing_evidence": 6,
+        "meta_repair": 7,
+        "immediate_repair": 8,
+        "install_sync": 9,
+        "github_sync": 10,
+        "recurrence": 11,
+        "project_progress": 12,
+        "live_process": 13,
     }
     return sorted(
         findings,
@@ -469,6 +1183,93 @@ def _primary_finding(findings: list[dict[str, Any]]) -> dict[str, Any] | None:
             layer_rank.get(item["layer"], len(_LAYER_ORDER)),
         ),
     )[0]
+
+
+def _coerce_mapping(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _auditor_recursion_non_ok_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        finding
+        for finding in findings
+        if finding.get("status") != "ok" and finding.get("layer") != "auditor_recursion"
+    ]
+
+
+def _auditor_recursion_history_findings(history_entry: dict[str, Any]) -> list[dict[str, Any]]:
+    findings = history_entry.get("findings")
+    if not isinstance(findings, list):
+        return []
+    return [
+        finding
+        for finding in findings
+        if isinstance(finding, dict)
+        and finding.get("status") != "ok"
+        and finding.get("layer") != "auditor_recursion"
+    ]
+
+
+def _auditor_recursion_fingerprint_map(findings: list[dict[str, Any]]) -> dict[str, str]:
+    fingerprints: dict[str, str] = {}
+    for finding in findings:
+        stable_payload = _auditor_recursion_stable_value(finding)
+        fingerprint = json.dumps(stable_payload, sort_keys=True, separators=(",", ":"))
+        fingerprints[fingerprint] = _auditor_recursion_label(finding)
+    return fingerprints
+
+
+def _auditor_recursion_stable_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        stable_items: dict[str, Any] = {}
+        for key in sorted(value):
+            if not isinstance(key, str):
+                continue
+            if key in _AUDITOR_RECURSION_VOLATILE_KEYS:
+                continue
+            if key.endswith("_at") or key.endswith("_ts") or "timestamp" in key:
+                continue
+            stable_items[key] = _auditor_recursion_stable_value(value[key])
+        return stable_items
+    if isinstance(value, list):
+        return [_auditor_recursion_stable_value(item) for item in value]
+    return value
+
+
+def _auditor_recursion_label(finding: dict[str, Any]) -> str:
+    layer = _normalized_text(finding.get("layer")) or "unknown"
+    code = _normalized_text(finding.get("code")) or "unknown"
+    return f"{layer}:{code}"
+
+
+def _audit_history_next_expected_event(history_entry: dict[str, Any]) -> str:
+    audit_complete = history_entry.get("audit_complete")
+    if not isinstance(audit_complete, dict):
+        return ""
+    return _normalized_text(audit_complete.get("next_expected_event"))
+
+
+def _l2_fix_claimed(brief: dict[str, Any], incident: dict[str, Any]) -> bool:
+    placeholders = _incident_placeholders(brief, incident)
+    shipped_fix = _normalized_text(placeholders.get("shipped_fix")).lower()
+    install_freshness = _normalized_text(placeholders.get("install_freshness")).lower()
+    brief_outcome = _normalized_text(brief.get("outcome")).lower()
+    return (
+        brief_outcome in _RECONCILER_RECOVERED_OUTCOMES
+        or shipped_fix == "fixed"
+        or install_freshness == "fresh"
+    )
+
+
+def _auditor_stale_evidence_detected(
+    findings: list[dict[str, Any]],
+    *,
+    current_target: dict[str, Any],
+) -> bool:
+    stale_evidence = current_target.get("stale_evidence")
+    if isinstance(stale_evidence, list) and stale_evidence:
+        return True
+    return any(_normalized_text(finding.get("code")) in _AUDITOR_RECURSION_STALE_CODES for finding in findings)
 
 
 def _resolve_incident(incidents: list[dict[str, Any]], incident_id: Any) -> dict[str, Any]:

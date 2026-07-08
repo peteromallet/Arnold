@@ -1,4 +1,5 @@
 base_branch: main
+superseded_by: custody-control-plane
 anchors:
   north_star: NORTHSTAR.md
 milestones:
@@ -16,7 +17,8 @@ on_failure:
   abort: stop_chain
 on_escalate:
   abort: stop_chain
-merge_policy: auto
+# Retired duplicate initiative: preserve history but disable unattended merges.
+merge_policy: review
 driver:
   robustness: full
   auto_approve: true
