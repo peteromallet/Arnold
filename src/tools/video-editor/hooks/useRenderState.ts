@@ -7,6 +7,7 @@ import type { ExtensionRuntime, VideoEditorOutputFormatDescriptor } from '@/tool
 import {
   createCompileOnlyOutputFormatRegistry,
   executeCompileOnlyOutput,
+  formatScopedKey,
   type CompileOnlyOutputFormatEntry,
   type CompileOnlyOutputFormatRegistry,
 } from '@/tools/video-editor/runtime/outputFormatRegistry.ts';
@@ -20,16 +21,17 @@ import {
   scanExportConfig,
 } from '@/tools/video-editor/runtime/exportGuard.ts';
 import {
+  buildExportReadinessPlan,
   planRender,
   type RenderPlannerResult,
 } from '@/tools/video-editor/runtime/renderPlanner.ts';
+import type { PlannerBackedRenderRouteDecision } from '@/tools/video-editor/lib/renderRouter.ts';
 import {
   DataProviderContext,
   type VideoEditorRuntimeContextValue,
 } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
 import { syncPlannerDiagnosticsToCollection } from '@/tools/video-editor/runtime/diagnosticCollectionSync.ts';
 import type {
-  CapabilityFinding,
   Diagnostic,
   ExportDiagnostic,
   RenderBlocker,
@@ -103,84 +105,6 @@ function buildExtensionContributions(extRuntime: ExtensionRuntime) {
   return allContributions;
 }
 
-/**
- * Create a concise render log line from export guard diagnostics.
- * Emits a single summary line plus per-diagnostic error lines for blocking issues.
- */
-function formatExportGuardLog(
-  guardResult: ReturnType<typeof scanExportConfig>,
-): string {
-  const lines: string[] = [];
-
-  const totalDiags = guardResult.diagnostics.length;
-  const errorCount = guardResult.diagnostics.filter((d) => d.severity === 'error').length;
-  const warningCount = guardResult.diagnostics.filter((d) => d.severity === 'warning').length;
-  const infoCount = totalDiags - errorCount - warningCount;
-
-  if (totalDiags === 0) {
-    lines.push('Export guard: no issues found.');
-    return lines.join('\n');
-  }
-
-  lines.push(
-    `Export guard: ${totalDiags} issue(s) — ${errorCount} error(s), ${warningCount} warning(s), ${infoCount} info(s).`,
-  );
-
-  // Show blocking errors first, naming the effect/transition and route when available
-  for (const diag of guardResult.diagnostics) {
-    if (diag.severity === 'error') {
-      const name = diag.detail?.effectType
-        ? ` effect "${diag.detail.effectType}"`
-        : diag.detail?.transitionType
-          ? ` transition "${diag.detail.transitionType}"`
-          : diag.detail?.clipType
-            ? ` clip type "${diag.detail.clipType}"`
-            : diag.detail?.shaderId
-              ? ` shader "${diag.detail.shaderId}"`
-            : '';
-      const route = diag.detail?.renderRoute ? ` (${diag.detail.renderRoute})` : '';
-      lines.push(`  [${diag.code}]${name}${route}: ${diag.message}`);
-    }
-  }
-
-  // Then warnings — also name effects/transitions/clip types
-  for (const diag of guardResult.diagnostics) {
-    if (diag.severity === 'warning') {
-      const name = diag.detail?.effectType
-        ? ` effect "${diag.detail.effectType}"`
-        : diag.detail?.transitionType
-          ? ` transition "${diag.detail.transitionType}"`
-          : diag.detail?.clipType
-            ? ` clip type "${diag.detail.clipType}"`
-            : diag.detail?.shaderId
-              ? ` shader "${diag.detail.shaderId}"`
-            : '';
-      const route = diag.detail?.renderRoute ? ` (${diag.detail.renderRoute})` : '';
-      lines.push(`  [${diag.code}]${name}${route}: ${diag.message}`);
-    }
-  }
-
-  // Append per-route blocker summaries from findings (when available)
-  const blockerFindings = (guardResult.findings ?? []).filter((f) => f.severity === 'error');
-  if (blockerFindings.length > 0) {
-    lines.push('');
-    lines.push('Route blockers:');
-    for (const finding of blockerFindings) {
-      const name = finding.detail?.effectType
-        ? `"${finding.detail.effectType}"`
-        : finding.detail?.transitionType
-          ? `"${finding.detail.transitionType}"`
-          : finding.detail?.shaderId
-            ? `"${finding.detail.shaderId}"`
-          : 'unknown';
-      const route = finding.route ?? 'unknown-route';
-      lines.push(`  ${name} blocked on ${route}: ${finding.message}`);
-    }
-  }
-
-  return lines.join('\n');
-}
-
 function exportDiagnosticId(diagnostic: ReturnType<typeof scanExportConfig>['diagnostics'][number], index: number): string {
   const detail = diagnostic.detail ?? {};
   return [
@@ -193,46 +117,6 @@ function exportDiagnosticId(diagnostic: ReturnType<typeof scanExportConfig>['dia
   ].join(':');
 }
 
-function blockerReasonForExportDiagnostic(diagnostic: ExportDiagnostic): RenderBlockerReason {
-  if (diagnostic.code.includes('unknown') || diagnostic.code.includes('missing')) {
-    return 'missing-contribution';
-  }
-  if (diagnostic.code.includes('inactive')) {
-    return 'inactive-extension';
-  }
-  if (diagnostic.code.includes('live-binding')) {
-    return 'live-unbaked';
-  }
-  if (diagnostic.code.includes('shader')) {
-    return 'missing-material';
-  }
-  return 'route-unsupported';
-}
-
-function exportDiagnosticToPlannerFinding(diagnostic: ExportDiagnostic, index: number): CapabilityFinding {
-  const route = diagnostic.detail?.renderRoute === 'worker-export' || diagnostic.detail?.renderRoute === 'preview'
-    ? diagnostic.detail.renderRoute
-    : 'browser-export';
-  const reason = diagnostic.severity === 'error'
-    ? blockerReasonForExportDiagnostic(diagnostic)
-    : undefined;
-
-  return {
-    id: exportDiagnosticId(diagnostic, index),
-    severity: diagnostic.severity,
-    route,
-    ...(reason ? { reason } : {}),
-    message: diagnostic.message,
-    ...(diagnostic.extensionId ? { extensionId: diagnostic.extensionId } : {}),
-    ...(diagnostic.contributionId ? { contributionId: diagnostic.contributionId } : {}),
-    detail: {
-      ...(diagnostic.detail ?? {}),
-      source: 'export-guard-compat',
-      code: diagnostic.code,
-    },
-  };
-}
-
 function planFromExportGuardResult(
   guardResult: ReturnType<typeof scanExportConfig>,
   options?: {
@@ -241,13 +125,8 @@ function planFromExportGuardResult(
     readonly processResultAttachRecords?: VideoEditorRuntimeContextValue['processResultAttachRecords'];
   },
 ): RenderPlannerResult {
-  const diagnostics: CapabilityFinding[] = [
-    ...(guardResult.findings ?? []),
-    ...(guardResult.blockers ?? []),
-    ...guardResult.diagnostics.map(exportDiagnosticToPlannerFinding),
-  ];
-  return planRender({
-    diagnostics,
+  return buildExportReadinessPlan({
+    guard: guardResult,
     extensionRuntime: options?.extensionRuntime,
     outputFormats: outputFormatsForPlanning(options?.extensionRuntime),
     processStatuses: options?.processStatuses,
@@ -322,6 +201,25 @@ function firstPlannerBlockerForDecision(
     ?? plannerResult.blockers[0];
 }
 
+function routeDecisionBlockerForLog(
+  blocker: RenderBlocker | undefined,
+  decision: RenderRouteDecisionForPlanning,
+): RenderBlocker | undefined {
+  if (!blocker) return undefined;
+  const message = decision.route === 'preview-only' && !blocker.message.startsWith('Render blocked')
+    ? `Render blocked: ${blocker.message}`
+    : blocker.message;
+  return {
+    ...blocker,
+    message,
+    detail: {
+      ...(blocker.detail ?? {}),
+      legacyReason: decision.reason,
+      providerRoute: decision.route,
+    },
+  };
+}
+
 function outputFormatsForPlanning(extensionRuntime: ExtensionRuntime | undefined): readonly VideoEditorOutputFormatDescriptor[] {
   const outputFormats = extensionRuntime?.outputFormats
     ?? extensionRuntime?.config?.outputFormats
@@ -373,6 +271,54 @@ function categorizeExportFormats(
     }
   }
   return { compileOnly, renderDependent };
+}
+
+function hasCompileOnlyHandler(
+  registry: CompileOnlyOutputFormatRegistry | undefined,
+  format: VideoEditorOutputFormatDescriptor,
+): boolean {
+  if (!registry) return false;
+  return registry.has(formatScopedKey(format.extensionId, format.id)) || registry.has(format.id);
+}
+
+function plannerBlockerMessage(
+  plan: RenderPlannerResult | undefined,
+  fallback: string,
+  route?: 'browser-export' | 'worker-export' | 'sidecar-export' | 'preview',
+): string {
+  const routeBlocker = route && route !== 'preview'
+    ? plan?.routePlans.find((routePlan) => routePlan.route === route)?.blockers[0]
+    : undefined;
+  return routeBlocker?.message ?? plan?.blockers[0]?.message ?? fallback;
+}
+
+function plannerRouteAvailabilityBlockerMessage(
+  plan: RenderPlannerResult,
+  route: 'worker-export' | 'sidecar-export',
+  fallback: string,
+): string {
+  const availabilityBlocker = plan.blockers.find((blocker) =>
+    blocker.route === route
+    && blocker.detail?.source === 'render-request'
+    && blocker.detail.routeAvailability === 'unavailable');
+  return availabilityBlocker?.message ?? plannerBlockerMessage(plan, fallback, route);
+}
+
+function formatPlannerReadinessBlockLog(plan: RenderPlannerResult): string {
+  if (plan.blockers.length === 0) {
+    return 'Export readiness blocked by the render planner.';
+  }
+
+  const lines = ['Export readiness blocked by the render planner:'];
+  for (const blocker of plan.blockers) {
+    lines.push(`  [${blocker.route}/${blocker.reason}] ${blocker.message}`);
+  }
+  return lines.join('\n');
+}
+
+interface ExportGuardRunResult {
+  readonly passed: boolean;
+  readonly plannerResult?: RenderPlannerResult;
 }
 
 export function useRenderState(
@@ -442,7 +388,7 @@ export function useRenderState(
     },
   });
 
-  const runExportGuard = useCallback((): boolean => {
+  const runExportGuard = useCallback((): ExportGuardRunResult => {
     diagnosticCollection?.remove((diagnostic) => diagnostic.detail?.source === 'export-guard');
     diagnosticCollection?.remove((diagnostic) => diagnostic.detail?.source === 'render-planner');
 
@@ -456,11 +402,11 @@ export function useRenderState(
       && clipTypeRegistrySnapshot.records.length === 0
       && !hasTimelineShaderMetadata(resolvedConfig, compositionGraph)
     ) {
-      return true; // no blocker
+      return { passed: true };
     }
 
     if (!resolvedConfig || resolvedConfig.clips.length === 0) {
-      return true; // nothing to scan
+      return { passed: true };
     }
 
     const builtIn = collectBuiltInKnownIds();
@@ -487,20 +433,17 @@ export function useRenderState(
     });
     syncPlannerDiagnosticsToCollection(diagnosticCollection, plannerResult.blockers);
 
-    // Emit structured diagnostics as concise render log output
-    const log = formatExportGuardLog(guardResult);
-    setRenderLog(log);
-
     if (plannerResult.blockers.length > 0) {
       // Planner-owned blockers are the canonical readiness decision.
       setRenderStatus('error');
       setRenderProgress(null);
       setRenderDirty(false);
-      return false; // blocker
+      setRenderLog(formatPlannerReadinessBlockLog(plannerResult));
+      return { passed: false, plannerResult };
     }
 
-    // Extension-declared warnings only — preserve native routing
-    return true; // no blocker
+    setRenderLog('');
+    return { passed: true, plannerResult };
   }, [
     diagnosticCollection,
     effectRegistrySnapshot,
@@ -514,46 +457,45 @@ export function useRenderState(
 
   const startRender = useCallback(async () => {
     // ---- export guard: scan for unknown IDs before routing ------------------
-    if (!runExportGuard()) {
-      return; // blocked by export guard
+    const guardResult = runExportGuard();
+    if (!guardResult.passed) {
+      return; // blocked by planner-owned export readiness
     }
 
-    let decision = getFastRenderRouteDecision(resolvedConfig);
-    if (!decision) {
-      let importedDecision: {
-      route: 'browser-remotion' | 'worker-banodoco' | 'preview-only' | 'external';
-      reason: string;
-      };
-      try {
-        const renderRouter = await import('@/tools/video-editor/lib/renderRouter');
-        importedDecision = renderRouter.decideRenderRoute(
-          resolvedConfig,
-          undefined,
-          {
-            compositionGraph: extensionRuntime?.compositionGraph,
-            processes: extensionRuntime?.processes,
-            processStatuses,
-            processResultAttachRecords,
-          },
-        );
-      } catch (error) {
-        setRenderStatus('error');
-        setRenderProgress(null);
-        setRenderDirty(false);
-        setRenderLog(error instanceof Error
-          ? `Render routing unavailable: ${error.message}`
-          : 'Render routing unavailable.');
-        return;
-      }
-      decision = importedDecision;
+    let decision: PlannerBackedRenderRouteDecision;
+    try {
+      const renderRouter = await import('@/tools/video-editor/lib/renderRouter');
+      decision = renderRouter.decideRenderRoute(
+        resolvedConfig,
+        undefined,
+        {
+          compositionGraph: extensionRuntime?.compositionGraph,
+          processes: extensionRuntime?.processes,
+          processStatuses,
+          processResultAttachRecords,
+        },
+      );
+    } catch (error) {
+      setRenderStatus('error');
+      setRenderProgress(null);
+      setRenderDirty(false);
+      setRenderLog(error instanceof Error
+        ? `Render routing unavailable: ${error.message}`
+        : 'Render routing unavailable.');
+      return;
     }
+
     if (decision.route === 'preview-only') {
-      const plannerResult = planRouteDecisionBlocker(decision, {
+      const plannerResult = decision.planner?.plannerResult ?? planRouteDecisionBlocker(decision, {
         extensionRuntime,
         processStatuses,
         processResultAttachRecords,
       });
-      const blocker = firstPlannerBlockerForDecision(plannerResult, decision);
+      const selectedRoute = decision.planner?.selectedPlannerRoute;
+      const blocker = routeDecisionBlockerForLog(selectedRoute
+        ? plannerResult.routePlans.find((routePlan) => routePlan.route === selectedRoute)?.blockers[0]
+          ?? plannerResult.blockers[0]
+        : firstPlannerBlockerForDecision(plannerResult, decision), decision);
       syncPlannerDiagnosticsToCollection(diagnosticCollection, blocker ? [blocker] : plannerResult.blockers);
       setRenderStatus('error');
       setRenderProgress(null);
@@ -563,17 +505,38 @@ export function useRenderState(
     }
 
     if (decision.route === 'worker-banodoco' || decision.route === 'external') {
-      const plannerResult = planRouteDecisionBlocker(decision, {
+      const plannerRoute = decision.route === 'external' ? 'sidecar-export' : 'worker-export';
+      const providerId = decision.route === 'external' ? 'external' : 'worker-banodoco';
+      const plannerResult = planRender({
         extensionRuntime,
+        outputFormats: outputFormatsForPlanning(extensionRuntime),
         processStatuses,
         processResultAttachRecords,
+        request: {
+          route: plannerRoute,
+          routeAvailability: [{
+            route: plannerRoute,
+            available: false,
+            providerId,
+            reason: blockerReasonForRouteDecision(decision),
+            message: blockerMessageForRouteDecision(decision),
+            detail: {
+              source: 'render-route-decision',
+              legacyReason: decision.reason,
+            },
+          }],
+        },
       });
-      const blocker = firstPlannerBlockerForDecision(plannerResult, decision);
-      syncPlannerDiagnosticsToCollection(diagnosticCollection, blocker ? [blocker] : plannerResult.blockers);
+      const blockers = plannerResult.blockers.map((blocker) => routeDecisionBlockerForLog(blocker, decision) ?? blocker);
+      syncPlannerDiagnosticsToCollection(diagnosticCollection, blockers);
       setRenderStatus('error');
       setRenderProgress(null);
       setRenderDirty(false);
-      setRenderLog(blocker?.message ?? blockerMessageForRouteDecision(decision));
+      setRenderLog(blockers[0]?.message ?? plannerRouteAvailabilityBlockerMessage(
+        plannerResult,
+        plannerRoute,
+        blockerMessageForRouteDecision(decision),
+      ));
       return;
     }
 
@@ -661,6 +624,7 @@ export function useRenderState(
     }
 
     const plannerOutputFormats = outputFormatsForPlanning(extensionRuntime);
+    const requestedOutputFormat = plannerOutputFormats.find((candidate) => candidate.id === formatId);
     const outputPlan = planRender({
       extensionRuntime,
       outputFormats: plannerOutputFormats,
@@ -672,32 +636,21 @@ export function useRenderState(
       request: {
         outputFormatId: formatId,
         routes: ['browser-export'],
+        compileOnlyHandlerAvailable: requestedOutputFormat
+          ? hasCompileOnlyHandler(compileOnlyRegistry, requestedOutputFormat)
+          : undefined,
       },
-      diagnostics: plannerOutputFormats.find((candidate) => candidate.id === formatId)?.disabled
-        ? [{
-            id: `planner.outputFormat.${formatId}.disabled`,
-            severity: 'error',
-            route: 'browser-export',
-            reason: 'inactive-extension',
-            message: plannerOutputFormats.find((candidate) => candidate.id === formatId)?.disabledReason
-              ?? `Export format "${formatId}" is disabled.`,
-            contributionId: formatId,
-            detail: { source: 'output-format', outputFormatId: formatId },
-          }]
-        : [],
     });
     const browserOutputPlan = outputPlan.routePlans.find((routePlan) => routePlan.route === 'browser-export');
     const fmt = plannerOutputFormats.find((f) => f.id === formatId && !f.requiresRender && !f.disabled);
     if (!fmt || browserOutputPlan?.blocked) {
-      const requestedFormat = plannerOutputFormats.find((f) => f.id === formatId);
-      const blocker = outputPlan.blockers.find((candidate) => candidate.id === `planner.outputFormat.${formatId}.disabled`)
-        ?? browserOutputPlan?.blockers[0]
+      const blocker = browserOutputPlan?.blockers[0]
         ?? outputPlan.blockers[0];
       setExportStatus('error');
       if (blocker) {
         setExportLogState(`Export blocked: ${blocker.message}`);
-      } else if (requestedFormat) {
-        setExportLogState(`Export blocked: "${requestedFormat.label}" is not available for browser export.`);
+      } else if (requestedOutputFormat) {
+        setExportLogState(`Export blocked: "${requestedOutputFormat.label}" is not available for browser export.`);
       } else {
         setExportLogState(`Export format "${formatId}" not found.`);
       }
@@ -710,20 +663,16 @@ export function useRenderState(
     // because the exported data would be invalid.  Route-specific capability
     // blockers (browser-export blocked, worker-export blocked) are surfaced
     // as warnings but do not prevent compile-only export.
-    const guardPassed = runExportGuard();
-    if (!guardPassed) {
-      // Export guard found blocking errors (e.g. truly unknown effects).
-      // Surface the guard log as the export error.
+    const guardResult = runExportGuard();
+    if (!guardResult.passed) {
       setExportStatus('error');
       setExportLogState(
-        `Export blocked by readiness scan. See render log for details.`,
+        `Export blocked: ${plannerBlockerMessage(
+          guardResult.plannerResult,
+          'Export readiness is blocked by the render planner.',
+          'browser-export',
+        )}`,
       );
-      return;
-    }
-
-    if (!compileOnlyRegistry || compileOnlyRegistry.size === 0) {
-      setExportStatus('error');
-      setExportLogState(`Export unavailable: no compile-only output handlers registered. Format "${fmt.label}" (${fmt.id}) requires a handler registered via ctx.export.registerOutputFormat().`);
       return;
     }
 

@@ -2,7 +2,7 @@
 
 **Status:** Active (M3b)
 **Last updated:** 2026-07-04
-**Scope:** End-to-end architecture of the M3b live binding → deterministic capture → graph-owned keyframe pipeline. Covers live preview vs authoritative export, the frozen four-profile V1 scope, graph-owned keyframe op placement, export safety, and sidecar/process exclusions.
+**Scope:** End-to-end architecture of the M3b live binding → deterministic capture → graph-owned keyframe pipeline. Covers live preview vs planner-owned export readiness, the frozen four-profile V1 scope, graph-owned keyframe op placement, export safety, and sidecar/process exclusions.
 **Related:** [Deterministic Capture Profiles](./deterministic-capture-profiles.md) (detailed profile shapes and validation rules).
 
 ---
@@ -60,9 +60,10 @@ M3b extends the composition spine with a deterministic capture pipeline that bri
 
 ---
 
-## 2. Live preview vs authoritative export
+## 2. Live preview vs planner-owned export readiness
 
-M3b introduces a critical distinction between **live preview** and **authoritative export**:
+M3b introduces a critical distinction between **live preview** and
+**planner-owned export readiness**:
 
 ### 2.1 Live preview (non-blocking)
 
@@ -70,9 +71,14 @@ During editing, live bindings feed real-time data into the preview render. Deter
 
 Live preview diagnostics (e.g., `composition/material-live-only`) are **warnings**, not errors. They inform the user that the current state cannot be exported but allow the editing workflow to continue uninterrupted.
 
-### 2.2 Authoritative export (blocking)
+### 2.2 Export readiness (blocking)
 
-When the user initiates an export, the export guard (`exportGuard.ts`) performs an authoritative scan of all live bindings. Bindings are classified into two export target classes:
+When the user initiates an export, the export guard scanner (`exportGuard.ts`)
+performs a structured scan of all live bindings. The scanner classifies
+bindings into two export target classes, then `buildExportReadinessPlan()` feeds
+that scan payload into `planRender()`. Planner `RenderBlocker` records are the
+canonical user-facing readiness vocabulary; scanner diagnostics are planner
+input and debug metadata.
 
 | Export target class | Examples | Clearing condition |
 |---|---|---|
@@ -84,17 +90,19 @@ When the user initiates an export, the export guard (`exportGuard.ts`) performs 
 - Sidecar-only refs leave the export blocked regardless of how many exist.
 - Malformed capture metadata (missing `captureId`, invalid `provenanceHash`, unknown `profile`, empty `routeConstraints`) is surfaced as a `malformed` resolution status and blocks export.
 - Capture refs missing `browser-export` in `routeConstraints` do not clear the blocker for non-media bindings.
-- All five deterministic capture conversion diagnostic codes are blocking and surface as `export/`-prefixed diagnostics with `live-unbaked` blocker reason.
+- All five deterministic capture conversion diagnostic codes are exported as
+  `export/`-prefixed diagnostic metadata. The planner maps those codes to
+  `live-unbaked` blockers for readiness messaging.
 
 ### 2.3 Bake status propagation
 
-Each live binding carries a bake status that informs the export guard:
+Each live binding carries a bake status that informs the guard scan:
 
 | Status | Behavior |
 |---|---|
 | `unbaked` | No deterministic refs exist; export blocked. |
 | `partial` | Some ranges baked, unresolved ranges remain; export blocked. |
-| `complete` | All ranges baked with valid deterministic refs; export unblocked if refs satisfy authoritative rules (§2.2). |
+| `complete` | All ranges baked with valid deterministic refs; export unblocked if refs satisfy planner-owned readiness rules (§2.2). |
 
 ---
 
@@ -166,22 +174,27 @@ All mutations happen on a deep-cloned copy, and the original input remains uncha
 
 ## 5. Export safety
 
-### 5.1 Authoritative export guard behavior
+### 5.1 Export guard scanner behavior
 
-The export guard (`exportGuard.ts`) performs a three-phase scan:
+The export guard (`exportGuard.ts`) performs a three-phase scan that feeds
+planner readiness:
 
 1. **Live binding scan** — `scanTimelineLiveBindings` (in `timeline-domain.ts`) collects all `TimelineLiveBinding` records from the timeline config.
 2. **Resolution classification** — Each binding is classified as `media-like` or `non-media` based on its source kind and channel type.
-3. **Blocker evaluation** — Bindings are checked against the authoritative clearing rules (§2.2).
+3. **Scanner evaluation** — Bindings are checked against the clearing inputs in
+   §2.2 and emitted as guard-compatible findings/diagnostics.
 
-A binding is **unblocked** only when:
+The planner can clear a binding only when:
 - It has a `complete` bake status (no partial ranges).
 - For media-like bindings: at least one deterministic ref is a durable `asset` or `render-material` with a non-empty ref.
 - For non-media bindings: at least one deterministic ref is a structurally valid `deterministic-capture` ref with `browser-export` in its route constraints.
 
 ### 5.2 Composition graph diagnostics
 
-During export, the composition graph's `diagnostics` array is scanned for blocking target codes. All five deterministic capture conversion codes are blocking:
+During export, the composition graph's `diagnostics` array is scanned for target
+codes. All five deterministic capture conversion codes are carried as
+`export/*` diagnostic metadata and mapped by the planner adapter to
+`live-unbaked` readiness blockers:
 
 | Composition diagnostic | Export diagnostic | Blocker reason |
 |---|---|---|
@@ -195,7 +208,12 @@ Each conversion diagnostic carries `captureRef` and `provenanceHash` detail fiel
 
 ### 5.3 Material vs capture diagnostic separation
 
-Material live-only diagnostics (`composition/material-live-only`, `composition/material-stale`, etc.) are **not** in `BLOCKING_TARGET_COMPOSITION_DIAGNOSTIC_CODES`. They are handled separately through the material diagnostic path and never reach the capture-conversion blocking path. This keeps the two diagnostic categories distinct so that the export guard can differentiate between "this material is live-only" (warning) and "this deterministic capture failed conversion" (error/blocker).
+Material live-only diagnostics (`composition/material-live-only`,
+`composition/material-stale`, etc.) are **not** in
+`BLOCKING_TARGET_COMPOSITION_DIAGNOSTIC_CODES`. They are handled separately
+through the material diagnostic path and never reach the capture-conversion scan
+path. This keeps the two diagnostic categories distinct so that the planner can
+map material and capture issues to the correct readiness blockers.
 
 ---
 
@@ -212,11 +230,21 @@ The live event converter (`liveEventConversion.ts`) is intentionally **pure**:
 
 ### 6.2 Sidecar-only refs
 
-A deterministic ref with `kind: 'sidecar'` is recognized as a valid `TimelineLiveDeterministicRefKind` but **does not clear the authoritative export blocker**. Sidecar refs are metadata sidecars (JSON, CSV, etc.) that accompany the export, not durable artifacts that prove the live data has been baked. The export guard explicitly requires `asset`, `render-material`, or validated `deterministic-capture` refs to clear blockers.
+A deterministic ref with `kind: 'sidecar'` is recognized as a valid
+`TimelineLiveDeterministicRefKind` but **does not clear the planner export
+blocker**. Sidecar refs are metadata sidecars (JSON, CSV, etc.) that accompany
+the export, not durable artifacts that prove the live data has been baked. The
+guard scan requires `asset`, `render-material`, or validated
+`deterministic-capture` refs before the planner can clear blockers.
 
 ### 6.3 Process-dependent posture
 
-Captures with `determinism: 'process-dependent'` are accepted through validation (they carry valid provenance, content hash, and body schema) but their determinism posture signals that the captured values depend on host-process state (e.g., system time, random seed from host entropy). The export guard does **not** currently block on this posture alone — it is metadata for downstream consumers to interpret.
+Captures with `determinism: 'process-dependent'` are accepted through
+validation (they carry valid provenance, content hash, and body schema) but
+their determinism posture signals that the captured values depend on
+host-process state (e.g., system time, random seed from host entropy). The guard
+scan does **not** currently emit a blocker for this posture alone; it is
+metadata for downstream consumers to interpret.
 
 ---
 
@@ -271,7 +299,7 @@ This keeps the SDK surface minimal and portable while allowing the host to evolv
 | `src/tools/video-editor/runtime/liveBake.ts` | Live bake planner with deterministic capture metadata threading |
 | `src/tools/video-editor/runtime/composition/patchPreview.ts` | Graph preview operations, clone-and-apply, event metadata |
 | `src/tools/video-editor/runtime/composition/diagnostics.ts` | Composition diagnostic codes (M3b conversion codes at lines 107–123) |
-| `src/tools/video-editor/runtime/exportGuard.ts` | Authoritative export guard with capture diagnostic surfacing |
+| `src/tools/video-editor/runtime/exportGuard.ts` | Export guard scanner with capture diagnostic metadata for planner readiness |
 | `src/tools/video-editor/lib/timeline-domain.ts` | Live binding resolution, deterministic ref validation, malformed detection |
 | `src/sdk/video/liveData.ts` | Public SDK `LiveBakeTargetKind` with `deterministic-capture` discriminant |
 | `src/sdk/index.ts` | SDK barrel re-export |

@@ -25,6 +25,7 @@ import {
   collectExtensionDeclaredIds,
   scanExportConfig,
 } from '@/tools/video-editor/runtime/exportGuard';
+import { buildExportReadinessPlan } from '@/tools/video-editor/runtime/renderPlanner';
 import { scanTimelineLiveBindings } from '@/tools/video-editor/lib/timeline-domain';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types';
 
@@ -326,13 +327,13 @@ describe('live-webcam-canary extension', () => {
       collectBuiltInKnownIds(),
       collectExtensionDeclaredIds([]),
     );
-    expect(exportScan.hasBlockingErrors).toBe(true);
     expect(exportScan.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({
         severity: 'error',
         code: 'export/live-binding-unresolved',
       }),
     ]));
+    expect(buildExportReadinessPlan({ guard: exportScan }).canBrowserExport).toBe(false);
 
     host.disposeAll();
   });

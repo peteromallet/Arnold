@@ -17,7 +17,10 @@ import {
 } from '@/tools/video-editor/runtime/exportGuard.ts';
 import { normalizeExtensionRuntime } from '@/tools/video-editor/runtime/extensionSurface.ts';
 import { createLiveDataRegistry } from '@/tools/video-editor/runtime/liveDataRegistry.ts';
-import { planRender } from '@/tools/video-editor/runtime/renderPlanner.ts';
+import {
+  buildExportReadinessPlan,
+  planRender,
+} from '@/tools/video-editor/runtime/renderPlanner.ts';
 
 const FLAGSHIP_EXTENSION_ID = 'com.reigh.examples.flagship-local';
 const FLAGSHIP_GLOW_CONTRIBUTION_ID = 'flagship-effect-glow';
@@ -136,7 +139,6 @@ describe('flagship-local M5 effect/live canary', () => {
     const unbakedSnapshot = await roundTripSnapshot(unbakedConfig);
 
     const blockedExport = scanExportConfig(unbakedConfig, builtIn, extensionIds);
-    expect(blockedExport.hasBlockingErrors).toBe(true);
     expect(blockedExport.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({
         code: 'export/live-binding-unresolved',
@@ -150,9 +152,10 @@ describe('flagship-local M5 effect/live canary', () => {
       }),
     ]));
 
-    const blockedPlanner = planRender({
+    const blockedPlanner = buildExportReadinessPlan({
       snapshot: unbakedSnapshot,
       extensionRuntime: runtime,
+      guard: blockedExport,
     });
     expect(blockedPlanner.canBrowserExport).toBe(false);
     expect(blockedPlanner.blockers).toEqual(expect.arrayContaining([
@@ -213,7 +216,6 @@ describe('flagship-local M5 effect/live canary', () => {
       graph,
     );
     expect(clearedExport.diagnostics.filter((diagnostic) => diagnostic.code === 'export/live-binding-unresolved')).toEqual([]);
-    expect(clearedExport.hasBlockingErrors).toBe(false);
 
     const clearedPlanner = planRender({
       snapshot: bakedSnapshot,
@@ -222,5 +224,11 @@ describe('flagship-local M5 effect/live canary', () => {
     });
     expect(clearedPlanner.canBrowserExport).toBe(true);
     expect(clearedPlanner.blockers.filter((blocker) => blocker.reason === 'live-unbaked')).toEqual([]);
+    expect(buildExportReadinessPlan({
+      snapshot: bakedSnapshot,
+      compositionGraph: graph,
+      extensionRuntime: runtime,
+      guard: clearedExport,
+    }).canBrowserExport).toBe(true);
   });
 });

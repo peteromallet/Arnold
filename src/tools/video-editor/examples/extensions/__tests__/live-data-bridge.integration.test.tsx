@@ -43,6 +43,7 @@ import {
   collectExtensionDeclaredIds,
   scanExportConfig,
 } from '@/tools/video-editor/runtime/exportGuard';
+import { buildExportReadinessPlan } from '@/tools/video-editor/runtime/renderPlanner';
 import { scanTimelineLiveBindings } from '@/tools/video-editor/lib/timeline-domain';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types';
 import type {
@@ -441,10 +442,10 @@ describe('M11 live data bridge integration', () => {
       undefined,
       clipTypeSnapshot,
     );
-    expect(blocked.hasBlockingErrors).toBe(true);
     expect(blocked.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'export/live-binding-unresolved' }),
     ]));
+    expect(buildExportReadinessPlan({ guard: blocked }).canBrowserExport).toBe(false);
 
     const clearedConfig = removeLiveBindingsFromResolvedConfig(orphanedConfig, WEBCAM_SOURCE_ID);
     expect(clearedConfig).not.toBeNull();
@@ -457,7 +458,7 @@ describe('M11 live data bridge integration', () => {
       clipTypeSnapshot,
     );
     expect(cleared.diagnostics.filter((diagnostic) => diagnostic.code === 'export/live-binding-unresolved')).toEqual([]);
-    expect(cleared.hasBlockingErrors).toBe(false);
+    expect(buildExportReadinessPlan({ guard: cleared }).canBrowserExport).toBe(true);
 
     host.disposeAll();
   });
@@ -539,8 +540,8 @@ describe('M11 live data bridge integration', () => {
       collectBuiltInKnownIds(),
       collectExtensionDeclaredIds([]),
     );
-    expect(liveGuard.hasBlockingErrors).toBe(true);
     expect(liveGuard.findings.map((finding) => finding.detail?.resolutionStatus)).toContain('active');
+    expect(buildExportReadinessPlan({ guard: liveGuard }).canBrowserExport).toBe(false);
 
     const partial = test.controller.bakeAcceptedTake('generated-int-take-main', 'take-main');
     expect(partial.success).toBe(true);
@@ -562,8 +563,8 @@ describe('M11 live data bridge integration', () => {
       collectBuiltInKnownIds(),
       collectExtensionDeclaredIds([]),
     );
-    expect(partialGuard.hasBlockingErrors).toBe(true);
     expect(partialGuard.findings.map((finding) => finding.detail?.resolutionStatus)).toContain('partiallyBaked');
+    expect(buildExportReadinessPlan({ guard: partialGuard }).canBrowserExport).toBe(false);
 
     const asset = test.controller.bakeAsset('generated-int-full-asset');
     const material = test.controller.bakeRenderMaterial('generated-int-full-material');
@@ -591,7 +592,7 @@ describe('M11 live data bridge integration', () => {
       collectExtensionDeclaredIds([]),
     );
     expect(fullGuard.diagnostics.filter((diagnostic) => diagnostic.code === 'export/live-binding-unresolved')).toEqual([]);
-    expect(fullGuard.hasBlockingErrors).toBe(false);
+    expect(buildExportReadinessPlan({ guard: fullGuard }).canBrowserExport).toBe(true);
 
     test.dispose();
   });

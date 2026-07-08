@@ -19,20 +19,112 @@ import {
   type VideoEditorRuntimeContextValue,
 } from '@/tools/video-editor/contexts/DataProviderContext';
 import { createDiagnosticCollection } from '@reigh/editor-sdk';
+import type { RenderPlannerResult } from '@/tools/video-editor/runtime/renderPlanner';
 
 const mocks = vi.hoisted(() => ({
   startClientRender: vi.fn(),
 }));
 
+const renderPlannerMocks = vi.hoisted(() => ({
+  buildExportReadinessPlan: vi.fn(),
+  planRender: vi.fn(),
+}));
+
+vi.mock('@/tools/video-editor/runtime/renderPlanner', async () => {
+  const actual = await vi.importActual<typeof import('@/tools/video-editor/runtime/renderPlanner')>(
+    '@/tools/video-editor/runtime/renderPlanner',
+  );
+  renderPlannerMocks.buildExportReadinessPlan.mockImplementation(actual.buildExportReadinessPlan);
+  renderPlannerMocks.planRender.mockImplementation(actual.planRender);
+  return {
+    ...actual,
+    buildExportReadinessPlan: renderPlannerMocks.buildExportReadinessPlan,
+    planRender: renderPlannerMocks.planRender,
+  };
+});
+
+function makePlannerResult(blockers: RenderPlannerResult['blockers'] = []): RenderPlannerResult {
+  const routes = ['preview', 'browser-export', 'worker-export', 'sidecar-export'] as const;
+  return {
+    guard: {
+      diagnostics: [],
+      findings: [],
+      blockers,
+      unknownClipTypes: [],
+      unknownEffects: [],
+      unknownTransitions: [],
+      inactiveExtensionIds: {
+        effectIds: new Set(),
+        transitionIds: new Set(),
+        clipTypeIds: new Set(),
+      },
+      hasBlockingErrors: blockers.length > 0,
+    },
+    findings: blockers,
+    blockers,
+    routes: routes.map((route) => ({
+      route,
+      blockerCount: blockers.filter((blocker) => blocker.route === route).length,
+      findingCount: blockers.filter((blocker) => blocker.route === route).length,
+      blocked: blockers.some((blocker) => blocker.route === route),
+    })),
+    routePlans: routes.map((route) => ({
+      route,
+      blockerCount: blockers.filter((blocker) => blocker.route === route).length,
+      findingCount: blockers.filter((blocker) => blocker.route === route).length,
+      blocked: blockers.some((blocker) => blocker.route === route),
+      requiredCapabilities: [],
+      determinism: 'deterministic',
+      blockers: blockers.filter((blocker) => blocker.route === route),
+      diagnostics: blockers.filter((blocker) => blocker.route === route),
+      outputFormatIds: [],
+      processRequirements: [],
+      nextActions: [],
+      artifactCompletion: {
+        status: 'complete',
+        requiredProfiles: [],
+        completeProfiles: [],
+        incompleteProfiles: [],
+        blockedProfiles: [],
+        profiles: [],
+      },
+    })),
+    diagnostics: blockers,
+    nextActions: [],
+    canBrowserExport: !blockers.some((blocker) => blocker.route === 'browser-export'),
+    canWorkerExport: !blockers.some((blocker) => blocker.route === 'worker-export'),
+    canSidecarExport: !blockers.some((blocker) => blocker.route === 'sidecar-export'),
+  };
+}
+
 const renderRouterMocks = vi.hoisted(() => ({
   decideRenderRoute: vi.fn((timeline: ResolvedTimelineConfig | null | undefined) => {
     const clip = timeline?.clips?.[0];
     if (clip?.generation?.sequence_lane === 'remotion_module' && !clip?.generation?.artifact_id) {
+      const message = `Generated remotion_module clip "${clip.id}" is missing artifact metadata.`;
       return {
         route: 'preview-only',
         hasThemedClip: false,
         hasMediaClip: false,
+        hasContributedClip: false,
         reason: 'remotion_module_missing_artifact',
+        planner: {
+          selectedPlannerRoute: 'preview',
+          plannerResult: makePlannerResult([
+            {
+              id: `router.generatedModule.${clip.id}.missingArtifact.preview`,
+              severity: 'error',
+              route: 'preview',
+              reason: 'missing-material',
+              message,
+              clipId: clip.id,
+              detail: {
+                source: 'render-router',
+                legacyReason: 'remotion_module_missing_artifact',
+              },
+            },
+          ]),
+        },
       };
     }
 
@@ -41,7 +133,12 @@ const renderRouterMocks = vi.hoisted(() => ({
         route: 'worker-banodoco',
         hasThemedClip: false,
         hasMediaClip: false,
+        hasContributedClip: false,
         reason: 'generated_remotion_module',
+        planner: {
+          selectedPlannerRoute: 'worker-export',
+          plannerResult: makePlannerResult(),
+        },
       };
     }
 
@@ -49,7 +146,12 @@ const renderRouterMocks = vi.hoisted(() => ({
       route: 'browser-remotion',
       hasThemedClip: false,
       hasMediaClip: true,
+      hasContributedClip: false,
       reason: 'pure_native_clips',
+      planner: {
+        selectedPlannerRoute: 'browser-export',
+        plannerResult: makePlannerResult(),
+      },
     };
   }),
 }));
@@ -582,6 +684,172 @@ describe('useRenderState render routing', () => {
     });
     expect(result.current.renderLog).toBe(plannerDiagnostic?.message);
   });
+
+  it('surfaces generated-module preview blocks from router planner context', async () => {
+    const plannerMessage = 'Planner context says generated module artifact "artifact-missing" is absent.';
+    renderRouterMocks.decideRenderRoute.mockImplementationOnce(() => ({
+      route: 'preview-only',
+      hasThemedClip: false,
+      hasMediaClip: false,
+      hasContributedClip: false,
+      reason: 'remotion_module_missing_artifact',
+      planner: {
+        selectedPlannerRoute: 'preview',
+        plannerResult: makePlannerResult([
+          {
+            id: 'router.generatedModule.clip-module-bad.missingArtifact.preview',
+            severity: 'error',
+            route: 'preview',
+            reason: 'missing-material',
+            message: plannerMessage,
+            clipId: 'clip-module-bad',
+            detail: {
+              source: 'render-router',
+              legacyReason: 'remotion_module_missing_artifact',
+            },
+          },
+        ]),
+      },
+    }));
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({
+        id: 'clip-module-bad',
+        clipType: 'media',
+        track: 'V1',
+        at: 0,
+        hold: 1,
+        generation: {
+          sequence_lane: 'remotion_module',
+        },
+      }),
+      null,
+    ));
+
+    await act(async () => {
+      await result.current.startRender();
+    });
+
+    expect(result.current.renderStatus).toBe('error');
+    expect(result.current.renderLog).toContain(plannerMessage);
+    expect(result.current.renderLog).not.toContain('Render route "remotion_module_missing_artifact" is not exportable.');
+    expect(mocks.startClientRender).not.toHaveBeenCalled();
+  });
+
+  it('uses planner blocker text for worker provider unavailability', async () => {
+    const plannerMessage = 'Planner worker blocker text from route availability.';
+    renderPlannerMocks.planRender.mockReturnValueOnce(makePlannerResult([
+      {
+        id: 'planner.request.worker-export.worker-banodoco.unavailable',
+        severity: 'error',
+        route: 'worker-export',
+        reason: 'process-dependent',
+        message: plannerMessage,
+        detail: {
+          source: 'render-request',
+          routeAvailability: 'unavailable',
+          providerId: 'worker-banodoco',
+        },
+      },
+    ]));
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({
+        id: 'clip-module-good',
+        clipType: 'generated-module',
+        track: 'V1',
+        at: 0,
+        hold: 1,
+        generation: {
+          sequence_lane: 'remotion_module',
+          artifact_id: 'artifact-1',
+        },
+      }),
+      null,
+    ));
+
+    await act(async () => {
+      await result.current.startRender();
+    });
+
+    expect(result.current.renderStatus).toBe('error');
+    expect(result.current.renderLog).toContain(plannerMessage);
+    expect(result.current.renderLog).not.toContain('Render provider unavailable');
+    expect(renderPlannerMocks.planRender).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        route: 'worker-export',
+        routeAvailability: [
+          expect.objectContaining({
+            route: 'worker-export',
+            available: false,
+            providerId: 'worker-banodoco',
+          }),
+        ],
+      }),
+    }));
+    expect(mocks.startClientRender).not.toHaveBeenCalled();
+  });
+
+  it('uses planner blocker text for external provider unavailability', async () => {
+    const plannerMessage = 'Planner sidecar blocker text from route availability.';
+    renderRouterMocks.decideRenderRoute.mockImplementationOnce(() => ({
+      route: 'external',
+      hasThemedClip: false,
+      hasMediaClip: false,
+      hasContributedClip: false,
+      reason: 'external_provider_required',
+      planner: {
+        selectedPlannerRoute: 'sidecar-export',
+        plannerResult: makePlannerResult(),
+      },
+    }));
+    renderPlannerMocks.planRender.mockReturnValueOnce(makePlannerResult([
+      {
+        id: 'planner.request.sidecar-export.external.unavailable',
+        severity: 'error',
+        route: 'sidecar-export',
+        reason: 'route-unsupported',
+        message: plannerMessage,
+        detail: {
+          source: 'render-request',
+          routeAvailability: 'unavailable',
+          providerId: 'external',
+        },
+      },
+    ]));
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({
+        id: 'clip-external',
+        clipType: 'media',
+        track: 'V1',
+        at: 0,
+        hold: 1,
+      }),
+      null,
+    ));
+
+    await act(async () => {
+      await result.current.startRender();
+    });
+
+    expect(result.current.renderStatus).toBe('error');
+    expect(result.current.renderLog).toContain(plannerMessage);
+    expect(result.current.renderLog).not.toContain('Render provider unavailable');
+    expect(renderPlannerMocks.planRender).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        route: 'sidecar-export',
+        routeAvailability: [
+          expect.objectContaining({
+            route: 'sidecar-export',
+            available: false,
+            providerId: 'external',
+          }),
+        ],
+      }),
+    }));
+    expect(mocks.startClientRender).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -836,10 +1104,11 @@ describe('useRenderState export guard', () => {
 
       // Render was blocked
       expect(result.current.renderStatus).toBe('error');
-      expect(result.current.renderLog).toContain('Export guard');
+      expect(result.current.renderLog).toContain('Export readiness blocked by the render planner');
       expect(result.current.renderLog).toContain('alien-format');
       // Native routing was preserved — client render was NOT invoked
       expect(mocks.startClientRender).not.toHaveBeenCalled();
+      expect(renderPlannerMocks.buildExportReadinessPlan).toHaveBeenCalledTimes(1);
     });
 
     it('blocks exporter render too when guard finds blocking errors', async () => {
@@ -897,7 +1166,8 @@ describe('useRenderState export guard', () => {
       });
 
       expect(result.current.renderStatus).toBe('error');
-      expect(result.current.renderLog).toContain('Export guard');
+      expect(result.current.renderLog).toContain('Export readiness blocked by the render planner');
+      expect(result.current.renderLog).toContain('crazy-spin');
       expect(exporter.render).not.toHaveBeenCalled();
     });
 
@@ -965,13 +1235,11 @@ describe('useRenderState export guard', () => {
 
       expect(result.current.renderStatus).toBe('error');
       const log = result.current.renderLog;
-      // Summary line
-      expect(log).toContain('Export guard: 3 issue(s) — 2 error(s), 1 warning(s)');
-      // Error diagnostics shown first
-      expect(log).toContain('[export/unknown-clip-type]');
-      expect(log).toContain('[export/unknown-effect-type]');
-      // Warning still shown
-      expect(log).toContain('[export/unknown-transition-type]');
+      expect(log).toContain('Export readiness blocked by the render planner');
+      expect(log).toContain('[browser-export/missing-contribution]');
+      expect(log).toContain('alien-format');
+      expect(log).toContain('hyperspace');
+      expect(log).not.toContain('star-wipe');
     });
 
     it('publishes export and planner diagnostics to the provider collection during guard execution', async () => {
@@ -1090,6 +1358,70 @@ describe('useRenderState export guard', () => {
       expect(result.current.renderStatus).toBe('error');
       expect(mocks.startClientRender).not.toHaveBeenCalled();
     });
+
+    it('does not use raw guard diagnostic text when planner blockers exist', async () => {
+      const rawGuardMessage = 'RAW GUARD DIAGNOSTIC SHOULD STAY OUT OF THE USER LOG';
+      const plannerMessage = 'Planner blocker says the export contribution is missing.';
+      const extRuntime = makeExtensionRuntime({
+        extensions: [
+          {
+            manifest: {
+              id: 'test-ext' as any,
+              version: '1.0.0',
+              contributions: [],
+            },
+          } as any,
+        ],
+      });
+
+      guardMocks.scanExportConfig.mockReturnValue({
+        ...cleanGuardResult(),
+        diagnostics: [
+          {
+            severity: 'error',
+            code: 'export/unknown-effect-type',
+            message: rawGuardMessage,
+            detail: { clipId: 'c1', effectType: 'raw-effect' },
+          },
+        ],
+        hasBlockingErrors: true,
+      });
+      renderPlannerMocks.buildExportReadinessPlan.mockReturnValueOnce(makePlannerResult([
+        {
+          id: 'planner.compat.effect.browser-export.missing',
+          severity: 'error',
+          route: 'browser-export',
+          reason: 'missing-contribution',
+          message: plannerMessage,
+          detail: {
+            source: 'render-planner',
+            effectType: 'raw-effect',
+          },
+        },
+      ]));
+
+      const { result } = renderHook(() => useRenderState(
+        buildConfig({
+          id: 'c1',
+          clipType: 'media',
+          track: 'V1',
+          at: 0,
+          hold: 1,
+        }),
+        null,
+        null,
+        extRuntime,
+      ));
+
+      await act(async () => {
+        await result.current.startRender();
+      });
+
+      expect(result.current.renderStatus).toBe('error');
+      expect(result.current.renderLog).toContain(plannerMessage);
+      expect(result.current.renderLog).not.toContain(rawGuardMessage);
+      expect(mocks.startClientRender).not.toHaveBeenCalled();
+    });
   });
 
   describe('export guard — warnings only (preserve native routing)', () => {
@@ -1151,10 +1483,7 @@ describe('useRenderState export guard', () => {
 
       // Native routing preserved — client render invoked
       expect(mocks.startClientRender).toHaveBeenCalledTimes(1);
-      // But diagnostics are still emitted in the render log
-      expect(result.current.renderLog).toContain('Export guard');
-      expect(result.current.renderLog).toContain('future-transition');
-      expect(result.current.renderLog).toContain('warning');
+      expect(result.current.renderLog).toBe('');
     });
 
     it('allows render when guard finds no issues at all', async () => {
@@ -1201,7 +1530,7 @@ describe('useRenderState export guard', () => {
       });
 
       expect(mocks.startClientRender).toHaveBeenCalledTimes(1);
-      expect(result.current.renderLog).toContain('Export guard: no issues found.');
+      expect(result.current.renderLog).toBe('');
     });
   });
 
@@ -1256,9 +1585,7 @@ describe('useRenderState export guard', () => {
       // Guard passed but preview-only blocked it — native routing preserved
       expect(result.current.renderStatus).toBe('error');
       expect(result.current.renderLog).toContain('Render blocked');
-      expect(result.current.renderLog).toContain('remotion_module_missing_artifact');
-      // But guard log was set first (then overwritten by the route block)
-      // The route block's log takes precedence
+      expect(result.current.renderLog).toContain('missing artifact metadata');
       expect(mocks.startClientRender).not.toHaveBeenCalled();
     });
 
@@ -1519,7 +1846,7 @@ describe('useRenderState export guard', () => {
       expect(mocks.startClientRender).not.toHaveBeenCalled();
       expect(result.current.renderStatus).toBe('error');
       expect(result.current.renderLog).toContain('Render blocked');
-      expect(result.current.renderLog).toContain('remotion_module_missing_artifact');
+      expect(result.current.renderLog).toContain('missing artifact metadata');
     });
   });
 
@@ -1586,7 +1913,7 @@ describe('useRenderState export guard', () => {
       });
 
       expect(result.current.renderStatus).toBe('idle');
-      expect(result.current.renderLog).toContain('Export guard: no issues found.');
+      expect(result.current.renderLog).toBe('');
       expect(mocks.startClientRender).toHaveBeenCalledTimes(1);
     });
 
@@ -1654,7 +1981,7 @@ describe('useRenderState export guard', () => {
 
       // Blocked because the effect is not declared by any extension and not built-in
       expect(result.current.renderStatus).toBe('error');
-      expect(result.current.renderLog).toContain('Export guard');
+      expect(result.current.renderLog).toContain('Export readiness blocked by the render planner');
       expect(result.current.renderLog).toContain('missing-effect');
       expect(mocks.startClientRender).not.toHaveBeenCalled();
     });
@@ -1723,9 +2050,7 @@ describe('useRenderState export guard', () => {
 
       // Not blocked — warning only, routing preserved
       expect(result.current.renderStatus).toBe('idle');
-      expect(result.current.renderLog).toContain('Export guard');
-      expect(result.current.renderLog).toContain('future-effect');
-      expect(result.current.renderLog).toContain('warning');
+      expect(result.current.renderLog).toBe('');
       expect(mocks.startClientRender).toHaveBeenCalledTimes(1);
     });
 
@@ -1809,10 +2134,7 @@ describe('useRenderState export guard', () => {
       // Guard invoked (extensions present), warnings emitted, routing preserved
       expect(guardMocks.scanExportConfig).toHaveBeenCalledTimes(1);
       expect(result.current.renderStatus).toBe('idle');
-      expect(result.current.renderLog).toContain('Export guard');
-      expect(result.current.renderLog).toContain('custom-fx');
-      expect(result.current.renderLog).toContain('custom-transition');
-      expect(result.current.renderLog).toContain('warning');
+      expect(result.current.renderLog).toBe('');
       expect(mocks.startClientRender).toHaveBeenCalledTimes(1);
     });
   });
@@ -1906,7 +2228,7 @@ describe('useRenderState export guard', () => {
       expect(firstSnapshot.records).toHaveLength(0);
       expect(secondSnapshot.has('late-provider-effect')).toBe(true);
       expect(secondSnapshot.records).toHaveLength(1);
-      expect(result.current.renderLog).toContain('Export guard: no issues found.');
+      expect(result.current.renderLog).toBe('');
       expect(mocks.startClientRender).toHaveBeenCalledTimes(1);
     });
   });
@@ -2122,6 +2444,72 @@ describe('useRenderState — M6 export behavior', () => {
 
     expect(result.current.exportStatus).toBe('error');
     expect(result.current.exportLog).toContain('no compile-only output handlers registered');
+    expect(exportMocks.executeCompileOnlyOutput).not.toHaveBeenCalled();
+  });
+
+  it('surfaces compile-only missing-handler planner text before guard or execution', async () => {
+    const plannerMessage = 'Planner compile-only blocker text before execution.';
+    renderPlannerMocks.planRender.mockReturnValueOnce(makePlannerResult([
+      {
+        id: 'planner.outputFormat.ext-a.fmt-json.browser-export.compile-handler-missing',
+        severity: 'error',
+        route: 'browser-export',
+        reason: 'missing-contribution',
+        message: plannerMessage,
+        extensionId: 'ext-a',
+        contributionId: 'fmt-json',
+        detail: {
+          source: 'render-request',
+          outputFormatId: 'fmt-json',
+          requestedRoute: 'browser-export',
+          compileOnlyHandlerAvailable: false,
+        },
+      },
+    ]));
+    guardMocks.scanExportConfig.mockImplementation(() => {
+      throw new Error('guard should not run before compile-only handler availability blocks');
+    });
+    const extRuntime = makeExtensionRuntime({
+      extensions: [
+        {
+          manifest: {
+            id: 'test-ext' as any,
+            version: '1.0.0',
+            contributions: [],
+          },
+        } as any,
+      ],
+      config: {
+        slots: {},
+        dialogHost: { dialogs: [] },
+        registry: { panels: [], inspectorSections: [] },
+        outputFormats: [
+          { id: 'fmt-json', extensionId: 'ext-a', label: 'JSON', requiresRender: false, outputExtension: 'json', disabled: false },
+        ],
+      } as any,
+    });
+
+    const { result } = renderHook(() => useRenderState(
+      buildConfig({ id: 'c1', clipType: 'media', track: 'V1', at: 0, hold: 1 }),
+      null,
+      null,
+      extRuntime,
+    ));
+
+    await act(async () => {
+      await result.current.startExport('fmt-json', new Map());
+    });
+
+    expect(result.current.exportStatus).toBe('error');
+    expect(result.current.exportLog).toContain(plannerMessage);
+    expect(renderPlannerMocks.planRender).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        outputFormatId: 'fmt-json',
+        routes: ['browser-export'],
+        compileOnlyHandlerAvailable: false,
+      }),
+    }));
+    expect(guardMocks.scanExportConfig).not.toHaveBeenCalled();
     expect(exportMocks.executeCompileOnlyOutput).not.toHaveBeenCalled();
   });
 
@@ -2583,7 +2971,7 @@ describe('useRenderState — M6 export behavior', () => {
 
     // Render was blocked by guard despite having export formats
     expect(result.current.renderStatus).toBe('error');
-    expect(result.current.renderLog).toContain('Export guard');
+    expect(result.current.renderLog).toContain('Export readiness blocked by the render planner');
     expect(result.current.renderLog).toContain('alien-format');
     expect(mocks.startClientRender).not.toHaveBeenCalled();
   });
@@ -2773,9 +3161,9 @@ describe('useRenderState export guard — clip-type registry snapshot', () => {
     });
 
     expect(result.current.renderStatus).toBe('error');
-    expect(result.current.renderLog).toContain('Export guard');
+    expect(result.current.renderLog).toContain('Export readiness blocked by the render planner');
     expect(result.current.renderLog).toContain('stale-clip-type');
-    expect(result.current.renderLog).toContain('export/unrenderable-clip-type');
+    expect(result.current.renderLog).toContain('route-unsupported');
     expect(result.current.renderLog).toContain('inactive');
     expect(mocks.startClientRender).not.toHaveBeenCalled();
   });
@@ -2825,9 +3213,7 @@ describe('useRenderState export guard — clip-type registry snapshot', () => {
 
     // Warning only — native routing preserved
     expect(mocks.startClientRender).toHaveBeenCalledTimes(1);
-    expect(result.current.renderLog).toContain('Export guard');
-    expect(result.current.renderLog).toContain('future-clip');
-    expect(result.current.renderLog).toContain('warning');
+    expect(result.current.renderLog).toBe('');
   });
 
   it('publishes clip-type diagnostics to the provider collection', async () => {

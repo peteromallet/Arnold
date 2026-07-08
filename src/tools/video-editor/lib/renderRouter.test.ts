@@ -10,6 +10,25 @@ import {
 } from '@/tools/video-editor/lib/renderRouter';
 import { executeRenderPipeline } from '@/tools/video-editor/render/renderPipeline';
 
+function expectPlannerBlocker(
+  blockers: readonly unknown[],
+  expected: {
+    readonly id: string;
+    readonly route: string;
+    readonly reason: string;
+    readonly message: string;
+    readonly detail: Readonly<Record<string, unknown>>;
+  },
+): void {
+  expect(blockers).toContainEqual(expect.objectContaining({
+    id: expected.id,
+    route: expected.route,
+    reason: expected.reason,
+    message: expected.message,
+    detail: expect.objectContaining(expected.detail),
+  }));
+}
+
 describe('Sprint 8 render-button router (decideRenderRoute)', () => {
   it('routes a pure-media timeline to the client renderer', () => {
     const decision = decideRenderRoute({
@@ -148,24 +167,64 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
       route: 'preview-only',
       reason: 'remotion_module_missing_artifact',
     });
-    expect(missingArtifact.planner.selectedPlannerRoute).toBe('sidecar-export');
+    expect(missingArtifact.planner.selectedPlannerRoute).toBe('preview');
     expect(missingArtifact.planner.plannerResult.canBrowserExport).toBe(false);
     expect(missingArtifact.planner.plannerResult.canWorkerExport).toBe(false);
-    expect(missingArtifact.planner.plannerResult.canSidecarExport).toBe(true);
+    expect(missingArtifact.planner.plannerResult.canSidecarExport).toBe(false);
+    const missingArtifactMessage = 'Clip type "media" cannot be rendered until remotion_module_missing_artifact is resolved.';
+    expectPlannerBlocker(missingArtifact.planner.plannerResult.blockers, {
+      id: 'router.clip.0.media.browser-export.browser-export.missing-material',
+      route: 'browser-export',
+      reason: 'missing-material',
+      message: missingArtifactMessage,
+      detail: {
+        source: 'render-router',
+        clipType: 'media',
+        legacyReason: 'remotion_module_missing_artifact',
+      },
+    });
+    expectPlannerBlocker(missingArtifact.planner.plannerResult.blockers, {
+      id: 'router.clip.0.media.worker-export.worker-export.missing-material',
+      route: 'worker-export',
+      reason: 'missing-material',
+      message: missingArtifactMessage,
+      detail: {
+        source: 'render-router',
+        clipType: 'media',
+        legacyReason: 'remotion_module_missing_artifact',
+      },
+    });
+    expectPlannerBlocker(missingArtifact.planner.plannerResult.blockers, {
+      id: 'router.clip.0.media.sidecar-export.sidecar-export.missing-material',
+      route: 'sidecar-export',
+      reason: 'missing-material',
+      message: missingArtifactMessage,
+      detail: {
+        source: 'render-router',
+        clipType: 'media',
+        legacyReason: 'remotion_module_missing_artifact',
+      },
+    });
 
-    expect(decideRenderRoute({
+    const emptyArtifact = decideRenderRoute({
       clips: [{ clipType: 'image-jump', generation: { sequence_lane: 'remotion_module', artifact_id: '' } }],
-    })).toMatchObject({
+    });
+    expect(emptyArtifact).toMatchObject({
       route: 'preview-only',
       reason: 'remotion_module_invalid_artifact',
     });
+    expect(emptyArtifact.planner.selectedPlannerRoute).toBe('preview');
+    expect(emptyArtifact.planner.plannerResult.canSidecarExport).toBe(false);
 
-    expect(decideRenderRoute({
+    const nonStringArtifact = decideRenderRoute({
       clips: [{ clipType: 'unknown', generation: { sequence_lane: 'remotion_module', artifact_id: 42 } }],
-    })).toMatchObject({
+    });
+    expect(nonStringArtifact).toMatchObject({
       route: 'preview-only',
       reason: 'remotion_module_invalid_artifact',
     });
+    expect(nonStringArtifact.planner.selectedPlannerRoute).toBe('preview');
+    expect(nonStringArtifact.planner.plannerResult.canSidecarExport).toBe(false);
   });
 
   it('does not treat non-module generation lanes as generated Remotion modules', () => {
@@ -194,16 +253,16 @@ describe('Sprint 8 render-button router (decideRenderRoute)', () => {
 // ---------------------------------------------------------------------------
 
 describe('M7b T2 sidecar-export route selection', () => {
-  it('selects sidecar-export in selectPlannerRoute when browser and worker are blocked but sidecar is unblocked', () => {
-    // Blocked remotion_module blocks browser + worker but not sidecar.
+  it('selects preview when a router-generated hard blocker blocks all export routes', () => {
+    // Blocked remotion_module artifact metadata is a hard router-fed
+    // planner blocker: browser, worker, and sidecar are all unavailable.
     const decision = decideRenderRoute({
       clips: [{ clipType: 'media', generation: { sequence_lane: 'remotion_module' } }],
     });
-    expect(decision.planner.selectedPlannerRoute).toBe('sidecar-export');
+    expect(decision.planner.selectedPlannerRoute).toBe('preview');
     expect(decision.planner.plannerResult.canBrowserExport).toBe(false);
     expect(decision.planner.plannerResult.canWorkerExport).toBe(false);
-    expect(decision.planner.plannerResult.canSidecarExport).toBe(true);
-    // Clip-level block still forces preview-only for the UI route.
+    expect(decision.planner.plannerResult.canSidecarExport).toBe(false);
     expect(decision.route).toBe('preview-only');
   });
 
@@ -282,9 +341,7 @@ describe('M7b T2 sidecar-export route selection', () => {
     expect(decision.planner.plannerResult.canWorkerExport).toBe(false);
     expect(decision.planner.plannerResult.canSidecarExport).toBe(false);
     expect(decision.planner.selectedPlannerRoute).toBe('preview');
-    // Native media clips → browser-remotion is the clip logic fallback,
-    // but when all routes are blocked, the planner context shows preview.
-    expect(decision.route).toBe('browser-remotion');
+    expect(decision.route).toBe('preview-only');
   });
 
   it('maps sidecar-export planner route to external for native clips with browser/worker blocked', () => {
@@ -440,6 +497,45 @@ describe('M9 T11 contributed clip routing (decideRenderRoute)', () => {
     expect(decision.route).toBe('preview-only');
     expect(decision.hasContributedClip).toBe(true);
     expect(decision.reason).toBe('contributed_blocked_no_browser_capability');
+    expect(decision.planner.selectedPlannerRoute).toBe('preview');
+    expect(decision.planner.plannerResult.canBrowserExport).toBe(false);
+    expect(decision.planner.plannerResult.canWorkerExport).toBe(false);
+    expect(decision.planner.plannerResult.canSidecarExport).toBe(false);
+
+    const message = 'Clip type "ext-preview-only" cannot be rendered until contributed_blocked_no_browser_capability is resolved.';
+    expectPlannerBlocker(decision.planner.plannerResult.blockers, {
+      id: 'router.clip.0.ext-preview-only.browser-export.browser-export.route-unsupported',
+      route: 'browser-export',
+      reason: 'route-unsupported',
+      message,
+      detail: {
+        source: 'render-router',
+        clipType: 'ext-preview-only',
+        legacyReason: 'contributed_blocked_no_browser_capability',
+      },
+    });
+    expectPlannerBlocker(decision.planner.plannerResult.blockers, {
+      id: 'router.clip.0.ext-preview-only.worker-export.worker-export.route-unsupported',
+      route: 'worker-export',
+      reason: 'route-unsupported',
+      message,
+      detail: {
+        source: 'render-router',
+        clipType: 'ext-preview-only',
+        legacyReason: 'contributed_blocked_no_browser_capability',
+      },
+    });
+    expectPlannerBlocker(decision.planner.plannerResult.blockers, {
+      id: 'router.clip.0.ext-preview-only.sidecar-export.sidecar-export.route-unsupported',
+      route: 'sidecar-export',
+      reason: 'route-unsupported',
+      message,
+      detail: {
+        source: 'render-router',
+        clipType: 'ext-preview-only',
+        legacyReason: 'contributed_blocked_no_browser_capability',
+      },
+    });
   });
 
   it('blocks a contributed clip with only worker-export capability (worker routes blocked for contributed code)', () => {
@@ -450,6 +546,8 @@ describe('M9 T11 contributed clip routing (decideRenderRoute)', () => {
     expect(decision.route).toBe('preview-only');
     expect(decision.hasContributedClip).toBe(true);
     expect(decision.reason).toBe('contributed_blocked_no_browser_capability');
+    expect(decision.planner.selectedPlannerRoute).toBe('preview');
+    expect(decision.planner.plannerResult.canSidecarExport).toBe(false);
   });
 
   it('blocks a contributed clip with no capabilities at all', () => {
@@ -460,6 +558,8 @@ describe('M9 T11 contributed clip routing (decideRenderRoute)', () => {
     expect(decision.route).toBe('preview-only');
     expect(decision.hasContributedClip).toBe(true);
     expect(decision.reason).toBe('contributed_blocked_no_browser_capability');
+    expect(decision.planner.selectedPlannerRoute).toBe('preview');
+    expect(decision.planner.plannerResult.canSidecarExport).toBe(false);
   });
 
   it('blocks mixed contributed (browser-capable) + themed clips due to worker route conflict', () => {
@@ -476,6 +576,34 @@ describe('M9 T11 contributed clip routing (decideRenderRoute)', () => {
     expect(decision.hasContributedClip).toBe(true);
     expect(decision.hasThemedClip).toBe(true);
     expect(decision.reason).toBe('contributed_blocked_worker_route_conflict');
+    expect(decision.planner.selectedPlannerRoute).toBe('preview');
+    expect(decision.planner.plannerResult.canBrowserExport).toBe(false);
+    expect(decision.planner.plannerResult.canWorkerExport).toBe(false);
+    expect(decision.planner.plannerResult.canSidecarExport).toBe(false);
+
+    const message = 'Clip type "image-jump" cannot be rendered until contributed_blocked_worker_route_conflict is resolved.';
+    expectPlannerBlocker(decision.planner.plannerResult.blockers, {
+      id: 'router.clip.1.image-jump.browser-export.browser-export.route-unsupported',
+      route: 'browser-export',
+      reason: 'route-unsupported',
+      message,
+      detail: {
+        source: 'render-router',
+        clipType: 'image-jump',
+        legacyReason: 'contributed_blocked_worker_route_conflict',
+      },
+    });
+    expectPlannerBlocker(decision.planner.plannerResult.blockers, {
+      id: 'router.clip.1.image-jump.sidecar-export.sidecar-export.route-unsupported',
+      route: 'sidecar-export',
+      reason: 'route-unsupported',
+      message,
+      detail: {
+        source: 'render-router',
+        clipType: 'image-jump',
+        legacyReason: 'contributed_blocked_worker_route_conflict',
+      },
+    });
   });
 
   it('blocks contributed clip mixed with generated remotion module due to worker route conflict', () => {
@@ -497,6 +625,34 @@ describe('M9 T11 contributed clip routing (decideRenderRoute)', () => {
     expect(decision.route).toBe('preview-only');
     expect(decision.hasContributedClip).toBe(true);
     expect(decision.reason).toBe('contributed_blocked_worker_route_conflict');
+    expect(decision.planner.selectedPlannerRoute).toBe('preview');
+    expect(decision.planner.plannerResult.canBrowserExport).toBe(false);
+    expect(decision.planner.plannerResult.canWorkerExport).toBe(false);
+    expect(decision.planner.plannerResult.canSidecarExport).toBe(false);
+
+    const message = 'Clip type "generated-remotion-module" cannot be rendered until contributed_blocked_worker_route_conflict is resolved.';
+    expectPlannerBlocker(decision.planner.plannerResult.blockers, {
+      id: 'router.generated.contributed-conflict.browser-export.browser-export.route-unsupported',
+      route: 'browser-export',
+      reason: 'route-unsupported',
+      message,
+      detail: {
+        source: 'render-router',
+        clipType: 'generated-remotion-module',
+        legacyReason: 'contributed_blocked_worker_route_conflict',
+      },
+    });
+    expectPlannerBlocker(decision.planner.plannerResult.blockers, {
+      id: 'router.generated.contributed-conflict.sidecar-export.sidecar-export.route-unsupported',
+      route: 'sidecar-export',
+      reason: 'route-unsupported',
+      message,
+      detail: {
+        source: 'render-router',
+        clipType: 'generated-remotion-module',
+        legacyReason: 'contributed_blocked_worker_route_conflict',
+      },
+    });
   });
 
   it('multiple browser-capable contributed clips all route to browser-remotion', () => {
@@ -572,6 +728,8 @@ describe('M9 T11 contributed clip routing (decideRenderRoute)', () => {
     expect(decision.route).toBe('preview-only');
     expect(decision.hasContributedClip).toBe(true);
     expect(decision.reason).toBe('contributed_blocked_no_browser_capability');
+    expect(decision.planner.selectedPlannerRoute).toBe('preview');
+    expect(decision.planner.plannerResult.canSidecarExport).toBe(false);
   });
 
   it('no_clips decision reports hasContributedClip false', () => {
@@ -593,6 +751,8 @@ describe('M9 T11 contributed clip routing (decideRenderRoute)', () => {
     );
     expect(decision.route).toBe('preview-only');
     expect(decision.reason).toBe('remotion_module_missing_artifact');
+    expect(decision.planner.selectedPlannerRoute).toBe('preview');
+    expect(decision.planner.plannerResult.canSidecarExport).toBe(false);
   });
 });
 

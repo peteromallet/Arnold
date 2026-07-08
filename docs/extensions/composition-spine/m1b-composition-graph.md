@@ -27,7 +27,7 @@ M1b owns **only** `consumes` edges and shader/ref authority:
 | Composition diagnostics | Canonical `composition/` diagnostic codes with structured detail fields. |
 | Graph preview | Internal `shader.assign` and `shader.remove` preview operations. |
 | Graph-first planner authority | `planRender` derives shader facts from graph nodes/edges/reference states. |
-| Graph-first export authority | `scanExportConfig` derives shader blockers from graph-resolved facts. |
+| Graph-first export scan input | `scanExportConfig` derives guard scanner findings from graph-resolved facts and feeds them to planner readiness; `planRender` remains the final export-readiness reducer. |
 | Graph-first shader validation | `validateShaderComposition` derives projected shaders from graph edges. |
 
 ### Legacy Inputs Are Compatibility Sources
@@ -208,13 +208,18 @@ When a `CompositionGraph` is present in `planRender` input:
 - Legacy snapshot shader refs are **ignored**.
 - Graph-absent callers emit a compatibility warning.
 
-### Export Guard (`exportGuard.ts`)
+### Export Guard Scanner (`exportGuard.ts`)
 
 When a `CompositionGraph` is present:
-- `scanExportConfig` derives shader blockers from `validateShaderComposition` with
-  graph input.
+- `scanExportConfig` derives guard-compatible scanner findings from
+  `validateShaderComposition` with graph input.
 - Legacy timeline shader metadata is **not** read.
 - Graph-absent callers emit a compatibility warning.
+- The scan payload is planner input. `buildExportReadinessPlan()` adapts it into
+  `planRender()`, and planner `RenderBlocker` records are the canonical
+  user-facing readiness vocabulary.
+- Any `export/*` diagnostic code emitted by the scanner is retained as
+  diagnostic metadata, not as independent readiness authority.
 
 ### Shader Validation (`shaderValidation.ts`)
 
@@ -235,7 +240,8 @@ When a `CompositionGraph` is present:
 ### Production Hook (`useRenderState.ts`)
 
 - `extensionRuntime.compositionGraph` is passed to `planRender`, `scanExportConfig`,
-  and `hasTimelineShaderMetadata` calls.
+  and `hasTimelineShaderMetadata` calls. Guard scans remain scanner inputs;
+  blocked readiness text is sourced from planner blockers.
 - Graph propagation is the only change; all other hook behavior is preserved.
 
 ## SDK Exports
@@ -273,8 +279,9 @@ M1b enforces the following guardrails:
    internal graph preview operations, not SDK exports.
 
 4. **No graph authority bypass.** When `compositionGraph` is present, planner,
-   export guard, and shader validation do not fall back to legacy fields for
-   M1b-owned facts.
+   export guard scanning, and shader validation do not fall back to legacy fields
+   for M1b-owned facts. Guard scanner output is then reduced through planner
+   blockers before it becomes user-facing readiness.
 
 5. **No legacy authority leak.** Legacy descriptor arrays are graph-derived
    when a graph is present; they are not a second authority pathway.

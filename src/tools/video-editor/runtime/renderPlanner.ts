@@ -13,6 +13,7 @@ import {
   RENDER_ROUTES,
   type TimelineSnapshot,
   type TimelineShaderSummary,
+  type ExportDiagnostic,
   getCapabilityRequirements,
 } from '@reigh/editor-sdk';
 import type { ProcessStatus } from '@/sdk/video/families/processes';
@@ -69,6 +70,17 @@ export interface RenderPlannerRequest {
   readonly routes?: readonly RenderRoute[];
   readonly outputFormatId?: string;
   readonly requiredCapabilities?: readonly string[];
+  readonly compileOnlyHandlerAvailable?: boolean;
+  readonly routeAvailability?: readonly RenderPlannerRouteAvailability[];
+}
+
+export interface RenderPlannerRouteAvailability {
+  readonly route: RenderRoute;
+  readonly available: boolean;
+  readonly providerId?: string;
+  readonly reason?: RenderBlockerReason;
+  readonly message?: string;
+  readonly detail?: Readonly<Record<string, unknown>>;
 }
 
 export type RenderPlannerMaterialState = RenderMaterialStatusState;
@@ -93,6 +105,23 @@ export interface RenderPlannerInput {
   readonly materialRuntime?: HostMaterialRuntimeProjection;
   readonly request?: RenderPlannerRequest;
   readonly diagnostics?: readonly CapabilityFinding[];
+}
+
+export type RenderPlannerGuardDiagnosticInput = CapabilityFinding | ExportDiagnostic;
+
+export interface RenderPlannerGuardScanPayload {
+  readonly diagnostics?: readonly RenderPlannerGuardDiagnosticInput[];
+  readonly findings?: readonly CapabilityFinding[];
+  readonly blockers?: readonly RenderBlocker[];
+  readonly unknownClipTypes?: readonly string[];
+  readonly unknownEffects?: readonly string[];
+  readonly unknownTransitions?: readonly string[];
+  readonly inactiveExtensionIds?: RenderPlannerGuardCompatibility['inactiveExtensionIds'];
+  readonly hasBlockingErrors?: boolean;
+}
+
+export interface ExportReadinessPlannerInput extends RenderPlannerInput {
+  readonly guard?: RenderPlannerGuardScanPayload | null;
 }
 
 export interface RenderRouteSummary {
@@ -216,6 +245,12 @@ const GRAPH_PLANNER_ROUTES = [
   'worker-export',
 ] as const satisfies readonly RenderRoute[];
 
+const EXPORT_BLOCKING_ROUTES = [
+  'browser-export',
+  'worker-export',
+  'sidecar-export',
+] as const satisfies readonly RenderRoute[];
+
 const LEGACY_GRAPH_COMPATIBILITY_BLOCKER_ID = 'planner.compositionGraph.legacy-shader-ref-compatibility';
 
 const PROCESS_NON_DEGRADED_CAPABILITY_IDS = new Set([
@@ -226,6 +261,46 @@ const PROCESS_NON_DEGRADED_CAPABILITY_IDS = new Set([
 const TRUSTED_LOCAL_PROCESS_PROTOCOLS = new Set<VideoEditorProcessDescriptor['protocol']>([
   'stdio-jsonrpc',
 ]);
+
+const EXPORT_DIAGNOSTIC_REASON_BY_CODE = Object.freeze({
+  'export/unknown-clip-type': 'missing-contribution',
+  'export/unknown-effect-type': 'missing-contribution',
+  'export/unknown-transition-type': 'missing-contribution',
+  'export/unrenderable-clip-type': 'route-unsupported',
+  'export/unrenderable-effect': 'route-unsupported',
+  'export/unrenderable-transition': 'route-unsupported',
+  'export/unrenderable-shader': 'missing-material',
+  'export/missing-shader-materializer': 'missing-material',
+  'export/shader-no-materializer': 'missing-material',
+  'export/live-binding-unresolved': 'live-unbaked',
+  'export/unknown-route-support': 'unknown',
+  'export/missing-extension': 'missing-contribution',
+  'export/effect-preview-only': 'preview-only',
+  'export/preview-only': 'preview-only',
+  'export/route-unsupported': 'route-unsupported',
+  'export/unresolved-ref': 'unknown',
+  'export/effect-unresolved-ref': 'unknown',
+  'export/transition-unresolved-ref': 'unknown',
+  'export/invalid-target-path': 'unknown',
+  'export/unsupported-reserved-target': 'inactive-extension',
+  'export/unknown-target-ref': 'missing-contribution',
+  'export/unknown-uniform': 'unknown',
+  'export/non-bindable-target': 'unknown',
+  'export/target-value-type-error': 'unknown',
+  'export/target-interpolation-gap': 'unknown',
+  'export/deterministic-capture-conversion-failed': 'live-unbaked',
+  'export/deterministic-capture-target-path-unresolvable': 'live-unbaked',
+  'export/deterministic-capture-value-normalization-failed': 'live-unbaked',
+  'export/deterministic-capture-timing-failed': 'live-unbaked',
+  'export/deterministic-capture-provenance-mismatch': 'live-unbaked',
+} satisfies Partial<Record<ExportDiagnostic['code'], RenderBlockerReason>>);
+
+// M3 export-readiness category audit:
+// Existing planner-owned paths: missing output formats, route-unsupported output
+// formats, process dependency states, shader/material blockers, and live-binding
+// blockers. Missing/normalized inputs still needed: disabled formats,
+// request-scoped compile handler absence, worker/provider availability, and
+// unknown contribution IDs.
 
 const DETERMINISM_RANK: Record<DeterminismStatus, number> = {
   deterministic: 0,
@@ -1260,6 +1335,47 @@ function collectRequestCapabilities(acc: PlanAccumulator, request: RenderPlanner
   }
 }
 
+function requestedAvailabilityApplies(
+  request: RenderPlannerRequest | undefined,
+  route: RenderRoute,
+): boolean {
+  const routes = requestedRoutes(request);
+  return routes.length === 0 || routes.includes(route);
+}
+
+function collectRequestRouteAvailability(
+  acc: PlanAccumulator,
+  request: RenderPlannerRequest | undefined,
+): void {
+  if (!request?.routeAvailability?.length) return;
+
+  for (const availability of request.routeAvailability) {
+    if (availability.available || !requestedAvailabilityApplies(request, availability.route)) {
+      continue;
+    }
+    const reason = availability.reason ?? (
+      availability.route === 'worker-export' ? 'process-dependent' : 'route-unsupported'
+    );
+    const blocker: RenderBlocker = {
+      id: `planner.request.${availability.route}.${availability.providerId ?? 'provider'}.unavailable`,
+      severity: 'error',
+      route: availability.route,
+      reason,
+      message: availability.message
+        ?? `Render provider "${availability.providerId ?? availability.route}" is unavailable for ${availability.route}.`,
+      detail: {
+        source: 'render-request',
+        routeAvailability: 'unavailable',
+        providerId: availability.providerId,
+        requestedRoute: availability.route,
+        ...(availability.detail ?? {}),
+      },
+    };
+    acc.findings.push(blocker);
+    acc.blockers.push(blocker);
+  }
+}
+
 function descriptorBlockerToFinding(
   blocker: VideoEditorPlannerBlockerDescriptor,
   fallbackRoute: RenderRoute,
@@ -2082,6 +2198,71 @@ function collectRequestedOutputRouteSupport(
   }
 }
 
+function collectRequestedOutputAvailability(
+  acc: PlanAccumulator,
+  outputFormat: VideoEditorOutputFormatDescriptor | undefined,
+  request: RenderPlannerRequest | undefined,
+): void {
+  if (!outputFormat || request?.outputFormatId !== outputFormat.id) return;
+  const routes = requestedRoutes(request);
+  const targetRoutes = routes.length > 0
+    ? routes
+    : (outputFormat.availableRoutes.length > 0
+      ? canonicalRenderRoutes(outputFormat.availableRoutes)
+      : (['browser-export'] as const));
+
+  if (outputFormat.disabled) {
+    for (const route of targetRoutes) {
+      const blocker: RenderBlocker = {
+        id: `planner.outputFormat.${outputFormat.extensionId}.${outputFormat.id}.${route}.disabled`,
+        severity: 'error',
+        route,
+        reason: 'inactive-extension',
+        message: outputFormat.disabledReason ?? `Output format "${outputFormat.label}" is disabled.`,
+        extensionId: outputFormat.extensionId,
+        contributionId: outputFormat.id,
+        detail: {
+          source: 'render-request',
+          outputFormatId: outputFormat.id,
+          requestedRoute: route,
+          disabled: true,
+        },
+      };
+      acc.findings.push(blocker);
+      acc.blockers.push(blocker);
+    }
+    return;
+  }
+
+  if (
+    outputFormat.requiresRender
+    || request?.compileOnlyHandlerAvailable !== false
+  ) {
+    return;
+  }
+
+  for (const route of targetRoutes) {
+    const blocker: RenderBlocker = {
+      id: `planner.outputFormat.${outputFormat.extensionId}.${outputFormat.id}.${route}.compile-handler-missing`,
+      severity: 'error',
+      route,
+      reason: 'missing-contribution',
+      message:
+        `Export format "${outputFormat.label}" has no compile-only output handlers registered.`,
+      extensionId: outputFormat.extensionId,
+      contributionId: outputFormat.id,
+      detail: {
+        source: 'render-request',
+        outputFormatId: outputFormat.id,
+        requestedRoute: route,
+        compileOnlyHandlerAvailable: false,
+      },
+    };
+    acc.findings.push(blocker);
+    acc.blockers.push(blocker);
+  }
+}
+
 function collectProcess(
   acc: PlanAccumulator,
   process: VideoEditorProcessDescriptor,
@@ -2503,6 +2684,142 @@ function emptyGuard(
   });
 }
 
+function freezeInactiveExtensionIds(
+  ids: RenderPlannerGuardCompatibility['inactiveExtensionIds'] | undefined,
+): RenderPlannerGuardCompatibility['inactiveExtensionIds'] {
+  if (!ids) return EMPTY_IDS;
+  return Object.freeze({
+    effectIds: Object.freeze(new Set(ids.effectIds)),
+    transitionIds: Object.freeze(new Set(ids.transitionIds)),
+    clipTypeIds: Object.freeze(new Set(ids.clipTypeIds)),
+  });
+}
+
+function exportDiagnosticId(diagnostic: ExportDiagnostic, index: number): string {
+  const detail = diagnostic.detail ?? {};
+  return [
+    'export-guard',
+    diagnostic.code,
+    diagnostic.extensionId ?? 'host',
+    diagnostic.contributionId ?? 'timeline',
+    detail.clipId ?? 'no-clip',
+    detail.effectType ?? detail.transitionType ?? detail.clipType ?? detail.shaderId ?? index,
+  ].join(':');
+}
+
+function blockerReasonForExportDiagnostic(diagnostic: ExportDiagnostic): RenderBlockerReason {
+  return EXPORT_DIAGNOSTIC_REASON_BY_CODE[diagnostic.code] ?? 'unknown';
+}
+
+function routeForExportDiagnostic(diagnostic: ExportDiagnostic): RenderRoute {
+  const detailRoute = diagnostic.detail?.renderRoute;
+  return isCanonicalRenderRoute(typeof detailRoute === 'string' ? detailRoute : undefined)
+    ? detailRoute
+    : 'browser-export';
+}
+
+function exportDiagnosticToPlannerFinding(diagnostic: ExportDiagnostic, index: number): CapabilityFinding {
+  const reason = diagnostic.severity === 'error'
+    ? blockerReasonForExportDiagnostic(diagnostic)
+    : undefined;
+
+  return {
+    id: exportDiagnosticId(diagnostic, index),
+    severity: diagnostic.severity,
+    route: routeForExportDiagnostic(diagnostic),
+    ...(reason ? { reason } : {}),
+    message: diagnostic.message,
+    ...(diagnostic.extensionId ? { extensionId: diagnostic.extensionId } : {}),
+    ...(diagnostic.contributionId ? { contributionId: diagnostic.contributionId } : {}),
+    detail: {
+      source: 'export-guard-compat',
+      code: diagnostic.code,
+      diagnosticDetail: Object.freeze({ ...(diagnostic.detail ?? {}) }),
+    },
+  };
+}
+
+function isCapabilityFinding(input: RenderPlannerGuardDiagnosticInput): input is CapabilityFinding {
+  return 'id' in input && typeof input.id === 'string';
+}
+
+function guardDiagnosticToPlannerFinding(
+  diagnostic: RenderPlannerGuardDiagnosticInput,
+  index: number,
+): CapabilityFinding {
+  return isCapabilityFinding(diagnostic)
+    ? diagnostic
+    : exportDiagnosticToPlannerFinding(diagnostic, index);
+}
+
+function unknownContributionFindings(
+  kind: 'clip-type' | 'effect' | 'transition',
+  ids: readonly string[] | undefined,
+): CapabilityFinding[] {
+  const uniqueIds = [...new Set(ids ?? [])].sort();
+  const label = kind === 'clip-type' ? 'clip type' : kind;
+  return uniqueIds.flatMap((id) =>
+    EXPORT_BLOCKING_ROUTES.map((route): CapabilityFinding => ({
+      id: `planner.guard.unknown-${kind}.${id}.${route}`,
+      severity: 'error',
+      route,
+      reason: 'missing-contribution',
+      message: `Unknown ${label} "${id}" cannot be exported on ${route}.`,
+      contributionId: id,
+      detail: {
+        source: 'export-guard-compat',
+        code: `export/unknown-${kind}`,
+        contributionKind: kind,
+        contributionId: id,
+        renderRoute: route,
+      },
+    })),
+  );
+}
+
+function buildGuardCompatibility(
+  guard: RenderPlannerGuardScanPayload,
+): {
+  readonly guard: RenderPlannerGuardCompatibility;
+  readonly plannerDiagnostics: readonly CapabilityFinding[];
+} {
+  const unknownIdFindings = sortedFindings([
+    ...unknownContributionFindings('clip-type', guard.unknownClipTypes),
+    ...unknownContributionFindings('effect', guard.unknownEffects),
+    ...unknownContributionFindings('transition', guard.unknownTransitions),
+  ]);
+  const diagnostics = sortedFindings(
+    (guard.diagnostics ?? []).map(guardDiagnosticToPlannerFinding),
+  );
+  const findings = sortedFindings(guard.findings ?? []);
+  const blockers = sortedBlockers(guard.blockers ?? []);
+  const hasBlockingErrors = guard.hasBlockingErrors
+    ?? (
+      unknownIdFindings.length > 0
+      || blockers.length > 0
+      || diagnostics.some((diagnostic) => diagnostic.severity === 'error')
+    );
+
+  return Object.freeze({
+    guard: Object.freeze({
+      diagnostics,
+      findings,
+      blockers,
+      unknownClipTypes: Object.freeze([...(guard.unknownClipTypes ?? [])].sort()),
+      unknownEffects: Object.freeze([...(guard.unknownEffects ?? [])].sort()),
+      unknownTransitions: Object.freeze([...(guard.unknownTransitions ?? [])].sort()),
+      inactiveExtensionIds: freezeInactiveExtensionIds(guard.inactiveExtensionIds),
+      hasBlockingErrors,
+    }),
+    plannerDiagnostics: Object.freeze([
+      ...unknownIdFindings,
+      ...diagnostics,
+      ...findings,
+      ...blockers,
+    ]),
+  });
+}
+
 export function planRender(input: RenderPlannerInput): RenderPlannerResult {
   const acc = createAccumulator();
   const requestRouteFindings = renderRequestRouteScopeFindings(input.request);
@@ -2581,10 +2898,12 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
     collectRequirement(acc, requirement);
   }
   collectRequestCapabilities(acc, input.request);
+  collectRequestRouteAvailability(acc, input.request);
   for (const outputFormat of plannedOutputFormats) {
     collectOutputFormat(acc, outputFormat, processStatusById, processById);
   }
   collectRequestedOutputRouteSupport(acc, requestedOutputFormat, input.request);
+  collectRequestedOutputAvailability(acc, requestedOutputFormat, input.request);
   for (const process of processes) {
     collectProcess(acc, process, processStatusById.get(process.processId));
   }
@@ -2672,5 +2991,26 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
     canBrowserExport: !browserRoute?.blocked,
     canWorkerExport: !workerRoute?.blocked,
     canSidecarExport: !sidecarRoute?.blocked,
+  });
+}
+
+export function buildExportReadinessPlan(input: ExportReadinessPlannerInput): RenderPlannerResult {
+  const { guard, ...plannerInput } = input;
+  if (!guard) {
+    return planRender(plannerInput);
+  }
+
+  const guardCompatibility = buildGuardCompatibility(guard);
+  const plannerResult = planRender({
+    ...plannerInput,
+    diagnostics: [
+      ...(plannerInput.diagnostics ?? []),
+      ...guardCompatibility.plannerDiagnostics,
+    ],
+  });
+
+  return Object.freeze({
+    ...plannerResult,
+    guard: guardCompatibility.guard,
   });
 }

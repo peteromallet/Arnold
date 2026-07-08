@@ -5,6 +5,9 @@ import { resolve } from 'node:path';
 
 const repoRoot = resolve(import.meta.dirname, '..', '..', '..', '..');
 
+const readDoc = (relativePath: string): string =>
+  readFileSync(resolve(repoRoot, relativePath), 'utf8');
+
 describe('M5-021: trust-and-security.md', () => {
   const docPath = resolve(repoRoot, 'docs/extensions/trust-and-security.md');
   const trustEnvelopePath = resolve(repoRoot, 'docs/video-editor/extensions-trust-envelope.md');
@@ -60,6 +63,55 @@ describe('M5-021: trust-and-security.md', () => {
     const content = readFileSync(docPath, 'utf8');
     const lines = content.split('\n').filter((l) => l.trim().length > 0);
     expect(lines.length).toBeGreaterThanOrEqual(130);
+  });
+});
+
+describe('M3 export readiness documentation contracts', () => {
+  const readinessDocs = [
+    'docs/extensions/composition-spine/m1b-composition-graph.md',
+    'docs/extensions/composition-spine/m3b-live-binding-and-deterministic-capture.md',
+    'docs/extensions/composition-spine/v8-architecture-baseline.md',
+    'docs/extensions/phase4-readiness.md',
+  ];
+
+  const readAllReadinessDocs = (): string =>
+    readinessDocs.map((docPath) => readDoc(docPath)).join('\n\n');
+
+  it('keeps guard scans as planner inputs and planner blockers as the user-facing readiness vocabulary', () => {
+    const content = readAllReadinessDocs();
+
+    expect(content).toMatch(/The scan payload is planner input/i);
+    expect(content).toMatch(/scanner diagnostics are planner\s+input/i);
+    expect(content).toMatch(/buildExportReadinessPlan\(\).*planRender\(\)/s);
+    expect(content).toMatch(/planner `RenderBlocker` records are the canonical\s+user-facing readiness vocabulary/i);
+    expect(content).toMatch(/user-facing readiness blockers must be planner\s+blockers/i);
+    expect(content).toMatch(/`export\/\*` diagnostic codes?.*diagnostic metadata/is);
+  });
+
+  it('does not reintroduce guard-as-authority readiness wording', () => {
+    const content = readAllReadinessDocs();
+
+    expect(content).not.toMatch(/scanExportConfig[^.\n]*(?:authoritative|authority)/i);
+    expect(content).not.toMatch(/(?:authoritative|authority)[^.\n]*scanExportConfig/i);
+    expect(content).not.toMatch(/export guard[^.\n]*(?:authoritative|authority)/i);
+    expect(content).not.toMatch(/(?:authoritative|authority)[^.\n]*export guard/i);
+    expect(content).not.toMatch(/authoritative export guard/i);
+    expect(content).not.toMatch(/Graph-first export authority/i);
+    expect(content).not.toMatch(/exportGuard[^.\n]*authority/i);
+  });
+
+  it('keeps broader trust and release gate prohibitions in the readiness docs', () => {
+    const baselineContent = readDoc(
+      'docs/extensions/composition-spine/v8-architecture-baseline.md',
+    );
+    const phase4Content = readDoc('docs/extensions/phase4-readiness.md');
+
+    expect(baselineContent).toMatch(/No sandbox, marketplace/i);
+    expect(baselineContent).toMatch(/trusted, unsandboxed code/i);
+    expect(baselineContent).toMatch(/not runtime enforcement, sandbox isolation, code signing, or a permission broker/i);
+    expect(baselineContent).toMatch(/No marketplace, remote install, or signing claims/i);
+    expect(phase4Content).toMatch(/`npm run test:readiness` command validates/i);
+    expect(phase4Content).toMatch(/A missing or renamed anchor causes the\s+command to fail/i);
   });
 });
 

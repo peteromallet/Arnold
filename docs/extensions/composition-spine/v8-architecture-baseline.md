@@ -35,7 +35,7 @@ reconstructive source path. No claim depends solely on the absent v8 brief.
 | 9 | artifacts.ts | `src/sdk/video/rendering/artifacts.ts` | `RenderMaterial`, `RenderArtifact`, `RenderArtifactManifest`, `BakeContract` |
 | 10 | renderability.ts | `src/sdk/video/rendering/renderability.ts` | `RenderRoute`, `DeterminismStatus` (5 values), `RenderBlockerReason` (9 values) |
 | 11 | capabilities.ts | `src/sdk/video/rendering/capabilities.ts` | Shader materializer requirement scope |
-| 12 | renderPlanner.ts | `src/tools/video-editor/runtime/renderPlanner.ts` | Canonical render readiness reducer: route plans, blockers, diagnostics, next actions |
+| 12 | renderPlanner.ts | `src/tools/video-editor/runtime/renderPlanner.ts` | Canonical render/export readiness reducer: route plans, planner blockers, diagnostics, next actions, guard-scan adaptation |
 | 13 | phase4-readiness.md | `docs/extensions/phase4-readiness.md` | Phase 4 promotion checklist, render planner participation contract, trust posture |
 | 14 | foundation-closure-assessment.md | `docs/extensions/foundation-closure-assessment.md` | M4 closure gate, satisfied contracts, family maturity snapshot |
 | 15 | process-example.ts | `src/examples/process-example.ts` | Process contribution declaration example |
@@ -150,7 +150,7 @@ direct contribution-index access for all M1b-owned fact families.
 | Composition diagnostics | Canonical `composition/` diagnostic codes with structured detail fields (`nodeId`, `refKey`, `refState`, `scope`, `extensionId`, `contributionId`, `shaderId`). |
 | Graph preview | Internal `shader.assign` and `shader.remove` preview operations applied to a cloned graph; returns updated nodes, edges, reference states, and diagnostics without mutating the original. |
 | Graph-first planner authority | `planRender` derives shader materializer requirements and scope validation from graph nodes/edges/reference states when a graph is present. |
-| Graph-first export authority | `scanExportConfig` derives shader blockers from graph-resolved facts when a graph is present. |
+| Graph-first export scan input | `scanExportConfig` derives guard scanner findings from graph-resolved facts when a graph is present; `buildExportReadinessPlan()` feeds those findings to `planRender()`. |
 | Graph-first shader validation | `validateShaderComposition` derives projected shaders and first-wins occupancy from graph edges when a graph is present. |
 
 #### Legacy Inputs: Compatibility Sources Only
@@ -279,6 +279,17 @@ From `src/sdk/video/rendering/renderability.ts` (lines 40–49):
 
 `missing-contribution`, `route-unsupported`, `preview-only`, `live-unbaked`,
 `process-dependent`, `missing-material`, `materialization-failed`, `inactive-extension`, `unknown`.
+
+### Export Readiness Authority
+
+Export readiness is planner-owned. Guard scans, router/provider checks, and
+output-format diagnostics may contribute structured inputs, but `planRender()`
+is the final reducer and planner `RenderBlocker` records are the canonical
+user-facing readiness vocabulary. `buildExportReadinessPlan()` is a thin adapter
+that passes `scanExportConfig()` payloads into the planner instead of computing
+an independent blocked/unblocked decision. Original `export/*` diagnostic codes
+are preserved in finding detail for diagnostics and debugging; they are
+diagnostic metadata, not readiness authority.
 
 ### Render Routes
 
