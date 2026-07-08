@@ -738,6 +738,8 @@ def _meta_repair_summary(
     *,
     run_kind="",
     current_state="",
+    active_step_phase="",
+    active_step_liveness=None,
     chain_state_summary=None,
     chain_log_summary=None,
     events_mtime_age_min=None,
@@ -914,16 +916,23 @@ def _meta_repair_summary(
     if isinstance(chain_log_summary, dict):
         chain_log_age = chain_log_summary.get("mtime_age_min")
     live_chain_activity = isinstance(chain_log_age, int) and chain_log_age <= 5
+    active_step = active_step_liveness if isinstance(active_step_liveness, dict) else {}
+    live_active_step_activity = bool(str(active_step_phase or "").strip()) and (
+        live_event_activity or active_step.get("worker_pid_alive") is True
+    )
     non_terminal_state = normalized_state not in {"done", "complete", "completed", "finalized"}
-    live_target_activity = non_terminal_state and (
+    live_target_activity = live_active_step_activity or (
+        non_terminal_state and (
         live_event_activity or (normalized_kind == "chain" and live_chain_activity)
+        )
     )
     if should_dispatch and trigger in {"persistent_recurring_retry", "partial_liveness_recurrence"} and live_target_activity:
         should_dispatch = False
         trigger = ""
         rationale = [
             "watchdog-corroborated live target activity supersedes recurring meta-repair dispatch: "
-            f"events_mtime_age_min={events_mtime_age_min!r}, chain_log_mtime_age_min={chain_log_age!r}"
+            f"events_mtime_age_min={events_mtime_age_min!r}, chain_log_mtime_age_min={chain_log_age!r}, "
+            f"active_step_phase={active_step_phase!r}, worker_pid_alive={active_step.get('worker_pid_alive')!r}"
         ]
     failed_run_refs = [item for item in run_refs if item.get("launch_failure")]
     failed_meta_records = []
@@ -2645,12 +2654,16 @@ def _plan_evidence(entry):
     chain_state = _chain_state_summary(workspace_path, plan)
     repair_data = _repair_data_summary(session)
     cross_refs = _collect_related_artifact_refs(workspace_path, plan, session, repair_data)
+    active = state.get("active_step") or {}
+    active_liveness = _active_step_liveness(active)
     meta_repair_summary = _meta_repair_summary(
         session,
         repair_data,
         cross_refs.get("meta_repair_refs") or [],
         run_kind=run_kind,
         current_state=state.get("current_state") or "",
+        active_step_phase=active.get("phase") or "",
+        active_step_liveness=active_liveness,
         chain_state_summary=chain_state,
         chain_log_summary=chain_log,
         events_mtime_age_min=int((now.timestamp() - events_mtime) // 60) if events_mtime else None,
@@ -2688,8 +2701,6 @@ def _plan_evidence(entry):
     scores = meta.get("weighted_scores") or []
     plan_deltas = meta.get("plan_deltas") or []
     counts = meta.get("significant_counts") or []
-    active = state.get("active_step") or {}
-    active_liveness = _active_step_liveness(active)
 
     history = state.get("history") or []
     recent_history = []
