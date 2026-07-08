@@ -1,0 +1,31 @@
+{
+  "deadline_ts": null,
+  "evidence_ref_count": 1,
+  "evidence_refs": [
+    {
+      "kind": "verification_record"
+    }
+  ],
+  "generated_at": "2026-07-08T01:30:21.293533+00:00",
+  "incident_id": "inc-extension-reality-convergence-epic",
+  "kind": "incident_summary",
+  "latest_actor": "repair_system",
+  "next_expected_event": null,
+  "outcome": "recovered",
+  "placeholders": {
+    "install_freshness": "unknown",
+    "recurrence": "unknown",
+    "shipped_fix": "unknown"
+  },
+  "problem_ids": [
+    "problem-bef9405c197d"
+  ],
+  "schema_version": 1,
+  "source": {
+    "digest": "sha256:ba0ce8e7b9fc491fb6475681e1ebecf43239637f8327b59c4ac53acf9771ccd8",
+    "last_seq": 12,
+    "projection": "incidents"
+  },
+  "state": "verified_recovered",
+  "summary_text": "inc-extension-reality-convergence-epic: repair-data outcome=live_with_fresh_activity kind=chain workspace=/workspace/extension-reality-convergence-epic/reigh-app"
+}
