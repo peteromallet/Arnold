@@ -59,6 +59,7 @@ temp/
 !docs/extensions/foundation-closure-assessment.md
 !docs/extensions/composition-spine/*.md
 !docs/video-editor/*.md
+!scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md
 !tasks/*.md
 !CLAUDE.md
 !/.megaplan/briefs/**/*.md

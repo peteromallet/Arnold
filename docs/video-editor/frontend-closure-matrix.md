@@ -444,14 +444,14 @@ This matrix classifies every public frontend primitive that is part of the Reigh
 
 ### 12.2 Export Guard / Renderability Surface
 
-- **Host affordance:** Not a visible component — a cross-cutting guard invoked before render dispatch. Surfaces export blockers via structured diagnostics and the diagnostic panel.
+- **Host affordance:** Not a visible component — a cross-cutting guard invoked before render dispatch. Surfaces export and fast-path render blockers through planner-compatible diagnostics and `RenderBlocker.message` logs.
 - **UI states:**
   - **Empty:** — Not applicable.
   - **Loading:** — Not applicable.
-  - **Error:** ■ Export blockers render as `Diagnostic` entries with `code` starting `'export/'`. Rendered in diagnostic panel and inline banners.
+  - **Error:** ■ Export blockers render as `Diagnostic` entries with `code` starting `'export/'`; planner blockers render as `render-planner` diagnostics and provide blocked render/export log messages.
   - **Disabled:** — Not applicable.
 - **Accessibility:** Export blocker diagnostics use severity-colored badges in the diagnostic panel. "View diagnostics" action links to filtered diagnostic panel.
-- **Evidence:** `src/tools/video-editor/runtime/renderability.ts` (`runExportGuard()`); `DiagnosticCollection` integration.
+- **Evidence:** `src/tools/video-editor/runtime/renderability.ts`; `src/tools/video-editor/runtime/renderPlanner.ts`; `src/tools/video-editor/hooks/useRenderState.ts`; `DiagnosticCollection` integration.
 - **Status:** `pass`
 - **Disposition:** `supported`
 - **Contract-recheck:** CR:M1-003, CR:M1-011, CR:M5-005, CR:M11-004, CR:M7-004

@@ -49,6 +49,14 @@ const SCAN_TARGETS = [
   'scripts/quality',
 ];
 
+const TRUST_SENSITIVE_VIDEO_EDITOR_DOCS = new Set([
+  'frontend-closure-matrix.md',
+  'live-data-bridge-manual-smoke-checklist.txt',
+  'provider-compatibility-matrix.md',
+  'shader-execution-model.md',
+  'timeline-patch-operations.md',
+]);
+
 const DENIAL_CONTEXT_RE =
   /\b(?:no|not|never|without|none|false|cannot|can't|does not|do not|is not|are not|isn't|aren't|lack(?:s|ing)?|missing|absent|absence|unsupported|out[- ]of[- ]scope|anti[- ]scope|excluded|exclusion|avoid(?:s|ing)?|blocked until|non[- ]enforced|not enforced|not runtime[- ]enforced|not mediated|not surfaced|not authorized|descriptive only|metadata only|declarative (?:metadata|access disclosure)s? only|trusted[- ]local|unsandboxed)\b/i;
 
@@ -128,7 +136,12 @@ function isRelevantVideoEditorDoc(relativePath) {
     return true;
   }
   const base = path.basename(relativePath).toLowerCase();
-  return base.includes('extension') || base.includes('trust') || base.includes('readiness');
+  return (
+    base.includes('extension')
+    || base.includes('trust')
+    || base.includes('readiness')
+    || TRUST_SENSITIVE_VIDEO_EDITOR_DOCS.has(base)
+  );
 }
 
 function isQualityScriptFile(relativePath) {

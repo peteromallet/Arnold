@@ -239,9 +239,9 @@ This document is the downstream consumer of the [M15 Contract-Recheck Matrix](./
 
 | Row ID | Behavior | Classification | Evidence |
 |---|---|---|---|
-| D-020 | Full render planner implementation with capability/blocker reports | **deferred** | CR:M12-001; BLOCKER:B-002 |
+| D-020 | Full render planner implementation with capability/blocker reports | **supported** | CR:M12-001; TEST:src/tools/video-editor/runtime/renderPlanner.test.ts; TEST:src/tools/video-editor/runtime/exportGuard.test.ts; `src/tools/video-editor/runtime/renderPlanner.ts`; `src/tools/video-editor/runtime/exportGuard.ts` |
 | D-021 | Export UI surfaces for clear reasons and next actions | **deferred** | CR:M12-002; BLOCKER:B-002 |
-| D-022 | Planner/export inspection using public `TimelineSnapshot`/`TimelineReader` | **deferred** | CR:M12-007; BLOCKER:B-002 |
+| D-022 | Planner/export inspection using public `TimelineSnapshot`/`TimelineReader` | **supported** | CR:M12-007; TEST:src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts; `src/tools/video-editor/runtime/renderPlanner.ts`; `src/tools/video-editor/runtime/exportGuard.ts`; `src/tools/video-editor/lib/timeline-reader.ts` |
 | D-023 | Process/sidecar/roundtrip execution tests | **deferred** | CR:M12-004 through M12-013; DEFER:D-004 |
 | D-024 | Artifact manifest provenance, input hash propagation | **deferred** | CR:M12-005; DEFER:D-004 |
 | D-025 | Multi-artifact dataset/show-control export with sidecar manifest | **deferred** | CR:M12-006; DEFER:D-004 |
@@ -414,7 +414,7 @@ These behaviors are documented as unsupported across all milestones and have no 
 | Category | Count |
 |---|---|
 | Extension Packaging & Manager (M14) | 10 |
-| Render Planner & Export (M12) | 8 |
+| Render Planner & Export (M12) | 6 |
 | Live Data Bridge Frontend (M11) | 8 |
 | Agent Tool Frontend (M10) | 8 |
 | Commands Tests (M4) | 3 |
@@ -426,7 +426,7 @@ These behaviors are documented as unsupported across all milestones and have no 
 | TimelinePatch Reserved Ops | 2 |
 | Permissions & Sandboxing | 4 |
 | Structural Deferrals | 7 |
-| **Total deferred** | **70** |
+| **Total deferred** | **68** |
 
 ---
 
@@ -437,7 +437,7 @@ The following blocker entries (from the contract-recheck matrix § 3.1) track ga
 | Blocker ID | Affected Areas | Description |
 |---|---|---|
 | B-001 | D-001 through D-010 (M14) | Extension manager UI, persistence, integrity, migration, dependency management are core to installed-pack experience |
-| B-002 | D-020 through D-022 (M12) | Render planner implementation not confirmed; export guard relies on ad hoc checks |
+| B-002 | D-021 (M12) | Remaining gap is complete frontend evidence that planner next actions are surfaced everywhere blocked export/render decisions are exposed |
 | B-003 | D-030 through D-037 (M11) | Live data bridge frontend state coverage is sparse in identified tests |
 
 ---

@@ -7,6 +7,10 @@ const PROJECT_ROOT = process.cwd();
 const MIGRATED_READINESS_FILES = [
   'src/tools/video-editor/runtime/renderPlanner.ts',
   'src/tools/video-editor/runtime/exportGuard.ts',
+  'src/tools/video-editor/lib/renderRouter.ts',
+  'src/tools/video-editor/hooks/useRenderState.ts',
+  'src/tools/video-editor/runtime/composition/routeScopeValidation.ts',
+  'src/tools/video-editor/runtime/renderability.ts',
 ] as const;
 
 const EXPLICIT_OUT_OF_SCOPE_ALLOWLIST = [
@@ -57,6 +61,7 @@ function readProjectFile(projectPath: string): string {
 
 describe('shader/ref authority guard', () => {
   it('keeps migrated planner/export readiness code off raw legacy shader storage', () => {
+    expect(MIGRATED_READINESS_FILES).toHaveLength(6);
     const violations: string[] = [];
 
     for (const projectPath of MIGRATED_READINESS_FILES) {

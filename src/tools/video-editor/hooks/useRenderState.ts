@@ -32,7 +32,9 @@ import type {
   CapabilityFinding,
   Diagnostic,
   ExportDiagnostic,
+  RenderBlocker,
   RenderBlockerReason,
+  RenderRoute,
 } from '@reigh/editor-sdk';
 
 export type RenderStatus = 'idle' | 'rendering' | 'done' | 'error';
@@ -79,6 +81,11 @@ function getFastRenderRouteDecision(resolvedConfig: ResolvedTimelineConfig | nul
 
   return { route: 'browser-remotion' as const, reason: 'pure_native_clips' };
 }
+
+type RenderRouteDecisionForPlanning = {
+  readonly route: 'browser-remotion' | 'worker-banodoco' | 'preview-only' | 'external';
+  readonly reason: string;
+};
 
 function isExtensionRuntimeEmpty(extRuntime: ExtensionRuntime | undefined): boolean {
   if (!extRuntime) return true;
@@ -246,6 +253,73 @@ function planFromExportGuardResult(
     processStatuses: options?.processStatuses,
     processResultAttachRecords: options?.processResultAttachRecords,
   });
+}
+
+function plannerRouteForDecision(
+  decision: RenderRouteDecisionForPlanning,
+): RenderRoute {
+  return decision.route === 'worker-banodoco' || decision.route === 'external'
+    ? 'worker-export'
+    : 'browser-export';
+}
+
+function blockerReasonForRouteDecision(
+  decision: RenderRouteDecisionForPlanning,
+): RenderBlockerReason {
+  if (decision.route === 'preview-only') {
+    return decision.reason === 'remotion_module_missing_artifact'
+      ? 'missing-material'
+      : 'materialization-failed';
+  }
+  return 'route-unsupported';
+}
+
+function blockerMessageForRouteDecision(
+  decision: RenderRouteDecisionForPlanning,
+): string {
+  if (decision.route === 'preview-only') {
+    return `Render blocked: ${decision.reason}. Generated Remotion module clips require valid worker artifact metadata.`;
+  }
+  return `Worker render unavailable for route "${decision.reason}". This timeline was not sent to the browser renderer.`;
+}
+
+function planRouteDecisionBlocker(
+  decision: RenderRouteDecisionForPlanning,
+  options?: {
+    readonly extensionRuntime?: ExtensionRuntime;
+    readonly processStatuses?: VideoEditorRuntimeContextValue['processStatuses'];
+    readonly processResultAttachRecords?: VideoEditorRuntimeContextValue['processResultAttachRecords'];
+  },
+): RenderPlannerResult {
+  const finding: CapabilityFinding = {
+    id: `planner.renderRoute.${decision.route}.${decision.reason}`,
+    severity: 'error',
+    route: plannerRouteForDecision(decision),
+    reason: blockerReasonForRouteDecision(decision),
+    message: blockerMessageForRouteDecision(decision),
+    detail: {
+      source: 'render-route-decision',
+      providerRoute: decision.route,
+      legacyReason: decision.reason,
+    },
+  };
+
+  return planRender({
+    diagnostics: [finding],
+    extensionRuntime: options?.extensionRuntime,
+    outputFormats: outputFormatsForPlanning(options?.extensionRuntime),
+    processStatuses: options?.processStatuses,
+    processResultAttachRecords: options?.processResultAttachRecords,
+  });
+}
+
+function firstPlannerBlockerForDecision(
+  plannerResult: RenderPlannerResult,
+  decision: RenderRouteDecisionForPlanning,
+): RenderBlocker | undefined {
+  const expectedId = `planner.renderRoute.${decision.route}.${decision.reason}`;
+  return plannerResult.blockers.find((blocker) => blocker.id === expectedId)
+    ?? plannerResult.blockers[0];
 }
 
 function outputFormatsForPlanning(extensionRuntime: ExtensionRuntime | undefined): readonly VideoEditorOutputFormatDescriptor[] {
@@ -474,18 +548,32 @@ export function useRenderState(
       decision = importedDecision;
     }
     if (decision.route === 'preview-only') {
+      const plannerResult = planRouteDecisionBlocker(decision, {
+        extensionRuntime,
+        processStatuses,
+        processResultAttachRecords,
+      });
+      const blocker = firstPlannerBlockerForDecision(plannerResult, decision);
+      syncPlannerDiagnosticsToCollection(diagnosticCollection, blocker ? [blocker] : plannerResult.blockers);
       setRenderStatus('error');
       setRenderProgress(null);
       setRenderDirty(false);
-      setRenderLog(`Render blocked: ${decision.reason}. Generated Remotion module clips require valid worker artifact metadata.`);
+      setRenderLog(blocker?.message ?? blockerMessageForRouteDecision(decision));
       return;
     }
 
     if (decision.route === 'worker-banodoco' || decision.route === 'external') {
+      const plannerResult = planRouteDecisionBlocker(decision, {
+        extensionRuntime,
+        processStatuses,
+        processResultAttachRecords,
+      });
+      const blocker = firstPlannerBlockerForDecision(plannerResult, decision);
+      syncPlannerDiagnosticsToCollection(diagnosticCollection, blocker ? [blocker] : plannerResult.blockers);
       setRenderStatus('error');
       setRenderProgress(null);
       setRenderDirty(false);
-      setRenderLog(`Worker render unavailable for route "${decision.reason}". This timeline was not sent to the browser renderer.`);
+      setRenderLog(blocker?.message ?? blockerMessageForRouteDecision(decision));
       return;
     }
 
@@ -558,6 +646,7 @@ export function useRenderState(
     resolvedConfig,
     startClientRender,
     runExportGuard,
+    diagnosticCollection,
   ]);
 
   // ---- M6: compile-only export ------------------------------------------------

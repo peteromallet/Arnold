@@ -1008,8 +1008,19 @@ function duplicateScopeMessage(
 
 function buildDuplicateScopeDiagnostics(
   shaders: readonly TimelineShaderSummary[],
+  contributionIndex: ContributionIndex | undefined,
 ): readonly ExtensionDiagnostic[] {
-  const activeShaders = shaders.filter((shader) => shader.enabled !== false);
+  const activeShaders = shaders.filter((shader) => {
+    if (shader.enabled === false) {
+      return false;
+    }
+    const ref: ContributionRef = {
+      kind: 'shader',
+      extensionId: shader.extensionId,
+      contributionId: shader.contributionId,
+    };
+    return resolveReferenceStateFromEntries(contributionIndex?.[contributionRefKey(ref)]) !== 'disabled';
+  });
   const validation = validateShaderComposition(activeShaders);
   if (validation.occupied.length === 0) {
     return EMPTY_DIAGNOSTICS;
@@ -1072,15 +1083,15 @@ function clipTypeReferenceState(record: ClipTypeRegistryRecord | undefined): Ref
 function clipTypeDiagnosticMessage(refKey: string, state: ReferenceState, clipTypeId: string): string {
   switch (state) {
     case 'missing':
-      return `Clip type \"${clipTypeId}\" ref \"${refKey}\" has no registered clip type record.`;
+      return `Clip type "${clipTypeId}" ref "${refKey}" has no registered clip type record.`;
     case 'disabled':
-      return `Clip type \"${clipTypeId}\" ref \"${refKey}\" has renderability blockers.`;
+      return `Clip type "${clipTypeId}" ref "${refKey}" has renderability blockers.`;
     case 'runtime-error':
-      return `Clip type \"${clipTypeId}\" ref \"${refKey}\" is in error state.`;
+      return `Clip type "${clipTypeId}" ref "${refKey}" is in error state.`;
     case 'inactive-reserved':
-      return `Clip type \"${clipTypeId}\" ref \"${refKey}\" is inactive.`;
+      return `Clip type "${clipTypeId}" ref "${refKey}" is inactive.`;
     default:
-      return `Clip type \"${clipTypeId}\" ref \"${refKey}\" is ${state}.`;
+      return `Clip type "${clipTypeId}" ref "${refKey}" is ${state}.`;
   }
 }
 
@@ -1586,6 +1597,17 @@ export function projectCompositionGraph(input: CompositionGraphInput): Compositi
       contributionId: shader.contributionId,
     };
     const refKey = contributionRefKey(ref);
+    const refState = resolveReferenceStateFromEntries(contributionIndex?.[refKey]);
+    refUsages.push({
+      ref,
+      nodeId: sourceNodeId,
+      scope,
+      shaderId: shader.shaderId,
+    });
+    if (refState === 'disabled') {
+      continue;
+    }
+
     let contributionNode = contributionNodeByRefKey.get(refKey);
     if (!contributionNode) {
       contributionNode = Object.freeze({
@@ -1609,13 +1631,6 @@ export function projectCompositionGraph(input: CompositionGraphInput): Compositi
         scope,
       }),
     }));
-
-    refUsages.push({
-      ref,
-      nodeId: sourceNodeId,
-      scope,
-      shaderId: shader.shaderId,
-    });
 
     for (const [rawTargetPath, keyframes] of Object.entries(shader.keyframes ?? {})) {
       const targetPath = canonicalizeShaderUniformPath(rawTargetPath);
@@ -1644,7 +1659,7 @@ export function projectCompositionGraph(input: CompositionGraphInput): Compositi
   }
 
   const resolvedReferences = resolveCompositionReferences(refUsages, contributionIndex);
-  const duplicateScopeDiagnostics = buildDuplicateScopeDiagnostics(shaders);
+  const duplicateScopeDiagnostics = buildDuplicateScopeDiagnostics(shaders, contributionIndex);
   const clipTypeResolved = buildClipTypeReferenceStatesAndDiagnostics(
     clipTypeRefUsages,
     clipTypeRegistry,

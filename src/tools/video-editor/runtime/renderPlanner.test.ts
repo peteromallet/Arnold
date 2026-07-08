@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { planRender } from '@/tools/video-editor/runtime/renderPlanner.ts';
 import { projectHostMaterialRuntime } from '@/tools/video-editor/runtime/composition/materialRuntime.ts';
 import { createProcessResultAttachRecord } from '@/tools/video-editor/runtime/composition/processResultAttach.ts';
+import { projectCompositionGraph } from '@/tools/video-editor/runtime/composition/graphProjector.ts';
 import { createRenderArtifactManifest } from '@/tools/video-editor/runtime/renderability.ts';
 import {
   blockerToRouteFitMetadata,
@@ -356,6 +357,25 @@ function shaderContributionIndex(
   return index;
 }
 
+function shaderGraphInput(
+  snapshot: TimelineSnapshot = snapshotWithShaders(),
+  contributionIndex: ContributionIndex = shaderContributionIndex([
+    { contributionId: 'ext.shader.clip' },
+    { contributionId: 'ext.shader.post' },
+  ]),
+) {
+  return {
+    snapshot,
+    extensionRuntime: {
+      outputFormats: [],
+      processes: [],
+      shaders: [],
+      contributionIndex,
+      compositionGraph: projectCompositionGraph({ snapshot, contributionIndex }),
+    },
+  };
+}
+
 function materialRef(
   id: string,
   overrides: Partial<RenderMaterialRef> = {},
@@ -699,7 +719,7 @@ describe('planRender', () => {
   });
 
   it('blocks export for timeline shader metadata until a materializer produces RenderMaterial', () => {
-    const result = planRender({ snapshot: snapshotWithShaders() });
+    const result = planRender(shaderGraphInput());
 
     expect(result.canBrowserExport).toBe(false);
     expect(result.canWorkerExport).toBe(false);
@@ -835,44 +855,47 @@ describe('planRender', () => {
   });
 
   it('projects snapshot shader refs through the contribution index before duplicate-scope diagnosis', () => {
-    const result = planRender({
-      snapshot: {
-        ...snapshotWithShaders(),
-        shaders: [
-          {
-            id: 'clip-1:shader:shader.preview.clip',
-            shaderId: 'shader.preview.clip',
-            scope: 'clip',
-            clipId: 'clip-1',
-            extensionId: 'ext.shader',
-            contributionId: 'ext.shader.clip',
-            enabled: true,
-          },
-          {
-            id: 'clip-1:shader:shader.preview.clip.disabled',
-            shaderId: 'shader.preview.clip.disabled',
-            scope: 'clip',
-            clipId: 'clip-1',
-            extensionId: 'ext.shader',
-            contributionId: 'ext.shader.clip.disabled',
-            enabled: true,
-          },
-        ],
+    const snapshot = {
+      ...snapshotWithShaders(),
+      shaders: [
+        {
+          id: 'clip-1:shader:shader.preview.clip',
+          shaderId: 'shader.preview.clip',
+          scope: 'clip',
+          clipId: 'clip-1',
+          extensionId: 'ext.shader',
+          contributionId: 'ext.shader.clip',
+          enabled: true,
+        },
+        {
+          id: 'clip-1:shader:shader.preview.clip.disabled',
+          shaderId: 'shader.preview.clip.disabled',
+          scope: 'clip',
+          clipId: 'clip-1',
+          extensionId: 'ext.shader',
+          contributionId: 'ext.shader.clip.disabled',
+          enabled: true,
+        },
+      ],
+    } satisfies TimelineSnapshot;
+    const contributionIndex = shaderContributionIndex([
+      { contributionId: 'ext.shader.clip' },
+      {
+        contributionId: 'ext.shader.clip.disabled',
+        status: 'disabled',
+        projected: false,
+        projectionEligible: false,
+        source: 'preserved-record',
       },
+    ]);
+    const result = planRender({
+      snapshot,
       extensionRuntime: {
         outputFormats: [],
         processes: [],
         shaders: [],
-        contributionIndex: shaderContributionIndex([
-          { contributionId: 'ext.shader.clip' },
-          {
-            contributionId: 'ext.shader.clip.disabled',
-            status: 'disabled',
-            projected: false,
-            projectionEligible: false,
-            source: 'preserved-record',
-          },
-        ]),
+        contributionIndex,
+        compositionGraph: projectCompositionGraph({ snapshot, contributionIndex }),
       },
     });
 
@@ -891,15 +914,24 @@ describe('planRender', () => {
       }),
     ]));
     expect(result.blockers).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ contributionId: 'ext.shader.clip.disabled' }),
+      expect.objectContaining({
+        contributionId: 'ext.shader.clip.disabled',
+        reason: 'missing-material',
+      }),
     ]));
   });
 
   it('uses registered shader materializer process routes for materialization next actions', () => {
+    const graphInput = shaderGraphInput();
     const result = planRender({
-      snapshot: snapshotWithShaders(),
+      ...graphInput,
       shaders: [shaderMaterializerDescriptor()],
       processes: [shaderMaterializerProcess()],
+      extensionRuntime: {
+        ...graphInput.extensionRuntime,
+        shaders: [shaderMaterializerDescriptor()],
+        processes: [shaderMaterializerProcess()],
+      },
       processStatuses: [
         {
           processId: 'shader-materializer',
@@ -912,7 +944,7 @@ describe('planRender', () => {
     expect(result.canBrowserExport).toBe(false);
     expect(result.blockers).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: 'snapshot.shader.2.browser-export.process-dependent',
+        id: 'graph.shader.0.browser-export.browser-export.process-dependent',
         route: 'browser-export',
         reason: 'process-dependent',
         message: 'Shader "shader.preview.clip" has a materializer route for browser-export; run process "shader-materializer" to produce RenderMaterial.',
@@ -929,7 +961,7 @@ describe('planRender', () => {
     ]));
     expect(result.findings).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: 'snapshot.shader.2.browser-export.shader-materializer.discovered',
+        id: 'graph.shader.0.browser-export.browser-export.shader-materializer.discovered',
         severity: 'info',
         route: 'browser-export',
         detail: expect.objectContaining({
