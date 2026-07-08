@@ -1,0 +1,291 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Extension Reality Convergence
+Source: `.megaplan/initiatives/extension-reality-convergence-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `5ed92f91a987b5fafb1e8011624176237e2b9fe3164b07cde7fa7d1f59b4baf9`
+
+```md
+# North Star: Extension Reality Convergence
+
+## End State
+
+The Reigh video-editor extension system is truthful and converged across trust, composition authority, and export readiness. Extensions are presented as trusted local code unless a later untrusted-runtime epic adds real isolation. Composition facts used by planner/export/preview flow through a canonical authority spine instead of scattered legacy timeline reads. Export readiness is decided by planner-owned blockers, with guard scans and provider route checks demoted to structured planner inputs.
+
+## Success In One Sentence
+
+From a clean checkout on top of the completed extension-foundation work, Reigh can prove that extension trust claims are honest, the first composition fact family has moved to graph authority, and every user-facing export block originates from canonical planner readiness.
+
+## Immutable Constraints
+
+- Do not implement fake or partial permission enforcement and call it sandboxing.
+- Do not claim marketplace, third-party, or untrusted extension safety.
+- Keep extension code trusted and unsandboxed unless a separate future epic introduces isolation and brokered APIs.
+- Do not delete legacy timeline storage fields before compatibility projection and regression tests exist.
+- Do not let migrated fact families remain authoritative through direct legacy timeline reads.
+- Do not add a second export readiness authority beside the planner.
+- Do not weaken quality gates, docs checks, or release checks to make the epic pass.
+- Preserve existing editor behavior for timelines and packages that do not use migrated composition features.
+- Keep generated-module, provider, and export-guard scans where useful, but make them feed planner readiness instead of bypassing it.
+
+## Required Proof
+
+- SDK, JSON schema, examples, docs, and manager UI agree on the trusted-code/access-disclosure model.
+- A regression gate fails if docs or UI imply sandboxing, runtime permission enforcement, marketplace safety, or third-party safety.
+- The first composition authority ratchet proves shader/ref readiness comes from graph-projected facts, not direct legacy shader fields.
+- A fixture proves legacy-only shader/ref fields do not count as authoritative after projection is disabled.
+- User-facing export/render blocked states are derived from planner blockers.
+- Generated-module artifact state, provider availability, output-format availability, contribution conflicts, shader/material blockers, and live-binding blockers are represented in planner readiness.
+- Quality checks pass from a clean checkout with the convergence gates enabled.
+
+## Explicitly Deferred
+
+- True permission enforcement through iframe, Worker, process, SES-like isolation, or a brokered host API.
+- Marketplace install, remote extension discovery, update/delete flows, code signing, and dependency resolution.
+- Full composition-spine completion beyond the fact families named by this epic.
+- Full process/sidecar runtime hardening unless required as an input to export-readiness diagnostics.
+```
+
+### Current Stage
+Stage: `plan`
+Plan directory: `/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120`
+Current milestone: `m4-evidence-and-drift-gates`
+
+### Phase Instruction
+Build a plan that advances the local brief while preserving the North Star. If scope is narrowed, state whether the narrowing is a bridge or a contradiction.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are creating an implementation plan for the following idea.
+
+        Engineering brief produced from the codebase and task details:
+
+        ### Task Summary
+        M4 is the capstone evidence milestone: prove the epic end state from a clean checkout, strengthen three drift gates (trust-model, composition-authority, export-blocker-provenance), reconcile docs/code contradictions, and produce the North Star proof mapping artifact. The quality pipeline is blocked by a pre-existing syntax error in check-readiness.mjs that must be fixed first. Two research audits (A2 trust-gate-gaps, A5 docs-matrix-reconciliation) failed with structural errors and must be completed as first M4 actions. The A4 export-blocker audit reveals D-020 contradicts code reality and a fast-path bypass undermines exclusive planner authority. The A6 North Star proof mapping is the strongest area — all 7 proof items are mapped to concrete files with high confidence — but the formal proof note artifact does not yet exist.
+
+        ### Key Evidence
+        - Quality infrastructure is rich but blocked: 20+ check scripts and 5 major test suites exist, but check-readiness.mjs line 418 has garbled syntax that prevents any quality:check run from completing. (source: A1 findings: check-readiness.mjs:418 verified in repo read; relevance: high)
+- Trust-model gate (check-trust-model-truth.mjs) is proven working against the current repo via its own test suite (70 lines), but the A2 audit of what M2/M3 surfaces escape its scan targets failed — the gap is unknown. (source: A1 findings + A6 Proof #2 + A2 error; relevance: high)
+- Composition authority gate (shaderRefAuthority.test.ts) monitors only 2 of 6 readiness-path files (renderPlanner.ts, exportGuard.ts). The other 4 (renderRouter.ts, useRenderState.ts, routeScopeValidation.ts, renderability.ts) are currently clean but unmonitored — a forward-looking gap. (source: A3 findings: shaderRefAuthority.test.ts:7-10 MIGRATED_READINESS_FILES; relevance: high)
+- The North Star required fixture 'legacy-only shader/ref fields do not count as authoritative after projection is disabled' does not exist in compositionGraphProjector.test.ts (1835 lines). A partial equivalent exists in shaderValidation.test.ts:260-286 (projected:false test) but tests shader ref projection, not graph projector authority loss. (source: A3 findings + NORTHSTAR.md:28; relevance: high)
+- Export blocker primary chain is planner-owned and tested (useRenderState.test.tsx:1011), but a fast-path bypass (getFastRenderRouteDecision, useRenderState.ts:47-81) produces user-facing block messages from direct route-string checks without planner provenance. The test at :1175 confirms this dual-authority design is intentional ('Guard passed but preview-only blocked it — native routing preserved'). (source: A4 findings: useRenderState.ts L47-81, L476-490, L1175-1229; relevance: high)
+- D-020 in extension-platform-supported-deferred.md classifies 'Full render planner implementation with capability/blocker reports' as deferred with BLOCKER:B-002 ('Render planner implementation not confirmed; export guard relies on ad hoc checks'), but the codebase contains a 2676-line renderPlanner.ts with planRender() producing blockers, routePlans, and artifact records — and useRenderState.ts:420-426 uses planner.blockers as the canonical readiness gate. (source: A4 findings + docs matrix L242 + renderPlanner.ts + useRenderState.ts:420-426; relevance: high)
+- All 7 North Star proof items are mapped to concrete files/tests with high confidence: trust-model convergence across 4 surfaces, regression gate with fixture proof, graph authority in 3 test files, legacy-not-authoritative in shaderValidation.test.ts, planner provenance chain, 6 blocker categories covered in renderPlanner/exportGuard tests, and quality:check aggregate command defined. (source: A6 findings (complete, high confidence); relevance: high)
+- A2 (trust-gate gap audit) and A5 (docs matrix reconciliation audit) both failed with structural errors. Without these audits, the full gap picture for trust-gate scan target expansion and docs supported/deferred reclassification is unknown. (source: A2 error + A5 error; relevance: high)
+- shaderRefAuthority gate has a false-positive: exportGuard.ts function hasTimelineShaderMetadata() (L460) matches the forbidden pattern 'TimelineShaderMetadata' but is a legitimate wrapper preferring the composition-graph path before falling back to legacy storage. Naming collision, not a real legacy read. (source: A1 findings: exportGuard.ts:460-471 + shaderRefAuthority.test.ts:35-52; relevance: medium)
+- The export guard and render planner use separate blocker ID namespaces for the same legacy-graph-compatibility concern: exportGuard uses 'exportGuard.compositionGraph.legacy-shader-ref-compatibility' while planner uses 'planner.compositionGraph.legacy-shader-ref-compatibility'. Both paths exist for the same concern. (source: A4 findings: exportGuard.ts:151 vs renderPlanner.ts:219; relevance: medium)
+
+        ### Relevant Code
+        | File | Functions | Why |
+| --- | --- | --- |
+| scripts/quality/check-readiness.mjs | extractTestReadinessFiles | BLOCKING: line 418 has garbled syntax in extractTestReadinessFiles() — must fix before any quality:check run or test:readiness --strict execution. This is the first M4 action. |
+| scripts/quality/check-trust-model-truth.mjs | findViolations, RULES array | Trust-model drift gate. Must expand scan targets to cover M2/M3 surfaces (shader-execution-model.md, composition-spine docs, planner/export docs) once A2 audit is completed. Currently scans 7 surfaces; may need rule additions for composition/export trust language edge cases. |
+| src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts | MIGRATED_READINESS_FILES, FORBIDDEN_READS, EXPLICIT_OUT_OF_SCOPE_ALLOWLIST | Composition authority drift gate. Must expand MIGRATED_READINESS_FILES from 2 to 6 files (add renderRouter.ts, useRenderState.ts, routeScopeValidation.ts, renderability.ts). Must add allowlist entry or rename exception for hasTimelineShaderMetadata false-positive. Must handle effect/transition reference-resolution patterns if A3 audit identifies them as gaps. |
+| src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts | projectCompositionGraph | Missing North Star fixture: 'legacy-only shader/ref fields not authoritative after projection disabled.' The existing test at L281 tests the happy path (projection works). Must add a negative-case fixture. Alternatively, cross-reference the partial fixture in shaderValidation.test.ts:260-286 and decide if it satisfies the North Star requirement or needs a dedicated compositionGraphProjector test. |
+| src/tools/video-editor/hooks/useRenderState.ts | getFastRenderRouteDecision, startRender, runExportGuard, planFromExportGuardResult | Export blocker provenance: fast-path bypass at getFastRenderRouteDecision (L47-81) produces user-facing block messages without planner provenance. Must either route fast-path decisions through planRender() or add planner-provenance assertions to existing fast-path tests. The dual-authority design is intentional per test comments but violates M3 done criterion. |
+| docs/video-editor/extension-platform-supported-deferred.md | D-020 row, B-002 blocker, trust-model rows S-150/D-120-D-123, shader/ref rows S-130-S-135/D-100-D-102 | D-020 contradicts code reality: says render planner is deferred but code uses it as primary readiness authority. Must reclassify D-020/D-021/D-022 based on actual implementation, or document the fast-path bypass as evidence the planner is not yet the exclusive authority. Also needs date update (currently 2026-07-07), milestone reference reconciliation, and evidence link validation. Full A5 audit must complete first. |
+| .megaplan/initiatives/extension-reality-convergence-epic/NORTHSTAR.md | Required Proof section (lines 25-31) | Source of truth for the 7 required proof items. The final proof note (M4 deliverable) must map each item to concrete files/tests. A6 provides the complete mapping; this must be formalized into a standalone artifact. |
+
+        ### Test Expectations
+        - [pass_to_pass] quality:check aggregate pipeline: All 18+ quality checks pass from clean checkout, including trust-model, composition-authority, export-blocker, docs-maturity, and readiness gates.
+- [pass_to_pass] check-readiness.mjs --strict (via test:readiness): Readiness gate parses and validates extension lifecycle, error boundary, shell core, properties panel, editor surface, video editor provider, extension manager, and phase 4 readiness docs.
+- [pass_to_pass] check-trust-model-truth --release: Trust-model gate scans ~140 files for forbidden sandboxing, permission-enforcement, marketplace, and untrusted-extension claims. Proven passing against current repo by check-trust-model-truth.test.mjs.
+- [fail_to_pass] shaderRefAuthority gate (composition drift): Forbidden legacy shader reads (clip.app?.shader, config.app?.shaderPostprocess, TimelineShaderMetadata, legacyTimelineShaderMetadata) in migrated readiness files.
+- [pass_to_pass] compositionGraphProjector — legacy-not-authoritative-after-projection-disabled fixture: North Star Proof #4: legacy-only shader/ref fields lose authority when CompositionGraph projection is disabled at the planner level.
+- [fail_to_pass] useRenderState — fast-path planner provenance: M3 Done Criterion: every user-facing export/render blocked state derives from a planner RenderBlocker. Fast-path tests at L501-550 assert error status but not planner provenance.
+- [fail_to_pass] D-020 docs/code reconciliation: extension-platform-supported-deferred.md row D-020 classification agrees with renderPlanner.ts implementation reality and M3 claims.
+- [pass_to_pass] North Star proof mapping artifact: Final completion note maps all 7 North Star proof items to concrete files/tests/scripts. Mapping exists in A6 findings but no standalone artifact yet.
+
+        ### Constraints
+        - Do not suppress failing tests without fixing behavior or documenting precise deferred requirement.
+- Do not accept dirty/stale evidence state as proof.
+- Do not let docs claim future composition-spine or export capabilities as current support.
+- Preserve generated runtime state and user work; do not use destructive git cleanup.
+- Do not broaden product scope beyond M1-M3 implemented architecture.
+- Do not implement real untrusted-extension sandboxing.
+- Do not add composition fact-family migrations beyond what M1-M3 implemented.
+
+        ### Suggested Approach
+        Phase 1 — Unblock the pipeline: Fix check-readiness.mjs:418 syntax error. This is the highest-priority action; nothing else can be validated without it. Phase 2 — Complete the failed audits: Re-run A2 (trust-gate gap analysis) and A5 (docs matrix reconciliation) as the first M4 implementation steps. These determine the full scope of gate strengthening and docs reclassification. Phase 3 — Strengthen the three drift gates in parallel: (a) Expand check-trust-model-truth.mjs scan targets based on A2 findings and add any missing rule patterns. (b) Expand shaderRefAuthority.test.ts MIGRATED_READINESS_FILES to 6 entries, add hasTimelineShaderMetadata allowlist exception, add the North Star legacy-not-authoritative fixture to compositionGraphProjector.test.ts (or document shaderValidation.test.ts:260-286 as the proof if it satisfies the requirement). (c) Add planner-provenance assertions to useRenderState fast-path tests; either route fast-path decisions through planRender() or document the dual-authority design as a known limitation with a deferred item. Phase 4 — Reconcile docs: Reclassify D-020/D-021/D-022 based on code evidence, update dates and milestone references, validate all evidence links. Phase 5 — Produce the final proof note: Formalize the A6 mapping into a standalone artifact (e.g., .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md) with each North Star item mapped to exact file:line references. Phase 6 — Final quality:check run from clean checkout to prove all gates pass.
+
+### Open Questions
+- [blocking] A2 trust-model gate gap audit failed with structural error. What M2/M3 surfaces (docs, code paths) were added that fall outside the current check-trust-model-truth.mjs scan targets? Without this, the trust gate may have blind spots.
+- [blocking] A5 docs matrix reconciliation audit failed with structural error. Beyond D-020, which supported/deferred rows in extension-platform-supported-deferred.md, contract-recheck.md, and frontend-closure-matrix.md have classifications, evidence links, or dates that contradict M1-M3 code changes?
+- [blocking] The check-readiness.mjs syntax error at line 418 predates M1-M3. Is the correct fix to reconstruct the garbled extractTestReadinessFiles() function from its documented intent (parse vitest --config command lines to extract test file paths), or is there a known-good version in version control history?
+- [assume_and_proceed] Should D-020 be reclassified from deferred to supported given the 2676-line renderPlanner.ts with planRender() producing blockers, or does the fast-path bypass (getFastRenderRouteDecision) mean the planner is not yet the 'full' exclusive implementation and D-020 should remain deferred? _(assumption: Reclassify D-020 as supported with a note that fast-path routing decisions exist as a compatibility bridge and are documented as a known limitation (not a gap). The planner IS the canonical readiness authority; the fast-path is a routing optimization that should feed into planner input in a future refinement. Update B-002 blocker description accordingly.)_
+- [assume_and_proceed] Where should the North Star 'legacy-not-authoritative-after-projection-disabled' fixture live? compositionGraphProjector.test.ts has no such test; shaderValidation.test.ts:260-286 tests projected:false but is about shader ref projection, not graph projector authority loss. _(assumption: Add the dedicated fixture to compositionGraphProjector.test.ts because it tests the CompositionGraph projector, which is the canonical authority spine. The shaderValidation.test.ts test is a supporting proof but not the primary North Star fixture. The new test should call projectCompositionGraph with a snapshot where projection is disabled for a clip, then assert the projected graph has no consumes edge for that clip's shader.)_
+- [assume_and_proceed] Should the fast-path bypass (getFastRenderRouteDecision) be refactored to route through planRender() for planner provenance, or should it be documented as a known limitation with the dual-authority design preserved? _(assumption: Document the fast-path as a known limitation and add a deferred item for routing it through planner input. Refactoring it now would risk breaking the preview-only routing behavior that existing tests explicitly preserve. Instead, add planner-provenance assertions to the existing fast-path tests that verify the fast-path decision reason is captured in planner diagnostics when planRender() is eventually invoked downstream.)_
+
+        The engineering brief above is evidence gathered from the codebase. Treat it as the default working context, challenge its conclusions when the code disagrees, and only do targeted repository lookups when a concrete gap remains. Open questions in the brief are candidate concerns, not mandates — act on ones that materially affect the plan, dismiss immaterial or already-resolved ones with a brief reason, and treat question count as noise.
+
+        Idea:
+# M4: Evidence And Drift Gates
+
+## Outcome
+
+Prove the epic end state from a clean checkout. Add durable gates that keep trust claims, migrated composition authority, and export readiness from drifting apart again.
+
+## Execution Posture
+
+This milestone is about earning the claims. Do not broaden product scope. Tighten evidence, clean stale docs, and make the quality surface deterministic.
+
+## Scope
+
+IN:
+- Re-run the relevant quality/test suite from a clean checkout or clean cloud workspace.
+- Add or strengthen drift gates for forbidden extension trust claims.
+- Add or strengthen drift gates for direct legacy reads in migrated shader/ref readiness paths.
+- Add or strengthen tests proving user-facing export blockers originate from planner readiness.
+- Reconcile docs matrices and supported/deferred language after the first three milestones.
+- Produce a final completion note that maps North Star proof requirements to concrete files/tests.
+
+OUT:
+- New architecture beyond what M1-M3 implemented.
+- Real untrusted-extension sandboxing.
+- Additional composition fact-family migrations.
+- Cosmetic docs rewrites unrelated to trust/composition/export convergence.
+
+## Constraints
+
+- Do not suppress failing tests without either fixing the behavior or documenting a precise deferred requirement outside release claims.
+- Do not accept a dirty or stale evidence state as proof.
+- Do not let docs claim future composition-spine or export capabilities as current support.
+- Preserve generated runtime state and user work; do not use destructive git cleanup.
+
+## Done Criteria
+
+- Relevant extension, planner/export, SDK/schema, and docs quality checks pass from a clean base.
+- A final proof note lists each North Star required proof item and the exact test, script, or document that proves it.
+- Docs supported/deferred matrices agree with code and tests.
+- Gates fail on each of these regressions:
+  - UI/docs imply runtime permission enforcement or sandboxing.
+  - migrated shader/ref readiness reads raw legacy timeline fields as authority.
+  - user-facing export blocks bypass planner blockers.
+- The epic can be handed off with no unresolved blocker hidden behind "supported" language.
+
+## Touchpoints
+
+- `package.json`
+- `scripts/**`
+- `docs/extensions/**`
+- `src/sdk/**`
+- `src/tools/video-editor/rendering/**`
+- `src/tools/video-editor/runtime/composition/**`
+- `.megaplan/initiatives/extension-reality-convergence-epic/**`
+
+
+
+        Project directory:
+        /workspace/extension-reality-convergence-epic/reigh-app
+
+
+
+
+
+        No prior clarification artifact exists. Identify ambiguities, ask clarifying questions, and state your assumptions inside the plan output.
+
+
+
+        Requirements:
+        - If the engineering brief suggests an approach, use it as your starting hypothesis — but before committing, consider if there's a simpler or more fundamental fix. The brief is well-researched input, not a final answer.
+        - If the brief is absent, incomplete, or says "skip", inspect the repository yourself before planning.
+        - Stay focused on the requested idea. If repo exploration surfaces unrelated issues or docs, ignore them and return to the task.
+        - Prefer source code, tests, and directly relevant config files. Avoid `.megaplan/`, prior plan artifacts, and unrelated `docs/` or ops/deployment material unless the task explicitly depends on them.
+        - Stop exploring once you have enough evidence to name the concrete touch points and validation path. Do not keep browsing after you can write the plan.
+        - Produce a concrete implementation plan in markdown.
+        - Define observable success criteria as objects with `criterion` (string) and `priority` (`must`, `should`, or `info`):
+          - `must` — hard gate. The reviewer will block on failure. Use for correctness, functional requirements, and verifiable outcomes (e.g., "all existing tests pass", "API returns 200 for valid input"). Every `must` criterion must have a clear yes/no answer.
+          - `should` — quality target. The reviewer flags but does not block. Use for subjective goals, numeric guidelines, and best-effort improvements (e.g., "file under ~300 lines", "no deeply nested conditionals", "each function has a single responsibility").
+          - `info` — documented for humans, reviewer skips. Use for criteria that cannot be verified in this pipeline (e.g., "13 manual smoke tests pass", "stakeholder sign-off obtained").
+        - Each success criterion should include a `requires` field listing the capabilities needed for verification. Valid capability strings: `run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, `run_linter` (container), `drive_browser`, `inspect_runtime_ui`, `observe_runtime_logs`, `subjective_judgment`, `verify_physical_device` (human). `must` criteria MUST have non-empty `requires`. Example: `{"criterion": "All tests pass", "priority": "must", "requires": ["run_tests"]}`.
+        - Use the `questions` field for ambiguities that would materially change implementation.
+        - Use the `assumptions` field for defaults you are making so planning can proceed now.
+        - Prefer cheap validation steps early.
+        - Keep the plan proportional to the task. A 1-line fix needs a 2-step plan (apply fix + run tests), not a 5-step investigation.
+        - Size each step so it can be implemented AND verified in a single worker turn (~15 min, one model conversation). A step that bundles "create the abstraction AND migrate every consumer AND write all the tests" is too large to finish in one turn and will fail (the worker runs out of time before it can implement, leaving the step blocked). For large mechanical refactors, split along the natural seam — one step to add the new abstraction + its unit tests, then one step per consumer to migrate (the last migration step also adds parity tests) — rather than one giant step. Higher complexity does not earn a step more time; it only routes to a stronger model for the same single turn.
+        - If user notes answer earlier questions, incorporate them into the draft plan instead of re-asking them.
+        - Fix the problem fully. Do not limit scope just to avoid breaking existing tests — update the tests too if needed.
+        - Prefer the simplest, most direct fix. No fallbacks, type conversions, or defensive wrappers without concrete evidence they are needed.
+        - If the task or issue hints suggest a specific approach, follow it. Only deviate with concrete counter-evidence.
+        - Assign every plan step a complexity score 1–5 before finalize. Reason about complexity in the plan markdown (e.g. "Complexity: 2" per step), and surface it informally so the reviewer can audit:
+          - 1 = trivial single-file mechanical change
+          - 2 = simple change with tests to update
+          - 3 = multi-file change with non-trivial logic
+          - 4 = cross-cutting change with architecture implications
+          - 5 = fundamental system change with high regression risk
+        - Populate `changed_surfaces` with every concrete file path your plan will change or create. Include both source files and test files. Use repo-relative paths (e.g., `src/prompts.py`, `tests/test_prompts.py`). This list drives the deterministic test-selection blast radius; be complete. If your plan touches a file, list it.
+        - (Optional) Populate `test_blast_radius` with your own scoped test-selection proposal. This complements the deterministic floor the system computes from `changed_surfaces`. Provide `strategy` ("scoped", "full", or "none"), `selectors` (array of `{"kind": "path", "value": "<path>", "reason": "<why>"}` objects), and a `rationale` string. The system merges your proposal with the deterministic floor; you cannot narrow below the floor, but you can widen with additional selectors or escalate to full. If you intend a scoped finalize baseline while keeping the full suite as a hard gate, set `strategy` to "scoped", include concrete `selectors`, and set `full_suite_fallback` to true; the floor's full-suite requirement will be honored by the fallback without forcing the baseline strategy to "full".
+
+        Plan template — simple format (adapt to the actual repo and scope):
+````md
+# Implementation Plan: [Title]
+
+## Overview
+Summarize the goal, current repository shape, and the constraints that matter.
+
+## Main Phase
+
+### Step 1: Audit the current behavior (`src/prompts.py`)
+**Scope:** Small
+1. **Inspect** the current implementation and call out the exact insertion points (`src/prompts.py:29`).
+
+### Step 2: Add the first change (`src/evaluation.py`)
+**Scope:** Medium
+1. **Implement** the smallest viable change with exact file references (`src/evaluation.py:1`).
+2. **Capture** any tricky behavior with a short example.
+   ```python
+   issues = validate_plan_structure(plan_text)
+   ```
+
+### Step 3: Wire downstream behavior (`src/handlers.py`, `src/workers.py`)
+**Scope:** Medium
+1. **Update** the runtime flow in the touched files (`src/handlers.py:400`, `src/workers.py:199`).
+
+### Step 4: Prove the change (`tests/test_validator.py`, `tests/test_integration.py`)
+**Scope:** Small
+1. **Run** the cheapest targeted checks first (`tests/test_validator.py:1`).
+2. **Finish** with broader verification once the wiring is in place (`tests/test_integration.py:1`).
+
+## Execution Order
+1. Update prompts and mocks before enforcing stricter validation.
+2. Land higher-risk wiring after the validator and tests are ready.
+
+## Validation Order
+1. Start with focused unit tests.
+2. Run the broader suite after the flow changes are in place.
+````
+
+For complex plans, use multiple phases:
+````md
+## Phase 1: Foundation — Dependencies, DB, Types
+
+### Step 1: Install dependencies (`package.json`)
+...
+
+### Step 2: Create database migration (`supabase/migrations/`)
+...
+
+## Phase 2: Core Integration
+
+### Step 3: Port the main component (`src/components/`)
+...
+````
+
+Template guidance:
+- Simple plans: use `## Main Phase` with `### Step N:` sections underneath.
+- Complex plans: use multiple `## Phase N:` sections, each containing `### Step N:` steps. Step numbers are global (not per-phase).
+- The flat `## Step N:` format (without phases) also works for backwards compatibility.
+- Key invariants: one H1 title, one `## Overview`, numbered step sections (`### Step N:` or `## Step N:`), and at least one ordering section.
