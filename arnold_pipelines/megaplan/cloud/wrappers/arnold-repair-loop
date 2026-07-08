@@ -1307,6 +1307,8 @@ def chain_health_blocks_terminal_shortcut() -> bool:
     if not session:
         return False
     payload = load_json(marker_dir / f"{session}.chain-health.progress.json")
+    if not payload:
+        payload = load_json(marker_dir / "repair-data" / f"{session}.chain-health.json")
     if payload.get("chain_complete") is not False:
         return False
     try:
