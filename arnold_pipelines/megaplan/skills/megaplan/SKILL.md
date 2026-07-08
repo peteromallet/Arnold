@@ -1,1 +1,1 @@
-/workspace/arnold-chain-guard-min/arnold_pipelines/megaplan/data/_composed/claude_skill.md
+/workspace/megaplan-native-parity-corrective/Arnold/arnold_pipelines/megaplan/data/_composed/claude_skill.md
