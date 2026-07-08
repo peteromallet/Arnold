@@ -47,6 +47,23 @@ def test_record_step_routing_includes_fallback_observability_fields(tmp_path: Pa
     assert payload["failed_attempt_reasons"] == ["availability"]
 
 
+def test_record_step_routing_ignores_removed_plan_directory(tmp_path: Path, caplog) -> None:
+    removed_plan_dir = tmp_path / "removed-plan"
+
+    record_step_routing(
+        removed_plan_dir,
+        phase="plan",
+        step_label="plan",
+        agent="codex",
+        selected_spec="codex:gpt-5.5",
+        resolved_model="gpt-5.5",
+        actual_model="gpt-5.5",
+    )
+
+    assert not removed_plan_dir.exists()
+    assert "Routing ledger write failed" not in caplog.text
+
+
 def test_build_receipt_prefers_selected_attempt_and_emits_fallback_fields(tmp_path: Path) -> None:
     state = {
         "name": "demo-plan",
