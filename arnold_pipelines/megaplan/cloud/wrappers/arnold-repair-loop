@@ -142,14 +142,14 @@ prepare_repair_agent_exec_env() {
 }
 
 entry_target_missing_reason() {
-  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$MARKER_DIR" "$DATA_DIR" "$ARNOLD_SRC" <<'PY'
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$MARKER_DIR" "$DATA_DIR" "$ARNOLD_SRC" "$WORKSPACE" "$REMOTE_SPEC" "${RUN_KIND:-}" <<'PY'
 import pathlib
 import sys
 
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.source_initiative_repair import source_initiative_restore_available
 
-session, marker_dir, repair_data_dir, arnold_src = sys.argv[1:]
+session, marker_dir, repair_data_dir, arnold_src, cli_workspace, cli_remote_spec, cli_run_kind = sys.argv[1:]
 record = resolve_current_target(
     session,
     marker_dir=marker_dir,
@@ -170,12 +170,25 @@ current_refs = record.get("current_refs") if isinstance(record.get("current_refs
 run_kind = str(current_refs.get("run_kind") or "").strip().lower()
 workspace = str(current_refs.get("workspace") or "").strip()
 remote_spec = str(current_refs.get("remote_spec") or "").strip()
+cli_workspace = str(cli_workspace or "").strip()
+cli_remote_spec = str(cli_remote_spec or "").strip()
+cli_run_kind = str(cli_run_kind or "").strip().lower()
+if cli_workspace:
+    workspace = cli_workspace
+if cli_remote_spec:
+    remote_spec = cli_remote_spec
+if cli_run_kind:
+    run_kind = cli_run_kind
 stale_evidence = record.get("stale_evidence") if isinstance(record.get("stale_evidence"), list) else []
 stale_kinds = {
     str(item.get("kind") or "").strip()
     for item in stale_evidence
     if isinstance(item, dict)
 }
+if cli_workspace and pathlib.Path(cli_workspace).exists():
+    stale_kinds.discard("workspace_missing")
+if cli_remote_spec and pathlib.Path(cli_remote_spec).exists():
+    stale_kinds.discard("spec_missing")
 plan_state = record.get("plan_state") if isinstance(record.get("plan_state"), dict) else {}
 chain_state = record.get("chain_state") if isinstance(record.get("chain_state"), dict) else {}
 chain_log = record.get("chain_log") if isinstance(record.get("chain_log"), dict) else {}
@@ -573,12 +586,14 @@ EOF
       log "another repair loop is already active; exiting session=$SESSION owner_pid=$existing_pid pidfile=$REPAIR_PID_FILE"
       return 1
     fi
-    if live_pid="$(find_live_repair_loop_for_session "$SESSION" 2>/dev/null)"; then
-      if [[ "$REPAIR_LOCK_DIR_OWNED" == "1" ]]; then
-        release_repair_lock
+    if [[ -z "$existing_pid" ]]; then
+      if live_pid="$(find_live_repair_loop_for_session "$SESSION" 2>/dev/null)"; then
+        if [[ "$REPAIR_LOCK_DIR_OWNED" == "1" ]]; then
+          release_repair_lock
+        fi
+        log "another repair loop is already active; exiting session=$SESSION owner_pid=$live_pid pidfile=$REPAIR_PID_FILE"
+        return 1
       fi
-      log "another repair loop is already active; exiting session=$SESSION owner_pid=$live_pid pidfile=$REPAIR_PID_FILE"
-      return 1
     fi
     if [[ -n "$existing_pid" ]]; then
       log "stale repair pidfile detected; reclaiming session=$SESSION stale_pid=$existing_pid pidfile=$REPAIR_PID_FILE"
@@ -798,6 +813,17 @@ record = resolve_current_target(
 active_step = record.get("active_step_heartbeat")
 if isinstance(active_step, dict) and active_step.get("active"):
     raise SystemExit(0)
+if isinstance(active_step, dict):
+    phase = str(active_step.get("phase") or "").strip().lower()
+    started_at = str(active_step.get("started_at") or "").strip()
+    last_activity_at = str(active_step.get("last_activity_at") or "").strip()
+    current_refs = record.get("current_refs") if isinstance(record.get("current_refs"), dict) else {}
+    plan_state = str(current_refs.get("plan_current_state") or "").strip().lower()
+    chain_state = str(current_refs.get("chain_last_state") or "").strip().lower()
+    terminal_states = {"done", "complete", "completed", "finalized", "awaiting_pr_merge", "merged"}
+    nonterminal = plan_state not in terminal_states and chain_state not in terminal_states
+    if phase and nonterminal and (started_at or last_activity_at):
+        raise SystemExit(0)
 raise SystemExit(1)
 PY
 }
@@ -1150,7 +1176,7 @@ if [ -n "$REPO" ] && [ ! -d "$SRC/.git" ]; then
   fi
   git clone --branch "$REF" "$CLONE_URL" "$SRC"
 fi
-if [ -d "$SRC/.git" ]; then
+  if [ -d "$SRC/.git" ]; then
   git -C "$SRC" fetch origin "$REF"
   BRANCH="$(git -C "$SRC" branch --show-current)"
   if [ "$BRANCH" != "$REF" ]; then git -C "$SRC" checkout "$REF"; fi
@@ -1504,6 +1530,26 @@ elif run_kind == "chain" and manifest_reason:
                 str(chain_path or ""),
                 str(manifest_path or ""),
                 "done",
+            ]
+        )
+    )
+elif (
+    run_kind == "chain"
+    and plan_complete
+    and chain_path is not None
+    and chain_path.exists()
+    and chain_last_state in {"done", "complete"}
+    and not chain_health_blocks_terminal_shortcut()
+):
+    print(
+        "\t".join(
+            [
+                "1",
+                "chain",
+                f"terminal plan+chain state={chain_last_state}",
+                str(chain_path or ""),
+                str(plan_path or ""),
+                str(plan_state.get("current_state") or plan_state.get("state") or ""),
             ]
         )
     )
@@ -2756,6 +2802,88 @@ try:
 except Exception:
     resolver_output = {}
 
+resume_authority_failure = (
+    resolver_output.get("resume_authority_failure")
+    if isinstance(resolver_output.get("resume_authority_failure"), dict)
+    else {}
+)
+if (
+    str(plan_runtime_state.get("current_state") or "").strip().lower() == "failed"
+    and str(resume_authority_failure.get("code") or "").strip()
+    == "resume_execute_authority_blocked"
+    and str(resume_authority_failure.get("reason") or "").strip()
+    == "execute_authority_diverged"
+):
+    raw_failure_signals = _unique_strings(
+        [
+            *_collect_signal_values(
+                resume_authority_failure,
+                "resume_authority_failure",
+            ),
+            *raw_failure_signals,
+        ]
+    )
+    live_execute_failure_message = (
+        "failed plan cannot resume into a later phase because execute "
+        "completion is not fully corroborated by authority evidence"
+    )
+    latest_failure = {
+        "kind": "execution_blocked",
+        "message": live_execute_failure_message,
+        "phase": "execute",
+        "state": plan_runtime_state.get("current_state") or "failed",
+        "recorded_at": plan_latest_failure.get("recorded_at") or "",
+        "last_artifact": plan_latest_failure.get("last_artifact") or "",
+        "suggested_action": (
+            "repair or regenerate the missing execute authority evidence, "
+            "then retry resume"
+        ),
+        "metadata": _metadata_excerpt(resume_authority_failure),
+    }
+    plan_latest_failure = {
+        "plan_name": plan_latest_failure.get("plan_name")
+        or resume_authority_failure.get("plan_name")
+        or "",
+        "state_path": plan_latest_failure.get("state_path") or "",
+        "events_path": plan_latest_failure.get("events_path") or "",
+        "current_state": plan_latest_failure.get("current_state")
+        or plan_runtime_state.get("current_state")
+        or "",
+        "phase": "execute",
+        "iteration": plan_latest_failure.get("iteration"),
+        "kind": "execution_blocked",
+        "message": live_execute_failure_message,
+        "state": plan_latest_failure.get("state")
+        or plan_runtime_state.get("current_state")
+        or "",
+        "recorded_at": plan_latest_failure.get("recorded_at") or "",
+        "last_artifact": plan_latest_failure.get("last_artifact") or "",
+        "suggested_action": (
+            "repair or regenerate the missing execute authority evidence, "
+            "then retry resume"
+        ),
+        "metadata": _metadata_excerpt(resume_authority_failure),
+    }
+    stale_state = {
+        **stale_state,
+        "classification": "LIVE FAILURE",
+        "summary": (
+            "failed plan cannot resume into a later phase because execute "
+            "authority divergence is live"
+        ),
+        "recommended_action": (
+            "investigate the blocked execute task; fix the task-level target "
+            "code or plan state when the blocker is not an Arnold engine bug"
+        ),
+    }
+
+failure_classification = _classify_failure(
+    raw_failure_signals,
+    latest_failure,
+    chain_state,
+    plan_runtime_state,
+)
+
 stale_kinds = {
     str(item.get("kind") or "").strip()
     for item in resolver_output.get("stale_evidence", [])
@@ -2772,6 +2900,18 @@ if (
     and "stale_chain_state_after_terminal_plan" in stale_kinds
     and authoritative_plan_state in terminal_plan_states
 ):
+    failure_classification = "stale_state"
+elif (
+    failure_classification == "unknown_failure_mode"
+    and run_kind == "chain"
+    and stale_state.get("classification") == "NO LATEST FAILURE"
+    and authoritative_plan_state in terminal_plan_states
+    and str(chain_state.get("last_state") or "").strip().lower() == "done"
+    and str(chain_state.get("current_state") or "").strip().lower() in {"", "unknown"}
+    and str(chain_state.get("current_plan_name") or "").strip().lower() not in {"", "unknown"}
+):
+    # A mechanically stopped chain can retain last_state=done after the plan
+    # finishes, even though the chain summary never reached completion.
     failure_classification = "stale_state"
 elif state_mismatch.get("detected"):
     failure_classification = "plan_chain_state_mismatch"
@@ -2801,6 +2941,7 @@ payload = {
     "last_gate": last_gate,
     "user_action_context": user_action_context,
     "execute_attempt_context": execute_attempt_context,
+    "resume_authority_failure": resume_authority_failure,
 }
 payload["resolver_output"] = resolver_output
 print(json.dumps(payload, sort_keys=True))
@@ -4284,6 +4425,172 @@ exit_if_repair_target_recovered() {
   exit 0
 }
 
+recover_blocked_after_dev_fix_if_possible() {
+  require_repair_lock_held
+  local iteration="${1:-0}"
+  local attempt_id="${2:-0}"
+  ensure_repair_budget_available "blocked-recovery-$iteration"
+  local recovery_summary=""
+  recovery_summary="$(
+    PYTHONPATH="${WRAPPER_REPO_ROOT:-$ARNOLD_SRC}:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - \
+      "$WORKSPACE" "$RUN_KIND" "$PLAN_NAME" "$REMOTE_SPEC" "$SESSION" \
+      "${MARKER_DIR:-/workspace/.megaplan/cloud-sessions}" "$iteration" "$attempt_id" <<'PY'
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
+
+workspace = Path(sys.argv[1])
+run_kind = str(sys.argv[2] or "").strip().lower()
+plan_name_hint = str(sys.argv[3] or "").strip()
+remote_spec = str(sys.argv[4] or "").strip()
+session = str(sys.argv[5] or "").strip()
+marker_dir = Path(sys.argv[6]) if sys.argv[6] else Path("/workspace/.megaplan/cloud-sessions")
+iteration = int(sys.argv[7] or 0)
+attempt_id = int(sys.argv[8] or 0)
+
+
+def load_json(path: Path | None) -> dict[str, object]:
+    if path is None:
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def write_json(path: Path, payload: dict[str, object]) -> None:
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+try:
+    from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+except Exception:
+    print("")
+    raise SystemExit(0)
+
+target = resolve_current_target(
+    session,
+    marker_dir=marker_dir,
+    repair_data_dir=marker_dir / "repair-data",
+)
+plan_state_info = target.get("plan_state") if isinstance(target.get("plan_state"), dict) else {}
+plan_path_text = str(plan_state_info.get("path") or "").strip()
+plan_path = Path(plan_path_text) if plan_path_text else None
+if plan_path is None or not plan_path.exists():
+    fallback_name = plan_name_hint or str(
+        (
+            target.get("chain_state", {})
+            if isinstance(target.get("chain_state"), dict)
+            else {}
+        ).get("current_plan_name")
+        or ""
+    ).strip()
+    if fallback_name:
+        candidate = workspace / ".megaplan" / "plans" / fallback_name / "state.json"
+        if candidate.exists():
+            plan_path = candidate
+    if plan_path is None and workspace.exists():
+        plan_candidates = sorted(
+            (workspace / ".megaplan" / "plans").glob("*/state.json"),
+            key=lambda path: path.stat().st_mtime if path.exists() else 0.0,
+            reverse=True,
+        )
+        if plan_candidates:
+            plan_path = plan_candidates[0]
+if plan_path is None or not plan_path.exists():
+    print("")
+    raise SystemExit(0)
+plan_state = load_json(plan_path)
+if not plan_state:
+    print("")
+    raise SystemExit(0)
+
+current_state = str(plan_state.get("current_state") or "").strip().lower()
+if current_state not in {"blocked", "manual_review"}:
+    print("")
+    raise SystemExit(0)
+if plan_state.get("active_step"):
+    print("")
+    raise SystemExit(0)
+
+resume_cursor = plan_state.get("resume_cursor")
+resume_cursor = resume_cursor if isinstance(resume_cursor, dict) else {}
+retry_strategy = str(resume_cursor.get("retry_strategy") or "").strip().lower()
+resume_phase = str(resume_cursor.get("phase") or "").strip().lower()
+latest_failure = plan_state.get("latest_failure")
+latest_failure = latest_failure if isinstance(latest_failure, dict) else {}
+failure_kind = str(latest_failure.get("kind") or "").strip().lower()
+failure_phase = str(latest_failure.get("phase") or "").strip().lower()
+if retry_strategy != "manual_review":
+    print("")
+    raise SystemExit(0)
+if failure_kind not in {
+    "blocked_recovery_not_resolved",
+    "execution_blocked",
+    "no_next_step_state_mapping_failure",
+}:
+    print("")
+    raise SystemExit(0)
+if (resume_phase and resume_phase != "execute") or (failure_phase and failure_phase != "execute"):
+    print("")
+    raise SystemExit(0)
+
+plan_name = str(plan_state.get("name") or plan_path.parent.name or plan_name_hint).strip()
+meta = plan_state.get("meta")
+meta = meta if isinstance(meta, dict) else {}
+recoveries = meta.get("watchdog_dev_fix_recoveries")
+recoveries = recoveries if isinstance(recoveries, list) else []
+recoveries.append(
+    {
+        "recovered_at": datetime.now(timezone.utc).isoformat(),
+        "iteration": iteration,
+        "attempt_id": attempt_id,
+        "reason": "dev_fix_cleared_repairable_execute_block",
+        "previous_state": current_state,
+        "previous_retry_strategy": retry_strategy,
+        "previous_failure_kind": failure_kind,
+    }
+)
+meta["watchdog_dev_fix_recoveries"] = recoveries
+plan_state["meta"] = meta
+plan_state["current_state"] = "finalized"
+plan_state["resume_cursor"] = {"phase": "execute", "retry_strategy": "rerun_phase"}
+plan_state["latest_failure"] = None
+plan_state.pop("active_step", None)
+write_json(plan_path, plan_state)
+
+chain_state_info = target.get("chain_state") if isinstance(target.get("chain_state"), dict) else {}
+chain_path_text = str(chain_state_info.get("path") or "").strip()
+chain_path = Path(chain_path_text) if chain_path_text else None
+if (chain_path is None or not chain_path.exists()) and run_kind == "chain" and workspace.exists():
+    chain_candidates = sorted(
+        (workspace / ".megaplan" / "plans" / ".chains").glob("*.json"),
+        key=lambda path: path.stat().st_mtime if path.exists() else 0.0,
+        reverse=True,
+    )
+    if chain_candidates:
+        chain_path = chain_candidates[0]
+if run_kind == "chain" and chain_path is not None and chain_path.exists():
+    chain_state = load_json(chain_path)
+    if (
+        chain_state
+        and str(chain_state.get("current_plan_name") or "").strip() == plan_name
+        and str(chain_state.get("last_state") or "").strip().lower() == "blocked"
+    ):
+        chain_state["last_state"] = "finalized"
+        chain_state["latest_failure"] = None
+        write_json(chain_path, chain_state)
+
+print(f"recovered blocked execute plan={plan_name} path={plan_path}")
+PY
+  )"
+  if [[ -n "$recovery_summary" ]]; then
+    log "$recovery_summary session=$SESSION iteration=$iteration attempt_id=$attempt_id"
+  fi
+}
+
 verify_started_and_holding() {
   local session="$1"
   local workspace="$2"
@@ -5224,7 +5531,7 @@ if [[ "$INITIAL_HEALTH" == "alive" ]]; then
     log "repair target is alive but marker requires repair session=$SESSION reason=$forced_repair_reason"
   else
   repair_data_set_outcome "live_with_fresh_activity"
-  log "repair target already running; verified recovery session=$SESSION"
+  log "repair target already running; no dev-fix needed session=$SESSION"
   exit 0
   fi
 fi
@@ -5539,6 +5846,7 @@ for iteration in 1 2 3; do
   fi
   run_dev_fix_turn "$iteration" "$CURRENT_ATTEMPT_ID" "${CURRENT_RECURRING:-0}" "$DEV_REQUESTED_MODEL" "$DEV_DISPATCH_MODEL" "$DEV_DISPATCH_KIND" "$DEV_FALLBACK_REASON"
   exit_if_repair_target_complete "iteration-$iteration-post-dev-fix"
+  recover_blocked_after_dev_fix_if_possible "$iteration" "$CURRENT_ATTEMPT_ID" || true
 
   mechanical_status="$(mechanical_launch_step "$iteration" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
     repair_data_record_mechanical "$iteration" "$CURRENT_ATTEMPT_ID" "$mechanical_status" "$mechanical_status"
