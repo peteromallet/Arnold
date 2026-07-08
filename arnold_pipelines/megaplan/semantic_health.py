@@ -1,4 +1,4 @@
-"""Read-only semantic health inspection for S2 front-half boundaries.
+"""Read-only semantic health inspection for declared Megaplan boundaries.
 
 Loads the boundary contract registry, current state/history,
 ``phase_result.json``, step receipts, and ``boundary_receipts/`` from a
@@ -17,6 +17,8 @@ contracts.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from functools import lru_cache
 import json
 import logging
 from pathlib import Path
@@ -57,6 +59,27 @@ _EXECUTE_TERMINAL_BOUNDARY_IDS = {"execute_no_review_terminal"}
 _EXECUTE_APPROVAL_BOUNDARY_IDS = {"execute_approval"}
 _EXECUTE_AGGREGATE_BOUNDARY_IDS = {"execute_aggregate_promotion"}
 _EXECUTE_CHECKPOINT_BOUNDARY_IDS = {"execute_batch_checkpoint", "execute_partial_failure"}
+_REVIEW_CHILD_OUTPUTS_BOUNDARY_ID = "review_child_outputs"
+_REVIEW_REDUCER_PROMOTION_BOUNDARY_ID = "review_reducer_promotion"
+_REVIEW_REWORK_EFFECTS_BOUNDARY_ID = "review_rework_effects"
+_REVIEW_HUMAN_VERIFICATION_BOUNDARY_ID = "review_human_verification"
+_FINALIZE_ARTIFACTS_BOUNDARY_ID = "finalize_artifacts"
+_FINALIZE_FALLBACK_BOUNDARY_ID = "finalize_fallback"
+_FINAL_PROJECTION_BOUNDARY_ID = "final_projection"
+_REVIEW_CURRENT_STATES = {"executed", "reviewed", "done", "awaiting_human_verify"}
+_NATIVE_REVIEW_ROUTE_SIGNATURES = frozenset(
+    {
+        ("execute-batches", "default", "review-fan-in"),
+        ("review-fan-in", "rework", "review-rework-execute-batches"),
+        ("review-rework-execute-batches", "default", "review-rework-fan-in"),
+    }
+)
+_REVIEW_CHILD_TRACE_DETAIL_KEYS = (
+    "child_receipt_refs",
+    "child_receipts",
+    "child_trace_refs",
+    "child_output_refs",
+)
 
 # ── public API ─────────────────────────────────────────────────────────
 
@@ -137,6 +160,16 @@ def _inspect_contract(
 
     # --- execute-phase read-only semantics (S4) ---
     findings.extend(_check_execute_semantics(plan_dir=plan_dir, contract=contract, state=state))
+
+    # --- review/finalize read-only semantics (S5) ---
+    findings.extend(
+        _check_review_finalize_semantics(
+            plan_dir=plan_dir,
+            contract=contract,
+            state=state,
+            history=history,
+        )
+    )
 
     return findings
 
@@ -773,6 +806,606 @@ def _check_execute_terminal_state(
                 details={
                     "accepted_terminal_states": sorted(_EXECUTE_TERMINAL_STATES),
                     "actual_current_state": actual_cs,
+                },
+            )
+        )
+    return findings
+
+
+# ── review/finalize read-only semantics (S5) ───────────────────────────
+
+
+def _check_review_finalize_semantics(
+    *,
+    plan_dir: Path,
+    contract: Any,
+    state: dict[str, Any] | None,
+    history: list[dict[str, Any]],
+) -> list[SemanticFinding]:
+    bid = contract.boundary_id
+    if bid == _REVIEW_CHILD_OUTPUTS_BOUNDARY_ID:
+        return _check_review_child_outputs(plan_dir, contract, state, history)
+    if bid == _REVIEW_REDUCER_PROMOTION_BOUNDARY_ID:
+        return _check_review_reducer_promotion(plan_dir, contract, state, history)
+    if bid == _REVIEW_REWORK_EFFECTS_BOUNDARY_ID:
+        return _check_review_rework_effects(plan_dir, contract, state, history)
+    if bid == _REVIEW_HUMAN_VERIFICATION_BOUNDARY_ID:
+        return _check_review_human_verification(plan_dir, contract, state, history)
+    if bid == _FINALIZE_ARTIFACTS_BOUNDARY_ID:
+        return _check_finalize_artifacts(plan_dir, contract)
+    if bid == _FINALIZE_FALLBACK_BOUNDARY_ID:
+        return _check_finalize_fallback(plan_dir, contract, state)
+    if bid == _FINAL_PROJECTION_BOUNDARY_ID:
+        return _check_final_projection(plan_dir, contract, state, history)
+    return []
+
+
+@lru_cache(maxsize=1)
+def _native_review_finalize_topology() -> dict[str, Any]:
+    from arnold.workflow.source_compiler import lower_workflow_file
+    from arnold_pipelines.megaplan.workflows import planning
+    from arnold_pipelines.megaplan.workflows.components import (
+        FINALIZE_POLICY,
+        REVIEW_POLICY,
+    )
+
+    lowered = lower_workflow_file(planning.AUTHORING_SOURCE_PATH)
+    route_signatures = frozenset(
+        (route.source, route.label, route.target)
+        for route in lowered.routes
+        if route.label != "else"
+    )
+    review_surface = REVIEW_POLICY.metadata.get("route_surface")
+    finalize_surface = FINALIZE_POLICY.metadata.get("route_surface")
+    return {
+        "route_signatures": route_signatures,
+        "review_surface": review_surface if isinstance(review_surface, Mapping) else None,
+        "finalize_surface": finalize_surface if isinstance(finalize_surface, Mapping) else None,
+    }
+
+
+def _review_surface_visible() -> bool:
+    topology = _native_review_finalize_topology()
+    review_surface = topology["review_surface"]
+    if not isinstance(review_surface, Mapping):
+        return False
+    fan_in_contract = review_surface.get("fan_in_contract")
+    rework_cycle = review_surface.get("rework_cycle")
+    if not isinstance(fan_in_contract, Mapping) or not isinstance(rework_cycle, Mapping):
+        return False
+    if fan_in_contract.get("fan_in_ref") != "review-fan-in":
+        return False
+    if fan_in_contract.get("reducer_ref") != "SOURCE_REVIEW":
+        return False
+    if rework_cycle.get("target_ref") != "execute":
+        return False
+    return _NATIVE_REVIEW_ROUTE_SIGNATURES.issubset(topology["route_signatures"])
+
+
+def _finalize_surface_visible() -> bool:
+    topology = _native_review_finalize_topology()
+    finalize_surface = topology["finalize_surface"]
+    if not isinstance(finalize_surface, Mapping):
+        return False
+    fallback_routes = finalize_surface.get("fallback_routes")
+    projection_routes = finalize_surface.get("final_projection_routes")
+    if not isinstance(fallback_routes, Mapping) or not isinstance(projection_routes, Mapping):
+        return False
+    fallback = fallback_routes.get("plan_contract_revise_needed")
+    revise_projection = projection_routes.get("revise_fallback")
+    execute_projection = projection_routes.get("execute")
+    if not isinstance(fallback, Mapping):
+        return False
+    if not isinstance(revise_projection, Mapping) or not isinstance(execute_projection, Mapping):
+        return False
+    return (
+        fallback.get("route_signal") == "revise"
+        and fallback.get("target_ref") == "revise"
+        and revise_projection.get("route_signal") == "revise"
+        and revise_projection.get("target_ref") == "revise"
+        and execute_projection.get("target_ref") == "execute"
+    )
+
+
+def _load_plan_meta(plan_dir: Path, state: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(state, dict):
+        return None
+    try:
+        from arnold_pipelines.megaplan._core import latest_plan_meta_path, read_json
+
+        meta_path = latest_plan_meta_path(plan_dir, state)
+        loaded = read_json(meta_path)
+    except Exception:
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
+def _history_contains_step(history: list[dict[str, Any]], step: str) -> bool:
+    return any(entry.get("step") == step for entry in history if isinstance(entry, dict))
+
+
+def _review_or_finalize_evidence_present(
+    *,
+    plan_dir: Path,
+    state: dict[str, Any] | None,
+    history: list[dict[str, Any]],
+    artifact_name: str,
+    receipt_boundary_id: str,
+    phase: str,
+) -> bool:
+    receipt = _load_receipt(plan_dir, receipt_boundary_id)
+    if receipt is not None:
+        return True
+    if (plan_dir / artifact_name).exists():
+        return True
+    if isinstance(state, dict):
+        if state.get("current_phase") == phase:
+            return True
+        current_state = state.get("current_state")
+        if phase == "review" and current_state in _REVIEW_CURRENT_STATES:
+            return True
+        if phase == "finalize" and current_state in {"gated", "finalized", "done", "awaiting_human_verify"}:
+            return True
+    return _history_contains_step(history, phase)
+
+
+def _child_receipt_refs(receipt: dict[str, Any]) -> tuple[str, ...]:
+    refs: list[str] = []
+    for ref in receipt.get("artifact_refs", ()):
+        if isinstance(ref, str) and ref.startswith("review/"):
+            refs.append(ref)
+    details = receipt.get("details")
+    if isinstance(details, Mapping):
+        for key in _REVIEW_CHILD_TRACE_DETAIL_KEYS:
+            value = details.get(key)
+            if isinstance(value, (list, tuple)):
+                refs.extend(str(item) for item in value if isinstance(item, str) and item)
+        child_count = details.get("child_count")
+        if isinstance(child_count, int) and child_count > 0 and not refs:
+            refs.append(f"child_count:{child_count}")
+    deduped: list[str] = []
+    for ref in refs:
+        if ref not in deduped:
+            deduped.append(ref)
+    return tuple(deduped)
+
+
+def _receipt_state_value(receipt: dict[str, Any], key: str) -> Any:
+    state_observation = receipt.get("state_observation")
+    if isinstance(state_observation, Mapping):
+        return state_observation.get(key)
+    return None
+
+
+def _check_review_child_outputs(
+    plan_dir: Path,
+    contract: Any,
+    state: dict[str, Any] | None,
+    history: list[dict[str, Any]],
+) -> list[SemanticFinding]:
+    findings: list[SemanticFinding] = []
+    if not _review_or_finalize_evidence_present(
+        plan_dir=plan_dir,
+        state=state,
+        history=history,
+        artifact_name="review.json",
+        receipt_boundary_id=contract.boundary_id,
+        phase="review",
+    ):
+        return findings
+    receipt = _load_receipt(plan_dir, contract.boundary_id)
+    if receipt is None:
+        return findings
+    child_refs = _child_receipt_refs(receipt)
+    if not child_refs:
+        findings.append(
+            SemanticFinding(
+                finding_id="SH-review_child_outputs-missing-child-receipts",
+                boundary_id=contract.boundary_id,
+                description=(
+                    "review child outputs boundary recorded completion without "
+                    "any visible child receipt or child trace refs"
+                ),
+                severity=FindingSeverity.ERROR,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                contract_ref=contract.boundary_id,
+                evidence_ref=str(plan_dir / "boundary_receipts" / f"{contract.boundary_id}.json"),
+            )
+        )
+    if not _review_surface_visible():
+        findings.append(
+            SemanticFinding(
+                finding_id="SH-review_child_outputs-native-reducer-route-missing",
+                boundary_id=contract.boundary_id,
+                description=(
+                    "review child outputs cannot be treated as complete because "
+                    "the native review fan-in/rework topology is not visibly declared"
+                ),
+                severity=FindingSeverity.ERROR,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+                contract_ref=contract.boundary_id,
+                details={"required_routes": sorted(_NATIVE_REVIEW_ROUTE_SIGNATURES)},
+            )
+        )
+    return findings
+
+
+def _check_review_reducer_promotion(
+    plan_dir: Path,
+    contract: Any,
+    state: dict[str, Any] | None,
+    history: list[dict[str, Any]],
+) -> list[SemanticFinding]:
+    findings: list[SemanticFinding] = []
+    child_receipt = _load_receipt(plan_dir, _REVIEW_CHILD_OUTPUTS_BOUNDARY_ID)
+    child_refs = _child_receipt_refs(child_receipt) if child_receipt is not None else ()
+    if child_refs and _load_receipt(plan_dir, contract.boundary_id) is None:
+        findings.append(
+            SemanticFinding(
+                finding_id="SH-review_reducer_promotion-missing-reducer-receipt",
+                boundary_id=contract.boundary_id,
+                description=(
+                    "review child receipts are present but no reducer promotion "
+                    "receipt records the native review fan-in result"
+                ),
+                severity=FindingSeverity.ERROR,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                contract_ref=contract.boundary_id,
+                details={"child_receipt_refs": list(child_refs)},
+            )
+        )
+    if _review_or_finalize_evidence_present(
+        plan_dir=plan_dir,
+        state=state,
+        history=history,
+        artifact_name="review.json",
+        receipt_boundary_id=contract.boundary_id,
+        phase="review",
+    ) and _load_receipt(plan_dir, contract.boundary_id) is not None and not _review_surface_visible():
+        findings.append(
+            SemanticFinding(
+                finding_id="SH-review_reducer_promotion-native-reducer-route-missing",
+                boundary_id=contract.boundary_id,
+                description=(
+                    "review reducer promotion receipt cannot prove completion "
+                    "without a visible native review fan-in and rework route"
+                ),
+                severity=FindingSeverity.ERROR,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+                contract_ref=contract.boundary_id,
+            )
+        )
+    return findings
+
+
+def _check_review_rework_effects(
+    plan_dir: Path,
+    contract: Any,
+    state: dict[str, Any] | None,
+    history: list[dict[str, Any]],
+) -> list[SemanticFinding]:
+    if not _review_or_finalize_evidence_present(
+        plan_dir=plan_dir,
+        state=state,
+        history=history,
+        artifact_name="review.json",
+        receipt_boundary_id=contract.boundary_id,
+        phase="review",
+    ):
+        return []
+    if _load_receipt(plan_dir, contract.boundary_id) is None or _review_surface_visible():
+        return []
+    return [
+        SemanticFinding(
+            finding_id="SH-review_rework_effects-native-rework-route-missing",
+            boundary_id=contract.boundary_id,
+            description=(
+                "review rework effects receipt cannot be considered complete "
+                "without the visible native execute/review rework cycle"
+            ),
+            severity=FindingSeverity.ERROR,
+            diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+            contract_ref=contract.boundary_id,
+        )
+    ]
+
+
+def _check_review_human_verification(
+    plan_dir: Path,
+    contract: Any,
+    state: dict[str, Any] | None,
+    history: list[dict[str, Any]],
+) -> list[SemanticFinding]:
+    findings: list[SemanticFinding] = []
+    if not _review_or_finalize_evidence_present(
+        plan_dir=plan_dir,
+        state=state,
+        history=history,
+        artifact_name="review.json",
+        receipt_boundary_id=contract.boundary_id,
+        phase="review",
+    ):
+        return findings
+    current_state = state.get("current_state") if isinstance(state, dict) else None
+    receipt = _load_receipt(plan_dir, contract.boundary_id)
+    if receipt is None and current_state != "awaiting_human_verify":
+        return findings
+    verifications_path = plan_dir / "human_verifications.json"
+    if not verifications_path.is_file():
+        findings.append(
+            SemanticFinding(
+                finding_id="SH-review_human_verification-human-authority-missing",
+                boundary_id=contract.boundary_id,
+                description=(
+                    "review human-verification boundary lacks human_verifications.json "
+                    "authority evidence"
+                ),
+                severity=FindingSeverity.ERROR,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                contract_ref=contract.boundary_id,
+                evidence_ref=str(verifications_path),
+            )
+        )
+        return findings
+    plan_meta = _load_plan_meta(plan_dir, state)
+    if plan_meta is None:
+        return findings
+    try:
+        from arnold_pipelines.megaplan.handlers.verifiability import (
+            get_human_verification_status,
+        )
+
+        hv_status = get_human_verification_status(plan_dir, plan_meta)
+    except Exception:
+        return findings
+    if hv_status.get("semantics") != "latest_verdict":
+        findings.append(
+            SemanticFinding(
+                finding_id="SH-review_human_verification-human-authority-stale",
+                boundary_id=contract.boundary_id,
+                description=(
+                    "review human-verification evidence is present but does not "
+                    "declare latest_verdict semantics"
+                ),
+                severity=FindingSeverity.WARNING,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+                contract_ref=contract.boundary_id,
+                details={"semantics": hv_status.get("semantics")},
+            )
+        )
+    return findings
+
+
+def _check_finalize_artifacts(
+    plan_dir: Path,
+    contract: Any,
+) -> list[SemanticFinding]:
+    findings: list[SemanticFinding] = []
+    receipt = _load_receipt(plan_dir, contract.boundary_id)
+    if receipt is None:
+        return findings
+    finalize_json = plan_dir / "finalize.json"
+    if not finalize_json.is_file():
+        return findings
+    details = receipt.get("details")
+    recorded_hash = details.get("artifact_hash") if isinstance(details, Mapping) else None
+    if isinstance(recorded_hash, str) and recorded_hash:
+        try:
+            from arnold_pipelines.megaplan._core import sha256_file
+
+            current_hash = sha256_file(finalize_json)
+        except Exception:
+            current_hash = None
+        if current_hash and current_hash != recorded_hash:
+            findings.append(
+                SemanticFinding(
+                    finding_id="SH-finalize_artifacts-stale-artifact-hash",
+                    boundary_id=contract.boundary_id,
+                    description=(
+                        "finalize artifacts receipt hash does not match the current "
+                        "finalize.json payload"
+                    ),
+                    severity=FindingSeverity.WARNING,
+                    diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+                    contract_ref=contract.boundary_id,
+                    evidence_ref=str(finalize_json),
+                    details={
+                        "recorded_hash": recorded_hash,
+                        "current_hash": current_hash,
+                    },
+                )
+            )
+    artifact_refs = receipt.get("artifact_refs")
+    if isinstance(artifact_refs, list):
+        missing_refs = [
+            ref for ref in contract.required_artifacts if ref not in artifact_refs
+        ]
+        if missing_refs:
+            findings.append(
+                SemanticFinding(
+                    finding_id="SH-finalize_artifacts-stale-artifact-refs",
+                    boundary_id=contract.boundary_id,
+                    description=(
+                        "finalize artifacts receipt is missing one or more canonical "
+                        "artifact refs"
+                    ),
+                    severity=FindingSeverity.WARNING,
+                    diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+                    contract_ref=contract.boundary_id,
+                    details={"missing_artifact_refs": missing_refs},
+                )
+            )
+    return findings
+
+
+def _final_projection_implies_revise_fallback(
+    plan_dir: Path,
+    state: dict[str, Any] | None,
+) -> bool:
+    receipt = _load_receipt(plan_dir, _FINAL_PROJECTION_BOUNDARY_ID)
+    if receipt is not None:
+        if _receipt_state_value(receipt, "next_step") == "revise":
+            return True
+        if _receipt_state_value(receipt, "current_state") == "critiqued":
+            return True
+    if isinstance(state, dict) and state.get("current_state") == "critiqued":
+        return True
+    return False
+
+
+def _check_finalize_fallback(
+    plan_dir: Path,
+    contract: Any,
+    state: dict[str, Any] | None,
+) -> list[SemanticFinding]:
+    findings: list[SemanticFinding] = []
+    fallback_receipt = _load_receipt(plan_dir, contract.boundary_id)
+    fallback_artifact = plan_dir / "finalize_revise_feedback.json"
+    fallback_needed = fallback_artifact.exists() or _final_projection_implies_revise_fallback(plan_dir, state)
+    if fallback_needed and fallback_receipt is None:
+        findings.append(
+            SemanticFinding(
+                finding_id="SH-finalize_fallback-missing-fallback-receipt",
+                boundary_id=contract.boundary_id,
+                description=(
+                    "finalize revise-fallback evidence exists but no finalize "
+                    "fallback receipt was recorded"
+                ),
+                severity=FindingSeverity.ERROR,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                contract_ref=contract.boundary_id,
+            )
+        )
+    if fallback_receipt is not None and not _finalize_surface_visible():
+        findings.append(
+            SemanticFinding(
+                finding_id="SH-finalize_fallback-native-fallback-route-missing",
+                boundary_id=contract.boundary_id,
+                description=(
+                    "finalize fallback receipt cannot prove completion without a "
+                    "visible native fallback route and projection surface"
+                ),
+                severity=FindingSeverity.ERROR,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+                contract_ref=contract.boundary_id,
+            )
+        )
+    return findings
+
+
+def _expected_final_projection_cases() -> tuple[dict[str, Any], ...]:
+    from arnold_pipelines.megaplan._core.topology import STAGE_TO_STATE
+
+    finalize_surface = _native_review_finalize_topology()["finalize_surface"]
+    if not isinstance(finalize_surface, Mapping):
+        return ()
+    projection_routes = finalize_surface.get("final_projection_routes")
+    if not isinstance(projection_routes, Mapping):
+        return ()
+    cases: list[dict[str, Any]] = []
+    for case_name, route in projection_routes.items():
+        if not isinstance(route, Mapping):
+            continue
+        state_value = route.get("terminal_state")
+        if not isinstance(state_value, str) or not state_value:
+            projected_phase = route.get("projected_phase")
+            if isinstance(projected_phase, str):
+                state_value = STAGE_TO_STATE.get(projected_phase)
+        if not isinstance(state_value, str) or not state_value:
+            continue
+        cases.append(
+            {
+                "case_name": case_name,
+                "state": state_value,
+                "next_step": route.get("target_ref"),
+                "route_signal": route.get("route_signal"),
+            }
+        )
+    return tuple(cases)
+
+
+def _check_final_projection(
+    plan_dir: Path,
+    contract: Any,
+    state: dict[str, Any] | None,
+    history: list[dict[str, Any]],
+) -> list[SemanticFinding]:
+    findings: list[SemanticFinding] = []
+    if not _review_or_finalize_evidence_present(
+        plan_dir=plan_dir,
+        state=state,
+        history=history,
+        artifact_name="finalize.json",
+        receipt_boundary_id=contract.boundary_id,
+        phase="finalize",
+    ):
+        return findings
+    receipt = _load_receipt(plan_dir, contract.boundary_id)
+    if receipt is None:
+        return findings
+    if not _finalize_surface_visible():
+        findings.append(
+            SemanticFinding(
+                finding_id="SH-final_projection-native-fallback-route-missing",
+                boundary_id=contract.boundary_id,
+                description=(
+                    "final projection receipt cannot prove completion without the "
+                    "visible finalize fallback/projection route surface"
+                ),
+                severity=FindingSeverity.ERROR,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+                contract_ref=contract.boundary_id,
+            )
+        )
+    current_state = state.get("current_state") if isinstance(state, dict) else None
+    observed_state = _receipt_state_value(receipt, "current_state")
+    if isinstance(current_state, str) and isinstance(observed_state, str) and current_state != observed_state:
+        findings.append(
+            SemanticFinding(
+                finding_id="SH-final_projection-state-history-drift",
+                boundary_id=contract.boundary_id,
+                description=(
+                    "final projection receipt state observation no longer matches "
+                    "state.json"
+                ),
+                severity=FindingSeverity.WARNING,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+                contract_ref=contract.boundary_id,
+                details={
+                    "receipt_current_state": observed_state,
+                    "state_json_current_state": current_state,
+                },
+            )
+        )
+        return findings
+    observed_next_step = _receipt_state_value(receipt, "next_step")
+    valid_cases = _expected_final_projection_cases()
+    if valid_cases and not any(
+        case["state"] == current_state and case["next_step"] == observed_next_step
+        for case in valid_cases
+    ):
+        findings.append(
+            SemanticFinding(
+                finding_id="SH-final_projection-state-history-drift",
+                boundary_id=contract.boundary_id,
+                description=(
+                    "final projection state/next_step do not match any visible "
+                    "finalize projection case"
+                ),
+                severity=FindingSeverity.WARNING,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+                contract_ref=contract.boundary_id,
+                details={
+                    "current_state": current_state,
+                    "observed_next_step": observed_next_step,
+                    "expected_cases": [
+                        {
+                            "case_name": case["case_name"],
+                            "state": case["state"],
+                            "next_step": case["next_step"],
+                        }
+                        for case in valid_cases
+                    ],
                 },
             )
         )

@@ -167,6 +167,70 @@ def test_boundary_contract_to_dict_round_trip() -> None:
     assert payload["details"] == {"owner": "megaplan"}
 
 
+def test_boundary_contract_to_dict_preserves_s5_effect_and_projection_details() -> None:
+    """BoundaryContract must preserve S5-style effect, receipt, and projection evidence."""
+    from arnold.workflow.boundary_evidence import BoundaryContract
+
+    contract = BoundaryContract(
+        boundary_id="review-rework-effects",
+        workflow_id="megaplan-review",
+        row_id="s5.review_rework_effects.1",
+        required_artifacts=("review.json", "finalize.json"),
+        expected_state_delta={"current_phase": "review", "projection_state": "finalized"},
+        expected_history_entry="review_rework_projected",
+        phase_result_required=True,
+        receipt_required=True,
+        authority_required=True,
+        details={
+            "effect": {
+                "effect_id": "artifact.review.output",
+                "projection_cases": (
+                    "execute",
+                    "revise_fallback",
+                    "no_review_deferred_human",
+                ),
+            },
+            "authority": {
+                "scope": "review.cap_exhausted",
+                "outcomes": ("blocked", "force_proceeded"),
+                "policy_ref": "megaplan:review",
+            },
+            "evidence_surface_ref": "REVIEW_POLICY.metadata.route_surface.rework_cycle",
+        },
+    )
+
+    payload = contract.to_dict()
+
+    assert payload["row_id"] == "s5.review_rework_effects.1"
+    assert payload["required_artifacts"] == ["review.json", "finalize.json"]
+    assert payload["expected_state_delta"] == {
+        "current_phase": "review",
+        "projection_state": "finalized",
+    }
+    assert payload["expected_history_entry"] == "review_rework_projected"
+    assert payload["phase_result_required"] is True
+    assert payload["receipt_required"] is True
+    assert payload["authority_required"] is True
+    assert payload["details"] == {
+        "effect": {
+            "effect_id": "artifact.review.output",
+            "projection_cases": [
+                "execute",
+                "revise_fallback",
+                "no_review_deferred_human",
+            ],
+        },
+        "authority": {
+            "scope": "review.cap_exhausted",
+            "outcomes": ["blocked", "force_proceeded"],
+            "policy_ref": "megaplan:review",
+        },
+        "evidence_surface_ref": "REVIEW_POLICY.metadata.route_surface.rework_cycle",
+    }
+    for key in ("route_target", "next_step", "routing_predicate"):
+        assert key not in payload
+
+
 # ── BoundaryReceipt tests ─────────────────────────────────────────────────
 
 
@@ -287,6 +351,92 @@ def test_boundary_receipt_to_dict_round_trip() -> None:
     assert payload["receipt_version"] == "arnold.workflow.boundary_receipt.v1"
     assert len(payload["authority_records"]) == 1
     assert payload["authority_records"][0]["actor"] == "gate-handler"
+
+
+def test_boundary_receipt_to_dict_preserves_s5_authority_and_projection_evidence() -> None:
+    """BoundaryReceipt must carry S5 authority records and projection evidence durably."""
+    from arnold.workflow.boundary_evidence import (
+        AuthorityRecord,
+        BoundaryOutcome,
+        BoundaryReceipt,
+    )
+
+    authority = AuthorityRecord(
+        actor="review-policy",
+        role="cap_authority",
+        decision="force_proceeded",
+        scope="review.cap_exhausted",
+        conditions=("advisory_cap", "receipt_present"),
+        evidence_refs=("receipts/review_cap.json", "policy/review_surface.json"),
+        waiver_reason="advisory_threshold_only",
+        details={"policy_ref": "megaplan:review"},
+    )
+    receipt = BoundaryReceipt(
+        boundary_id="review-cap-authority",
+        workflow_id="megaplan-review",
+        row_id="s5.review_cap_authority.1",
+        invocation_id="inv-review-001",
+        artifact_refs=("review.json", "finalize.json"),
+        state_observation={
+            "current_phase": "review",
+            "projection_state": "finalized",
+            "terminal_state": "awaiting_human_verify",
+        },
+        history_ref="history/review_cap_authorized",
+        phase_result_ref="phase_results/review.json",
+        outcome=BoundaryOutcome.DEGRADED_CONTINUE,
+        authority_records=(authority,),
+        details={
+            "projection_cases": (
+                "execute",
+                "no_review_deferred_human",
+            ),
+            "evidence_surface_ref": (
+                "FINALIZE_POLICY.metadata.route_surface.final_projection_routes"
+            ),
+        },
+    )
+
+    payload = receipt.to_dict()
+
+    assert payload["boundary_id"] == "review-cap-authority"
+    assert payload["workflow_id"] == "megaplan-review"
+    assert payload["row_id"] == "s5.review_cap_authority.1"
+    assert payload["invocation_id"] == "inv-review-001"
+    assert payload["artifact_refs"] == ["review.json", "finalize.json"]
+    assert payload["state_observation"] == {
+        "current_phase": "review",
+        "projection_state": "finalized",
+        "terminal_state": "awaiting_human_verify",
+    }
+    assert payload["history_ref"] == "history/review_cap_authorized"
+    assert payload["phase_result_ref"] == "phase_results/review.json"
+    assert payload["outcome"] == "degraded_continue"
+    assert payload["authority_records"] == [
+        {
+            "actor": "review-policy",
+            "role": "cap_authority",
+            "decision": "force_proceeded",
+            "scope": "review.cap_exhausted",
+            "conditions": ["advisory_cap", "receipt_present"],
+            "evidence_refs": [
+                "receipts/review_cap.json",
+                "policy/review_surface.json",
+            ],
+            "waiver_reason": "advisory_threshold_only",
+            "authority_version": "arnold.workflow.authority_record.v1",
+            "details": {"policy_ref": "megaplan:review"},
+        }
+    ]
+    assert payload["details"] == {
+        "projection_cases": [
+            "execute",
+            "no_review_deferred_human",
+        ],
+        "evidence_surface_ref": (
+            "FINALIZE_POLICY.metadata.route_surface.final_projection_routes"
+        ),
+    }
 
 
 # ── AuthorityRecord tests ─────────────────────────────────────────────────

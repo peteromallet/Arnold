@@ -207,7 +207,7 @@
       "kind": "verification_record"
     }
   ],
-  "generated_at": "2026-07-07T19:33:31.343846+00:00",
+  "generated_at": "2026-07-08T01:34:17.650000+00:00",
   "incident_id": "inc-demo-session",
   "kind": "incident_summary",
   "latest_actor": "github_sync",
@@ -227,7 +227,7 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:9f7625ab4af64098a0a4033c19416b13fc17b1c4a84df8cf6de2611edaf7cdcb",
+    "digest": "sha256:55c725572341c60f889b2f411baeb0fc138cfaf4606812617d48e24bee9ae287",
     "last_seq": 205,
     "projection": "incidents"
   },

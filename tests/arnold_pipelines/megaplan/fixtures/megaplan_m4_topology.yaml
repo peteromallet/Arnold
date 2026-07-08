@@ -1,6 +1,6 @@
 manifest_id: megaplan
-manifest_hash: sha256:1ac5bde8195484b6e8d38f8da5a2449e86fb8caaa97f9959577d116cba2f63b7
-topology_hash: sha256:7485470207d2ec624791b2c1f4ed71cdc3e0a49246fcde6a128e013e0f995133
+manifest_hash: sha256:74563f60ae604b96822a308178eff6a4e7d308a43f7ecd726e02824cbafbfb96
+topology_hash: sha256:295e0ad28430ff465334a36c6ff5add25fba1d21d7ba2449da6b081150098260
 nodes:
 - prep
 - plan
@@ -46,9 +46,7 @@ tiebreaker_targets:
   target: override
 - label: replan
   target: revise
-review_targets:
-- label: rework
-  target: revise
+review_targets: []
 canonical_authoring:
   source_path: arnold_pipelines/megaplan/workflows/workflow.pypeline
   workflow_id: megaplan

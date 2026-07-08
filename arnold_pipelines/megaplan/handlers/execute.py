@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from collections.abc import Mapping as MappingABC
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -20,9 +21,7 @@ from arnold_pipelines.megaplan.types import (
     StepResponse,
 )
 from arnold_pipelines.megaplan.planning.state import (
-    STATE_AWAITING_HUMAN_VERIFY,
     STATE_BLOCKED,
-    STATE_DONE,
     STATE_EXECUTED,
     STATE_FAILED,
     STATE_FINALIZED,
@@ -46,16 +45,15 @@ from arnold_pipelines.megaplan._core import (
 from arnold_pipelines.megaplan.execute.policy import (
     ApprovalOutcome,
     ExecuteEntryRoute,
-    NextExecuteTransition,
     NoReviewTerminalOutcome,
     evaluate_destructive_approval,
     evaluate_no_review_terminal,
     resolve_execute_entry_route,
-    resolve_single_batch_next_step,
 )
 from arnold_pipelines.megaplan._core.io import read_plan_state_cached
 from arnold_pipelines.megaplan.workers import warn_if_work_dir_differs_from_project_dir
 from arnold_pipelines.megaplan.runtime.execution_environment import preflight_mutating_phase
+from arnold_pipelines.megaplan.workflows.components import EXECUTE_POLICY, FINALIZE_POLICY
 
 from .shared import (
     _active_step_fallback_fields,
@@ -173,26 +171,129 @@ def _apply_execute_tier_cap(
 # persistence and command-adapter dispatch remain handler-owned.
 # ---------------------------------------------------------------------------
 
-#: Typed no-review terminal outcomes → canonical plan state.
-_NO_REVIEW_TERMINAL_STATE: Mapping[NoReviewTerminalOutcome, str] = {
-    NoReviewTerminalOutcome.TERMINATE_DONE: STATE_DONE,
-    NoReviewTerminalOutcome.TERMINATE_AWAITING_HUMAN: STATE_AWAITING_HUMAN_VERIFY,
+_NO_REVIEW_PROJECTION_KEYS: Mapping[NoReviewTerminalOutcome, tuple[str, str]] = {
+    NoReviewTerminalOutcome.TERMINATE_DONE: ("no_review", "no_review_done"),
+    NoReviewTerminalOutcome.TERMINATE_AWAITING_HUMAN: (
+        "deferred_human",
+        "no_review_deferred_human",
+    ),
 }
 
-#: Typed no-review terminal outcomes → legacy ``next_step`` (always terminal).
-_NO_REVIEW_NEXT_STEP: Mapping[NoReviewTerminalOutcome, str | None] = {
-    NoReviewTerminalOutcome.TERMINATE_DONE: None,
-    NoReviewTerminalOutcome.TERMINATE_AWAITING_HUMAN: None,
-}
 
-#: Typed single-batch transitions → legacy ``next_step`` value.
-_LEGACY_NEXT_STEP: Mapping[NextExecuteTransition, str | None] = {
-    NextExecuteTransition.EXECUTE: "execute",
-    NextExecuteTransition.REVIEW: "review",
-    NextExecuteTransition.BLOCKED: None,
-    NextExecuteTransition.DONE: None,
-    NextExecuteTransition.AWAITING_HUMAN: None,
-}
+def _required_mapping(value: object, *, context: str) -> dict[str, Any]:
+    if not isinstance(value, MappingABC):
+        raise AssertionError(f"{context} must be a mapping")
+    return dict(value)
+
+
+def _required_string(mapping: dict[str, Any], key: str, *, context: str) -> str:
+    value = mapping.get(key)
+    if not isinstance(value, str) or not value:
+        raise AssertionError(f"{context}.{key} must be a non-empty string")
+    return value
+
+
+def _execute_route_surface() -> dict[str, Any]:
+    metadata = _required_mapping(EXECUTE_POLICY.metadata, context="EXECUTE_POLICY.metadata")
+    return _required_mapping(
+        metadata.get("route_surface"),
+        context="EXECUTE_POLICY.metadata.route_surface",
+    )
+
+
+def _finalize_route_surface() -> dict[str, Any]:
+    metadata = _required_mapping(FINALIZE_POLICY.metadata, context="FINALIZE_POLICY.metadata")
+    return _required_mapping(
+        metadata.get("route_surface"),
+        context="FINALIZE_POLICY.metadata.route_surface",
+    )
+
+
+def _blocked_execute_projection() -> dict[str, str]:
+    blocked_route = _required_mapping(
+        _required_mapping(
+            _execute_route_surface().get("retry_and_reentry"),
+            context="EXECUTE_POLICY.metadata.route_surface.retry_and_reentry",
+        ).get("blocked_route"),
+        context="EXECUTE_POLICY.metadata.route_surface.retry_and_reentry.blocked_route",
+    )
+    return {
+        "route_signal": _required_string(
+            blocked_route,
+            "route_signal",
+            context="EXECUTE_POLICY.metadata.route_surface.retry_and_reentry.blocked_route",
+        ),
+        "next_step": _required_string(
+            blocked_route,
+            "target_ref",
+            context="EXECUTE_POLICY.metadata.route_surface.retry_and_reentry.blocked_route",
+        ),
+        "state": _required_string(
+            blocked_route,
+            "recoverable_state",
+            context="EXECUTE_POLICY.metadata.route_surface.retry_and_reentry.blocked_route",
+        ),
+    }
+
+
+def _no_review_terminal_projection(outcome: NoReviewTerminalOutcome) -> dict[str, str]:
+    route_key = _NO_REVIEW_PROJECTION_KEYS.get(outcome)
+    if route_key is None:
+        raise AssertionError(f"Unsupported no-review terminal outcome: {outcome!r}")
+    skip_route_key, projection_key = route_key
+    route_surface = _finalize_route_surface()
+    skip_route = _required_mapping(
+        _required_mapping(
+            route_surface.get("skip_review_routes"),
+            context="FINALIZE_POLICY.metadata.route_surface.skip_review_routes",
+        ).get(skip_route_key),
+        context=f"FINALIZE_POLICY.metadata.route_surface.skip_review_routes.{skip_route_key}",
+    )
+    projection = _required_mapping(
+        _required_mapping(
+            route_surface.get("final_projection_routes"),
+            context="FINALIZE_POLICY.metadata.route_surface.final_projection_routes",
+        ).get(projection_key),
+        context=f"FINALIZE_POLICY.metadata.route_surface.final_projection_routes.{projection_key}",
+    )
+    route_signal = _required_string(
+        skip_route,
+        "route_signal",
+        context=f"FINALIZE_POLICY.metadata.route_surface.skip_review_routes.{skip_route_key}",
+    )
+    target_ref = _required_string(
+        skip_route,
+        "target_ref",
+        context=f"FINALIZE_POLICY.metadata.route_surface.skip_review_routes.{skip_route_key}",
+    )
+    terminal_state = _required_string(
+        projection,
+        "terminal_state",
+        context=f"FINALIZE_POLICY.metadata.route_surface.final_projection_routes.{projection_key}",
+    )
+    if route_signal != _required_string(
+        projection,
+        "route_signal",
+        context=f"FINALIZE_POLICY.metadata.route_surface.final_projection_routes.{projection_key}",
+    ):
+        raise AssertionError("No-review terminal route_signal must match finalize projection route")
+    if target_ref != _required_string(
+        projection,
+        "target_ref",
+        context=f"FINALIZE_POLICY.metadata.route_surface.final_projection_routes.{projection_key}",
+    ):
+        raise AssertionError("No-review terminal target_ref must match finalize projection route")
+    if terminal_state != _required_string(
+        skip_route,
+        "terminal_state",
+        context=f"FINALIZE_POLICY.metadata.route_surface.skip_review_routes.{skip_route_key}",
+    ):
+        raise AssertionError("No-review terminal state must match finalize skip-review route")
+    return {
+        "route_signal": route_signal,
+        "next_step": target_ref,
+        "state": terminal_state,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -485,6 +586,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             raise
         clear_active_step(state, run_id=run_id)
         if response.get("result") == "blocked":
+            blocked_projection = _blocked_execute_projection()
             save_state_merge_meta(plan_dir, state)
             # Include the typed retry decision (from
             # ``evaluate_blocker_recovery_policy``) in the blocked-anchor
@@ -510,17 +612,10 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             )
             _record_execute_blocked(plan_dir, response)
             state = read_plan_state_cached(plan_dir, mode="authority")
-            response["state"] = STATE_BLOCKED
-            # next_step payload is translated from the typed BLOCKED transition;
-            # ``blocked=True`` is dominant in resolve_single_batch_next_step, so
-            # the legacy value is always None (halt → override recovery).
-            blocked_transition = resolve_single_batch_next_step(
-                is_final_batch=(int(response.get("batches_remaining") or 0) == 0),
-                all_tracked=False,
-                blocked=True,
-            ).transition
-            response["next_step"] = _LEGACY_NEXT_STEP[blocked_transition]
-            response.pop("next_step_runtime", None)
+            response["route_signal"] = blocked_projection["route_signal"]
+            response["state"] = blocked_projection["state"]
+            response["next_step"] = blocked_projection["next_step"]
+            _attach_next_step_runtime(response)
         else:
             state["latest_failure"] = None
             state.pop("resume_cursor", None)
@@ -539,12 +634,14 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 # Target state + next_step payload come from the typed no-review
                 # terminal policy, not an inline branch.
                 terminal = evaluate_no_review_terminal(robustness="bare")
-                next_state = _NO_REVIEW_TERMINAL_STATE[terminal.outcome]
+                terminal_projection = _no_review_terminal_projection(terminal.outcome)
+                next_state = terminal_projection["state"]
                 state["current_state"] = next_state
                 save_state_merge_meta(plan_dir, state)
+                response["route_signal"] = terminal_projection["route_signal"]
                 response["state"] = next_state
-                response["next_step"] = _NO_REVIEW_NEXT_STEP[terminal.outcome]
-                response.pop("next_step_runtime", None)
+                response["next_step"] = terminal_projection["next_step"]
+                _attach_next_step_runtime(response)
                 _emit_execute_boundary_receipt(
                     boundary_id="execute_no_review_terminal",
                     plan_dir=plan_dir,
@@ -588,7 +685,8 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             terminal = evaluate_no_review_terminal(
                 robustness=robustness, has_deferred_must=has_deferred_must
             )
-            next_state = _NO_REVIEW_TERMINAL_STATE[terminal.outcome]
+            terminal_projection = _no_review_terminal_projection(terminal.outcome)
+            next_state = terminal_projection["state"]
 
             stub_review = {
                 "review_verdict": "approved",
@@ -616,9 +714,10 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 artifacts.append("review.json")
             state["current_state"] = next_state
             save_state_merge_meta(plan_dir, state)
+            response["route_signal"] = terminal_projection["route_signal"]
             response["state"] = next_state
-            response["next_step"] = _NO_REVIEW_NEXT_STEP[terminal.outcome]
-            response.pop("next_step_runtime", None)
+            response["next_step"] = terminal_projection["next_step"]
+            _attach_next_step_runtime(response)
             _emit_execute_boundary_receipt(
                 boundary_id="execute_no_review_terminal",
                 plan_dir=plan_dir,

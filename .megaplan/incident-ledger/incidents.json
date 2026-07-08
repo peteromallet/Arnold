@@ -5908,7 +5908,7 @@
           "seq": 254
         }
       ],
-      "event_count": 78,
+      "event_count": 80,
       "events": [
         {
           "actor": "watchdog",
@@ -9609,6 +9609,102 @@
           "timestamp": "2026-07-07T20:01:42.128668+00:00",
           "trigger": null,
           "type": "six_hour_auditor.audit_complete"
+        },
+        {
+          "actor": "github_sync",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "ghp-bf76e0a3f505",
+          "evidence": [
+            {
+              "kind": "github_sync.problem_projection",
+              "occurrence_count": 2,
+              "problem_id": "problem-8f475cf8e677",
+              "recurred_after_fix": false,
+              "status": "open"
+            },
+            {
+              "body_bytes": 654,
+              "body_sha256": "sha256:ef9bb1dc8eb491e3797b2821810b3e4b2442c095981358fb80aeba1ccb05743a",
+              "kind": "github_sync.publication_payload"
+            },
+            {
+              "incident_id": "inc-megaplan-native-parity-corrective",
+              "kind": "github_sync.incident_projection",
+              "last_seq": 254,
+              "session_id": "megaplan-native-parity-corrective"
+            },
+            {
+              "applied_labels": [],
+              "kind": "github_sync.label_fallback",
+              "omitted_labels": [
+                "incident-control-plane",
+                "persistent-problem"
+              ]
+            },
+            {
+              "action": "created",
+              "kind": "github.issue",
+              "number": 179,
+              "repo": "peteromallet/Arnold",
+              "url": "https://github.com/peteromallet/Arnold/issues/179"
+            }
+          ],
+          "kind": "incident.github_sync.issue_published",
+          "next_expected_event": "six_hour_auditor.diagnosis",
+          "outcome": "published",
+          "parent": [],
+          "problem_id": "problem-8f475cf8e677",
+          "seq": 255,
+          "session_id": null,
+          "summary": "Published persistent problem problem-8f475cf8e677 to GitHub as a new issue",
+          "timestamp": "2026-07-07T20:01:46.505504+00:00",
+          "trigger": null,
+          "type": "github_sync.issue_published"
+        },
+        {
+          "actor": "github_sync",
+          "attempt_id": null,
+          "deadline_ts": null,
+          "event_id": "ghp-5ad452c19e2d",
+          "evidence": [
+            {
+              "kind": "github_sync.problem_projection",
+              "occurrence_count": 7,
+              "problem_id": "problem-9eb61fd41e68",
+              "recurred_after_fix": false,
+              "status": "open"
+            },
+            {
+              "body_bytes": 347,
+              "body_sha256": "sha256:c7cab591862c5ec06cdb8b10b731e14d7eb07b5f49f7676720957536ce773eac",
+              "kind": "github_sync.publication_payload"
+            },
+            {
+              "incident_id": "inc-megaplan-native-parity-corrective",
+              "kind": "github_sync.incident_projection",
+              "last_seq": 254,
+              "session_id": "megaplan-native-parity-corrective"
+            },
+            {
+              "action": "commented",
+              "kind": "github.issue",
+              "number": 177,
+              "repo": "peteromallet/Arnold",
+              "url": "https://github.com/peteromallet/Arnold/issues/177#issuecomment-4908151195"
+            }
+          ],
+          "kind": "incident.github_sync.issue_published",
+          "next_expected_event": "six_hour_auditor.diagnosis",
+          "outcome": "published",
+          "parent": [],
+          "problem_id": "problem-9eb61fd41e68",
+          "seq": 256,
+          "session_id": null,
+          "summary": "Published persistent problem problem-9eb61fd41e68 update to GitHub issue #177",
+          "timestamp": "2026-07-07T20:01:47.904277+00:00",
+          "trigger": null,
+          "type": "github_sync.issue_published"
         }
       ],
       "evidence_refs": [
@@ -9646,6 +9742,13 @@
           "number": 171,
           "repo": "peteromallet/Arnold",
           "url": "https://github.com/peteromallet/Arnold/issues/171#issuecomment-4904662804"
+        },
+        {
+          "action": "commented",
+          "kind": "github.issue",
+          "number": 177,
+          "repo": "peteromallet/Arnold",
+          "url": "https://github.com/peteromallet/Arnold/issues/177#issuecomment-4908151195"
         },
         {
           "action": "created",
@@ -9702,6 +9805,21 @@
           "number": 177,
           "repo": "peteromallet/Arnold",
           "url": "https://github.com/peteromallet/Arnold/issues/177"
+        },
+        {
+          "action": "created",
+          "kind": "github.issue",
+          "number": 179,
+          "repo": "peteromallet/Arnold",
+          "url": "https://github.com/peteromallet/Arnold/issues/179"
+        },
+        {
+          "applied_labels": [],
+          "kind": "github_sync.label_fallback",
+          "omitted_labels": [
+            "incident-control-plane",
+            "persistent-problem"
+          ]
         },
         {
           "applied_labels": [],
@@ -9783,6 +9901,11 @@
           "kind": "github_sync.publication_payload"
         },
         {
+          "body_bytes": 347,
+          "body_sha256": "sha256:c7cab591862c5ec06cdb8b10b731e14d7eb07b5f49f7676720957536ce773eac",
+          "kind": "github_sync.publication_payload"
+        },
+        {
           "body_bytes": 348,
           "body_sha256": "sha256:70e9584de071b42b9a2ccdf1efcfb915a2bb6724156f7e68637a5254f3be93d0",
           "kind": "github_sync.publication_payload"
@@ -9810,6 +9933,11 @@
         {
           "body_bytes": 654,
           "body_sha256": "sha256:a60481b9170864af8fd762d4ca1fb90838a573cdf02edfc5c0f0b43daf8aaf54",
+          "kind": "github_sync.publication_payload"
+        },
+        {
+          "body_bytes": 654,
+          "body_sha256": "sha256:ef9bb1dc8eb491e3797b2821810b3e4b2442c095981358fb80aeba1ccb05743a",
           "kind": "github_sync.publication_payload"
         },
         {
@@ -9999,6 +10127,18 @@
           "session_id": "megaplan-native-parity-corrective"
         },
         {
+          "incident_id": "inc-megaplan-native-parity-corrective",
+          "kind": "github_sync.incident_projection",
+          "last_seq": 254,
+          "session_id": "megaplan-native-parity-corrective"
+        },
+        {
+          "incident_id": "inc-megaplan-native-parity-corrective",
+          "kind": "github_sync.incident_projection",
+          "last_seq": 254,
+          "session_id": "megaplan-native-parity-corrective"
+        },
+        {
           "kind": "audit_report_path",
           "path": "/workspace/audit-reports/20260706T072844Z-audit.json",
           "session_id": "megaplan-native-parity-corrective"
@@ -10129,6 +10269,13 @@
           "kind": "github_sync.problem_projection",
           "occurrence_count": 10,
           "problem_id": "problem-e20c45ae0eb0",
+          "recurred_after_fix": false,
+          "status": "open"
+        },
+        {
+          "kind": "github_sync.problem_projection",
+          "occurrence_count": 2,
+          "problem_id": "problem-8f475cf8e677",
           "recurred_after_fix": false,
           "status": "open"
         },
@@ -10206,6 +10353,13 @@
           "kind": "github_sync.problem_projection",
           "occurrence_count": 6,
           "problem_id": "problem-bd43205325d0",
+          "recurred_after_fix": false,
+          "status": "open"
+        },
+        {
+          "kind": "github_sync.problem_projection",
+          "occurrence_count": 7,
+          "problem_id": "problem-9eb61fd41e68",
           "recurred_after_fix": false,
           "status": "open"
         },
@@ -10804,12 +10958,12 @@
       "first_seq": 155,
       "first_timestamp": "2026-07-05T23:34:02.322711+00:00",
       "incident_id": "inc-megaplan-native-parity-corrective",
-      "last_seq": 254,
-      "last_timestamp": "2026-07-07T20:01:42.128668+00:00",
-      "latest_actor": "six_hour_auditor",
-      "latest_kind": "incident.six_hour_auditor.audit_complete",
-      "next_expected_event": "github_sync.publish",
-      "outcome": "escalated",
+      "last_seq": 256,
+      "last_timestamp": "2026-07-07T20:01:47.904277+00:00",
+      "latest_actor": "github_sync",
+      "latest_kind": "incident.github_sync.issue_published",
+      "next_expected_event": "six_hour_auditor.diagnosis",
+      "outcome": "published",
       "placeholders": {
         "install_freshness": "unknown",
         "recurrence": "unknown",
@@ -10834,8 +10988,8 @@
       "session_ids": [
         "megaplan-native-parity-corrective"
       ],
-      "state": "six_hour_auditor.audit_complete",
-      "summary": "Audit found 1 blocking layer(s) for inc-megaplan-native-parity-corrective: github_sync:github_sync_publish_due."
+      "state": "github_sync.issue_published",
+      "summary": "Published persistent problem problem-9eb61fd41e68 update to GitHub issue #177"
     },
     {
       "actions": [],
@@ -11958,24 +12112,6 @@
   ],
   "integrity": [
     {
-      "actual": "sha256:9f7625ab4af64098a0a4033c19416b13fc17b1c4a84df8cf6de2611edaf7cdcb",
-      "code": "index_divergence",
-      "expected": "sha256:b41f8cd9b2fdf6b69c418c0684f9c98bca6545c3e77266c8ab2361b29de4f4c2",
-      "message": "incidents projection source metadata diverged for digest: 'sha256:9f7625ab4af64098a0a4033c19416b13fc17b1c4a84df8cf6de2611edaf7cdcb' != 'sha256:b41f8cd9b2fdf6b69c418c0684f9c98bca6545c3e77266c8ab2361b29de4f4c2'",
-      "projection": "incidents",
-      "recommendation": "system.integrity_repair",
-      "severity": "error"
-    },
-    {
-      "actual": "sha256:9f7625ab4af64098a0a4033c19416b13fc17b1c4a84df8cf6de2611edaf7cdcb",
-      "code": "index_divergence",
-      "expected": "sha256:b41f8cd9b2fdf6b69c418c0684f9c98bca6545c3e77266c8ab2361b29de4f4c2",
-      "message": "problems projection source metadata diverged for digest: 'sha256:9f7625ab4af64098a0a4033c19416b13fc17b1c4a84df8cf6de2611edaf7cdcb' != 'sha256:b41f8cd9b2fdf6b69c418c0684f9c98bca6545c3e77266c8ab2361b29de4f4c2'",
-      "projection": "problems",
-      "recommendation": "system.integrity_repair",
-      "severity": "error"
-    },
-    {
       "code": "loop_break_repeated_attempt_no_new_evidence",
       "incident_id": "inc-demo-session",
       "message": "Repeated repair_attempt events did not add a new hypothesis or state change",
@@ -11995,10 +12131,10 @@
   "projection": "incidents",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:b41f8cd9b2fdf6b69c418c0684f9c98bca6545c3e77266c8ab2361b29de4f4c2",
-    "event_count": 254,
-    "journal_line_count": 254,
-    "last_seq": 254,
+    "digest": "sha256:55c725572341c60f889b2f411baeb0fc138cfaf4606812617d48e24bee9ae287",
+    "event_count": 256,
+    "journal_line_count": 256,
+    "last_seq": 256,
     "malformed_line_count": 0
   }
 }

@@ -1,4 +1,4 @@
-"""Tests for the S2/S3 boundary contract registry.
+"""Tests for the S2/S3/S4/S5 boundary contract registry.
 
 Covers immutability, completeness, row-ID correctness, phase assignment,
 and the absence of routing targets/predicates in boundary contracts.
@@ -39,11 +39,19 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     execute_no_review_terminal,
     execute_partial_failure,
     execute_resume_anchor,
+    final_projection,
+    finalize_artifacts,
+    finalize_fallback,
     gate_to_revise,
     parent_rejoin_promotion,
     plan_to_critique,
     prep_to_plan,
     replan_authority,
+    review_cap_authority,
+    review_child_outputs,
+    review_human_verification,
+    review_reducer_promotion,
+    review_rework_effects,
     researcher_to_challenger,
     revise_to_critique,
     synthesis_to_decision,
@@ -52,9 +60,9 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
 # ── Registry completeness ──────────────────────────────────────────────────
 
 
-def test_registry_defines_exactly_nineteen_contracts() -> None:
-    """The registry must contain exactly the nineteen S2+S3+S4 contracts."""
-    assert len(BOUNDARY_CONTRACTS) == 19
+def test_registry_defines_exactly_twenty_seven_contracts() -> None:
+    """The registry must contain exactly the twenty-seven S2+S3+S4+S5 contracts."""
+    assert len(BOUNDARY_CONTRACTS) == 27
 
 
 def test_registry_by_id_has_no_duplicates() -> None:
@@ -90,6 +98,14 @@ def test_named_contracts_are_in_registry() -> None:
         execute_resume_anchor.boundary_id,
         execute_aggregate_promotion.boundary_id,
         execute_no_review_terminal.boundary_id,
+        review_child_outputs.boundary_id,
+        review_reducer_promotion.boundary_id,
+        review_rework_effects.boundary_id,
+        review_cap_authority.boundary_id,
+        review_human_verification.boundary_id,
+        finalize_artifacts.boundary_id,
+        finalize_fallback.boundary_id,
+        final_projection.boundary_id,
     }
     registry_ids = {c.boundary_id for c in BOUNDARY_CONTRACTS}
     assert named_ids == registry_ids
@@ -123,6 +139,14 @@ def test_boundary_ids_match_expected() -> None:
     assert decision_to_parent.boundary_id == "tiebreaker_decision_to_parent"
     assert replan_authority.boundary_id == "replan_authority"
     assert parent_rejoin_promotion.boundary_id == "parent_rejoin_promotion"
+    assert review_child_outputs.boundary_id == "review_child_outputs"
+    assert review_reducer_promotion.boundary_id == "review_reducer_promotion"
+    assert review_rework_effects.boundary_id == "review_rework_effects"
+    assert review_cap_authority.boundary_id == "review_cap_authority"
+    assert review_human_verification.boundary_id == "review_human_verification"
+    assert finalize_artifacts.boundary_id == "finalize_artifacts"
+    assert finalize_fallback.boundary_id == "finalize_fallback"
+    assert final_projection.boundary_id == "final_projection"
 
 
 # ── Row ID correctness ─────────────────────────────────────────────────────
@@ -362,7 +386,7 @@ def test_contracts_do_not_declare_route_target_fields() -> None:
 
 
 def test_all_contracts_have_same_workflow_id() -> None:
-    """All five contracts must share the same workflow_id ('megaplan-review')."""
+    """All contracts must share the same workflow_id ('megaplan-review')."""
     for contract in BOUNDARY_CONTRACTS:
         assert contract.workflow_id == "megaplan-review", (
             f"{contract.boundary_id} has unexpected workflow_id {contract.workflow_id}"
@@ -373,8 +397,13 @@ def test_all_contracts_have_same_workflow_id() -> None:
 
 
 def test_gate_to_revise_requires_authority() -> None:
-    """Only gate_to_revise, replan_authority, and execute_approval must have authority_required=True."""
-    authority_boundaries = {"gate_to_revise", "replan_authority", "execute_approval"}
+    """Only explicit authority boundaries may set authority_required=True."""
+    authority_boundaries = {
+        "gate_to_revise",
+        "replan_authority",
+        "execute_approval",
+        "review_cap_authority",
+    }
     for contract in BOUNDARY_CONTRACTS:
         if contract.boundary_id in authority_boundaries:
             assert contract.authority_required is True, (
@@ -540,3 +569,146 @@ def test_parent_rejoin_promotion_requires_receipt_not_phase_result() -> None:
     assert parent_rejoin_promotion.receipt_required is True
     assert parent_rejoin_promotion.phase_result_required is False
     assert parent_rejoin_promotion.authority_required is False
+
+
+# ── S5 review/finalize boundary contracts ─────────────────────────────────
+
+
+def test_s5_contracts_have_stable_row_ids() -> None:
+    """S5 contracts must expose stable row IDs for durable receipt evidence."""
+    assert review_child_outputs.row_id == "s5.review_child_outputs.1"
+    assert review_reducer_promotion.row_id == "s5.review_reducer_promotion.1"
+    assert review_rework_effects.row_id == "s5.review_rework_effects.1"
+    assert review_cap_authority.row_id == "s5.review_cap_authority.1"
+    assert review_human_verification.row_id == "s5.review_human_verification.1"
+    assert finalize_artifacts.row_id == "s5.finalize_artifacts.1"
+    assert finalize_fallback.row_id == "s5.finalize_fallback.1"
+    assert final_projection.row_id == "s5.final_projection.1"
+
+
+def test_s5_contract_payloads_remain_evidence_only() -> None:
+    """S5 contract payloads may reference policy surfaces but must not own routing."""
+    s5_contracts = (
+        review_child_outputs,
+        review_reducer_promotion,
+        review_rework_effects,
+        review_cap_authority,
+        review_human_verification,
+        finalize_artifacts,
+        finalize_fallback,
+        final_projection,
+    )
+    for contract in s5_contracts:
+        payload = contract.to_dict()
+        assert payload["receipt_required"] is True
+        for key in ("route_target", "next_step", "routing_predicate", "route"):
+            assert key not in payload
+            assert key not in payload.get("details", {})
+
+
+def test_review_child_outputs_and_reducer_promotion_capture_durable_effects() -> None:
+    """Review fanout/fan-in evidence must require receipts without adding route control."""
+    assert review_child_outputs.required_artifacts == ("review.json",)
+    assert review_child_outputs.phase_result_required is True
+    assert review_child_outputs.receipt_required is True
+    assert review_child_outputs.authority_required is False
+    assert review_child_outputs.details["child_trace_template"] == "review/{item_id}"
+    assert review_child_outputs.details["fan_in_ref"] == "review-fan-in"
+    assert (
+        review_child_outputs.details["evidence_surface_ref"]
+        == "REVIEW_POLICY.metadata.route_surface.fan_in_contract"
+    )
+
+    assert review_reducer_promotion.required_artifacts == ("review.json",)
+    assert review_reducer_promotion.phase_result_required is True
+    assert review_reducer_promotion.receipt_required is True
+    assert review_reducer_promotion.details["reducer_promotion"] is True
+    assert review_reducer_promotion.details["effect_id"] == "artifact.review.output"
+    assert (
+        review_reducer_promotion.details["artifact_policy_ref"]
+        == "megaplan:artifact-contract"
+    )
+    assert review_reducer_promotion.details["reducer_ref"] == "SOURCE_REVIEW"
+
+
+def test_review_rework_and_cap_contracts_capture_projection_and_authority() -> None:
+    """Rework projection stays declarative while cap exhaustion carries receipts and authority."""
+    assert review_rework_effects.required_artifacts == ("review.json",)
+    assert review_rework_effects.phase_result_required is True
+    assert review_rework_effects.receipt_required is True
+    assert review_rework_effects.authority_required is False
+    assert review_rework_effects.details["effect_kind"] == "review_rework_cycle"
+    assert review_rework_effects.details["fresh_execute_session"] is True
+    assert (
+        review_rework_effects.details["evidence_surface_ref"]
+        == "REVIEW_POLICY.metadata.route_surface.rework_cycle"
+    )
+    assert review_rework_effects.details["projection_state_ref"] == "finalized"
+
+    assert review_cap_authority.required_artifacts == ("review.json",)
+    assert review_cap_authority.phase_result_required is True
+    assert review_cap_authority.receipt_required is True
+    assert review_cap_authority.authority_required is True
+    assert review_cap_authority.details["authority_scope"] == "review.cap_exhausted"
+    assert review_cap_authority.details["authority_outcomes"] == (
+        "blocked",
+        "force_proceeded",
+    )
+    assert review_cap_authority.details["policy_ref"] == "megaplan:review"
+
+
+def test_review_human_verification_and_finalize_contracts_capture_projection() -> None:
+    """Human verification, finalize artifacts, fallback, and final projection stay evidence-only."""
+    assert review_human_verification.required_artifacts == ("review.json",)
+    assert review_human_verification.phase_result_required is True
+    assert review_human_verification.receipt_required is True
+    assert review_human_verification.authority_required is False
+    assert review_human_verification.details["suspension_route_id"] == "review:human"
+    assert review_human_verification.details["resume_policy_ref"] == "megaplan:suspension"
+    assert review_human_verification.details["resume_cursor_ref"] == "cursor:suspension"
+    assert review_human_verification.details["terminal_state"] == "awaiting_human_verify"
+
+    assert finalize_artifacts.required_artifacts == (
+        "contract.json",
+        "final.md",
+        "finalize.json",
+    )
+    assert finalize_artifacts.phase_result_required is True
+    assert finalize_artifacts.receipt_required is True
+    assert finalize_artifacts.details["effect_id"] == "artifact.finalize.plan"
+    assert (
+        finalize_artifacts.details["artifact_policy_ref"]
+        == "megaplan:artifact-contract"
+    )
+    assert finalize_artifacts.details["artifact_refs"] == (
+        "contract.json",
+        "final.md",
+        "finalize.json",
+    )
+
+    assert finalize_fallback.required_artifacts == ("finalize_revise_feedback.json",)
+    assert finalize_fallback.phase_result_required is False
+    assert finalize_fallback.receipt_required is True
+    assert finalize_fallback.authority_required is False
+    assert (
+        finalize_fallback.details["evidence_surface_ref"]
+        == "FINALIZE_POLICY.metadata.route_surface.fallback_routes."
+        "plan_contract_revise_needed"
+    )
+    assert finalize_fallback.details["projection_ref"] == "finalize:revise"
+
+    assert final_projection.required_artifacts == ("finalize.json",)
+    assert final_projection.phase_result_required is False
+    assert final_projection.receipt_required is True
+    assert final_projection.authority_required is False
+    assert final_projection.details["projection_cases"] == (
+        "execute",
+        "revise_fallback",
+        "no_review_done",
+        "no_review_deferred_human",
+    )
+    assert final_projection.details["projected_status_ref"] == "status:terminal"
+    assert (
+        final_projection.details["evidence_surface_ref"]
+        == "FINALIZE_POLICY.metadata.route_surface.final_projection_routes"
+    )

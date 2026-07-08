@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from arnold.manifest import (
     AuthorityRequirement,
@@ -104,6 +104,7 @@ _LOWERED_STEP_ID_ALIASES = {
     "gate_retry_revise": "revise",
     "gate_suspend": "halt",
     "override_halt": "halt",
+    "override_revise": "revise",
     "override_unknown": "halt",
     "review-fan-in": "review",
     "review_deferred_human": "halt",
@@ -112,6 +113,12 @@ _LOWERED_STEP_ID_ALIASES = {
     "review_revise": "revise",
     "tiebreaker_decide": "tiebreaker_decision",
     "tiebreaker_fallback_override": "override",
+    "tiebreaker_finalize": "finalize",
+    "tiebreaker_iterate_revise": "revise",
+    "tiebreaker_override": "override",
+    "tiebreaker_override_finalize": "finalize",
+    "tiebreaker_override_revise": "revise",
+    "tiebreaker_replan_revise": "revise",
     "tiebreaker_run": "tiebreaker_researcher",
 }
 
@@ -182,6 +189,35 @@ def _canonical_step_id(step_id: str) -> str:
     return _LOWERED_STEP_ID_ALIASES.get(step_id, step_id)
 
 
+def _topology_step_id(step_id: str) -> str:
+    canonical_step_id = _canonical_step_id(step_id)
+    if canonical_step_id != step_id:
+        return canonical_step_id
+    if "review" in step_id:
+        if step_id.endswith(("-execute-batches", "_execute_batches")):
+            return "execute"
+        if step_id.endswith(("-fan-in", "_fan_in")):
+            return "review"
+    return step_id
+
+
+def _lowered_step_aliases(
+    lowered_steps: Sequence[Step],
+    *,
+    step_id_fn: Callable[[str], str] = _canonical_step_id,
+) -> dict[str, tuple[str, ...]]:
+    aliases: dict[str, set[str]] = {}
+    for lowered in lowered_steps:
+        canonical_step_id = step_id_fn(lowered.id)
+        if canonical_step_id == lowered.id:
+            continue
+        aliases.setdefault(canonical_step_id, set()).add(lowered.id)
+    return {
+        canonical_step_id: tuple(sorted(alias_ids))
+        for canonical_step_id, alias_ids in sorted(aliases.items())
+    }
+
+
 def _canonical_lowered_steps(lowered_steps: Sequence[Step]) -> dict[str, Step]:
     canonical_steps: dict[str, Step] = {}
     for lowered in lowered_steps:
@@ -192,25 +228,33 @@ def _canonical_lowered_steps(lowered_steps: Sequence[Step]) -> dict[str, Step]:
     return canonical_steps
 
 
-def _route_id_for_lowered_route(route: Route, *, source: str, target: str) -> str:
+def _route_id_for_lowered_route(
+    route: Route,
+    *,
+    source: str,
+    target: str,
+    label: str | None = None,
+) -> str:
+    route_label = route.label if label is None else label
     component = PIPELINE_STEP_COMPONENTS_BY_ID.get(source)
     if component is not None:
         bindings = component.metadata.get("route_bindings", ())
         for binding in bindings:
             if (
-                str(binding.get("label", "default")) == route.label
+                str(binding.get("label", "default")) == route_label
                 and _canonical_step_id(str(binding.get("target_ref", ""))) == target
             ):
                 return str(binding["id"])
         for binding in bindings:
-            if str(binding.get("label", "default")) == route.label:
+            if str(binding.get("label", "default")) == route_label:
                 return str(binding["id"])
-    suffix = target if route.label == "default" else route.label
+    suffix = target if route_label == "default" else route_label
     return f"{source}:{suffix}"
 
 
 def _canonical_lowered_routes(lowered_routes: Sequence[Route]) -> tuple[Route, ...]:
     seen: set[tuple[str, str, str, str | None]] = set()
+    seen_route_ids: set[str] = set()
     routes: list[Route] = []
     for lowered in lowered_routes:
         source = _canonical_step_id(lowered.source)
@@ -221,16 +265,46 @@ def _canonical_lowered_routes(lowered_routes: Sequence[Route]) -> tuple[Route, .
         if signature in seen:
             continue
         seen.add(signature)
-        routes.append(
-            Route(
-                id=_route_id_for_lowered_route(lowered, source=source, target=target),
-                source=source,
-                target=target,
-                label=lowered.label,
-                condition_ref=lowered.condition_ref,
-                metadata={},
-            )
+        route = Route(
+            id=_route_id_for_lowered_route(lowered, source=source, target=target),
+            source=source,
+            target=target,
+            label=lowered.label,
+            condition_ref=lowered.condition_ref,
+            metadata={},
         )
+        if route.id in seen_route_ids:
+            continue
+        seen_route_ids.add(route.id)
+        routes.append(route)
+    return tuple(routes)
+
+
+def _topology_lowered_routes(lowered_routes: Sequence[Route]) -> tuple[Route, ...]:
+    seen: set[tuple[str, str, str, str | None]] = set()
+    seen_route_ids: set[str] = set()
+    routes: list[Route] = []
+    for lowered in lowered_routes:
+        source = _topology_step_id(lowered.source)
+        target = _topology_step_id(lowered.target)
+        if source not in PIPELINE_STEP_COMPONENTS_BY_ID or target not in PIPELINE_STEP_COMPONENTS_BY_ID:
+            continue
+        signature = (source, target, lowered.label, lowered.condition_ref)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        route = Route(
+            id=_route_id_for_lowered_route(lowered, source=source, target=target),
+            source=source,
+            target=target,
+            label=lowered.label,
+            condition_ref=lowered.condition_ref,
+            metadata={},
+        )
+        if route.id in seen_route_ids:
+            continue
+        seen_route_ids.add(route.id)
+        routes.append(route)
     return tuple(routes)
 
 
@@ -555,12 +629,13 @@ def lowered_workflow_topology() -> dict[str, Any]:
     """
 
     lowered = _lowered_workflow()
-    canonical_routes = _canonical_lowered_routes(lowered.routes)
+    canonical_routes = _topology_lowered_routes(lowered.routes)
     return {
         "workflow_id": lowered.id,
         "workflow_version": lowered.version,
         "source_path": str(AUTHORING_SOURCE_PATH),
         "steps": tuple(step.id for step in _canonical_steps(timeout_seconds=None, lowered_steps=lowered.steps)),
+        "step_aliases": _lowered_step_aliases(lowered.steps, step_id_fn=_topology_step_id),
         "routes": tuple(
             {
                 "id": route.id,
@@ -581,7 +656,7 @@ def lowered_route_bindings_by_step(
 
     grouped: dict[str, list[dict[str, str | None]]] = {}
     wanted_step_ids = None if step_ids is None else set(step_ids)
-    for route in _canonical_lowered_routes(_lowered_workflow().routes):
+    for route in _topology_lowered_routes(_lowered_workflow().routes):
         if wanted_step_ids is not None and route.source not in wanted_step_ids:
             continue
         grouped.setdefault(route.source, []).append(
@@ -598,7 +673,7 @@ def lowered_route_bindings_by_step(
 def resolve_lowered_route_target_for_signal(source: str, signal: str) -> str | None:
     """Resolve a source-derived route target for a route signal."""
 
-    for route in _canonical_lowered_routes(_lowered_workflow().routes):
+    for route in _topology_lowered_routes(_lowered_workflow().routes):
         if route.source == source and route.label == signal:
             return route.target
     return None

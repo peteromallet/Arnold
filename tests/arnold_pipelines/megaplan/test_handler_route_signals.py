@@ -31,11 +31,15 @@ REQUIRED_EXECUTE_POLICY_CALLS = {
     "resolve_execute_entry_route",
     "evaluate_destructive_approval",
     "evaluate_no_review_terminal",
-    "resolve_single_batch_next_step",
 }
 # Legacy next_step payloads written by the execute handler must be
-# translated through these lookup maps — never a bare string literal.
+# translated through these lookup maps or through projection helpers that
+# resolve from source/policy metadata — never a bare string literal.
 EXECUTE_NEXT_STEP_MAPS = {"_LEGACY_NEXT_STEP", "_NO_REVIEW_NEXT_STEP"}
+EXECUTE_NEXT_STEP_PROJECTION_HELPERS = {
+    "_blocked_execute_projection",
+    "_no_review_terminal_projection",
+}
 # The batch auto-loop must route all next_step derivations through this
 # compatibility mapper.
 BATCH_NEXT_STEP_MAPPER = "_legacy_next_step_for_execute_policy"
@@ -163,20 +167,174 @@ class TestReviewSignals:
         calls = _called_names(_function_node(REVIEW_PATH, "handle_review"))
         assert calls.isdisjoint(FORBIDDEN_TRANSITION_HELPERS)
 
-    def test_review_route_signal_helper_uses_route_labels_not_targets(self) -> None:
+    def test_review_outcome_resolver_delegates_route_authority_to_policy_helpers(self) -> None:
         func = _function_node(REVIEW_PATH, "_resolve_review_outcome")
-        strings = {
-            call.args[2].value
+        calls = _called_names(func)
+        assert {
+            "_review_infrastructure_retry_decision",
+            "_review_rework_decision",
+            "_review_cap_exhausted_blocked_decision",
+            "_review_force_proceeded_decision",
+            "_review_deferred_human_decision",
+            "_review_pass_decision",
+            "_review_rework_cap_config_key",
+        } <= calls
+        assert not [
+            call
             for call in ast.walk(func)
             if isinstance(call, ast.Call)
             and isinstance(call.func, ast.Name)
             and call.func.id == "ReviewRouteDecision"
-            and len(call.args) >= 3
-            and isinstance(call.args[2], ast.Constant)
-            and isinstance(call.args[2].value, str)
-        }
-        assert {"pass", "rework", "blocked", "force_proceeded", "deferred_human"} <= strings
-        assert FORBIDDEN_REVIEW_TARGETS.isdisjoint(strings)
+        ], "_resolve_review_outcome must not construct ReviewRouteDecision directly"
+
+    def test_review_outcome_resolver_avoids_handler_owned_cap_literals(self) -> None:
+        strings = _string_constants(_function_node(REVIEW_PATH, "_resolve_review_outcome"))
+        assert {
+            "max_review_rework_cycles",
+            "max_robust_review_rework_cycles",
+        }.isdisjoint(strings)
+
+    def test_review_blocked_next_step_only_loops_retryable_review(self) -> None:
+        from arnold_pipelines.megaplan.handlers.review import (
+            ReviewRouteDecision,
+            _compat_next_step_for_review_route,
+        )
+        from arnold_pipelines.megaplan.outcomes import ReviewDecisionResult, ReviewOutcome
+        from arnold_pipelines.megaplan.planning.state import STATE_BLOCKED, STATE_EXECUTED
+
+        assert _compat_next_step_for_review_route(
+            ReviewRouteDecision(
+                result=ReviewDecisionResult.BLOCKED,
+                next_state=STATE_EXECUTED,
+                route_signal=ReviewOutcome.BLOCKED,
+            )
+        ) == "review"
+        assert _compat_next_step_for_review_route(
+            ReviewRouteDecision(
+                result=ReviewDecisionResult.BLOCKED,
+                next_state=STATE_BLOCKED,
+                route_signal=ReviewOutcome.BLOCKED,
+            )
+        ) is None
+
+    def test_review_rework_routes_back_to_scoped_execute_before_re_review(self, monkeypatch, tmp_path: Path) -> None:
+        import arnold_pipelines.megaplan.handlers.review as review_handler
+        from arnold_pipelines.megaplan.outcomes import ReviewDecisionResult, ReviewOutcome
+        from arnold_pipelines.megaplan.planning.state import STATE_FINALIZED
+
+        monkeypatch.setattr(review_handler, "get_effective", lambda *_args: 2)
+        issues: list[str] = []
+
+        decision = review_handler._resolve_review_outcome(
+            tmp_path,
+            "needs_rework",
+            verdict_count=1,
+            total_tasks=1,
+            check_count=1,
+            total_checks=1,
+            missing_evidence=[],
+            robustness="standard",
+            state={"config": {}, "history": []},
+            issues=issues,
+            criteria=[{"priority": "should", "pass": "fail", "criterion": "tighten docs"}],
+            rework_items=[{"issue": "tighten docs", "severity": "advisory"}],
+        )
+
+        assert decision.result is ReviewDecisionResult.NEEDS_REWORK
+        assert decision.route_signal is ReviewOutcome.REWORK
+        assert decision.next_state == STATE_FINALIZED
+        assert review_handler._compat_next_step_for_review_route(decision) == "execute"
+        assert issues == []
+
+    def test_review_rework_cap_with_blockers_routes_to_recoverable_block(self, monkeypatch, tmp_path: Path) -> None:
+        import arnold_pipelines.megaplan.handlers.review as review_handler
+        from arnold_pipelines.megaplan.outcomes import ReviewDecisionResult, ReviewOutcome
+        from arnold_pipelines.megaplan.planning.state import STATE_BLOCKED
+
+        monkeypatch.setattr(review_handler, "get_effective", lambda *_args: 1)
+        issues: list[str] = []
+
+        decision = review_handler._resolve_review_outcome(
+            tmp_path,
+            "needs_rework",
+            verdict_count=1,
+            total_tasks=1,
+            check_count=1,
+            total_checks=1,
+            missing_evidence=[],
+            robustness="standard",
+            state={
+                "config": {},
+                "history": [{"step": "review", "result": ReviewDecisionResult.NEEDS_REWORK.value}],
+            },
+            issues=issues,
+            criteria=[{"priority": "must", "pass": "fail", "criterion": "prove rollback safety"}],
+            rework_items=[{"issue": "missing rollback proof"}],
+        )
+
+        assert decision.result is ReviewDecisionResult.BLOCKED
+        assert decision.route_signal is ReviewOutcome.BLOCKED
+        assert decision.next_state == STATE_BLOCKED
+        assert review_handler._compat_next_step_for_review_route(decision) is None
+        assert any("recoverable blocked" in issue for issue in issues)
+
+    def test_review_rework_cap_without_blockers_force_proceeds_advisory_only(self, monkeypatch, tmp_path: Path) -> None:
+        import arnold_pipelines.megaplan.handlers.review as review_handler
+        from arnold_pipelines.megaplan.outcomes import ReviewDecisionResult, ReviewOutcome
+        from arnold_pipelines.megaplan.planning.state import STATE_DONE
+
+        monkeypatch.setattr(review_handler, "get_effective", lambda *_args: 1)
+        issues: list[str] = []
+
+        decision = review_handler._resolve_review_outcome(
+            tmp_path,
+            "needs_rework",
+            verdict_count=1,
+            total_tasks=1,
+            check_count=1,
+            total_checks=1,
+            missing_evidence=[],
+            robustness="standard",
+            state={
+                "config": {},
+                "history": [{"step": "review", "result": ReviewDecisionResult.NEEDS_REWORK.value}],
+            },
+            issues=issues,
+            criteria=[{"priority": "should", "pass": "fail", "criterion": "polish summary"}],
+            rework_items=[{"issue": "rename heading", "severity": "advisory"}],
+        )
+
+        assert decision.result is ReviewDecisionResult.FORCE_PROCEEDED
+        assert decision.route_signal is ReviewOutcome.FORCE_PROCEEDED
+        assert decision.next_state == STATE_DONE
+        assert review_handler._compat_next_step_for_review_route(decision) is None
+        assert any("Force-proceeding to done" in issue for issue in issues)
+
+    def test_review_deferred_human_uses_suspend_resume_surface(self, monkeypatch, tmp_path: Path) -> None:
+        import arnold_pipelines.megaplan.handlers.review as review_handler
+        from arnold_pipelines.megaplan.outcomes import ReviewDecisionResult, ReviewOutcome
+        from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_HUMAN_VERIFY
+
+        monkeypatch.setattr(review_handler, "get_effective", lambda *_args: 2)
+
+        decision = review_handler._resolve_review_outcome(
+            tmp_path,
+            "approved",
+            verdict_count=1,
+            total_tasks=1,
+            check_count=1,
+            total_checks=1,
+            missing_evidence=[],
+            robustness="standard",
+            state={"config": {}, "history": []},
+            issues=[],
+            criteria=[{"priority": "must", "pass": "deferred_human", "criterion": "human UX validation"}],
+        )
+
+        assert decision.result is ReviewDecisionResult.SUCCESS
+        assert decision.route_signal is ReviewOutcome.DEFERRED_HUMAN
+        assert decision.next_state == STATE_AWAITING_HUMAN_VERIFY
+        assert review_handler._compat_next_step_for_review_route(decision) is None
 
 
 class TestOverrideSignals:
@@ -316,23 +474,39 @@ class TestExecuteSignals:
             "handle_execute must call evaluate_no_review_terminal for no-review routing"
         )
 
-    def test_handle_execute_uses_single_batch_next_step_policy(self) -> None:
-        """Next-step derivation must route through resolve_single_batch_next_step."""
+    def test_handle_execute_uses_policy_projection_helpers_for_terminal_next_step(self) -> None:
+        """Terminal next-step derivation must route through policy-backed projections."""
         calls = _called_names(_function_node(EXECUTE_HANDLER_PATH, "handle_execute"))
-        assert "resolve_single_batch_next_step" in calls, (
-            "handle_execute must call resolve_single_batch_next_step for next-step routing"
+        assert EXECUTE_NEXT_STEP_PROJECTION_HELPERS <= calls, (
+            "handle_execute must call policy-backed projection helpers for blocked/no-review next-step routing"
         )
 
     def test_handle_execute_next_step_assignments_use_lookup_maps(self) -> None:
         """All ``response['next_step']`` writes must use ``_LEGACY_NEXT_STEP``
-        or ``_NO_REVIEW_NEXT_STEP`` lookup maps — never a bare string literal.
+        or ``_NO_REVIEW_NEXT_STEP`` lookup maps, or values projected from the
+        explicit execute/finalize policy helpers — never a bare string literal.
 
         We walk the AST of ``handle_execute`` and collect every
         ``response[...] = ...`` assignment whose subscript is the string
-        ``'next_step'``.  The assigned value must come from a name that is
-        one of the approved lookup maps, or from a subscript of those maps.
+        ``'next_step'``.  The assigned value must come from a lookup map, or
+        from a subscript of a local variable whose value was created by one of
+        the approved projection helpers.
         """
         func = _function_node(EXECUTE_HANDLER_PATH, "handle_execute")
+        projection_names: dict[str, str] = {}
+        for node in ast.walk(func):
+            if not isinstance(node, ast.Assign):
+                continue
+            if len(node.targets) != 1:
+                continue
+            target = node.targets[0]
+            if not isinstance(target, ast.Name):
+                continue
+            if not isinstance(node.value, ast.Call):
+                continue
+            if not isinstance(node.value.func, ast.Name):
+                continue
+            projection_names[target.id] = node.value.func.id
         violations: list[int] = []
         for node in ast.walk(func):
             if not isinstance(node, ast.Assign):
@@ -350,7 +524,8 @@ class TestExecuteSignals:
                         violations.append(node.lineno)
                 elif isinstance(node.value, ast.Subscript):
                     if isinstance(node.value.value, ast.Name):
-                        if node.value.value.id not in EXECUTE_NEXT_STEP_MAPS:
+                        source_name = node.value.value.id
+                        if source_name not in EXECUTE_NEXT_STEP_MAPS and projection_names.get(source_name) not in EXECUTE_NEXT_STEP_PROJECTION_HELPERS:
                             violations.append(node.lineno)
                     else:
                         violations.append(node.lineno)

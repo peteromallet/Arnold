@@ -41,6 +41,9 @@ class ConstructType(StrEnum):
     PARENT_REJOIN = "parent_rejoin"
     # ── S4 execute construct types ─────────────────────────────────────────
     EXECUTE = "execute"
+    # ── S5 review/finalize construct types ─────────────────────────────────
+    REVIEW = "review"
+    FINALIZE = "finalize"
 
 
 # ── S2 front-half stable row ID namespace ──────────────────────────────────
@@ -72,6 +75,20 @@ S3_PARENT_REJOIN_ROW_ID = "s3.parent_rejoin.1"
 # the namespace and uses it in boundary contracts and tests.
 
 S4_EXECUTE_ROW_ID = "s4.execute.1"
+
+# ── S5 review/finalize stable row ID namespace ──────────────────────────────
+# Row IDs are versioned under 's5.' to avoid collision with the S2-S4
+# namespaces.  These rows back review/finalize boundary-contract matching for
+# source-visible reducer, cap-authority, fallback, and projection topology.
+
+S5_REVIEW_CHILD_OUTPUTS_ROW_ID = "s5.review_child_outputs.1"
+S5_REVIEW_REDUCER_PROMOTION_ROW_ID = "s5.review_reducer_promotion.1"
+S5_REVIEW_REWORK_EFFECTS_ROW_ID = "s5.review_rework_effects.1"
+S5_REVIEW_CAP_AUTHORITY_ROW_ID = "s5.review_cap_authority.1"
+S5_REVIEW_HUMAN_VERIFICATION_ROW_ID = "s5.review_human_verification.1"
+S5_FINALIZE_ARTIFACTS_ROW_ID = "s5.finalize_artifacts.1"
+S5_FINALIZE_FALLBACK_ROW_ID = "s5.finalize_fallback.1"
+S5_FINAL_PROJECTION_ROW_ID = "s5.final_projection.1"
 
 
 class CompatibilityQuarantineCategory(StrEnum):
@@ -261,6 +278,14 @@ __all__ = [
     "S3_TIEBREAKER_RESEARCHER_ROW_ID",
     "S3_TIEBREAKER_SYNTHESIS_ROW_ID",
     "S4_EXECUTE_ROW_ID",
+    "S5_FINALIZE_ARTIFACTS_ROW_ID",
+    "S5_FINALIZE_FALLBACK_ROW_ID",
+    "S5_FINAL_PROJECTION_ROW_ID",
+    "S5_REVIEW_CAP_AUTHORITY_ROW_ID",
+    "S5_REVIEW_CHILD_OUTPUTS_ROW_ID",
+    "S5_REVIEW_HUMAN_VERIFICATION_ROW_ID",
+    "S5_REVIEW_REDUCER_PROMOTION_ROW_ID",
+    "S5_REVIEW_REWORK_EFFECTS_ROW_ID",
     "SemanticEvidence",
     "SemanticFailure",
 ]

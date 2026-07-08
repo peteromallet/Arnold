@@ -23,8 +23,8 @@ FIXTURE_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_topology.yaml"
 MANIFEST_GOLDEN_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_manifest_golden.json"
 NORMALIZED_SHAPE_PATH = Path(__file__).parent / "fixtures" / "normalized_pipeline_shape.json"
 AMENDMENT_PATH = Path(__file__).parents[3] / "docs" / "arnold" / "workflow-manifest-amendments.md"
-LOCKED_MANIFEST_HASH = "sha256:1ac5bde8195484b6e8d38f8da5a2449e86fb8caaa97f9959577d116cba2f63b7"
-LOCKED_TOPOLOGY_HASH = "sha256:7485470207d2ec624791b2c1f4ed71cdc3e0a49246fcde6a128e013e0f995133"
+LOCKED_MANIFEST_HASH = "sha256:74563f60ae604b96822a308178eff6a4e7d308a43f7ecd726e02824cbafbfb96"
+LOCKED_TOPOLOGY_HASH = "sha256:295e0ad28430ff465334a36c6ff5add25fba1d21d7ba2449da6b081150098260"
 
 
 @pytest.fixture
@@ -282,7 +282,7 @@ class TestTopologyFixtureLock:
                 "force_proceed",
             ],
             "tiebreaker_decision": ["proceed", "iterate", "escalate", "replan"],
-            "review": ["rework"],
+            "review": [],
         }
 
     @pytest.mark.parametrize(

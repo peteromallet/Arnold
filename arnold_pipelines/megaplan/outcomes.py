@@ -90,6 +90,21 @@ class ReviewOutcome(StrEnum):
     DEFERRED_HUMAN = "deferred_human"
 
 
+class ReviewDecisionResult(StrEnum):
+    """Typed review handler result values.
+
+    These values are intentionally distinct from ``ReviewOutcome`` route
+    signals: the handler may emit a successful review result while still using
+    a terminal route signal such as ``pass`` or ``deferred_human``.
+    """
+
+    SUCCESS = "success"
+    NEEDS_REWORK = "needs_rework"
+    BLOCKED = "blocked"
+    FORCE_PROCEEDED = "force_proceeded"
+    POLICY_DENIED = "policy_denied"
+
+
 class OverrideOutcome(StrEnum):
     """Closed routing vocabulary for the override step."""
 
@@ -208,6 +223,7 @@ __all__ = [
     "OverrideOutcome",
     "PrepOutcome",
     "ReviewOutcome",
+    "ReviewDecisionResult",
     "ReviseOutcome",
     "SuspensionHaltOutcome",
     "SuspensionOutcome",
