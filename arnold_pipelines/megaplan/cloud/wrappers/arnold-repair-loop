@@ -1020,8 +1020,20 @@ default_plan_relaunch_command() {
   local plan_name="$1"
   local workspace="$2"
   local log_path="$workspace/.megaplan/cloud-logs/${plan_name}.log"
-  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan auto --plan %q --project-dir %q >> %q 2>&1' \
-    "$workspace" "$ARNOLD_SRC" "$plan_name" "$workspace" "$log_path"
+  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PLAN_STATE_FILE=%q/.megaplan/plans/%q/state.json && PLAN_CMD=auto && if [[ -f "$PLAN_STATE_FILE" ]] && python3 - "$PLAN_STATE_FILE" <<'\''PY'\'' >/dev/null 2>&1
+import json
+import sys
+from pathlib import Path
+
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+
+raise SystemExit(0 if str(payload.get("current_state") or "").strip() == "failed" else 1)
+PY
+  then PLAN_CMD=resume; fi && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan "$PLAN_CMD" --plan %q --project-dir %q >> %q 2>&1' \
+    "$workspace" "$workspace" "$plan_name" "$ARNOLD_SRC" "$plan_name" "$workspace" "$log_path"
 }
 
 stale_marker_relaunch_command() {

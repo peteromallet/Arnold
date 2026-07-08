@@ -4742,8 +4742,65 @@ def test_watchdog_plan_markers_relaunch_with_auto_not_chain_start(tmp_path: Path
     )
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
-    assert "python3 -P -m arnold_pipelines.megaplan auto --plan demo-plan" in result.stdout
+    assert 'PLAN_CMD=auto' in result.stdout
+    assert 'python3 -P -m arnold_pipelines.megaplan "$PLAN_CMD" --plan demo-plan --project-dir /tmp/workspace' in result.stdout
     assert "chain start" not in result.stdout
+
+
+def test_watchdog_plan_relaunch_resumes_failed_plan_state(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    plan_dir.mkdir(parents=True)
+    (workspace / ".megaplan" / "cloud-logs").mkdir(parents=True)
+    (plan_dir / "state.json").write_text('{"current_state":"failed"}', encoding="utf-8")
+    argv_log = tmp_path / "argv.log"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("default_plan_relaunch_command"),
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"ARGV_LOG={shlex.quote(str(argv_log))}",
+            r"""python3() {
+  if [[ "${1:-}" == "-" ]] && [[ "${2:-}" == *"/state.json" ]]; then
+    command python3 "$@"
+    return
+  fi
+  printf '%s\n' "$*" >> "$ARGV_LOG"
+}""",
+            f"cmd=\"$(default_plan_relaunch_command demo-plan {shlex.quote(str(workspace))})\"",
+            'eval "$cmd"',
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "arnold_pipelines.megaplan resume --plan demo-plan" in argv_log.read_text(encoding="utf-8")
+
+
+def test_repair_loop_plan_relaunch_resumes_failed_plan_state(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    plan_dir.mkdir(parents=True)
+    (workspace / ".megaplan" / "cloud-logs").mkdir(parents=True)
+    (plan_dir / "state.json").write_text('{"current_state":"failed"}', encoding="utf-8")
+    argv_log = tmp_path / "argv.log"
+    script = "\n\n".join(
+        [
+            _extract_repair_function("default_plan_relaunch_command"),
+            f"ARNOLD_SRC={str(REPO_ROOT)!r}",
+            f"ARGV_LOG={shlex.quote(str(argv_log))}",
+            r"""python3() {
+  if [[ "${1:-}" == "-" ]] && [[ "${2:-}" == *"/state.json" ]]; then
+    command python3 "$@"
+    return
+  fi
+  printf '%s\n' "$*" >> "$ARGV_LOG"
+}""",
+            f"cmd=\"$(default_plan_relaunch_command demo-plan {shlex.quote(str(workspace))})\"",
+            'eval "$cmd"',
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "arnold_pipelines.megaplan resume --plan demo-plan" in argv_log.read_text(encoding="utf-8")
 
 
 def test_watchdog_stale_marker_relaunch_command_regenerates_clean_runtime_chain_command() -> None:
