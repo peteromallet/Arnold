@@ -743,6 +743,7 @@ def _meta_repair_summary(
     chain_state_summary=None,
     chain_log_summary=None,
     events_mtime_age_min=None,
+    prior_watchdog_report_refs=None,
 ):
     repair_root = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_REPAIR_DATA_DIR", "/workspace/.megaplan/cloud-sessions/repair-data"))
     repair_payload = _load_json(repair_root / f"{session}.repair-data.json")
@@ -934,6 +935,14 @@ def _meta_repair_summary(
             f"events_mtime_age_min={events_mtime_age_min!r}, chain_log_mtime_age_min={chain_log_age!r}, "
             f"active_step_phase={active_step_phase!r}, worker_pid_alive={active_step.get('worker_pid_alive')!r}"
         ]
+    watchdog_alive_refs = _watchdog_alive_refs(prior_watchdog_report_refs)
+    if should_dispatch and trigger in {"persistent_recurring_retry", "partial_liveness_recurrence"} and watchdog_alive_refs:
+        should_dispatch = False
+        trigger = ""
+        rationale = [
+            "repeated watchdog reports already classified this session as alive, so stale recurring "
+            f"repair sidecars do not prove an unhandled meta-repair dispatch gap (alive_refs={len(watchdog_alive_refs)})"
+        ]
     failed_run_refs = [item for item in run_refs if item.get("launch_failure")]
     failed_meta_records = []
     for item in meta_refs or []:
@@ -956,6 +965,17 @@ def _meta_repair_summary(
         "failed_meta_run_evidence": bool(should_dispatch and (failed_run_refs or failed_meta_records)),
     }
 
+def _watchdog_alive_refs(refs):
+    alive = []
+    for item in refs or []:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("matched_status") or "").strip().lower()
+        message = str(item.get("matched_message") or "").strip().lower()
+        if status == "alive" or "session already alive" in message:
+            alive.append(item)
+    return alive
+
 def _collect_watchdog_report_refs(session, plan, workspace):
     refs = []
     tokens = _match_tokens(session, plan, workspace.name)
@@ -972,12 +992,14 @@ def _collect_watchdog_report_refs(session, plan, workspace):
         items = payload.get("items") if isinstance(payload.get("items"), list) else []
         issues = payload.get("issues") if isinstance(payload.get("issues"), list) else []
         for item in items + issues:
-            if isinstance(item, dict) and _artifact_matches(item, tokens):
+            if _watchdog_record_matches(item, session=session, plan=plan, workspace=workspace, tokens=tokens):
                 matched_items.append(item)
-        if not _artifact_matches(payload, tokens):
-            if not matched_items:
-                continue
-        matched = matched_items[-1] if matched_items else {}
+        if matched_items:
+            matched = matched_items[-1]
+        elif _watchdog_record_matches(payload, session=session, plan=plan, workspace=workspace, tokens=tokens):
+            matched = payload
+        else:
+            continue
         refs.append(
             {
                 "report_id": _redact_scalar(path.stem),
@@ -989,6 +1011,28 @@ def _collect_watchdog_report_refs(session, plan, workspace):
             }
         )
     return _bounded_refs(refs, key_fields=("report_id", "path"))
+
+def _watchdog_record_matches(item, *, session, plan, workspace, tokens):
+    if not isinstance(item, dict):
+        return False
+    session_text = str(session or "").strip()
+    plan_text = str(plan or "").strip()
+    workspace_text = str(workspace or "").strip()
+    item_session = str(item.get("session") or "").strip()
+    item_plan = str(item.get("plan") or item.get("current_plan_name") or "").strip()
+    item_workspace = str(item.get("workspace") or "").strip()
+    item_remote_spec = str(item.get("remote_spec") or "").strip()
+    if session_text and item_session:
+        return item_session == session_text
+    if workspace_text and item_workspace and item_workspace == workspace_text:
+        if plan_text and item_plan:
+            return item_plan == plan_text
+        return True
+    if plan_text and item_plan:
+        return item_plan == plan_text
+    if item_session or item_plan or item_workspace or item_remote_spec:
+        return False
+    return _artifact_matches(item, tokens)
 
 def _collect_audit_report_refs(session, plan):
     refs = []
@@ -2656,6 +2700,8 @@ def _plan_evidence(entry):
     cross_refs = _collect_related_artifact_refs(workspace_path, plan, session, repair_data)
     active = state.get("active_step") or {}
     active_liveness = _active_step_liveness(active)
+    prior_incident_ids = [item.get("incident_id") for item in cross_refs.get("prior_incident_refs", []) if item.get("incident_id")]
+    prior_watchdog_report_refs = _collect_watchdog_report_refs(session, plan, workspace_path)
     meta_repair_summary = _meta_repair_summary(
         session,
         repair_data,
@@ -2667,9 +2713,8 @@ def _plan_evidence(entry):
         chain_state_summary=chain_state,
         chain_log_summary=chain_log,
         events_mtime_age_min=int((now.timestamp() - events_mtime) // 60) if events_mtime else None,
+        prior_watchdog_report_refs=prior_watchdog_report_refs,
     )
-    prior_incident_ids = [item.get("incident_id") for item in cross_refs.get("prior_incident_refs", []) if item.get("incident_id")]
-    prior_watchdog_report_refs = _collect_watchdog_report_refs(session, plan, workspace_path)
     prior_audit_refs = _collect_audit_report_refs(session, plan)
     persistent_finding_refs = _collect_persistent_finding_refs(session, plan, prior_incident_ids)
     ticket_refs = _collect_ticket_refs(workspace_path, session, plan, prior_incident_ids)
