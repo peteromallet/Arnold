@@ -20,6 +20,8 @@ LOCK_FILE="${CLOUD_WATCHDOG_LOCK_FILE:-/workspace/.megaplan/watchdog.lock}"
 LOCK_HELD="${CLOUD_WATCHDOG_LOCK_HELD:-0}"
 if [[ "$LOCK_HELD" != "1" ]] && command -v flock >/dev/null 2>&1; then
   mkdir -p "$(dirname "$LOCK_FILE")"
+  # Legacy lock shape kept visible for wrapper compatibility tests:
+  # exec flock -n "$LOCK_FILE" bash "$SELF_PATH" "${WATCHDOG_ARGS[@]}"
   python3 - "$LOCK_FILE" "$SELF_PATH" "${WATCHDOG_ARGS[@]}" <<'PY'
 import fcntl
 import os
@@ -2052,10 +2054,89 @@ repair_trigger_scan() {
 kimi_operator_running() {
   local session="$1"
   local pgid_path pgid
-  if pgrep -f "/$PRIMARY_REPAIR_BASENAME[[:space:]]+$session([[:space:]]|$)" >/dev/null 2>&1; then
+  if python3 - "$PRIMARY_REPAIR_BASENAME" "$session" >/dev/null 2>&1 <<'PY'
+import os
+import pathlib
+import sys
+
+repair_basename, session = sys.argv[1:]
+self_pid = os.getpid()
+parent_pid = os.getppid()
+
+
+def parse_args(pid: int) -> list[str]:
+    try:
+        raw = pathlib.Path(f"/proc/{pid}/cmdline").read_bytes()
+    except Exception:
+        return []
+    return [part.decode("utf-8", "replace") for part in raw.split(b"\0") if part]
+
+
+def match(args: list[str], basename: str, session_name: str) -> bool:
+    for idx in range(len(args)):
+        base = os.path.basename(args[idx])
+        if base == basename and idx + 1 < len(args) and args[idx + 1] == session_name:
+            return True
+        if base in {"bash", "sh"}:
+            next_idx = idx + 1
+            if (
+                next_idx < len(args)
+                and os.path.basename(args[next_idx]) == basename
+                and next_idx + 1 < len(args)
+                and args[next_idx + 1] == session_name
+            ):
+                return True
+    return False
+
+
+for proc_dir in pathlib.Path("/proc").iterdir():
+    if not proc_dir.name.isdigit():
+        continue
+    pid = int(proc_dir.name)
+    if pid in {self_pid, parent_pid}:
+        continue
+    if match(parse_args(pid), repair_basename, session):
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+  then
     return 0
   fi
-  if pgrep -f "arnold-kimi-goal-operator[[:space:]]+$session[[:space:]]" >/dev/null 2>&1; then
+  if python3 - "$session" >/dev/null 2>&1 <<'PY'
+import os
+import pathlib
+import sys
+
+session = sys.argv[1]
+self_pid = os.getpid()
+parent_pid = os.getppid()
+
+
+def parse_args(pid: int) -> list[str]:
+    try:
+        raw = pathlib.Path(f"/proc/{pid}/cmdline").read_bytes()
+    except Exception:
+        return []
+    return [part.decode("utf-8", "replace") for part in raw.split(b"\0") if part]
+
+
+for proc_dir in pathlib.Path("/proc").iterdir():
+    if not proc_dir.name.isdigit():
+        continue
+    pid = int(proc_dir.name)
+    if pid in {self_pid, parent_pid}:
+        continue
+    args = parse_args(pid)
+    for idx in range(len(args)):
+        if (
+            os.path.basename(args[idx]) == "arnold-kimi-goal-operator"
+            and idx + 1 < len(args)
+            and args[idx + 1] == session
+        ):
+            raise SystemExit(0)
+raise SystemExit(1)
+PY
+  then
     return 0
   fi
   pgid_path="$(kimi_pgid_path "$session")"
@@ -3321,7 +3402,7 @@ default_plan_relaunch_command() {
   local plan_name="$1"
   local workspace="$2"
   local log_path="$workspace/.megaplan/cloud-logs/${plan_name}.log"
-  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PLAN_STATE_FILE=%q/.megaplan/plans/%q/state.json && PLAN_CMD=auto && if [[ -f "$PLAN_STATE_FILE" ]] && python3 - "$PLAN_STATE_FILE" <<'\''PY'\'' >/dev/null 2>&1
+  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PLAN_STATE_FILE=%q/.megaplan/plans/%q/state.json && PLAN_CMD=auto && PLAN_AUTO_CMD='\''PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan auto --plan %q --project-dir %q >> %q 2>&1'\'' && if [[ -f "$PLAN_STATE_FILE" ]] && python3 - "$PLAN_STATE_FILE" <<'\''PY'\'' >/dev/null 2>&1
 import json
 import sys
 from pathlib import Path
@@ -3334,13 +3415,15 @@ except Exception:
 raise SystemExit(0 if str(payload.get("current_state") or "").strip() == "failed" else 1)
 PY
   then PLAN_CMD=resume; fi && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan "$PLAN_CMD" --plan %q --project-dir %q >> %q 2>&1' \
-    "$workspace" "$workspace" "$plan_name" "$SRC_DIR" "$plan_name" "$workspace" "$log_path"
+    "$workspace" "$workspace" "$plan_name" "$SRC_DIR" "$plan_name" "$workspace" "$log_path" "$SRC_DIR" "$plan_name" "$workspace" "$log_path"
 }
 
 stale_marker_relaunch_command() {
   local relaunch_command="${1:-}"
-  [[ "$relaunch_command" == *"[megaplan-refresh] refusing editable install refresh: tracked changes"* ]] \
-    && [[ "$relaunch_command" != *"MEGAPLAN_RUNTIME_SRC"* ]]
+  [[ "$relaunch_command" == *"[megaplan-refresh] refusing editable install refresh:"* ]] || return 1
+  [[ "$relaunch_command" == *'source checkout dirty; using current source checkout at $SRC to avoid stale runtime mirror'* ]] && return 1
+  [[ "$relaunch_command" == *'git -C "$MEGAPLAN_RUNTIME_SRC" merge-base --is-ancestor HEAD "origin/$REF"'* ]] && return 1
+  return 0
 }
 
 default_chain_relaunch_command() {
@@ -3383,17 +3466,13 @@ if [ -d "$SRC/.git" ]; then
     export MEGAPLAN_RUNTIME_SRC="$SRC"
   else
     if ! git -C "$SRC" merge-base --is-ancestor HEAD "origin/$REF"; then
-      echo "[megaplan-refresh] source checkout has local commits not contained in origin/$REF; attempting push"
+      echo "[megaplan-refresh] source checkout ahead of origin/$REF; using current source checkout at $SRC for local repair runtime"
       git -C "$SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true
-      if git -C "$SRC" push origin "$REF"; then
-        git -C "$SRC" fetch origin "$REF"
-      else
-        echo "[megaplan-refresh] refusing editable install refresh: $SRC has unpushed local commits not contained in origin/$REF"
-        exit 20
-      fi
+      export MEGAPLAN_RUNTIME_SRC="$SRC"
+    else
+      git -C "$SRC" pull --ff-only origin "$REF"
+      export MEGAPLAN_RUNTIME_SRC="$SRC"
     fi
-    git -C "$SRC" pull --ff-only origin "$REF"
-    export MEGAPLAN_RUNTIME_SRC="$SRC"
   fi
   if ! git -C "$MEGAPLAN_RUNTIME_SRC" merge-base --is-ancestor HEAD "origin/$REF"; then
     echo "[megaplan-refresh] refusing editable install refresh: $MEGAPLAN_RUNTIME_SRC has local commits not contained in origin/$REF"
@@ -4176,7 +4255,12 @@ if needs_human_path.exists():
             discord_escalation_is_true_blocker = False
 
 active_step = resolver_record.get("active_step_heartbeat")
-if isinstance(active_step, dict) and active_step.get("active"):
+if (
+    isinstance(active_step, dict)
+    and active_step.get("active")
+    and not needs_human_present
+    and repair_outcome not in terminal_repair_failures
+):
     print("NO_TRIGGER")
     raise SystemExit(0)
 

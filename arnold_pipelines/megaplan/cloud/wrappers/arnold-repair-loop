@@ -559,13 +559,17 @@ safe_name() {
 
 guard_against_recursive_repair_loop() {
   local parent_pid="${CLOUD_WATCHDOG_REPAIR_LOOP_PID:-}"
+  local parent_session="${CLOUD_WATCHDOG_REPAIR_LOOP_SESSION:-}"
   if [[ "${CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE:-0}" != "1" ]]; then
     return 0
   fi
   if [[ "$parent_pid" == "$$" ]]; then
     return 0
   fi
-  if [[ -n "$parent_pid" ]] && ! repair_loop_pid_matches_session "$parent_pid"; then
+  if [[ -n "$parent_session" && "$parent_session" != "$SESSION" ]]; then
+    return 0
+  fi
+  if [[ -n "$parent_pid" ]] && ! repair_loop_pid_matches_session "$parent_pid" "$SESSION"; then
     return 0
   fi
   log "repair loop recursion blocked; parent repair loop already active owner_session=${CLOUD_WATCHDOG_REPAIR_LOOP_SESSION:-unknown} owner_pid=${parent_pid:-unknown} requested_session=$SESSION"
@@ -1072,8 +1076,10 @@ PY
 
 stale_marker_relaunch_command() {
   local relaunch_command="${1:-}"
-  [[ "$relaunch_command" == *"[megaplan-refresh] refusing editable install refresh: tracked changes"* ]] \
-    && [[ "$relaunch_command" != *"MEGAPLAN_RUNTIME_SRC"* ]]
+  [[ "$relaunch_command" == *"[megaplan-refresh] refusing editable install refresh:"* ]] || return 1
+  [[ "$relaunch_command" == *'source checkout dirty; using current source checkout at $SRC to avoid stale runtime mirror'* ]] && return 1
+  [[ "$relaunch_command" == *'git -C "$MEGAPLAN_RUNTIME_SRC" merge-base --is-ancestor HEAD "origin/$REF"'* ]] && return 1
+  return 0
 }
 
 default_chain_relaunch_command() {
@@ -5210,10 +5216,61 @@ repair_source_initiative_if_possible() {
   ensure_repair_budget_available "source-initiative-repair"
   local result_path="" status=0
   result_path="$RUN_DIR/source-initiative-repair.json"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 -m arnold_pipelines.megaplan.cloud.source_initiative_repair \
-    --workspace "$WORKSPACE" \
-    --remote-spec "$REMOTE_SPEC" \
-    --arnold-src "$ARNOLD_SRC" >"$result_path" 2>>"$LOG"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$WORKSPACE" "$REMOTE_SPEC" "$ARNOLD_SRC" "$result_path" <<'PY' > /dev/null 2>>"$LOG"
+import json
+import shutil
+import sys
+from pathlib import Path
+
+from arnold_pipelines.megaplan.cloud.source_initiative_repair import (
+    source_initiative_restore_available,
+)
+
+workspace = Path(sys.argv[1])
+remote_spec = Path(sys.argv[2])
+arnold_src = Path(sys.argv[3])
+result_path = Path(sys.argv[4])
+
+if not source_initiative_restore_available(
+    workspace=workspace,
+    remote_spec=remote_spec,
+    arnold_src=arnold_src,
+):
+    result_path.write_text(
+        json.dumps({"repaired": False, "reason": "source_initiative_unavailable", "details": {}}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    raise SystemExit(1)
+
+relative = remote_spec.relative_to(workspace)
+source_spec = arnold_src / relative
+source_root = source_spec.parent
+target_root = remote_spec.parent
+target_root.mkdir(parents=True, exist_ok=True)
+for item in source_root.iterdir():
+    destination = target_root / item.name
+    if item.is_dir():
+      shutil.copytree(item, destination, dirs_exist_ok=True)
+    else:
+      shutil.copy2(item, destination)
+
+result_path.write_text(
+    json.dumps(
+        {
+            "repaired": True,
+            "reason": "source_initiative_restored",
+            "details": {
+                "workspace": str(workspace),
+                "remote_spec": str(remote_spec),
+                "source_spec": str(source_spec),
+            },
+        },
+        indent=2,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+PY
   status=$?
   if [[ "$status" == "0" ]]; then
     log "source initiative repair succeeded result=$result_path"
