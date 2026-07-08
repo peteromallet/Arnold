@@ -89,6 +89,11 @@ from arnold_pipelines.megaplan.profiles import (
     _resolve_default_vendor,
     load_profile_metadata,
 )
+from arnold_pipelines.megaplan.run_state import (
+    CanonicalRunState,
+    CanonicalState,
+    resolve_run_state,
+)
 from arnold_pipelines.megaplan.runtime.process import (
     megaplan_engine_env,
     megaplan_engine_root,
@@ -2407,6 +2412,7 @@ def _chain_completion_guard(
     *,
     implementation_milestone: bool,
     chain_state: ChainState | None = None,
+    canonical_run_state: CanonicalRunState | None = None,
 ) -> tuple[bool, str]:
     plan_name = record.get("plan")
     if not isinstance(plan_name, str) or not plan_name.strip():
@@ -2444,6 +2450,19 @@ def _chain_completion_guard(
 
     if not implementation_milestone:
         return True, "non-implementation completion guard passed"
+
+    if canonical_run_state is not None:
+        canonical_state = canonical_run_state.canonical_state
+        if canonical_state is not CanonicalState.COMPLETED:
+            reason = (
+                f"plan {plan_name} current_state={current_state!r} cannot complete "
+                f"because canonical_state={canonical_state.name!r}"
+            )
+            if canonical_state is CanonicalState.STALE_DERIVED_STATE:
+                return False, f"{reason} indicates stale derived state"
+            if canonical_run_state.running or canonical_run_state.repairable:
+                return False, f"{reason} remains nonterminal under canonical custody"
+            return False, f"{reason} is not canonical terminal success"
 
     milestone_base_sha = _milestone_base_sha_from_plan_state(plan_state)
     waiver_ok, waiver_reason = _read_typed_noop_completion_waiver(
@@ -2698,6 +2717,7 @@ def _recover_stale_merged_pr_for_unfinished_plan(
     milestone: MilestoneSpec,
     plan_state: dict[str, Any],
     *,
+    canonical_run_state: CanonicalRunState | None = None,
     writer,
 ) -> tuple[ChainState | None, str]:
     """Retire a merged PR cursor that points at a plan that still must run.
@@ -2719,7 +2739,23 @@ def _recover_stale_merged_pr_for_unfinished_plan(
         return None, f"plan {plan_name} is already {STATE_DONE!r}"
     if not isinstance(current_state, str) or not current_state:
         return None, f"plan {plan_name} has no usable current_state for stale merged PR recovery"
-    if current_state not in {STATE_PREPPED, STATE_FINALIZED, STATE_EXECUTED}:
+    recoverable_states = {STATE_PREPPED, STATE_FINALIZED, STATE_EXECUTED}
+    recoverable_canonical_states = {
+        CanonicalState.RUNNING,
+        CanonicalState.REPAIRING,
+        CanonicalState.RETRYABLE_EXECUTION_BLOCK,
+    }
+    if canonical_run_state is not None:
+        canonical_state = canonical_run_state.canonical_state
+        if canonical_state not in recoverable_canonical_states:
+            reason = (
+                f"plan {plan_name} current_state={current_state!r} cannot recover stale "
+                f"merged PR because canonical_state={canonical_state.name!r}"
+            )
+            if canonical_state is CanonicalState.STALE_DERIVED_STATE:
+                return None, f"{reason} indicates stale derived state under canonical custody"
+            return None, f"{reason} is not eligible for unfinished-plan recovery"
+    elif current_state not in recoverable_states:
         return (
             None,
             f"plan {plan_name} current_state={current_state!r} is not recoverable "
@@ -2787,6 +2823,9 @@ def _recover_stale_merged_pr_for_unfinished_plan(
         "plan": plan_name,
         "stale_pr_number": old_pr_number,
         "plan_current_state": current_state,
+        "canonical_state": (
+            canonical_run_state.canonical_state.name if canonical_run_state is not None else None
+        ),
         "dirty_claimed_paths": dirty_claimed,
         "unclaimed_execute_dirty_paths": unrelated_dirty,
     }
@@ -2834,6 +2873,7 @@ def _append_completed_with_guard(
     record: dict[str, Any],
     *,
     implementation_milestone: bool,
+    canonical_run_state: CanonicalRunState | None = None,
     writer,
 ) -> tuple[bool, str]:
     ok, reason = _chain_completion_guard(
@@ -2841,6 +2881,7 @@ def _append_completed_with_guard(
         record,
         implementation_milestone=implementation_milestone,
         chain_state=state,
+        canonical_run_state=canonical_run_state,
     )
     if not ok:
         state.last_state = "authority_divergence"
@@ -3650,6 +3691,84 @@ def _plan_has_live_active_step(plan_state: Mapping[str, Any]) -> bool:
         or active_step.get("pid")
         or active_step.get("session_id")
     )
+
+
+def _canonical_run_state_for_stale_merged_pr_recovery(
+    plan_state: Mapping[str, Any],
+    *,
+    chain_state: ChainState | None = None,
+) -> CanonicalRunState | None:
+    if not isinstance(plan_state, Mapping) or not plan_state:
+        return None
+
+    evidence: dict[str, Any] = {"plan_state": dict(plan_state)}
+    has_signal = False
+
+    if chain_state is not None:
+        chain_payload: dict[str, Any] = {}
+        if isinstance(chain_state.last_state, str) and chain_state.last_state:
+            chain_payload["last_state"] = chain_state.last_state
+            if chain_state.last_state == "repairing":
+                evidence["repair_progress"] = {"present": True, "items": [{"status": "repairing"}]}
+                has_signal = True
+        if isinstance(chain_state.current_plan_name, str) and chain_state.current_plan_name:
+            chain_payload["current_plan_name"] = chain_state.current_plan_name
+        if chain_payload:
+            evidence["chain_state"] = chain_payload
+
+    active_step = plan_state.get("active_step")
+    if isinstance(active_step, Mapping):
+        heartbeat = {
+            "active": _plan_has_live_active_step(plan_state),
+            "phase": active_step.get("phase"),
+            "worker_pid": active_step.get("worker_pid") or active_step.get("pid"),
+            "session_id": active_step.get("session_id"),
+        }
+        if heartbeat["active"]:
+            evidence["active_step_heartbeat"] = heartbeat
+            has_signal = True
+
+    latest_failure = plan_state.get("latest_failure")
+    latest_gate_kind = ""
+    if isinstance(latest_failure, Mapping):
+        raw_kind = latest_failure.get("kind")
+        if isinstance(raw_kind, str) and raw_kind:
+            latest_gate_kind = raw_kind
+            lowered_kind = raw_kind.lower()
+            if lowered_kind in {"execution_blocked", "tasks_blocked"} or any(
+                token in lowered_kind
+                for token in (
+                    "awf018",
+                    "route_metadata_mismatch",
+                    "route_metadata",
+                    "route_binding",
+                    "missing_route",
+                    "missing_fallthrough_route",
+                    "stale_assertion",
+                    "fixture_refresh",
+                )
+            ):
+                has_signal = True
+
+    diagnostic_codes: dict[str, Any] = {}
+    resume_cursor = plan_state.get("resume_cursor")
+    if isinstance(resume_cursor, Mapping) and resume_cursor.get("phase") == "execute":
+        raw_retry_strategy = resume_cursor.get("retry_strategy")
+        if isinstance(raw_retry_strategy, str) and raw_retry_strategy:
+            lowered_strategy = raw_retry_strategy.lower()
+            if lowered_strategy in {"fresh_session", "retry", "retry_fresh"}:
+                diagnostic_codes["retry_strategy"] = "requeue"
+            else:
+                diagnostic_codes["retry_strategy"] = raw_retry_strategy
+            has_signal = True
+    if diagnostic_codes:
+        evidence["diagnostic_codes"] = diagnostic_codes
+    if latest_gate_kind:
+        evidence["event_cursors"] = {"latest_gate_kind": latest_gate_kind}
+
+    if not has_signal:
+        return None
+    return resolve_run_state(evidence)
 
 
 def _blocked_plan_replay_would_be_redundant(
@@ -4638,6 +4757,10 @@ def run_chain(
                     root, state.current_plan_name
                 )
                 if merged_pr_plan_state.get("current_state") != STATE_DONE:
+                    canonical_run_state = _canonical_run_state_for_stale_merged_pr_recovery(
+                        merged_pr_plan_state,
+                        chain_state=state,
+                    )
                     recovered_state, recovery_reason = (
                         _recover_stale_merged_pr_for_unfinished_plan(
                             root,
@@ -4645,6 +4768,7 @@ def run_chain(
                             state,
                             milestone,
                             merged_pr_plan_state,
+                            canonical_run_state=canonical_run_state,
                             writer=writer,
                         )
                     )
@@ -4873,6 +4997,10 @@ def run_chain(
                     root, state.current_plan_name
                 )
                 if merged_pr_plan_state.get("current_state") != STATE_DONE:
+                    canonical_run_state = _canonical_run_state_for_stale_merged_pr_recovery(
+                        merged_pr_plan_state,
+                        chain_state=state,
+                    )
                     recovered_state, recovery_reason = (
                         _recover_stale_merged_pr_for_unfinished_plan(
                             root,
@@ -4880,6 +5008,7 @@ def run_chain(
                             state,
                             milestone,
                             merged_pr_plan_state,
+                            canonical_run_state=canonical_run_state,
                             writer=writer,
                         )
                     )

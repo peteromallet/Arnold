@@ -406,6 +406,47 @@ def test_profile_expansion_with_phase_model_and_no_state_keeps_tier_models(tmp_p
     assert "critique" in args.tier_models
 
 
+def test_profile_expansion_without_cli_suppresses_profile_execute_tier_models(tmp_path: Path) -> None:
+    args = Namespace(
+        profile="partnered-5",
+        phase_model=[],
+        tier_models=None,
+        vendor=None,
+        critic=None,
+        depth=None,
+        deepseek_provider=None,
+    )
+
+    apply_profile_expansion(args, tmp_path)
+
+    assert "execute=codex:medium" in args.phase_model
+    assert args.tier_models is not None
+    assert "execute" not in args.tier_models
+    assert "critique" in args.tier_models
+
+
+def test_profile_expansion_with_persisted_execute_pin_keeps_execute_pinned_and_suppressed(
+    tmp_path: Path,
+) -> None:
+    args = Namespace(
+        profile="partnered-5",
+        phase_model=[],
+        tier_models=None,
+        vendor=None,
+        critic=None,
+        depth=None,
+        deepseek_provider=None,
+    )
+    state = {"config": {"phase_model": ["execute=codex:gpt-5.5"]}}
+
+    apply_profile_expansion(args, tmp_path, state=state)
+
+    assert "execute=codex:gpt-5.5" in args.phase_model
+    assert args.tier_models is not None
+    assert "execute" not in args.tier_models
+    assert "critique" in args.tier_models
+
+
 def test_profile_expansion_selects_first_explicit_prep_chain_for_stage_models(tmp_path: Path) -> None:
     encoded_prep = encode_phase_model_value(
         "prep",

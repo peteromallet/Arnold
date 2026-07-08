@@ -17,7 +17,11 @@ from arnold_pipelines.megaplan.cloud.current_target import resolve_current_targe
 from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
 from arnold_pipelines.megaplan.cloud.redact import redact_payload
 from arnold_pipelines.megaplan.cloud.repair_contract import classify_repair_dispatch, project_repair_custody
-from arnold_pipelines.megaplan.cloud.repair_lock import acquire_repair_lock, release_repair_lock
+from arnold_pipelines.megaplan.cloud.repair_lock import (
+    acquire_repair_lock,
+    inspect_repair_lock,
+    release_repair_lock,
+)
 from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
 
 TERMINAL_DECISIONS = {"coalesced", "stale", "superseded", "dispatched"}
@@ -393,12 +397,19 @@ def _classify_request(
             repair_data_dir=repair_data_dir,
             resolver_record=normalized_target,
         )
+    lock_evidence = None
+    blocker_id = str(projection.get("blocker_id") or "").strip()
+    if blocker_id:
+        lock_evidence = inspect_repair_lock(
+            repair_requests.active_repair_claim_lock_dir(repair_requests.repair_queue_dir(marker_dir), blocker_id)
+        )
     decision = classify_repair_dispatch(
         canonical_run_state=canonical_run_state,
         event_plan_dir=event_plan_dir,
         plan_state=plan_state,
         current_target=normalized_target,
         human_blocker_classification=human_blocker,
+        lock_evidence=lock_evidence,
         custody_projection=projection,
     )
     return {

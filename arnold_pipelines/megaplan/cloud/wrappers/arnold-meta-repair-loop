@@ -536,10 +536,10 @@ fi
 persist_record() {
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$TRIGGER_TYPE" "$VERDICT" "$RESP_PATH" "$BRIEF_PATH" "$REPAIR_DATA_DIR" <<'PY'
 import json, os, sys, uuid
-from datetime import datetime, timezone
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.meta_repair import (
+    derive_meta_repair_effective_outcome,
     MetaRepairRecord,
     MetaRepairTrigger,
     persist_meta_repair_record,
@@ -575,13 +575,24 @@ try:
 except Exception:
     pass
 
+verification_raw = os.environ.get("META_REPAIR_VERIFICATION_JSON", "{}")
+verification_info = {}
+try:
+    verification_info = json.loads(verification_raw)
+except Exception:
+    pass
+
 post_retrigger_verification = {"verdict": verdict}
 if install_sync_info:
     post_retrigger_verification["install_sync"] = install_sync_info
+if isinstance(verification_info, dict) and verification_info:
+    post_retrigger_verification.update(verification_info)
 
-effective_outcome = verdict
-if install_sync_info.get("status") == "failed":
-    effective_outcome = "FIXED:install_sync_failed"
+effective_outcome = derive_meta_repair_effective_outcome(
+    verdict=verdict,
+    install_sync_status=str(install_sync_info.get("status") or ""),
+    post_retrigger_verification=post_retrigger_verification,
+)
 
 record = MetaRepairRecord(
     meta_repair_id=meta_repair_id,
@@ -600,11 +611,7 @@ print(f"RECORD_PATH={record_path}")
 print(f"META_REPAIR_ID={meta_repair_id}")
 PY
 }
-
-RECORD_INFO="$(persist_record 2>&1)" || true
-RECORD_PATH="$(echo "$RECORD_INFO" | sed -n 's/^RECORD_PATH=//p')"
-META_REPAIR_ID="$(echo "$RECORD_INFO" | sed -n 's/^META_REPAIR_ID=//p')"
-log "record persisted meta_repair_id=$META_REPAIR_ID path=$RECORD_PATH"
+export META_REPAIR_VERIFICATION_JSON='{}'
 
 # ---- retrigger ordinary repair after successful install sync ----------------
 if [[ "$VERDICT" == FIXED* ]]; then
@@ -613,7 +620,7 @@ if [[ "$VERDICT" == FIXED* ]]; then
   else
     log "emitting repair_retriggered and retriggering ordinary repair session=$SESSION"
 
-    RETRIGGER_RESULT="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_LOOP_BIN" "$WRAPPER_REPO_ROOT" "$INSTALL_SYNC_EVENT_ID" <<'PY'
+    RETRIGGER_RESULT="$(PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$SESSION" "$REPAIR_LOOP_BIN" "$WRAPPER_REPO_ROOT" "$INSTALL_SYNC_EVENT_ID" "$REPAIR_DATA_PATH" <<'PY'
 import json, os, subprocess, sys
 from pathlib import Path
 
@@ -621,11 +628,42 @@ from arnold_pipelines.megaplan.cloud.incident_bridge import (
     append_repair_retriggered,
     append_verified_recovered,
 )
+from arnold_pipelines.megaplan.cloud.meta_repair import (
+    RetriggerExecutionResult,
+    verify_retrigger_success,
+)
+from arnold_pipelines.megaplan.cloud.repair_contract import validate_repair_data
 
 session = sys.argv[1]
 repair_loop_bin = sys.argv[2]
 workspace_root = Path(sys.argv[3])
 install_sync_event_id = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else ""
+repair_data_path = Path(sys.argv[5])
+
+VERIFIER_REJECTION_RETURNCODE = 73
+
+
+def load_authoritative_post_retrigger_verification(
+    session_id: str,
+    repair_data_path: Path,
+) -> dict[str, str]:
+    """Read the canonical session repair-data outcome after retrigger.
+
+    Fail closed if the artifact is missing, invalid, or does not contain a
+    usable outcome for the expected session.
+    """
+
+    payload = validate_repair_data(repair_data_path)
+    payload_session = str(payload.get("session") or "").strip()
+    if payload_session and payload_session != session_id:
+        raise ValueError(
+            "authoritative repair-data session mismatch: "
+            f"expected {session_id!r}, found {payload_session!r}"
+        )
+    outcome = str(payload.get("outcome") or "").strip().lower()
+    if not outcome:
+        raise ValueError("authoritative repair-data outcome missing")
+    return {"outcome": outcome}
 
 incident_id = f"inc-{session}"
 
@@ -651,42 +689,92 @@ completed = subprocess.run(
     timeout=3600,
 )
 
-# Verify retrigger result
-retrigger_ok = completed.returncode == 0
-summary = (
-    f"Ordinary repair retrigger completed with returncode={completed.returncode}"
-    if retrigger_ok
-    else f"Ordinary repair retrigger FAILED with returncode={completed.returncode}"
-)
+# Verify retrigger result from the authoritative session repair-data artifact,
+# not from subprocess liveness alone.
+lookup_error = ""
+post_retrigger_verification = {}
+try:
+    post_retrigger_verification = load_authoritative_post_retrigger_verification(
+        session,
+        repair_data_path,
+    )
+except Exception as exc:
+    lookup_error = f"{type(exc).__name__}: {exc}"
 
-verification_event = append_verified_recovered(
-    incident_id=incident_id,
-    summary=summary,
-    evidence=[{
-        "kind": "retrigger_result",
-        "returncode": completed.returncode,
-        "stdout_tail": (completed.stdout or "")[-500:],
-        "stderr_tail": (completed.stderr or "")[-500:],
-    }] if not retrigger_ok else [{
-        "kind": "retrigger_result",
-        "returncode": completed.returncode,
-    }],
-    session_id=session,
-    parent_event_ids=[retrigger_event.get("event_id", "")],
-    root=workspace_root,
+retrigger_result = RetriggerExecutionResult(
+    command=(repair_loop_bin, session),
+    returncode=int(completed.returncode),
+    stdout=str(completed.stdout or ""),
+    stderr=str(completed.stderr or ""),
+    lock_released=False,
 )
-print(f"VERIFICATION_EVENT_ID={verification_event.get('event_id', '')}")
-print(f"RETRIGGER_RETURNCODE={completed.returncode}")
-print(f"RETRIGGER_OK={'true' if retrigger_ok else 'false'}")
+verification = verify_retrigger_success(
+    retriggered=True,
+    retrigger_result=retrigger_result,
+    post_retrigger_verification=post_retrigger_verification,
+)
+if lookup_error:
+    verification["authoritative_repair_data_error"] = lookup_error
+    if retrigger_result.returncode == 0:
+        verification["accepted"] = False
+        verification["rejection_reason"] = (
+            "authoritative post-retrigger repair-data outcome unavailable: "
+            f"{lookup_error}"
+        )
+
+accepted = bool(verification.get("accepted"))
+effective_returncode = retrigger_result.returncode
+if not accepted and effective_returncode == 0:
+    effective_returncode = VERIFIER_REJECTION_RETURNCODE
+
+verification_event_id = ""
+if accepted:
+    verification_event = append_verified_recovered(
+        incident_id=incident_id,
+        summary=(
+            "Ordinary repair retrigger verified success "
+            f"outcome={verification.get('outcome', '')} "
+            f"returncode={retrigger_result.returncode}"
+        ),
+        evidence=[
+            {
+                "kind": "retrigger_result",
+                "returncode": retrigger_result.returncode,
+            },
+            {
+                "kind": "verification_record",
+                "data": verification,
+            },
+        ],
+        session_id=session,
+        parent_event_ids=[retrigger_event.get("event_id", "")],
+        root=workspace_root,
+    )
+    verification_event_id = str(verification_event.get("event_id", ""))
+
+print(f"VERIFICATION_EVENT_ID={verification_event_id}")
+print(f"VERIFICATION_ACCEPTED={'true' if accepted else 'false'}")
+print(f"VERIFICATION_REJECTION_REASON={verification.get('rejection_reason', '')}")
+print("VERIFICATION_JSON=" + json.dumps(verification, sort_keys=True))
+print(f"RETRIGGER_RETURNCODE={effective_returncode}")
+print(f"RETRIGGER_RAW_RETURNCODE={retrigger_result.returncode}")
 PY
 )" || true
 
     RETRIGGER_EVENT_ID="$(echo "$RETRIGGER_RESULT" | sed -n 's/^RETRIGGER_EVENT_ID=//p')"
     VERIFICATION_EVENT_ID="$(echo "$RETRIGGER_RESULT" | sed -n 's/^VERIFICATION_EVENT_ID=//p')"
+    VERIFICATION_ACCEPTED="$(echo "$RETRIGGER_RESULT" | sed -n 's/^VERIFICATION_ACCEPTED=//p')"
+    VERIFICATION_REJECTION_REASON="$(echo "$RETRIGGER_RESULT" | sed -n 's/^VERIFICATION_REJECTION_REASON=//p')"
+    META_REPAIR_VERIFICATION_JSON="$(echo "$RETRIGGER_RESULT" | sed -n 's/^VERIFICATION_JSON=//p')"
     RETRIGGER_RETURNCODE="$(echo "$RETRIGGER_RESULT" | sed -n 's/^RETRIGGER_RETURNCODE=//p')"
 
-    log "retrigger complete returncode=$RETRIGGER_RETURNCODE retrigger_event_id=$RETRIGGER_EVENT_ID verification_event_id=$VERIFICATION_EVENT_ID"
+    log "retrigger complete returncode=$RETRIGGER_RETURNCODE accepted=${VERIFICATION_ACCEPTED:-false} rejection_reason=${VERIFICATION_REJECTION_REASON:-} retrigger_event_id=$RETRIGGER_EVENT_ID verification_event_id=$VERIFICATION_EVENT_ID"
   fi
 fi
+
+RECORD_INFO="$(persist_record 2>&1)" || true
+RECORD_PATH="$(echo "$RECORD_INFO" | sed -n 's/^RECORD_PATH=//p')"
+META_REPAIR_ID="$(echo "$RECORD_INFO" | sed -n 's/^META_REPAIR_ID=//p')"
+log "record persisted meta_repair_id=$META_REPAIR_ID path=$RECORD_PATH"
 
 log "meta-repair complete session=$SESSION verdict=$VERDICT"

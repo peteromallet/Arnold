@@ -237,6 +237,16 @@ def test_active_lock_or_process_only_suppresses_machine_actionable_dispatch(tmp_
         plan_state=_plan_state(),
         current_target=_current_target(),
         custody_projection=_projection(request_id="req-1"),
+        lock_evidence=RepairLockResult(status="missing", lock_dir=tmp_path / "repair.lock"),
+    )
+    assert decision.decision == DISPATCH_DECISION_L1
+
+    decision = classify_repair_dispatch(
+        canonical_run_state=_canonical(CanonicalState.REAL_IMPLEMENTATION_BLOCK),
+        event_plan_dir=_event_plan_dir(tmp_path),
+        plan_state=_plan_state(),
+        current_target=_current_target(),
+        custody_projection=_projection(request_id="req-1"),
         process_evidence={"status": "running"},
     )
     assert decision.decision == DISPATCH_DECISION_REPAIRING
