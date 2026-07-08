@@ -499,6 +499,16 @@ describe('useRenderState render routing', () => {
   });
 
   it('blocks malformed remotion_module metadata without invoking the client renderer', async () => {
+    const collection = createDiagnosticCollection();
+    const runtimeValue = {
+      diagnosticCollection: collection,
+    } as unknown as VideoEditorRuntimeContextValue;
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <DataProviderContext.Provider value={runtimeValue}>
+        {children}
+      </DataProviderContext.Provider>
+    );
+
     const { result } = renderHook(() => useRenderState(
       buildConfig({
         id: 'clip-module-bad',
@@ -511,7 +521,7 @@ describe('useRenderState render routing', () => {
         },
       }),
       null,
-    ));
+    ), { wrapper });
 
     await act(async () => {
       await result.current.startRender();
@@ -519,11 +529,28 @@ describe('useRenderState render routing', () => {
 
     expect(mocks.startClientRender).not.toHaveBeenCalled();
     expect(result.current.renderStatus).toBe('error');
-    expect(result.current.renderLog).toContain('Render blocked');
-    expect(result.current.renderLog).toContain('remotion_module_missing_artifact');
+    const plannerDiagnostic = collection.getSnapshot().find(
+      (diagnostic) => diagnostic.detail?.source === 'render-planner',
+    );
+    expect(plannerDiagnostic).toBeDefined();
+    expect(plannerDiagnostic?.detail).toMatchObject({
+      legacyReason: 'remotion_module_missing_artifact',
+      providerRoute: 'preview-only',
+    });
+    expect(result.current.renderLog).toBe(plannerDiagnostic?.message);
   });
 
   it('surfaces worker-unavailable state for valid remotion_module routes without client fallback', async () => {
+    const collection = createDiagnosticCollection();
+    const runtimeValue = {
+      diagnosticCollection: collection,
+    } as unknown as VideoEditorRuntimeContextValue;
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <DataProviderContext.Provider value={runtimeValue}>
+        {children}
+      </DataProviderContext.Provider>
+    );
+
     const { result } = renderHook(() => useRenderState(
       buildConfig({
         id: 'clip-module-good',
@@ -537,7 +564,7 @@ describe('useRenderState render routing', () => {
         },
       }),
       null,
-    ));
+    ), { wrapper });
 
     await act(async () => {
       await result.current.startRender();
@@ -545,8 +572,15 @@ describe('useRenderState render routing', () => {
 
     expect(mocks.startClientRender).not.toHaveBeenCalled();
     expect(result.current.renderStatus).toBe('error');
-    expect(result.current.renderLog).toContain('Worker render unavailable');
-    expect(result.current.renderLog).toContain('generated_remotion_module');
+    const plannerDiagnostic = collection.getSnapshot().find(
+      (diagnostic) => diagnostic.detail?.source === 'render-planner',
+    );
+    expect(plannerDiagnostic).toBeDefined();
+    expect(plannerDiagnostic?.detail).toMatchObject({
+      legacyReason: 'generated_remotion_module',
+      providerRoute: 'worker-banodoco',
+    });
+    expect(result.current.renderLog).toBe(plannerDiagnostic?.message);
   });
 });
 

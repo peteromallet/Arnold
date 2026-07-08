@@ -337,6 +337,67 @@ describe('compositionGraphProjector', () => {
     ]));
   });
 
+  it('keeps disabled projection legacy shader refs from becoming authoritative consumes edges', () => {
+    const graph = project({
+      snapshot: timelineSnapshot({
+        shaders: [
+          shaderSummary({
+            id: 'clip-1:shader:shader.disabledLegacy',
+            shaderId: 'shader.disabledLegacy',
+            scope: 'clip',
+            clipId: 'clip-1',
+            contributionId: 'clip-glow',
+          }),
+        ],
+      }),
+      contributionIndex: {
+        'shader:com.example.shader:clip-glow': [
+          indexEntry('shader:com.example.shader:clip-glow', {
+            status: 'disabled',
+            packageState: 'disabled-by-user',
+            projectionEligible: false,
+            projection: {
+              duplicateOrdinal: 0,
+              eligible: false,
+              projected: false,
+              source: 'preserved-record',
+            },
+          }),
+        ],
+      },
+    });
+
+    expect(graph.edges).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'consumes',
+        sourceNodeId: 'clip:clip-1',
+        targetNodeId: 'contribution:shader:com.example.shader:clip-glow',
+        detail: expect.objectContaining({
+          shaderId: 'shader.disabledLegacy',
+          refKey: 'shader:com.example.shader:clip-glow',
+        }),
+      }),
+    ]));
+    expect(graph.referenceStates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        refKey: 'shader:com.example.shader:clip-glow',
+        state: 'disabled',
+        nodeIds: ['clip:clip-1'],
+      }),
+    ]));
+    expect(graph.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'composition/disabled-ref',
+        detail: expect.objectContaining({
+          nodeId: 'clip:clip-1',
+          refKey: 'shader:com.example.shader:clip-glow',
+          refState: 'disabled',
+          shaderId: 'shader.disabledLegacy',
+        }),
+      }),
+    ]));
+  });
+
   it('projects clip, timeline-postprocess, and contribution nodes plus shader consumes edges', () => {
     const graph = project();
 

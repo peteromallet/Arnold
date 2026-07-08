@@ -1,0 +1,1343 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+Review the implementation against the success criteria.
+
+        Project directory:
+        /workspace/extension-reality-convergence-epic/reigh-app
+
+        Brief summary: # M4: Evidence And Drift Gates
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: M4 Evidence And Drift Gates
+
+## Overview
+M4 should prove the epic’s claims rather than add new product scope. The repository largely matches the brief, with two corrections from targeted inspection: `scripts/quality/check-readiness.mjs` already has a valid `extractTestReadinessFiles()` tokenizer in this checkout, and render/export files live under `src/tools/video-editor/runtime/`, not `rendering/`. The main anchor tension is the brief’s suggestion to document the fast-path render bypass as a limitation: that would contradict the North Star requirement that user-facing export/render blocks originate from planner blockers. Treat the bypass as a bridge only if it is converted into planner-provenance behavior during M4.
+
+## Phase 1: Evidence Baseline And Failed Audits
+
+### Step 1: Verify readiness infrastructure before changing it (`scripts/quality/check-readiness.mjs`)
+**Complexity: 1**
+1. Run `node scripts/quality/check-readiness.mjs --strict` and `npm run test:readiness` first.
+2. If the parser still fails, patch only `extractTestReadinessFiles()` to preserve the current intended behavior: split the `test:readiness` script, skip `--config` plus its value, ignore flags, and return `.test/.spec` file paths.
+3. Do not weaken strict readiness checks or remove required evidence rows.
+
+### Step 2: Complete A2 and A5 as explicit audit notes (`.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/`)
+**Complexity: 2**
+1. Create `a2-trust-gate-gaps.md` listing trust-sensitive M2/M3 surfaces and whether `check-trust-model-truth.mjs` currently scans them.
+2. Create `a5-docs-matrix-reconciliation.md` listing docs rows that contradict code/tests, starting with D-020/D-021/D-022 and B-002.
+3. Keep the audits factual and scoped to trust, composition authority, export readiness, and docs matrices.
+
+## Phase 2: Strengthen Drift Gates
+
+### Step 3: Expand the trust-model truth gate (`scripts/quality/check-trust-model-truth.mjs`)
+**Complexity: 2**
+1. Update docs target selection so trust-sensitive video-editor docs such as `shader-execution-model.md`, planner/export docs, render docs, and composition-spine docs are scanned even when the filename does not contain `extension`, `trust`, or `readiness`.
+2. Add a fixture that proves an unsupported sandbox/permission claim in a newly covered M2/M3-style doc fails the release gate.
+3. Extend `scripts/quality/check-trust-model-truth.test.mjs` to assert both the new scan coverage and the existing package-script wiring.
+
+### Step 4: Expand shader/ref authority coverage (`src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts`)
+**Complexity: 2**
+1. Expand `MIGRATED_READINESS_FILES` from two files to the six readiness paths named by the brief: `runtime/renderPlanner.ts`, `runtime/exportGuard.ts`, `lib/renderRouter.ts`, `hooks/useRenderState.ts`, `runtime/composition/routeScopeValidation.ts`, and `runtime/renderability.ts`.
+2. Re-run the test before adding any allowlist entry. Current regexes do not appear to match `hasTimelineShaderMetadata`, so avoid documenting a false exception unless the expanded test actually fails.
+3. If a legitimate wrapper trips the scanner, add the narrowest line/path exception with a reason that says why the graph-projected path remains authoritative.
+
+### Step 5: Add the missing graph-authority negative fixture (`src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts`)
+**Complexity: 2**
+1. Add a dedicated test for the North Star fixture: legacy-only shader/ref fields must not produce authoritative consumes edges when projection is disabled for that clip/ref.
+2. Use existing `projectCompositionGraph()` helpers and assert the projected graph lacks the shader consumes edge for the disabled projection case.
+3. Keep `shaderValidation.test.ts` as supporting evidence, not the primary proof, because it validates shader ref projection rather than graph projector authority loss.
+
+### Step 6: Make fast-path render blocks planner-owned (`src/tools/video-editor/hooks/useRenderState.ts`)
+**Complexity: 3**
+1. Convert `getFastRenderRouteDecision()` blocked decisions into planner diagnostics/blockers before setting user-facing `renderStatus` or `renderLog`.
+2. Preserve current route behavior for missing generated Remotion artifacts and worker/external routes, but have the displayed block message come from a `RenderBlocker` returned by `planRender()`.
+3. Update `useRenderState.test.tsx` so preview-only and worker/external fast-path blocks fail if they bypass planner blockers or only assert raw route strings.
+4. This is a bridge from the existing compatibility optimization to the North Star, not a contradiction: the fast route may remain an optimization, but the user-facing blocked state must be planner-provenanced.
+
+## Phase 3: Reconcile Docs And Proof
+
+### Step 7: Reclassify render planner docs after the code fix (`docs/video-editor/extension-platform-supported-deferred.md`)
+**Complexity: 3**
+1. Reconcile D-020/D-021/D-022 and B-002 against the actual planner implementation and the fast-path planner-provenance fix.
+2. Update `extension-platform-contract-recheck.md` rows M12-001, M12-002, and M12-007 so their status/evidence matches `renderPlanner.ts`, `exportGuard.ts`, and `useRenderState.ts`.
+3. Update `frontend-closure-matrix.md` only where it repeats stale export blocker or planner-readiness claims.
+4. Do not claim future process/sidecar/export capabilities as supported unless tests already prove them.
+
+### Step 8: Produce the North Star proof note (`.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md`)
+**Complexity: 2**
+1. Create a concise proof note mapping all seven North Star required proof items to exact files/tests/scripts.
+2. Include the command evidence needed to prove the gates: trust model, shader/ref authority, export blocker provenance, docs checks, readiness, and aggregate quality.
+3. Call out any remaining deferred work only if it is outside current release claims and does not hide behind supported language.
+
+## Validation Order
+1. Run the cheapest blockers first: `node scripts/quality/check-readiness.mjs --strict`, `node scripts/quality/check-trust-model-truth.mjs --release`, and focused vitest files.
+2. Run targeted tests after each gate change: trust gate test, shader authority test, composition projector test, render planner/export guard tests, and `useRenderState.test.tsx`.
+3. Run docs checks after docs reconciliation: `npm run check:contract-recheck`, `npm run check:deferred-claims`, `npm run check:frontend-closure`, and `npm run check:docs-maturity-sync`.
+4. Finish with `npm run test:readiness` and `npm run quality:check` from a clean working state, preserving unrelated user/generated work.
+
+## Execution Order
+1. Verify readiness and complete A2/A5 audit notes before editing gates.
+2. Land trust and composition drift gates before relying on the final proof note.
+3. Fix export blocker provenance before reclassifying D-020/D-021/D-022 as supported.
+4. Write the proof note last so it cites final files and passing commands, not stale intermediate evidence.
+
+
+        Review execution context (`finalize.json` + `execution.json`, prompt projection only):
+        {
+  "tasks": [
+    {
+      "id": "T1",
+      "depends_on": [],
+      "status": "skipped",
+      "kind": "test",
+      "complexity": 1,
+      "reviewer_verdict": "deferred_baseline_unavailable",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This is a mechanical baseline check of existing readiness commands and one narrow parser-failure triage point. It does not require changing source behavior or reasoning across files.",
+      "executor_notes": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative.",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": []
+    },
+    {
+      "id": "T2",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "skipped",
+      "kind": "code",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Step 1 conditional repair: if T1 proves the readiness failure is a parser bug, patch only `extractTestReadinessFiles()` in `scripts/quality/check-readiness.mjs` so it splits the `test:readiness` script, skips `--config` and its value, ignores flags, and returns `.test`/`.spec` paths. If T1 passes or fails for another reason, mark this task skipped with the T1 evidence and do not weaken strict evidence validation.",
+      "complexity_justification": "The only allowed edit is a localized tokenizer fix in `scripts/quality/check-readiness.mjs` with direct readiness commands as verification. The risk is local because the task explicitly forbids relaxing strict rows or changing unrelated evidence requirements.",
+      "executor_notes": "Skipped per conditional task rule. Completed dependency T1 is recorded as skipped/deferred_baseline_unavailable with baseline_test_failures null, no commands run, and no evidence that readiness failed because of extractTestReadinessFiles(). Inspected scripts/quality/check-readiness.mjs: extractTestReadinessFiles() already splits the script, skips --config and its value, ignores flags, and returns .test/.spec paths; node --check passed. No strict readiness evidence validation was weakened.",
+      "files_changed": [],
+      "commands_run": [
+        "node --check scripts/quality/check-readiness.mjs"
+      ]
+    },
+    {
+      "id": "T3",
+      "depends_on": [
+        "T2"
+      ],
+      "status": "done",
+      "kind": "docs",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Step 2 audit artifacts: create `.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a2-trust-gate-gaps.md` and `a5-docs-matrix-reconciliation.md`. A2 must list trust-sensitive M2/M3 surfaces and whether `check-trust-model-truth.mjs` scans them; A5 must reconcile docs rows that contradict code/tests, starting with D-020, D-021, D-022, and B-002. Keep both notes factual and scoped to trust, composition authority, export readiness, and docs matrices.",
+      "complexity_justification": "This writes two scoped audit notes from local grep/code inspection and does not alter runtime or gate behavior. The work requires judgment about evidence rows, but the surfaces and starting rows are named in the approved plan.",
+      "executor_notes": "Created both required audit notes. A2 inventories trust-sensitive M2/M3-adjacent surfaces and marks current check-trust-model-truth.mjs scan coverage, including skipped video-editor docs such as shader-execution-model.md and frontend-closure-matrix.md. A5 reconciles D-020, D-021, D-022, and B-002 against renderPlanner/exportGuard/useRenderState evidence without reclassifying docs before later code fixes. Verified with trust-gate audit output, file presence/JSON parse, rg content check, line counts, and git diff --check.",
+      "files_changed": [],
+      "commands_run": [
+        "node scripts/quality/check-trust-model-truth.mjs --audit | sed -n '1,80p'",
+        "git diff --check -- .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a2-trust-gate-gaps.md .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a5-docs-matrix-reconciliation.md",
+        "wc -l .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a2-trust-gate-gaps.md .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a5-docs-matrix-reconciliation.md",
+        "node -e \"const fs=require('fs'); for (const f of ['.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/execution_batch_3.json','.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a2-trust-gate-gaps.md','.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a5-docs-matrix-reconciliation.md']) { if (!fs.existsSync(f)) throw new Error(f+' missing'); } JSON.parse(fs.readFileSync('.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/execution_batch_3.json','utf8')); console.log('batch 3 artifacts OK');\""
+      ]
+    },
+    {
+      "id": "T4",
+      "depends_on": [
+        "T3"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 3 trust-model truth gate: expand `scripts/quality/check-trust-model-truth.mjs` target selection so trust-sensitive video-editor docs such as shader execution, planner/export, render, and composition-spine docs are scanned even when filenames lack extension/trust/readiness terms. Add an active unsupported fixture under `scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md`, and extend `scripts/quality/check-trust-model-truth.test.mj...",
+      "complexity_justification": "This changes the release gate's document-selection logic plus fixtures and node:test coverage, so the executor must preserve both negative and allowed trust-claim behavior. The contract is still limited to one quality script and its test fixture tree, so tier 4 is not warranted.",
+      "executor_notes": "Expanded trust-model truth scanning for trust-sensitive docs/video-editor basenames, including shader-execution-model.md, provider-compatibility-matrix.md, frontend-closure-matrix.md, timeline-patch-operations.md, and live-data-bridge-manual-smoke-checklist.txt. Added/unignored the active unsupported docs/video-editor/shader-execution-model.md fixture and updated node:test assertions to require sandbox-or-isolation and permission-checks findings from that fixture. Release scan and node:test passed.",
+      "files_changed": [
+        ".gitignore",
+        "scripts/quality/check-trust-model-truth.mjs",
+        "scripts/quality/check-trust-model-truth.test.mjs",
+        "scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md"
+      ],
+      "commands_run": [
+        "node --test scripts/quality/check-trust-model-truth.test.mjs",
+        "node scripts/quality/check-trust-model-truth.mjs --release",
+        "git diff --check -- .gitignore scripts/quality/check-trust-model-truth.mjs scripts/quality/check-trust-model-truth.test.mjs scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/composition/graphProjector.ts src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts docs/video-editor/extension-platform-supported-deferred.md docs/video-editor/extension-platform-contract-recheck.md docs/video-editor/frontend-closure-matrix.md .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md"
+      ]
+    },
+    {
+      "id": "T5",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "The primary edit is a localized expansion of a test file's scanned path list, with any exception constrained by the test output. It does not change production authority semantics, and violations are directly observable in the focused test.",
+      "executor_notes": "Expanded MIGRATED_READINESS_FILES in shaderRefAuthority.test.ts to the six required readiness paths and added an explicit length assertion. The forbidden legacy shader read scan over all six files returned no matches, and the focused Vitest set including shaderRefAuthority passed.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts"
+      ],
+      "commands_run": [
+        "rg -n \"\\bclip\\.app\\??\\.shader\\b|\\bconfig\\.app\\??\\.shaderPostprocess\\b|\\bTimelineShaderMetadata\\b|\\blegacyTimelineShaderMetadata\\b\" src/tools/video-editor/runtime/renderPlanner.ts src/tools/video-editor/runtime/exportGuard.ts src/tools/video-editor/lib/renderRouter.ts src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/runtime/composition/routeScopeValidation.ts src/tools/video-editor/runtime/renderability.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx",
+        "git diff --check -- .gitignore scripts/quality/check-trust-model-truth.mjs scripts/quality/check-trust-model-truth.test.mjs scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/composition/graphProjector.ts src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts docs/video-editor/extension-platform-supported-deferred.md docs/video-editor/extension-platform-contract-recheck.md docs/video-editor/frontend-closure-matrix.md .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md"
+      ]
+    },
+    {
+      "id": "T6",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This is a single-file regression fixture using existing projector helpers and assertions. The risk is bounded to test coverage for an already-defined projection-disable behavior rather than a new production data contract.",
+      "executor_notes": "Added the disabled-projection legacy shader regression and fixed graph projection so disabled shader refs are recorded as disabled diagnostics/reference states without creating authoritative consumes edges or duplicate-scope blockers. Focused projector/planner tests passed after the production behavior fix.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "src/tools/video-editor/runtime/composition/graphProjector.ts",
+        "src/tools/video-editor/runtime/renderPlanner.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "npx eslint src/tools/video-editor/runtime/composition/graphProjector.ts --ext ts --report-unused-disable-directives --max-warnings 0",
+        "git diff --check -- .gitignore scripts/quality/check-trust-model-truth.mjs scripts/quality/check-trust-model-truth.test.mjs scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/composition/graphProjector.ts src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts docs/video-editor/extension-platform-supported-deferred.md docs/video-editor/extension-platform-contract-recheck.md docs/video-editor/frontend-closure-matrix.md .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md"
+      ]
+    },
+    {
+      "id": "T7",
+      "depends_on": [
+        "T5",
+        "T6"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 6 planner-owned fast-path blocks: update `src/tools/video-editor/hooks/useRenderState.ts` so blocked decisions from `getFastRenderRouteDecision()` are converted into planner diagnostics/blockers before any user-facing `renderStatus` or `renderLog` is set. Preserve current behavior for missing generated Remotion artifacts and worker/external routes, but make the displayed block message come from a `RenderBlocker` returned by `planRender()`. Update `src/tools/video-editor/hooks/useRenderSt...",
+      "complexity_justification": "This is a multi-file behavior change in the render hook and tests, and the executor must preserve route compatibility while moving user-facing blocked provenance to planner blockers. The blast radius is meaningful but testable through the focused render planner, export guard, and hook tests, so i...",
+      "executor_notes": "Converted preview-only, worker-banodoco, and external fast-path decisions into planRender() diagnostics/blockers through planRouteDecisionBlocker() before setting user-facing renderStatus/renderLog. Hook tests now assert render-planner diagnostic provenance and exact renderLog equality for missing generated Remotion artifacts and worker-unavailable generated module routes. Focused Vitest set passed.",
+      "files_changed": [
+        "src/tools/video-editor/hooks/useRenderState.ts",
+        "src/tools/video-editor/hooks/useRenderState.test.tsx",
+        "src/tools/video-editor/runtime/renderPlanner.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx",
+        "node verification/t9-fast-path-planner-provenance-check.mjs",
+        "git diff --check -- .gitignore scripts/quality/check-trust-model-truth.mjs scripts/quality/check-trust-model-truth.test.mjs scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/composition/graphProjector.ts src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts docs/video-editor/extension-platform-supported-deferred.md docs/video-editor/extension-platform-contract-recheck.md docs/video-editor/frontend-closure-matrix.md .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md"
+      ]
+    },
+    {
+      "id": "T8",
+      "depends_on": [
+        "T7"
+      ],
+      "status": "done",
+      "kind": "docs",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 7 docs reconciliation: after T7 lands, update `docs/video-editor/extension-platform-supported-deferred.md` for D-020, D-021, D-022, and B-002 based on actual code/test evidence; update `docs/video-editor/extension-platform-contract-recheck.md` rows M12-001, M12-002, and M12-007 to match `renderPlanner.ts`, `exportGuard.ts`, and `useRenderState.ts`; and update `docs/video-editor/frontend-closure-matrix.md` only where it repeats stale export blocker or planner-readiness claims. Do not mark...",
+      "complexity_justification": "This reconciles three release-facing docs matrices against code and tests, so the executor must keep status language consistent across multiple checkers. It is documentation-only and guarded by docs scripts, so the risk is claim drift rather than runtime regression.",
+      "executor_notes": "Reconciled docs after the planner-provenance fix: D-020 and D-022 now cite implemented/tested planner/export and TimelineReader evidence, D-021 remains deferred for complete frontend next-action coverage, B-002 is narrowed to that remaining UI evidence gap, and M12-001/M12-007 are pass/supported while M12-002 stays gap/supported. Contract, deferred-claims, frontend-closure, and docs-maturity-sync checks passed in audit mode.",
+      "files_changed": [
+        "docs/video-editor/extension-platform-supported-deferred.md",
+        "docs/video-editor/extension-platform-contract-recheck.md",
+        "docs/video-editor/frontend-closure-matrix.md"
+      ],
+      "commands_run": [
+        "npm run check:contract-recheck",
+        "npm run check:deferred-claims",
+        "npm run check:frontend-closure",
+        "npm run check:docs-maturity-sync",
+        "git diff --check -- .gitignore scripts/quality/check-trust-model-truth.mjs scripts/quality/check-trust-model-truth.test.mjs scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/composition/graphProjector.ts src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts docs/video-editor/extension-platform-supported-deferred.md docs/video-editor/extension-platform-contract-recheck.md docs/video-editor/frontend-closure-matrix.md .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md"
+      ]
+    },
+    {
+      "id": "T9",
+      "depends_on": [
+        "T8"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 2,
+      "reviewer_verdict": "deferred_baseline_unavailable",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "The work is mostly mechanical evidence collection plus a concise proof-note write-up, with all commands and proof categories specified by the approved plan. It does not change production logic, but it must accurately distinguish passing evidence from any recorded baseline failure.",
+      "executor_notes": "Updated the M4 proof note to cite only landed files and current command evidence from this rework pass. Added, ran, and deleted a temporary fast-path planner-provenance verification script. The first quality:check exposed a touched-file graphProjector lint issue, which was fixed and verified with focused eslint; the final quality:check passed convergence gates through release-checklist, then failed at lint on six files outside this batch's changed-file set. This remaining aggregate failure is recorded explicitly in the proof note.",
+      "files_changed": [],
+      "commands_run": [
+        "node verification/t9-fast-path-planner-provenance-check.mjs",
+        "npm run quality:check",
+        "npx eslint src/tools/video-editor/runtime/composition/graphProjector.ts --ext ts --report-unused-disable-directives --max-warnings 0",
+        "npm run quality:check",
+        "git diff --check -- .gitignore scripts/quality/check-trust-model-truth.mjs scripts/quality/check-trust-model-truth.test.mjs scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/composition/graphProjector.ts src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts docs/video-editor/extension-platform-supported-deferred.md docs/video-editor/extension-platform-contract-recheck.md docs/video-editor/frontend-closure-matrix.md .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md"
+      ],
+      "evidence_files": []
+    }
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "verdict": "",
+      "question": "Did the executor run both readiness commands and clearly identify whether any failure is caused by `extractTestReadinessFiles()` rather than another readiness row or test failure?",
+      "executor_note": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative."
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "verdict": "",
+      "question": "If edited, does `extractTestReadinessFiles()` preserve strict readiness evidence validation while only fixing tokenization of the `test:readiness` command; if not edited, is the skip justified by T1 evidence?",
+      "executor_note": "No edit was made. The skip is justified by T1 evidence: T1 was deferred because the baseline was unavailable and did not prove a readiness parser failure; current syntax check also passes."
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "verdict": "",
+      "question": "Do the A2 and A5 audit notes exist at the required paths and stay factual, concise, and scoped to trust, composition authority, export readiness, and docs matrix reconciliation?",
+      "executor_note": "Both required notes exist at the requested audit paths, are concise factual markdown, and stay scoped to trust gate coverage plus docs matrix reconciliation for trust, composition authority, and export readiness."
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "verdict": "",
+      "question": "Does the trust-model truth gate now scan the newly identified video-editor M2/M3-style docs and fail on the added active unsupported sandbox/permission-style fixture while preserving package-script wiring?",
+      "executor_note": "Yes. The release gate now selects named trust-sensitive video-editor docs and the active unsupported shader-execution-model.md fixture fails the node:test expectations for sandbox/isolation and permission-check claims while package script wiring remains covered."
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "verdict": "",
+      "question": "Does `shaderRefAuthority.test.ts` cover all six required readiness paths, with no broad or speculative allowlist entries added before a real focused-test failure?",
+      "executor_note": "Yes. shaderRefAuthority.test.ts covers exactly the six required readiness paths, asserts the six-file gate length, and the forbidden legacy shader read scan over those files returned no matches."
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "verdict": "",
+      "question": "Does the projector test prove that disabled projection prevents legacy-only shader/ref fields from becoming authoritative consumes edges?",
+      "executor_note": "Yes. compositionGraphProjector.test.ts now proves a disabled legacy shader projection records disabled reference state/diagnostics without creating a consumes edge to the shader contribution."
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "verdict": "",
+      "question": "Are all user-facing fast-path render blocked statuses/logs derived from `planRender()` `RenderBlocker` data, with tests that would fail on raw route-string-only blocking?",
+      "executor_note": "Yes. Fast-path blocked route decisions are converted through planRender() into RenderBlocker data before renderStatus/renderLog are set, and hook tests assert renderLog equals the render-planner diagnostic message."
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "verdict": "",
+      "question": "Do the docs matrices classify D-020/D-021/D-022/B-002 and M12 rows according to implemented, tested behavior without claiming unsupported sandboxing, marketplace, sidecar, or export capabilities?",
+      "executor_note": "Yes. D-020/D-022 and M12-001/M12-007 now reflect implemented/tested planner/export behavior, D-021/B-002 remain scoped to the unresolved frontend next-action evidence gap, and unsupported sandboxing, marketplace, sidecar/process execution, and remote loading claims remain deferred/out of scope."
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "verdict": "",
+      "question": "Does the proof note map all seven North Star required proof items to concrete files/tests/scripts and include truthful final command evidence, with the final validation commands actually run?",
+      "executor_note": "Yes. The proof note maps all seven North Star proof items to landed files/tests/scripts and records actual command results, including the final quality:check lint failure on files outside this batch's changed-file set."
+    }
+  ],
+  "task_updates": [
+    {
+      "task_id": "T4",
+      "status": "done",
+      "executor_notes": "Expanded trust-model truth scanning for trust-sensitive docs/video-editor basenames, including shader-execution-model.md, provider-compatibility-matrix.md, frontend-closure-matrix.md, timeline-patch-operations.md, and live-data-bridge-manual-smoke-checklist.txt. Added/unignored the active unsupported docs/video-editor/shader-execution-model.md fixture and updated node:test assertions to require sandbox-or-isolation and permission-checks findings from that fixture. Release scan and node:test passed.",
+      "files_changed": [
+        ".gitignore",
+        "scripts/quality/check-trust-model-truth.mjs",
+        "scripts/quality/check-trust-model-truth.test.mjs",
+        "scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md"
+      ],
+      "commands_run": [
+        "node --test scripts/quality/check-trust-model-truth.test.mjs",
+        "node scripts/quality/check-trust-model-truth.mjs --release",
+        "git diff --check -- .gitignore scripts/quality/check-trust-model-truth.mjs scripts/quality/check-trust-model-truth.test.mjs scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/composition/graphProjector.ts src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts docs/video-editor/extension-platform-supported-deferred.md docs/video-editor/extension-platform-contract-recheck.md docs/video-editor/frontend-closure-matrix.md .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md"
+      ]
+    },
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "Expanded MIGRATED_READINESS_FILES in shaderRefAuthority.test.ts to the six required readiness paths and added an explicit length assertion. The forbidden legacy shader read scan over all six files returned no matches, and the focused Vitest set including shaderRefAuthority passed.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts"
+      ],
+      "commands_run": [
+        "rg -n \"\\bclip\\.app\\??\\.shader\\b|\\bconfig\\.app\\??\\.shaderPostprocess\\b|\\bTimelineShaderMetadata\\b|\\blegacyTimelineShaderMetadata\\b\" src/tools/video-editor/runtime/renderPlanner.ts src/tools/video-editor/runtime/exportGuard.ts src/tools/video-editor/lib/renderRouter.ts src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/runtime/composition/routeScopeValidation.ts src/tools/video-editor/runtime/renderability.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx",
+        "git diff --check -- .gitignore scripts/quality/check-trust-model-truth.mjs scripts/quality/check-trust-model-truth.test.mjs scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/composition/graphProjector.ts src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts docs/video-editor/extension-platform-supported-deferred.md docs/video-editor/extension-platform-contract-recheck.md docs/video-editor/frontend-closure-matrix.md .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "Added the disabled-projection legacy shader regression and fixed graph projection so disabled shader refs are recorded as disabled diagnostics/reference states without creating authoritative consumes edges or duplicate-scope blockers. Focused projector/planner tests passed after the production behavior fix.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "src/tools/video-editor/runtime/composition/graphProjector.ts",
+        "src/tools/video-editor/runtime/renderPlanner.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "npx eslint src/tools/video-editor/runtime/composition/graphProjector.ts --ext ts --report-unused-disable-directives --max-warnings 0",
+        "git diff --check -- .gitignore scripts/quality/check-trust-model-truth.mjs scripts/quality/check-trust-model-truth.test.mjs scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/composition/graphProjector.ts src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts docs/video-editor/extension-platform-supported-deferred.md docs/video-editor/extension-platform-contract-recheck.md docs/video-editor/frontend-closure-matrix.md .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md"
+      ]
+    },
+    {
+      "task_id": "T7",
+      "status": "done",
+      "executor_notes": "Converted preview-only, worker-banodoco, and external fast-path decisions into planRender() diagnostics/blockers through planRouteDecisionBlocker() before setting user-facing renderStatus/renderLog. Hook tests now assert render-planner diagnostic provenance and exact renderLog equality for missing generated Remotion artifacts and worker-unavailable generated module routes. Focused Vitest set passed.",
+      "files_changed": [
+        "src/tools/video-editor/hooks/useRenderState.ts",
+        "src/tools/video-editor/hooks/useRenderState.test.tsx",
+        "src/tools/video-editor/runtime/renderPlanner.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx",
+        "node verification/t9-fast-path-planner-provenance-check.mjs",
+        "git diff --check -- .gitignore scripts/quality/check-trust-model-truth.mjs scripts/quality/check-trust-model-truth.test.mjs scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/composition/graphProjector.ts src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts docs/video-editor/extension-platform-supported-deferred.md docs/video-editor/extension-platform-contract-recheck.md docs/video-editor/frontend-closure-matrix.md .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md"
+      ]
+    },
+    {
+      "task_id": "T8",
+      "status": "done",
+      "executor_notes": "Reconciled docs after the planner-provenance fix: D-020 and D-022 now cite implemented/tested planner/export and TimelineReader evidence, D-021 remains deferred for complete frontend next-action coverage, B-002 is narrowed to that remaining UI evidence gap, and M12-001/M12-007 are pass/supported while M12-002 stays gap/supported. Contract, deferred-claims, frontend-closure, and docs-maturity-sync checks passed in audit mode.",
+      "files_changed": [
+        "docs/video-editor/extension-platform-supported-deferred.md",
+        "docs/video-editor/extension-platform-contract-recheck.md",
+        "docs/video-editor/frontend-closure-matrix.md"
+      ],
+      "commands_run": [
+        "npm run check:contract-recheck",
+        "npm run check:deferred-claims",
+        "npm run check:frontend-closure",
+        "npm run check:docs-maturity-sync",
+        "git diff --check -- .gitignore scripts/quality/check-trust-model-truth.mjs scripts/quality/check-trust-model-truth.test.mjs scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/composition/graphProjector.ts src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts docs/video-editor/extension-platform-supported-deferred.md docs/video-editor/extension-platform-contract-recheck.md docs/video-editor/frontend-closure-matrix.md .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md"
+      ]
+    },
+    {
+      "task_id": "T9",
+      "status": "done",
+      "executor_notes": "Updated the M4 proof note to cite only landed files and current command evidence from this rework pass. Added, ran, and deleted a temporary fast-path planner-provenance verification script. The first quality:check exposed a touched-file graphProjector lint issue, which was fixed and verified with focused eslint; the final quality:check passed convergence gates through release-checklist, then failed at lint on six files outside this batch's changed-file set. This remaining aggregate failure is recorded explicitly in the proof note.",
+      "files_changed": [],
+      "commands_run": [
+        "node verification/t9-fast-path-planner-provenance-check.mjs",
+        "npm run quality:check",
+        "npx eslint src/tools/video-editor/runtime/composition/graphProjector.ts --ext ts --report-unused-disable-directives --max-warnings 0",
+        "npm run quality:check",
+        "git diff --check -- .gitignore scripts/quality/check-trust-model-truth.mjs scripts/quality/check-trust-model-truth.test.mjs scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/composition/graphProjector.ts src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts docs/video-editor/extension-platform-supported-deferred.md docs/video-editor/extension-platform-contract-recheck.md docs/video-editor/frontend-closure-matrix.md .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md"
+      ]
+    },
+    {
+      "task_id": "T2",
+      "status": "skipped",
+      "executor_notes": "Skipped per conditional task rule. Completed dependency T1 is recorded as skipped/deferred_baseline_unavailable with baseline_test_failures null, no commands run, and no evidence that readiness failed because of extractTestReadinessFiles(). Inspected scripts/quality/check-readiness.mjs: extractTestReadinessFiles() already splits the script, skips --config and its value, ignores flags, and returns .test/.spec paths; node --check passed. No strict readiness evidence validation was weakened.",
+      "files_changed": [],
+      "commands_run": [
+        "node --check scripts/quality/check-readiness.mjs"
+      ]
+    },
+    {
+      "task_id": "T3",
+      "status": "done",
+      "executor_notes": "Created both required audit notes. A2 inventories trust-sensitive M2/M3-adjacent surfaces and marks current check-trust-model-truth.mjs scan coverage, including skipped video-editor docs such as shader-execution-model.md and frontend-closure-matrix.md. A5 reconciles D-020, D-021, D-022, and B-002 against renderPlanner/exportGuard/useRenderState evidence without reclassifying docs before later code fixes. Verified with trust-gate audit output, file presence/JSON parse, rg content check, line counts, and git diff --check.",
+      "files_changed": [],
+      "commands_run": [
+        "node scripts/quality/check-trust-model-truth.mjs --audit | sed -n '1,80p'",
+        "git diff --check -- .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a2-trust-gate-gaps.md .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a5-docs-matrix-reconciliation.md",
+        "wc -l .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a2-trust-gate-gaps.md .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a5-docs-matrix-reconciliation.md",
+        "node -e \"const fs=require('fs'); for (const f of ['.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/execution_batch_3.json','.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a2-trust-gate-gaps.md','.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a5-docs-matrix-reconciliation.md']) { if (!fs.existsSync(f)) throw new Error(f+' missing'); } JSON.parse(fs.readFileSync('.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/execution_batch_3.json','utf8')); console.log('batch 3 artifacts OK');\""
+      ]
+    },
+    {
+      "task_id": "T4",
+      "status": "done",
+      "executor_notes": "Expanded docs/video-editor target selection with an explicit trust-sensitive basename allow-list for shader-execution-model.md, frontend-closure-matrix.md, provider-compatibility-matrix.md, timeline-patch-operations.md, and live-data-bridge-manual-smoke-checklist.txt while preserving existing extension/trust/readiness filename selection. Added active unsupported fixture at scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md and extended node:test assertions to require sandbox-or-isolation and permission-checks findings from that path...",
+      "files_changed": [
+        ".gitignore",
+        "scripts/quality/check-trust-model-truth.mjs",
+        "scripts/quality/check-trust-model-truth.test.mjs",
+        "scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md"
+      ],
+      "commands_run": [
+        "node scripts/quality/check-trust-model-truth.mjs --release",
+        "node --test scripts/quality/check-trust-model-truth.test.mjs",
+        "git diff --check -- .gitignore scripts/quality/check-trust-model-truth.mjs scripts/quality/check-trust-model-truth.test.mjs scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md"
+      ]
+    },
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "Expanded MIGRATED_READINESS_FILES in shaderRefAuthority.test.ts from renderPlanner/exportGuard only to the six required readiness paths: renderPlanner.ts, exportGuard.ts, lib/renderRouter.ts, hooks/useRenderState.ts, runtime/composition/routeScopeValidation.ts, and runtime/renderability.ts. Added a length assertion for the six-file gate and no new allowlist entries. Static forbidden-read scan over the six files found no matches; the full shaderRefAuthority.test.ts file passed with 2 tests.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts"
+      ],
+      "commands_run": [
+        "rg -n \"\\bclip\\.app\\??\\.shader\\b|\\bconfig\\.app\\??\\.shaderPostprocess\\b|\\bTimelineShaderMetadata\\b|\\blegacyTimelineShaderMetadata\\b\" src/tools/video-editor/runtime/renderPlanner.ts src/tools/video-editor/runtime/exportGuard.ts src/tools/video-editor/lib/renderRouter.ts src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/runtime/composition/routeScopeValidation.ts src/tools/video-editor/runtime/renderability.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts",
+        "git diff --check -- src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "Added a compositionGraphProjector.test.ts regression fixture for a legacy snapshot shader whose contribution index entry is disabled, projectionEligible false, and projection.projected false. The test asserts no resolved authoritative consumes edge exists for that shader ref, while the projector records the ref as disabled and emits composition/disabled-ref diagnostics. The full compositionGraphProjector.test.ts file passed with 40 tests.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "git diff --check -- src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ]
+    },
+    {
+      "task_id": "T7",
+      "status": "done",
+      "executor_notes": "Updated useRenderState route blocking so preview-only, worker-banodoco, and external route decisions are converted to planner diagnostics with planRender() before renderStatus/renderLog are set; the displayed block log is the returned RenderBlocker.message and the blocker is synced to the diagnostic collection. Updated hook tests to require a render-planner diagnostic and assert renderLog equals that diagnostic message for missing generated Remotion artifacts and worker-unavailable generated module routes. Updated stale renderPlanner shader fixtures to provide CompositionGraph authority req...",
+      "files_changed": [
+        "src/tools/video-editor/hooks/useRenderState.ts",
+        "src/tools/video-editor/hooks/useRenderState.test.tsx",
+        "src/tools/video-editor/runtime/renderPlanner.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx",
+        "git diff --check -- src/tools/video-editor/hooks/useRenderState.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts"
+      ]
+    },
+    {
+      "task_id": "T8",
+      "status": "done",
+      "executor_notes": "Updated supported/deferred M12 rows so D-020 and D-022 are supported by renderPlanner/exportGuard/TimelineReader evidence, while D-021 remains deferred for complete planner next-action UI coverage. Updated contract-recheck M12-001 and M12-007 to pass/supported, kept M12-002 gap/supported with useRenderState planner-provenance evidence, rewrote B-002 to the remaining UI next-action evidence gap, and refreshed contract statistics from the gate output. Updated frontend closure row 12.2 to describe export/planner blocker diagnostics and planner RenderBlocker log provenance without claiming unsu...",
+      "files_changed": [
+        "docs/video-editor/extension-platform-supported-deferred.md",
+        "docs/video-editor/extension-platform-contract-recheck.md",
+        "docs/video-editor/frontend-closure-matrix.md"
+      ],
+      "commands_run": [
+        "npm run check:contract-recheck",
+        "npm run check:deferred-claims",
+        "npm run check:frontend-closure",
+        "npm run check:docs-maturity-sync",
+        "git diff --check -- docs/video-editor/extension-platform-supported-deferred.md docs/video-editor/extension-platform-contract-recheck.md docs/video-editor/frontend-closure-matrix.md"
+      ]
+    },
+    {
+      "task_id": "T9",
+      "status": "blocked",
+      "executor_notes": "Created the final M4 proof note at `.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md` and mapped all seven North Star proof items to concrete files/tests/scripts/docs. Final validation passed for strict readiness, trust-model release scan, focused Vitest evidence (5 files, 231 tests), contract-recheck, deferred-claims (2 audit warnings), frontend-closure (audit warnings only), docs-maturity-sync, and test:readiness (8 files, 580 tests). `quality:check` was run; after repairing a missing mapped governance surface, the rerun failed at lint on files with no M4 diff, so a...",
+      "files_changed": [
+        ".gitignore",
+        "docs/governance/contracts/compatibility-shims.md"
+      ],
+      "commands_run": [
+        "node .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/verification/t9-fast-path-planner-provenance-check.mjs",
+        "rm .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/verification/t9-fast-path-planner-provenance-check.mjs && test ! -e .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/verification/t9-fast-path-planner-provenance-check.mjs",
+        "node scripts/quality/check-readiness.mjs --strict",
+        "node scripts/quality/check-trust-model-truth.mjs --release",
+        "npx vitest run --config config/testing/vitest.config.ts scripts/quality/check-trust-model-truth.test.mjs src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx",
+        "npm run check:contract-recheck",
+        "npm run check:deferred-claims",
+        "npm run check:frontend-closure",
+        "npm run check:docs-maturity-sync",
+        "npm run test:readiness",
+        "npm run quality:check",
+        "npm run check:contract-surface-map",
+        "npm run quality:check",
+        "git diff --check -- .gitignore docs/governance/contracts/compatibility-shims.md"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC4",
+      "executor_note": "Yes. The release gate now selects named trust-sensitive video-editor docs and the active unsupported shader-execution-model.md fixture fails the node:test expectations for sandbox/isolation and permission-check claims while package script wiring remains covered."
+    },
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "Yes. shaderRefAuthority.test.ts covers exactly the six required readiness paths, asserts the six-file gate length, and the forbidden legacy shader read scan over those files returned no matches."
+    },
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "Yes. compositionGraphProjector.test.ts now proves a disabled legacy shader projection records disabled reference state/diagnostics without creating a consumes edge to the shader contribution."
+    },
+    {
+      "sense_check_id": "SC7",
+      "executor_note": "Yes. Fast-path blocked route decisions are converted through planRender() into RenderBlocker data before renderStatus/renderLog are set, and hook tests assert renderLog equals the render-planner diagnostic message."
+    },
+    {
+      "sense_check_id": "SC8",
+      "executor_note": "Yes. D-020/D-022 and M12-001/M12-007 now reflect implemented/tested planner/export behavior, D-021/B-002 remain scoped to the unresolved frontend next-action evidence gap, and unsupported sandboxing, marketplace, sidecar/process execution, and remote loading claims remain deferred/out of scope."
+    },
+    {
+      "sense_check_id": "SC9",
+      "executor_note": "Yes. The proof note maps all seven North Star proof items to landed files/tests/scripts and records actual command results, including the final quality:check lint failure on files outside this batch's changed-file set."
+    },
+    {
+      "sense_check_id": "SC2",
+      "executor_note": "No edit was made. The skip is justified by T1 evidence: T1 was deferred because the baseline was unavailable and did not prove a readiness parser failure; current syntax check also passes."
+    },
+    {
+      "sense_check_id": "SC3",
+      "executor_note": "Both required notes exist at the requested audit paths, are concise factual markdown, and stay scoped to trust gate coverage plus docs matrix reconciliation for trust, composition authority, and export readiness."
+    },
+    {
+      "sense_check_id": "SC4",
+      "executor_note": "Yes. The trust-model truth gate now scans the newly identified video-editor M2/M3-style docs via explicit basename selection and fails on the added active unsupported docs/video-editor/shader-execution-model.md fixture for both sandbox/isolation and permission-check language. The package quality wiring assertion remains in the full node:test file and passed."
+    },
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "Yes. shaderRefAuthority.test.ts now covers exactly the six required readiness paths, and no broad or speculative allowlist entries were added."
+    },
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "Yes. compositionGraphProjector.test.ts now includes a disabled-projection legacy shader fixture and asserts that the disabled ref does not become a resolved authoritative consumes edge."
+    },
+    {
+      "sense_check_id": "SC7",
+      "executor_note": "Acknowledged: user-facing fast-path blocked render logs now come from planRender() RenderBlocker data. The hook tests would fail on raw route-string-only blocking because they assert a render-planner diagnostic exists and renderLog exactly matches that diagnostic message."
+    },
+    {
+      "sense_check_id": "SC8",
+      "executor_note": "Acknowledged. The reconciled rows distinguish implemented/tested planner, export-guard, useRenderState, and TimelineSnapshot behavior from the still-deferred planner next-action UI coverage, and they preserve explicit deferrals for sandboxing, marketplace/remote loading, sidecar/process execution, and other unsupported capabilities."
+    },
+    {
+      "sense_check_id": "SC9",
+      "executor_note": "The proof note maps all seven North Star proof items to concrete files/tests/scripts/docs and records the final validation commands actually run. It explicitly states that aggregate quality is not fully proven because `quality:check` failed at lint on untouched files after the M4 convergence gates passed."
+    },
+    {
+      "sense_check_id": "SC9",
+      "executor_note": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative."
+    }
+  ],
+  "output": "Aggregated execute batches: completed 8/1. Batch 1: Focused rework completed for T4-T9. Trust gate selection now includes named trust-sensitive video-editor docs and the active unsupported shader-execution fixture is unignored/tested. Shader/ref authority covers all six readiness files, disabled shader projection no longer creates authoritative consumes edges, and fast-path render blocks are converted through planRender() RenderBlocker data before user-facing status/logs are set. Docs and proof note were reconciled to current command evidence. Aggregate quality:check reaches lint after passing convergence gates and fails only on six files outside this batch's changed-file set. Batch 2: T2 skipped: T1 was deferred because baseline_test_failures is null and provides no evidence that readiness failed due to extractTestReadinessFiles(). No readiness code was changed; strict evidence validation remains intact. Batch checkpoint written to .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/execution_batch_2.json. Batch 3: Created the T3 A2/A5 audit artifacts and checkpointed batch 3. No runtime tests were run because this batch only writes scoped docs audit notes; verification was file presence, JSON parse, trust-gate audit evidence, and whitespace checks. Batch 4: T4 complete. Expanded trust-model truth gate selection for trust-sensitive video-editor docs, added the active unsupported shader-execution fixture, and checkpointed batch 4 output. Batch 5: Batch 5 completed. E...",
+  "deviations": [
+    "Touched src/tools/video-editor/runtime/composition/graphProjector.ts beyond the named milestone changed-file set because the required disabled-projection regression exposed production behavior: disabled shader refs were still projected into consumes edges and duplicate-scope diagnostics.",
+    "The focused Vitest module set initially failed on stale renderPlanner shader fixtures; the fixtures and projector behavior were corrected, then the same focused set passed with 231 tests.",
+    "npm run quality:check remains red at lint after passing the convergence gates; the remaining six lint errors are in files outside this batch's changed-file set: src/sdk/video/families/processes.ts, src/tools/video-editor/lib/timeline-domain.ts, src/tools/video-editor/runtime/composition/materialRuntime.ts, src/tools/video-editor/runtime/composition/patchPreview.ts, src/tools/video-editor/runtime/extensionSurface.ts, and src/tools/video-editor/runtime/processes/jsonRpcStdioTransport.ts.",
+    "Advisory: task T9 was 'skipped' on disk before merge but structured output set it to 'done'. Structured output remains authoritative.",
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: .gitignore, docs/video-editor/extension-platform-contract-recheck.md, docs/video-editor/extension-platform-supported-deferred.md, docs/video-editor/frontend-closure-matrix.md, scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md, scripts/quality/check-trust-model-truth.mjs, scripts/quality/check-trust-model-truth.test.mjs, src/tools/video-editor/hooks/useRenderState.test.tsx, src/tools/video-editor/hooks/useRenderState.ts, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/com...",
+    "Advisory audit finding: Executor claimed changed files not present in git status: .gitignore, docs/governance/contracts/compatibility-shims.md, docs/video-editor/extension-platform-contract-recheck.md, docs/video-editor/extension-platform-supported-deferred.md, docs/video-editor/frontend-closure-matrix.md, scripts/quality/check-trust-model-truth.mjs, scripts/quality/check-trust-model-truth.test.mjs, src/tools/video-editor/hooks/useRenderState.test.tsx, src/tools/video-editor/hooks/useRenderState.ts, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts, src/tools/video-editor/runtime/renderPlanne...",
+    "Advisory audit finding: Sense check SC3 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+    "Advisory audit finding: Tasks left pending after execute (executor never started them): T3, T4, T5, T6, T7, T8, T9",
+    "Advisory: docs task has notes but no files_changed: T3",
+    "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+    {
+      "omitted_count": 33,
+      "reason": "prompt projection"
+    }
+  ],
+  "files_changed": [
+    ".gitignore",
+    "scripts/quality/check-trust-model-truth.mjs",
+    "scripts/quality/check-trust-model-truth.test.mjs",
+    "scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md",
+    "src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts",
+    "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+    "src/tools/video-editor/runtime/composition/graphProjector.ts",
+    "src/tools/video-editor/hooks/useRenderState.ts",
+    "src/tools/video-editor/hooks/useRenderState.test.tsx",
+    "src/tools/video-editor/runtime/renderPlanner.test.ts",
+    "docs/video-editor/extension-platform-supported-deferred.md",
+    "docs/video-editor/extension-platform-contract-recheck.md",
+    "docs/video-editor/frontend-closure-matrix.md",
+    "docs/governance/contracts/compatibility-shims.md"
+  ],
+  "commands_run": [
+    "node --test scripts/quality/check-trust-model-truth.test.mjs",
+    "node scripts/quality/check-trust-model-truth.mjs --release",
+    "rg -n \"\\bclip\\.app\\??\\.shader\\b|\\bconfig\\.app\\??\\.shaderPostprocess\\b|\\bTimelineShaderMetadata\\b|\\blegacyTimelineShaderMetadata\\b\" src/tools/video-editor/runtime/renderPlanner.ts src/tools/video-editor/runtime/exportGuard.ts src/tools/video-editor/lib/renderRouter.ts src/tools/video-editor/hooks/...",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/exportGuar...",
+    "npm run check:contract-recheck",
+    "npm run check:deferred-claims",
+    "npm run check:frontend-closure",
+    "npm run check:docs-maturity-sync",
+    "node verification/t9-fast-path-planner-provenance-check.mjs",
+    "npm run quality:check",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/renderPlanner.test.ts",
+    "npx eslint src/tools/video-editor/runtime/composition/graphProjector.ts --ext ts --report-unused-disable-directives --max-warnings 0",
+    "git diff --check -- .gitignore scripts/quality/check-trust-model-truth.mjs scripts/quality/check-trust-model-truth.test.mjs scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md src/tools/video-editor/runtime/composition/shaderRefAuthority.t...",
+    "jq '.tasks[]? | select(.id==\"T1\" or .id==\"T2\")' .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/finalize.json",
+    "jq '{baseline_test_failures, task_updates: [.task_updates[]? | select(.task_id==\"T1\" or .task_id==\"T2\")], tasks: [.tasks[]? | select(.id==\"T1\" or .id==\"T2\")]}' .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/finalize.json",
+    "nl -ba scripts/quality/check-readiness.mjs | sed -n '360,470p'",
+    "jq -r '.scripts[\"test:readiness\"] // empty' package.json",
+    "node --check scripts/quality/check-readiness.mjs",
+    "rg -n \"extractTestReadinessFiles|test:readiness|baseline_test_failures|deferred_baseline|parser bug|SyntaxError\" .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120 -g '*.json' -g '*.md'",
+    "jq . .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/execution_batch_2.json >/dev/null",
+    {
+      "omitted_count": 33,
+      "reason": "prompt projection"
+    }
+  ],
+  "watch_items": [
+    "Do not invoke the `megaplan` CLI, read or activate a megaplan skill, start nested plans, or recurse into another planning harness.",
+    "North Star conflict to keep visible: the fast-path render route may remain an optimization, but every user-facing blocked render/export state touched by it must come from planner `RenderBlocker` provenance.",
+    "Do not add or imply sandboxing, runtime permission enforcement, marketplace safety, third-party safety, or untrusted-extension support; this epic keeps extension code trusted and unsandboxed.",
+    "Do not weaken strict readiness checks, trust-model scans, docs checks, release checks, or quality gates to make M4 pass.",
+    "The render/export source paths in this checkout are under `src/tools/video-editor/runtime/`, not a `rendering/` directory.",
+    "D-020 can move to supported only after the planner-provenance code fix; D-021 and D-022 may remain deferred if A5 does not find direct tests for the claimed behavior.",
+    "Shader/ref authority allowlists should be narrow and evidence-backed; do not document `hasTimelineShaderMetadata` or similar as an exception unless the expanded scanner actually fails on it.",
+    "Preserve legacy timeline storage compatibility; this milestone proves the first migrated fact-family authority path and must not delete legacy fields.",
+    "Preserve unrelated user or generated work in the working tree; no destructive git cleanup is part of M4.",
+    "Write the proof note after gate/code/docs work and include actual final command results rather than stale intermediate evidence."
+  ],
+  "user_actions": [],
+  "meta_commentary": "Execute the tasks in DAG order and keep batches narrow: T5 and T6 intentionally share composition context after the trust gate, while the render provenance fix is isolated behind them. Treat conditional work in T2 as a real conditional, not a license to touch readiness code unnecessarily. The final proof note must be evidence-driven and must not hide failures behind supported language; if final validation exposes a pre-existing baseline failure, record it explicitly and leave gates intact."
+}
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-08T01:39:32Z",
+  "hash": "sha256:e1eb478dbcd602ad2fb6b65f1edce0d8d6d7b84f9ae2bcec3ca41600fe2cf27f",
+  "questions": [
+    "Should D-021 and D-022 be reclassified as supported only if A5 finds direct tests for UI next actions and public TimelineSnapshot/TimelineReader inspection, or should partial implementation remain explicitly deferred?",
+    "For final validation, is a clean local checkout required, or is a clean cloud/worktree run acceptable if this workspace contains unrelated generated `.megaplan` artifacts?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`npm run test:readiness` passes, and any readiness parser change preserves strict evidence validation instead of skipping rows.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The trust-model gate scans newly identified M2/M3 trust-sensitive docs and fails on an active unsupported sandboxing, permission-enforcement, marketplace, third-party, or untrusted-extension claim in those surfaces.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The shader/ref authority gate covers all six migrated readiness files and fails on raw legacy shader/ref authority reads in those files.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`compositionGraphProjector.test.ts` proves legacy-only shader/ref fields do not become authoritative consumes edges when projection is disabled.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Every user-facing render/export blocked state touched by the fast path is derived from a planner `RenderBlocker`, with tests that fail on direct route-string-only blocking.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Docs matrices no longer classify implemented planner/blocker behavior as deferred or hide unresolved blockers behind supported language.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_linter"
+      ]
+    },
+    {
+      "criterion": "The final proof note maps all seven North Star required proof items to concrete files, tests, scripts, or docs.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`npm run quality:check` passes after the gate, docs, and proof-note changes.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output",
+        "run_linter"
+      ]
+    },
+    {
+      "criterion": "Changes stay scoped to M4 evidence, drift gates, and docs reconciliation without adding sandboxing, marketplace, or new composition fact-family migrations.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Audit notes are concise enough for a reviewer to use as evidence and do not duplicate unrelated historical plan material.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The current checkout\u2019s `check-readiness.mjs` syntax is valid; strict readiness validation, not the stale line-number report, determines whether a patch is needed.",
+    "The fast-path route optimization may remain, but any user-facing blocked status/log must be planner-provenanced to satisfy the epic North Star.",
+    "D-020 can only move to supported after the fast-path planner-provenance fix lands; D-021/D-022 depend on A5 evidence and may remain deferred if proof is incomplete.",
+    "The proof note belongs in `.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md` because M4 explicitly asks for a milestone artifact.",
+    "No destructive git cleanup is needed; unrelated `.megaplan` or generated working-tree artifacts should be preserved."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "scripts/quality/check-readiness.mjs",
+        "reason": "Strict readiness parser and evidence gate are the first pipeline blocker."
+      },
+      {
+        "kind": "path",
+        "value": "scripts/quality/check-trust-model-truth.test.mjs",
+        "reason": "Covers trust gate scan targets, fixtures, and package wiring."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts",
+        "reason": "Composition authority drift gate."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "reason": "North Star legacy-not-authoritative fixture."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/hooks/useRenderState.test.tsx",
+        "reason": "User-facing render/export blocked-state provenance."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "reason": "Planner blocker behavior and route plans are part of the provenance chain."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/exportGuard.test.ts",
+        "reason": "Export guard diagnostics feed planner readiness."
+      },
+      {
+        "kind": "path",
+        "value": "docs/video-editor/extension-platform-supported-deferred.md",
+        "reason": "Docs matrix reconciliation target."
+      }
+    ],
+    "changed_surfaces": [
+      "scripts/quality/check-readiness.mjs",
+      "scripts/quality/check-trust-model-truth.mjs",
+      "scripts/quality/check-trust-model-truth.test.mjs",
+      "scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md",
+      "src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "src/tools/video-editor/hooks/useRenderState.ts",
+      "src/tools/video-editor/hooks/useRenderState.test.tsx",
+      "docs/video-editor/extension-platform-supported-deferred.md",
+      "docs/video-editor/extension-platform-contract-recheck.md",
+      "docs/video-editor/frontend-closure-matrix.md",
+      ".megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a2-trust-gate-gaps.md",
+      ".megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a5-docs-matrix-reconciliation.md",
+      ".megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md"
+    ],
+    "always_run": [
+      "node scripts/quality/check-readiness.mjs --strict",
+      "node scripts/quality/check-trust-model-truth.mjs --release",
+      "npm run check:contract-recheck",
+      "npm run check:deferred-claims",
+      "npm run check:frontend-closure",
+      "npm run check:docs-maturity-sync",
+      "npm run test:readiness",
+      "npm run quality:check"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: scripts/quality/check-readiness.mjs, scripts/quality/check-trust-model-truth.mjs, scripts/quality/check-trust-model-truth.test.mjs, src/tools/video-editor/hooks/useRenderState.test.tsx, src/tools/video-editor/hooks/useRenderState.ts, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts. Ignored documentation-only change(s) for selector derivation: docs/video-editor/extension-platform-contract-recheck.md, docs/video-editor/extension-platform-supported-deferred.md, docs/video-editor/frontend-closure-matrix.md, megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a2-trust-gate-gaps.md, megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a5-docs-matrix-reconciliation.md, megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md, scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md. Candidate: Use focused checks while developing each gate, but M4 is an evidence milestone and must finish with the aggregate quality pipeline from a clean state.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    }
+  },
+  "structure_warnings": []
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "PROCEED",
+  "passed": true,
+  "rationale_brief": "All preflight checks pass, critique assessment is clear across all five dimensions (correctness, scope, all_locations, verification, prerequisite_ordering), and there are zero significant, unresolved, or addressed flags. The plan is well-formed with explicit execution and validation ordering, correctly handles the one anchor tension (fast-path render bypass as planner-provenance bridge, not a limitation), and respects all North Star constraints including the immutable constraint against claiming sandboxing/marketplace/third-party safety. Scope is appropriately constrained to evidence producti...",
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "The fast-path render bypass remains as an optimization but all user-facing blocked states must originate from planner RenderBlockers",
+      "rationale": "This resolves the anchor tension between the brief's suggestion to document the bypass as a limitation and the North Star requirement that export blocks originate from planner blockers. The plan correctly treats this as a conversion (bridge), not a contradiction. The fast route may remain for optimization, but the user-facing blocked status/log must be planner-provenanced. This is captured in Step 6 and Criterion 5."
+    },
+    {
+      "id": "SD2",
+      "decision": "D-020 moves to supported only after the fast-path planner-provenance fix lands; D-021/D-022 depend on A5 evidence and may remain deferred if proof is incomplete",
+      "rationale": "This is the correct ordering constraint. The plan explicitly ties docs reclassification to code changes landing first (Step 7 follows Step 6), preventing the anti-pattern of claiming support before implementation exists. The assumption document reinforces this dependency."
+    },
+    {
+      "id": "SD3",
+      "decision": "The proof note belongs in .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md as a milestone artifact, not in the epic initiative directory",
+      "rationale": "The plan explicitly places the proof note in the milestone plan directory. This keeps M4 evidence self-contained and avoids polluting the epic-level initiative directory with per-milestone artifacts. The epic North Star's required proof items are mapped to M4 deliverables, not duplicated."
+    },
+    {
+      "id": "SD4",
+      "decision": "No destructive git cleanup; unrelated .megaplan or generated working-tree artifacts preserved",
+      "rationale": "Explicitly called out in plan assumptions and aligns with the North Star constraint to preserve existing editor behavior for timelines and packages that do not use migrated composition features. A clean checkout validation is not the same as destructive cleanup."
+    }
+  ],
+  "warnings": [
+    "Criteria 9 (scope containment) and 10 (audit conciseness) are 'should' priority and involve subjective judgment. Do not let these block a PROCEED if all 8 'must' criteria are satisfied and the deviations are minor.",
+    "The plan's test_blast_radius.import_graph shows 'dependent_tests: 0' which may undercount transitive dependencies through shared fixtures; the full_suite_fallback is correctly set to true as a safety net.",
+    "Ensure the proof note (Step 8) is written last as planned \u2014 stale intermediate evidence would undermine the milestone's credibility."
+  ],
+  "orchestrator_guidance": "First iteration; follow gate recommendation: PROCEED.",
+  "carried_flags": [],
+  "iteration": 1,
+  "produced_at": "2026-07-08T01:47:00Z"
+}
+
+        Settled decisions (verify the executor implemented these correctly):
+- SD1: The fast-path render bypass remains as an optimization but all user-facing blocked states must originate from planner RenderBlockers (This resolves the anchor tension between the brief's suggestion to document the bypass as a limitation and the North Star requirement that export blocks originate from planner blockers. The plan correctly treats this as a conversion (bridge), not a contradiction. The fast route may remain for optimization, but the user-facing blocked status/log must be planner-provenanced. This is captured in Step 6 and Criterion 5.)
+- SD2: D-020 moves to supported only after the fast-path planner-provenance fix lands; D-021/D-022 depend on A5 evidence and may remain deferred if proof is incomplete (This is the correct ordering constraint. The plan explicitly ties docs reclassification to code changes landing first (Step 7 follows Step 6), preventing the anti-pattern of claiming support before implementation exists. The assumption document reinforces this dependency.)
+- SD3: The proof note belongs in .megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md as a milestone artifact, not in the epic initiative directory (The plan explicitly places the proof note in the milestone plan directory. This keeps M4 evidence self-contained and avoids polluting the epic-level initiative directory with per-milestone artifacts. The epic North Star's required proof items are mapped to M4 deliverables, not duplicated.)
+- SD4: No destructive git cleanup; unrelated .megaplan or generated working-tree artifacts preserved (Explicitly called out in plan assumptions and aligns with the North Star constraint to preserve existing editor behavior for timelines and packages that do not use migrated composition features. A clean checkout validation is not the same as destructive cleanup.)
+
+
+Critique flags to re-verify against the final diff:
+            [
+  {
+    "id": "verifiability-0",
+    "concern": "Criterion 8: requires human verification (subjective_judgment).",
+    "severity": "minor",
+    "status": "disputed"
+  },
+  {
+    "id": "verifiability-1",
+    "concern": "Criterion 9: requires human verification (subjective_judgment).",
+    "severity": "minor",
+    "status": "disputed"
+  }
+]
+
+            For each flag above that was raised during critique, verify whether the final diff actually addresses the concern.
+            A flag is resolved only if the final diff contains code that directly addresses the concern.
+            Do not trust pre-execute promises or plan claims; check the diff itself.
+            Add resolved flag IDs to `verified_flag_ids`.
+            Add flag IDs that are unresolved only by prose judgment, without a deterministic pre/post failing check, to `disputed_flag_ids`.
+            For any unresolved flag that is backed by a deterministic pre/post failing check, add a `rework_items` entry with a typed `target`, `issue`, `expected`, `actual`, `evidence_file`, `flag_id`, `source: "review_flag_reverify"`, and `deterministic_check`. Use `target.kind: "task"` with `task_id` for a single finalize task, `target.kind: "bulk"` with `task_ids` for a bulk operation that maps to multiple finalize tasks, or `target.kind: "manifest"` with `task_ids` for manifest-backed routes. Only use legacy `task_id: "REVIEW"` when the finding is a review blocker with no routable finalize target; execute treats that as telemetry/blocker compatibility, not runnable rework.
+
+Advisory mechanical pre-check flags:
+            [
+  {
+    "id": "PRECHECK-DIFF_SIZE_SANITY",
+    "check": "diff_size_sanity",
+    "detail": "Diff size looks larger than expected: changed_lines=2142, expected\u2248270, ratio=7.93, files=35, hunks=120.",
+    "severity": "minor",
+    "evidence_file": ".gitignore"
+  }
+]
+
+            Copy this list verbatim into the output `pre_check_flags` field.
+
+        Historical execution audit context (`execution_audit.json`, prompt projection only):
+        {
+  "skipped": false,
+  "reason": "",
+  "findings": [
+    "Executor claimed changed files not present in git status: .gitignore, docs/governance/contracts/compatibility-shims.md, docs/video-editor/extension-platform-contract-recheck.md, docs/video-editor/extension-platform-supported-deferred.md, docs/video-editor/frontend-closure-matrix.md, scripts/quality/check-trust-model-truth.mjs, scripts/quality/check-trust-model-truth.test.mjs, src/tools/video-editor/hooks/useRenderState.test.tsx, src/tools/video-editor/hooks/useRenderState.ts, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composi..."
+  ],
+  "files_in_diff": [
+    ".gitignore",
+    "docs/video-editor/extension-platform-contract-recheck.md",
+    "docs/video-editor/extension-platform-supported-deferred.md",
+    "docs/video-editor/frontend-closure-matrix.md",
+    "scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/",
+    "scripts/quality/check-trust-model-truth.mjs",
+    "scripts/quality/check-trust-model-truth.test.mjs",
+    "src/tools/video-editor/hooks/useRenderState.test.tsx",
+    "src/tools/video-editor/hooks/useRenderState.ts",
+    "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+    "src/tools/video-editor/runtime/composition/graphProjector.ts",
+    "src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts",
+    "src/tools/video-editor/runtime/renderPlanner.test.ts"
+  ],
+  "files_claimed": [
+    ".gitignore",
+    "docs/governance/contracts/compatibility-shims.md",
+    "docs/video-editor/extension-platform-contract-recheck.md",
+    "docs/video-editor/extension-platform-supported-deferred.md",
+    "docs/video-editor/frontend-closure-matrix.md",
+    "scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md",
+    "scripts/quality/check-trust-model-truth.mjs",
+    "scripts/quality/check-trust-model-truth.test.mjs",
+    "src/tools/video-editor/hooks/useRenderState.test.tsx",
+    "src/tools/video-editor/hooks/useRenderState.ts",
+    "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+    "src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts",
+    "src/tools/video-editor/runtime/renderPlanner.test.ts"
+  ]
+}
+
+        Fresh review-time evidence (`review_evidence.json`):
+        {
+  "projection": "bounded_prompt_summary",
+  "full_artifact": "review_evidence.json",
+  "schema": "megaplan.review_evidence",
+  "schema_version": 1,
+  "evidence_contract_version": 1,
+  "mode": "shadow",
+  "subject": {
+    "kind": "plan",
+    "name": "plan",
+    "to_state": "done",
+    "from_state": "executed",
+    "phase": "review",
+    "plan_name": "plan",
+    "milestone_label": null
+  },
+  "accepted": false,
+  "would_block": false,
+  "failures": [
+    "landed_diff: execution evidence findings: Executor claimed changed files not present in git status: docs/governance/contracts/compatibility-shims.md",
+    "green_suite: verification suite ran but delta is not computable (collection parse failure in baseline or verification)"
+  ],
+  "providers_used": [
+    "phase_coverage",
+    "landed_diff",
+    "worker_did_work",
+    "green_suite",
+    "execution_acceptance_contract",
+    "review_disposition",
+    "declared_noop"
+  ],
+  "legacy_evidence_count": 0,
+  "unknown_evidence_count": 2,
+  "would_block_reasons": [
+    "landed_diff: execution evidence findings: Executor claimed changed files not present in git status: docs/governance/contracts/compatibility-shims.md",
+    "green_suite: verification suite ran but delta is not computable (collection parse failure in baseline or verification)"
+  ],
+  "artifact": "review_evidence.json",
+  "generated_at": "2026-07-08T06:02:47Z",
+  "phase": "review",
+  "iteration": 1,
+  "base_sha": "148a7b7d97fbc52115393936602ab7f78fdef2ac",
+  "head_sha": "55fb090a48184095c0a7b03e3ab054f6bd634cd6",
+  "invocation_id": "72df1cf783f54eb3",
+  "provider_diagnostics": {
+    "phase_coverage": {
+      "ok": true
+    },
+    "landed_diff": {
+      "ok": true
+    },
+    "worker_did_work": {
+      "ok": false,
+      "error": "name 'list_batch_artifacts' is not defined",
+      "exception_type": "NameError"
+    },
+    "green_suite": {
+      "ok": true
+    },
+    "execution_acceptance_contract": {
+      "ok": true
+    },
+    "review_disposition": {
+      "ok": true
+    },
+    "declared_noop": {
+      "ok": true
+    }
+  },
+  "diagnostics": {
+    "base_sha": {
+      "ok": true,
+      "source": "state.meta.chain_policy.milestone_base_sha"
+    },
+    "head_sha": {
+      "ok": true,
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "source": "git_rev_parse_head"
+    },
+    "invocation_id": {
+      "ok": true,
+      "source": "state.meta.current_invocation_id"
+    }
+  },
+  "evidence": [
+    {
+      "kind": "phase_coverage",
+      "status": "satisfied",
+      "summary": "all batch tasks done",
+      "trust_class": "judgment",
+      "provider": "PhaseCoverageProvider",
+      "provider_version": "1",
+      "source": "phase_result.json",
+      "subject": "plan",
+      "artifact": {
+        "path": "phase_result.json",
+        "sha256": "sha256:964191b1867eae7cdf70da712d97b8520a197c98edb4e4a8c7697ebb79c9c1cc",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "phase": "execute",
+        "exit_kind": "success",
+        "reason": "finalize.json",
+        "evidence_id": "sha256:34a7810a477ece13330106a1c5e6e7808977a7f02aef181e4c541fc735890a60"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "landed_diff",
+      "status": "unsatisfied",
+      "summary": "execution evidence findings: Executor claimed changed files not present in git status: docs/governance/contracts/compatibility-shims.md",
+      "trust_class": "judgment",
+      "provider": "LandedDiffProvider",
+      "provider_version": "1",
+      "source": "execution_evidence.validate_execution_evidence",
+      "subject": "plan",
+      "artifact": {
+        "path": "finalize.json",
+        "sha256": "sha256:5ac2bb980c8b65082386894453f0229fe9ed8b140bbd387b4aed6d9031c55649",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "preview": "{\n  \"findings\": [\n    \"Executor claimed changed files not present in git status: docs/governance/contracts/compatibility-shims.md\",\n    \"Git status shows changed files not claimed by any task: config/contracts/reigh-extension.schema.json, docs/extensions/trust-and-security.md, docs/video-editor/extensions-trust-envelope.md, package-lock.json, package.json, scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/extensions/trust.txt, scripts/quality/__fixtures__/trust-model-truth/allowed-statements/docs/extensions/trust.txt, src/sdk/__tests__/sdk-boundary.test.ts, src/sdk/manifest-schema-validation.test.ts, src/sdk/manifest.ts, src/sdk/smoke/barrel-import-smoke.test.ts, src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx, src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx, src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json, src/tools/video-editor/lib/timeline-reader.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/graphProjector.ts, src/tools/video-editor/runtime/exportGuard.test.ts, src/tools/video-editor/runtime/exportGuard.ts, src/tools\n\n[truncated 4,929 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "worker_did_work",
+      "status": "unknown",
+      "summary": "provider crashed: name 'list_batch_artifacts' is not defined",
+      "details_preview": {},
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "green_suite",
+      "status": "unsatisfied",
+      "summary": "verification suite ran but delta is not computable (collection parse failure in baseline or verification)",
+      "trust_class": "evidence",
+      "provider": "GreenSuiteProvider",
+      "provider_version": "1",
+      "source": "verification:277c33efcda0",
+      "subject": "plan:plan",
+      "observed_at": "1783490567.403786",
+      "code_hash": "sha256:e4a0441ef41600391ddbe0ef2635f631945e190cdf4a802fba09421d6f6e1caf",
+      "artifact": {
+        "path": "verification/raw_277c33efcda0.log",
+        "sha256": "sha256:ee8d326fe0bde99e30bd45a317fccabc18c61101f54439f95f18ba36a4ef79cc",
+        "artifact_type": "text/plain"
+      },
+      "artifacts": [
+        {
+          "path": "verification/raw_277c33efcda0.log",
+          "sha256": "sha256:ee8d326fe0bde99e30bd45a317fccabc18c61101f54439f95f18ba36a4ef79cc",
+          "artifact_type": "text/plain"
+        },
+        {
+          "path": "verification/suite_runs.ndjson",
+          "sha256": "sha256:4267c9fd5d2247540a659bf3da322a7367b68b3596e4e8c92cf28173572e6aa6",
+          "artifact_type": "application/x-ndjson"
+        }
+      ],
+      "details_preview": {
+        "preview": "{\n  \"run_id\": \"277c33efcda0\",\n  \"phase\": \"verification\",\n  \"command\": \"/root/.pyenv/versions/3.11.11/bin/python -m pytest scripts/quality/check-readiness.mjs scripts/quality/check-trust-model-truth.test.mjs src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx src/tools/video-editor/runtime/renderPlanner.test.ts src/tools/video-editor/runtime/exportGuard.test.ts docs/video-editor/extension-platform-supported-deferred.md --tb=no -q --no-header -rA\",\n  \"duration\": 0.31500791397411376,\n  \"collected\": 0,\n  \"collected_ids\": [],\n  \"failure_count\": 0,\n  \"failures\": [\n    \"runner_error\"\n  ],\n  \"pass_count\": 0,\n  \"status\": \"runner_error\",\n  \"exit_code\": 4,\n  \"code_hash\": \"sha256:e4a0441ef41600391ddbe0ef2635f631945e190cdf4a802fba09421d6f6e1caf\",\n  \"collections_parse_ok\": false,\n  \"collection_errors\": [],\n  \"raw_log_path\": \"/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/verification/raw_277c33efcda0.log\",\n  \"freshness_cache_hit\": false,\n  \"baseline_test_command\": null,\n  \"baseline_te\n\n[truncated 1,224 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "execution_acceptance_contract",
+      "status": "unknown",
+      "summary": "execute acceptance contract could not be verified because suite evidence is runner_error",
+      "trust_class": "evidence",
+      "provider": "ExecuteAcceptanceContractProvider",
+      "provider_version": "1",
+      "source": "gate.json|gate_signals_v*.json + verification/suite_runs.ndjson",
+      "subject": "plan",
+      "details_preview": {
+        "preview": "{\n  \"contract\": {\n    \"scope\": \"execute\",\n    \"verification_mode\": \"verification_suite\",\n    \"required_checks\": [\n      {\n        \"id\": \"correctness\",\n        \"question\": \"Are the proposed changes technically correct?\",\n        \"reason\": \"`src/tools/video-editor/runtime/composition/graphProjector.ts` builds shader consumes edges from `selectShaderSummaries(input)` and never checks `entry.projection.projected`, while `src/tools/video-editor/runtime/composition/shaderValidation.ts` already treats non-projected shader refs as non-authoritative.\",\n        \"complexity\": 4,\n        \"attention\": \"high_complexity_unverifiable\"\n      },\n      {\n        \"id\": \"scope\",\n        \"question\": \"Search for related code that handles the same concept. Is the reported issue a symptom of something broader \\u2014 and is any single step sized to fit one worker turn?\",\n        \"reason\": \"scripts/quality/check-readiness.mjs lines 415-432: `const tokens=script...+/);`, `const token=***`, `if (token=*** '--config')`\",\n        \"complexity\": 3\n      },\n      {\n        \"id\": \"all_locations\",\n        \"question\": \"Does the change touch all locations AND supporting infrastructure?\",\n        \"reason\": \"Lines 418-42\n\n[truncated 1,511 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "review_disposition",
+      "status": "satisfied",
+      "summary": "review reported success",
+      "trust_class": "judgment",
+      "provider": "ReviewDispositionProvider",
+      "provider_version": "1",
+      "source": "review.json",
+      "subject": "plan",
+      "artifact": {
+        "path": "review.json",
+        "sha256": "sha256:ecf39978e7f50ca20f982a83fb9e4f8412155087a97e3085bee2aa33890955e2",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "review_verdict": "needs_rework",
+        "issue_count": 5,
+        "force_proceeded": false,
+        "evidence_id": "sha256:fadc053360b7a0aa24fb3184538803975cac0ed5b8701e8524a65fc4ea4734aa"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "declared_noop",
+      "status": "not_applicable",
+      "summary": "no declared no-op/waiver artifact (absence is not a failure)",
+      "trust_class": "claim",
+      "provider": "DeclaredNoopProvider",
+      "provider_version": "1",
+      "source": "completion/noop.json|completion_noop.json",
+      "subject": "plan",
+      "details_preview": {
+        "evidence_id": "sha256:c5a9ab90387234220c35d0514efb5fab48bd80d5d3066b982919aa7d976625c8"
+      },
+      "details_full_location": "review_evidence.json"
+    }
+  ],
+  "evidence_count": 7,
+  "green_suite": {
+    "delta": {
+      "computable": false,
+      "newly_failing": 0,
+      "newly_passing": 0,
+      "still_red": 0,
+      "still_green": 0,
+      "deleted_tests": 0,
+      "added_tests": 0,
+      "flakes": 0,
+      "tests_collected": 0,
+      "duration": 0.31500791397411376,
+      "flake_retry_skipped": false,
+      "flake_retry_reason": ""
+    }
+  }
+}
+
+        Your output template is at: /workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/review_output.json
+        Read this file first — it contains the expected JSON structure with pre-populated `task_verdicts`, `sense_check_verdicts`, and `criteria`.
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Git diff summary:
+        ?? .megaplan/epics/m4-evidence-and-drift-gates-20260708-0120/
+
+        Requirements:
+        - Verify each success criterion explicitly.
+        - Fresh repository inspection and `review_evidence.json` outrank stale execution-time claims from `execution_audit.json`, `finalize.json`, and executor notes.
+        - Use repository tools to inspect relevant files and run focused verification commands when behavior or tests are part of a criterion; include concrete repository-backed evidence for every criterion verdict.
+        - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
+          - `must` criteria are hard gates only when backed by a deterministic runnable check that failed on the pre-execute baseline and still fails after execution. Ungrounded prose concerns are advisory.
+          - `should` criteria are quality targets. If the spirit is met but the letter is not, mark `pass` with evidence explaining the gap. Only mark `fail` if the intent was clearly missed. A `should` failure alone does NOT require `needs_rework`.
+          - `info` criteria are for human reference. Mark them `waived` with a note — do not evaluate them.
+          - If a criterion has `requires` capabilities that are not satisfiable by container workers (e.g., `drive_browser`, `subjective_judgment`), mark it `deferred_human` — NOT `fail` or `waived`. Deferred-human criteria do NOT count toward `needs_rework`.
+          - If a criterion (any priority) cannot be verified in this context (e.g., requires manual testing or runtime observation), mark it `waived` with an explanation.
+        - Set `review_verdict` to `needs_rework` only for a rework item with `deterministic_check: {"command": "...", "baseline_status": "failed", "post_status": "failed"}`. Use `approved` for prose-only concerns; record those as advisory issues instead.
+        - Set `review_completion_status` to `"incomplete"` when you could not inspect the repository or run verification commands; otherwise set it to `"complete"`.
+        - The decisions listed above were settled at the gate stage. Verify that the executor implemented each settled decision correctly. Flag deviations from these decisions, but do not question the decisions themselves.
+        - baseline_test_failures in finalize.json lists tests that were already failing before execution. Do not flag these as rework items unless the executor introduced new failures in those same tests.
+        - Cross-reference each task's `files_changed` and `commands_run` against the git diff and any audit findings.
+        - Review every `sense_check` explicitly and treat perfunctory acknowledgments as a reason to dig deeper.
+        - Follow this JSON shape exactly:
+        ```json
+        {
+          "review_verdict": "approved",
+          "review_completion_status": "complete",
+          "criteria": [
+            {
+              "name": "All existing tests pass",
+              "priority": "must",
+              "pass": "pass",
+              "evidence": "Test suite ran green — 42 passed, 0 failed."
+            },
+            {
+              "name": "File under ~300 lines",
+              "priority": "should",
+              "pass": "pass",
+              "evidence": "File is 375 lines — above the target but reasonable given the component's responsibilities. Spirit met."
+            },
+            {
+              "name": "Manual smoke tests pass",
+              "priority": "info",
+              "pass": "waived",
+              "evidence": "Cannot be verified in automated review. Noted for manual QA."
+            }
+          ],
+          "issues": [],
+          "rework_items": [],
+          "summary": "Approved. All must criteria pass. The should criterion on line count is close enough given the component scope.",
+          "task_verdicts": [
+            {
+              "task_id": "T6",
+              "reviewer_verdict": "Pass. Claimed handler changes and command evidence match the repo state.",
+              "evidence_files": ["megaplan/handlers.py", "megaplan/evaluation.py"]
+            }
+          ],
+          "sense_check_verdicts": [
+            {
+              "sense_check_id": "SC6",
+              "verdict": "Confirmed. The execute blocker only fires when both evidence arrays are empty."
+            }
+          ]
+        }
+        ```
+        - `rework_items` must be an array of structured rework directives. When `review_verdict` is `needs_rework`, populate one entry per issue with:
+          - `target`: typed route for the rework. Use `{"kind": "task", "task_id": "T6"}` for one finalize task, `{"kind": "bulk", "id": "bulk-1", "task_ids": ["T6", "T7"]}` for bulk-operation findings, or `{"kind": "manifest", "id": "manifest-path-or-ref", "task_ids": ["T6"]}` for manifest-backed findings.
+          - `task_id`: legacy compatibility only. It may mirror the single task target, or be `"REVIEW"` only for review blockers with no runnable finalize target.
+          - `issue`: what is wrong
+          - `expected`: what correct behavior looks like
+          - `actual`: what was observed
+          - `evidence_file`: file path supporting the finding
+          - `flag_id`: critique/review flag ID when applicable, otherwise `null`
+          - `source`: short machine-readable source tag when applicable, otherwise `null`
+          - `deterministic_check` (required for blocking rework): object with `command`, `baseline_status`, and `post_status`
+        - `issues` must still be populated as a flat one-line-per-item summary derived from `rework_items` (for backward compatibility). When approved, blocking `rework_items` should be empty; prose-only concerns may be summarized in `issues`.
+        - When the work needs another execute pass, keep the same shape and change only `review_verdict` to `needs_rework`; make `issues`, `rework_items`, `summary`, and task verdicts specific enough for the executor to act on directly.

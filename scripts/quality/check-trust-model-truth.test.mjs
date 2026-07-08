@@ -48,6 +48,8 @@ describe('check-trust-model-truth', () => {
     assert.strictEqual(result.exitCode, 1, output);
     assert.match(output, /active unsupported trust-model claim/);
     assert.match(output, /docs\/extensions\/trust\.txt:3 \[sandbox-or-isolation\]/);
+    assert.match(output, /docs\/video-editor\/shader-execution-model\.md:3 \[sandbox-or-isolation\]/);
+    assert.match(output, /docs\/video-editor\/shader-execution-model\.md:3 \[permission-checks\]/);
     assert.match(output, /permission-checks/);
   });
 

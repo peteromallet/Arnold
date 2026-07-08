@@ -1,0 +1,323 @@
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+You are an independent reviewer. Critique the plan against the actual repository.
+
+
+        Project directory:
+        /workspace/extension-reality-convergence-epic/reigh-app
+
+        Brief summary: # M4: Evidence And Drift Gates
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Plan:
+        # Implementation Plan: M4 Evidence And Drift Gates
+
+## Overview
+M4 should prove the epic’s claims rather than add new product scope. The repository largely matches the brief, with two corrections from targeted inspection: `scripts/quality/check-readiness.mjs` already has a valid `extractTestReadinessFiles()` tokenizer in this checkout, and render/export files live under `src/tools/video-editor/runtime/`, not `rendering/`. The main anchor tension is the brief’s suggestion to document the fast-path render bypass as a limitation: that would contradict the North Star requirement that user-facing export/render blocks originate from planner blockers. Treat the bypass as a bridge only if it is converted into planner-provenance behavior during M4.
+
+## Phase 1: Evidence Baseline And Failed Audits
+
+### Step 1: Verify readiness infrastructure before changing it (`scripts/quality/check-readiness.mjs`)
+**Complexity: 1**
+1. Run `node scripts/quality/check-readiness.mjs --strict` and `npm run test:readiness` first.
+2. If the parser still fails, patch only `extractTestReadinessFiles()` to preserve the current intended behavior: split the `test:readiness` script, skip `--config` plus its value, ignore flags, and return `.test/.spec` file paths.
+3. Do not weaken strict readiness checks or remove required evidence rows.
+
+### Step 2: Complete A2 and A5 as explicit audit notes (`.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/`)
+**Complexity: 2**
+1. Create `a2-trust-gate-gaps.md` listing trust-sensitive M2/M3 surfaces and whether `check-trust-model-truth.mjs` currently scans them.
+2. Create `a5-docs-matrix-reconciliation.md` listing docs rows that contradict code/tests, starting with D-020/D-021/D-022 and B-002.
+3. Keep the audits factual and scoped to trust, composition authority, export readiness, and docs matrices.
+
+## Phase 2: Strengthen Drift Gates
+
+### Step 3: Expand the trust-model truth gate (`scripts/quality/check-trust-model-truth.mjs`)
+**Complexity: 2**
+1. Update docs target selection so trust-sensitive video-editor docs such as `shader-execution-model.md`, planner/export docs, render docs, and composition-spine docs are scanned even when the filename does not contain `extension`, `trust`, or `readiness`.
+2. Add a fixture that proves an unsupported sandbox/permission claim in a newly covered M2/M3-style doc fails the release gate.
+3. Extend `scripts/quality/check-trust-model-truth.test.mjs` to assert both the new scan coverage and the existing package-script wiring.
+
+### Step 4: Expand shader/ref authority coverage (`src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts`)
+**Complexity: 2**
+1. Expand `MIGRATED_READINESS_FILES` from two files to the six readiness paths named by the brief: `runtime/renderPlanner.ts`, `runtime/exportGuard.ts`, `lib/renderRouter.ts`, `hooks/useRenderState.ts`, `runtime/composition/routeScopeValidation.ts`, and `runtime/renderability.ts`.
+2. Re-run the test before adding any allowlist entry. Current regexes do not appear to match `hasTimelineShaderMetadata`, so avoid documenting a false exception unless the expanded test actually fails.
+3. If a legitimate wrapper trips the scanner, add the narrowest line/path exception with a reason that says why the graph-projected path remains authoritative.
+
+### Step 5: Add the missing graph-authority negative fixture (`src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts`)
+**Complexity: 2**
+1. Add a dedicated test for the North Star fixture: legacy-only shader/ref fields must not produce authoritative consumes edges when projection is disabled for that clip/ref.
+2. Use existing `projectCompositionGraph()` helpers and assert the projected graph lacks the shader consumes edge for the disabled projection case.
+3. Keep `shaderValidation.test.ts` as supporting evidence, not the primary proof, because it validates shader ref projection rather than graph projector authority loss.
+
+### Step 6: Make fast-path render blocks planner-owned (`src/tools/video-editor/hooks/useRenderState.ts`)
+**Complexity: 3**
+1. Convert `getFastRenderRouteDecision()` blocked decisions into planner diagnostics/blockers before setting user-facing `renderStatus` or `renderLog`.
+2. Preserve current route behavior for missing generated Remotion artifacts and worker/external routes, but have the displayed block message come from a `RenderBlocker` returned by `planRender()`.
+3. Update `useRenderState.test.tsx` so preview-only and worker/external fast-path blocks fail if they bypass planner blockers or only assert raw route strings.
+4. This is a bridge from the existing compatibility optimization to the North Star, not a contradiction: the fast route may remain an optimization, but the user-facing blocked state must be planner-provenanced.
+
+## Phase 3: Reconcile Docs And Proof
+
+### Step 7: Reclassify render planner docs after the code fix (`docs/video-editor/extension-platform-supported-deferred.md`)
+**Complexity: 3**
+1. Reconcile D-020/D-021/D-022 and B-002 against the actual planner implementation and the fast-path planner-provenance fix.
+2. Update `extension-platform-contract-recheck.md` rows M12-001, M12-002, and M12-007 so their status/evidence matches `renderPlanner.ts`, `exportGuard.ts`, and `useRenderState.ts`.
+3. Update `frontend-closure-matrix.md` only where it repeats stale export blocker or planner-readiness claims.
+4. Do not claim future process/sidecar/export capabilities as supported unless tests already prove them.
+
+### Step 8: Produce the North Star proof note (`.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md`)
+**Complexity: 2**
+1. Create a concise proof note mapping all seven North Star required proof items to exact files/tests/scripts.
+2. Include the command evidence needed to prove the gates: trust model, shader/ref authority, export blocker provenance, docs checks, readiness, and aggregate quality.
+3. Call out any remaining deferred work only if it is outside current release claims and does not hide behind supported language.
+
+## Validation Order
+1. Run the cheapest blockers first: `node scripts/quality/check-readiness.mjs --strict`, `node scripts/quality/check-trust-model-truth.mjs --release`, and focused vitest files.
+2. Run targeted tests after each gate change: trust gate test, shader authority test, composition projector test, render planner/export guard tests, and `useRenderState.test.tsx`.
+3. Run docs checks after docs reconciliation: `npm run check:contract-recheck`, `npm run check:deferred-claims`, `npm run check:frontend-closure`, and `npm run check:docs-maturity-sync`.
+4. Finish with `npm run test:readiness` and `npm run quality:check` from a clean working state, preserving unrelated user/generated work.
+
+## Execution Order
+1. Verify readiness and complete A2/A5 audit notes before editing gates.
+2. Land trust and composition drift gates before relying on the final proof note.
+3. Fix export blocker provenance before reclassifying D-020/D-021/D-022 as supported.
+4. Write the proof note last so it cites final files and passing commands, not stale intermediate evidence.
+
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-08T01:39:32Z",
+  "hash": "sha256:e1eb478dbcd602ad2fb6b65f1edce0d8d6d7b84f9ae2bcec3ca41600fe2cf27f",
+  "questions": [
+    "Should D-021 and D-022 be reclassified as supported only if A5 finds direct tests for UI next actions and public TimelineSnapshot/TimelineReader inspection, or should partial implementation remain explicitly deferred?",
+    "For final validation, is a clean local checkout required, or is a clean cloud/worktree run acceptable if this workspace contains unrelated generated `.megaplan` artifacts?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`npm run test:readiness` passes, and any readiness parser change preserves strict evidence validation instead of skipping rows.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The trust-model gate scans newly identified M2/M3 trust-sensitive docs and fails on an active unsupported sandboxing, permission-enforcement, marketplace, third-party, or untrusted-extension claim in those surfaces.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The shader/ref authority gate covers all six migrated readiness files and fails on raw legacy shader/ref authority reads in those files.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`compositionGraphProjector.test.ts` proves legacy-only shader/ref fields do not become authoritative consumes edges when projection is disabled.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Every user-facing render/export blocked state touched by the fast path is derived from a planner `RenderBlocker`, with tests that fail on direct route-string-only blocking.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Docs matrices no longer classify implemented planner/blocker behavior as deferred or hide unresolved blockers behind supported language.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_linter"
+      ]
+    },
+    {
+      "criterion": "The final proof note maps all seven North Star required proof items to concrete files, tests, scripts, or docs.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`npm run quality:check` passes after the gate, docs, and proof-note changes.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output",
+        "run_linter"
+      ]
+    },
+    {
+      "criterion": "Changes stay scoped to M4 evidence, drift gates, and docs reconciliation without adding sandboxing, marketplace, or new composition fact-family migrations.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Audit notes are concise enough for a reviewer to use as evidence and do not duplicate unrelated historical plan material.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The current checkout\u2019s `check-readiness.mjs` syntax is valid; strict readiness validation, not the stale line-number report, determines whether a patch is needed.",
+    "The fast-path route optimization may remain, but any user-facing blocked status/log must be planner-provenanced to satisfy the epic North Star.",
+    "D-020 can only move to supported after the fast-path planner-provenance fix lands; D-021/D-022 depend on A5 evidence and may remain deferred if proof is incomplete.",
+    "The proof note belongs in `.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md` because M4 explicitly asks for a milestone artifact.",
+    "No destructive git cleanup is needed; unrelated `.megaplan` or generated working-tree artifacts should be preserved."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "scripts/quality/check-readiness.mjs",
+        "reason": "Strict readiness parser and evidence gate are the first pipeline blocker."
+      },
+      {
+        "kind": "path",
+        "value": "scripts/quality/check-trust-model-truth.test.mjs",
+        "reason": "Covers trust gate scan targets, fixtures, and package wiring."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts",
+        "reason": "Composition authority drift gate."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "reason": "North Star legacy-not-authoritative fixture."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/hooks/useRenderState.test.tsx",
+        "reason": "User-facing render/export blocked-state provenance."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "reason": "Planner blocker behavior and route plans are part of the provenance chain."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/exportGuard.test.ts",
+        "reason": "Export guard diagnostics feed planner readiness."
+      },
+      {
+        "kind": "path",
+        "value": "docs/video-editor/extension-platform-supported-deferred.md",
+        "reason": "Docs matrix reconciliation target."
+      }
+    ],
+    "changed_surfaces": [
+      "scripts/quality/check-readiness.mjs",
+      "scripts/quality/check-trust-model-truth.mjs",
+      "scripts/quality/check-trust-model-truth.test.mjs",
+      "scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md",
+      "src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "src/tools/video-editor/hooks/useRenderState.ts",
+      "src/tools/video-editor/hooks/useRenderState.test.tsx",
+      "docs/video-editor/extension-platform-supported-deferred.md",
+      "docs/video-editor/extension-platform-contract-recheck.md",
+      "docs/video-editor/frontend-closure-matrix.md",
+      ".megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a2-trust-gate-gaps.md",
+      ".megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a5-docs-matrix-reconciliation.md",
+      ".megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md"
+    ],
+    "always_run": [
+      "node scripts/quality/check-readiness.mjs --strict",
+      "node scripts/quality/check-trust-model-truth.mjs --release",
+      "npm run check:contract-recheck",
+      "npm run check:deferred-claims",
+      "npm run check:frontend-closure",
+      "npm run check:docs-maturity-sync",
+      "npm run test:readiness",
+      "npm run quality:check"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: scripts/quality/check-readiness.mjs, scripts/quality/check-trust-model-truth.mjs, scripts/quality/check-trust-model-truth.test.mjs, src/tools/video-editor/hooks/useRenderState.test.tsx, src/tools/video-editor/hooks/useRenderState.ts, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts. Ignored documentation-only change(s) for selector derivation: docs/video-editor/extension-platform-contract-recheck.md, docs/video-editor/extension-platform-supported-deferred.md, docs/video-editor/frontend-closure-matrix.md, megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a2-trust-gate-gaps.md, megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a5-docs-matrix-reconciliation.md, megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md, scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md. Candidate: Use focused checks while developing each gate, but M4 is an evidence milestone and must finish with the aggregate quality pipeline from a clean state.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    }
+  },
+  "structure_warnings": []
+}
+
+        Plan structure warnings from validator:
+        []
+
+        Existing flags:
+        []
+
+
+
+        Your output template is at: /workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/critique_check_prerequisite_ordering.json
+Read this file first — it contains 1 check with a question and guidance.
+Investigate only this check, then add your findings to the `findings` array for that check.
+
+Self-monitor for non-convergence before spending more tool calls. This is NOT about duration or difficulty: hard checks that are still making new progress should continue. But if you are spinning — re-reading the same file 3+ times, searching for a file the plan says to CREATE, needing a sibling/external repo or path outside the project root, or making many tool calls without getting closer to a verdict — STOP investigating. Not finding what you need is a finding; emit exactly one non-flagged finding whose detail starts `unverifiable: ` and explains what you could not resolve and exactly why. An unverifiable check is a complete, valid result for this worker; normal code ambiguity that you can inspect should still be flagged per the usual "when in doubt, flag it" rule.
+
+Check ID: prerequisite_ordering
+Question: Do tasks that depend on a precondition gracefully handle that precondition only partially holding?
+Guidance: Walk the task graph. For each task that depends on a precondition produced by an earlier task (e.g. 'after T5 regen, remove ref()'), check what happens if the precondition only partially holds — some inputs fail, some succeed. Then re-read the brief: does it lock a graceful-fallback policy for the earlier task (e.g. 'failed templates get skipped with a diagnostic') AND simultaneously demand absolute completion for the dependent task (e.g. 'zero callers remain', 'all migrated')? That's a brief contradiction the planner will transcribe faithfully and the executor will hit at runtime. Flag the conflicting paragraphs and recommend conditionalizing the dependent task, or specifying explicit deferral behavior.
+
+Each finding needs:
+- "detail": what you specifically checked and what you found (at least a full sentence)
+- "flagged": true if this describes a difference, risk, or tension — even if you think it's justified. false only if purely informational with no possible downside.
+- This check must end with at least one finding. Never leave its `findings` array empty. If you found no issue, add one detailed `flagged: false` finding explaining what you checked and why it appears clear.
+
+When in doubt, flag it — the gate can accept tradeoffs, but it can't act on findings it never sees.
+
+Good: {"detail": "Checked callers of nthroot_mod in solveset.py line 1205 — passes prime moduli only, consistent with the fix.", "flagged": false}
+Good: {"detail": "The fix handles empty tuples but not single-element tuples which need a trailing comma.", "flagged": true}
+Bad: {"detail": "No issue found", "flagged": false}  ← too brief, will be rejected
+Bad: {"detail": "The hints suggest approach X but the plan uses Y. However Y is consistent with X's intent.", "flagged": false}  ← a different approach than the hints IS a flag. You found a divergence — flag it. The gate decides if it's acceptable.
+
+After filling in checks, add any additional concerns to the `flags` array (e.g., security, performance, dependencies).
+Use the standard format (id, concern, category, severity_hint, evidence). This array can be empty.
+
+Workflow: read the file → investigate → read file again → add finding → write file back. Repeat for this check.
+
+        Additional guidelines:
+        - Robustness level: thorough. Use balanced judgment. Flag significant risks, but do not spend flags on minor polish or executor-obvious boilerplate.
+        - Over-engineering: prefer the simplest approach that fully solves the problem.
+        - Reuse existing flag IDs when the same concern is still open.
+        - `verified_flag_ids`: list flag IDs from prior iterations that the revised plan actually resolves (e.g., if the plan was revised to fix FLAG-001, and you confirm the fix is correct, include "FLAG-001"). Only include flags you've verified — don't guess.
+        - Verify that the plan follows the expected structure when validator warnings or the outline suggest drift.
+        - Additional flags may use these categories: correctness, security, completeness, performance, maintainability, other.
+        - Focus on concrete issues, not structural formatting.
+        - Complexity audit: flag (a) missing complexity scores on plan steps, (b) inflated scores that would waste premium models on trivial work, and (c) under-rated work that should not run on cheap models. Use category `completeness`.

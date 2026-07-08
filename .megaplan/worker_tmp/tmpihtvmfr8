@@ -1,0 +1,725 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Extension Reality Convergence
+Source: `.megaplan/initiatives/extension-reality-convergence-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `5ed92f91a987b5fafb1e8011624176237e2b9fe3164b07cde7fa7d1f59b4baf9`
+
+```md
+# North Star: Extension Reality Convergence
+
+## End State
+
+The Reigh video-editor extension system is truthful and converged across trust, composition authority, and export readiness. Extensions are presented as trusted local code unless a later untrusted-runtime epic adds real isolation. Composition facts used by planner/export/preview flow through a canonical authority spine instead of scattered legacy timeline reads. Export readiness is decided by planner-owned blockers, with guard scans and provider route checks demoted to structured planner inputs.
+
+## Success In One Sentence
+
+From a clean checkout on top of the completed extension-foundation work, Reigh can prove that extension trust claims are honest, the first composition fact family has moved to graph authority, and every user-facing export block originates from canonical planner readiness.
+
+## Immutable Constraints
+
+- Do not implement fake or partial permission enforcement and call it sandboxing.
+- Do not claim marketplace, third-party, or untrusted extension safety.
+- Keep extension code trusted and unsandboxed unless a separate future epic introduces isolation and brokered APIs.
+- Do not delete legacy timeline storage fields before compatibility projection and regression tests exist.
+- Do not let migrated fact families remain authoritative through direct legacy timeline reads.
+- Do not add a second export readiness authority beside the planner.
+- Do not weaken quality gates, docs checks, or release checks to make the epic pass.
+- Preserve existing editor behavior for timelines and packages that do not use migrated composition features.
+- Keep generated-module, provider, and export-guard scans where useful, but make them feed planner readiness instead of bypassing it.
+
+## Required Proof
+
+- SDK, JSON schema, examples, docs, and manager UI agree on the trusted-code/access-disclosure model.
+- A regression gate fails if docs or UI imply sandboxing, runtime permission enforcement, marketplace safety, or third-party safety.
+- The first composition authority ratchet proves shader/ref readiness comes from graph-projected facts, not direct legacy shader fields.
+- A fixture proves legacy-only shader/ref fields do not count as authoritative after projection is disabled.
+- User-facing export/render blocked states are derived from planner blockers.
+- Generated-module artifact state, provider availability, output-format availability, contribution conflicts, shader/material blockers, and live-binding blockers are represented in planner readiness.
+- Quality checks pass from a clean checkout with the convergence gates enabled.
+
+## Explicitly Deferred
+
+- True permission enforcement through iframe, Worker, process, SES-like isolation, or a brokered host API.
+- Marketplace install, remote extension discovery, update/delete flows, code signing, and dependency resolution.
+- Full composition-spine completion beyond the fact families named by this epic.
+- Full process/sidecar runtime hardening unless required as an input to export-readiness diagnostics.
+```
+
+### Current Stage
+Stage: `critique_evaluator`
+Plan directory: `/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120`
+Current milestone: `m4-evidence-and-drift-gates`
+
+### Phase Instruction
+Select critique checks that can catch North Star violations, scope substitution, or unsupported claims of alignment.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are the Critique Evaluator. Your job is to decide which critique
+        lenses to fire and to rate each selected lens's difficulty on a 1–5
+        complexity scale. The profile will map your complexity scores to
+        models — you do NOT name models or vendors.
+
+
+        Project directory:
+        /workspace/extension-reality-convergence-epic/reigh-app
+
+        Brief summary: # M4: Evidence And Drift Gates
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Finished plan:
+        # Implementation Plan: M4 Evidence And Drift Gates
+
+## Overview
+M4 should prove the epic’s claims rather than add new product scope. The repository largely matches the brief, with two corrections from targeted inspection: `scripts/quality/check-readiness.mjs` already has a valid `extractTestReadinessFiles()` tokenizer in this checkout, and render/export files live under `src/tools/video-editor/runtime/`, not `rendering/`. The main anchor tension is the brief’s suggestion to document the fast-path render bypass as a limitation: that would contradict the North Star requirement that user-facing export/render blocks originate from planner blockers. Treat the bypass as a bridge only if it is converted into planner-provenance behavior during M4.
+
+## Phase 1: Evidence Baseline And Failed Audits
+
+### Step 1: Verify readiness infrastructure before changing it (`scripts/quality/check-readiness.mjs`)
+**Complexity: 1**
+1. Run `node scripts/quality/check-readiness.mjs --strict` and `npm run test:readiness` first.
+2. If the parser still fails, patch only `extractTestReadinessFiles()` to preserve the current intended behavior: split the `test:readiness` script, skip `--config` plus its value, ignore flags, and return `.test/.spec` file paths.
+3. Do not weaken strict readiness checks or remove required evidence rows.
+
+### Step 2: Complete A2 and A5 as explicit audit notes (`.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/`)
+**Complexity: 2**
+1. Create `a2-trust-gate-gaps.md` listing trust-sensitive M2/M3 surfaces and whether `check-trust-model-truth.mjs` currently scans them.
+2. Create `a5-docs-matrix-reconciliation.md` listing docs rows that contradict code/tests, starting with D-020/D-021/D-022 and B-002.
+3. Keep the audits factual and scoped to trust, composition authority, export readiness, and docs matrices.
+
+## Phase 2: Strengthen Drift Gates
+
+### Step 3: Expand the trust-model truth gate (`scripts/quality/check-trust-model-truth.mjs`)
+**Complexity: 2**
+1. Update docs target selection so trust-sensitive video-editor docs such as `shader-execution-model.md`, planner/export docs, render docs, and composition-spine docs are scanned even when the filename does not contain `extension`, `trust`, or `readiness`.
+2. Add a fixture that proves an unsupported sandbox/permission claim in a newly covered M2/M3-style doc fails the release gate.
+3. Extend `scripts/quality/check-trust-model-truth.test.mjs` to assert both the new scan coverage and the existing package-script wiring.
+
+### Step 4: Expand shader/ref authority coverage (`src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts`)
+**Complexity: 2**
+1. Expand `MIGRATED_READINESS_FILES` from two files to the six readiness paths named by the brief: `runtime/renderPlanner.ts`, `runtime/exportGuard.ts`, `lib/renderRouter.ts`, `hooks/useRenderState.ts`, `runtime/composition/routeScopeValidation.ts`, and `runtime/renderability.ts`.
+2. Re-run the test before adding any allowlist entry. Current regexes do not appear to match `hasTimelineShaderMetadata`, so avoid documenting a false exception unless the expanded test actually fails.
+3. If a legitimate wrapper trips the scanner, add the narrowest line/path exception with a reason that says why the graph-projected path remains authoritative.
+
+### Step 5: Add the missing graph-authority negative fixture (`src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts`)
+**Complexity: 2**
+1. Add a dedicated test for the North Star fixture: legacy-only shader/ref fields must not produce authoritative consumes edges when projection is disabled for that clip/ref.
+2. Use existing `projectCompositionGraph()` helpers and assert the projected graph lacks the shader consumes edge for the disabled projection case.
+3. Keep `shaderValidation.test.ts` as supporting evidence, not the primary proof, because it validates shader ref projection rather than graph projector authority loss.
+
+### Step 6: Make fast-path render blocks planner-owned (`src/tools/video-editor/hooks/useRenderState.ts`)
+**Complexity: 3**
+1. Convert `getFastRenderRouteDecision()` blocked decisions into planner diagnostics/blockers before setting user-facing `renderStatus` or `renderLog`.
+2. Preserve current route behavior for missing generated Remotion artifacts and worker/external routes, but have the displayed block message come from a `RenderBlocker` returned by `planRender()`.
+3. Update `useRenderState.test.tsx` so preview-only and worker/external fast-path blocks fail if they bypass planner blockers or only assert raw route strings.
+4. This is a bridge from the existing compatibility optimization to the North Star, not a contradiction: the fast route may remain an optimization, but the user-facing blocked state must be planner-provenanced.
+
+## Phase 3: Reconcile Docs And Proof
+
+### Step 7: Reclassify render planner docs after the code fix (`docs/video-editor/extension-platform-supported-deferred.md`)
+**Complexity: 3**
+1. Reconcile D-020/D-021/D-022 and B-002 against the actual planner implementation and the fast-path planner-provenance fix.
+2. Update `extension-platform-contract-recheck.md` rows M12-001, M12-002, and M12-007 so their status/evidence matches `renderPlanner.ts`, `exportGuard.ts`, and `useRenderState.ts`.
+3. Update `frontend-closure-matrix.md` only where it repeats stale export blocker or planner-readiness claims.
+4. Do not claim future process/sidecar/export capabilities as supported unless tests already prove them.
+
+### Step 8: Produce the North Star proof note (`.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md`)
+**Complexity: 2**
+1. Create a concise proof note mapping all seven North Star required proof items to exact files/tests/scripts.
+2. Include the command evidence needed to prove the gates: trust model, shader/ref authority, export blocker provenance, docs checks, readiness, and aggregate quality.
+3. Call out any remaining deferred work only if it is outside current release claims and does not hide behind supported language.
+
+## Validation Order
+1. Run the cheapest blockers first: `node scripts/quality/check-readiness.mjs --strict`, `node scripts/quality/check-trust-model-truth.mjs --release`, and focused vitest files.
+2. Run targeted tests after each gate change: trust gate test, shader authority test, composition projector test, render planner/export guard tests, and `useRenderState.test.tsx`.
+3. Run docs checks after docs reconciliation: `npm run check:contract-recheck`, `npm run check:deferred-claims`, `npm run check:frontend-closure`, and `npm run check:docs-maturity-sync`.
+4. Finish with `npm run test:readiness` and `npm run quality:check` from a clean working state, preserving unrelated user/generated work.
+
+## Execution Order
+1. Verify readiness and complete A2/A5 audit notes before editing gates.
+2. Land trust and composition drift gates before relying on the final proof note.
+3. Fix export blocker provenance before reclassifying D-020/D-021/D-022 as supported.
+4. Write the proof note last so it cites final files and passing commands, not stale intermediate evidence.
+
+
+        Task graph (plan metadata):
+        {
+  "version": 1,
+  "timestamp": "2026-07-08T01:39:32Z",
+  "hash": "sha256:e1eb478dbcd602ad2fb6b65f1edce0d8d6d7b84f9ae2bcec3ca41600fe2cf27f",
+  "questions": [
+    "Should D-021 and D-022 be reclassified as supported only if A5 finds direct tests for UI next actions and public TimelineSnapshot/TimelineReader inspection, or should partial implementation remain explicitly deferred?",
+    "For final validation, is a clean local checkout required, or is a clean cloud/worktree run acceptable if this workspace contains unrelated generated `.megaplan` artifacts?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`npm run test:readiness` passes, and any readiness parser change preserves strict evidence validation instead of skipping rows.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "The trust-model gate scans newly identified M2/M3 trust-sensitive docs and fails on an active unsupported sandboxing, permission-enforcement, marketplace, third-party, or untrusted-extension claim in those surfaces.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "The shader/ref authority gate covers all six migrated readiness files and fails on raw legacy shader/ref authority reads in those files.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`compositionGraphProjector.test.ts` proves legacy-only shader/ref fields do not become authoritative consumes edges when projection is disabled.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Every user-facing render/export blocked state touched by the fast path is derived from a planner `RenderBlocker`, with tests that fail on direct route-string-only blocking.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Docs matrices no longer classify implemented planner/blocker behavior as deferred or hide unresolved blockers behind supported language.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_linter"
+      ]
+    },
+    {
+      "criterion": "The final proof note maps all seven North Star required proof items to concrete files, tests, scripts, or docs.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`npm run quality:check` passes after the gate, docs, and proof-note changes.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_build_output",
+        "run_linter"
+      ]
+    },
+    {
+      "criterion": "Changes stay scoped to M4 evidence, drift gates, and docs reconciliation without adding sandboxing, marketplace, or new composition fact-family migrations.",
+      "priority": "should",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Audit notes are concise enough for a reviewer to use as evidence and do not duplicate unrelated historical plan material.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The current checkout\u2019s `check-readiness.mjs` syntax is valid; strict readiness validation, not the stale line-number report, determines whether a patch is needed.",
+    "The fast-path route optimization may remain, but any user-facing blocked status/log must be planner-provenanced to satisfy the epic North Star.",
+    "D-020 can only move to supported after the fast-path planner-provenance fix lands; D-021/D-022 depend on A5 evidence and may remain deferred if proof is incomplete.",
+    "The proof note belongs in `.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md` because M4 explicitly asks for a milestone artifact.",
+    "No destructive git cleanup is needed; unrelated `.megaplan` or generated working-tree artifacts should be preserved."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "scripts/quality/check-readiness.mjs",
+        "reason": "Strict readiness parser and evidence gate are the first pipeline blocker."
+      },
+      {
+        "kind": "path",
+        "value": "scripts/quality/check-trust-model-truth.test.mjs",
+        "reason": "Covers trust gate scan targets, fixtures, and package wiring."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts",
+        "reason": "Composition authority drift gate."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "reason": "North Star legacy-not-authoritative fixture."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/hooks/useRenderState.test.tsx",
+        "reason": "User-facing render/export blocked-state provenance."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "reason": "Planner blocker behavior and route plans are part of the provenance chain."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/exportGuard.test.ts",
+        "reason": "Export guard diagnostics feed planner readiness."
+      },
+      {
+        "kind": "path",
+        "value": "docs/video-editor/extension-platform-supported-deferred.md",
+        "reason": "Docs matrix reconciliation target."
+      }
+    ],
+    "changed_surfaces": [
+      "scripts/quality/check-readiness.mjs",
+      "scripts/quality/check-trust-model-truth.mjs",
+      "scripts/quality/check-trust-model-truth.test.mjs",
+      "scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md",
+      "src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "src/tools/video-editor/hooks/useRenderState.ts",
+      "src/tools/video-editor/hooks/useRenderState.test.tsx",
+      "docs/video-editor/extension-platform-supported-deferred.md",
+      "docs/video-editor/extension-platform-contract-recheck.md",
+      "docs/video-editor/frontend-closure-matrix.md",
+      ".megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a2-trust-gate-gaps.md",
+      ".megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a5-docs-matrix-reconciliation.md",
+      ".megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md"
+    ],
+    "always_run": [
+      "node scripts/quality/check-readiness.mjs --strict",
+      "node scripts/quality/check-trust-model-truth.mjs --release",
+      "npm run check:contract-recheck",
+      "npm run check:deferred-claims",
+      "npm run check:frontend-closure",
+      "npm run check:docs-maturity-sync",
+      "npm run test:readiness",
+      "npm run quality:check"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: scripts/quality/check-readiness.mjs, scripts/quality/check-trust-model-truth.mjs, scripts/quality/check-trust-model-truth.test.mjs, src/tools/video-editor/hooks/useRenderState.test.tsx, src/tools/video-editor/hooks/useRenderState.ts, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts. Ignored documentation-only change(s) for selector derivation: docs/video-editor/extension-platform-contract-recheck.md, docs/video-editor/extension-platform-supported-deferred.md, docs/video-editor/frontend-closure-matrix.md, megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a2-trust-gate-gaps.md, megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/audits/a5-docs-matrix-reconciliation.md, megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/proof-note.md, scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/video-editor/shader-execution-model.md. Candidate: Use focused checks while developing each gate, but M4 is an evidence milestone and must finish with the aggregate quality pipeline from a clean state.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    }
+  },
+  "structure_warnings": []
+}
+
+        Idea:
+# M4: Evidence And Drift Gates
+
+## Outcome
+
+Prove the epic end state from a clean checkout. Add durable gates that keep trust claims, migrated composition authority, and export readiness from drifting apart again.
+
+## Execution Posture
+
+This milestone is about earning the claims. Do not broaden product scope. Tighten evidence, clean stale docs, and make the quality surface deterministic.
+
+## Scope
+
+IN:
+- Re-run the relevant quality/test suite from a clean checkout or clean cloud workspace.
+- Add or strengthen drift gates for forbidden extension trust claims.
+- Add or strengthen drift gates for direct legacy reads in migrated shader/ref readiness paths.
+- Add or strengthen tests proving user-facing export blockers originate from planner readiness.
+- Reconcile docs matrices and supported/deferred language after the first three milestones.
+- Produce a final completion note that maps North Star proof requirements to concrete files/tests.
+
+OUT:
+- New architecture beyond what M1-M3 implemented.
+- Real untrusted-extension sandboxing.
+- Additional composition fact-family migrations.
+- Cosmetic docs rewrites unrelated to trust/composition/export convergence.
+
+## Constraints
+
+- Do not suppress failing tests without either fixing the behavior or documenting a precise deferred requirement outside release claims.
+- Do not accept a dirty or stale evidence state as proof.
+- Do not let docs claim future composition-spine or export capabilities as current support.
+- Preserve generated runtime state and user work; do not use destructive git cleanup.
+
+## Done Criteria
+
+- Relevant extension, planner/export, SDK/schema, and docs quality checks pass from a clean base.
+- A final proof note lists each North Star required proof item and the exact test, script, or document that proves it.
+- Docs supported/deferred matrices agree with code and tests.
+- Gates fail on each of these regressions:
+  - UI/docs imply runtime permission enforcement or sandboxing.
+  - migrated shader/ref readiness reads raw legacy timeline fields as authority.
+  - user-facing export blocks bypass planner blockers.
+- The epic can be handed off with no unresolved blocker hidden behind "supported" language.
+
+## Touchpoints
+
+- `package.json`
+- `scripts/**`
+- `docs/extensions/**`
+- `src/sdk/**`
+- `src/tools/video-editor/rendering/**`
+- `src/tools/video-editor/runtime/composition/**`
+- `.megaplan/initiatives/extension-reality-convergence-epic/**`
+
+        Your output template is at: /workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/critique_evaluator_output.json
+        Read this file first by calling `read_file` with `path` exactly `/workspace/extension-reality-convergence-epic/reigh-app/.megaplan/plans/m4-evidence-and-drift-gates-20260708-0120/critique_evaluator_output.json` — it contains the expected JSON structure with all known check IDs pre-populated in `skipped`.
+        If you cannot supply that exact non-empty path, do not call `read_file`.
+        Move checks you are firing to `selections`, fill `why` for the rest, and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        ## Prep that preceded this plan
+
+This plan was produced after a multi-step prep phase (triage -> research
+fan-out -> distill). Use the prep record below when deciding which lenses
+to fire: areas prep researched thoroughly may need less scrutiny, while
+areas prep flagged as gaps, contradictions, or timed-out research warrant
+extra attention from the critics.
+
+**Prep coverage:** area_count=6, fanout_count=6, completed_count=4, partial_count=0, timed_out_count=0, error_count=2
+
+**Gaps prep could not close:**
+- A2-trust-gate-gaps: research failed with worker_structural_audit_failed: model output structural audit failed: type_mismatch at /error: value does not match declared type(s) ['string'].
+- A5-docs-matrix-reconciliation: research failed with worker_structural_audit_failed: model output structural audit failed: type_mismatch at /error: value does not match declared type(s) ['string'].
+
+**Contradictions surfaced in research:**
+- file .megaplan/initiatives/extension-reality-convergence-epic/NORTHSTAR.md appears in multiple areas with differing evidence/status: A3-composition-gate-gaps=complete, A6-northstar-proof-mapping=complete
+- file docs/video-editor/extension-platform-supported-deferred.md appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A4-export-blocker-trace=complete, A6-northstar-proof-mapping=complete
+- file package.json appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A6-northstar-proof-mapping=complete
+- file scripts/quality/check-trust-model-truth.mjs appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A6-northstar-proof-mapping=complete
+- file scripts/quality/check-trust-model-truth.test.mjs appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A6-northstar-proof-mapping=complete
+- file src/sdk/__tests__/sdk-boundary.test.ts appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A6-northstar-proof-mapping=complete
+- file src/tools/video-editor/hooks/useRenderState.test.tsx appears in multiple areas with differing evidence/status: A4-export-blocker-trace=complete, A6-northstar-proof-mapping=complete
+- file src/tools/video-editor/hooks/useRenderState.ts appears in multiple areas with differing evidence/status: A3-composition-gate-gaps=complete, A4-export-blocker-trace=complete
+- file src/tools/video-editor/lib/renderRouter.ts appears in multiple areas with differing evidence/status: A3-composition-gate-gaps=complete, A4-export-blocker-trace=complete
+- file src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A3-composition-gate-gaps=complete, A6-northstar-proof-mapping=complete
+- file src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A3-composition-gate-gaps=complete, A6-northstar-proof-mapping=complete
+- file src/tools/video-editor/runtime/composition/shaderValidation.test.ts appears in multiple areas with differing evidence/status: A3-composition-gate-gaps=complete, A6-northstar-proof-mapping=complete
+- file src/tools/video-editor/runtime/exportGuard.test.ts appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A6-northstar-proof-mapping=complete
+- file src/tools/video-editor/runtime/exportGuard.ts appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A3-composition-gate-gaps=complete, A4-export-blocker-trace=complete
+- file src/tools/video-editor/runtime/renderPlanner.test.ts appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A4-export-blocker-trace=complete, A6-northstar-proof-mapping=complete
+- file src/tools/video-editor/runtime/renderPlanner.ts appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A3-composition-gate-gaps=complete, A4-export-blocker-trace=complete
+- file src/tools/video-editor/runtime/renderability.test.ts appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A6-northstar-proof-mapping=complete
+
+**Prep dossier:**
+
+# Prep Research Dossier
+
+## Triage
+
+M4 is the capstone evidence milestone — it must prove M1–M3 converged the trust model, composition authority, and export readiness as claimed, then add durable drift gates so those claims don't erode. The task explicitly asks to produce a final North Star proof mapping artifact and asks to strengthen (not build from scratch) gates that already have partial implementations from M1–M3. Root questions: (1) What is the current pass/fail baseline from clean checkout? (2) What gaps exist in the M1 trust-model gate after M2/M3 added new docs and surfaces? (3) Does the composition authority gate cover all migrated readiness consumers beyond the two files it currently monitors, and does a fixture exist proving legacy-only fields aren't authoritative post-projection? (4) Can every user-facing export blocker be traced back to a planner-owned RenderBlocker, or do legacy guard scans / route strings still bypass the planner? (5) After M1–M3 code changes, do the supported/deferred matrices still agree with reality, especially the D-020/B-002 entries that mark the render planner as deferred? (6) Which exact files/tests prove each of the 7 North Star required proof items?
+
+## Research Areas
+
+1. A1-quality-baseline: Determine the current pass/fail state of the quality:check pipeline (or the extension/trust/composition/export-relevant subset) from a clean checkout. Identify which checks already pass, which fail, and whether any failures are pre-existing (not introduced by M1–M3). This establishes the evidence baseline that all M4 gate-strengthening work starts from and the proof note references. Also confirm that test:extensions, test:readiness, and the quality:check aggregate command exist and are runnable.
+2. A2-trust-gate-gaps: M1's check-trust-model-truth.mjs scans SDK, schema, ExtensionManager UI, docs/extensions, docs/video-editor, examples, and scripts/quality for forbidden trust claims (sandboxing, permission enforcement, marketplace safety, untrusted extension support, capability gates). M2 and M3 may have introduced new docs (e.g., shader-execution-model.md, composition-spine docs, planner/export docs) or new code paths that touch trust language but fall outside the gate's scan targets or rule patterns. Audit: (a) what surfaces were added/changed in M2–M3 that the gate doesn't scan, (b) whether the forbidden-term regex rules catch edge cases like 'permission enforcement' in composition/export contexts, (c) whether the denial/future-deferral context recognition correctly handles M2/M3's deferred-trust language. Produce a prioritized list of rule additions, scan-target expansions, and fixture gaps.
+3. A3-composition-gate-gaps: M2's shaderRefAuthority.test.ts monitors only renderPlanner.ts and exportGuard.ts for forbidden legacy shader reads (clip.app?.shader, config.app?.shaderPostprocess, TimelineShaderMetadata, legacyTimelineShaderMetadata). Audit whether additional readiness-path consumers escape monitoring: renderRouter.ts reads from renderPlanner and could re-introduce legacy reads; useRenderState.ts calls exportGuard and planRender directly; routeScopeValidation.ts and the renderability module participate in the readiness chain. Also audit whether the North Star required fixture — 'legacy-only shader/ref fields do not count as authoritative after projection is disabled' — exists in compositionGraphProjector.test.ts (1835 lines) or needs a dedicated fixture. Identify forbidden-pattern gaps for reference-resolution legacy reads (contribution refs, effect/transition ID reads).
+4. A4-export-blocker-trace: M3 claims every user-facing export/render blocked state derives from planner blockers. Trace the full chain end-to-end: user-facing blocked UI (useRenderState.ts → derived blocked/ready states → UI components) → scanExportConfig() or fast-path logic → planRender() → RenderBlocker objects. Identify every code path where: (a) a user-facing block message is sourced from a non-planner path (legacy export guard findings, direct route-string checks in getFastRenderRouteDecision, renderRouter decisions that don't go through planRender), (b) a planner blocker exists but is not surfaced to the user, or (c) the D-020 deferred entry ('Full render planner implementation') contradicts M3's 'planner-owned readiness' claim. Produce the inventory of gap locations where M4 must add or strengthen tests proving planner provenance.
+5. A5-docs-matrix-reconciliation: After M1 (trust model truth), M2 (composition authority), and M3 (export readiness convergence), the canonical supported/deferred matrix (extension-platform-supported-deferred.md, 472 lines, 96 supported + 70 deferred rows), the contract-recheck matrix, and the frontend-closure-matrix must agree with code and tests. Audit each for: (a) rows whose classification contradicts new M1–M3 evidence — particularly D-020/D-021/D-022 (render planner deferred, blocker B-002), the trust-model rows (S-150, D-120/D-121/D-122/D-123), and shader/ref rows (S-130–S-135, D-100/D-101/D-102); (b) stale 'Last updated' dates or milestone references; (c) evidence links (TEST:, CR:, ABSENCE:) that point to files M1–M3 renamed, moved, or made obsolete; (d) supported rows that claim evidence from tests that don't exist or are deferred. Produce a reconciliation delta showing what must be reclassified, re-evidenced, or re-dated.
+6. A6-northstar-proof-mapping: Produce the final completion note that maps each of the 7 North Star Required Proof items to the exact test file, quality script, document, or fixture that proves it. For each proof item: (1) SDK/schema/docs/UI agreement on trusted-code model → which tests/scripts/documents converge; (2) regression gate fails on sandboxing/runtime-permission/marketplace/third-party claims → which gate + fixture; (3) shader/ref readiness from graph-projected facts → which tests + gate prove graph authority; (4) fixture proving legacy-only fields not authoritative after projection disabled → which test; (5) user-facing export blocks from planner blockers → which tests trace the chain; (6) generated-module/provider/output-format/contribution/shader/live-binding blockers represented in planner → which test cases cover each blocker category; (7) quality checks pass from clean checkout → which aggregate command + baseline. This is explicitly requested as a deliverable; the task says 'Produce a final completion note that maps North Star proof requirements to concrete files/tests.'
+
+## Findings
+
+### A1-quality-baseline (complete)
+
+Determine the current pass/fail state of the quality:check pipeline from a clean checkout, identifying pre-existing failures vs M1-M3 introduced ones.
+
+- ALL quality infrastructure commands exist and are wired in package.json: `quality:check` (line 81) aggregates 18+ checks; `test:extensions` (line 36) combines drift+conformance+exports+imports+vitest; `test:readiness` (line 82) runs readiness gate + vitest on lifecycle/boundary/manager/docs tests.
+- ALL 20+ quality check scripts exist under scripts/quality/, including check-trust-model-truth.mjs, check-extension-drift.mjs, check-readiness.mjs, check-sdk-public-exports.mjs, check-frontend-closure-matrix.mjs, check-docs-maturity-sync.mjs, check-extension-family-conformance.mjs, check-extension-deferred-claims.mjs, check-extension-contract-recheck.mjs, and their supporting libraries.
+- ALL suggested test files exist on disk and are substantial: sdk-boundary.test.ts (4762 lines), renderPlanner.test.ts (2166 lines), exportGuard.test.ts (2782 lines), renderability.test.ts (881 lines), compositionGraphProjector.test.ts (1835 lines), shaderRefAuthority.test.ts (90 lines).
+- CRITICAL BUG FOUND: scripts/quality/check-readiness.mjs line 418 contains syntactically invalid JavaScript — `const tokens=script...+/);` — the extractTestReadinessFiles function is corrupted/garbled. This means `test:readiness --strict` and by extension `quality:check` cannot parse, and would fail at startup before any validation occurs. This is a pre-existing bug (not from M1-M3) that blocks the entire quality:check pipeline.
+- SHADER REF AUTHORITY GATE VIOLATION: exportGuard.ts (a MIGRATED_READINESS_FILE) contains `hasTimelineShaderMetadata` at lines 460 and 471. The function name matches the forbidden pattern `\bTimelineShaderMetadata\b` in shaderRefAuthority.test.ts. However, this is a legitimate wrapper function that prefers the new composition-graph path (`graphShaderSummaries`) before falling back to `hasLegacyTimelineShaderStorage`. This is a naming collision, not a real legacy read — but the gate as written would fail.
+- TRUST MODEL GATE: check-trust-model-truth.mjs is wired into quality:check via `check:trust-model-truth` (--release mode). It has its own test suite (check-trust-model-truth.test.mjs, 70 lines) proving it catches violations and passes against the current repo. The trust posture docs (phase4-readiness.md lines 85-101, trust-and-security.md) explicitly negate sandbox/permission/marketplace claims.
+- DOCS MATURITY SYNC: check-docs-maturity-sync.mjs enforces that the family-maturity-table in phase4-readiness.md matches config/extensions/family-maturity.json. The embedded table (lines 249-273) covers all 21 families with declaration/execution maturity, trust, bridge, and adapter columns.
+- EXTENSION DRIFT GATE: check-extension-drift.mjs (701 lines) validates kind/placement/schema/docs/manifest drift with audit/release modes. Has a comprehensive test suite (check-extension-drift.test.mjs, 581 lines) using fixtures. Uses the family-maturity.json registry as canonical bridged/reserved authority.
+- FAMILY CONFORMANCE GATE: check-extension-family-conformance.mjs (922 lines) validates registry completeness, schema definition mapping, stale generated JSON, maturity coordinates, cross-axis coherence, schema coverage, and deterministic ordering. Has its own test suite (check-extension-family-conformance.test.mjs, 229 lines).
+- SDK PUBLIC EXPORTS GATE: check-sdk-public-exports.mjs (840 lines) uses TypeScript-aware resolution to audit every public export from src/sdk/index.ts with an allowlist at config/governance/sdk-public-export-allowlist.json.
+- FRONTEND CLOSURE MATRIX: check-frontend-closure-matrix.mjs (939 lines) validates the closure matrix at docs/video-editor/frontend-closure-matrix.md using shared contract-matrix helpers. Release mode enforces evidence links resolve and deferred rows link to blockers.
+- DEFERRED CLAIMS GATE: check-extension-deferred-claims.mjs (604 lines) verifies absence checks for risky deferred terms (marketplace, sandbox, cloud loading, etc.) against actual code presence.
+- CONTRACT RECHECK GATE: check-extension-contract-recheck.mjs (160 lines) loads the contract-recheck matrix and applies shared release-semantics rules from lib/extension-contract-matrix.mjs (576 lines).
+- North Star proof requirements are documented in phase4-readiness.md (lines 197-223) with 23 M5 rows all marked 'cleared', each with verifiable test anchor, code anchor, and objective pass condition. However, no standalone 'proof note' mapping North Star items to concrete files exists yet — that is the M4 deliverable.
+- Cannot verify actual test pass/fail without `npm install` to run vitest suites. The check scripts use Node.js directly and could be tested, but the check-readiness.mjs syntax error would prevent any meaningful quality:check run.
+
+### A2-trust-gate-gaps (error)
+
+M1's check-trust-model-truth.mjs scans SDK, schema, ExtensionManager UI, docs/extensions, docs/video-editor, examples, and scripts/quality for forbidden trust claims (sandboxing, permission enforcement, marketplace safety, untrusted extension support, capability gates). M2 and M3 may have introduced new docs (e.g., shader-execution-model.md, composition-spine docs, planner/export docs) or new code paths that touch trust language but fall outside the gate's scan targets or rule patterns. Audit: (a) what surfaces were added/changed in M2–M3 that the gate doesn't scan, (b) whether the forbidden-term regex rules catch edge cases like 'permission enforcement' in composition/export contexts, (c) whether the denial/future-deferral context recognition correctly handles M2/M3's deferred-trust language. Produce a prioritized list of rule additions, scan-target expansions, and fixture gaps.
+
+Error: worker_structural_audit_failed: model output structural audit failed: type_mismatch at /error: value does not match declared type(s) ['string']
+
+### A3-composition-gate-gaps (complete)
+
+Audit composition authority drift gate coverage for shader/ref reads in readiness-path consumers and the North Star 'legacy-only fields not authoritative after projection disabled' fixture.
+
+- GATE COVERS ONLY 2 FILES: shaderRefAuthority.test.ts monitors ONLY renderPlanner.ts and exportGuard.ts for four forbidden patterns (clip.app?.shader, config.app?.shaderPostprocess, TimelineShaderMetadata, legacyTimelineShaderMetadata). renderRouter.ts, useRenderState.ts, routeScopeValidation.ts, and renderability.ts are NOT in the monitored file list.
+- UNMAPPED PATHS ARE CLEAN: renderRouter.ts calls planRender() and passes compositionGraph through plannerInput but contains zero direct legacy shader reads — no clip.app?.shader, config.app?.shaderPostprocess, TimelineShaderMetadata, or legacyTimelineShaderMetadata patterns. It relies entirely on planner authority.
+- useRenderState.ts CLEAN: useRenderState.ts calls exportGuard.scanExportConfig() and planRender() (via planFromExportGuardResult) but has no direct forbidden legacy field reads. It imports hasTimelineShaderMetadata from exportGuard (an allow-listed file per the gate's EXPLICIT_OUT_OF_SCOPE_ALLOWLIST does not cover it, but the function's body lives in exportGuard.ts which IS monitored).
+- routeScopeValidation.ts CLEAN: Pure utility for validating render route scopes against canonical RENDER_ROUTES. Contains no legacy shader field reads.
+- renderability.ts CLEAN: Pure re-export barrel from SDK rendering modules. No legacy reads.
+- NORTH STAR FIXTURE MISSING: The required proof — 'A fixture proves legacy-only shader/ref fields do not count as authoritative after projection is disabled' (NORTHSTAR.md line 28, M2 brief line 19) — does NOT exist in compositionGraphProjector.test.ts (1835 lines). The closest test at line 281 ('projects legacy clip and postprocess shader summaries into consumes edges') tests the HAPPY path where projection WORKS (legacy fields ARE projected), not the negative case where projection is disabled and legacy fields fail as authority.
+- PARTIAL FIXTURE IN shaderValidation.test.ts: The test at line 388 ('validates shader composition from graph edges in graph order and ignores legacy stack authority') proves graph edges override a legacy-provided shader stack, but this tests shader stack collision resolution (one-shader-per-scope), NOT that legacy-only fields lose authority when CompositionGraph projection is disabled at the planner level.
+- RENDERPLANNER LEGACY BLOCKER EXISTS: renderPlanner.ts function legacyGraphCompatibilityFindings() (line 940) emits error findings on browser-export and worker-export routes when compositionGraph is absent but legacy shader facts exist in snapshot.shaders — this IS the authority ratchet in the planner, but there is NO dedicated test fixture proving it blocks legacy-only input in compositionGraphProjector.test.ts.
+- EXPORTGUARD LEGACY FALLBACK: exportGuard.ts function hasTimelineShaderMetadata() (line 460) falls back to hasLegacyTimelineShaderStorage() via getTimelineClipShader()/getTimelinePostprocessShader() when no compositionGraph is provided. This is an intentional compatibility bridge, but it means the export guard itself CAN still read legacy storage — though only as a fallback when graph authority is absent, not as a competing authority. The allow-list explicitly documents this in timeline-domain.ts.
+- EFFECT/TRANSITION REFERENCE GAP: The forbidden-pattern regex set in shaderRefAuthority.test.ts covers only shader-related legacy reads (clip.app?.shader, config.app?.shaderPostprocess, TimelineShaderMetadata, legacyTimelineShaderMetadata). It does NOT cover legacy reads of effect/transition IDs, contribution refs, or reference-resolution patterns. However, the composition graph projector (graphProjector.ts) resolves effects and transitions through resolveEffectContributionEntry/resolveTransitionContributionEntry using tiered lookup (primary: kind+managedBy+renderId, fallback: contributionId) against the ContributionIndex, not direct legacy field reads — so the current code path is compliant.
+- GATE SHOULD BE EXTENDED: renderRouter.ts and useRenderState.ts SHOULD be added to MIGRATED_READINESS_FILES in shaderRefAuthority.test.ts to prevent future drift, even though they are currently clean. This is a forward-looking gate gap.
+
+### A4-export-blocker-trace (complete)
+
+Trace the full chain from user-facing blocked UI through scanExportConfig, planRender, to RenderBlocker objects, identifying every gap where planner provenance is missing or D-020 contradicts M3 claims.
+
+- PRIMARY CHAIN (planner-owned): useRenderState.ts → runExportGuard() → scanExportConfig() → planFromExportGuardResult() → planRender(). The guard result (findings, blockers, diagnostics) is merged into RenderPlannerInput at planFromExportGuardResult() (L229-248), then planRender() produces RenderPlannerResult with blockers array. The user-facing gate at L420-426 reads plannerResult.blockers.length > 0 to set renderStatus='error'. This chain IS planner-provenanced and has test coverage at useRenderState.test.tsx L1011 ('uses planner blockers as the canonical render readiness decision').
+- GAP A — FAST-PATH BYPASS (getFastRenderRouteDecision): After runExportGuard() returns true, getFastRenderRouteDecision() (L47-81) performs direct string checks on clip.generation.sequence_lane and CLIENT_CLIP_TYPES without calling planRender(). User-facing blocked messages at L476-490 ('Render blocked: ...', 'Worker render unavailable ...') are sourced from direct route-string checks, NOT from planner blockers. This path is tested at useRenderState.test.tsx L501-550 but the tests assert error status and log content without asserting planner provenance. The comment at L1222 explicitly confirms: 'Guard passed but preview-only blocked it — native routing preserved'.
+- GAP A — SPECIFIC CODE PATHS: (a) getFastRenderRouteDecision() L57-59 returns {route:'preview-only', reason:'remotion_module_missing_artifact'} based on direct clip.generation property check — no planner involvement. (b) L73-78 returns {route:'worker-banodoco'} based on hasGeneratedModuleClip flag — no planner blockers checked for worker availability. (c) L70 returns null to fall through to renderRouter.decideRenderRoute() which DOES invoke planRender() internally, so only the null-return path gets planner provenance.
+- GAP B — PLANNER BLOCKERS NOT SURFACED TO USER: When renderRouter.decideRenderRoute() is called (L454-474) and the planner result says all routes are blocked (e.g., returned route='preview-only'), the useRenderState code at L476-490 synthesizes user-facing messages from decision.reason string, NOT from planner.blockers[].message. The planner blocker messages and nextActions are discarded at the UI message layer.
+- GAP C — D-020 CONTRADICTION WITH M3 CODE: The docs (extension-platform-supported-deferred.md L242) classify D-020 'Full render planner implementation with capability/blocker reports' as deferred with BLOCKER:B-002 stating 'Render planner implementation not confirmed; export guard relies on ad hoc checks'. However, the codebase contains a 2676-line renderPlanner.ts with planRender() producing blockers, routePlans, canBrowserExport, canWorkerExport, and artifact completion records. The planner IS the canonical gate at useRenderState.ts L420-426. This is a docs-code contradiction: docs claim planner is deferred, but code uses it as the primary authority. The partial truth is that the fast-path bypass (Gap A) and message-sourcing gap (Gap B) mean the planner is not the EXCLUSIVE authority, which may be what D-020 correctly captures.
+- GAP D — LEGACY EXPORT GUARD FINDINGS BYPASS: scanExportConfig() at exportGuard.ts L361 produces its own blockers array (exportGuard.ts L132, L373, L397-403), and pushLegacyGraphCompatibilityFindingsAndBlockers() adds legacy graph compatibility blockers (L397) using LEGACY_EXPORT_GRAPH_COMPATIBILITY_BLOCKER_ID. These are merged into planner input at planFromExportGuardResult() L238-241, but the legacy graph compatibility blocker at exportGuard.ts L151-152 uses a separate blocker ID namespace ('exportGuard.compositionGraph.legacy-shader-ref-compatibility') distinct from the planner's LEGACY_GRAPH_COMPATIBILITY_BLOCKER_ID ('planner.compositionGraph.legacy-shader-ref-compatibility'). Both blocker paths exist for the same concern.
+- GAP E — MISSING PLANNER-OWNED TESTS FOR FAST-PATH SCENARIOS: M3 done criteria require planner-owned tests for 'Generated-module missing artifact, worker unavailable, contributed clip conflict, unknown contribution IDs, shader/material blockers, live-binding blockers, disabled output format, missing output format, and missing compile handler'. The renderPlanner.test.ts (2166 lines) covers shader/material blockers, live-binding blockers, output format blockers, and process blockers extensively. However, generated-module missing artifact and worker-unavailable scenarios are only tested through the fast-path in useRenderState.test.tsx, not through planRender() directly. The renderRouter.test.ts does include planner context assertions (e.g., L36-38, L151-154), but these are on decideRenderRoute() which is only invoked when the fast-path returns null.
+- PARTIALLY COVERED: The renderRouter.test.ts L143-169 tests 'blocks remotion_module clips with missing artifact ids' and asserts planner.selectedPlannerRoute and planner.plannerResult.canBrowserExport/canWorkerExport. This covers the Gap A path only when the fast-path returns null (which happens when CLIENT_CLIP_TYPES doesn't match and generation.sequence_lane isn't 'remotion_module' — but for actual remotion_module clips, the fast-path catches them first at L57-59).
+- EVIDENCE THAT GAP A IS KNOWN: The test at useRenderState.test.tsx L1175-1229 ('preserves existing preview-only block when guard passes') explicitly tests the scenario where guard passes but fast-path blocks, with the comment 'Guard passed but preview-only blocked it — native routing preserved'. This confirms the dual-authority design is intentional, but the gap remains that the fast-path blocker message does not originate from a planner RenderBlocker object.
+
+### A5-docs-matrix-reconciliation (error)
+
+After M1 (trust model truth), M2 (composition authority), and M3 (export readiness convergence), the canonical supported/deferred matrix (extension-platform-supported-deferred.md, 472 lines, 96 supported + 70 deferred rows), the contract-recheck matrix, and the frontend-closure-matrix must agree with code and tests. Audit each for: (a) rows whose classification contradicts new M1–M3 evidence — particularly D-020/D-021/D-022 (render planner deferred, blocker B-002), the trust-model rows (S-150, D-120/D-121/D-122/D-123), and shader/ref rows (S-130–S-135, D-100/D-101/D-102); (b) stale 'Last updated' dates or milestone references; (c) evidence links (TEST:, CR:, ABSENCE:) that point to files M1–M3 renamed, moved, or made obsolete; (d) supported rows that claim evidence from tests that don't exist or are deferred. Produce a reconciliation delta showing what must be reclassified, re-evidenced, or re-dated.
+
+Error: worker_structural_audit_failed: model output structural audit failed: type_mismatch at /error: value does not match declared type(s) ['string']
+
+### A6-northstar-proof-mapping (complete)
+
+Produce the final completion note that maps each of the 7 North Star Required Proof items to the exact test file, quality script, document, or fixture that proves it.
+
+- **Proof #1 — SDK/schema/docs/UI agreement on trusted-code/access-disclosure model**: The trust-model convergence spans four surfaces. (a) Schema: `config/contracts/reigh-extension.schema.json` enforces canonical `{reason, posture}` shape and rejects legacy `permission` via `additionalProperties:false` (verified in `src/sdk/manifest-schema-validation.test.ts` — canonical acceptance + legacy rejection cases). (b) SDK types: `src/sdk/manifest.ts` frames `ExtensionPermissionDeclaration` as declarative access disclosure; SDK boundary tests (`src/sdk/__tests__/sdk-boundary.test.ts`, `src/sdk/smoke/barrel-import-smoke.test.ts`) exercise the canonical shape through the public barrel. (c) Docs: `docs/extensions/trust-and-security.md` and `docs/video-editor/extensions-trust-envelope.md` explicitly use 'non-enforced declarative access disclosures' and defer true isolation/brokered enforcement to a future epic (asserted by `src/tools/video-editor/runtime/phase4ReadinessDocs.test.ts`). (d) UI: `src/tools/video-editor/components/ExtensionManager/ExtensionManager.tsx` renders 'Disclosed access' posture labels from manifest.permissions, with tests in `ExtensionManager.test.tsx` asserting disclosure reason/posture labels and the persistent trusted/unsandboxed/non-enforced warning. The supported/deferred matrix at `docs/video-editor/extension-platform-supported-deferred.md` rows S-150, D-120–D-123 document the trust envelope with evidence references.
+- **Proof #2 — Regression gate fails on sandboxing/runtime-permission/marketplace/third-party claims**: The gate is `scripts/quality/check-trust-model-truth.mjs` (286 lines). It scans 7 target surfaces (config/contracts, src/sdk, ExtensionManager UI, examples/extensions, docs/extensions, docs/video-editor, scripts/quality) for 6 rule categories: sandbox-or-isolation, runtime-permission-enforcement, marketplace-or-third-party-safety, untrusted-extension-support, permission-checks, capability-gates. It allows explicit negation (`DENIAL_CONTEXT_RE`) and future-deferral (`FUTURE_CONTEXT_RE`). The gate test file `scripts/quality/check-trust-model-truth.test.mjs` (70 lines) proves: (a) the gate passes against the checked-in repository (exit 0, 'OK: no active unsupported trust-model claims detected'), (b) an active-unsupported fixture fails (exit 1 with sandbox-or-isolation and permission-checks hits on `docs/extensions/trust.txt:3`), and (c) allowed-statements fixture with explicit negation/deferred/non-enforced wording passes. Fixture roots: `scripts/quality/__fixtures__/trust-model-truth/active-unsupported/docs/extensions/trust.txt` and `scripts/quality/__fixtures__/trust-model-truth/allowed-statements/docs/extensions/trust.txt`. The gate is wired into `quality:check` as a separate `npm run check:trust-model-truth` script (proved by the test at line 61–69 asserting the package.json scripts).
+- **Proof #3 — Shader/ref readiness from graph-projected facts, not direct legacy shader fields**: Three test files prove graph authority. (a) `src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts` (1835 lines) — tests that `projectCompositionGraph` projects clip/postprocess shader summaries into `consumes` edges with graph-attributed `refKey`, `shaderId`, `scope` detail; proves nodes for clip, timeline-postprocess, and contribution kinds; proves reference states as resolved/missing/disabled from graph authority. (b) `src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts` (90 lines) — the dedicated drift gate that asserts migrated planner/export readiness files (`renderPlanner.ts`, `exportGuard.ts`) keep off raw legacy shader storage (forbids `clip.app?.shader`, `config.app?.shaderPostprocess`, `TimelineShaderMetadata`, `legacyTimelineShaderMetadata`) and documents the explicit allowlist of files that may read snapshot.shaders for projector input only. (c) `src/tools/video-editor/runtime/composition/shaderValidation.test.ts` (450 lines) — line 288: 'projects graph shader refs from graph authority without falling back to legacy summaries or the contribution index' where legacy-only shader refs are filtered out in favor of graph-authoritative refs; line 388: 'validates shader composition from graph edges in graph order and ignores legacy stack authority' where legacy shader summaries passed alongside graph edges are ignored (only graph-derived shaders appear in output while legacy entries are dropped).
+- **Proof #4 — Fixture proving legacy-only shader/ref fields not authoritative after projection disabled**: `src/tools/video-editor/runtime/composition/shaderValidation.test.ts` lines 260–286: `projectShaderRefs` is called with two shaders where one has `projected: false`, `projectionEligible: false`, and `status: 'disabled'` in the contribution index projection. The test asserts `expect(projected).toEqual([visible])` — only the non-disabled shader appears; the disabled/not-projected one is excluded. This proves legacy-only fields (with disabled projection) are not counted as authoritative. Also lines 288–347: legacy shader summaries (id `legacy:shader`) passed alongside graph-authoritative refs are completely filtered out — only graph-projected refs appear in the result.
+- **Proof #5 — User-facing export/render blocked states derived from planner blockers**: The chain is proven end-to-end. (a) `src/tools/video-editor/hooks/useRenderState.test.tsx` line 1011: the test 'uses planner blockers as the canonical render readiness decision' proves that when `scanExportConfig` returns planner-compatible blockers, `useRenderState` sets `renderStatus` to `'error'` and never invokes the client renderer. (b) `src/tools/video-editor/runtime/exportGuard.test.ts` line 965: 'keeps scan output as planner-compatible compatibility input' tests that `scanExportConfig().findings` and `.blockers` are fed into `planRender({ diagnostics })` and the planner correctly reports `canBrowserExport: false` with `blocked: true`. (c) `src/tools/video-editor/runtime/renderPlanner.test.ts` line 486: 'derives route blockers from a public TimelineSnapshot without registry inputs' proves the planner produces route-level blocked/blockerCount/findingCount from snapshot data. The user-facing export guard (`exportGuard.ts`) feeds its blockers/findings into the canonical planner; the planner is the single authority for readiness.
+- **Proof #6 — Generated-module/provider/output-format/contribution/shader/live-binding blockers in planner**: These blocker categories are covered across renderPlanner tests and exportGuard tests. (a) **generated-module**: `useRenderState.test.tsx` lines 501–555 test generated-module clips ('blocks malformed remotion_module metadata', 'surfaces worker-unavailable state for valid remotion_module routes'). (b) **provider availability**: `renderPlanner.test.tsx` line 1012 'surfaces missing requested output formats as structured request blockers' — `planner.outputFormat.missing.format.missing` with reason `missing-contribution`. Also lines 973–1020 test route-unsupported and process-dependent blockers for render-dependent outputs. (c) **output-format availability**: same tests; line 1022–1041 for missing output format, lines 1043–1067 for requested route support. (d) **contribution conflicts**: `renderPlanner.compositionGraph.test.ts` covers duplicate contribution reference states (`{state:'duplicate', reason:'missing-contribution'}` at line 75) and `renderPlanner.test.ts` lines 729–836 diagnose duplicate clip/postprocess shaders. `extensionSurface.test.ts` lines 335–1128 cover `runtime/duplicate-contribution` diagnostics. (e) **shader/material blockers**: `renderPlanner.test.ts` line 701 'blocks export for timeline shader metadata until a materializer produces RenderMaterial'; line 1069 'converts materialize-on-export live material refs into browser-export blockers'; line 1095 'materializes missing and stale material next actions'. (f) **live-binding blockers**: `exportGuard.test.ts` lines 573–820 cover live binding blockers in detail — the 'scanExportConfig — live binding blockers' describe block with extensive test coverage for active/resolved/missing/malformed/unknown resolution statuses. `renderPlanner.test.ts` line 486 derives `live-unbaked` route blockers from timeline snapshot live bindings.
+- **Proof #7 — Quality checks pass from clean checkout with convergence gates enabled**: The aggregate command is `npm run quality:check` (defined in `package.json` line 81), which chains 20+ checks including `check:trust-model-truth`, `check:extension-family-conformance`, `check:contracts`, `check:deferred-claims`, `check:docs-maturity-sync`, `lint`, `typecheck:strict-probe`, and `test:readiness`. The trust-model gate (`check:trust-model-truth`) passes against the checked-in repo (proved by `scripts/quality/check-trust-model-truth.test.mjs` line 38–42). The dedicated readiness test suite (`npm run test:readiness`, line 82–83) runs `check-readiness.mjs --strict` plus 8 targeted Vitest test files covering extension lifecycle, error boundary, shell core, properties panel, editor surface, video editor provider, extension manager, and phase 4 readiness docs. The quality gate suite is invoked via `check:trust-model-truth` which runs `node scripts/quality/check-trust-model-truth.mjs --release` (scans ~140 files in release mode). Execution evidence from M1 finalize.json (T10) confirmed targeted runs: `check:trust-model-truth` passed with 140 files scanned; broader `quality:check` passed early quality checks through `check:core-shim-usage`. Remaining tooling failures (vitest/config, tsx, typescript unresolved) are pre-existing environment issues, not changed-surface assertion failures.
+
+## Adjudication
+
+### Gap Notes
+
+- A2-trust-gate-gaps: research failed with worker_structural_audit_failed: model output structural audit failed: type_mismatch at /error: value does not match declared type(s) ['string'].
+- A5-docs-matrix-reconciliation: research failed with worker_structural_audit_failed: model output structural audit failed: type_mismatch at /error: value does not match declared type(s) ['string'].
+
+### Contradiction Notes
+
+- file .megaplan/initiatives/extension-reality-convergence-epic/NORTHSTAR.md appears in multiple areas with differing evidence/status: A3-composition-gate-gaps=complete, A6-northstar-proof-mapping=complete
+- file docs/video-editor/extension-platform-supported-deferred.md appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A4-export-blocker-trace=complete, A6-northstar-proof-mapping=complete
+- file package.json appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A6-northstar-proof-mapping=complete
+- file scripts/quality/check-trust-model-truth.mjs appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A6-northstar-proof-mapping=complete
+- file scripts/quality/check-trust-model-truth.test.mjs appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A6-northstar-proof-mapping=complete
+- file src/sdk/__tests__/sdk-boundary.test.ts appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A6-northstar-proof-mapping=complete
+- file src/tools/video-editor/hooks/useRenderState.test.tsx appears in multiple areas with differing evidence/status: A4-export-blocker-trace=complete, A6-northstar-proof-mapping=complete
+- file src/tools/video-editor/hooks/useRenderState.ts appears in multiple areas with differing evidence/status: A3-composition-gate-gaps=complete, A4-export-blocker-trace=complete
+- file src/tools/video-editor/lib/renderRouter.ts appears in multiple areas with differing evidence/status: A3-composition-gate-gaps=complete, A4-export-blocker-trace=complete
+- file src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A3-composition-gate-gaps=complete, A6-northstar-proof-mapping=complete
+- file src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A3-composition-gate-gaps=complete, A6-northstar-proof-mapping=complete
+- file src/tools/video-editor/runtime/composition/shaderValidation.test.ts appears in multiple areas with differing evidence/status: A3-composition-gate-gaps=complete, A6-northstar-proof-mapping=complete
+- file src/tools/video-editor/runtime/exportGuard.test.ts appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A6-northstar-proof-mapping=complete
+- file src/tools/video-editor/runtime/exportGuard.ts appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A3-composition-gate-gaps=complete, A4-export-blocker-trace=complete
+- file src/tools/video-editor/runtime/renderPlanner.test.ts appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A4-export-blocker-trace=complete, A6-northstar-proof-mapping=complete
+- file src/tools/video-editor/runtime/renderPlanner.ts appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A3-composition-gate-gaps=complete, A4-export-blocker-trace=complete
+- file src/tools/video-editor/runtime/renderability.test.ts appears in multiple areas with differing evidence/status: A1-quality-baseline=complete, A6-northstar-proof-mapping=complete
+
+### Overlap Groups
+
+- file: .megaplan/initiatives/extension-reality-convergence-epic/NORTHSTAR.md [A3-composition-gate-gaps, A6-northstar-proof-mapping]
+- file: docs/video-editor/extension-platform-supported-deferred.md [A1-quality-baseline, A4-export-blocker-trace, A6-northstar-proof-mapping]
+- file: package.json [A1-quality-baseline, A6-northstar-proof-mapping]
+- file: scripts/quality/check-trust-model-truth.mjs [A1-quality-baseline, A6-northstar-proof-mapping]
+- file: scripts/quality/check-trust-model-truth.test.mjs [A1-quality-baseline, A6-northstar-proof-mapping]
+- file: src/sdk/__tests__/sdk-boundary.test.ts [A1-quality-baseline, A6-northstar-proof-mapping]
+- file: src/tools/video-editor/hooks/useRenderState.test.tsx [A4-export-blocker-trace, A6-northstar-proof-mapping]
+- file: src/tools/video-editor/hooks/useRenderState.ts [A3-composition-gate-gaps, A4-export-blocker-trace]
+- file: src/tools/video-editor/lib/renderRouter.ts [A3-composition-gate-gaps, A4-export-blocker-trace]
+- file: src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts [A1-quality-baseline, A3-composition-gate-gaps, A6-northstar-proof-mapping]
+- file: src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts [A1-quality-baseline, A3-composition-gate-gaps, A6-northstar-proof-mapping]
+- file: src/tools/video-editor/runtime/composition/shaderValidation.test.ts [A3-composition-gate-gaps, A6-northstar-proof-mapping]
+- file: src/tools/video-editor/runtime/exportGuard.test.ts [A1-quality-baseline, A6-northstar-proof-mapping]
+- file: src/tools/video-editor/runtime/exportGuard.ts [A1-quality-baseline, A3-composition-gate-gaps, A4-export-blocker-trace]
+- file: src/tools/video-editor/runtime/renderPlanner.test.ts [A1-quality-baseline, A4-export-blocker-trace, A6-northstar-proof-mapping]
+- file: src/tools/video-editor/runtime/renderPlanner.ts [A1-quality-baseline, A3-composition-gate-gaps, A4-export-blocker-trace]
+- file: src/tools/video-editor/runtime/renderability.test.ts [A1-quality-baseline, A6-northstar-proof-mapping]
+
+### Bounded Cross-Reference
+
+- Performed: yes
+- Shared files: .megaplan/initiatives/extension-reality-convergence-epic/NORTHSTAR.md, docs/video-editor/extension-platform-supported-deferred.md, scripts/quality/check-readiness.mjs, scripts/quality/check-trust-model-truth.mjs, src/tools/video-editor/hooks/useRenderState.ts, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/shaderRefAuthority.test.ts
+- Missing files: (none)
+
+## Metrics
+
+- Areas triaged: 6
+- Fan-out units run: 6
+- Complete: 4
+- Partial: 0
+- Timed out: 0
+- Errors: 2
+- Missed units: A2-trust-gate-gaps, A5-docs-matrix-reconciliation
+
+
+## Critique Lens Catalog (9 lenses)
+
+        ### Lens: `issue_hints` (tier: core, category: completeness)
+**Question:** Did the work fully address the issue hints, user notes, and approved plan requirements?
+**Guidance:** Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.
+
+### Lens: `correctness` (tier: core, category: correctness)
+**Question:** Are the proposed changes technically correct?
+**Guidance:** Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases — not just the one reported in the issue.
+
+### Lens: `scope` (tier: core, category: completeness)
+**Question:** Search for related code that handles the same concept. Is the reported issue a symptom of something broader — and is any single step sized to fit one worker turn?
+**Guidance:** Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes. Also audit step SIZING: each step/task is executed in ONE worker turn (~15 min, one conversation) and must be fully implemented AND verified there. A single step that bundles multiple concerns — e.g. 'extract this 2000-line file into modules AND write tests', or 'consolidate the roots AND migrate N registries AND add parity tests' — is a god-task: it cannot finish in one turn and the worker will run out of time mid-implementation. Raising complexity does not buy more time, only a stronger model for the same single turn. Flag any such step and recommend splitting along the natural seam (one step to add the abstraction + its unit tests, then one step per consumer/module to migrate, parity tests on the last).
+
+### Lens: `all_locations` (tier: core, category: completeness)
+**Question:** Does the change touch all locations AND supporting infrastructure?
+**Guidance:** Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.
+
+### Lens: `callers` (tier: core, category: correctness)
+**Question:** Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?
+**Guidance:** Grep for call sites. For each caller, check what values it passes — especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?
+
+### Lens: `conventions` (tier: extended, category: maintainability)
+**Question:** Does the approach match how the codebase solves similar problems?
+**Guidance:** Check not just naming/style but how similar PROBLEMS are solved in this codebase. If the codebase adds new methods for similar cases, the plan should too. Do not spend findings on trivial stylistic preferences.
+
+### Lens: `verification` (tier: extended, category: completeness)
+**Question:** Is there convincing verification for the change?
+**Guidance:** Flag missing tests or weak validation. If verification tests exist, trace the test's execution path through your patch — does every branch it exercises produce the expected result? A patch can look correct but fail because it misses one code path the test covers. If you manually verify an edge case because existing tests don't cover it, also test the cases next to it.
+
+### Lens: `criteria_quality` (tier: extended, category: completeness)
+**Question:** Are the success criteria well-prioritized and verifiable?
+**Guidance:** Check that each `must` criterion has a clear yes/no answer verifiable from code, tests, or git diff. Subjective goals, numeric guidelines, and aspirational targets should be `should`, not `must`. Criteria requiring manual testing or human judgment should be `info`. Flag any `must` criterion that is ambiguous, subjective, or unverifiable in the review pipeline.
+
+### Lens: `prerequisite_ordering` (tier: core, category: correctness)
+**Question:** Do tasks that depend on a precondition gracefully handle that precondition only partially holding?
+**Guidance:** Walk the task graph. For each task that depends on a precondition produced by an earlier task (e.g. 'after T5 regen, remove ref()'), check what happens if the precondition only partially holds — some inputs fail, some succeed. Then re-read the brief: does it lock a graceful-fallback policy for the earlier task (e.g. 'failed templates get skipped with a diagnostic') AND simultaneously demand absolute completion for the dependent task (e.g. 'zero callers remain', 'all migrated')? That's a brief contradiction the planner will transcribe faithfully and the executor will hit at runtime. Flag the conflicting paragraphs and recommend conditionalizing the dependent task, or specifying explicit deferral behavior.
+
+
+        ## Complexity Rubric (1–5)
+
+        Rate each selected lens on its **hardest realistic** aspect, not a
+        worst-case imagining. When genuinely torn between two tiers, choose the
+        LOWER one UNLESS you can name the specific cascading, test-evading
+        failure that earns the higher tier in the justification.
+
+        - **1 = trivial, mechanical check.** The lens's question can be
+          answered by pattern-matching a single file or a grep hit. A weak
+          model cannot get it wrong.
+        - **2 = simple, localized check.** The lens touches one or two
+          files, the question has a linear answer, and the failure mode
+          (missing something) is obvious.
+        - **3 = multi-step check with non-trivial reasoning.** The lens
+          requires holding multiple files or a dataflow in your head;
+          correctness is not self-evident from a quick skim.
+        - **4 = cross-cutting or high-stakes check.** A defect this lens would
+          miss is **non-local and not caught by an obvious test** — it
+          propagates through a shared contract or invariant that code the plan
+          does NOT touch relies on. Spanning several modules is NOT sufficient
+          on its own; a lens whose failure is local and obvious is tier 2-3.
+        - **5 = fundamental system-level check.** The lens probes a
+          security-sensitive path, a schema migration, an auth boundary, or
+          a contract relied on by the whole system, where a subtle error would
+          pass the full suite and corrupt state. Only assign tier 5 when the
+          lens genuinely requires system-level reasoning — not merely
+          "important" or central code.
+
+        **FLOOR rules (hard minimum) — these two lenses ONLY:**
+        - `correctness` — NEVER below tier 4. A correctness defect that
+          slips through is the most expensive failure mode.
+        - `prerequisite_ordering` — NEVER below tier 4. Partial-precondition
+          contradictions are subtle and cascade into runtime failures; a
+          weak model will miss them.
+        Every OTHER lens must EARN tier 4-5 under the rubric above; the
+        expected home for an ordinary, locally-verifiable check is tier 2-3.
+        Do not let "this plan is large" inflate a lens whose own question is
+        answerable by a focused read.
+
+        ## Assignment Contract
+
+        Select the FEWEST lenses that cover the real risk; keep the set lean
+        rather than firing broad, overlapping checks. If a check's verification
+        would likely depend on things outside this project root (external or
+        sibling repos), files the plan only creates later, or runtime-only
+        behavior, either scope the lens to what is statically checkable in this
+        repo or name that dependency in its justification so the worker and gate
+        expect a partial or `unverifiable` result.
+
+        - **Select deliberately**: a lens fires only when it covers a concrete
+          risk in this plan.
+        - **Justify to skip**: every skipped lens must include a concrete, specific
+          `why` — a reason grounded in the plan's content, not a generic dismissal.
+        - **Every lens is assigned exactly once**: the union of `selections` and
+          `skipped` must cover all 9 lens ids with no overlap
+          and no omission.
+        - **At least one lens must be selected** — an all-skip verdict is rejected.
+        - **Every selected catalog lens** must emit a `complexity` (int 1–5) and
+          a `complexity_justification` (one or two sentences citing why this
+          lens sits at exactly that tier — reference the lens's question, the
+          plan's concrete files/interfaces/risks). The justification must be
+          defensible against a reviewer who disagrees. A bare restatement of the
+          rubric ("this is complex") is not acceptable.
+        - **`other` custom areas**: an `other` selection is additive (does not
+          replace a catalog lens). It requires `area` (a non-empty name for the
+          custom critique area), `why` (the probe question for the critic),
+          `complexity`, and `complexity_justification`. At most 2
+          `other` areas.
+        - **Do not invent check IDs**: North Star, anchor, product, or project-
+          specific concerns must either use one of the catalog lens IDs above
+          or `check_id: "other"` with the specific concern named in `area`.
+          Values such as `north_star_alignment`, `compatibility_shim_risk`, or
+          `behavior_preservation` are invalid as `check_id`s.
+
+        Your output must be a JSON object with these keys:
+        - `selections`: list of objects. For catalog lenses:
+          {check_id, complexity (int 1–5), complexity_justification, why?}
+          For `other` custom areas:
+          {check_id: "other", area, why, complexity (int 1–5), complexity_justification}
+        - `skipped`: list of {check_id, why} objects
+        - `evaluator_model`: your own model identifier string
+        - `flag_verifications`: list of
+          {flag_id, lens, outcome, rationale} objects where outcome is
+          one of "verified" / "open" / "accepted_tradeoff"; use [] when the
+          Flag Resolution Verification section is absent. `lens` must be
+          exactly one catalog lens id; combined lens strings such as
+          `correctness/all_locations` are invalid.
+
+        Remember: prefer the smallest selected set that still covers the real
+        risk.  Skipping requires a justification.  When you skip, explain *why
+        this specific lens is unnecessary for this specific plan* — do not
+        write generic cop-outs.
