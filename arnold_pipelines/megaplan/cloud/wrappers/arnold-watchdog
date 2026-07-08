@@ -1034,16 +1034,26 @@ emit_current_needs_human_sidecar() {
   local workspace="$3"
   local remote_spec="$4"
   local current_plan="$5"
+  local current_target_observation="${6:-}"
   local marker_path stale_marker_plans repair_summary
 
   marker_path="$(repair_needs_human_path "$session")"
   [[ -f "$marker_path" ]] || return 1
 
   stale_marker_plans="$(repair_needs_human_matches_current_plan "$session" "$current_plan" 2>/dev/null)" || {
-    rm -f "$marker_path" 2>/dev/null || true
-    log "stale repair needs-human marker cleared; live current plan supersedes marker session=$session live_plan=${current_plan:-unknown} marker_plans=${stale_marker_plans:-unknown}"
+    local stale_clear_verdict stale_clear_state
+    stale_clear_verdict="$(resolver_stale_needs_human_clear_verdict "$current_target_observation")"
+    stale_clear_state="${stale_clear_verdict#*:}"
+    if [[ "$stale_clear_state" == "$stale_clear_verdict" || -z "$stale_clear_state" ]]; then
+      stale_clear_state="UNKNOWN"
+    fi
     compare_needs_human_to_resolver "$session" "$current_plan" "true" "${stale_marker_plans:-}"
-    return 1
+    if [[ "$stale_clear_verdict" == clear:* ]]; then
+      rm -f "$marker_path" 2>/dev/null || true
+      log "stale repair needs-human marker cleared; canonical resolver permits stale clear session=$session canonical_state=$stale_clear_state live_plan=${current_plan:-unknown} marker_plans=${stale_marker_plans:-unknown}"
+      return 1
+    fi
+    log "stale repair needs-human marker preserved; canonical resolver blocks stale clear session=$session canonical_state=$stale_clear_state live_plan=${current_plan:-unknown} marker_plans=${stale_marker_plans:-unknown}"
   }
   if [[ -n "${stale_marker_plans:-}" ]]; then
     compare_needs_human_to_resolver "$session" "$current_plan" "true" "$stale_marker_plans"
@@ -1092,12 +1102,17 @@ from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
+from arnold_pipelines.megaplan.cloud.repair_lock import inspect_repair_lock
 from arnold_pipelines.megaplan.cloud.repair_contract import (
     _blocked_task_id_from_failure,
     classify_repair_dispatch,
     project_repair_custody,
 )
-from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
+from arnold_pipelines.megaplan.cloud.repair_requests import (
+    active_repair_claim_lock_dir,
+    enqueue_repair_request,
+    repair_queue_dir,
+)
 from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
 
 session, workspace_raw, remote_spec_raw, run_kind, plan_name, marker_dir_raw, repair_data_dir_raw = sys.argv[1:]
@@ -1284,12 +1299,20 @@ if needs_human_path.exists():
         resolver_record=target,
     )
 
+lock_evidence = None
+blocker_id = str(projection.get("blocker_id") or "").strip()
+if blocker_id:
+    lock_evidence = inspect_repair_lock(
+        active_repair_claim_lock_dir(repair_queue_dir(marker_dir), blocker_id)
+    )
+
 decision = classify_repair_dispatch(
     canonical_run_state=canonical_run_state,
     event_plan_dir=event_plan_dir,
     plan_state=plan_state,
     current_target=target,
     human_blocker_classification=human_blocker,
+    lock_evidence=lock_evidence,
     custody_projection=projection,
 )
 
@@ -5687,6 +5710,45 @@ else:
 PY
 }
 
+resolver_stale_needs_human_clear_verdict() {
+  # Decide whether a stale needs-human marker may be cleared. This is always
+  # resolver-gated when evidence is available: RUNNING and the existing
+  # machine-actionable suppression states may clear; everything else preserves
+  # the marker fail-closed.
+  local current_target_observation="${1:-}"
+  if [[ -z "$current_target_observation" ]]; then
+    return 0
+  fi
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$current_target_observation" <<'PY' 2>>"${LOG:-/dev/null}" || true
+import json
+import sys
+
+from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
+
+CLEARABLE_STATES = {
+    "RUNNING",
+    "REAL_IMPLEMENTATION_BLOCK",
+    "RETRYABLE_EXECUTION_BLOCK",
+    "BROKEN_STATE_MACHINE",
+}
+
+raw = sys.argv[1] if len(sys.argv) > 1 else ""
+try:
+    evidence = json.loads(raw) if raw else {}
+except Exception:
+    evidence = {}
+
+try:
+    result = resolve_run_state(evidence)
+except Exception:
+    sys.exit(0)
+
+state = result.canonical_state.name
+prefix = "clear" if state in CLEARABLE_STATES else "preserve"
+print(f"{prefix}:{state}")
+PY
+}
+
 # ---------------------------------------------------------------------------
 # ARNOLD_RESOLVER_ENFORCEMENT gating for watchdog needs-human escalation
 # ---------------------------------------------------------------------------
@@ -6067,7 +6129,7 @@ PY
 
   local observed_current_plan
   observed_current_plan="$(current_target_plan_name_from_observation "$current_target_observation" 2>>"${LOG:-/dev/null}" || true)"
-  if emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${observed_current_plan:-$plan_name}"; then
+  if emit_current_needs_human_sidecar "$report_items" "$session" "$workspace" "$remote_spec" "${observed_current_plan:-$plan_name}" "$current_target_observation"; then
     return 0
   fi
 
