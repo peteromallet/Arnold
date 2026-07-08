@@ -2466,6 +2466,40 @@ def test_repair_loop_reclassifies_completed_chain_history_unknown_sentinels(tmp_
     assert "failure classification: chain_completed" in result.stdout
 
 
+def test_repair_loop_render_failure_summary_handles_no_latest_failure_chain_completed(
+    tmp_path: Path,
+) -> None:
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(
+        json.dumps(
+            {
+                "iterations": [
+                    {
+                        "failure_classification": "chain_completed",
+                        "stale_state": {"classification": "NO LATEST FAILURE"},
+                        "chain_state_summary": {
+                            "last_state": "done",
+                            "current_plan_name": "unknown",
+                            "current_state": "unknown",
+                            "events": [{"msg": "all milestones complete"}],
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    program = _extract_repair_program(
+        "render_failure_summary",
+        "python3 - \"$data_path\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(data_path))
+
+    assert result.returncode == 0, result.stderr
+    assert "failure classification: chain_completed" in result.stdout
+
+
 def test_repair_loop_exits_immediately_for_completed_chain(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     repair_root = tmp_path / "repair-root"

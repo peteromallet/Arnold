@@ -2853,6 +2853,12 @@ if (
 ):
     classification = "chain_completed"
 
+stale_kinds = {
+    str(item.get("kind") or "").strip()
+    for item in resolver_output.get("stale_evidence", [])
+    if isinstance(item, dict)
+}
+
 if classification == "unknown_failure_mode":
     combined_signals = "\n".join(str(item) for item in signals).lower()
     stale_kinds = {
