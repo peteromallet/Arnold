@@ -485,6 +485,110 @@ def _reconcile_failed_no_next_after_blocked_execute(
     return write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_transition)
 
 
+def _reconcile_failed_review_after_successful_execute(
+    plan_dir: Path,
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    """Recover stale failed review state layered on top of successful execute.
+
+    A relaunch can attempt ``review`` directly from ``current_state=failed``
+    after execute already completed successfully. That records a synthetic
+    review ``invalid_transition`` even though the durable phase authority still
+    says the plan is ready to review. Canonicalize the plan back to
+    ``executed`` so the next driver pass can re-enter review normally.
+    """
+
+    if state.get("current_state") != "failed":
+        return state
+    resume_cursor = state.get("resume_cursor")
+    if not isinstance(resume_cursor, dict):
+        return state
+    if (
+        resume_cursor.get("phase") != "review"
+        or resume_cursor.get("retry_strategy") != "rerun_phase"
+    ):
+        return state
+    latest_failure = state.get("latest_failure")
+    if not isinstance(latest_failure, dict):
+        return state
+    if latest_failure.get("kind") != "phase_failed" or latest_failure.get("phase") != "review":
+        return state
+    metadata = latest_failure.get("metadata")
+    failure_text = " ".join(
+        str(part)
+        for part in (
+            latest_failure.get("message"),
+            metadata.get("stderr") if isinstance(metadata, dict) else "",
+            metadata.get("stderr_raw") if isinstance(metadata, dict) else "",
+        )
+        if part
+    ).lower()
+    if "invalid_transition" not in failure_text or "current state is 'failed'" not in failure_text:
+        return state
+
+    from arnold_pipelines.megaplan.orchestration.phase_result import read_phase_result
+
+    try:
+        phase_result = read_phase_result(plan_dir)
+    except Exception:
+        return state
+    if (
+        phase_result is None
+        or getattr(phase_result, "phase", None) != "execute"
+        or getattr(phase_result, "exit_kind", None) != "success"
+    ):
+        return state
+
+    def _transition(current: dict[str, Any]) -> bool:
+        if current.get("current_state") != "failed":
+            return False
+        current_resume = current.get("resume_cursor")
+        if not isinstance(current_resume, dict):
+            return False
+        if (
+            current_resume.get("phase") != "review"
+            or current_resume.get("retry_strategy") != "rerun_phase"
+        ):
+            return False
+        current_failure = current.get("latest_failure")
+        if not isinstance(current_failure, dict):
+            return False
+        if current_failure.get("kind") != "phase_failed" or current_failure.get("phase") != "review":
+            return False
+        current_metadata = current_failure.get("metadata")
+        current_failure_text = " ".join(
+            str(part)
+            for part in (
+                current_failure.get("message"),
+                current_metadata.get("stderr") if isinstance(current_metadata, dict) else "",
+                current_metadata.get("stderr_raw") if isinstance(current_metadata, dict) else "",
+            )
+            if part
+        ).lower()
+        if (
+            "invalid_transition" not in current_failure_text
+            or "current state is 'failed'" not in current_failure_text
+        ):
+            return False
+        current["current_state"] = STATE_EXECUTED
+        current["latest_failure"] = None
+        current.pop("active_step", None)
+        current.pop("resume_cursor", None)
+        current.setdefault("meta", {})
+        if isinstance(current["meta"], dict):
+            current["meta"].setdefault("state_reconciliations", []).append(
+                {
+                    "kind": "failed_review_after_successful_execute",
+                    "from_state": state.get("current_state"),
+                    "to_state": STATE_EXECUTED,
+                    "timestamp": now_utc(),
+                }
+            )
+        return True
+
+    return write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_transition)
+
+
 def load_plan_from_dir(plan_dir: Path) -> tuple[Path, PlanState]:
     from arnold_pipelines.megaplan._core.io import read_plan_state_cached
     state = read_plan_state_cached(plan_dir, mode="authority")
@@ -499,6 +603,7 @@ def load_plan_from_dir(plan_dir: Path) -> tuple[Path, PlanState]:
         state = _reconcile_completed_review(plan_dir, state)
         state = _reconcile_failed_no_next_after_finalize(plan_dir, state)
         state = _reconcile_failed_no_next_after_blocked_execute(plan_dir, state)
+        state = _reconcile_failed_review_after_successful_execute(plan_dir, state)
     _validate_persisted_phase_models(plan_dir, state)
     return plan_dir, state
 
