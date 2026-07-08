@@ -234,9 +234,9 @@ test("composer apply display state projects canonical candidate, stage, and rout
 
 // ── LIFECYCLE_STATE_FIELDS ──────────────────────────────────────────────────
 
-test("LIFECYCLE_STATE_FIELDS exports frozen array with 52 field names", () => {
+test("LIFECYCLE_STATE_FIELDS exports frozen array with 53 field names", () => {
   assert.ok(Object.isFrozen(LIFECYCLE_STATE_FIELDS));
-  assert.equal(LIFECYCLE_STATE_FIELDS.length, 52);
+  assert.equal(LIFECYCLE_STATE_FIELDS.length, 53);
 
   // Spot-check key categories
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("phase"));
@@ -250,6 +250,7 @@ test("LIFECYCLE_STATE_FIELDS exports frozen array with 52 field names", () => {
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("baselineTurnId"));
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("baselineGraphHash"));
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("candidateGraph"));
+  assert.ok(LIFECYCLE_STATE_FIELDS.includes("candidateBaselineGraph"));
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("candidateGraphHash"));
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("candidateReport"));
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("customNodeResolution"));
@@ -267,6 +268,7 @@ test("LIFECYCLE_STATE_FIELDS exports frozen array with 52 field names", () => {
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("rebaselinePending"));
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("lastSubmit"));
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("lastAppliedChanges"));
+  assert.ok(LIFECYCLE_STATE_FIELDS.includes("candidateBaselineGraph"));
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("changeDetails"));
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("transcriptMessages"));
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("responseDetails"));
@@ -280,12 +282,12 @@ test("LIFECYCLE_STATE_FIELDS exports frozen array with 52 field names", () => {
   assert.ok(LIFECYCLE_STATE_FIELDS.includes("deltaOps"));
 
   // No duplicates
-  assert.equal(new Set(LIFECYCLE_STATE_FIELDS).size, 52);
+  assert.equal(new Set(LIFECYCLE_STATE_FIELDS).size, 53);
 });
 
 // ── createAgentEditState ────────────────────────────────────────────────────
 
-test("createAgentEditState initializes all 52 lifecycle fields to defaults", () => {
+test("createAgentEditState initializes all 53 lifecycle fields to defaults", () => {
   const state = createAgentEditState();
 
   // Every field from LIFECYCLE_STATE_FIELDS must exist on the returned object
@@ -296,9 +298,9 @@ test("createAgentEditState initializes all 52 lifecycle fields to defaults", () 
     );
   }
 
-  // No extra own keys beyond the 52 fields
+  // No extra own keys beyond the 53 fields
   const ownKeys = Object.keys(state);
-  assert.equal(ownKeys.length, 52);
+  assert.equal(ownKeys.length, 53);
 
   // Phase default
   assert.equal(state.phase, PANEL_STATE.IDLE);
@@ -6557,4 +6559,3 @@ test("ACCEPT_REJECTED transitions to ERROR phase", () => {
   // Handler does not attach toast obligation
   assert.equal(obligations.toast, undefined);
 });
-

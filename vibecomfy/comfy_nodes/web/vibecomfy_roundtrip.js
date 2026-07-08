@@ -8052,6 +8052,15 @@ export function drawPreviewOverlay(ctx, diff) {
       return safePreviewOverlayText(field.new_value, "");
     };
 
+    var _previewFieldValueText = function (labelText, valueText) {
+      var value = String(valueText == null ? "" : valueText);
+      var label = String(labelText == null ? "" : labelText).trim();
+      if (!label) {
+        return value;
+      }
+      return label + ": " + value;
+    };
+
     var editedFieldsByUid = new Map();
     if (diff.edited_fields && diff.edited_fields.length > 0) {
       for (var _efg = 0; _efg < diff.edited_fields.length; _efg += 1) {
@@ -8119,7 +8128,10 @@ export function drawPreviewOverlay(ctx, diff) {
         ctx.textBaseline = "middle";
         ctx.textAlign = "right";
         ctx.fillStyle = hexToRgba(VC_COLORS.edited, 0.98);
-        var fitted = _fitTextToWidth(valueText, Math.max(overlayW - padX * 2, 4));
+        var fitted = _fitTextToWidth(
+          _previewFieldValueText(labelText, valueText),
+          Math.max(overlayW - padX * 2, 4),
+        );
         ctx.fillText(fitted, overlayX + overlayW - padX, overlayY + overlayH / 2);
       } finally {
         ctx.restore();

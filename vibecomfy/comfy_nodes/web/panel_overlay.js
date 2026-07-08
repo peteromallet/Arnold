@@ -177,14 +177,23 @@ function previewChipGeometry(bounds, labelText) {
   };
 }
 
-function appendPreviewDomChip(root, app, bounds, valueText) {
+function previewFieldValueText(labelText, valueText) {
+  const value = String(valueText == null ? "" : valueText);
+  const label = String(labelText == null ? "" : labelText).trim();
+  if (!label) {
+    return value;
+  }
+  return `${label}: ${value}`;
+}
+
+function appendPreviewDomChip(root, app, bounds, valueText, labelText = "") {
   const viewport = graphBoundsToViewport(bounds, app);
   if (!viewport || viewport.width <= 0 || viewport.height <= 0) {
     return;
   }
   const chip = root.ownerDocument.createElement("div");
   chip.dataset.vibecomfyPreviewChip = "1";
-  chip.textContent = String(valueText || "");
+  chip.textContent = previewFieldValueText(labelText, valueText);
   Object.assign(chip.style, {
     position: "fixed",
     left: `${viewport.left}px`,
@@ -328,7 +337,7 @@ export function syncPreviewDomOverlay(app, ctx, diff, candidateGraph, deps = {})
       if (!chipBounds) {
         continue;
       }
-      appendPreviewDomChip(root, app, chipBounds, valueText);
+      appendPreviewDomChip(root, app, chipBounds, valueText, labelText);
       chipCount += 1;
     }
   }
@@ -767,7 +776,10 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
         ctx.textBaseline = "middle";
         ctx.textAlign = "right";
         ctx.fillStyle = hexToRgba(VC_COLORS.edited, 0.98);
-        var fitted = fitTextToWidth(valueText, Math.max(overlayW - padX * 2, 4));
+        var fitted = fitTextToWidth(
+          previewFieldValueText(labelText, valueText),
+          Math.max(overlayW - padX * 2, 4),
+        );
         ctx.fillText(fitted, overlayX + overlayW - padX, overlayY + overlayH / 2);
       } finally {
         ctx.restore();

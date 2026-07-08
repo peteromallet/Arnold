@@ -7840,7 +7840,7 @@ test("VibeComfy edited widget field values render on their widget rows instead o
     assert.equal(amberValuePanels[0][1], NODE_POS[1] + 48 + 2, "seed value overlay must sit on widget row 0");
     assert.equal(amberValuePanels[1][1], NODE_POS[1] + 72 + 2, "steps value overlay must sit on widget row 1");
 
-    const newValueTexts = drawOps.filter((op) => op.kind === "fillText" && (op.args[0] === "5" || op.args[0] === "24"));
+    const newValueTexts = drawOps.filter((op) => op.kind === "fillText" && (op.args[0] === "seed: 5" || op.args[0] === "steps: 24"));
     assert.equal(newValueTexts.length, 2, "new widget values must be drawn as row text");
     assert.deepEqual(
       newValueTexts.map((op) => op.args[2]),
@@ -7849,6 +7849,7 @@ test("VibeComfy edited widget field values render on their widget rows instead o
     );
     const oldCornerChipTexts = drawOps
       .filter((op) => op.kind === "fillText")
+      .filter((op) => op.args[2] > NODE_POS[1] + 100)
       .map((op) => op.args[0])
       .filter((text) => text === "seed: 5" || text === "steps: 24");
     assert.deepEqual(oldCornerChipTexts, [], "widget fields must not render stacked corner chips");
@@ -8171,7 +8172,7 @@ test("VibeComfy preview widget value chips render in a fixed DOM overlay above C
     assert.equal(root.style.zIndex, "2147483647");
     const chips = root.querySelectorAll((node) => node.dataset?.vibecomfyPreviewChip === "1");
     assert.equal(chips.length, 1);
-    assert.equal(chips[0].textContent, "new prompt visible above textarea");
+    assert.equal(chips[0].textContent, "text: new prompt visible above textarea");
     assert.equal(chips[0].style.position, "fixed");
     assert.equal(chips[0].style.zIndex, "2147483647");
     assert.notEqual(chips[0].style.left, "");

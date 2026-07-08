@@ -141,6 +141,7 @@ export const LIFECYCLE_STATE_FIELDS = Object.freeze([
 
   // Candidate review
   "candidateGraph",
+  "candidateBaselineGraph",
   "candidateGraphHash",
   "candidateReport",
   "serverSubmitGraphHash",
@@ -246,6 +247,7 @@ export function createAgentEditState() {
 
     // Candidate review
     candidateGraph: null,
+    candidateBaselineGraph: null,
     candidateGraphHash: null,
     candidateReport: null,
     serverSubmitGraphHash: null,
@@ -890,6 +892,12 @@ function _writeLatestCandidateTransition(panel, payload) {
   _handleSyncBaseline(panel, payload?.baseline || payload?.result || {});
   _handleInvalidateCandidate(panel, { repaint: false });
   panel.state.candidateGraph = candidateGraph;
+  panel.state.candidateBaselineGraph =
+    payload?.baselineGraph && typeof payload.baselineGraph === "object"
+      ? payload.baselineGraph
+      : panel.state.lastSubmit?.graph && typeof panel.state.lastSubmit.graph === "object"
+        ? panel.state.lastSubmit.graph
+      : null;
   panel.state.candidateGraphHash =
     candidate?.graphHash
     || candidate?.candidateGraphHash
@@ -1014,6 +1022,7 @@ function _handleInvalidateCandidate(panel, payload) {
 
   // Clear candidate review fields
   panel.state.candidateGraph = null;
+  panel.state.candidateBaselineGraph = null;
   panel.state.candidateGraphHash = null;
   panel.state.candidateReport = null;
   panel.state.serverSubmitGraphHash = null;
@@ -1055,6 +1064,7 @@ const LIFECYCLE_BASELINE_RESTORE_FIELDS = Object.freeze([
   "baselineRebaselineId",
   "baselineGraphSourcePath",
   "candidateGraph",
+  "candidateBaselineGraph",
   "candidateGraphHash",
   "candidateReport",
   "serverSubmitGraphHash",
@@ -1525,6 +1535,12 @@ function _handleCandidateResponse(panel, payload) {
   _handleSyncBaseline(panel, result);
   _handleInvalidateCandidate(panel, { repaint: false });
   panel.state.candidateGraph = candidateGraph;
+  panel.state.candidateBaselineGraph =
+    payload?.baselineGraph && typeof payload.baselineGraph === "object"
+      ? payload.baselineGraph
+      : panel.state.lastSubmit?.graph && typeof panel.state.lastSubmit.graph === "object"
+        ? panel.state.lastSubmit.graph
+      : null;
   panel.state.candidateGraphHash =
     projectedCandidate?.graphHash
     || projectedCandidate?.candidateGraphHash
