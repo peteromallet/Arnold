@@ -488,11 +488,15 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
             next_step = payload.get("next_step")
             if not isinstance(next_step, str) or not next_step:
                 raise CliError("invalid_status", "Remote status did not include a next_step")
-            from arnold_pipelines.megaplan.auto import _phase_command
+            plan_name = getattr(args, "plan", None)
+            if payload.get("state") == "failed" and isinstance(plan_name, str) and plan_name:
+                argv = ["resume", "--plan", plan_name]
+            else:
+                from arnold_pipelines.megaplan.auto import _phase_command
 
-            argv = list(_phase_command(next_step, substrate=cloud_substrate))
-            if getattr(args, "plan", None):
-                argv.extend(["--plan", args.plan])
+                argv = list(_phase_command(next_step, substrate=cloud_substrate))
+                if plan_name:
+                    argv.extend(["--plan", plan_name])
             command = f"cd {shlex.quote(resume_workspace)} && arnold {shlex.join(argv)}"
             result = provider.ssh_exec(command)
             _relay_output(result, secret_names=spec.secrets, env=os.environ)
