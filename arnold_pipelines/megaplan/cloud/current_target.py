@@ -20,6 +20,8 @@ _TERMINAL_PLAN_STATES = {"done", "aborted", "cancelled"}
 
 SessionLiveProbe = Callable[[str], bool | None]
 PidLiveProbe = Callable[[int], bool | None]
+CIHealthCollector = Callable[..., dict[str, Any]]
+
 
 def _fingerprint(path: Path) -> str:
     """Return hex digest of file content, or empty string when unavailable."""
@@ -48,6 +50,9 @@ def resolve_current_target(
     repair_data_dir: str | Path | None = None,
     session_is_live: SessionLiveProbe | None = None,
     pid_is_live: PidLiveProbe | None = None,
+    repo_root: str | Path | None = None,
+    base_branch: str = "main",
+    ci_health_collector: CIHealthCollector | None = None,
 ) -> dict[str, Any]:
     """Return a stable evidence record for the current repair target.
 
@@ -72,6 +77,10 @@ def resolve_current_target(
             "tmux_process": {},
             "needs_human": {},
             "repair_progress": {"present": False, "items": []},
+            "ci_health": _ci_health_unavailable(
+                reason="resolver_observe_disabled",
+                base_branch=base_branch,
+            ),
             "chain_log": {},
             "active_step_heartbeat": {},
             "read_snapshot": {},
@@ -123,6 +132,11 @@ def resolve_current_target(
     needs_human_plans = _collect_needs_human_plan_refs(needs_human)
     repair_progress = _collect_sidecar_status(markers_root, session)
     tmux_process = _collect_tmux_process_evidence(marker, session, session_is_live, pid_is_live)
+    ci_health = _collect_ci_health_evidence(
+        repo_root=repo_root,
+        base_branch=base_branch,
+        collector=ci_health_collector or _default_ci_health_collector,
+    )
     siblings = _collect_sibling_sessions(
         markers_root,
         session=session,
@@ -321,6 +335,7 @@ def resolve_current_target(
             "blocked_task_id": _extract_blocked_task_id(needs_human),
         },
         "repair_progress": repair_progress,
+        "ci_health": ci_health,
         "chain_log": chain_log,
         "active_step_heartbeat": active_step_heartbeat,
         "read_snapshot": read_snapshot,
@@ -351,6 +366,8 @@ def _safe_plan_name(value: object) -> str:
 
 
 def _safe_path(value: object) -> Path | None:
+    if isinstance(value, Path):
+        return value
     text = _safe_text(value)
     return Path(text) if text else None
 
@@ -374,6 +391,79 @@ def _resolve_run_kind(value: object, remote_spec: Path | None) -> str:
     if remote_spec is not None and remote_spec.name == "epic-chain.yaml":
         return "epic_chain"
     return "unknown"
+
+
+def _default_ci_health_collector(
+    repo_root: Path | str,
+    *,
+    base_branch: str = "main",
+) -> dict[str, Any]:
+    from arnold_pipelines.megaplan.cloud.auditor_external_evidence import collect_ci_health
+
+    return collect_ci_health(repo_root, base_branch=base_branch)
+
+
+def _collect_ci_health_evidence(
+    *,
+    repo_root: str | Path | None,
+    base_branch: str,
+    collector: CIHealthCollector,
+) -> dict[str, Any]:
+    resolved_base_branch = _safe_text(base_branch) or "main"
+    resolved_repo_root = _safe_path(repo_root)
+    if resolved_repo_root is None:
+        return _ci_health_unavailable(
+            reason="repo_context_unavailable",
+            base_branch=resolved_base_branch,
+        )
+    try:
+        payload = collector(resolved_repo_root, base_branch=resolved_base_branch)
+    except FileNotFoundError:
+        return _ci_health_unavailable(
+            reason="gh_unavailable",
+            repo_root=resolved_repo_root,
+            base_branch=resolved_base_branch,
+        )
+    except Exception as exc:
+        return _ci_health_unavailable(
+            reason="ci_health_collection_failed",
+            repo_root=resolved_repo_root,
+            base_branch=resolved_base_branch,
+            error_type=exc.__class__.__name__,
+        )
+    if not isinstance(payload, Mapping):
+        return _ci_health_unavailable(
+            reason="ci_health_invalid_payload",
+            repo_root=resolved_repo_root,
+            base_branch=resolved_base_branch,
+        )
+
+    normalized = _stable_mapping(payload)
+    normalized.setdefault("status", "unavailable")
+    normalized.setdefault("available", normalized.get("status") != "unavailable")
+    normalized.setdefault("base_branch", resolved_base_branch)
+    normalized.setdefault("repo_root", str(resolved_repo_root))
+    normalized.setdefault("source", "current_target")
+    return normalized
+
+
+def _ci_health_unavailable(
+    *,
+    reason: str,
+    base_branch: str = "main",
+    repo_root: Path | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "status": "unavailable",
+        "available": False,
+        "source": "current_target",
+        "repo_root": str(repo_root) if repo_root is not None else "",
+        "base_branch": _safe_text(base_branch) or "main",
+        "reason": reason,
+    }
+    payload.update(extra)
+    return payload
 
 
 def _chain_state_path(workspace: Path | None, remote_spec: Path | None, run_kind: str) -> Path | None:

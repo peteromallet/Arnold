@@ -1,3 +1,7 @@
+---
+superseded_by: custody-control-plane
+---
+
 # Load-Bearing Questions: Superfixer Repair Custody
 
 These are the decisions that determine the shape of the sprint. Each answer is the current working position before the second DeepSeek review pass.

@@ -1,3 +1,7 @@
+---
+superseded_by: custody-control-plane
+---
+
 # M2: Repairer Integration
 
 ## Outcome
@@ -49,4 +53,3 @@ Out:
 - Meta repair source fixes require install-sync and retrigger evidence before they are considered shipped.
 - `megaplan incident brief` can explain the full repairer chain for fixture incidents.
 - Regression tests cover the known failure classes that motivated this initiative.
-

@@ -392,10 +392,16 @@ sys.path.insert(0, arnold_src)
 sys.path.insert(0, str(pathlib.Path.cwd()))
 
 from arnold_pipelines.megaplan.cloud.redact import redact_text
+from arnold_pipelines.megaplan.cloud.auditor_external_evidence import (
+    collect_ci_health,
+    collect_engine_tree_evidence,
+)
+from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
 from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
 from arnold_pipelines.megaplan.cloud.repair_contract import read_jsonl_records
 import arnold_pipelines.megaplan.cloud.six_hour_auditor as six_hour_auditor
 import arnold_pipelines.megaplan.incident.summaries as incident_summaries
+from arnold_pipelines.megaplan.run_state.resolver import resolve_run_state
 
 MAX_CROSS_REF_ITEMS = 3
 MAX_COMMIT_REFS = 5
@@ -2370,28 +2376,44 @@ def _incident_live_snapshot(
     prior_watchdog_report_refs,
     meta_repair_refs,
     attempt_refs,
+    current_target=None,
+    active_step_liveness=None,
 ):
     incident_session_ids = incident.get("session_ids") if isinstance(incident, dict) else []
     if not isinstance(incident_session_ids, list) or not incident_session_ids:
         incident_session_ids = [session]
     process_session_id = next((str(item) for item in incident_session_ids if item), session)
     processes = []
-    if attempt_refs:
+    tmux_process = current_target.get("tmux_process") if isinstance(current_target, dict) else {}
+    if not isinstance(tmux_process, dict):
+        tmux_process = {}
+    tmux_pid = tmux_process.get("pid")
+    if not isinstance(tmux_pid, int):
+        tmux_pid = None
+    tmux_evidence = {
+        "session": tmux_process.get("session") or process_session_id,
+        "pid": tmux_pid,
+        "pid_live": tmux_process.get("pid_live") if isinstance(tmux_process.get("pid_live"), bool) else None,
+        "session_live": tmux_process.get("session_live") if isinstance(tmux_process.get("session_live"), bool) else None,
+        "live_status": str(tmux_process.get("live_status") or "").strip().lower(),
+    }
+    active_step_evidence = dict(active_step_liveness) if isinstance(active_step_liveness, dict) else {"present": False}
+    live_evidence_sources = []
+    if active_step_evidence.get("worker_pid_alive") is True:
+        live_evidence_sources.append("active_step_pid")
+    if tmux_evidence.get("pid_live") is True:
+        live_evidence_sources.append("tmux_pid")
+    if tmux_evidence.get("session_live") is True or tmux_evidence.get("live_status") == "alive":
+        live_evidence_sources.append("tmux_session")
+    if attempt_refs and live_evidence_sources:
         latest_attempt = attempt_refs[-1]
         processes.append(
             {
                 "actor": "immediate_repair",
                 "session_id": process_session_id,
                 "started_at": latest_attempt.get("updated_at") or latest_attempt.get("created_at") or incident.get("last_timestamp"),
-            }
-        )
-    if meta_repair_refs:
-        latest_meta = meta_repair_refs[-1]
-        processes.append(
-            {
-                "actor": "meta_repair",
-                "session_id": process_session_id,
-                "started_at": latest_meta.get("updated_at") or latest_meta.get("created_at") or incident.get("last_timestamp"),
+                "worker_pid": active_step_evidence.get("worker_pid") or tmux_pid,
+                "live_evidence_sources": live_evidence_sources,
             }
         )
     snapshot = {
@@ -2404,6 +2426,11 @@ def _incident_live_snapshot(
         },
         "github_sync": {
             "last_attempt_at": _publication_attempt_ts(incident, problem),
+        },
+        "immediate_repair": {
+            "active_step_liveness": active_step_evidence,
+            "tmux_process": tmux_evidence,
+            "evidence_refs": attempt_refs,
         },
         "meta_repair": {
             "evidence_refs": meta_repair_refs,
@@ -2426,9 +2453,17 @@ def _reconciler_reasons(incident_audit):
             continue
         if finding.get("status") == "ok":
             continue
-        reasons.append(
-            f"reconciler {finding.get('layer')}={finding.get('code')}: {finding.get('message')}"
-        )
+        if str(finding.get("code") or "").strip() == "DRIFT_DETECTED":
+            drift_reason = str(finding.get("drift_reason") or "").strip()
+            if drift_reason:
+                reasons.append(drift_reason)
+            else:
+                reasons.append(
+                    f"{finding.get('source_pair') or 'unknown_source_pair'}:"
+                    f"{finding.get('contradiction') or 'unspecified_contradiction'}"
+                )
+            continue
+        reasons.append(f"reconciler {finding.get('layer')}={finding.get('code')}: {finding.get('message')}")
     return reasons
 
 def _chain_state_looks_terminal(chain_current):
@@ -2593,6 +2628,156 @@ def _meta_repair_gap_is_primary(incident_brief, incident_projection, incident_au
             return True
     return False
 
+def _ci_health_unavailable(repo_root, *, reason, **extra):
+    payload = {
+        "status": "unavailable",
+        "available": False,
+        "base_branch": "main",
+        "repo_root": str(repo_root),
+        "reason": reason,
+    }
+    payload.update(extra)
+    return payload
+
+def _engine_tree_unavailable(repo_root, workspace_root, *, reason, **extra):
+    payload = {
+        "status": "unavailable",
+        "available": False,
+        "repo_root": str(repo_root),
+        "workspace_root": str(workspace_root),
+        "reason": reason,
+        "import_consumers": [],
+    }
+    payload.update(extra)
+    return payload
+
+def _normalize_engine_tree_evidence(value, *, repo_root, workspace_root):
+    if not isinstance(value, dict):
+        return _engine_tree_unavailable(
+            repo_root,
+            workspace_root,
+            reason="engine_tree_invalid_payload",
+        )
+    normalized = dict(value)
+    if not isinstance(normalized.get("import_consumers"), list):
+        impacted_consumers = normalized.get("impacted_consumers")
+        normalized["import_consumers"] = impacted_consumers if isinstance(impacted_consumers, list) else []
+    return normalized
+
+def _collect_external_ci_health(repo_root):
+    if not repo_root.is_dir():
+        return _ci_health_unavailable(repo_root, reason="repo_context_unavailable")
+    try:
+        payload = collect_ci_health(repo_root, base_branch="main")
+    except Exception as exc:
+        return _ci_health_unavailable(
+            repo_root,
+            reason="ci_health_collection_failed",
+            error=str(exc),
+        )
+    if not isinstance(payload, dict):
+        return _ci_health_unavailable(repo_root, reason="ci_health_invalid_payload")
+    return dict(payload)
+
+def _candidate_engine_tree_roots(workspace_root, repo_root):
+    candidates = [repo_root, workspace_root / ".megaplan" / "runtime" / "editable-engine"]
+    deduped = []
+    seen = set()
+    for candidate in candidates:
+        resolved = pathlib.Path(candidate).expanduser()
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(resolved)
+    return deduped
+
+def _collect_external_engine_tree(repo_root, workspace_root):
+    if not repo_root.is_dir():
+        return _engine_tree_unavailable(
+            repo_root,
+            workspace_root,
+            reason="repo_context_unavailable",
+        )
+    try:
+        payload = collect_engine_tree_evidence(
+            repo_root,
+            workspace_root=workspace_root,
+            candidate_mirror_roots=_candidate_engine_tree_roots(workspace_root, repo_root),
+        )
+    except Exception as exc:
+        return _engine_tree_unavailable(
+            repo_root,
+            workspace_root,
+            reason="engine_tree_collection_failed",
+            error=str(exc),
+        )
+    return _normalize_engine_tree_evidence(
+        payload,
+        repo_root=repo_root,
+        workspace_root=workspace_root,
+    )
+
+def _current_target_fallback(session, *, repo_root, reason, **extra):
+    payload = {
+        "schema_version": 1,
+        "session": session,
+        "target_id": f"{session}:unknown",
+        "authoritative_source": "current_target_unavailable",
+        "current_refs": {},
+        "stale_evidence": [],
+        "rationale": [reason],
+        "ci_health": _ci_health_unavailable(repo_root, reason=reason),
+    }
+    payload.update(extra)
+    return payload
+
+def _resolve_current_target_evidence(session, *, workspace_root, repo_root):
+    marker_dir = pathlib.Path(os.environ.get("MEGAPLAN_AUDIT_MARKER_DIR", "/workspace/.megaplan/cloud-sessions"))
+    repair_data_dir = pathlib.Path(
+        os.environ.get("MEGAPLAN_AUDIT_REPAIR_DATA_DIR", str(marker_dir / "repair-data"))
+    )
+    try:
+        payload = resolve_current_target(
+            session,
+            marker_dir=marker_dir,
+            repair_data_dir=repair_data_dir,
+            repo_root=repo_root,
+            base_branch="main",
+        )
+    except Exception as exc:
+        return _current_target_fallback(
+            session,
+            repo_root=repo_root,
+            reason="current_target_collection_failed",
+            error=str(exc),
+        )
+    if not isinstance(payload, dict):
+        return _current_target_fallback(
+            session,
+            repo_root=repo_root,
+            reason="current_target_invalid_payload",
+        )
+    normalized = dict(payload)
+    normalized.setdefault("session", session)
+    normalized.setdefault("ci_health", _ci_health_unavailable(repo_root, reason="current_target_missing_ci_health"))
+    return normalized
+
+def _resolve_resolver_state_payload(current_target):
+    try:
+        resolved = resolve_run_state(current_target)
+    except Exception as exc:
+        return {
+            "canonical_state": "UNKNOWN",
+            "confidence": "low",
+            "next_action": "auditor_escalate_to_human",
+            "stale_sources": [],
+            "reason": str(exc),
+        }
+    if hasattr(resolved, "to_dict"):
+        resolved = resolved.to_dict()
+    return dict(resolved) if isinstance(resolved, dict) else {}
+
 def _plan_evidence(entry):
     workspace = entry["workspace"]
     plan = entry["plan"]
@@ -2730,11 +2915,34 @@ def _plan_evidence(entry):
     incident_brief = audit_input.get("brief") if isinstance(audit_input.get("brief"), dict) else {}
     incident_projection = audit_input.get("incident") if isinstance(audit_input.get("incident"), dict) else {}
     problem_projection = audit_input.get("problem") if isinstance(audit_input.get("problem"), dict) else {}
+    repo_root = COMMIT_SOURCE_DIR.expanduser().resolve()
+    current_target = _resolve_current_target_evidence(
+        session,
+        workspace_root=workspace_path,
+        repo_root=repo_root,
+    )
+    resolver_state = _resolve_resolver_state_payload(current_target)
+    ci_health = _collect_external_ci_health(repo_root)
+    engine_tree = _collect_external_engine_tree(repo_root, workspace_path)
+    projection_input = audit_input.get("projection_input") if isinstance(audit_input.get("projection_input"), dict) else {}
+    projection_input = {
+        **projection_input,
+        "brief": incident_brief,
+        "incident": incident_projection,
+        "problem": problem_projection,
+        "current_target": current_target,
+        "resolver_state": resolver_state,
+        "ci_health": ci_health,
+        "engine_tree": engine_tree,
+    }
     incident_audit = {}
     if incident_brief.get("found"):
         incident_summaries.write_projection_summaries(projections=audit_input.get("projections"), root=workspace_path)
+        audit_request = dict(audit_input)
+        audit_request.update(projection_input)
+        audit_request["projection_input"] = projection_input
         incident_audit = six_hour_auditor.audit_projection_input(
-            audit_input,
+            audit_request,
             live_process_snapshot=_incident_live_snapshot(
                 session=session,
                 incident=incident_projection,
@@ -2743,6 +2951,8 @@ def _plan_evidence(entry):
                 prior_watchdog_report_refs=prior_watchdog_report_refs,
                 meta_repair_refs=cross_refs.get("meta_repair_refs") or [],
                 attempt_refs=cross_refs.get("attempt_refs") or [],
+                current_target=current_target,
+                active_step_liveness=active_liveness,
             ),
             now=_now_iso(),
         )
@@ -3327,6 +3537,7 @@ record_incident_audits() {
   local findings_path="$1"
   PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$findings_path" "$GATHER_DIR" "$AUDIT_GITHUB_REPO" "$AUDIT_GITHUB_REPO_PATH" "$AUDIT_GITHUB_LABELS" <<'PY'
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -3335,9 +3546,22 @@ from arnold_pipelines.megaplan.cloud.github_sync import (
     GitHubSyncConfig,
     sync_persistent_problems,
 )
+from arnold_pipelines.megaplan.cloud.human_blockers import (
+    EscalationLedgerWriter,
+    build_needs_human_marker,
+    compute_escalation_id,
+    supersede_needs_human_marker,
+    write_needs_human_marker_payload,
+)
 from arnold_pipelines.megaplan.cloud.incident_bridge import (
     append_six_hour_auditor_audit_complete,
     append_six_hour_auditor_diagnosis,
+)
+from arnold_pipelines.megaplan.cloud.repair_contract import (
+    load_json,
+    load_repair_index,
+    update_incident_index,
+    update_session_index,
 )
 
 findings_path = Path(sys.argv[1])
@@ -3362,11 +3586,155 @@ def _normalize_handoff(outcome, raw_handoff):
         "github_sync.publish",
         "six_hour_auditor.diagnosis",
     }
+    if outcome == "auditor_human_escalation" or raw_handoff == "auditor_escalate_to_human":
+        return None
     if raw_handoff in allowed:
         return raw_handoff
     if outcome == "recovered":
         return None
     return "six_hour_auditor.diagnosis"
+
+def _repair_data_dir_for_workspace(workspace):
+    configured = os.environ.get("MEGAPLAN_AUDIT_REPAIR_DATA_DIR", "").strip()
+    if configured:
+        return Path(configured)
+    workspace_path = Path(workspace)
+    return workspace_path.parent / ".megaplan" / "cloud-sessions" / "repair-data"
+
+def _session_index_entry(index_payload, session_id):
+    sessions = index_payload.get("sessions") if isinstance(index_payload.get("sessions"), dict) else {}
+    return sessions.get(session_id) if isinstance(sessions.get(session_id), dict) else {}
+
+def _seed_human_escalation_payload(item, incident_id, session_id, repair_payload):
+    payload = dict(repair_payload) if isinstance(repair_payload, dict) else {}
+    payload.setdefault("schema_version", 1)
+    payload.setdefault("session", session_id)
+    payload.setdefault("workspace", item.get("workspace") or "")
+    payload.setdefault("run_kind", ((item.get("session_header") or {}).get("kind") or "chain"))
+    payload.setdefault("spec", ((item.get("session_header") or {}).get("remote_spec") or ""))
+    payload.setdefault("plan_name", item.get("plan") or "")
+    payload.setdefault("incident_id", incident_id)
+    target = payload.get("target") if isinstance(payload.get("target"), dict) else {}
+    current_refs = target.get("current_refs") if isinstance(target.get("current_refs"), dict) else {}
+    if item.get("plan"):
+        current_refs.setdefault("current_plan_name", item.get("plan"))
+    if current_refs:
+        target["current_refs"] = current_refs
+    target.setdefault("authoritative_source", "six_hour_auditor")
+    payload["target"] = target
+    iterations = payload.get("iterations")
+    if not isinstance(iterations, list) or not iterations:
+        incident_audit = item.get("incident_audit") if isinstance(item.get("incident_audit"), dict) else {}
+        diagnosis = incident_audit.get("diagnosis") if isinstance(incident_audit.get("diagnosis"), dict) else {}
+        audit_complete = incident_audit.get("audit_complete") if isinstance(incident_audit.get("audit_complete"), dict) else {}
+        payload["iterations"] = [
+            {
+                "i": "l3-auditor",
+                "mechanical_launch": "auditor_human_escalation",
+                "why": audit_complete.get("summary")
+                or diagnosis.get("summary")
+                or f"Six-hour auditor escalated incident {incident_id} to a human operator.",
+            }
+        ]
+    return payload
+
+def _record_auditor_human_escalation(item, incident_id, session_id, problem_id):
+    workspace = item.get("workspace")
+    if not workspace or not session_id:
+        return
+    repair_data_dir = _repair_data_dir_for_workspace(workspace)
+    repair_data_dir.mkdir(parents=True, exist_ok=True)
+    repair_data_path = repair_data_dir / f"{session_id}.repair-data.json"
+    marker_path = repair_data_dir / f"{session_id}.needs-human.json"
+    sidecar_dir = repair_data_dir.with_name(f"{repair_data_dir.name}.d")
+    incident_audit = item.get("incident_audit") if isinstance(item.get("incident_audit"), dict) else {}
+    diagnosis = incident_audit.get("diagnosis") if isinstance(incident_audit.get("diagnosis"), dict) else {}
+    audit_complete = incident_audit.get("audit_complete") if isinstance(incident_audit.get("audit_complete"), dict) else {}
+    repair_payload = load_json(repair_data_path, default={})
+    repair_payload = _seed_human_escalation_payload(item, incident_id, session_id, repair_payload)
+    preview_marker = build_needs_human_marker(
+        repair_payload,
+        repair_data_path=repair_data_path,
+        discord_status="pending",
+        escalation_label="auditor_human_escalation",
+    )
+    escalation_id = compute_escalation_id(
+        session_id,
+        target_id=str(preview_marker.get("target_id") or ""),
+        current_plan=str(preview_marker.get("plan_name") or item.get("plan") or repair_payload.get("plan_name") or ""),
+        current_plan_name=str(preview_marker.get("current_plan_name") or ""),
+        needs_human_path=str(marker_path),
+    )
+    writer = EscalationLedgerWriter()
+    writer.enable(sidecar_dir)
+    index_path = repair_data_dir / "index.json"
+    index_payload = load_repair_index(index_path)
+    previous_entry = _session_index_entry(index_payload, session_id)
+    previous_refs = previous_entry.get("refs") if isinstance(previous_entry.get("refs"), dict) else {}
+    previous_escalation = previous_refs.get("unresolved-escalation") if isinstance(previous_refs.get("unresolved-escalation"), dict) else {}
+    previous_escalation_id = str(previous_escalation.get("escalation_id") or "")
+    if previous_escalation_id and previous_escalation_id != escalation_id:
+        marker = supersede_needs_human_marker(
+            marker_path,
+            repair_payload,
+            repair_data_path=repair_data_path,
+            discord_status="pending",
+            previous_escalation_id=previous_escalation_id,
+            superseded_by=escalation_id,
+            ledger_writer=writer,
+            reason="six_hour_auditor escalated a new blocker to human review",
+        )
+    else:
+        marker = write_needs_human_marker_payload(
+            marker_path,
+            repair_payload,
+            repair_data_path=repair_data_path,
+            discord_status="pending",
+            escalation_label="auditor_human_escalation",
+        )
+    if previous_escalation_id != escalation_id:
+        writer.write_opened(
+            session_id,
+            escalation_id=escalation_id,
+            current_plan=str(marker.get("plan_name") or item.get("plan") or repair_payload.get("plan_name") or ""),
+            target_id=str(marker.get("target_id") or ""),
+            extra={
+                "incident_id": incident_id,
+                "problem_id": problem_id or "",
+                "needs_human_path": str(marker_path),
+                "summary": audit_complete.get("summary") or diagnosis.get("summary") or "",
+                "authoritative_source": str(marker.get("authoritative_source") or ""),
+            },
+        )
+    unresolved_ref = {
+        "escalation_id": escalation_id,
+        "incident_id": incident_id,
+        "problem_id": problem_id or "",
+        "path": str(marker_path),
+        "recorded_at": str(marker.get("recorded_at") or ""),
+        "target_id": str(marker.get("target_id") or ""),
+    }
+    update_session_index(
+        index_path,
+        session_id,
+        {
+            "session": session_id,
+            "incident_id": incident_id,
+            "updated_at": str(marker.get("recorded_at") or ""),
+            "refs": {"unresolved-escalation": unresolved_ref},
+        },
+    )
+    if incident_id:
+        update_incident_index(
+            index_path,
+            incident_id,
+            {
+                "session_id": session_id,
+                "problem_id": problem_id or "",
+                "updated_at": str(marker.get("recorded_at") or ""),
+                "refs": {"unresolved-escalation": unresolved_ref},
+            },
+        )
 
 def _issue_repo_for_workspace(workspace):
     workspace_path = Path(workspace)
@@ -3476,6 +3844,8 @@ for item in findings + green_checks:
         links=links,
         root=workspace,
     )
+    if audit_complete.get("outcome") == "auditor_human_escalation":
+        _record_auditor_human_escalation(item, incident_id, session_id, problem_id)
     if raw_handoff == "github_sync.publish":
         workspaces_for_sync[workspace] = True
 

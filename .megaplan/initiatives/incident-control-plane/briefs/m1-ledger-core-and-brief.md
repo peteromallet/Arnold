@@ -1,3 +1,7 @@
+---
+superseded_by: custody-control-plane
+---
+
 # M1: Ledger Core And Incident Brief
 
 ## Outcome
@@ -55,4 +59,3 @@ Out:
 - Missing refs, schema failures, stale claims, and index divergence are visible in brief output.
 - Tests cover concurrent/atomic append behavior to the degree feasible locally.
 - Existing megaplan tests still pass for impacted CLI/state modules.
-

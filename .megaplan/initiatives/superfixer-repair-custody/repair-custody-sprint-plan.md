@@ -1,3 +1,7 @@
+---
+superseded_by: custody-control-plane
+---
+
 # Superfixer Repair Custody Sprint Plan
 
 ## Context

@@ -68,6 +68,7 @@ def _run_gather_program(
     *,
     arnold_src: Path | None = None,
     extra_env: dict[str, str] | None = None,
+    cwd: Path | None = None,
     window_hours: str = "6",
     stall_summary: str = "none",
 ) -> dict:
@@ -102,6 +103,7 @@ def _run_gather_program(
         capture_output=True,
         text=True,
         check=False,
+        cwd=str(cwd or REPO_ROOT),
         env=env,
     )
     assert result.returncode == 0, f"gather program failed: {result.stderr}"
@@ -234,6 +236,258 @@ def _run_record_incident_audits(tmp_path: Path, findings_data: dict) -> list[dic
     return [
         json.loads(line)
         for line in events_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _write_stub_file(root: Path, relative_path: str, content: str) -> None:
+    path = root / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def _build_wrapper_boundary_stub_overlay(
+    tmp_path: Path,
+    *,
+    audit_result: dict | None = None,
+    current_target_payload: dict | None = None,
+) -> tuple[Path, Path, Path]:
+    stub_root = tmp_path / "stub-arnold-src"
+    call_log = tmp_path / "wrapper-boundary-calls.jsonl"
+    audit_capture = tmp_path / "wrapper-boundary-audit.json"
+    audit_result_literal = repr(
+        audit_result
+        or {
+            "incident_id": "inc-demo",
+            "problem_id": "problem-demo",
+            "findings": [
+                {
+                    "layer": "reconciler",
+                    "status": "error",
+                    "severity": "error",
+                    "code": "DRIFT_DETECTED",
+                    "source_pair": "resolver_vs_ledger",
+                    "contradiction": "resolver_canonical_state_conflicts_with_ledger_outcome",
+                    "drift_reason": "resolver_vs_ledger:resolver_canonical_state_conflicts_with_ledger_outcome",
+                    "observed": {"canonical_state": "RUNNING"},
+                    "expected": {
+                        "brief_outcome": "blocked",
+                        "next_expected_event": "immediate_repair.repair_attempt",
+                    },
+                    "message": "Cross-source reconciler drift detected for resolver_vs_ledger.",
+                }
+            ],
+            "diagnosis": {
+                "summary": "Resolver disagrees with the incident ledger.",
+                "finding_count": 1,
+                "highest_severity": "error",
+            },
+            "audit_complete": {
+                "outcome": "escalated",
+                "summary": "Resolver disagrees with the incident ledger.",
+                "next_expected_event": "immediate_repair.repair_attempt",
+            },
+            "next_expected_event": "immediate_repair.repair_attempt",
+        },
+    )
+    current_target_literal = repr(
+        current_target_payload
+        or {
+            "schema_version": 1,
+            "session": "demo-session",
+            "target_id": "demo-session:demo-target",
+            "authoritative_source": "stub_current_target",
+            "current_refs": {"plan": "demo-plan"},
+            "ci_health": {"status": "unavailable", "reason": "stub_current_target_slot"},
+        },
+    )
+
+    package_files = {
+        "arnold_pipelines/__init__.py": "",
+        "arnold_pipelines/megaplan/__init__.py": "",
+        "arnold_pipelines/megaplan/cloud/__init__.py": "",
+        "arnold_pipelines/megaplan/run_state/__init__.py": "",
+        "arnold_pipelines/megaplan/incident/__init__.py": "",
+        "arnold_pipelines/megaplan/cloud/_stub_capture.py": """
+import json
+import os
+from pathlib import Path
+
+
+def append_call(record):
+    path = Path(os.environ["ARNOLD_PROGRESS_AUDITOR_CALL_LOG"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(_jsonable(record), sort_keys=True) + "\\n")
+
+
+def _jsonable(value):
+    if hasattr(value, "to_dict"):
+        return _jsonable(value.to_dict())
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_jsonable(item) for item in value]
+    if hasattr(value, "__fspath__"):
+        return str(value)
+    return value
+
+
+def write_capture(record):
+    path = Path(os.environ["ARNOLD_PROGRESS_AUDITOR_AUDIT_CAPTURE"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_jsonable(record), sort_keys=True), encoding="utf-8")
+""",
+        "arnold_pipelines/megaplan/cloud/redact.py": """
+REDACTION = object()
+
+
+def redact_text(value):
+    return value
+""",
+        "arnold_pipelines/megaplan/cloud/meta_repair.py": """
+from arnold_pipelines.megaplan.cloud._stub_capture import append_call
+
+
+class _Classification:
+    should_dispatch = False
+    trigger_label = ""
+    rationale = []
+
+
+def evaluate_meta_repair_triggers(*args, **kwargs):
+    append_call({"fn": "evaluate_meta_repair_triggers", "kwargs": kwargs})
+    return _Classification(), {}
+""",
+        "arnold_pipelines/megaplan/cloud/repair_contract.py": """
+def read_jsonl_records(*args, **kwargs):
+    return []
+""",
+        "arnold_pipelines/megaplan/cloud/current_target.py": (
+            "from arnold_pipelines.megaplan.cloud._stub_capture import append_call\n\n\n"
+            "def resolve_current_target(session, **kwargs):\n"
+            '    append_call({"fn": "resolve_current_target", "session": session, "kwargs": kwargs})\n'
+            f"    payload = dict({current_target_literal})\n"
+            '    payload["session"] = session\n'
+            "    return payload\n"
+        ),
+        "arnold_pipelines/megaplan/cloud/auditor_external_evidence.py": """
+from arnold_pipelines.megaplan.cloud._stub_capture import append_call
+
+
+def collect_ci_health(repo_root, **kwargs):
+    append_call({"fn": "collect_ci_health", "repo_root": str(repo_root), "kwargs": kwargs})
+    return {
+        "status": "red",
+        "available": True,
+        "base_branch": kwargs.get("base_branch", "main"),
+        "failing_run_count": 2,
+        "failed_checks": [{"name": "build", "state": "fail", "details": "stub"}],
+    }
+
+
+def collect_engine_tree_evidence(repo_root, **kwargs):
+    append_call({"fn": "collect_engine_tree_evidence", "repo_root": str(repo_root), "kwargs": kwargs})
+    return {
+        "status": "red",
+        "available": True,
+        "repo_root": str(repo_root),
+        "workspace_root": str(kwargs.get("workspace_root", "")),
+        "dirty_paths": ["arnold_pipelines/megaplan/cloud/wrappers/arnold-progress-auditor"],
+        "sibling_drift": [{"root": "/workspace/sibling", "changed_paths": ["tests/cloud/test_progress_auditor.py"]}],
+        "import_consumers": ["cloud_wrappers"],
+    }
+""",
+        "arnold_pipelines/megaplan/run_state/resolver.py": """
+from arnold_pipelines.megaplan.cloud._stub_capture import append_call
+
+
+class _ResolvedState:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def to_dict(self):
+        return dict(self._payload)
+
+
+def resolve_run_state(evidence=None, blocker_verdict=None):
+    append_call(
+        {
+            "fn": "resolve_run_state",
+            "evidence": evidence if isinstance(evidence, dict) else {},
+            "blocker_verdict": blocker_verdict,
+        }
+    )
+    return _ResolvedState(
+        {
+            "canonical_state": "REAL_IMPLEMENTATION_BLOCK",
+            "confidence": "high",
+            "next_action": "immediate_repair.repair_attempt",
+            "stale_sources": [],
+            "root_cause_fingerprint": {"kind": "real_impl", "value": "stub-root-cause"},
+        }
+    )
+""",
+        "arnold_pipelines/megaplan/cloud/six_hour_auditor.py": f"""
+from arnold_pipelines.megaplan.cloud._stub_capture import write_capture
+
+AUDIT_RESULT = {audit_result_literal}
+
+
+def build_audit_input(session, *, root, now):
+    return {{
+        "brief": {{
+            "found": True,
+            "incident_id": "inc-demo",
+            "summary": "stub incident",
+            "next_expected_event": "immediate_repair.repair_attempt",
+            "claims": [],
+        }},
+        "incident": {{
+            "incident_id": "inc-demo",
+            "problem_id": "problem-demo",
+            "state": "open",
+            "outcome": "repair_in_progress",
+            "session_ids": [session],
+            "next_expected_event": "immediate_repair.repair_attempt",
+        }},
+        "problem": {{
+            "problem_id": "problem-demo",
+        }},
+        "projections": {{}},
+        "projection_input": {{
+            "seed": "from_stub",
+            "audit_history": [{{"audit_complete": {{"next_expected_event": "immediate_repair.repair_attempt"}}}}],
+        }},
+    }}
+
+
+def audit_projection_input(audit_input, *, live_process_snapshot, now):
+    write_capture(
+        {{
+            "audit_input": audit_input,
+            "live_process_snapshot": live_process_snapshot,
+            "now": now,
+        }}
+    )
+    return AUDIT_RESULT
+""",
+        "arnold_pipelines/megaplan/incident/summaries.py": """
+def write_projection_summaries(*, projections, root):
+    return None
+""",
+    }
+    for relative_path, content in package_files.items():
+        _write_stub_file(stub_root, relative_path, content.lstrip("\n"))
+    return stub_root, call_log, audit_capture
+
+
+def _read_stub_calls(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
 
@@ -990,6 +1244,232 @@ class TestAuditorCrossReferences:
         assert finding["reasons"][0].startswith("reconciler ")
         assert Path(finding["source_refs"]["incident_summary_path"]).exists()
 
+
+class TestAuditorWrapperBoundary:
+    def test_gather_passes_resolver_and_external_evidence_through_projection_input(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace" / "demo"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "executing",
+                    "iteration": 2,
+                    "last_gate": {"recommendation": "iterate"},
+                    "history": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+
+        stub_root, call_log, audit_capture = _build_wrapper_boundary_stub_overlay(tmp_path)
+        repair_root = tmp_path / "repair-data"
+        repair_root.mkdir(parents=True, exist_ok=True)
+
+        _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "plan",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            arnold_src=stub_root,
+            cwd=tmp_path,
+            extra_env={
+                "ARNOLD_PROGRESS_AUDITOR_CALL_LOG": str(call_log),
+                "ARNOLD_PROGRESS_AUDITOR_AUDIT_CAPTURE": str(audit_capture),
+                "MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root),
+            },
+        )
+
+        calls = _read_stub_calls(call_log)
+        capture = json.loads(audit_capture.read_text(encoding="utf-8"))
+        projection_input = capture["audit_input"]["projection_input"]
+
+        assert {call["fn"] for call in calls} >= {
+            "resolve_current_target",
+            "resolve_run_state",
+            "collect_ci_health",
+            "collect_engine_tree_evidence",
+        }
+        assert projection_input["current_target"]["authoritative_source"] == "stub_current_target"
+        assert projection_input["current_target"]["ci_health"]["reason"] == "stub_current_target_slot"
+        assert projection_input["resolver_state"]["canonical_state"] == "REAL_IMPLEMENTATION_BLOCK"
+        assert projection_input["resolver_state"]["next_action"] == "immediate_repair.repair_attempt"
+        assert projection_input["ci_health"]["status"] == "red"
+        assert projection_input["ci_health"]["failing_run_count"] == 2
+        assert projection_input["engine_tree"]["status"] == "red"
+        assert projection_input["engine_tree"]["import_consumers"] == ["cloud_wrappers"]
+
+    def test_gather_filters_dead_liveness_and_uses_drift_metadata_for_reasons(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace" / "demo"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "executing",
+                    "iteration": 4,
+                    "last_gate": {"recommendation": "iterate"},
+                    "active_step": {"phase": "execute", "attempt": 4, "worker_pid": 999999},
+                    "history": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+
+        repair_root = tmp_path / "repair-data"
+        attempt_dir = repair_root / "attempts"
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "incident_id": "inc-demo",
+                    "attempt_ids": ["attempt-1"],
+                    "current_attempt_id": "attempt-1",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (attempt_dir / "attempt-1.json").write_text(
+            json.dumps({"attempt_id": "attempt-1", "incident_id": "inc-demo"}),
+            encoding="utf-8",
+        )
+
+        stub_root, call_log, audit_capture = _build_wrapper_boundary_stub_overlay(tmp_path)
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "plan",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            arnold_src=stub_root,
+            cwd=tmp_path,
+            extra_env={
+                "ARNOLD_PROGRESS_AUDITOR_CALL_LOG": str(call_log),
+                "ARNOLD_PROGRESS_AUDITOR_AUDIT_CAPTURE": str(audit_capture),
+                "MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root),
+            },
+        )
+
+        capture = json.loads(audit_capture.read_text(encoding="utf-8"))
+        finding = findings["findings"][0]
+        snapshot = capture["live_process_snapshot"]
+        actors = {
+            process.get("actor")
+            for process in snapshot.get("processes", [])
+            if isinstance(process, dict)
+        }
+
+        assert "immediate_repair" not in actors
+        assert snapshot["immediate_repair"]["active_step_liveness"]["worker_pid_alive"] is False
+        assert snapshot["immediate_repair"]["evidence_refs"][0]["attempt_id"] == "attempt-1"
+        assert snapshot["corroboration"]["attempt_ref_count"] == 1
+        assert finding["reasons"][0] == "resolver_vs_ledger:resolver_canonical_state_conflicts_with_ledger_outcome"
+        assert "DRIFT_DETECTED" not in finding["reasons"][0]
+        assert not finding["reasons"][0].startswith("reconciler ")
+
+    def test_gather_uses_live_session_evidence_for_process_snapshot(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace" / "demo"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "current_state": "executing",
+                    "iteration": 4,
+                    "last_gate": {"recommendation": "iterate"},
+                    "history": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+
+        repair_root = tmp_path / "repair-data"
+        attempt_dir = repair_root / "attempts"
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        (repair_root / "demo-session.repair-data.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "incident_id": "inc-demo",
+                    "attempt_ids": ["attempt-1"],
+                    "current_attempt_id": "attempt-1",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (attempt_dir / "attempt-1.json").write_text(
+            json.dumps({"attempt_id": "attempt-1", "incident_id": "inc-demo"}),
+            encoding="utf-8",
+        )
+
+        stub_root, call_log, audit_capture = _build_wrapper_boundary_stub_overlay(
+            tmp_path,
+            current_target_payload={
+                "schema_version": 1,
+                "session": "demo-session",
+                "target_id": "demo-session:demo-target",
+                "authoritative_source": "stub_current_target",
+                "current_refs": {"plan": "demo-plan"},
+                "ci_health": {"status": "unavailable", "reason": "stub_current_target_slot"},
+                "tmux_process": {
+                    "session": "demo-session",
+                    "pid": 4242,
+                    "pid_live": True,
+                    "session_live": True,
+                    "live_status": "alive",
+                },
+            },
+        )
+        _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "plan",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+            arnold_src=stub_root,
+            cwd=tmp_path,
+            extra_env={
+                "ARNOLD_PROGRESS_AUDITOR_CALL_LOG": str(call_log),
+                "ARNOLD_PROGRESS_AUDITOR_AUDIT_CAPTURE": str(audit_capture),
+                "MEGAPLAN_AUDIT_REPAIR_DATA_DIR": str(repair_root),
+            },
+        )
+
+        capture = json.loads(audit_capture.read_text(encoding="utf-8"))
+        processes = capture["live_process_snapshot"]["processes"]
+
+        assert processes[0]["actor"] == "immediate_repair"
+        assert processes[0]["worker_pid"] == 4242
+        assert "tmux_session" in processes[0]["live_evidence_sources"]
+        assert capture["live_process_snapshot"]["immediate_repair"]["evidence_refs"][0]["attempt_id"] == "attempt-1"
+
     def test_gather_populates_bounded_redacted_cross_references(self, tmp_path: Path) -> None:
         workspace = tmp_path / "workspace" / "demo"
         plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
@@ -1288,6 +1768,92 @@ class TestAuditorCrossReferences:
         ]
         assert events[0]["payload"]["next_expected_event"] == "six_hour_auditor.audit_complete"
         assert events[1]["payload"]["next_expected_event"] == "six_hour_auditor.diagnosis"
+
+    def test_record_incident_audits_keeps_auditor_human_escalation_out_of_meta_repair_dispatch(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True, exist_ok=True)
+        findings_data = {
+            "findings": [
+                {
+                    "plan": "demo-plan",
+                    "workspace": str(workspace),
+                    "session": "demo-session",
+                    "incident_brief": {
+                        "incident_id": "inc-124",
+                        "summary": "auditor escalated to a human operator",
+                        "deadline_ts": "2026-07-04T00:00:00+00:00",
+                        "last_timestamp": "2026-07-03T20:00:00+00:00",
+                    },
+                    "incident_projection": {"incident_id": "inc-124"},
+                    "problem_projection": {"problem_id": "problem-124"},
+                    "incident_audit": {
+                        "incident_id": "inc-124",
+                        "problem_id": "problem-124",
+                        "findings": [
+                            {
+                                "layer": "recurrence",
+                                "status": "error",
+                                "severity": "error",
+                                "code": "auditor_recursion_guard",
+                                "recommendation": "auditor_escalate_to_human",
+                                "message": "The auditor found a repeated loop and must hand off to a human.",
+                            }
+                        ],
+                        "diagnosis": {
+                            "summary": "Audit found a repeated loop and requires human escalation.",
+                            "finding_count": 1,
+                            "highest_severity": "error",
+                        },
+                        "audit_complete": {
+                            "outcome": "auditor_human_escalation",
+                            "summary": "Audit found a repeated loop and requires human escalation.",
+                            "next_expected_event": "auditor_escalate_to_human",
+                        },
+                    },
+                    "source_refs": {
+                        "incident_summary_path": str(
+                            workspace / ".megaplan" / "incident-ledger" / "summaries" / "incidents" / "inc-124.json"
+                        ),
+                        "problem_summary_path": str(
+                            workspace / ".megaplan" / "incident-ledger" / "summaries" / "problems" / "problem-124.json"
+                        ),
+                    },
+                }
+            ],
+            "green_checks": [],
+        }
+
+        events = _run_record_incident_audits(tmp_path, findings_data)
+
+        assert [event["payload"]["type"] for event in events] == [
+            "six_hour_auditor.diagnosis",
+            "six_hour_auditor.audit_complete",
+        ]
+        assert events[1]["payload"]["outcome"] == "auditor_human_escalation"
+        assert events[1]["payload"]["next_expected_event"] is None
+        assert events[1]["payload"]["decision"]["reconciler_next_expected_event"] == "auditor_escalate_to_human"
+        assert all(event["payload"].get("next_expected_event") != "meta_repair.repair_attempt" for event in events)
+        repair_data_dir = tmp_path / ".megaplan" / "cloud-sessions" / "repair-data"
+        marker_path = repair_data_dir / "demo-session.needs-human.json"
+        assert marker_path.exists()
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        assert marker["session"] == "demo-session"
+        assert marker["plan_name"] == "demo-plan"
+        assert marker["discord_status"] == "pending"
+        index_payload = json.loads((repair_data_dir / "index.json").read_text(encoding="utf-8"))
+        session_ref = index_payload["sessions"]["demo-session"]["refs"]["unresolved-escalation"]
+        assert session_ref["incident_id"] == "inc-124"
+        assert session_ref["path"] == str(marker_path)
+        escalation_path = tmp_path / ".megaplan" / "cloud-sessions" / "repair-data.d" / "escalations" / "escalations.jsonl"
+        escalation_records = [
+            json.loads(line)
+            for line in escalation_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert escalation_records[-1]["event"] == "opened"
+        assert escalation_records[-1]["incident_id"] == "inc-124"
 
 
 class TestLiveSignalFiltering:
