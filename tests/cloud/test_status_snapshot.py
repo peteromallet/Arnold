@@ -799,6 +799,56 @@ def test_session_entry_carries_progress_block(fx):
     assert statuses == ["done", "in_progress", "pending", "pending"]
 
 
+def test_newer_terminal_chain_state_with_missing_completed_records_is_attention(fx):
+    workspace = fx.root / "epic-run"
+    spec_path = fx.root / "chain.yaml"
+    spec_path.write_text(
+        "base_branch: main\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: m1.md\n"
+        "  - label: m2\n"
+        "    idea: m2.md\n"
+        "  - label: m3\n"
+        "    idea: m3.md\n"
+        "  - label: m4\n"
+        "    idea: m4.md\n",
+        encoding="utf-8",
+    )
+    fx.add_session("epic-run", workspace=str(workspace), remote_spec=str(spec_path))
+    fx.add_chain_health(
+        "epic-run",
+        chain_complete=True,
+        completed_count=4,
+        milestone_count=4,
+        current_plan_name="",
+        last_state="done",
+        updated_at=NOW - timedelta(minutes=5),
+    )
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True, exist_ok=True)
+    (chain_dir / "chain.json").write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 4,
+                "last_state": "done",
+                "completed": [{"label": "m1", "pr_number": 93, "pr_state": "merged"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snap = fx.build()
+    entry = _by_session(snap, "epic-run")
+
+    assert entry["status"] == "attention"
+    assert entry["chain_complete"] is False
+    assert entry["completed_count"] == 1
+    assert entry["milestone_count"] == 4
+    assert entry["progress"]["percent"] == 25
+    assert "chain custody mismatch" in entry["operator_next"]
+
+
 def test_session_entry_progress_none_without_milestones(fx):
     fx.add_session("plan-only", plan_name="planX")
     # chain-health with no milestone_count → nothing to score → progress is None.

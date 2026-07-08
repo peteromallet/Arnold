@@ -2365,7 +2365,7 @@ def _published_pr_target_from_gh(
                 "view",
                 str(pr_number),
                 "--json",
-                "state,mergeCommit,headRefOid",
+                "state,mergedAt,mergeCommit,headRefOid",
             ],
             cwd=str(root),
             capture_output=True,
@@ -2387,6 +2387,9 @@ def _published_pr_target_from_gh(
     state = _string_value(payload.get("state"))
     if not state or state.lower() != "merged":
         return None, f"gh pr view #{pr_number} state={state!r} is not merged"
+    merged_at = _string_value(payload.get("mergedAt"))
+    if not merged_at:
+        return None, f"gh pr view #{pr_number} has no mergedAt timestamp"
     merge_sha = _sha_from_payload_value(payload.get("mergeCommit"))
     if merge_sha:
         return merge_sha, f"gh.pr#{pr_number}.mergeCommit"
@@ -2399,6 +2402,24 @@ def _published_pr_target_from_gh(
 def _completion_record_is_merged_pr(record: dict[str, Any]) -> bool:
     pr_state = _string_value(record.get("pr_state"))
     return bool(pr_state and pr_state.lower() == "merged")
+
+
+def _published_target_is_in_chain_target(
+    root: Path,
+    target: str,
+    chain_state: ChainState | None,
+) -> tuple[bool | None, str]:
+    if chain_state is None:
+        return None, "chain target unavailable"
+    target_ref = _string_value(chain_state.target_base_ref)
+    if not target_ref:
+        return None, "chain target ref unavailable"
+    if _git_is_ancestor(root, target, target_ref):
+        return True, f"published PR target {target[:12]} is contained in {target_ref}"
+    return (
+        False,
+        f"published PR target {target[:12]} is not contained in chain target {target_ref}",
+    )
 
 
 def _published_pr_semantic_diff_nonempty_from_base(
@@ -2419,6 +2440,13 @@ def _published_pr_semantic_diff_nonempty_from_base(
         target, source = _published_pr_target_from_record(record, chain_state)
     if target is None:
         return None, f"published PR target unavailable: {source}"
+    landed_ok, landed_reason = _published_target_is_in_chain_target(
+        root,
+        target,
+        chain_state,
+    )
+    if landed_ok is False:
+        return False, landed_reason
     return _semantic_diff_nonempty_between_refs(
         root,
         base_sha,
@@ -2490,6 +2518,11 @@ def _chain_completion_guard(
                 chain_state=chain_state,
             )
         )
+        if (
+            published_diff_ok is False
+            and "not contained in chain target" in published_diff_reason
+        ):
+            return False, published_diff_reason
         local_diff_ok = False
         local_diff_reason = ""
         local_raw_diff_ok: bool | None = None
@@ -3887,6 +3920,7 @@ def _reconcile_chain_from_ground_truth(
     }
     completed_by_label = _completed_records_by_label(state)
     reconciled_completed: list[dict[str, Any]] = []
+    removed_completed: dict[str, dict[str, Any]] = {}
 
     for milestone in spec.milestones:
         record = completed_by_label.get(milestone.label)
@@ -3908,6 +3942,9 @@ def _reconcile_chain_from_ground_truth(
                     f"[chain] completed record for {milestone.label} is not "
                     f"authoritative yet: PR #{pr_number} state={live_pr_state}\n"
                 )
+                removed = dict(record)
+                removed["pr_state"] = live_pr_state
+                removed_completed[milestone.label] = removed
                 continue
         reconciled_completed.append(record)
 
@@ -3931,6 +3968,25 @@ def _reconcile_chain_from_ground_truth(
             state.pr_number = None
             state.pr_state = None
             state.last_state = "done"
+    elif state.current_milestone_index > first_incomplete:
+        writer(
+            f"[chain] reconciled cursor index: {state.current_milestone_index} "
+            f"-> {first_incomplete} from completed milestones\n"
+        )
+        state.current_milestone_index = first_incomplete
+        if first_incomplete < len(spec.milestones):
+            milestone = spec.milestones[first_incomplete]
+            removed = removed_completed.get(milestone.label)
+            plan = removed.get("plan") if isinstance(removed, dict) else None
+            state.current_plan_name = plan if isinstance(plan, str) and plan else None
+            state.pr_number = _record_pr_number(removed)
+            pr_state = removed.get("pr_state") if isinstance(removed, dict) else None
+            state.pr_state = pr_state if isinstance(pr_state, str) else None
+            state.last_state = "authority_divergence"
+        else:
+            state.current_plan_name = None
+            state.pr_number = None
+            state.pr_state = None
 
     plan_name = state.current_plan_name
     plan_state = _plan_state_payload_from_name(root, plan_name)
