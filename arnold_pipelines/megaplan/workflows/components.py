@@ -125,6 +125,24 @@ _COMPATIBILITY_QUARANTINE = MappingProxyType(
 )
 
 
+def _adapter_metadata_quarantine(
+    *,
+    canonical_refs: tuple[str, ...],
+    preserved_fields: tuple[str, ...],
+) -> Mapping[str, Any]:
+    return MappingProxyType(
+        {
+            "compatibility_quarantine": MappingProxyType(
+                {
+                    "kind": "non_authoritative_adapter_metadata",
+                    "canonical_refs": canonical_refs,
+                    "preserved_fields": preserved_fields,
+                }
+            )
+        }
+    )
+
+
 def check_outcome_vocabulary_parity() -> dict[str, dict[str, tuple[str, ...]]]:
     """Return runtime/typed outcome vocabulary mismatches by step id."""
 
@@ -335,6 +353,212 @@ def _override_route_surface() -> Mapping[str, Any]:
             }
             for entry in OVERRIDE_ACTION_MATRIX
         ),
+    }
+
+
+def _review_cap_threshold_surface() -> Mapping[str, Any]:
+    return {
+        "rework_cycles": {
+            "default_config_key": "max_review_rework_cycles",
+            "robust_config_key": "max_robust_review_rework_cycles",
+            "robustness_levels": ("thorough", "extreme"),
+            "history_ref": "state.history.review.needs_rework",
+            "on_exhausted_condition_ref": "review.cap_exhausted",
+        },
+        "force_proceed_blockers": {
+            "criteria_ref": "review.criteria",
+            "rework_items_ref": "review.rework_items",
+            "helper_ref": "arnold_pipelines.megaplan.handlers.review:_force_proceed_blockers",
+            "blocking_outcome": "blocked",
+            "advisory_outcome": "force_proceeded",
+        },
+    }
+
+
+def _review_force_proceed_surface() -> Mapping[str, Any]:
+    return {
+        "route_signal": "force_proceeded",
+        "target_ref": "halt",
+        "state_ref": "done",
+        "authority": "review_policy",
+        "trigger_ref": "review.cap_exhausted",
+        "allowed_when": "remaining review items are advisory or cosmetic only",
+    }
+
+
+def _review_human_verification_surface() -> Mapping[str, Any]:
+    return {
+        "route_signal": "deferred_human",
+        "suspension_route_id": "review:human",
+        "capability_id": "human:review",
+        "state_ref": "awaiting_human_verify",
+        "resume_policy_ref": "megaplan:suspension",
+        "resume_schema_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
+        "resume_payload_ref": "review.review_payload",
+    }
+
+
+def _review_blocked_and_advisory_surface() -> Mapping[str, Any]:
+    return {
+        "blocked": {
+            "route_signal": "blocked",
+            "target_ref": "override",
+            "state_ref": "blocked",
+            "trigger_refs": (
+                "review_incomplete",
+                "review_process_error",
+                "missing_reviewer_evidence",
+                "review.cap_exhausted_with_blockers",
+            ),
+        },
+        "advisory_force_proceed": _review_force_proceed_surface(),
+    }
+
+
+def _review_source_control_transitions() -> tuple[Mapping[str, Any], ...]:
+    return (
+        {
+            "transition_id": "review:pass",
+            "route_signal": "pass",
+            "target_ref": "halt",
+            "topology_ref": "review-fan-in",
+            "source_step_id": "review_halt",
+        },
+        {
+            "transition_id": "review:rework",
+            "route_signal": "rework",
+            "target_ref": "execute",
+            "topology_ref": "review-fan-in",
+            "source_step_id": "review-rework-execute-batches",
+        },
+        {
+            "transition_id": "review:blocked",
+            "route_signal": "blocked",
+            "target_ref": "override",
+            "topology_ref": "review-fan-in",
+            "source_step_id": "review_override",
+        },
+        {
+            "transition_id": "review:force_proceeded",
+            "route_signal": "force_proceeded",
+            "target_ref": "halt",
+            "topology_ref": "review-fan-in",
+            "source_step_id": "review_halt",
+        },
+        {
+            "transition_id": "review:deferred_human",
+            "route_signal": "deferred_human",
+            "target_ref": "halt",
+            "topology_ref": "review-fan-in",
+            "source_step_id": "review_deferred_human",
+        },
+        {
+            "transition_id": "review_rework:pass",
+            "route_signal": "pass",
+            "target_ref": "halt",
+            "topology_ref": "review-rework-fan-in",
+            "source_step_id": "review_rework_halt",
+        },
+        {
+            "transition_id": "review_rework:rework",
+            "route_signal": "rework",
+            "target_ref": "revise",
+            "topology_ref": "review-rework-fan-in",
+            "source_step_id": "review_revise",
+        },
+        {
+            "transition_id": "review_rework:blocked",
+            "route_signal": "blocked",
+            "target_ref": "override",
+            "topology_ref": "review-rework-fan-in",
+            "source_step_id": "review_rework_override",
+        },
+        {
+            "transition_id": "review_rework:force_proceeded",
+            "route_signal": "force_proceeded",
+            "target_ref": "halt",
+            "topology_ref": "review-rework-fan-in",
+            "source_step_id": "review_rework_halt",
+        },
+        {
+            "transition_id": "review_rework:deferred_human",
+            "route_signal": "deferred_human",
+            "target_ref": "halt",
+            "topology_ref": "review-rework-fan-in",
+            "source_step_id": "review_rework_deferred_human",
+        },
+    )
+
+
+def _review_authored_topology_surface() -> Mapping[str, Any]:
+    return {
+        "fan_in_ids": {
+            "first_pass": "review-fan-in",
+            "rework_pass": "review-rework-fan-in",
+        },
+        "review_prefix_variants": (
+            "review",
+            "tiebreaker-review",
+            "tiebreaker-override-review",
+            "override-review",
+        ),
+        "control_transitions": _review_source_control_transitions(),
+    }
+
+
+def _review_route_surface() -> Mapping[str, Any]:
+    return {
+        "fan_in_contract": {
+            "parallel_map_id": "review-fan-in",
+            "fan_in_ref": "review.checks",
+            "step_ref": "SOURCE_REVIEW_PANEL_WORKFLOW",
+            "reducer_ref": "SOURCE_REVIEW",
+            "path_template": "review/{item_id}",
+            "route_signal": "review_route_signal",
+        },
+        "route_groups": {
+            "halt": ("pass", "force_proceeded", "deferred_human"),
+            "rework": ("rework",),
+            "recoverable_block": ("blocked",),
+        },
+        "rework_cycle": {
+            "route_signal": "rework",
+            "target_ref": "execute",
+            "state_ref": "finalized",
+            "fresh_execute_session": True,
+        },
+        "retry_and_cap": {
+            "infrastructure_retry": {
+                "route_signal": "blocked",
+                "target_ref": "review",
+                "state_ref": "executed",
+                "retry_on": (
+                    "review_incomplete",
+                    "review_process_error",
+                    "missing_reviewer_evidence",
+                ),
+            },
+            "cap_exhausted_non_blocking": _review_force_proceed_surface(),
+            "cap_exhausted_with_blockers": {
+                "route_signal": "blocked",
+                "target_ref": "override",
+                "state_ref": "blocked",
+                "resume_cursor": {
+                    "phase": "review",
+                    "retry_strategy": "manual_review",
+                },
+            },
+        },
+        "cap_thresholds": _review_cap_threshold_surface(),
+        "blocked_and_advisory_outcomes": _review_blocked_and_advisory_surface(),
+        "force_proceed_authority": _review_force_proceed_surface(),
+        "human_verification": _review_human_verification_surface(),
+        "authored_topology": _review_authored_topology_surface(),
+        "escalation": {
+            "policy_ref": "megaplan:override",
+            "route_signal": "blocked",
+            "actions": ("recover-blocked", "force-proceed"),
+        },
     }
 
 
@@ -1120,16 +1344,82 @@ FINALIZE_POLICY = _policy(
     metadata={
         "authoring_surface": True,
         "carrier_step_ref": "finalize",
-        "route_surface": {
-            "success_route": {"route_signal": "default", "target_ref": "execute"},
-            "fallback_routes": {
-                "plan_contract_revise_needed": {
-                    "route_signal": "revise",
-                    "target_ref": "revise",
-                    "reason": "missing_scoped_baseline_test_contract",
+        "route_surface": _superset_mapping(
+            {
+                "success_route": {
+                    "route_signal": "default",
+                    "target_ref": "execute",
+                    "artifact_effect_id": "artifact.finalize.plan",
+                    "artifact_policy_ref": "megaplan:artifact-contract",
+                    "projection_route_ref": "finalize:execute",
+                    "state_ref": "finalized",
                 },
-            },
-        },
+                "fallback_routes": {
+                    "plan_contract_revise_needed": {
+                        "route_signal": "revise",
+                        "target_ref": "revise",
+                        "reason": "missing_scoped_baseline_test_contract",
+                        "projection_route_ref": "finalize:revise",
+                        "phase_ref": "revise",
+                    },
+                },
+                "skip_review_routes": {
+                    "no_review": {
+                        "route_signal": "no_review",
+                        "target_ref": "halt",
+                        "terminal_state": "done",
+                        "branch_ref": "execute:no-review-terminal-done",
+                        "projected_status_ref": "status:terminal",
+                        "history_entry": "execute_no_review_terminal",
+                    },
+                    "deferred_human": {
+                        "route_signal": "deferred_human",
+                        "target_ref": "halt",
+                        "terminal_state": "awaiting_human_verify",
+                        "branch_ref": "execute:no-review-terminal-awaiting-human",
+                        "projected_status_ref": "status:terminal",
+                        "resume_cursor_ref": "cursor:suspension",
+                        "history_entry": "execute_no_review_terminal",
+                    },
+                },
+                "canonical_artifacts": {
+                    "finalize_plan": {
+                        "effect_id": "artifact.finalize.plan",
+                        "payload_ref": "finalize.finalize_payload",
+                        "policy_ref": "megaplan:artifact-contract",
+                        "idempotency_key_ref": "artifact_contract.finalize",
+                    },
+                },
+                "final_projection_routes": {
+                    "execute": {
+                        "route_signal": "default",
+                        "target_ref": "execute",
+                        "state_ref": "finalized",
+                        "artifact_ref": "artifact.finalize.plan",
+                        "projected_phase": "execute",
+                    },
+                    "revise_fallback": {
+                        "route_signal": "revise",
+                        "target_ref": "revise",
+                        "projected_phase": "revise",
+                        "reason": "missing_scoped_baseline_test_contract",
+                    },
+                    "no_review_done": {
+                        "route_signal": "no_review",
+                        "target_ref": "halt",
+                        "terminal_state": "done",
+                        "projected_status_ref": "status:terminal",
+                    },
+                    "no_review_deferred_human": {
+                        "route_signal": "deferred_human",
+                        "target_ref": "halt",
+                        "terminal_state": "awaiting_human_verify",
+                        "projected_status_ref": "status:terminal",
+                        "resume_cursor_ref": "cursor:suspension",
+                    },
+                },
+            }
+        ),
     },
 )
 REVIEW_POLICY = _policy(
@@ -1149,6 +1439,10 @@ REVIEW_POLICY = _policy(
             "policy_ref": "megaplan:override",
             "backoff": "manual_review",
         },
+        "cap_thresholds": _review_cap_threshold_surface(),
+        "blocked_and_advisory_outcomes": _review_blocked_and_advisory_surface(),
+        "force_proceed_authority": _review_force_proceed_surface(),
+        "human_verification": _review_human_verification_surface(),
         "suspension_routes": (
             {
                 "route_id": "review:human",
@@ -1162,7 +1456,7 @@ REVIEW_POLICY = _policy(
                 "transition_id": "review:rework",
                 "transition_type": "fallback",
                 "trigger_ref": "review.verdict",
-                "target_ref": "revise",
+                "target_ref": "execute",
                 "policy_ref": "megaplan:review",
             },
             {
@@ -1194,6 +1488,7 @@ REVIEW_POLICY = _policy(
                 "policy_ref": "megaplan:review",
             },
         ),
+        "authored_topology": _review_authored_topology_surface(),
         "topology_overlays": (
             {
                 "overlay_id": "review:cap-exhausted",
@@ -1218,58 +1513,7 @@ REVIEW_POLICY = _policy(
     },
     metadata={
         "canonical_carriers": ("review",),
-        "route_surface": {
-            "fan_in_contract": {
-                "parallel_map_id": "review-fan-in",
-                "fan_in_ref": "review.checks",
-                "step_ref": "SOURCE_REVIEW_PANEL_WORKFLOW",
-                "reducer_ref": "SOURCE_REVIEW",
-                "path_template": "review/{item_id}",
-                "route_signal": "review_route_signal",
-            },
-            "route_groups": {
-                "halt": ("pass", "force_proceeded", "deferred_human"),
-                "rework": ("rework",),
-                "recoverable_block": ("blocked",),
-            },
-            "rework_cycle": {
-                "route_signal": "rework",
-                "target_ref": "execute",
-                "state_ref": "finalized",
-                "fresh_execute_session": True,
-            },
-            "retry_and_cap": {
-                "infrastructure_retry": {
-                    "route_signal": "blocked",
-                    "target_ref": "review",
-                    "state_ref": "executed",
-                    "retry_on": (
-                        "review_incomplete",
-                        "review_process_error",
-                        "missing_reviewer_evidence",
-                    ),
-                },
-                "cap_exhausted_non_blocking": {
-                    "route_signal": "force_proceeded",
-                    "target_ref": "halt",
-                    "state_ref": "done",
-                },
-                "cap_exhausted_with_blockers": {
-                    "route_signal": "blocked",
-                    "target_ref": "override",
-                    "state_ref": "blocked",
-                    "resume_cursor": {
-                        "phase": "review",
-                        "retry_strategy": "manual_review",
-                    },
-                },
-            },
-            "escalation": {
-                "policy_ref": "megaplan:override",
-                "route_signal": "blocked",
-                "actions": ("recover-blocked", "force-proceed"),
-            },
-        },
+        "route_surface": _review_route_surface(),
     },
 )
 OVERRIDE_POLICY = _policy(
@@ -1833,25 +2077,25 @@ TIEBREAKER_DECISION = _step(
             "id": "tiebreaker_decision:critique",
             "label": "iterate",
             "condition_ref": "tiebreaker:loop",
-            "target_ref": "revise",
+            "target_ref": "tiebreaker_iterate_revise",
         },
         {
             "id": "tiebreaker_decision:finalize",
             "label": "proceed",
             "condition_ref": "proceed",
-            "target_ref": "finalize",
+            "target_ref": "tiebreaker_finalize",
         },
         {
             "id": "tiebreaker_decision:override",
             "label": "escalate",
             "condition_ref": "escalate",
-            "target_ref": "override",
+            "target_ref": "tiebreaker_override",
         },
         {
             "id": "tiebreaker_decision:revise_replan",
             "label": "replan",
             "condition_ref": "tiebreaker:replan",
-            "target_ref": "revise",
+            "target_ref": "tiebreaker_replan_revise",
         },
     ),
     capability_ids=("megaplan:planning",),
@@ -1868,8 +2112,20 @@ FINALIZE = _step(
     inputs=({"name": "gate_payload", "value_ref": "gate.gate_payload"},),
     outputs=({"name": "finalize_payload"},),
     policy=DEFAULT_POLICY,
-    route_bindings=({"id": "finalize:execute", "label": "default", "target_ref": "execute"},),
-    metadata={"policy_refs": ("megaplan:default", "megaplan:artifact-contract")},
+    route_bindings=(
+        {"id": "finalize:execute", "label": "default", "target_ref": "execute"},
+        {"id": "finalize:revise", "label": "revise", "condition_ref": "revise", "target_ref": "revise"},
+    ),
+    metadata={
+        "policy_refs": ("megaplan:default", "megaplan:finalize", "megaplan:artifact-contract"),
+        **_adapter_metadata_quarantine(
+            canonical_refs=(
+                "arnold_pipelines.megaplan.workflows.workflow.pypeline:finalize",
+                "FINALIZE_POLICY.metadata.route_surface",
+            ),
+            preserved_fields=("handler_ref", "policy_refs", "route_bindings"),
+        ),
+    },
     input_schema=FINALIZE_INPUT_SCHEMA,
     output_schema=FINALIZE_OUTPUT_SCHEMA,
 )
@@ -1905,7 +2161,7 @@ REVIEW = _step(
     policy=REVIEW_POLICY,
     route_bindings=(
         {"id": "review:halt", "label": "default", "condition_ref": "pass", "target_ref": "halt"},
-        {"id": "review:revise", "label": "rework", "condition_ref": "rework", "target_ref": "revise"},
+        {"id": "review:revise", "label": "rework", "condition_ref": "rework", "target_ref": "execute"},
     ),
     capability_ids=("human:review",),
     metadata={
@@ -1913,6 +2169,18 @@ REVIEW = _step(
             "megaplan:review",
             "megaplan:artifact-contract",
             "megaplan:suspension",
+        ),
+        **_adapter_metadata_quarantine(
+            canonical_refs=(
+                "arnold_pipelines.megaplan.workflows.workflow.pypeline:review-fan-in",
+                "REVIEW_POLICY.metadata.route_surface",
+            ),
+            preserved_fields=(
+                "handler_ref",
+                "policy_refs",
+                "route_bindings",
+                "runtime_branch_vocabulary",
+            ),
         ),
     },
     input_schema=REVIEW_INPUT_SCHEMA,
@@ -2039,6 +2307,13 @@ SOURCE_FINALIZE = _step(
     handler_ref=f"{HANDLER_MODULE}:handle_finalize",
     inputs=({"name": "gate_payload", "value_ref": "gate.gate_payload"},),
     outputs=({"name": "finalize_payload"},),
+    metadata=_adapter_metadata_quarantine(
+        canonical_refs=(
+            "arnold_pipelines.megaplan.workflows.workflow.pypeline:finalize",
+            "FINALIZE_POLICY.metadata.route_surface",
+        ),
+        preserved_fields=("handler_ref",),
+    ),
 )
 SOURCE_EXECUTE = _step(
     export_name="SOURCE_EXECUTE",
@@ -2056,6 +2331,13 @@ SOURCE_REVIEW = _step(
     inputs=({"name": "execute_payload", "value_ref": "execute.execute_payload"},),
     outputs=({"name": "review_payload"},),
     capability_ids=("human:review",),
+    metadata=_adapter_metadata_quarantine(
+        canonical_refs=(
+            "arnold_pipelines.megaplan.workflows.workflow.pypeline:review-fan-in",
+            "REVIEW_POLICY.metadata.route_surface",
+        ),
+        preserved_fields=("handler_ref", "runtime_branch_vocabulary"),
+    ),
 )
 SOURCE_HALT = _step(
     export_name="SOURCE_HALT",
@@ -2142,7 +2424,7 @@ SOURCE_TIEBREAKER_WORKFLOW = _workflow(
             "canonical_run_completion_target_ref": "tiebreaker_decision",
             "decision_routes": (
                 {"action": "pick", "route_signal": "proceed", "target_ref": "finalize"},
-                {"action": "replan", "route_signal": "iterate", "target_ref": "revise"},
+                {"action": "replan", "route_signal": "iterate", "target_ref": "critique-fanout"},
                 {"action": "escalate", "route_signal": "escalate", "target_ref": "override"},
             ),
             "fallback_route_signal": "escalate",
@@ -2219,6 +2501,16 @@ SOURCE_REVIEW_PANEL_WORKFLOW = _workflow(
     metadata={
         "policy_refs": ("megaplan:review", "megaplan:model-routing"),
         "fan_in_ref": "review.checks",
+        "compatibility_quarantine": MappingProxyType(
+            {
+                "kind": "non_authoritative_adapter_metadata",
+                "canonical_refs": (
+                    "arnold_pipelines.megaplan.workflows.workflow.pypeline:review-fan-in",
+                    "REVIEW_POLICY.metadata.route_surface",
+                ),
+                "preserved_fields": ("fan_in_ref", "topology_contract", "policy_refs"),
+            }
+        ),
         "topology_contract": {
             "kind": "review_fan_in",
             "criteria_ref": "review.criteria",
@@ -2248,7 +2540,7 @@ SOURCE_REVIEW_PANEL_WORKFLOW = _workflow(
             },
             "reducer_routes": (
                 {"route_signal": "pass", "target_ref": "halt"},
-                {"route_signal": "rework", "target_ref": "revise"},
+                {"route_signal": "rework", "target_ref": "execute"},
                 {"route_signal": "blocked", "target_ref": "halt"},
                 {"route_signal": "force_proceeded", "target_ref": "halt"},
                 {"route_signal": "deferred_human", "target_ref": "halt"},
@@ -2310,6 +2602,13 @@ AUTHORING_FINALIZE = _step(
     handler_ref=f"{HANDLER_MODULE}:handle_finalize",
     inputs=({"name": "gate_payload", "value_ref": "gate.gate_payload"},),
     outputs=({"name": "finalize_payload"},),
+    metadata=_adapter_metadata_quarantine(
+        canonical_refs=(
+            "arnold_pipelines.megaplan.workflows.workflow.pypeline:finalize",
+            "FINALIZE_POLICY.metadata.route_surface",
+        ),
+        preserved_fields=("handler_ref",),
+    ),
 )
 AUTHORING_EXECUTE = _step(
     export_name="AUTHORING_EXECUTE",
@@ -2327,6 +2626,13 @@ AUTHORING_REVIEW = _step(
     inputs=({"name": "execute_payload", "value_ref": "execute.execute_payload"},),
     outputs=({"name": "review_payload"},),
     capability_ids=("human:review",),
+    metadata=_adapter_metadata_quarantine(
+        canonical_refs=(
+            "arnold_pipelines.megaplan.workflows.workflow.pypeline:review-fan-in",
+            "REVIEW_POLICY.metadata.route_surface",
+        ),
+        preserved_fields=("handler_ref", "runtime_branch_vocabulary"),
+    ),
 )
 AUTHORING_HALT = _step(
     export_name="AUTHORING_HALT",

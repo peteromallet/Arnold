@@ -5,6 +5,8 @@ import ast
 import json
 from pathlib import Path
 
+import arnold_pipelines.megaplan.handlers.execute as execute_handler
+import arnold_pipelines.megaplan.handlers.finalize as finalize_handler
 from arnold.pipeline.native import compile_pipeline, phase, pipeline, start_from_trace, workflow
 from arnold.pipeline.native.runtime import run_native_pipeline
 from arnold.pipeline.types import (
@@ -14,7 +16,10 @@ from arnold.pipeline.types import (
     StepResult,
     Suspension,
 )
+from arnold.workflow.compiler import compile_pipeline as compile_workflow_pipeline
+from arnold.workflow.source_compiler import lower_workflow_file
 from arnold_pipelines.megaplan.blocker_recovery import find_synthetic_before_execute_gate
+from arnold_pipelines.megaplan.execute.policy import NoReviewTerminalOutcome
 from arnold_pipelines.megaplan.outcomes import (
     GateOutcome,
     OverrideOutcome,
@@ -23,6 +28,9 @@ from arnold_pipelines.megaplan.outcomes import (
 )
 from arnold_pipelines.megaplan.workflows import planning
 from arnold_pipelines.megaplan.workflows.components import (
+    EXECUTE_POLICY,
+    FINALIZE_POLICY,
+    REVIEW_POLICY,
     SOURCE_EXECUTE_BATCH_WORKFLOW,
     SOURCE_REVIEW_PANEL_WORKFLOW,
     SOURCE_TIEBREAKER_WORKFLOW,
@@ -88,11 +96,13 @@ def test_megaplan_resume_paths_are_visible_in_authored_workflow() -> None:
     assert _branch_literals("decision") >= {"proceed", "escalate"}
     assert _branch_literals("review_route_signal") >= {"pass", "rework"}
     assert _call_ids("AUTHORING_REVISE") >= {"revise", "review_revise", "override_revise"}
-    assert _call_ids("AUTHORING_EXECUTE") >= {
-        "override_execute",
-        "force_execute",
-        "fallback_execute",
+    assert _call_ids("AUTHORING_EXECUTE") >= {"force_execute", "fallback_execute"}
+    assert _call_ids("AUTHORING_FINALIZE") >= {
+        "override_finalize",
+        "force_finalize",
+        "fallback_finalize",
     }
+    assert _call_ids("parallel_map") >= {"override_execute_batches"}
     assert _call_ids("AUTHORING_HALT") >= {
         "halt",
         "review_halt",
@@ -136,7 +146,7 @@ def test_megaplan_child_workflow_metadata_covers_tiebreaker_execute_review_gates
         for route in review_contract["reducer_routes"]
     } == {
         "pass": "halt",
-        "rework": "revise",
+        "rework": "execute",
         "blocked": "halt",
         "force_proceeded": "halt",
         "deferred_human": "halt",
@@ -152,6 +162,84 @@ def test_non_protected_execute_routes_declare_no_review_to_done_contract() -> No
         for route in execute_contract["post_batch_routes"]
     }["no_review"] == "halt"
     assert review_contract["no_review_route_signal"] == "pass"
+
+
+def test_finalize_handlers_project_success_and_revise_fallback_from_policy_surface() -> None:
+    success = finalize_handler._finalize_success_projection()
+    fallback = finalize_handler._finalize_revise_fallback_projection()
+    route_surface = FINALIZE_POLICY.metadata["route_surface"]
+
+    assert success == {
+        "route_signal": route_surface["success_route"]["route_signal"],
+        "next_step": route_surface["success_route"]["target_ref"],
+        "state": route_surface["success_route"]["state_ref"],
+    }
+    assert fallback == {
+        "route_signal": route_surface["fallback_routes"]["plan_contract_revise_needed"]["route_signal"],
+        "next_step": route_surface["fallback_routes"]["plan_contract_revise_needed"]["target_ref"],
+        "state": "critiqued",
+    }
+
+
+def test_execute_terminal_projection_helpers_follow_source_policy_routes() -> None:
+    execute_route_surface = EXECUTE_POLICY.metadata["route_surface"]
+    finalize_route_surface = FINALIZE_POLICY.metadata["route_surface"]
+
+    blocked = execute_handler._blocked_execute_projection()
+    done = execute_handler._no_review_terminal_projection(
+        NoReviewTerminalOutcome.TERMINATE_DONE
+    )
+    deferred = execute_handler._no_review_terminal_projection(
+        NoReviewTerminalOutcome.TERMINATE_AWAITING_HUMAN
+    )
+
+    assert blocked == {
+        "route_signal": execute_route_surface["retry_and_reentry"]["blocked_route"]["route_signal"],
+        "next_step": execute_route_surface["retry_and_reentry"]["blocked_route"]["target_ref"],
+        "state": execute_route_surface["retry_and_reentry"]["blocked_route"]["recoverable_state"],
+    }
+    assert done == {
+        "route_signal": finalize_route_surface["skip_review_routes"]["no_review"]["route_signal"],
+        "next_step": finalize_route_surface["skip_review_routes"]["no_review"]["target_ref"],
+        "state": finalize_route_surface["final_projection_routes"]["no_review_done"]["terminal_state"],
+    }
+    assert deferred == {
+        "route_signal": finalize_route_surface["skip_review_routes"]["deferred_human"]["route_signal"],
+        "next_step": finalize_route_surface["skip_review_routes"]["deferred_human"]["target_ref"],
+        "state": finalize_route_surface["final_projection_routes"]["no_review_deferred_human"]["terminal_state"],
+    }
+
+
+def test_review_human_verification_suspend_resume_surface_is_manifest_visible() -> None:
+    manifest = compile_workflow_pipeline(planning.build_pipeline())
+    review = next(node for node in manifest.nodes if node.id == "review")
+    human_surface = REVIEW_POLICY.metadata["route_surface"]["human_verification"]
+    review_suspension = next(
+        route for route in review.policy.suspension_routes
+        if route.route_id == human_surface["suspension_route_id"]
+    )
+
+    assert review_suspension.capability_id == human_surface["capability_id"]
+    assert review_suspension.resume_schema_ref == human_surface["resume_schema_ref"]
+    assert review_suspension.resume_payload_ref == human_surface["resume_payload_ref"]
+    assert human_surface["state_ref"] == "awaiting_human_verify"
+    assert "suspension:review-human" in {
+        overlay.overlay_id for overlay in manifest.policy.topology_overlays
+    }
+
+
+def test_force_proceed_and_finalize_fallback_carriers_remain_visible_in_lowered_source() -> None:
+    lowered = lower_workflow_file(planning.PYPELINE_AUTHORING_SOURCE_PATH)
+    route_signatures = {
+        (route.source, route.label, route.target)
+        for route in lowered.routes
+        if route.label != "else"
+    }
+
+    assert ("force_finalize", "default", "force_execute") in route_signatures
+    assert ("fallback_finalize", "default", "fallback_execute") in route_signatures
+    assert _call_ids("AUTHORING_FINALIZE") >= {"finalize", "force_finalize", "fallback_finalize"}
+    assert _call_ids("AUTHORING_EXECUTE") >= {"force_execute", "fallback_execute"}
 
 
 def test_execute_gate_protected_action_scope_is_recoverable() -> None:

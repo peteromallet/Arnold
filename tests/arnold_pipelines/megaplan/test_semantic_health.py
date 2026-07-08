@@ -18,9 +18,15 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     BOUNDARY_CONTRACTS,
     BOUNDARY_CONTRACTS_BY_ID,
     critique_to_gate,
+    final_projection,
+    finalize_artifacts,
+    finalize_fallback,
     gate_to_revise,
     plan_to_critique,
     prep_to_plan,
+    review_child_outputs,
+    review_human_verification,
+    review_reducer_promotion,
     revise_to_critique,
 )
 
@@ -61,7 +67,7 @@ def _write_state(plan_dir: Path, state: dict[str, object]) -> None:
 def _write_phase_result(
     plan_dir: Path,
     *,
-    phase: str = "plan",
+    phase: str | None = "plan",
     exit_kind: str = "success",
     invocation_id: str = "inv-test",
     artifacts_written: list[str] | None = None,
@@ -96,11 +102,14 @@ def _write_boundary_receipt(
 ) -> None:
     receipt_dir = plan_dir / "boundary_receipts"
     receipt_dir.mkdir(parents=True, exist_ok=True)
+    payload = {k: v for k, v in overrides.items() if v is not None}
+    if authority_records is not None:
+        payload["authority_records"] = authority_records
     receipt = BoundaryReceipt(
         boundary_id=boundary_id,
         workflow_id=workflow_id,
         row_id=row_id,
-        **{k: v for k, v in overrides.items() if v is not None},
+        **payload,
     )
     (receipt_dir / f"{boundary_id}.json").write_text(
         json.dumps(receipt.to_dict()), encoding="utf-8"
@@ -110,6 +119,26 @@ def _write_boundary_receipt(
 def _write_artifact(plan_dir: Path, name: str, content: str = "") -> None:
     plan_dir.mkdir(parents=True, exist_ok=True)
     (plan_dir / name).write_text(content, encoding="utf-8")
+
+
+def _write_plan_meta(
+    plan_dir: Path,
+    *,
+    success_criteria: list[dict[str, object]],
+    version: int = 1,
+) -> None:
+    (plan_dir / f"plan_v{version}.meta.json").write_text(
+        json.dumps({"success_criteria": success_criteria}), encoding="utf-8"
+    )
+
+
+def _write_human_verifications(
+    plan_dir: Path,
+    rows: list[dict[str, object]],
+) -> None:
+    (plan_dir / "human_verifications.json").write_text(
+        json.dumps(rows), encoding="utf-8"
+    )
 
 
 def _findings_by_id(
@@ -696,6 +725,267 @@ def test_missing_invocation_id_does_not_crash(tmp_path: Path) -> None:
     # Should not crash; phase_result has its own invocation_id
     by_id = _findings_by_id(findings)
     assert "SH-prep_to_plan-phase-result-missing" not in by_id
+
+
+# ── S5 semantic-health coverage ─────────────────────────────────────────
+
+
+def test_s5_review_receipts_and_human_authority_have_no_targeted_findings(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    state = _make_state(
+        current_state="awaiting_human_verify",
+        history=[{"step": "review", "result": "success"}],
+        current_phase="review",
+        plan_versions=[{"file": "plan_v1.md", "version": 1}],
+    )
+    _write_state(plan_dir, state)
+    _write_phase_result(plan_dir, phase=None)
+    _write_artifact(plan_dir, "review.json", "{}")
+    _write_plan_meta(
+        plan_dir,
+        success_criteria=[
+            {"criterion": "Human signoff", "priority": "must"},
+        ],
+    )
+    _write_human_verifications(
+        plan_dir,
+        [
+            {
+                "criterion_idx": 0,
+                "timestamp": "2026-07-08T00:00:00Z",
+                "verdict": "pass",
+            }
+        ],
+    )
+    _write_boundary_receipt(
+        plan_dir,
+        review_child_outputs.boundary_id,
+        row_id=review_child_outputs.row_id,
+        artifact_refs=("review/panel-a.json", "review/panel-b.json"),
+        details={
+            "child_receipt_refs": [
+                "review/panel-a.json",
+                "review/panel-b.json",
+            ]
+        },
+    )
+    _write_boundary_receipt(
+        plan_dir,
+        review_reducer_promotion.boundary_id,
+        row_id=review_reducer_promotion.row_id,
+    )
+    _write_boundary_receipt(
+        plan_dir,
+        review_human_verification.boundary_id,
+        row_id=review_human_verification.row_id,
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    assert "SH-review_child_outputs-missing-child-receipts" not in by_id
+    assert "SH-review_reducer_promotion-missing-reducer-receipt" not in by_id
+    assert "SH-review_human_verification-human-authority-missing" not in by_id
+    assert "SH-review_human_verification-human-authority-stale" not in by_id
+
+
+def test_s5_finalize_evidence_has_no_targeted_findings(tmp_path: Path) -> None:
+    from arnold_pipelines.megaplan._core import sha256_file
+
+    plan_dir = tmp_path / "plan"
+    state = _make_state(
+        current_state="critiqued",
+        history=[{"step": "finalize", "result": "success"}],
+        current_phase="finalize",
+    )
+    _write_state(plan_dir, state)
+    _write_phase_result(plan_dir, phase=None)
+    _write_artifact(plan_dir, "contract.json", "{}")
+    _write_artifact(plan_dir, "final.md", "done")
+    _write_artifact(plan_dir, "finalize.json", '{"ok": true}')
+    _write_artifact(plan_dir, "finalize_revise_feedback.json", "{}")
+    _write_boundary_receipt(
+        plan_dir,
+        finalize_artifacts.boundary_id,
+        row_id=finalize_artifacts.row_id,
+        artifact_refs=("contract.json", "final.md", "finalize.json"),
+        details={"artifact_hash": sha256_file(plan_dir / "finalize.json")},
+    )
+    _write_boundary_receipt(
+        plan_dir,
+        finalize_fallback.boundary_id,
+        row_id=finalize_fallback.row_id,
+    )
+    _write_boundary_receipt(
+        plan_dir,
+        final_projection.boundary_id,
+        row_id=final_projection.row_id,
+        state_observation={"current_state": "critiqued", "next_step": "revise"},
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    assert "SH-finalize_artifacts-stale-artifact-hash" not in by_id
+    assert "SH-finalize_artifacts-stale-artifact-refs" not in by_id
+    assert "SH-finalize_fallback-missing-fallback-receipt" not in by_id
+    assert "SH-finalize_fallback-native-fallback-route-missing" not in by_id
+    assert "SH-final_projection-native-fallback-route-missing" not in by_id
+    assert "SH-final_projection-state-history-drift" not in by_id
+
+
+def test_s5_review_child_receipt_requires_visible_child_refs(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    _write_state(
+        plan_dir,
+        _make_state(
+            current_state="executed",
+            history=[{"step": "review", "result": "success"}],
+            current_phase="review",
+        ),
+    )
+    _write_phase_result(plan_dir, phase=None)
+    _write_artifact(plan_dir, "review.json", "{}")
+    _write_boundary_receipt(
+        plan_dir,
+        review_child_outputs.boundary_id,
+        row_id=review_child_outputs.row_id,
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    assert "SH-review_child_outputs-missing-child-receipts" in by_id
+
+
+def test_s5_review_reducer_requires_receipt_when_child_outputs_present(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    _write_state(
+        plan_dir,
+        _make_state(
+            current_state="executed",
+            history=[{"step": "review", "result": "success"}],
+            current_phase="review",
+        ),
+    )
+    _write_phase_result(plan_dir, phase=None)
+    _write_artifact(plan_dir, "review.json", "{}")
+    _write_boundary_receipt(
+        plan_dir,
+        review_child_outputs.boundary_id,
+        row_id=review_child_outputs.row_id,
+        artifact_refs=("review/panel-a.json",),
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    assert "SH-review_reducer_promotion-missing-reducer-receipt" in by_id
+
+
+def test_s5_review_human_verification_requires_authority_evidence(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    _write_state(
+        plan_dir,
+        _make_state(
+            current_state="awaiting_human_verify",
+            history=[{"step": "review", "result": "success"}],
+            current_phase="review",
+            plan_versions=[{"file": "plan_v1.md", "version": 1}],
+        ),
+    )
+    _write_phase_result(plan_dir, phase=None)
+    _write_artifact(plan_dir, "review.json", "{}")
+    _write_plan_meta(
+        plan_dir,
+        success_criteria=[
+            {"criterion": "Human signoff", "priority": "must"},
+        ],
+    )
+    _write_boundary_receipt(
+        plan_dir,
+        review_human_verification.boundary_id,
+        row_id=review_human_verification.row_id,
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    assert "SH-review_human_verification-human-authority-missing" in by_id
+
+
+def test_s5_finalize_artifact_staleness_reports_hash_and_ref_drift(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    _write_state(
+        plan_dir,
+        _make_state(
+            current_state="gated",
+            history=[{"step": "finalize", "result": "success"}],
+            current_phase="finalize",
+        ),
+    )
+    _write_phase_result(plan_dir, phase=None)
+    _write_artifact(plan_dir, "contract.json", "{}")
+    _write_artifact(plan_dir, "final.md", "done")
+    _write_artifact(plan_dir, "finalize.json", '{"ok": true}')
+    _write_boundary_receipt(
+        plan_dir,
+        finalize_artifacts.boundary_id,
+        row_id=finalize_artifacts.row_id,
+        artifact_refs=("contract.json",),
+        details={"artifact_hash": "stale-hash"},
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    assert "SH-finalize_artifacts-stale-artifact-hash" in by_id
+    assert "SH-finalize_artifacts-stale-artifact-refs" in by_id
+
+
+def test_s5_finalize_fallback_requires_receipt_when_revise_evidence_exists(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    _write_state(
+        plan_dir,
+        _make_state(
+            current_state="critiqued",
+            history=[{"step": "finalize", "result": "success"}],
+            current_phase="finalize",
+        ),
+    )
+    _write_artifact(plan_dir, "finalize.json", "{}")
+    _write_artifact(plan_dir, "finalize_revise_feedback.json", "{}")
+    _write_boundary_receipt(
+        plan_dir,
+        final_projection.boundary_id,
+        row_id=final_projection.row_id,
+        state_observation={"current_state": "critiqued", "next_step": "revise"},
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    assert "SH-finalize_fallback-missing-fallback-receipt" in by_id
+
+
+def test_s5_final_projection_reports_state_history_drift(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    _write_state(
+        plan_dir,
+        _make_state(
+            current_state="done",
+            history=[{"step": "finalize", "result": "success"}],
+            current_phase="finalize",
+        ),
+    )
+    _write_artifact(plan_dir, "finalize.json", "{}")
+    _write_boundary_receipt(
+        plan_dir,
+        final_projection.boundary_id,
+        row_id=final_projection.row_id,
+        state_observation={"current_state": "finalized", "next_step": "execute"},
+    )
+
+    by_id = _findings_by_id(inspect_semantic_health(plan_dir))
+    assert "SH-final_projection-state-history-drift" in by_id
 
 
 # ── contract with no phase ──────────────────────────────────────────────

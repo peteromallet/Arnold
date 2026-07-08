@@ -18,7 +18,7 @@
   ],
   "counts": {
     "capabilities": 3,
-    "routes": 24,
+    "routes": 23,
     "steps": 14
   },
   "fixture_schema": "arnold.megaplan.normalized_pipeline_shape.v1",
@@ -190,14 +190,6 @@
       "target": "review"
     },
     {
-      "condition_ref": "review-fan-in.review_route_signal.eq.rework",
-      "id": "review:revise",
-      "label": "rework",
-      "metadata": {},
-      "source": "review",
-      "target": "revise"
-    },
-    {
       "condition_ref": null,
       "id": "tiebreaker_researcher:challenger",
       "label": "default",
@@ -254,7 +246,7 @@
       "target": "revise"
     },
     {
-      "condition_ref": "override.override_result.eq.force_proceed",
+      "condition_ref": "tiebreaker_override.override_result.eq.force_proceed",
       "id": "override:finalize",
       "label": "force_proceed",
       "metadata": {},
@@ -262,7 +254,7 @@
       "target": "finalize"
     },
     {
-      "condition_ref": "override.override_result.eq.replan",
+      "condition_ref": "tiebreaker_override.override_result.eq.replan",
       "id": "override:revise",
       "label": "replan",
       "metadata": {},
@@ -455,7 +447,7 @@
       "inputs": [
         {
           "name": "gate_payload",
-          "value_ref": "output:review_route_signal"
+          "value_ref": "output:rework_review_route_signal"
         }
       ],
       "kind": "megaplan:revise",
@@ -671,6 +663,7 @@
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_finalize",
         "policy_refs": [
           "megaplan:default",
+          "megaplan:finalize",
           "megaplan:artifact-contract"
         ],
         "source_form": "function",
@@ -773,7 +766,7 @@
         "control_transitions": [
           {
             "policy_ref": "megaplan:review",
-            "target_ref": "revise",
+            "target_ref": "execute",
             "transition_id": "review:rework",
             "transition_type": "fallback",
             "trigger_ref": "review.verdict"

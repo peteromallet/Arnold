@@ -8,7 +8,12 @@ evidence, and that the API / serialization contracts hold.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
+import arnold.workflow as workflow
 from arnold.manifest.refs import SourceSpan
+from arnold.workflow.boundary_evidence import AuthorityRecord, BoundaryOutcome, BoundaryReceipt
 from arnold.workflow import check_workflow_source
 from arnold.workflow.diagnostics import DiagnosticCode
 from arnold.workflow.semantic_evidence import (
@@ -26,6 +31,9 @@ from arnold.workflow.semantic_evidence import (
     SemanticEvidence,
 )
 from arnold_pipelines.megaplan.workflows import planning
+import arnold.workflow.source_compiler as source_compiler
+
+M3_FIXTURE_DIR = Path("tests/fixtures/workflow_authoring/m3")
 
 # ── minimal source templates ────────────────────────────────────────────────
 
@@ -56,6 +64,81 @@ def _evidence_for(row_id: str, *, code: DiagnosticCode | None = None) -> Semanti
         source_span=SourceSpan("test.pypeline", 1, 1, 1, 10),
         construct_type=ConstructType.PREP,
         row_id=row_id,
+    )
+
+
+def _load_m3_sidecar(case_name: str) -> dict[str, object]:
+    with (M3_FIXTURE_DIR / f"{case_name}.expected.json").open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _diagnostic_payloads(result: object) -> list[dict[str, object]]:
+    payloads: list[dict[str, object]] = []
+    for diagnostic in result.diagnostics:
+        payload: dict[str, object] = {
+            "code": diagnostic.code.value,
+            "message": diagnostic.message,
+        }
+        if diagnostic.import_ref is not None:
+            payload["import_ref"] = {
+                "module": diagnostic.import_ref.module,
+                "qualname": diagnostic.import_ref.qualname,
+            }
+        if diagnostic.component_ref is not None:
+            payload["component_ref"] = diagnostic.component_ref
+        if diagnostic.source_span is not None:
+            payload["source_span"] = {
+                "path": diagnostic.source_span.path,
+                "start_line": diagnostic.source_span.start_line,
+                "start_column": diagnostic.source_span.start_column,
+                "end_line": diagnostic.source_span.end_line,
+                "end_column": diagnostic.source_span.end_column,
+            }
+        payloads.append(payload)
+    return payloads
+
+
+def _run_s5_fixture(case_name: str):
+    source_path = M3_FIXTURE_DIR / f"{case_name}.py"
+    original_topology_contract = source_compiler._megaplan_review_topology_contract
+    original_route_surface = source_compiler._megaplan_policy_route_surface
+    try:
+        if case_name == "invalid_m3_handler_owned_review_cap":
+            source_compiler._megaplan_review_topology_contract = lambda: {
+                "retry_and_cap": {"cap_thresholds": {"max_review_rework_cycles": 1}},
+            }
+        elif case_name == "invalid_m3_hidden_finalize_fallback":
+            source_compiler._megaplan_policy_route_surface = (
+                lambda export_name: {}
+                if export_name == "FINALIZE_POLICY"
+                else original_route_surface(export_name)
+            )
+        return workflow.check_workflow_file(source_path)
+    finally:
+        source_compiler._megaplan_review_topology_contract = original_topology_contract
+        source_compiler._megaplan_policy_route_surface = original_route_surface
+
+
+def _receipt_for_contract(boundary_contract) -> BoundaryReceipt:
+    authority_records = ()
+    if boundary_contract.authority_required:
+        authority_records = (
+            AuthorityRecord(actor="review-policy", role="authority"),
+        )
+    return BoundaryReceipt(
+        boundary_id=boundary_contract.boundary_id,
+        workflow_id=boundary_contract.workflow_id,
+        row_id=boundary_contract.row_id,
+        artifact_refs=boundary_contract.required_artifacts,
+        state_observation=boundary_contract.expected_state_delta,
+        outcome=BoundaryOutcome.COMPLETE,
+        history_ref=boundary_contract.expected_history_entry,
+        phase_result_ref=(
+            f"phase/{boundary_contract.boundary_id}.json"
+            if boundary_contract.phase_result_required
+            else None
+        ),
+        authority_records=authority_records,
     )
 
 
@@ -883,3 +966,68 @@ def test_old_wrapper_awf252_not_silenced_by_row_evidence() -> None:
         "old wrapper must not produce AWF245 for S3 phases "
         "(they are not source-visible as individual steps)"
     )
+
+
+def test_s5_invalid_authoring_fixtures_match_sidecars() -> None:
+    """S5 invalid fixtures must pin the intended review/finalize checker diagnostics."""
+    for case_name in (
+        "invalid_m3_single_handler_review_fanout",
+        "invalid_m3_handler_owned_review_cap",
+        "invalid_m3_hidden_finalize_fallback",
+    ):
+        expected = _load_m3_sidecar(case_name)["expected_diagnostics"]
+        result = _run_s5_fixture(case_name)
+
+        assert not result.ok, case_name
+        assert _diagnostic_payloads(result) == expected
+
+
+def test_s5_canonical_fixture_accepts_source_visible_review_finalize_evidence() -> None:
+    """The canonical M3 fixture must satisfy the S5 boundary rows from source/policy
+    topology without relying on legacy enabled-status shortcuts."""
+    from arnold_pipelines.megaplan.workflows.boundary_contracts import (
+        final_projection,
+        finalize_artifacts,
+        finalize_fallback,
+        review_cap_authority,
+        review_child_outputs,
+        review_human_verification,
+        review_reducer_promotion,
+        review_rework_effects,
+    )
+
+    s5_contracts = (
+        review_child_outputs,
+        review_reducer_promotion,
+        review_rework_effects,
+        review_cap_authority,
+        review_human_verification,
+        finalize_artifacts,
+        finalize_fallback,
+        final_projection,
+    )
+    s5_receipts = tuple(_receipt_for_contract(contract) for contract in s5_contracts)
+
+    result = workflow.check_workflow_file(
+        M3_FIXTURE_DIR / "valid_m3_canonical_megaplan_topology.py",
+        boundary_contracts=s5_contracts,
+        boundary_evidence=s5_receipts,
+    )
+
+    s5_row_ids = {contract.row_id for contract in s5_contracts}
+    assert not any(
+        diagnostic.code in {
+            DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+            DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+            DiagnosticCode.BOUNDARY_EVIDENCE_STALE,
+            DiagnosticCode.BOUNDARY_CONTRACT_MISSING,
+        }
+        and diagnostic.details.get("row_id") in s5_row_ids
+        for diagnostic in result.diagnostics
+    ), _diagnostic_payloads(result)
+    assert DiagnosticCode.SINGLE_HANDLER_WRAPPER not in {
+        diagnostic.code for diagnostic in result.diagnostics
+    }
+    assert DiagnosticCode.HANDLER_PURITY_VIOLATION not in {
+        diagnostic.code for diagnostic in result.diagnostics
+    }

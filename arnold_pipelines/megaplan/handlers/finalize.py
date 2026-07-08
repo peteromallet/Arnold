@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -21,8 +22,6 @@ from arnold_pipelines.megaplan.calibration import (
 )
 from arnold_pipelines.megaplan.types import CliError, MOCK_ENV_VAR, PlanState, StepResponse
 from arnold_pipelines.megaplan.planning.state import (
-    STATE_CRITIQUED,
-    STATE_FINALIZED,
     STATE_GATED,
     STATE_PLANNED,
 )
@@ -52,12 +51,14 @@ from arnold_pipelines.megaplan.orchestration.test_selection import (
     resolve_baseline_test_selection,
 )
 from arnold_pipelines.megaplan.store import write_plan_artifact_json
+from arnold_pipelines.megaplan._core.topology import STAGE_TO_STATE
 from arnold_pipelines.megaplan.execute.quality import (
     _capture_git_status_snapshot_recursive,
     _git_head,
     _is_harness_generated_path,
     capture_uncommitted_baseline,
 )
+from arnold_pipelines.megaplan.workflows.components import FINALIZE_POLICY
 
 from .shared import _attach_next_step_runtime, _finish_step, _raise_step_validation_error, _run_worker
 
@@ -86,6 +87,107 @@ def _finalize_baseline_contract_message(test_selection: dict[str, Any]) -> str:
         "intended."
         + details
     )
+
+
+def _required_mapping(value: object, *, context: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise AssertionError(f"{context} must be a mapping")
+    return dict(value)
+
+
+def _required_string(mapping: dict[str, Any], key: str, *, context: str) -> str:
+    value = mapping.get(key)
+    if not isinstance(value, str) or not value:
+        raise AssertionError(f"{context}.{key} must be a non-empty string")
+    return value
+
+
+def _finalize_route_surface() -> dict[str, Any]:
+    metadata = _required_mapping(FINALIZE_POLICY.metadata, context="FINALIZE_POLICY.metadata")
+    return _required_mapping(
+        metadata.get("route_surface"),
+        context="FINALIZE_POLICY.metadata.route_surface",
+    )
+
+
+def _finalize_success_projection() -> dict[str, str]:
+    success = _required_mapping(
+        _finalize_route_surface().get("success_route"),
+        context="FINALIZE_POLICY.metadata.route_surface.success_route",
+    )
+    return {
+        "route_signal": _required_string(
+            success,
+            "route_signal",
+            context="FINALIZE_POLICY.metadata.route_surface.success_route",
+        ),
+        "next_step": _required_string(
+            success,
+            "target_ref",
+            context="FINALIZE_POLICY.metadata.route_surface.success_route",
+        ),
+        "state": _required_string(
+            success,
+            "state_ref",
+            context="FINALIZE_POLICY.metadata.route_surface.success_route",
+        ),
+    }
+
+
+def _finalize_revise_fallback_projection() -> dict[str, str]:
+    route_surface = _finalize_route_surface()
+    fallback = _required_mapping(
+        _required_mapping(
+            route_surface.get("fallback_routes"),
+            context="FINALIZE_POLICY.metadata.route_surface.fallback_routes",
+        ).get("plan_contract_revise_needed"),
+        context="FINALIZE_POLICY.metadata.route_surface.fallback_routes.plan_contract_revise_needed",
+    )
+    projection = _required_mapping(
+        _required_mapping(
+            route_surface.get("final_projection_routes"),
+            context="FINALIZE_POLICY.metadata.route_surface.final_projection_routes",
+        ).get("revise_fallback"),
+        context="FINALIZE_POLICY.metadata.route_surface.final_projection_routes.revise_fallback",
+    )
+    route_signal = _required_string(
+        fallback,
+        "route_signal",
+        context="FINALIZE_POLICY.metadata.route_surface.fallback_routes.plan_contract_revise_needed",
+    )
+    target_ref = _required_string(
+        fallback,
+        "target_ref",
+        context="FINALIZE_POLICY.metadata.route_surface.fallback_routes.plan_contract_revise_needed",
+    )
+    projected_phase = _required_string(
+        projection,
+        "projected_phase",
+        context="FINALIZE_POLICY.metadata.route_surface.final_projection_routes.revise_fallback",
+    )
+    if route_signal != _required_string(
+        projection,
+        "route_signal",
+        context="FINALIZE_POLICY.metadata.route_surface.final_projection_routes.revise_fallback",
+    ):
+        raise AssertionError("Finalize revise fallback route_signal must match its projection route")
+    if target_ref != _required_string(
+        projection,
+        "target_ref",
+        context="FINALIZE_POLICY.metadata.route_surface.final_projection_routes.revise_fallback",
+    ):
+        raise AssertionError("Finalize revise fallback target_ref must match its projection route")
+    projected_state = STAGE_TO_STATE.get(projected_phase)
+    if not isinstance(projected_state, str) or not projected_state:
+        raise AssertionError(
+            "FINALIZE_POLICY.metadata.route_surface.final_projection_routes."
+            "revise_fallback.projected_phase must map to a known plan state"
+        )
+    return {
+        "route_signal": route_signal,
+        "next_step": target_ref,
+        "state": projected_state,
+    }
 
 
 def _strict_finalize_validation_enabled() -> bool:
@@ -1449,6 +1551,7 @@ def _route_finalize_baseline_selection_failure_to_revise(
     worker: WorkerResult,
     error: FinalizeBaselineSelectionError,
 ) -> StepResponse:
+    projection = _finalize_revise_fallback_projection()
     message = _finalize_baseline_contract_message(error.test_selection)
     gate_feedback = {
         "recommendation": "ITERATE",
@@ -1498,7 +1601,7 @@ def _route_finalize_baseline_selection_failure_to_revise(
             "test_selection": error.test_selection,
         },
     }
-    state["current_state"] = STATE_CRITIQUED
+    state["current_state"] = projection["state"]
     state["last_gate"] = gate_feedback
     meta = state.setdefault("meta", {})
     if isinstance(meta, dict):
@@ -1549,10 +1652,11 @@ def _route_finalize_baseline_selection_failure_to_revise(
         "success": False,
         "step": "finalize",
         "result": "plan_contract_revise_needed",
+        "route_signal": projection["route_signal"],
         "summary": message,
         "artifacts": ["gate.json", "gate_carry.json", "finalize_revise_feedback.json"],
-        "next_step": "revise",
-        "state": STATE_CRITIQUED,
+        "next_step": projection["next_step"],
+        "state": projection["state"],
         "iteration": state["iteration"],
         "details": {
             "code": "missing_scoped_baseline_test_contract",
@@ -1743,8 +1847,9 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
                 worker,
                 error,
             )
+        success_projection = _finalize_success_projection()
         _ensure_execution_baseline(state)
-        state["current_state"] = STATE_FINALIZED
+        state["current_state"] = success_projection["state"]
         return _finish_step(
             plan_dir, state, args,
             step="finalize",
@@ -1753,5 +1858,6 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
             artifacts=["contract.json", "final.md", "finalize.json", "user_actions.md"],
             output_file="finalize.json",
             artifact_hash=artifact_hash,
-            next_step="execute",
+            next_step=success_projection["next_step"],
+            response_fields={"route_signal": success_projection["route_signal"]},
         )

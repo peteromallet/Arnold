@@ -14,18 +14,75 @@
       "execute-batches",
       "review-fan-in",
       "halt",
+      "review-rework-execute-batches",
+      "review-rework-fan-in",
+      "review_rework_halt",
       "review_revise",
+      "review_rework_override",
+      "review_rework_deferred_human",
+      "review_rework_halt_unknown",
+      "review_override",
+      "review_deferred_human",
       "review_halt",
       "revise",
-      "tiebreaker",
+      "gate_retry_revise",
+      "gate_reprompt_revise",
+      "tiebreaker_researcher",
+      "tiebreaker_challenger",
+      "tiebreaker_synthesis",
+      "tiebreaker_decision",
       "tiebreaker_finalize",
-      "tiebreaker-execute-batches",
+      "tiebreaker_execute_batches",
+      "tiebreaker_review_fan_in",
+      "tiebreaker_halt",
+      "tiebreaker-review-rework-execute-batches",
+      "tiebreaker-review-rework-fan-in",
+      "tiebreaker_review_rework_halt",
+      "tiebreaker_review_revise",
+      "tiebreaker_review_rework_override",
+      "tiebreaker_review_rework_deferred_human",
+      "tiebreaker_review_rework_halt_unknown",
+      "tiebreaker_review_override",
+      "tiebreaker_review_deferred_human",
+      "tiebreaker_review_halt",
+      "tiebreaker_iterate_revise",
       "tiebreaker_override",
+      "tiebreaker_override_halt",
+      "tiebreaker_override_finalize",
+      "tiebreaker_override_execute_batches",
+      "tiebreaker_override_review_fan_in",
+      "tiebreaker_override_halt_review",
+      "tiebreaker-override-review-rework-execute-batches",
+      "tiebreaker-override-review-rework-fan-in",
+      "tiebreaker_override_review_rework_halt",
+      "tiebreaker_override_review_revise",
+      "tiebreaker_override_review_rework_override",
+      "tiebreaker_override_review_rework_deferred_human",
+      "tiebreaker_override_review_rework_halt_unknown",
+      "tiebreaker_override_review_override",
+      "tiebreaker_override_review_deferred_human",
+      "tiebreaker_override_review_halt",
+      "tiebreaker_override_revise",
+      "tiebreaker_override_unknown",
+      "tiebreaker_replan_revise",
+      "tiebreaker_fallback_override",
       "override",
       "override_halt",
       "override_finalize",
-      "override_execute",
-      "override_revise",
+      "override_execute_batches",
+      "override_review_fan_in",
+      "override_halt_review",
+      "override-review-rework-execute-batches",
+      "override-review-rework-fan-in",
+      "override_review_rework_halt",
+      "override_review_revise",
+      "override_review_rework_override",
+      "override_review_rework_deferred_human",
+      "override_review_rework_halt_unknown",
+      "override_review_override",
+      "override_review_deferred_human",
+      "override_review_halt",
+      "override_replan_revise",
       "override_unknown",
       "gate_abort",
       "gate_suspend",
@@ -81,9 +138,29 @@
         }
       },
       {
-        "id": "gate-tiebreaker",
+        "id": "gate-gate_retry_revise",
         "source": "gate",
-        "target": "tiebreaker",
+        "target": "gate_retry_revise",
+        "label": "retry_gate",
+        "condition_ref": "gate.gate_route_signal.eq.retry_gate",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "gate-gate_reprompt_revise",
+        "source": "gate",
+        "target": "gate_reprompt_revise",
+        "label": "reprompt_downgrade",
+        "condition_ref": "gate.gate_route_signal.eq.reprompt_downgrade",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "gate-tiebreaker_researcher",
+        "source": "gate",
+        "target": "tiebreaker_researcher",
         "label": "tiebreaker",
         "condition_ref": "gate.gate_route_signal.eq.tiebreaker",
         "metadata": {
@@ -177,11 +254,31 @@
         }
       },
       {
-        "id": "review-fan-in-review_revise",
+        "id": "review-fan-in-review-rework-execute-batches",
         "source": "review-fan-in",
-        "target": "review_revise",
+        "target": "review-rework-execute-batches",
         "label": "rework",
         "condition_ref": "review-fan-in.review_route_signal.eq.rework",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "review-fan-in-review_override",
+        "source": "review-fan-in",
+        "target": "review_override",
+        "label": "blocked",
+        "condition_ref": "review-fan-in.review_route_signal.eq.blocked",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "review-fan-in-review_deferred_human",
+        "source": "review-fan-in",
+        "target": "review_deferred_human",
+        "label": "deferred_human",
+        "condition_ref": "review-fan-in.review_route_signal.eq.deferred_human",
         "metadata": {
           "source_form": "function"
         }
@@ -197,29 +294,421 @@
         }
       },
       {
-        "id": "tiebreaker-tiebreaker_finalize",
-        "source": "tiebreaker",
+        "id": "review-rework-execute-batches-review-rework-fan-in",
+        "source": "review-rework-execute-batches",
+        "target": "review-rework-fan-in",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "review-rework-fan-in-review_rework_halt",
+        "source": "review-rework-fan-in",
+        "target": "review_rework_halt",
+        "label": "pass",
+        "condition_ref": "review-rework-fan-in.rework_review_route_signal.eq.pass",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "review-rework-fan-in-review_revise",
+        "source": "review-rework-fan-in",
+        "target": "review_revise",
+        "label": "rework",
+        "condition_ref": "review-rework-fan-in.rework_review_route_signal.eq.rework",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "review-rework-fan-in-review_rework_override",
+        "source": "review-rework-fan-in",
+        "target": "review_rework_override",
+        "label": "blocked",
+        "condition_ref": "review-rework-fan-in.rework_review_route_signal.eq.blocked",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "review-rework-fan-in-review_rework_deferred_human",
+        "source": "review-rework-fan-in",
+        "target": "review_rework_deferred_human",
+        "label": "deferred_human",
+        "condition_ref": "review-rework-fan-in.rework_review_route_signal.eq.deferred_human",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "review-rework-fan-in-review_rework_halt_unknown",
+        "source": "review-rework-fan-in",
+        "target": "review_rework_halt_unknown",
+        "label": "else",
+        "condition_ref": "review-rework-fan-in.rework_review_route_signal.else",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_researcher:challenger",
+        "source": "tiebreaker_researcher",
+        "target": "tiebreaker_challenger",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_challenger:synthesis",
+        "source": "tiebreaker_challenger",
+        "target": "tiebreaker_synthesis",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_synthesis:decision",
+        "source": "tiebreaker_synthesis",
+        "target": "tiebreaker_decision",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_decision:finalize",
+        "source": "tiebreaker_decision",
         "target": "tiebreaker_finalize",
         "label": "proceed",
-        "condition_ref": "tiebreaker.decision.eq.proceed",
+        "condition_ref": "proceed",
         "metadata": {
           "source_form": "function"
         }
       },
       {
-        "id": "tiebreaker-tiebreaker_override",
-        "source": "tiebreaker",
+        "id": "tiebreaker_decision:critique",
+        "source": "tiebreaker_decision",
+        "target": "tiebreaker_iterate_revise",
+        "label": "iterate",
+        "condition_ref": "tiebreaker:loop",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_decision:override",
+        "source": "tiebreaker_decision",
         "target": "tiebreaker_override",
         "label": "escalate",
-        "condition_ref": "tiebreaker.decision.eq.escalate",
+        "condition_ref": "escalate",
         "metadata": {
           "source_form": "function"
         }
       },
       {
-        "id": "tiebreaker_finalize-tiebreaker-execute-batches",
+        "id": "tiebreaker_decision:revise_replan",
+        "source": "tiebreaker_decision",
+        "target": "tiebreaker_replan_revise",
+        "label": "replan",
+        "condition_ref": "tiebreaker:replan",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_decision-tiebreaker_fallback_override",
+        "source": "tiebreaker_decision",
+        "target": "tiebreaker_fallback_override",
+        "label": "else",
+        "condition_ref": "tiebreaker_decision.decision.else",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_finalize-tiebreaker_execute_batches",
         "source": "tiebreaker_finalize",
-        "target": "tiebreaker-execute-batches",
+        "target": "tiebreaker_execute_batches",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_execute_batches-tiebreaker_review_fan_in",
+        "source": "tiebreaker_execute_batches",
+        "target": "tiebreaker_review_fan_in",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_review_fan_in-tiebreaker_halt",
+        "source": "tiebreaker_review_fan_in",
+        "target": "tiebreaker_halt",
+        "label": "pass",
+        "condition_ref": "tiebreaker_review_fan_in.review_route_signal.eq.pass",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_review_fan_in-tiebreaker-review-rework-execute-batches",
+        "source": "tiebreaker_review_fan_in",
+        "target": "tiebreaker-review-rework-execute-batches",
+        "label": "rework",
+        "condition_ref": "tiebreaker_review_fan_in.review_route_signal.eq.rework",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_review_fan_in-tiebreaker_review_override",
+        "source": "tiebreaker_review_fan_in",
+        "target": "tiebreaker_review_override",
+        "label": "blocked",
+        "condition_ref": "tiebreaker_review_fan_in.review_route_signal.eq.blocked",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_review_fan_in-tiebreaker_review_deferred_human",
+        "source": "tiebreaker_review_fan_in",
+        "target": "tiebreaker_review_deferred_human",
+        "label": "deferred_human",
+        "condition_ref": "tiebreaker_review_fan_in.review_route_signal.eq.deferred_human",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_review_fan_in-tiebreaker_review_halt",
+        "source": "tiebreaker_review_fan_in",
+        "target": "tiebreaker_review_halt",
+        "label": "else",
+        "condition_ref": "tiebreaker_review_fan_in.review_route_signal.else",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker-review-rework-execute-batches-tiebreaker-review-rework-fan-in",
+        "source": "tiebreaker-review-rework-execute-batches",
+        "target": "tiebreaker-review-rework-fan-in",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker-review-rework-fan-in-tiebreaker_review_rework_halt",
+        "source": "tiebreaker-review-rework-fan-in",
+        "target": "tiebreaker_review_rework_halt",
+        "label": "pass",
+        "condition_ref": "tiebreaker-review-rework-fan-in.rework_review_route_signal.eq.pass",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker-review-rework-fan-in-tiebreaker_review_revise",
+        "source": "tiebreaker-review-rework-fan-in",
+        "target": "tiebreaker_review_revise",
+        "label": "rework",
+        "condition_ref": "tiebreaker-review-rework-fan-in.rework_review_route_signal.eq.rework",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker-review-rework-fan-in-tiebreaker_review_rework_override",
+        "source": "tiebreaker-review-rework-fan-in",
+        "target": "tiebreaker_review_rework_override",
+        "label": "blocked",
+        "condition_ref": "tiebreaker-review-rework-fan-in.rework_review_route_signal.eq.blocked",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker-review-rework-fan-in-tiebreaker_review_rework_deferred_human",
+        "source": "tiebreaker-review-rework-fan-in",
+        "target": "tiebreaker_review_rework_deferred_human",
+        "label": "deferred_human",
+        "condition_ref": "tiebreaker-review-rework-fan-in.rework_review_route_signal.eq.deferred_human",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker-review-rework-fan-in-tiebreaker_review_rework_halt_unknown",
+        "source": "tiebreaker-review-rework-fan-in",
+        "target": "tiebreaker_review_rework_halt_unknown",
+        "label": "else",
+        "condition_ref": "tiebreaker-review-rework-fan-in.rework_review_route_signal.else",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_override-tiebreaker_override_halt",
+        "source": "tiebreaker_override",
+        "target": "tiebreaker_override_halt",
+        "label": "abort",
+        "condition_ref": "tiebreaker_override.override_result.eq.abort",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_override-tiebreaker_override_finalize",
+        "source": "tiebreaker_override",
+        "target": "tiebreaker_override_finalize",
+        "label": "force_proceed",
+        "condition_ref": "tiebreaker_override.override_result.eq.force_proceed",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_override-tiebreaker_override_revise",
+        "source": "tiebreaker_override",
+        "target": "tiebreaker_override_revise",
+        "label": "replan",
+        "condition_ref": "tiebreaker_override.override_result.eq.replan",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_override-tiebreaker_override_unknown",
+        "source": "tiebreaker_override",
+        "target": "tiebreaker_override_unknown",
+        "label": "else",
+        "condition_ref": "tiebreaker_override.override_result.else",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_override_finalize-tiebreaker_override_execute_batches",
+        "source": "tiebreaker_override_finalize",
+        "target": "tiebreaker_override_execute_batches",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_override_execute_batches-tiebreaker_override_review_fan_in",
+        "source": "tiebreaker_override_execute_batches",
+        "target": "tiebreaker_override_review_fan_in",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_override_review_fan_in-tiebreaker_override_halt_review",
+        "source": "tiebreaker_override_review_fan_in",
+        "target": "tiebreaker_override_halt_review",
+        "label": "pass",
+        "condition_ref": "tiebreaker_override_review_fan_in.review_route_signal.eq.pass",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_override_review_fan_in-tiebreaker-override-review-rework-execute-batches",
+        "source": "tiebreaker_override_review_fan_in",
+        "target": "tiebreaker-override-review-rework-execute-batches",
+        "label": "rework",
+        "condition_ref": "tiebreaker_override_review_fan_in.review_route_signal.eq.rework",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_override_review_fan_in-tiebreaker_override_review_override",
+        "source": "tiebreaker_override_review_fan_in",
+        "target": "tiebreaker_override_review_override",
+        "label": "blocked",
+        "condition_ref": "tiebreaker_override_review_fan_in.review_route_signal.eq.blocked",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_override_review_fan_in-tiebreaker_override_review_deferred_human",
+        "source": "tiebreaker_override_review_fan_in",
+        "target": "tiebreaker_override_review_deferred_human",
+        "label": "deferred_human",
+        "condition_ref": "tiebreaker_override_review_fan_in.review_route_signal.eq.deferred_human",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker_override_review_fan_in-tiebreaker_override_review_halt",
+        "source": "tiebreaker_override_review_fan_in",
+        "target": "tiebreaker_override_review_halt",
+        "label": "else",
+        "condition_ref": "tiebreaker_override_review_fan_in.review_route_signal.else",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker-override-review-rework-execute-batches-tiebreaker-override-review-rework-fan-in",
+        "source": "tiebreaker-override-review-rework-execute-batches",
+        "target": "tiebreaker-override-review-rework-fan-in",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker-override-review-rework-fan-in-tiebreaker_override_review_rework_halt",
+        "source": "tiebreaker-override-review-rework-fan-in",
+        "target": "tiebreaker_override_review_rework_halt",
+        "label": "pass",
+        "condition_ref": "tiebreaker-override-review-rework-fan-in.rework_review_route_signal.eq.pass",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker-override-review-rework-fan-in-tiebreaker_override_review_revise",
+        "source": "tiebreaker-override-review-rework-fan-in",
+        "target": "tiebreaker_override_review_revise",
+        "label": "rework",
+        "condition_ref": "tiebreaker-override-review-rework-fan-in.rework_review_route_signal.eq.rework",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker-override-review-rework-fan-in-tiebreaker_override_review_rework_override",
+        "source": "tiebreaker-override-review-rework-fan-in",
+        "target": "tiebreaker_override_review_rework_override",
+        "label": "blocked",
+        "condition_ref": "tiebreaker-override-review-rework-fan-in.rework_review_route_signal.eq.blocked",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker-override-review-rework-fan-in-tiebreaker_override_review_rework_deferred_human",
+        "source": "tiebreaker-override-review-rework-fan-in",
+        "target": "tiebreaker_override_review_rework_deferred_human",
+        "label": "deferred_human",
+        "condition_ref": "tiebreaker-override-review-rework-fan-in.rework_review_route_signal.eq.deferred_human",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "tiebreaker-override-review-rework-fan-in-tiebreaker_override_review_rework_halt_unknown",
+        "source": "tiebreaker-override-review-rework-fan-in",
+        "target": "tiebreaker_override_review_rework_halt_unknown",
+        "label": "else",
+        "condition_ref": "tiebreaker-override-review-rework-fan-in.rework_review_route_signal.else",
         "metadata": {
           "source_form": "function"
         }
@@ -245,9 +734,9 @@
         }
       },
       {
-        "id": "override-override_revise",
+        "id": "override-override_replan_revise",
         "source": "override",
-        "target": "override_revise",
+        "target": "override_replan_revise",
         "label": "replan",
         "condition_ref": "override.override_result.eq.replan",
         "metadata": {
@@ -265,9 +754,125 @@
         }
       },
       {
-        "id": "override_finalize-override_execute",
+        "id": "override_finalize-override_execute_batches",
         "source": "override_finalize",
-        "target": "override_execute",
+        "target": "override_execute_batches",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "override_execute_batches-override_review_fan_in",
+        "source": "override_execute_batches",
+        "target": "override_review_fan_in",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "override_review_fan_in-override_halt_review",
+        "source": "override_review_fan_in",
+        "target": "override_halt_review",
+        "label": "pass",
+        "condition_ref": "override_review_fan_in.review_route_signal.eq.pass",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "override_review_fan_in-override-review-rework-execute-batches",
+        "source": "override_review_fan_in",
+        "target": "override-review-rework-execute-batches",
+        "label": "rework",
+        "condition_ref": "override_review_fan_in.review_route_signal.eq.rework",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "override_review_fan_in-override_review_override",
+        "source": "override_review_fan_in",
+        "target": "override_review_override",
+        "label": "blocked",
+        "condition_ref": "override_review_fan_in.review_route_signal.eq.blocked",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "override_review_fan_in-override_review_deferred_human",
+        "source": "override_review_fan_in",
+        "target": "override_review_deferred_human",
+        "label": "deferred_human",
+        "condition_ref": "override_review_fan_in.review_route_signal.eq.deferred_human",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "override_review_fan_in-override_review_halt",
+        "source": "override_review_fan_in",
+        "target": "override_review_halt",
+        "label": "else",
+        "condition_ref": "override_review_fan_in.review_route_signal.else",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "override-review-rework-execute-batches-override-review-rework-fan-in",
+        "source": "override-review-rework-execute-batches",
+        "target": "override-review-rework-fan-in",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "override-review-rework-fan-in-override_review_rework_halt",
+        "source": "override-review-rework-fan-in",
+        "target": "override_review_rework_halt",
+        "label": "pass",
+        "condition_ref": "override-review-rework-fan-in.rework_review_route_signal.eq.pass",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "override-review-rework-fan-in-override_review_revise",
+        "source": "override-review-rework-fan-in",
+        "target": "override_review_revise",
+        "label": "rework",
+        "condition_ref": "override-review-rework-fan-in.rework_review_route_signal.eq.rework",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "override-review-rework-fan-in-override_review_rework_override",
+        "source": "override-review-rework-fan-in",
+        "target": "override_review_rework_override",
+        "label": "blocked",
+        "condition_ref": "override-review-rework-fan-in.rework_review_route_signal.eq.blocked",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "override-review-rework-fan-in-override_review_rework_deferred_human",
+        "source": "override-review-rework-fan-in",
+        "target": "override_review_rework_deferred_human",
+        "label": "deferred_human",
+        "condition_ref": "override-review-rework-fan-in.rework_review_route_signal.eq.deferred_human",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "override-review-rework-fan-in-override_review_rework_halt_unknown",
+        "source": "override-review-rework-fan-in",
+        "target": "override_review_rework_halt_unknown",
+        "label": "else",
+        "condition_ref": "override-review-rework-fan-in.rework_review_route_signal.else",
         "metadata": {
           "source_form": "function"
         }
@@ -288,82 +893,7 @@
           "source_form": "function"
         }
       }
-    ],
-    "step_metadata": {
-      "critique-fanout": {
-        "parallel_map": true,
-        "items_ref": "megaplan.policy.critique_lenses",
-        "mapper_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_CRITIQUE_PANEL_WORKFLOW",
-        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_CRITIQUE",
-        "path_template": "critique/{item_id}",
-        "iteration_coordinate": "{item_id}",
-        "call_site_path": "critique-fanout"
-      },
-      "execute-batches": {
-        "parallel_map": true,
-        "items_ref": "megaplan.execute.batches",
-        "mapper_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_EXECUTE_BATCH_WORKFLOW",
-        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_EXECUTE",
-        "path_template": "execute/{index}",
-        "iteration_coordinate": "{index}",
-        "call_site_path": "execute-batches"
-      },
-      "review-fan-in": {
-        "parallel_map": true,
-        "items_ref": "execute_payload",
-        "mapper_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_REVIEW_PANEL_WORKFLOW",
-        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_REVIEW",
-        "path_template": "review/{item_id}",
-        "iteration_coordinate": "{item_id}",
-        "call_site_path": "review-fan-in"
-      },
-      "tiebreaker": {
-        "component_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_TIEBREAKER_WORKFLOW",
-        "executable_workflow": true,
-        "child_workflow_id": "tiebreaker_child",
-        "call_site_path": "megaplan/tiebreaker",
-        "parent_path": "megaplan",
-        "inputs_schema": [
-          "gate_payload"
-        ],
-        "outputs_schema": [
-          "decision"
-        ]
-      },
-      "tiebreaker-execute-batches": {
-        "parallel_map": true,
-        "items_ref": "megaplan.execute.batches",
-        "mapper_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_EXECUTE_BATCH_WORKFLOW",
-        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_EXECUTE",
-        "path_template": "execute/{index}",
-        "iteration_coordinate": "{index}",
-        "call_site_path": "tiebreaker-execute-batches"
-      }
-    },
-    "fanout_policies": {
-      "critique-fanout": {
-        "mode": "dynamic",
-        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_CRITIQUE"
-      },
-      "execute-batches": {
-        "mode": "dynamic",
-        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_EXECUTE"
-      },
-      "review-fan-in": {
-        "mode": "dynamic",
-        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_REVIEW"
-      },
-      "tiebreaker-execute-batches": {
-        "mode": "dynamic",
-        "reducer_ref": "arnold_pipelines.megaplan.workflows.components:SOURCE_EXECUTE"
-      }
-    },
-    "subflows": {
-      "tiebreaker": {
-        "manifest_hash": "sha256:de851fe19389f02de8a1edc5d4b616100c2d40a28fef95de74d0ac0d8798a075",
-        "alias": "tiebreaker_child"
-      }
-    }
+    ]
   },
   "expected_diagnostics": []
 }

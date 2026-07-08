@@ -69,10 +69,21 @@ from arnold.workflow.boundary_evidence import (
     BoundaryContract,
     BoundaryReceipt,
     SemanticFinding,
+    boundary_contract_missing_topology_detail_keys,
 )
 from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
 from arnold.workflow.refs import is_manifest_hash, is_ref
-from arnold.workflow.semantic_evidence import SemanticEvidence
+from arnold.workflow.semantic_evidence import (
+    S5_FINALIZE_ARTIFACTS_ROW_ID,
+    S5_FINALIZE_FALLBACK_ROW_ID,
+    S5_FINAL_PROJECTION_ROW_ID,
+    S5_REVIEW_CAP_AUTHORITY_ROW_ID,
+    S5_REVIEW_CHILD_OUTPUTS_ROW_ID,
+    S5_REVIEW_HUMAN_VERIFICATION_ROW_ID,
+    S5_REVIEW_REDUCER_PROMOTION_ROW_ID,
+    S5_REVIEW_REWORK_EFFECTS_ROW_ID,
+    SemanticEvidence,
+)
 
 _DEFAULT_SOURCE_PATH = "<workflow-source>"
 _SUPPORTED_SOURCE_SUFFIXES = frozenset({".py", ".pypeline"})
@@ -86,6 +97,36 @@ _INVALID_REF = object()
 _LOWERED_STEP_METADATA_KEYS = frozenset({"handler_ref", "terminal"})
 _MANIFEST_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _ALLOWED_OUTCOME_MODULES = frozenset({"arnold_pipelines.megaplan.outcomes"})
+_MEGAPLAN_COMPONENT_MODULE = "arnold_pipelines.megaplan.workflows.components"
+_MEGAPLAN_REVIEW_PANEL_EXPORTS = frozenset(
+    {"REVIEW_PANEL_WORKFLOW", "SOURCE_REVIEW_PANEL_WORKFLOW"}
+)
+_MEGAPLAN_REVIEW_REDUCER_EXPORTS = frozenset({"REVIEW", "SOURCE_REVIEW", "AUTHORING_REVIEW"})
+_MEGAPLAN_EXECUTE_BATCH_EXPORTS = frozenset(
+    {"EXECUTE_BATCH_WORKFLOW", "SOURCE_EXECUTE_BATCH_WORKFLOW"}
+)
+_MEGAPLAN_EXECUTE_REDUCER_EXPORTS = frozenset({"EXECUTE", "SOURCE_EXECUTE", "AUTHORING_EXECUTE"})
+_MEGAPLAN_FINALIZE_EXPORTS = frozenset({"FINALIZE", "SOURCE_FINALIZE", "AUTHORING_FINALIZE"})
+_MEGAPLAN_REVIEW_POLICY_EXPORT = "REVIEW_POLICY"
+_MEGAPLAN_FINALIZE_POLICY_EXPORT = "FINALIZE_POLICY"
+_MEGAPLAN_REVIEW_WORKFLOW_EXPORT = "SOURCE_REVIEW_PANEL_WORKFLOW"
+_MEGAPLAN_S5_REVIEW_ROW_IDS = frozenset(
+    {
+        S5_REVIEW_CHILD_OUTPUTS_ROW_ID,
+        S5_REVIEW_REDUCER_PROMOTION_ROW_ID,
+        S5_REVIEW_REWORK_EFFECTS_ROW_ID,
+        S5_REVIEW_CAP_AUTHORITY_ROW_ID,
+        S5_REVIEW_HUMAN_VERIFICATION_ROW_ID,
+    }
+)
+_MEGAPLAN_S5_ROW_IDS = frozenset(
+    {
+        *_MEGAPLAN_S5_REVIEW_ROW_IDS,
+        S5_FINALIZE_ARTIFACTS_ROW_ID,
+        S5_FINALIZE_FALLBACK_ROW_ID,
+        S5_FINAL_PROJECTION_ROW_ID,
+    }
+)
 
 
 class SourceCompileError(ValueError):
@@ -645,7 +686,13 @@ def check_workflow_source(
         boundary_evidence_records,
     )
     tiebreaker_shape_diagnostics = _tiebreaker_shape_diagnostics(parsed_source)
-    if row_evidence_diagnostics or boundary_diagnostics or tiebreaker_shape_diagnostics:
+    megaplan_topology_diagnostics = _megaplan_review_finalize_diagnostics(parsed_source)
+    if (
+        row_evidence_diagnostics
+        or boundary_diagnostics
+        or tiebreaker_shape_diagnostics
+        or megaplan_topology_diagnostics
+    ):
         parsed_source = replace(
             parsed_source,
             diagnostics=(
@@ -653,6 +700,7 @@ def check_workflow_source(
                 *row_evidence_diagnostics,
                 *boundary_diagnostics,
                 *tiebreaker_shape_diagnostics,
+                *megaplan_topology_diagnostics,
             ),
         )
     return CheckWorkflowSourceResult(
@@ -807,6 +855,299 @@ def _tiebreaker_shape_diagnostics(
     return tuple(diagnostics)
 
 
+def _normalized_component_export_name(value: str) -> str:
+    export_name = value.rsplit(":", 1)[-1]
+    if export_name.startswith("SOURCE_"):
+        export_name = export_name.removeprefix("SOURCE_")
+    if export_name.startswith("AUTHORING_"):
+        export_name = export_name.removeprefix("AUTHORING_")
+    return export_name
+
+
+def _normalized_topology_id(value: str) -> str:
+    return value.replace("_", "-")
+
+
+def _component_ref_matches_exports(component_ref: str, exports: set[str] | frozenset[str]) -> bool:
+    return _normalized_component_export_name(component_ref) in {
+        _normalized_component_export_name(export_name) for export_name in exports
+    }
+
+
+def _collect_parallel_map_calls(block: ParsedSourceBlock) -> tuple[ParsedParallelMapCall, ...]:
+    calls: list[ParsedParallelMapCall] = []
+    for statement in block.statements:
+        if isinstance(statement, ParsedParallelMapCall):
+            calls.append(statement)
+        elif isinstance(statement, ParsedBranchBlock):
+            for arm in statement.arms:
+                calls.extend(_collect_parallel_map_calls(arm.body))
+        elif isinstance(statement, ParsedLoopBlock):
+            calls.extend(_collect_parallel_map_calls(statement.body))
+    return tuple(calls)
+
+
+def _component_calls_for_exports(
+    block: ParsedSourceBlock,
+    exports: set[str] | frozenset[str],
+) -> tuple[ParsedStepCall | ParsedSubflowCall | ParsedNestedWorkflowCall, ...]:
+    calls: list[ParsedStepCall | ParsedSubflowCall | ParsedNestedWorkflowCall] = []
+    for statement in block.statements:
+        if isinstance(statement, (ParsedStepCall, ParsedSubflowCall, ParsedNestedWorkflowCall)):
+            if _component_ref_matches_exports(statement.component_ref, exports):
+                calls.append(statement)
+        elif isinstance(statement, ParsedBranchBlock):
+            for arm in statement.arms:
+                calls.extend(_component_calls_for_exports(arm.body, exports))
+        elif isinstance(statement, ParsedLoopBlock):
+            calls.extend(_component_calls_for_exports(statement.body, exports))
+    return tuple(calls)
+
+
+def _step_calls_for_exports(
+    block: ParsedSourceBlock,
+    exports: set[str] | frozenset[str],
+) -> tuple[ParsedStepCall, ...]:
+    calls: list[ParsedStepCall] = []
+    for statement in block.statements:
+        if isinstance(statement, ParsedStepCall) and _component_ref_matches_exports(
+            statement.component_ref,
+            exports,
+        ):
+            calls.append(statement)
+        elif isinstance(statement, ParsedBranchBlock):
+            for arm in statement.arms:
+                calls.extend(_step_calls_for_exports(arm.body, exports))
+        elif isinstance(statement, ParsedLoopBlock):
+            calls.extend(_step_calls_for_exports(statement.body, exports))
+    return tuple(calls)
+
+
+def _review_parallel_map_calls(block: ParsedSourceBlock) -> tuple[ParsedParallelMapCall, ...]:
+    return tuple(
+        call
+        for call in _collect_parallel_map_calls(block)
+        if _component_ref_matches_exports(call.mapper_ref, _MEGAPLAN_REVIEW_PANEL_EXPORTS)
+    )
+
+
+def _visible_review_fan_in_call(
+    calls: Sequence[ParsedParallelMapCall],
+) -> ParsedParallelMapCall | None:
+    for call in calls:
+        if (
+            _normalized_topology_id(call.id).endswith("review-fan-in")
+            and _component_ref_matches_exports(call.reducer_ref, _MEGAPLAN_REVIEW_REDUCER_EXPORTS)
+            and call.path_template == "review/{item_id}"
+        ):
+            return call
+    return None
+
+
+def _visible_review_rework_cycle_call(
+    block: ParsedSourceBlock,
+) -> ParsedParallelMapCall | None:
+    execute_calls = [
+        call
+        for call in _collect_parallel_map_calls(block)
+        if _normalized_topology_id(call.id).endswith("review-rework-execute-batches")
+        and _component_ref_matches_exports(call.mapper_ref, _MEGAPLAN_EXECUTE_BATCH_EXPORTS)
+        and _component_ref_matches_exports(call.reducer_ref, _MEGAPLAN_EXECUTE_REDUCER_EXPORTS)
+    ]
+    review_calls = [
+        call
+        for call in _review_parallel_map_calls(block)
+        if _normalized_topology_id(call.id).endswith("review-rework-fan-in")
+        and _component_ref_matches_exports(call.reducer_ref, _MEGAPLAN_REVIEW_REDUCER_EXPORTS)
+    ]
+    if execute_calls and review_calls:
+        return review_calls[0]
+    return None
+
+
+def _megaplan_policy_route_surface(export_name: str) -> Mapping[str, Any]:
+    try:
+        module = import_module(_MEGAPLAN_COMPONENT_MODULE)
+    except Exception:
+        return MappingProxyType({})
+    policy = getattr(module, export_name, None)
+    metadata = getattr(policy, "metadata", None)
+    if not isinstance(metadata, Mapping):
+        return MappingProxyType({})
+    route_surface = metadata.get("route_surface")
+    return route_surface if isinstance(route_surface, Mapping) else MappingProxyType({})
+
+
+def _megaplan_review_topology_contract() -> Mapping[str, Any]:
+    try:
+        module = import_module(_MEGAPLAN_COMPONENT_MODULE)
+    except Exception:
+        return MappingProxyType({})
+    workflow_component = getattr(module, _MEGAPLAN_REVIEW_WORKFLOW_EXPORT, None)
+    metadata = getattr(workflow_component, "metadata", None)
+    if not isinstance(metadata, Mapping):
+        return MappingProxyType({})
+    topology_contract = metadata.get("topology_contract")
+    return topology_contract if isinstance(topology_contract, Mapping) else MappingProxyType({})
+
+
+def _review_topology_contract_owns_cap_thresholds(contract: Mapping[str, Any]) -> bool:
+    disallowed_keys = {
+        "cap_thresholds",
+        "max_review_rework_cycles",
+        "max_rework_cycles",
+        "review_cap_threshold",
+        "rework_cycle_cap",
+    }
+    for key, value in contract.items():
+        lowered_key = str(key).lower()
+        if lowered_key in disallowed_keys or lowered_key.endswith("_threshold"):
+            return True
+        if lowered_key == "retry_and_cap" and isinstance(value, Mapping):
+            for nested_key, nested_value in value.items():
+                nested_lowered = str(nested_key).lower()
+                if nested_lowered in disallowed_keys or nested_lowered.endswith("_threshold"):
+                    return True
+                if isinstance(nested_value, Mapping):
+                    return True
+        elif isinstance(value, Mapping) and _review_topology_contract_owns_cap_thresholds(value):
+            return True
+    return False
+
+
+def _megaplan_surface_ref_exists(surface_ref: str) -> bool:
+    if not surface_ref or "." not in surface_ref:
+        return False
+    try:
+        module = import_module(_MEGAPLAN_COMPONENT_MODULE)
+    except Exception:
+        return False
+    current: Any = module
+    for segment in surface_ref.split("."):
+        if isinstance(current, Mapping):
+            current = current.get(segment, _INVALID_REF)
+        else:
+            current = getattr(current, segment, _INVALID_REF)
+        if current is _INVALID_REF:
+            return False
+    return True
+
+
+def _megaplan_policy_transition_exists(policy_export: str, transition_id: str) -> bool:
+    if not transition_id:
+        return False
+    try:
+        module = import_module(_MEGAPLAN_COMPONENT_MODULE)
+    except Exception:
+        return False
+    policy = getattr(module, policy_export, None)
+    config = getattr(policy, "config", None)
+    if not isinstance(config, Mapping):
+        return False
+    transitions = config.get("control_transitions", ())
+    if not isinstance(transitions, Sequence):
+        return False
+    return any(
+        isinstance(transition, Mapping)
+        and transition.get("transition_id") == transition_id
+        for transition in transitions
+    )
+
+
+def _megaplan_review_finalize_diagnostics(
+    parsed_source: "ParsedWorkflowSource",
+) -> tuple["AuthoringDiagnostic", ...]:
+    workflow = parsed_source.workflow
+    if workflow is None:
+        return ()
+
+    review_parallel_maps = _review_parallel_map_calls(workflow.source_block)
+    direct_review_calls = _component_calls_for_exports(
+        workflow.source_block,
+        _MEGAPLAN_REVIEW_PANEL_EXPORTS,
+    )
+    finalize_calls = _step_calls_for_exports(
+        workflow.source_block,
+        _MEGAPLAN_FINALIZE_EXPORTS,
+    )
+    if not review_parallel_maps and not direct_review_calls and not finalize_calls:
+        return ()
+
+    diagnostics: list[AuthoringDiagnostic] = []
+    visible_review_fan_in = _visible_review_fan_in_call(review_parallel_maps)
+    if review_parallel_maps and visible_review_fan_in is None:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.SINGLE_HANDLER_WRAPPER,
+                (
+                    "review fanout must expose a source-visible review-fan-in parallel_map "
+                    "with REVIEW_PANEL_WORKFLOW child calls and SOURCE/AUTHORING_REVIEW reducer"
+                ),
+                source_span=review_parallel_maps[0].source_span,
+                component_ref=review_parallel_maps[0].mapper_ref,
+            )
+        )
+    if direct_review_calls and visible_review_fan_in is None:
+        first_call = direct_review_calls[0]
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.SINGLE_HANDLER_WRAPPER,
+                (
+                    "review fanout must remain source-visible as parallel_map fan-in plus "
+                    "reducer; direct REVIEW_PANEL_WORKFLOW call detected"
+                ),
+                source_span=first_call.source_span,
+                component_ref=first_call.component_ref,
+            )
+        )
+
+    if review_parallel_maps:
+        review_policy_surface = _megaplan_policy_route_surface(_MEGAPLAN_REVIEW_POLICY_EXPORT)
+        review_topology_contract = _megaplan_review_topology_contract()
+        if (
+            not isinstance(review_policy_surface.get("cap_thresholds"), Mapping)
+            or not isinstance(review_policy_surface.get("blocked_and_advisory_outcomes"), Mapping)
+            or not isinstance(review_policy_surface.get("force_proceed_authority"), Mapping)
+            or _review_topology_contract_owns_cap_thresholds(review_topology_contract)
+        ):
+            anchor = visible_review_fan_in or review_parallel_maps[0]
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.HANDLER_PURITY_VIOLATION,
+                    (
+                        "review cap thresholds and cap-exhausted authority must be declared "
+                        "on REVIEW_POLICY, not hidden in handler-owned review topology metadata"
+                    ),
+                    source_span=anchor.source_span,
+                    component_ref=f"{_MEGAPLAN_COMPONENT_MODULE}:{_MEGAPLAN_REVIEW_POLICY_EXPORT}",
+                )
+            )
+
+    if finalize_calls:
+        finalize_policy_surface = _megaplan_policy_route_surface(_MEGAPLAN_FINALIZE_POLICY_EXPORT)
+        fallback_routes = finalize_policy_surface.get("fallback_routes")
+        projection_routes = finalize_policy_surface.get("final_projection_routes")
+        if (
+            not isinstance(fallback_routes, Mapping)
+            or "plan_contract_revise_needed" not in fallback_routes
+            or not isinstance(projection_routes, Mapping)
+            or "revise_fallback" not in projection_routes
+        ):
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.HANDLER_PURITY_VIOLATION,
+                    (
+                        "finalize fallback must be visible in FINALIZE_POLICY route surfaces "
+                        "instead of relying on hidden handler fallback logic"
+                    ),
+                    source_span=finalize_calls[0].source_span,
+                    component_ref=f"{_MEGAPLAN_COMPONENT_MODULE}:{_MEGAPLAN_FINALIZE_POLICY_EXPORT}",
+                )
+            )
+
+    return tuple(diagnostics)
+
+
 def _boundary_evidence_diagnostics(
     parsed_source: ParsedWorkflowSource,
     boundary_contracts: Sequence[BoundaryContract],
@@ -825,7 +1166,7 @@ def _boundary_evidence_diagnostics(
     if not boundary_contracts and not boundary_evidence:
         return ()
 
-    implemented_rows = _implemented_front_half_rows(parsed_source.workflow)
+    implemented_rows = _implemented_boundary_rows(parsed_source.workflow)
     implemented_by_row_id = {row.row_id: row for row in implemented_rows}
     contracts_by_row_id = {
         contract.row_id: contract
@@ -870,6 +1211,31 @@ def _boundary_evidence_diagnostics(
                     details={
                         "row_id": row.row_id,
                         "phase": row.phase,
+                    },
+                )
+            )
+            continue
+
+        topology_issues = _boundary_topology_issues(
+            contract=contract,
+            row=row,
+            parsed_source=parsed_source,
+        )
+        if topology_issues:
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.BOUNDARY_EVIDENCE_WITHOUT_SOURCE,
+                    (
+                        f"boundary evidence for contract {contract.boundary_id!r} lacks a "
+                        f"matching source-visible topology carrier for row {row.row_id!r}"
+                    ),
+                    source_span=row.source_span,
+                    component_ref=row.component_ref,
+                    details={
+                        "boundary_id": contract.boundary_id,
+                        "row_id": row.row_id,
+                        "phase": row.phase,
+                        "topology_issues": tuple(topology_issues),
                     },
                 )
             )
@@ -941,6 +1307,75 @@ def _boundary_evidence_diagnostics(
         )
 
     return tuple(diagnostics)
+
+
+def _boundary_topology_issues(
+    *,
+    contract: BoundaryContract,
+    row: _ImplementedFrontHalfRow,
+    parsed_source: ParsedWorkflowSource,
+) -> tuple[str, ...]:
+    if contract.row_id not in _MEGAPLAN_S5_ROW_IDS:
+        return ()
+
+    issues = list(boundary_contract_missing_topology_detail_keys(contract))
+    if issues:
+        return tuple(issues)
+
+    details = contract.details
+    review_parallel_maps = _review_parallel_map_calls(parsed_source.workflow.source_block) if parsed_source.workflow else ()
+    review_fan_in = _visible_review_fan_in_call(review_parallel_maps)
+    review_rework = _visible_review_rework_cycle_call(parsed_source.workflow.source_block) if parsed_source.workflow else None
+    review_policy_surface = _megaplan_policy_route_surface(_MEGAPLAN_REVIEW_POLICY_EXPORT)
+    finalize_policy_surface = _megaplan_policy_route_surface(_MEGAPLAN_FINALIZE_POLICY_EXPORT)
+
+    if contract.row_id == S5_REVIEW_CHILD_OUTPUTS_ROW_ID:
+        if review_fan_in is None:
+            issues.append("review_fan_in_missing")
+        if details.get("fan_in_ref") != "review-fan-in":
+            issues.append("fan_in_ref")
+        if not _megaplan_surface_ref_exists(str(details.get("evidence_surface_ref"))):
+            issues.append("evidence_surface_ref")
+    elif contract.row_id == S5_REVIEW_REDUCER_PROMOTION_ROW_ID:
+        if review_fan_in is None:
+            issues.append("review_reducer_missing")
+        else:
+            expected_reducer = _normalized_component_export_name(str(details.get("reducer_ref")))
+            actual_reducer = _normalized_component_export_name(review_fan_in.reducer_ref)
+            if expected_reducer != actual_reducer:
+                issues.append("reducer_ref")
+    elif contract.row_id == S5_REVIEW_REWORK_EFFECTS_ROW_ID:
+        if review_rework is None:
+            issues.append("review_rework_topology_missing")
+        if not _megaplan_surface_ref_exists(str(details.get("evidence_surface_ref"))):
+            issues.append("evidence_surface_ref")
+    elif contract.row_id == S5_REVIEW_CAP_AUTHORITY_ROW_ID:
+        if not isinstance(review_policy_surface.get("cap_thresholds"), Mapping):
+            issues.append("cap_thresholds")
+        if not isinstance(review_policy_surface.get("force_proceed_authority"), Mapping):
+            issues.append("force_proceed_authority")
+        if _review_topology_contract_owns_cap_thresholds(_megaplan_review_topology_contract()):
+            issues.append("handler_owned_cap_thresholds")
+    elif contract.row_id == S5_REVIEW_HUMAN_VERIFICATION_ROW_ID:
+        if not isinstance(review_policy_surface.get("human_verification"), Mapping):
+            issues.append("human_verification")
+    elif contract.row_id == S5_FINALIZE_ARTIFACTS_ROW_ID:
+        if not isinstance(finalize_policy_surface.get("canonical_artifacts"), Mapping):
+            issues.append("canonical_artifacts")
+    elif contract.row_id == S5_FINALIZE_FALLBACK_ROW_ID:
+        if not _megaplan_surface_ref_exists(str(details.get("evidence_surface_ref"))):
+            issues.append("evidence_surface_ref")
+        if not _megaplan_policy_transition_exists(
+            _MEGAPLAN_FINALIZE_POLICY_EXPORT,
+            str(details.get("projection_ref")),
+        ):
+            issues.append("projection_ref")
+    elif contract.row_id == S5_FINAL_PROJECTION_ROW_ID:
+        if not _megaplan_surface_ref_exists(str(details.get("evidence_surface_ref"))):
+            issues.append("evidence_surface_ref")
+        if not isinstance(finalize_policy_surface.get("final_projection_routes"), Mapping):
+            issues.append("final_projection_routes")
+    return tuple(issues)
 
 
 def _boundary_contract_for_record(
@@ -1245,6 +1680,113 @@ def _front_half_row_specs() -> Mapping[str, tuple[str, str]]:
                 f"arnold_pipelines.megaplan.workflows.components:{export_name}"
             ] = (contract.row_id, contract.phase.value)
     return MappingProxyType(row_specs)
+
+
+def _implemented_boundary_rows(
+    workflow: WorkflowDeclaration | None,
+) -> tuple[_ImplementedFrontHalfRow, ...]:
+    if workflow is None:
+        return ()
+    implemented_by_row_id = {
+        row.row_id: row for row in _implemented_front_half_rows(workflow)
+    }
+    for row in _implemented_s5_boundary_rows(workflow):
+        implemented_by_row_id.setdefault(row.row_id, row)
+    return tuple(implemented_by_row_id.values())
+
+
+def _implemented_s5_boundary_rows(
+    workflow: WorkflowDeclaration,
+) -> tuple[_ImplementedFrontHalfRow, ...]:
+    rows: list[_ImplementedFrontHalfRow] = []
+    review_parallel_maps = _review_parallel_map_calls(workflow.source_block)
+    review_fan_in = _visible_review_fan_in_call(review_parallel_maps)
+    review_rework = _visible_review_rework_cycle_call(workflow.source_block)
+    finalize_calls = _step_calls_for_exports(workflow.source_block, _MEGAPLAN_FINALIZE_EXPORTS)
+    review_policy_surface = _megaplan_policy_route_surface(_MEGAPLAN_REVIEW_POLICY_EXPORT)
+    finalize_policy_surface = _megaplan_policy_route_surface(_MEGAPLAN_FINALIZE_POLICY_EXPORT)
+    review_topology_contract = _megaplan_review_topology_contract()
+
+    if review_fan_in is not None:
+        rows.append(
+            _ImplementedFrontHalfRow(
+                row_id=S5_REVIEW_CHILD_OUTPUTS_ROW_ID,
+                phase="review",
+                source_span=review_fan_in.source_span,
+                component_ref=review_fan_in.mapper_ref,
+            )
+        )
+        rows.append(
+            _ImplementedFrontHalfRow(
+                row_id=S5_REVIEW_REDUCER_PROMOTION_ROW_ID,
+                phase="review",
+                source_span=review_fan_in.source_span,
+                component_ref=review_fan_in.reducer_ref,
+            )
+        )
+    if review_rework is not None and isinstance(review_policy_surface.get("rework_cycle"), Mapping):
+        rows.append(
+            _ImplementedFrontHalfRow(
+                row_id=S5_REVIEW_REWORK_EFFECTS_ROW_ID,
+                phase="review",
+                source_span=review_rework.source_span,
+                component_ref=review_rework.reducer_ref,
+            )
+        )
+    if (
+        review_fan_in is not None
+        and isinstance(review_policy_surface.get("cap_thresholds"), Mapping)
+        and isinstance(review_policy_surface.get("blocked_and_advisory_outcomes"), Mapping)
+        and isinstance(review_policy_surface.get("force_proceed_authority"), Mapping)
+        and not _review_topology_contract_owns_cap_thresholds(review_topology_contract)
+    ):
+        rows.append(
+            _ImplementedFrontHalfRow(
+                row_id=S5_REVIEW_CAP_AUTHORITY_ROW_ID,
+                phase="review",
+                source_span=review_fan_in.source_span,
+                component_ref=f"{_MEGAPLAN_COMPONENT_MODULE}:{_MEGAPLAN_REVIEW_POLICY_EXPORT}",
+            )
+        )
+    if review_fan_in is not None and isinstance(review_policy_surface.get("human_verification"), Mapping):
+        rows.append(
+            _ImplementedFrontHalfRow(
+                row_id=S5_REVIEW_HUMAN_VERIFICATION_ROW_ID,
+                phase="review",
+                source_span=review_fan_in.source_span,
+                component_ref=f"{_MEGAPLAN_COMPONENT_MODULE}:{_MEGAPLAN_REVIEW_POLICY_EXPORT}",
+            )
+        )
+    if finalize_calls:
+        finalize_source_span = finalize_calls[0].source_span
+        if isinstance(finalize_policy_surface.get("canonical_artifacts"), Mapping):
+            rows.append(
+                _ImplementedFrontHalfRow(
+                    row_id=S5_FINALIZE_ARTIFACTS_ROW_ID,
+                    phase="finalize",
+                    source_span=finalize_source_span,
+                    component_ref=f"{_MEGAPLAN_COMPONENT_MODULE}:{_MEGAPLAN_FINALIZE_POLICY_EXPORT}",
+                )
+            )
+        if isinstance(finalize_policy_surface.get("fallback_routes"), Mapping):
+            rows.append(
+                _ImplementedFrontHalfRow(
+                    row_id=S5_FINALIZE_FALLBACK_ROW_ID,
+                    phase="finalize",
+                    source_span=finalize_source_span,
+                    component_ref=f"{_MEGAPLAN_COMPONENT_MODULE}:{_MEGAPLAN_FINALIZE_POLICY_EXPORT}",
+                )
+            )
+        if isinstance(finalize_policy_surface.get("final_projection_routes"), Mapping):
+            rows.append(
+                _ImplementedFrontHalfRow(
+                    row_id=S5_FINAL_PROJECTION_ROW_ID,
+                    phase="finalize",
+                    source_span=finalize_source_span,
+                    component_ref=f"{_MEGAPLAN_COMPONENT_MODULE}:{_MEGAPLAN_FINALIZE_POLICY_EXPORT}",
+                )
+            )
+    return tuple(rows)
 
 
 def lower_workflow_file(

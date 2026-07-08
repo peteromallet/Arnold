@@ -64,6 +64,11 @@ M3_INVALID_FIXTURES = (
     "invalid_m3_megaplan_helper_fanout",
     "invalid_m3_tiebreaker_single_call_carrier",
 )
+M3_SPECIALIZED_INVALID_FIXTURES = (
+    "invalid_m3_single_handler_review_fanout",
+    "invalid_m3_handler_owned_review_cap",
+    "invalid_m3_hidden_finalize_fallback",
+)
 
 
 def test_source_compiler_public_api_names_are_exported() -> None:
@@ -987,7 +992,11 @@ def test_source_compiler_m3_expectation_fixture_set_is_complete() -> None:
         for path in M3_FIXTURE_DIR.glob("*.expected.json")
     }
 
-    assert source_cases == set(M3_VALID_FIXTURES) | set(M3_INVALID_FIXTURES)
+    assert source_cases == (
+        set(M3_VALID_FIXTURES)
+        | set(M3_INVALID_FIXTURES)
+        | set(M3_SPECIALIZED_INVALID_FIXTURES)
+    )
     assert sidecar_cases == source_cases
 
 
@@ -1112,6 +1121,19 @@ def test_source_compiler_m3_negative_sidecars_pin_source_diagnostics(
             workflow.lower_workflow_file(source_path)
         except workflow.SourceCompileError as error:
             result = error
+
+    assert sidecar["outcome"] == "invalid"
+    assert _diagnostic_payloads(result) == sidecar["expected_diagnostics"]
+
+
+@pytest.mark.parametrize("fixture_name", M3_SPECIALIZED_INVALID_FIXTURES)
+def test_source_compiler_m3_specialized_negative_sidecars_pin_s5_checker_diagnostics(
+    fixture_name: str,
+) -> None:
+    sidecar = _load_m3_sidecar(fixture_name)
+    source_path = M3_FIXTURE_DIR / f"{fixture_name}.py"
+
+    result = _check_specialized_m3_fixture(source_path)
 
     assert sidecar["outcome"] == "invalid"
     assert _diagnostic_payloads(result) == sidecar["expected_diagnostics"]
@@ -2891,6 +2913,27 @@ def _diagnostic_payloads(result: workflow.CheckWorkflowSourceResult) -> list[dic
 def _load_m3_sidecar(fixture_name: str) -> dict[str, object]:
     with (M3_FIXTURE_DIR / f"{fixture_name}.expected.json").open(encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _check_specialized_m3_fixture(source_path: Path):
+    fixture_name = source_path.stem
+    original_topology_contract = source_compiler._megaplan_review_topology_contract
+    original_route_surface = source_compiler._megaplan_policy_route_surface
+    try:
+        if fixture_name == "invalid_m3_handler_owned_review_cap":
+            source_compiler._megaplan_review_topology_contract = lambda: {
+                "retry_and_cap": {"cap_thresholds": {"max_review_rework_cycles": 1}},
+            }
+        elif fixture_name == "invalid_m3_hidden_finalize_fallback":
+            source_compiler._megaplan_policy_route_surface = (
+                lambda export_name: {}
+                if export_name == "FINALIZE_POLICY"
+                else original_route_surface(export_name)
+            )
+        return workflow.check_workflow_file(source_path)
+    finally:
+        source_compiler._megaplan_review_topology_contract = original_topology_contract
+        source_compiler._megaplan_policy_route_surface = original_route_surface
 
 
 def _load_m0_sidecar(fixture_name: str) -> dict[str, object]:

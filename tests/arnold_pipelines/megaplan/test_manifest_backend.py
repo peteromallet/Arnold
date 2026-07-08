@@ -182,6 +182,30 @@ class TestBackendBranchSelection:
         assert len(control_signals) == 1
         assert control_signals[0].target.node_ref == "finalize"
 
+    def test_review_and_finalize_route_signals_use_quarantined_adapter_bindings(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.runtime.manifest_backend import MegaplanManifestBackend
+        from arnold_pipelines.megaplan.workflows import components
+
+        backend = MegaplanManifestBackend(plan_dir=tmp_path / "plan")
+
+        finalize_quarantine = components.FINALIZE.metadata["compatibility_quarantine"]
+        assert finalize_quarantine["kind"] == "non_authoritative_adapter_metadata"
+        assert "FINALIZE_POLICY.metadata.route_surface" in finalize_quarantine["canonical_refs"]
+        assert "route_bindings" in finalize_quarantine["preserved_fields"]
+        assert backend._branch_edge_id("finalize", {"route_signal": "revise"}) == "finalize:revise"
+        finalize_signals = backend._build_control_signals("finalize", {"route_signal": "revise"})
+        assert len(finalize_signals) == 1
+        assert finalize_signals[0].target.node_ref == "revise"
+
+        review_quarantine = components.REVIEW.metadata["compatibility_quarantine"]
+        assert review_quarantine["kind"] == "non_authoritative_adapter_metadata"
+        assert "REVIEW_POLICY.metadata.route_surface" in review_quarantine["canonical_refs"]
+        assert "route_bindings" in review_quarantine["preserved_fields"]
+        assert backend._branch_edge_id("review", {"route_signal": "rework"}) == "review:revise"
+        review_signals = backend._build_control_signals("review", {"route_signal": "rework"})
+        assert len(review_signals) == 1
+        assert review_signals[0].target.node_ref == "execute"
+
     def test_suspension_route_for_human_state(self, tmp_path: Path) -> None:
         from arnold_pipelines.megaplan.runtime.manifest_backend import MegaplanManifestBackend
 

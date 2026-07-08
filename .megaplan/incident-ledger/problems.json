@@ -1,24 +1,6 @@
 {
   "integrity": [
     {
-      "actual": "sha256:9f7625ab4af64098a0a4033c19416b13fc17b1c4a84df8cf6de2611edaf7cdcb",
-      "code": "index_divergence",
-      "expected": "sha256:b41f8cd9b2fdf6b69c418c0684f9c98bca6545c3e77266c8ab2361b29de4f4c2",
-      "message": "incidents projection source metadata diverged for digest: 'sha256:9f7625ab4af64098a0a4033c19416b13fc17b1c4a84df8cf6de2611edaf7cdcb' != 'sha256:b41f8cd9b2fdf6b69c418c0684f9c98bca6545c3e77266c8ab2361b29de4f4c2'",
-      "projection": "incidents",
-      "recommendation": "system.integrity_repair",
-      "severity": "error"
-    },
-    {
-      "actual": "sha256:9f7625ab4af64098a0a4033c19416b13fc17b1c4a84df8cf6de2611edaf7cdcb",
-      "code": "index_divergence",
-      "expected": "sha256:b41f8cd9b2fdf6b69c418c0684f9c98bca6545c3e77266c8ab2361b29de4f4c2",
-      "message": "problems projection source metadata diverged for digest: 'sha256:9f7625ab4af64098a0a4033c19416b13fc17b1c4a84df8cf6de2611edaf7cdcb' != 'sha256:b41f8cd9b2fdf6b69c418c0684f9c98bca6545c3e77266c8ab2361b29de4f4c2'",
-      "projection": "problems",
-      "recommendation": "system.integrity_repair",
-      "severity": "error"
-    },
-    {
       "code": "loop_break_repeated_attempt_no_new_evidence",
       "incident_id": "inc-demo-session",
       "message": "Repeated repair_attempt events did not add a new hypothesis or state change",
@@ -173,15 +155,15 @@
       "first_seen_seq": 250,
       "first_seen_ts": "2026-07-07T19:08:31.293929+00:00",
       "fix_commits": [],
-      "last_seen_seq": 251,
-      "last_seen_ts": "2026-07-07T19:08:33.827899+00:00",
+      "last_seen_seq": 255,
+      "last_seen_ts": "2026-07-07T20:01:46.505504+00:00",
       "linked_incident_ids": [
         "inc-megaplan-native-parity-corrective"
       ],
       "next_review_ts": null,
       "normalized_signature": "meta repair recursion guard blocked dispatch",
-      "occurrence_count": 2,
-      "owner_actor": "watchdog",
+      "occurrence_count": 3,
+      "owner_actor": "github_sync",
       "problem_id": "problem-8f475cf8e677",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -211,15 +193,15 @@
       "first_seen_seq": 194,
       "first_seen_ts": "2026-07-07T02:33:10.287019+00:00",
       "fix_commits": [],
-      "last_seen_seq": 243,
-      "last_seen_ts": "2026-07-07T16:04:43.958764+00:00",
+      "last_seen_seq": 256,
+      "last_seen_ts": "2026-07-07T20:01:47.904277+00:00",
       "linked_incident_ids": [
         "inc-megaplan-native-parity-corrective"
       ],
       "next_review_ts": null,
       "normalized_signature": "unhealthy and needs repair attention retrying failure",
-      "occurrence_count": 7,
-      "owner_actor": "watchdog",
+      "occurrence_count": 8,
+      "owner_actor": "github_sync",
       "problem_id": "problem-9eb61fd41e68",
       "recurred_after_fix": false,
       "scope": "repair_system",
@@ -401,10 +383,10 @@
   "projection": "problems",
   "schema_version": 1,
   "source": {
-    "digest": "sha256:b41f8cd9b2fdf6b69c418c0684f9c98bca6545c3e77266c8ab2361b29de4f4c2",
-    "event_count": 254,
-    "journal_line_count": 254,
-    "last_seq": 254,
+    "digest": "sha256:55c725572341c60f889b2f411baeb0fc138cfaf4606812617d48e24bee9ae287",
+    "event_count": 256,
+    "journal_line_count": 256,
+    "last_seq": 256,
     "malformed_line_count": 0
   }
 }

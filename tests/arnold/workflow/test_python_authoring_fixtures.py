@@ -13,8 +13,10 @@ from arnold.workflow import diagnostics
 
 FIXTURE_DIR = Path("tests/fixtures/workflow_authoring")
 M0_FIXTURE_DIR = FIXTURE_DIR / "m0"
-GRAMMAR_VERSION = "arnold.workflow.authoring.v1"
+M3_FIXTURE_DIR = FIXTURE_DIR / "m3"
+GRAMMAR_VERSION = "arnold.workflow.authoring.v2"
 M0_GRAMMAR_VERSION = "arnold.workflow.authoring.v2"
+M3_GRAMMAR_VERSION = "arnold.workflow.authoring.v2"
 EXPECTED_CASES = {
     "valid_direct_linear": "valid",
     "valid_function_linear": "valid",
@@ -53,6 +55,8 @@ EXPECTED_CASES = {
 }
 M0_EXPECTED_CASES = {
     "valid_m0_single_workflow": "valid",
+    "valid_m0_nested_child_workflow": "valid",
+    "valid_m0_repeated_call_sites": "valid",
     "invalid_m0_manual_graph_nodes": "invalid",
     "invalid_m0_manual_path_strings": "invalid",
     "invalid_m0_validator_directives": "invalid",
@@ -62,6 +66,41 @@ M0_EXPECTED_CASES = {
     "deferred_m0_nested_child_workflow": "valid",
     "deferred_m0_repeated_call_sites": "valid",
     "deferred_m0_review_revise_loop": "valid",
+}
+M3_EXPECTED_CASES = {
+    "valid_m3_bounded_loop": "valid",
+    "valid_m3_branch_routes": "valid",
+    "valid_m3_canonical_megaplan_topology": "valid",
+    "valid_m3_parallel_map_loop_policy": "valid",
+    "valid_m3_policy_refs": "valid",
+    "valid_m3_subflow_control_flow": "valid",
+    "valid_m3_subflow_ref": "valid",
+    "invalid_m3_ambiguous_loop": "invalid",
+    "invalid_m3_ambiguous_route_metadata": "invalid",
+    "invalid_m3_dynamic_dispatch": "invalid",
+    "invalid_m3_dynamic_subflow_identity": "invalid",
+    "invalid_m3_handler_owned_review_cap": "invalid",
+    "invalid_m3_hidden_finalize_fallback": "invalid",
+    "invalid_m3_loop_dynamic_bounds": "invalid",
+    "invalid_m3_loop_missing_bounds": "invalid",
+    "invalid_m3_loop_non_true_test": "invalid",
+    "invalid_m3_malformed_capability_metadata": "invalid",
+    "invalid_m3_malformed_retry_policy_config": "invalid",
+    "invalid_m3_malformed_timing_policy_config": "invalid",
+    "invalid_m3_megaplan_helper_fanout": "invalid",
+    "invalid_m3_mismatched_route_metadata": "invalid",
+    "invalid_m3_missing_fallthrough_route": "invalid",
+    "invalid_m3_non_literal_routing": "invalid",
+    "invalid_m3_nonliteral_path_construction": "invalid",
+    "invalid_m3_repeated_route_comparison": "invalid",
+    "invalid_m3_single_handler_review_fanout": "invalid",
+    "invalid_m3_single_handler_wrapper": "invalid",
+    "invalid_m3_tiebreaker_single_call_carrier": "invalid",
+    "invalid_m3_unreachable_path": "invalid",
+    "invalid_m3_unsupported_mutation": "invalid",
+    "invalid_m3_unsupported_policy_carrier": "invalid",
+    "invalid_m3_unsupported_step_policy_carrier": "invalid",
+    "invalid_m3_unsupported_workflow_policy_carrier": "invalid",
 }
 SUPPORT_MODULES = {"components"}
 SOURCE_SPAN_FIELDS = {"start_line", "start_column", "end_line", "end_column"}
@@ -120,6 +159,17 @@ def test_python_authoring_m0_fixture_set_is_complete() -> None:
     assert sidecar_cases == source_cases
 
 
+def test_python_authoring_m3_fixture_set_is_complete() -> None:
+    source_cases = {path.stem for path in M3_FIXTURE_DIR.glob("*.py")}
+    sidecar_cases = {
+        path.name.removesuffix(".expected.json")
+        for path in M3_FIXTURE_DIR.glob("*.expected.json")
+    }
+
+    assert source_cases == set(M3_EXPECTED_CASES)
+    assert sidecar_cases == source_cases
+
+
 def test_python_authoring_fixture_sidecars_match_contract() -> None:
     known_codes = {code.value for code in diagnostics.DiagnosticCode}
 
@@ -167,9 +217,21 @@ def test_python_authoring_m0_fixture_sidecars_match_contract() -> None:
             continue
 
         if outcome == "valid":
-            assert set(sidecar) == M0_VALID_SIDECAR_FIELDS
+            if "expected_provenance" in sidecar:
+                assert set(sidecar) == M0_VALID_SIDECAR_FIELDS
+                assert sidecar["expected_diagnostics"] == []
+                _assert_m0_valid_provenance_sidecar(sidecar)
+                continue
+            assert set(sidecar) == {
+                "grammar_version",
+                "source_path",
+                "outcome",
+                "group",
+                "expected_lowering",
+                "expected_diagnostics",
+            }
             assert sidecar["expected_diagnostics"] == []
-            _assert_m0_valid_provenance_sidecar(sidecar)
+            assert sidecar["expected_lowering"]["workflow_id"]
             continue
 
         assert set(sidecar) == M0_INVALID_SIDECAR_FIELDS
@@ -181,6 +243,55 @@ def test_python_authoring_m0_fixture_sidecars_match_contract() -> None:
         assert expected["rejection_category"] == sidecar["rejection_category"]
         assert expected["grammar_version"] == M0_GRAMMAR_VERSION
         assert expected["message"]
+
+
+def test_python_authoring_m3_fixture_sidecars_match_contract() -> None:
+    known_codes = {code.value for code in diagnostics.DiagnosticCode}
+
+    for case_name, outcome in M3_EXPECTED_CASES.items():
+        source_path = M3_FIXTURE_DIR / f"{case_name}.py"
+        sidecar = _load_sidecar_from_dir(M3_FIXTURE_DIR, case_name)
+
+        assert source_path.exists()
+        assert sidecar["grammar_version"] == M3_GRAMMAR_VERSION
+        assert sidecar["source_path"] == source_path.as_posix()
+        assert sidecar["outcome"] == outcome
+        assert sidecar["group"]
+
+        if outcome == "valid":
+            assert set(sidecar) == {
+                "grammar_version",
+                "source_path",
+                "outcome",
+                "group",
+                "expected_lowering",
+                "expected_diagnostics",
+            }
+            expected_lowering = sidecar["expected_lowering"]
+            assert expected_lowering["workflow_id"]
+            assert expected_lowering["nodes"]
+            assert sidecar["expected_diagnostics"] == []
+            continue
+
+        assert set(sidecar) == {
+            "grammar_version",
+            "source_path",
+            "outcome",
+            "group",
+            "expected_diagnostics",
+        }
+        diagnostics_payload = sidecar["expected_diagnostics"]
+        assert diagnostics_payload
+        for diagnostic in diagnostics_payload:
+            assert set(diagnostic) >= {"code", "message", "source_span"}
+            assert diagnostic["code"] in known_codes
+            assert diagnostic["message"]
+            source_span = diagnostic["source_span"]
+            assert source_span["path"] == source_path.as_posix()
+            _assert_span_matches_source(
+                source_path,
+                {key: value for key, value in source_span.items() if key != "path"},
+            )
 
 
 def test_python_authoring_invalid_fixture_diagnostics_match_sidecars() -> None:
