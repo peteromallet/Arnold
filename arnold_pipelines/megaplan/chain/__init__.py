@@ -3762,7 +3762,9 @@ def _plan_state_payload_from_name(root: Path, plan: str | None) -> dict[str, Any
         return {}
     try:
         plan_dir = resolve_plan_dir(root, plan)
-        raw = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        from arnold_pipelines.megaplan._core.state import load_plan_from_dir
+
+        _, raw = load_plan_from_dir(plan_dir)
     except (
         CliError,
         FileNotFoundError,

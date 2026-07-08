@@ -87,6 +87,63 @@ def test_chain_recovers_failed_plan_before_auto_drive(monkeypatch, tmp_path: Pat
     ]
 
 
+def test_chain_current_state_reconciles_failed_review_after_successful_execute(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "demo"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "failed",
+                "iteration": 1,
+                "config": {},
+                "sessions": {},
+                "plan_versions": [],
+                "history": [{"step": "execute", "result": "success"}],
+                "meta": {},
+                "last_gate": {},
+                "latest_failure": {
+                    "kind": "phase_failed",
+                    "phase": "review",
+                    "message": (
+                        '{"success": false, "error": "invalid_transition", '
+                        '"message": "Cannot run \'review\' while current state is '
+                        '\'failed\'", "details": {"current_state": "failed"}}'
+                    ),
+                    "metadata": {
+                        "stderr": (
+                            '{"success": false, "error": "invalid_transition", '
+                            '"message": "Cannot run \'review\' while current state is '
+                            '\'failed\'", "details": {"current_state": "failed"}}'
+                        )
+                    },
+                },
+                "resume_cursor": {"phase": "review", "retry_strategy": "rerun_phase"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    atomic_write_phase_result(
+        plan_dir,
+        PhaseResult(
+            phase="execute",
+            invocation_id="test-execute-success",
+            exit_kind="success",
+            artifacts_written=("execution.json",),
+        ),
+    )
+
+    current_state = chain_module._plan_current_state_from_payload(tmp_path, "demo")
+
+    assert current_state == "executed"
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["current_state"] == "executed"
+    assert state["latest_failure"] is None
+    assert "resume_cursor" not in state
+
+
 def test_git_text_normalizes_timeout_as_cli_error(monkeypatch, tmp_path: Path) -> None:
     def fake_run(*args, **kwargs):
         raise subprocess.TimeoutExpired(

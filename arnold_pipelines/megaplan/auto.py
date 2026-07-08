@@ -1452,12 +1452,12 @@ def _read_state_data(plan_dir: Path | None) -> dict[str, Any] | None:
     if plan_dir is None:
         return None
     try:
-        # dormant-path: subprocess seam, retired at M6
-        with (plan_dir / "state.json").open(encoding="utf-8") as handle:
-            data = json.load(handle)
+        from arnold_pipelines.megaplan._core.state import load_plan_from_dir
+
+        _, data = load_plan_from_dir(plan_dir)
     except FileNotFoundError:
         return None
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+    except (CliError, json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError):
         return None
     return data if isinstance(data, dict) else None
 
