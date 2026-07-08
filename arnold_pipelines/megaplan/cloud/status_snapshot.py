@@ -35,6 +35,7 @@ from arnold_pipelines.megaplan.cloud.repair_contract import is_success_outcome
 from arnold_pipelines.megaplan.cloud.session_markers import (
     is_canonical_session_marker_path,
 )
+from arnold_pipelines.megaplan.chain.spec import load_spec as load_chain_spec
 
 # --- canonical paths -------------------------------------------------------
 
@@ -85,6 +86,7 @@ def is_trusted_container() -> bool:
 STALE_ACTIVITY_S = 30 * 60
 # A repair-progress marker older than this no longer counts as "repairing".
 REPAIR_FRESH_S = 6 * 60 * 60
+CHAIN_HEALTH_STALE_GRACE_S = 5
 
 SessionStatus = str  # one of: running | repairing | blocked | complete | attention
 LivenessProbe = Callable[[Mapping[str, Any]], dict[str, bool]]
@@ -664,6 +666,122 @@ def _session_progress(
     return progress
 
 
+def _overlay_newer_chain_state(
+    chain_health: Mapping[str, Any] | None,
+    *,
+    workspace: Path | None,
+    remote_spec: str,
+) -> Mapping[str, Any] | None:
+    state_path, chain_state = _load_latest_chain_state(workspace)
+    if state_path is None or not isinstance(chain_state, Mapping):
+        return chain_health
+
+    health_mtime = _chain_health_mtime(chain_health)
+    try:
+        state_mtime = state_path.stat().st_mtime
+    except OSError:
+        return chain_health
+    if health_mtime is not None and state_mtime <= health_mtime + CHAIN_HEALTH_STALE_GRACE_S:
+        return chain_health
+
+    milestone_count = _chain_milestone_count(remote_spec)
+    if milestone_count is None and isinstance(chain_health, Mapping):
+        milestone_count = _as_int(chain_health.get("milestone_count"))
+    completed = chain_state.get("completed")
+    completed_len = len(completed) if isinstance(completed, list) else 0
+    current_index = _as_int(chain_state.get("current_milestone_index"))
+    last_state = str(chain_state.get("last_state") or "").strip()
+    chain_complete = _chain_state_complete(
+        last_state=last_state,
+        completed_len=completed_len,
+        milestone_count=milestone_count,
+    )
+    custody_mismatch = bool(
+        last_state.lower() in {"done", "complete", "completed"}
+        and milestone_count is not None
+        and completed_len < milestone_count
+    )
+
+    merged: dict[str, Any] = dict(chain_health or {})
+    merged.update(
+        {
+            "chain_complete": chain_complete,
+            "completed_count": completed_len,
+            "current_milestone_index": current_index,
+            "custody_mismatch": custody_mismatch,
+            "last_state": last_state,
+            "updated_at": _isoformat(datetime.fromtimestamp(state_mtime, timezone.utc)),
+            "source": "chain_state",
+            "chain_state_path": str(state_path),
+        }
+    )
+    if milestone_count is not None:
+        merged["milestone_count"] = milestone_count
+    if chain_complete:
+        merged["current_plan_name"] = ""
+    elif isinstance(chain_state.get("current_plan_name"), str):
+        merged["current_plan_name"] = chain_state.get("current_plan_name")
+    completed_pr = completed[-1] if isinstance(completed, list) and completed else {}
+    if chain_state.get("pr_number") is not None:
+        merged["pr_number"] = chain_state.get("pr_number")
+    elif isinstance(completed_pr, Mapping) and completed_pr.get("pr_number") is not None:
+        merged["pr_number"] = completed_pr.get("pr_number")
+    if chain_state.get("pr_state") is not None:
+        merged["pr_state"] = chain_state.get("pr_state")
+    elif isinstance(completed_pr, Mapping) and completed_pr.get("pr_state") is not None:
+        merged["pr_state"] = completed_pr.get("pr_state")
+    return merged
+
+
+def _load_latest_chain_state(workspace: Path | None) -> tuple[Path | None, Mapping[str, Any] | None]:
+    if workspace is None:
+        return None, None
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    try:
+        candidates = [p for p in chain_dir.glob("*.json") if p.is_file()]
+    except OSError:
+        return None, None
+    if not candidates:
+        return None, None
+    path = max(candidates, key=lambda p: p.stat().st_mtime)
+    payload = _load_json(path)
+    if not isinstance(payload, Mapping):
+        return None, None
+    return path, payload
+
+
+def _chain_health_mtime(chain_health: Mapping[str, Any] | None) -> float | None:
+    if not chain_health:
+        return None
+    updated = _parse_iso(chain_health.get("updated_at"))
+    return updated.timestamp() if updated is not None else None
+
+
+def _chain_milestone_count(remote_spec: str) -> int | None:
+    if not remote_spec:
+        return None
+    try:
+        spec_path = Path(remote_spec)
+        if not spec_path.exists():
+            return None
+        return len(load_chain_spec(spec_path).milestones)
+    except Exception:
+        return None
+
+
+def _chain_state_complete(
+    *,
+    last_state: str,
+    completed_len: int,
+    milestone_count: int | None,
+) -> bool:
+    if last_state.strip().lower() not in {"done", "complete", "completed"}:
+        return False
+    if milestone_count is None:
+        return True
+    return completed_len >= milestone_count
+
+
 # --- per-session classification -------------------------------------------
 
 
@@ -685,6 +803,11 @@ def _build_session_entry(
 
     marker_path = Path(marker.get("_marker_path") or (marker_dir / f"{session}.json"))
     chain_health = _load_json(marker_dir / f"{session}.chain-health.progress.json")
+    chain_health = _overlay_newer_chain_state(
+        chain_health,
+        workspace=workspace,
+        remote_spec=remote_spec,
+    )
     repair_progress = _load_json(marker_dir / f"{session}.repair-progress.json")
     needs_human = _load_json(repair_data_dir / f"{session}.needs-human.json")
     watchdog_item = watchdog_by_session.get(session, {})
@@ -728,6 +851,8 @@ def _build_session_entry(
     plan_state_label = plan_current_state or (
         chain_health.get("last_state") if chain_health else None
     )
+    if isinstance(chain_health, Mapping) and chain_health.get("custody_mismatch"):
+        plan_state_label = None
     latest_activity = _latest_activity(chain_health, marker, plan_state_doc)
     liveness = _augment_liveness_with_plan_state(
         _safe_liveness(liveness_probe, marker),
@@ -834,6 +959,16 @@ def _classify_session(
 
     if _canonical_spec_missing(workspace, remote_spec):
         return "attention", "spec missing or unreadable"
+
+    if isinstance(chain_health, Mapping) and chain_health.get("custody_mismatch"):
+        completed = chain_health.get("completed_count")
+        total = chain_health.get("milestone_count")
+        current_index = chain_health.get("current_milestone_index")
+        return (
+            "attention",
+            "chain custody mismatch: terminal state with "
+            f"completed={completed}/{total} current_milestone_index={current_index}",
+        )
 
     # Fresh repair custody is stronger than a needs-human sidecar. Repair loops
     # can leave old needs-human markers in place while a higher layer is already

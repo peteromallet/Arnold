@@ -226,6 +226,30 @@ def _write_chain_spec(root: Path) -> Path:
     return spec_path
 
 
+def _write_three_milestone_chain_spec(root: Path) -> Path:
+    north_star = root / "NORTHSTAR.md"
+    north_star.write_text("north star\n", encoding="utf-8")
+    spec_path = root / "chain.yaml"
+    lines = [
+        "base_branch: main",
+        "anchors:",
+        "  north_star: NORTHSTAR.md",
+        "milestones:",
+    ]
+    for label in ("m1", "m2", "m3"):
+        idea = root / f"{label}.md"
+        idea.write_text(f"ship {label}\n", encoding="utf-8")
+        lines.extend(
+            [
+                f"  - label: {label}",
+                f"    idea: {idea}",
+                f"    branch: test/{label}",
+            ]
+        )
+    spec_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return spec_path
+
+
 def _write_base_branch_chain_spec(root: Path) -> Path:
     idea = root / "idea.md"
     idea.write_text("ship milestone on base\n", encoding="utf-8")
@@ -2980,6 +3004,90 @@ def test_merged_pr_completion_prefers_gh_merge_commit_over_stale_chain_pr_head(
     assert ok is True
     assert "gh.pr#128.mergeCommit" in reason
     assert stale_pr_head[:12] not in reason
+
+
+def test_completion_guard_rejects_published_pr_target_not_in_chain_target(
+    tmp_path: Path, monkeypatch
+) -> None:
+    base = _init_repo(tmp_path)
+    local_branch = _git(tmp_path, "branch", "--show-current")
+    published_sha = _commit_published_semantic_change(
+        tmp_path,
+        base,
+        branch="published-not-landed",
+        return_to=local_branch,
+    )
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+
+    def fake_published_target_from_gh(_root: Path, pr_number: int) -> tuple[str, str]:
+        assert pr_number == 95
+        return published_sha, "gh.pr#95.mergeCommit"
+
+    monkeypatch.setattr(
+        chain_module,
+        "_published_pr_target_from_gh",
+        fake_published_target_from_gh,
+    )
+
+    ok, reason = _chain_completion_guard(
+        tmp_path,
+        {**_record(), "pr_number": 95, "pr_state": "merged"},
+        implementation_milestone=True,
+        chain_state=ChainState(target_base_ref=local_branch),
+    )
+
+    assert ok is False
+    assert "not contained in chain target" in reason
+
+
+def test_reconcile_rolls_cursor_back_when_completed_record_not_authoritative(
+    tmp_path: Path,
+) -> None:
+    spec_path = _write_three_milestone_chain_spec(tmp_path)
+    spec = load_spec(spec_path)
+    state = ChainState(
+        current_milestone_index=3,
+        last_state="done",
+        completed=[
+            {
+                "label": "m1",
+                "plan": "plan-m1",
+                "status": "done",
+                "pr_number": 11,
+                "pr_state": "merged",
+            },
+            {
+                "label": "m2",
+                "plan": "plan-m2",
+                "status": "done",
+                "pr_number": 95,
+                "pr_state": "merged",
+            },
+        ],
+    )
+    messages: list[str] = []
+
+    def fake_pr_state(_root: Path, pr_number: int, *, writer=None) -> str:
+        return "closed" if pr_number == 95 else "merged"
+
+    with patch("arnold_pipelines.megaplan.chain._pr_state", fake_pr_state):
+        reconciled = chain_module._reconcile_chain_from_ground_truth(
+            tmp_path,
+            spec_path,
+            spec,
+            state,
+            writer=messages.append,
+            push_enabled=True,
+        )
+
+    assert reconciled.current_milestone_index == 1
+    assert reconciled.current_plan_name == "plan-m2"
+    assert reconciled.pr_number == 95
+    assert reconciled.pr_state == "closed"
+    assert reconciled.last_state == "authority_divergence"
+    assert [record["label"] for record in reconciled.completed] == ["m1"]
+    assert any("not authoritative yet" in message for message in messages)
+    assert any("reconciled cursor index: 3 -> 1" in message for message in messages)
 
 
 def test_missing_milestone_base_sha_blocks_without_waiver(tmp_path: Path) -> None:
