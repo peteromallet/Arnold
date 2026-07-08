@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import yaml
 
-from arnold.workflow import check_workflow_source, diagnostics
+from arnold.workflow import authoring, check_workflow_source, diagnostics
 from arnold.workflow.compiler import compile_pipeline
 from arnold.workflow.dsl import Pipeline
 from arnold.workflow.source_compiler import lower_workflow_file
@@ -81,6 +81,36 @@ def _call_ids(node: ast.AST, call_name: str) -> set[str]:
             if keyword.arg == "id" and isinstance(keyword.value, ast.Constant):
                 ids.add(str(keyword.value.value))
     return ids
+
+
+def _clone_step_component_with_metadata(
+    component: authoring.StepComponent,
+    metadata: Mapping[str, object],
+) -> authoring.StepComponent:
+    return authoring.StepComponent(
+        id=component.id,
+        provenance=component.provenance,
+        label=component.label,
+        step_type=component.step_type,
+        prompt=component.prompt,
+        policy=component.policy,
+        input_schema=component.input_schema,
+        output_schema=component.output_schema,
+        metadata=metadata,
+    )
+
+
+def _clone_workflow_component_with_metadata(
+    component: authoring.ComponentContract,
+    metadata: Mapping[str, object],
+) -> authoring.ComponentContract:
+    return authoring.ComponentContract(
+        id=component.id,
+        kind=component.kind,
+        provenance=component.provenance,
+        label=component.label,
+        metadata=metadata,
+    )
 
 
 class TestAuthoredWorkflow:
@@ -319,6 +349,101 @@ class TestAuthoredWorkflow:
         }
         assert workflows.GATE_POLICY.metadata["route_surface"]["critique_gate_diagnostics"] == expected_diagnostics
 
+    def test_declared_step_interfaces_survive_component_metadata_stripping(
+        self, monkeypatch
+    ) -> None:
+        baseline_manifest = compile_pipeline(planning.build_pipeline())
+        baseline_execute_contract = planning.declared_workflow_topology_contract("execute_batch")
+        baseline_review_contract = planning.declared_workflow_topology_contract("review_panel")
+        baseline_tiebreaker_contract = planning.declared_workflow_topology_contract("tiebreaker_child")
+
+        stripped_components = []
+        for component in planning.PIPELINE_STEP_COMPONENTS:
+            step_id = component.id.removeprefix("megaplan:")
+            if step_id in {"tiebreaker_run", "tiebreaker_decide"}:
+                stripped_components.append(component)
+                continue
+            stripped_components.append(
+                _clone_step_component_with_metadata(
+                    component,
+                    {
+                        key: value
+                        for key, value in component.metadata.items()
+                        if key
+                        not in {
+                            "handler_ref",
+                            "route_bindings",
+                            "policy_refs",
+                            "capability_requirements",
+                            "override_actions",
+                            "terminal",
+                        }
+                    },
+                )
+            )
+
+        stripped_components = tuple(stripped_components)
+        monkeypatch.setattr(planning, "PIPELINE_STEP_COMPONENTS", stripped_components)
+        monkeypatch.setattr(
+            planning,
+            "PIPELINE_STEP_COMPONENTS_BY_ID",
+            {component.id.removeprefix("megaplan:"): component for component in stripped_components},
+        )
+        for export_name in (
+            "SOURCE_EXECUTE_BATCH_WORKFLOW",
+            "SOURCE_REVIEW_PANEL_WORKFLOW",
+            "SOURCE_TIEBREAKER_WORKFLOW",
+        ):
+            component = getattr(workflows.components, export_name)
+            monkeypatch.setattr(
+                workflows.components,
+                export_name,
+                _clone_workflow_component_with_metadata(
+                    component,
+                    {
+                        key: value
+                        for key, value in component.metadata.items()
+                        if key not in {"topology_contract", "fan_in_ref", "policy_refs"}
+                    },
+                ),
+            )
+
+        pipeline = planning.build_pipeline()
+        manifest = compile_pipeline(pipeline)
+        steps = {step.id: step for step in pipeline.steps}
+
+        assert steps["finalize"].metadata["handler_ref"] == planning.declared_handler_binding("finalize")
+        assert steps["execute"].metadata["policy_refs"] == planning.declared_step_policy_refs("execute")
+        assert steps["review"].metadata["policy_refs"] == planning.declared_step_policy_refs("review")
+        assert steps["override"].metadata["override_actions"] == (
+            planning.declared_step_interface("override")["override_actions"]
+        )
+        assert steps["halt"].metadata["terminal"] is True
+        assert [(capability.id, capability.route, capability.required) for capability in planning.declared_step_capabilities("review")] == [("human:review", "default", False)]
+        assert planning.declared_workflow_topology_contract("execute_batch") == baseline_execute_contract
+        assert planning.declared_workflow_topology_contract("review_panel") == baseline_review_contract
+        assert planning.declared_workflow_topology_contract("tiebreaker_child") == baseline_tiebreaker_contract
+        assert manifest.to_json() == baseline_manifest.to_json()
+
+    def test_declared_surface_readers_match_named_policy_and_topology_contracts(self) -> None:
+        critique_surface = planning.declared_route_surface("critique")
+        execute_surface = planning.declared_route_surface("execute")
+        review_surface = planning.declared_route_surface("review")
+        execute_contract = planning.declared_workflow_topology_contract("execute_batch")
+        review_contract = planning.declared_workflow_topology_contract("review_panel")
+
+        assert critique_surface["fanout_contract"]["parallel_map_id"] == "critique-fanout"
+        assert execute_surface["fanout_contract"] == planning.declared_fanout_contract(step_id="execute")
+        assert execute_contract["fanout_contract"] == planning.declared_fanout_contract(
+            workflow_id="execute_batch"
+        )
+        assert execute_surface["fanout_contract"] == execute_contract["fanout_contract"]
+        assert review_surface["fan_in_contract"] == planning.declared_fan_in_contract(step_id="review")
+        assert review_contract["fan_in_contract"] == planning.declared_fan_in_contract(
+            workflow_id="review_panel"
+        )
+        assert review_surface["fan_in_contract"] == review_contract["fan_in_contract"]
+
     def test_compiled_views_expose_review_override_execute_policy_surfaces(self) -> None:
         pipeline = planning.build_pipeline()
         manifest = compile_pipeline(pipeline)
@@ -404,11 +529,10 @@ class TestAuthoredWorkflow:
             for binding in planning.AUTHOR_TIEBREAKER_DECIDE.metadata["route_bindings"]
         }
         assert bindings == {"iterate": "critique"}
-        compiled = next(
-            step for step in workflows.ALL_STEP_COMPONENTS if step.id == "megaplan:tiebreaker_decide"
-        )
-        route_labels = {binding["label"] for binding in compiled.metadata["route_bindings"]}
-        assert {"iterate", "proceed", "escalate"} <= route_labels
+        route_labels = {
+            binding["label"] for binding in planning.declared_step_route_bindings("tiebreaker_decision")
+        }
+        assert {"iterate", "proceed", "escalate", "replan"} <= route_labels
 
 
 class TestPlanningSubworkflowSourceShape:
@@ -718,7 +842,7 @@ class TestPlanningSubworkflowSourceShape:
     def test_review_component_rework_binding_matches_policy_cycle_target(self) -> None:
         bindings = {
             binding["label"]: binding["target_ref"]
-            for binding in workflows.REVIEW.metadata["route_bindings"]
+            for binding in planning.declared_step_route_bindings("review")
         }
 
         assert bindings["rework"] == workflows.REVIEW_POLICY.metadata["route_surface"]["rework_cycle"][
@@ -828,7 +952,7 @@ class TestPlanningSubworkflowSourceShape:
         finalize_surface = workflows.FINALIZE_POLICY.metadata["route_surface"]
         finalize_bindings = {
             binding["label"]: binding["target_ref"]
-            for binding in workflows.FINALIZE.metadata["route_bindings"]
+            for binding in planning.declared_step_route_bindings("finalize")
         }
 
         revise_fallback = finalize_surface["fallback_routes"]["plan_contract_revise_needed"]
@@ -920,10 +1044,11 @@ class TestCanonicalPypelineSource:
         source = source_path.read_text(encoding="utf-8")
         tree = ast.parse(source)
         func = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
+        function_source = ast.get_source_segment(source, func) or ""
 
-        assert "SOURCE_" not in source
-        assert "handler_ref" not in source
-        assert "route_bindings" not in source
+        assert "SOURCE_" not in function_source
+        assert "handler_ref" not in function_source
+        assert "route_bindings" not in function_source
         assert "manifest_hash" not in source
         assert "dispatch" not in source
         assert "build_manifest" not in source

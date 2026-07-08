@@ -73,6 +73,7 @@ from arnold_pipelines.megaplan.orchestration.gate_checks import (
 )
 from arnold_pipelines.megaplan.orchestration.gate_signals import build_gate_signals
 from arnold_pipelines.megaplan.blocker_recovery import command_blocker_details, evaluate_blocker_recovery
+from arnold_pipelines.megaplan.control_interface import declared_override_policy_target
 from arnold_pipelines.megaplan.orchestration.phase_result import read_phase_result
 
 
@@ -251,7 +252,6 @@ def _blocked_phase_rerun_target(
     state: Mapping[str, object],
     *,
     phase: str,
-    recovered_state: str,
     source: str | None,
 ) -> ControlTargetRef | None:
     blocked_rerunnable_phases = {"execute"}
@@ -278,7 +278,6 @@ def _blocked_phase_rerun_target(
     return _workflow_step_target(
         phase,
         direction="recovery",
-        target_state=recovered_state,
         source=source,
     )
 
@@ -287,17 +286,19 @@ def _awaiting_human_target(state: Mapping[str, object]) -> ControlTargetRef:
     clarification = state.get("clarification")
     source = clarification.get("source") if isinstance(clarification, Mapping) else None
     if source == "prep":
-        step = "resume-clarify"
-        target_state = "prepped"
-    else:
-        step = "verify-human"
-        target_state = "awaiting_human_verify"
+        return declared_override_policy_target(
+            "resume-clarify",
+            direction="operator",
+            source="awaiting_human",
+            target_state="prepped",
+            operator_action="resume-clarify",
+        )
     return _workflow_step_target(
-        step,
+        "verify-human",
         direction="operator",
-        target_state=target_state,
+        target_state="awaiting_human_verify",
         source="awaiting_human",
-        operator_action=step,
+        operator_action="verify-human",
     )
 
 
@@ -853,6 +854,23 @@ class PlanningControlBinding:
                 ),
             )
 
+        if current_state == STATE_BLOCKED:
+            rerun_target = _blocked_phase_rerun_target(
+                state,
+                phase=phase,
+                source=source,
+            )
+            if rerun_target is not None:
+                return (rerun_target,)
+            return (
+                declared_override_policy_target(
+                    "recover-blocked",
+                    direction="recovery",
+                    source=source,
+                    operator_action="recover-blocked",
+                ),
+            )
+
         recovered_state = topology.predecessors(phase, policy="recovery")
         if recovered_state is None:
             return (
@@ -862,25 +880,6 @@ class PlanningControlBinding:
                     current_state=current_state,
                     phase=phase,
                     source=source,
-                ),
-            )
-
-        if current_state == STATE_BLOCKED:
-            rerun_target = _blocked_phase_rerun_target(
-                state,
-                phase=phase,
-                recovered_state=recovered_state,
-                source=source,
-            )
-            if rerun_target is not None:
-                return (rerun_target,)
-            return (
-                _workflow_step_target(
-                    "recover-blocked",
-                    direction="recovery",
-                    target_state=recovered_state,
-                    source=source,
-                    operator_action="recover-blocked",
                 ),
             )
 

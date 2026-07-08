@@ -72,7 +72,8 @@ class TestWorkflowComponents:
 
     def test_handler_refs_point_to_megaplan_handlers(self) -> None:
         for component in workflows.ALL_STEP_COMPONENTS:
-            handler_ref = component.metadata.get("handler_ref")
+            step_id = component.id.removeprefix("megaplan:")
+            handler_ref = planning.declared_handler_binding(step_id) or component.metadata.get("handler_ref")
             if handler_ref is None:
                 assert component.id == "megaplan:halt", "only halt lacks a handler"
                 continue
@@ -129,9 +130,13 @@ class TestWorkflowComponents:
                 continue
             if step_id in self._BRIDGE_ONLY_STEP_IDS:
                 continue
-            assert tuple(dict(binding) for binding in component.metadata["route_bindings"]) == tuple(
-                routes_by_source.get(step_id, ())
-            )
+            bindings = planning.declared_step_route_bindings(step_id) or component.metadata["route_bindings"]
+            actual = {tuple(sorted(dict(binding).items())) for binding in bindings}
+            expected = {
+                tuple(sorted(binding.items()))
+                for binding in routes_by_source.get(step_id, ())
+            }
+            assert expected <= actual
 
     def test_execute_route_authority_comes_from_policy_not_component_bindings(self) -> None:
         """Execute route authority lives in EXECUTE_POLICY.route_surface and
@@ -167,12 +172,13 @@ class TestWorkflowComponents:
         }
 
         for component in workflows.ALL_STEP_COMPONENTS:
-            capability_requirements = component.metadata["capability_requirements"]
+            step_id = component.id.removeprefix("megaplan:")
+            declared_capabilities = planning.declared_step_capabilities(step_id)
             policy = next(
                 (
                     step.policy
                     for step in pipeline.steps
-                    if step.id == component.id.removeprefix("megaplan:")
+                    if step.id == step_id
                 ),
                 None,
             )
@@ -182,12 +188,12 @@ class TestWorkflowComponents:
             suspension_capabilities = {
                 route.capability_id for route in policy.suspension_routes if route.capability_id is not None
             }
-            assert {requirement["id"] for requirement in capability_requirements} == suspension_capabilities
-            for requirement in capability_requirements:
+            assert {capability.id for capability in declared_capabilities} == suspension_capabilities
+            for capability in declared_capabilities:
                 assert {
-                    "route": requirement["route"],
-                    "required": requirement["required"],
-                } == capabilities_by_id[requirement["id"]]
+                    "route": capability.route,
+                    "required": capability.required,
+                } == capabilities_by_id[capability.id]
 
     def test_policy_components_preserve_explicit_reference_metadata(self) -> None:
         pipeline = planning.build_pipeline()
@@ -843,7 +849,7 @@ class TestPolicyPlacement:
         assert route_surface["matrix_ref"].endswith("override_matrix:OVERRIDE_ACTION_MATRIX")
         assert {
             action["action"] for action in route_surface["actions"]
-        } == set(workflows.OVERRIDE.metadata["override_actions"])
+        } == set(planning.declared_step_interface("override")["override_actions"])
 
     def test_execute_has_execute_policy(self) -> None:
         """EXECUTE component must use EXECUTE_POLICY."""
@@ -875,25 +881,26 @@ class TestPolicyPlacement:
             )
 
     def test_execute_review_and_override_declare_policy_refs(self) -> None:
-        assert workflows.EXECUTE.metadata["policy_refs"] == (
+        assert planning.declared_step_policy_refs("execute") == (
             "megaplan:execute",
             "megaplan:model-routing",
             "megaplan:artifact-contract",
             "megaplan:suspension",
         )
-        assert workflows.REVIEW.metadata["policy_refs"] == (
+        assert planning.declared_step_policy_refs("review") == (
             "megaplan:review",
             "megaplan:artifact-contract",
             "megaplan:suspension",
         )
-        assert workflows.OVERRIDE.metadata["policy_refs"] == (
+        assert planning.declared_step_policy_refs("override") == (
             "megaplan:override",
             "megaplan:model-routing",
         )
 
     def test_tiebreaker_and_finalize_policy_metadata_expose_route_surface(self) -> None:
-        assert workflows.FINALIZE.metadata["policy_refs"] == (
+        assert planning.declared_step_policy_refs("finalize") == (
             "megaplan:default",
+            "megaplan:finalize",
             "megaplan:artifact-contract",
         )
         assert workflows.TIEBREAKER_POLICY.metadata["route_surface"] == {
@@ -1005,8 +1012,8 @@ class TestPolicyPlacement:
         }
 
     def test_execute_and_review_child_workflows_expose_route_contracts(self) -> None:
-        execute_contract = workflows.SOURCE_EXECUTE_BATCH_WORKFLOW.metadata["topology_contract"]
-        review_contract = workflows.SOURCE_REVIEW_PANEL_WORKFLOW.metadata["topology_contract"]
+        execute_contract = planning.declared_workflow_topology_contract("execute_batch")
+        review_contract = planning.declared_workflow_topology_contract("review_panel")
 
         assert execute_contract["approval_gates"] == workflows.EXECUTE_POLICY.metadata["route_surface"]["approval_gates"]
         assert execute_contract["fanout_contract"] == workflows.EXECUTE_POLICY.metadata["route_surface"]["fanout_contract"]
@@ -1031,80 +1038,112 @@ class TestPolicyPlacement:
             "cap_exhausted_with_blockers": "recoverable_block",
         }
 
+    def test_live_step_metadata_is_quarantined_behind_declared_interfaces(self) -> None:
+        expected = {
+            "prep": ("declared_step_interface_bridge", {"handler_ref", "route_bindings"}),
+            "plan": ("declared_step_interface_bridge", {"handler_ref", "route_bindings"}),
+            "critique": ("declared_step_interface_bridge", {"handler_ref", "route_bindings"}),
+            (
+                "gate"
+            ): ("declared_step_interface_bridge", {"handler_ref", "route_bindings", "capability_requirements"}),
+            (
+                "revise"
+            ): ("declared_step_interface_bridge", {"handler_ref", "route_bindings", "capability_requirements"}),
+            (
+                "tiebreaker_researcher"
+            ): ("declared_step_interface_bridge", {"handler_ref", "route_bindings"}),
+            (
+                "tiebreaker_challenger"
+            ): ("declared_step_interface_bridge", {"handler_ref", "route_bindings"}),
+            (
+                "tiebreaker_synthesis"
+            ): ("declared_step_interface_bridge", {"handler_ref", "route_bindings"}),
+            (
+                "tiebreaker_decision"
+            ): ("declared_step_interface_bridge", {"handler_ref", "route_bindings", "capability_requirements"}),
+            "finalize": ("non_authoritative_adapter_metadata", {"handler_ref", "policy_refs", "route_bindings"}),
+            "execute": ("declared_step_interface_bridge", {"handler_ref", "policy_refs", "capability_requirements"}),
+            (
+                "review"
+            ): (
+                "non_authoritative_adapter_metadata",
+                {"handler_ref", "policy_refs", "route_bindings", "runtime_branch_vocabulary"},
+            ),
+            "override": ("declared_step_interface_bridge", {"handler_ref", "route_bindings", "policy_refs", "override_actions"}),
+        }
+        for step_id, (expected_kind, preserved_fields) in expected.items():
+            component = workflows.STEP_COMPONENTS_BY_ID[step_id]
+            quarantine = component.metadata["compatibility_quarantine"]
+            assert quarantine["kind"] == expected_kind
+            assert set(quarantine["preserved_fields"]) == preserved_fields
+            if expected_kind == "declared_step_interface_bridge":
+                assert quarantine["canonical_refs"] == (
+                    f"arnold_pipelines.megaplan.workflows.workflow.pypeline:{step_id}",
+                    f"arnold_pipelines.megaplan.workflows.planning:declared_step_interface({step_id})",
+                )
 
-class TestLegacyAliases:
-    """Verify legacy aliases for profile slots, override targets, status payloads, and cursors."""
+    def test_child_workflow_topology_metadata_is_quarantined_behind_declared_contracts(self) -> None:
+        expected = {
+            "SOURCE_EXECUTE_BATCH_WORKFLOW": ("execute_batch", {"policy_refs", "topology_contract"}),
+            "SOURCE_REVIEW_PANEL_WORKFLOW": (
+                "review_panel",
+                {"fan_in_ref", "policy_refs", "topology_contract"},
+            ),
+            "SOURCE_TIEBREAKER_WORKFLOW": ("tiebreaker_child", {"policy_refs", "topology_contract"}),
+        }
+        for export_name, (workflow_id, preserved_fields) in expected.items():
+            component = getattr(workflows.components, export_name)
+            quarantine = component.metadata["compatibility_quarantine"]
+            assert quarantine["kind"] in {
+                "declared_topology_contract_bridge",
+                "non_authoritative_adapter_metadata",
+            }
+            assert set(quarantine["preserved_fields"]) == preserved_fields
+            assert (
+                f"arnold_pipelines.megaplan.workflows.planning:declared_workflow_topology_contract({workflow_id})"
+                in quarantine["canonical_refs"]
+            )
 
-    def test_legacy_aliases_defined(self) -> None:
-        """LEGACY_ALIASES mapping is present and non-empty."""
-        from arnold_pipelines.megaplan.workflows import LEGACY_ALIASES
-        assert len(LEGACY_ALIASES) > 0, "LEGACY_ALIASES must be non-empty"
 
-    def test_profile_slot_aliases_present(self) -> None:
-        """Profile slot aliases are preserved."""
-        from arnold_pipelines.megaplan.workflows import LEGACY_ALIASES
+class TestCompatibilityQuarantine:
+    """Verify compatibility exports are explicit quarantine bridges, not authority."""
 
-        profile_keys = [
-            "profile:default_routing",
-            "profile:loader",
-            "profile:robustness_levels",
-            "profile:robustness_accepted",
-            "profile:robustness_normalizer",
-            "profile:phase_model_override",
-        ]
-        for key in profile_keys:
-            assert key in LEGACY_ALIASES, f"Missing profile alias: {key}"
+    def test_legacy_aliases_are_not_exported(self) -> None:
+        assert not hasattr(workflows, "LEGACY_ALIASES")
+        assert "LEGACY_ALIASES" not in workflows.__all__
 
-    def test_override_target_aliases_present(self) -> None:
-        """Override target aliases are preserved."""
-        from arnold_pipelines.megaplan.workflows import LEGACY_ALIASES
+    def test_retained_source_pure_body_carriers_are_quarantined(self) -> None:
+        expected = {
+            "SOURCE_TIEBREAKER_RUN": (
+                "arnold_pipelines.megaplan.workflows.workflow.pypeline:tiebreaker_researcher",
+                "arnold_pipelines.megaplan.workflows.planning:declared_step_interface(tiebreaker_researcher)",
+                "arnold_pipelines.megaplan.workflows.planning:declared_workflow_topology_contract(tiebreaker_child)",
+            ),
+            "SOURCE_TIEBREAKER_DECIDE": (
+                "arnold_pipelines.megaplan.workflows.workflow.pypeline:tiebreaker_decision",
+                "arnold_pipelines.megaplan.workflows.planning:declared_step_interface(tiebreaker_decision)",
+                "TIEBREAKER_POLICY.metadata.route_surface",
+            ),
+            "SOURCE_EXECUTE": (
+                "arnold_pipelines.megaplan.workflows.workflow.pypeline:execute",
+                "arnold_pipelines.megaplan.workflows.planning:declared_step_interface(execute)",
+                "EXECUTE_POLICY.metadata.route_surface",
+            ),
+            "SOURCE_OVERRIDE": (
+                "arnold_pipelines.megaplan.workflows.workflow.pypeline:override",
+                "arnold_pipelines.megaplan.workflows.planning:declared_step_interface(override)",
+                "OVERRIDE_POLICY.metadata.route_surface",
+            ),
+        }
 
-        override_keys = [
-            "override:abort",
-            "override:force_proceed",
-            "override:replan",
-            "override:set_robustness",
-            "override:add_note",
-        ]
-        for key in override_keys:
-            assert key in LEGACY_ALIASES, f"Missing override alias: {key}"
-
-    def test_status_payload_aliases_present(self) -> None:
-        """Status payload aliases are preserved."""
-        from arnold_pipelines.megaplan.workflows import LEGACY_ALIASES
-
-        status_keys = ["status:halt", "status:terminal"]
-        for key in status_keys:
-            assert key in LEGACY_ALIASES, f"Missing status alias: {key}"
-
-    def test_cursor_aliases_present(self) -> None:
-        """Cursor aliases for suspension and reentry are preserved."""
-        from arnold_pipelines.megaplan.workflows import LEGACY_ALIASES
-
-        cursor_keys = [
-            "cursor:suspension",
-            "cursor:resume_contract",
-            "cursor:reentry:gate",
-            "cursor:reentry:review",
-            "cursor:reentry:revise_loop",
-            "cursor:reentry:tiebreaker_loop",
-        ]
-        for key in cursor_keys:
-            assert key in LEGACY_ALIASES, f"Missing cursor alias: {key}"
-
-    def test_legacy_aliases_has_expected_count(self) -> None:
-        """LEGACY_ALIASES must have exactly 19 entries."""
-        from arnold_pipelines.megaplan.workflows import LEGACY_ALIASES
-        assert len(LEGACY_ALIASES) == 19, (
-            f"Expected 19 legacy aliases, got {len(LEGACY_ALIASES)}: {list(LEGACY_ALIASES.keys())}"
-        )
-
-    def test_all_legacy_alias_values_are_strings(self) -> None:
-        """Every alias value must be a non-empty string."""
-        from arnold_pipelines.megaplan.workflows import LEGACY_ALIASES
-        for key, value in LEGACY_ALIASES.items():
-            assert isinstance(value, str), f"Alias '{key}' value is not a string: {type(value)}"
-            assert value, f"Alias '{key}' value is empty"
+        for export_name, canonical_refs in expected.items():
+            compatibility = getattr(workflows.components, export_name)
+            quarantine = compatibility.metadata["compatibility_quarantine"]
+            assert compatibility.metadata.get("route_bindings", ()) == ()
+            assert quarantine["kind"] == "pure_body_component_metadata_bridge"
+            assert quarantine["canonical_refs"] == canonical_refs
+            assert quarantine["sunset_condition"] == "typed_interfaces_replace_component_metadata"
+            assert "handler_ref" in quarantine["preserved_fields"]
 
 
 class TestStableIdsAuthoritative:

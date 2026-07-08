@@ -49,6 +49,17 @@ S5_FINALIZE_ARTIFACTS_ROW_ID = "s5.finalize_artifacts.1"
 S5_FINALIZE_FALLBACK_ROW_ID = "s5.finalize_fallback.1"
 S5_FINAL_PROJECTION_ROW_ID = "s5.final_projection.1"
 
+# ── S6 override authority stable row ID namespace ────────────────────────
+
+S6_OVERRIDE_ABORT_ROW_ID = "s6.override.abort.1"
+S6_OVERRIDE_FORCE_PROCEED_ROW_ID = "s6.override.force_proceed.1"
+S6_OVERRIDE_REPLAN_ROW_ID = "s6.override.replan.1"
+S6_OVERRIDE_RECOVER_BLOCKED_ROW_ID = "s6.override.recover_blocked.1"
+S6_OVERRIDE_RESUME_CLARIFY_ROW_ID = "s6.override.resume_clarify.1"
+S6_OVERRIDE_ADOPT_EXECUTION_ROW_ID = "s6.override.adopt_execution.1"
+S6_OVERRIDE_SUSPENSION_ROW_ID = "s6.override.suspension.1"
+S6_OVERRIDE_HUMAN_GATE_ROW_ID = "s6.override.human_gate.1"
+
 # ── S2 Front-half boundary contracts ───────────────────────────────────────
 
 prep_to_plan = BoundaryContract(
@@ -587,6 +598,238 @@ final_projection = BoundaryContract(
     },
 )
 
+# ── S6 override authority boundary contracts ──────────────────────────────
+
+override_abort_authority = BoundaryContract(
+    boundary_id="override_abort_authority",
+    workflow_id="megaplan-review",
+    row_id=S6_OVERRIDE_ABORT_ROW_ID,
+    required_artifacts=(),
+    expected_state_delta={},
+    expected_history_entry=None,
+    phase_result_required=False,
+    receipt_required=False,
+    authority_required=True,
+    details={
+        "description": (
+            "Override abort authority: halting the plan requires a durable "
+            "authority record bound to the exact state snapshot being aborted."
+        ),
+        "authority_transition": "abort",
+        "authority_scope": "override.abort",
+        "route_signal": "abort",
+        "target_ref": "halt",
+        "required_evidence_refs": ("state.json",),
+        "optional_evidence_refs": ("phase_result.json",),
+        "evidence_hashes_ref": "authority_records[].details.evidence_hashes",
+        "freshness_token_ref": "state.meta.current_invocation_id",
+        "actor_role_ref": "authority_records[].{actor,role}",
+        "override_entry_ref": "state.meta.overrides[action=abort]",
+    },
+)
+
+override_force_proceed_authority = BoundaryContract(
+    boundary_id="override_force_proceed_authority",
+    workflow_id="megaplan-review",
+    row_id=S6_OVERRIDE_FORCE_PROCEED_ROW_ID,
+    required_artifacts=(),
+    expected_state_delta={},
+    expected_history_entry=None,
+    phase_result_required=False,
+    receipt_required=False,
+    authority_required=True,
+    details={
+        "description": (
+            "Override force-proceed authority: bypassing a blocking gate or "
+            "review verdict must record who accepted the debt against which "
+            "durable evidence set."
+        ),
+        "authority_transition": "force-proceed",
+        "authority_scope": "override.force_proceed",
+        "route_signal": "force_proceed",
+        "route_surface_ref": (
+            "arnold_pipelines.megaplan.workflows.override_matrix:"
+            "OVERRIDE_ACTION_MATRIX[action=force-proceed]"
+        ),
+        "required_evidence_refs": ("state.json",),
+        "optional_evidence_refs": ("gate.json", "review.json", "phase_result.json"),
+        "evidence_hashes_ref": "authority_records[].details.evidence_hashes",
+        "freshness_token_ref": "state.meta.current_invocation_id",
+        "actor_role_ref": "authority_records[].{actor,role}",
+        "override_entry_ref": "state.meta.overrides[action=force-proceed]",
+    },
+)
+
+override_replan_authority = BoundaryContract(
+    boundary_id="override_replan_authority",
+    workflow_id="megaplan-review",
+    row_id=S6_OVERRIDE_REPLAN_ROW_ID,
+    required_artifacts=(),
+    expected_state_delta={},
+    expected_history_entry=None,
+    phase_result_required=False,
+    receipt_required=False,
+    authority_required=True,
+    details={
+        "description": (
+            "Override replan authority: restarting the planning loop must "
+            "record the exact prior state and freshness token that authorized "
+            "the re-entry."
+        ),
+        "authority_transition": "replan",
+        "authority_scope": "override.replan",
+        "route_signal": "replan",
+        "target_ref": "revise",
+        "required_evidence_refs": ("state.json",),
+        "optional_evidence_refs": ("phase_result.json",),
+        "evidence_hashes_ref": "authority_records[].details.evidence_hashes",
+        "freshness_token_ref": "state.meta.current_invocation_id",
+        "actor_role_ref": "authority_records[].{actor,role}",
+        "override_entry_ref": "state.meta.overrides[action=replan]",
+    },
+)
+
+override_recover_blocked_authority = BoundaryContract(
+    boundary_id="override_recover_blocked_authority",
+    workflow_id="megaplan-review",
+    row_id=S6_OVERRIDE_RECOVER_BLOCKED_ROW_ID,
+    required_artifacts=(),
+    expected_state_delta={},
+    expected_history_entry=None,
+    phase_result_required=False,
+    receipt_required=False,
+    authority_required=True,
+    details={
+        "description": (
+            "Override blocked-recovery authority: resuming from blocked must "
+            "bind recovery to the declared resume cursor and blocker evidence."
+        ),
+        "authority_transition": "recover-blocked",
+        "authority_scope": "override.recover_blocked",
+        "route_signal": "recover_blocked",
+        "policy_route_ref": "megaplan.override.recover_blocked",
+        "required_evidence_refs": ("state.json",),
+        "optional_evidence_refs": ("phase_result.json",),
+        "evidence_hashes_ref": "authority_records[].details.evidence_hashes",
+        "freshness_token_ref": "state.meta.current_invocation_id",
+        "actor_role_ref": "authority_records[].{actor,role}",
+        "override_entry_ref": "state.meta.overrides[action=recover-blocked]",
+        "resume_cursor_ref": "state.resume_cursor",
+    },
+)
+
+override_resume_clarify_authority = BoundaryContract(
+    boundary_id="override_resume_clarify_authority",
+    workflow_id="megaplan-review",
+    row_id=S6_OVERRIDE_RESUME_CLARIFY_ROW_ID,
+    required_artifacts=(),
+    expected_state_delta={},
+    expected_history_entry=None,
+    phase_result_required=False,
+    receipt_required=False,
+    authority_required=True,
+    details={
+        "description": (
+            "Override resume-clarify authority: leaving a clarification halt "
+            "must record the answers and freshness token that unlocked plan."
+        ),
+        "authority_transition": "resume-clarify",
+        "authority_scope": "override.resume_clarify",
+        "route_signal": "resume_clarify",
+        "target_ref": "plan",
+        "required_evidence_refs": ("state.json",),
+        "optional_evidence_refs": ("phase_result.json",),
+        "evidence_hashes_ref": "authority_records[].details.evidence_hashes",
+        "freshness_token_ref": "state.meta.current_invocation_id",
+        "actor_role_ref": "authority_records[].{actor,role}",
+        "override_entry_ref": "state.meta.overrides[action=resume-clarify]",
+    },
+)
+
+override_adopt_execution_authority = BoundaryContract(
+    boundary_id="override_adopt_execution_authority",
+    workflow_id="megaplan-review",
+    row_id=S6_OVERRIDE_ADOPT_EXECUTION_ROW_ID,
+    required_artifacts=(),
+    expected_state_delta={},
+    expected_history_entry=None,
+    phase_result_required=False,
+    receipt_required=False,
+    authority_required=True,
+    details={
+        "description": (
+            "Override adopt-execution authority: execution adoption must be "
+            "anchored to the exact execution/finalize artifacts being adopted."
+        ),
+        "authority_transition": "adopt-execution",
+        "authority_scope": "override.adopt_execution",
+        "route_signal": "adopt_execution",
+        "target_ref": "review",
+        "policy_route_ref": "megaplan.override.adopt_execution",
+        "required_evidence_refs": ("state.json", "execution.json", "finalize.json"),
+        "optional_evidence_refs": ("execution_audit.json", "final.md"),
+        "evidence_hashes_ref": "authority_records[].details.evidence_hashes",
+        "freshness_token_ref": "state.meta.current_invocation_id",
+        "actor_role_ref": "authority_records[].{actor,role}",
+        "override_entry_ref": "state.meta.overrides[action=adopt-execution]",
+    },
+)
+
+override_suspension_authority = BoundaryContract(
+    boundary_id="override_suspension_authority",
+    workflow_id="megaplan-review",
+    row_id=S6_OVERRIDE_SUSPENSION_ROW_ID,
+    required_artifacts=(),
+    expected_state_delta={},
+    expected_history_entry=None,
+    phase_result_required=False,
+    receipt_required=False,
+    authority_required=True,
+    details={
+        "description": (
+            "Override suspension authority: waiver or deferred-human "
+            "suspension must carry durable authority evidence separate from "
+            "handler-private state changes."
+        ),
+        "authority_transition": "suspension-waiver",
+        "authority_scope": "override.suspension_waiver",
+        "policy_ref": "megaplan:suspension",
+        "required_evidence_refs": ("state.json", "human_verifications.json"),
+        "optional_evidence_refs": ("review.json",),
+        "evidence_hashes_ref": "authority_records[].details.evidence_hashes",
+        "freshness_token_ref": "state.meta.current_invocation_id",
+        "actor_role_ref": "authority_records[].{actor,role}",
+        "waiver_reason_ref": "authority_records[].waiver_reason",
+    },
+)
+
+override_human_gate_authority = BoundaryContract(
+    boundary_id="override_human_gate_authority",
+    workflow_id="megaplan-review",
+    row_id=S6_OVERRIDE_HUMAN_GATE_ROW_ID,
+    required_artifacts=(),
+    expected_state_delta={},
+    expected_history_entry=None,
+    phase_result_required=False,
+    receipt_required=False,
+    authority_required=True,
+    details={
+        "description": (
+            "Override human-gate authority: protected actions and explicit "
+            "human gates must record actor, role, scope, and fresh evidence."
+        ),
+        "authority_transition": "human-gate",
+        "authority_scope": "override.human_gate",
+        "required_evidence_refs": ("state.json", "approval_record.json"),
+        "optional_evidence_refs": ("human_verifications.json",),
+        "evidence_hashes_ref": "authority_records[].details.evidence_hashes",
+        "freshness_token_ref": "state.meta.current_invocation_id",
+        "actor_role_ref": "authority_records[].{actor,role}",
+        "approval_scope_ref": "execute:approval-approved",
+        "suspension_policy_ref": "megaplan:suspension",
+    },
+)
+
 # ── Registry ───────────────────────────────────────────────────────────────
 
 BOUNDARY_CONTRACTS: tuple[BoundaryContract, ...] = (
@@ -617,24 +860,44 @@ BOUNDARY_CONTRACTS: tuple[BoundaryContract, ...] = (
     finalize_artifacts,
     finalize_fallback,
     final_projection,
+    override_abort_authority,
+    override_force_proceed_authority,
+    override_replan_authority,
+    override_recover_blocked_authority,
+    override_resume_clarify_authority,
+    override_adopt_execution_authority,
+    override_suspension_authority,
+    override_human_gate_authority,
+)
+
+OVERRIDE_AUTHORITY_CONTRACTS: tuple[BoundaryContract, ...] = (
+    override_abort_authority,
+    override_force_proceed_authority,
+    override_replan_authority,
+    override_recover_blocked_authority,
+    override_resume_clarify_authority,
+    override_adopt_execution_authority,
+    override_suspension_authority,
+    override_human_gate_authority,
 )
 
 BOUNDARY_CONTRACTS_BY_ID: dict[str, BoundaryContract] = {
     c.boundary_id: c for c in BOUNDARY_CONTRACTS
 }
 
-# Ensure the registry has exactly twenty-seven entries with no duplicates.
-assert len(BOUNDARY_CONTRACTS) == 27, (
-    f"BOUNDARY_CONTRACTS must have exactly 27 entries, got {len(BOUNDARY_CONTRACTS)}"
+# Ensure the registry has exactly thirty-five entries with no duplicates.
+assert len(BOUNDARY_CONTRACTS) == 35, (
+    f"BOUNDARY_CONTRACTS must have exactly 35 entries, got {len(BOUNDARY_CONTRACTS)}"
 )
-assert len(BOUNDARY_CONTRACTS_BY_ID) == 27, (
-    "BOUNDARY_CONTRACTS_BY_ID must have exactly 27 entries "
+assert len(BOUNDARY_CONTRACTS_BY_ID) == 35, (
+    "BOUNDARY_CONTRACTS_BY_ID must have exactly 35 entries "
     "(duplicate boundary_id detected)"
 )
 
 __all__ = [
     "BOUNDARY_CONTRACTS",
     "BOUNDARY_CONTRACTS_BY_ID",
+    "OVERRIDE_AUTHORITY_CONTRACTS",
     "challenger_to_synthesis",
     "critique_to_gate",
     "decision_to_parent",
@@ -654,6 +917,14 @@ __all__ = [
     "plan_to_critique",
     "prep_to_plan",
     "replan_authority",
+    "override_abort_authority",
+    "override_adopt_execution_authority",
+    "override_force_proceed_authority",
+    "override_human_gate_authority",
+    "override_recover_blocked_authority",
+    "override_replan_authority",
+    "override_resume_clarify_authority",
+    "override_suspension_authority",
     "review_cap_authority",
     "review_child_outputs",
     "review_human_verification",

@@ -30,6 +30,10 @@ from arnold.workflow.boundary_evidence import (
     SemanticFinding,
 )
 from arnold.workflow.diagnostics import DiagnosticCode
+from arnold_pipelines.megaplan.orchestration.override_authority import (
+    override_authority_transition_is_active,
+    validate_override_authority_record,
+)
 from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     BOUNDARY_CONTRACTS,
 )
@@ -157,6 +161,9 @@ def _inspect_contract(
 
     # --- missing authority records ---
     findings.extend(_check_authority_records(plan_dir, contract))
+
+    # --- override authority receipt / evidence integrity ---
+    findings.extend(_check_override_authority(plan_dir=plan_dir, contract=contract, state=state))
 
     # --- execute-phase read-only semantics (S4) ---
     findings.extend(_check_execute_semantics(plan_dir=plan_dir, contract=contract, state=state))
@@ -564,6 +571,105 @@ def _check_authority_records(
         # Already reported by _check_boundary_receipt
         pass
 
+    return findings
+
+
+def _check_override_authority(
+    *,
+    plan_dir: Path,
+    contract: Any,
+    state: dict[str, Any] | None,
+) -> list[SemanticFinding]:
+    """Validate override authority receipts only when their transition is active."""
+    transition = contract.details.get("authority_transition")
+    if not isinstance(transition, str) or not transition:
+        return []
+
+    bid = contract.boundary_id
+    receipt = _load_receipt(plan_dir, bid)
+    receipt_present = receipt is not None
+    if not override_authority_transition_is_active(
+        contract, state=state, receipt_present=receipt_present
+    ):
+        return []
+
+    if receipt is None:
+        return [
+            SemanticFinding(
+                finding_id=f"SH-{bid}-receipt-missing",
+                boundary_id=bid,
+                description=(
+                    f"override authority transition '{transition}' is active but "
+                    f"boundary receipt '{bid}' is missing"
+                ),
+                severity=FindingSeverity.ERROR,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                contract_ref=bid,
+                evidence_ref=str(plan_dir / "boundary_receipts" / f"{bid}.json"),
+            )
+        ]
+
+    authority_records = receipt.get("authority_records")
+    if authority_records is None:
+        return []
+    if not isinstance(authority_records, list):
+        return [
+            SemanticFinding(
+                finding_id=f"SH-{bid}-authority-records-invalid",
+                boundary_id=bid,
+                description=(
+                    f"override authority receipt '{bid}' must store authority_records "
+                    "as a list"
+                ),
+                severity=FindingSeverity.ERROR,
+                diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                contract_ref=bid,
+                details={"actual_type": type(authority_records).__name__},
+            )
+        ]
+    if not authority_records:
+        return []
+
+    findings: list[SemanticFinding] = []
+    for index, record in enumerate(authority_records):
+        if not isinstance(record, Mapping):
+            findings.append(
+                SemanticFinding(
+                    finding_id=f"SH-{bid}-authority-record-{index}-invalid",
+                    boundary_id=bid,
+                    description=(
+                        f"override authority receipt '{bid}' contains a non-mapping "
+                        f"authority record at index {index}"
+                    ),
+                    severity=FindingSeverity.ERROR,
+                    diagnostic_code=DiagnosticCode.BOUNDARY_EVIDENCE_MISSING,
+                    contract_ref=bid,
+                )
+            )
+            continue
+        issues = validate_override_authority_record(
+            plan_dir=plan_dir,
+            state=state,
+            contract=contract,
+            record=record,
+        )
+        for issue in issues:
+            diagnostic_code = (
+                DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+                if issue.severity == "missing"
+                else DiagnosticCode.BOUNDARY_EVIDENCE_STALE
+            )
+            findings.append(
+                SemanticFinding(
+                    finding_id=f"SH-{bid}-authority-{issue.code}-{index}",
+                    boundary_id=bid,
+                    description=issue.message,
+                    severity=FindingSeverity.ERROR,
+                    diagnostic_code=diagnostic_code,
+                    contract_ref=bid,
+                    details=dict(issue.details),
+                )
+            )
     return findings
 
 

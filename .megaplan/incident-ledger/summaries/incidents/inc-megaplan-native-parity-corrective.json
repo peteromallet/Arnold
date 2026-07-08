@@ -1,6 +1,6 @@
 {
   "deadline_ts": null,
-  "evidence_ref_count": 220,
+  "evidence_ref_count": 247,
   "evidence_refs": [
     {
       "action": "commented",
@@ -246,25 +246,23 @@
       "kind": "verification_record"
     },
     {
-      "kind": "github_sync.incident_projection",
-      "session_id": "megaplan-native-parity-corrective"
+      "kind": "verification_record"
     },
     {
-      "kind": "github_sync.incident_projection",
-      "session_id": "megaplan-native-parity-corrective"
+      "kind": "verification_record"
     },
     {
       "kind": "github_sync.incident_projection",
       "session_id": "megaplan-native-parity-corrective"
     }
   ],
-  "generated_at": "2026-07-08T01:34:17.658068+00:00",
+  "generated_at": "2026-07-08T13:33:01.584163+00:00",
   "incident_id": "inc-megaplan-native-parity-corrective",
   "kind": "incident_summary",
-  "latest_actor": "github_sync",
-  "next_expected_event": "six_hour_auditor.diagnosis",
-  "omitted_evidence_ref_count": 156,
-  "outcome": "published",
+  "latest_actor": "repair_system",
+  "next_expected_event": null,
+  "omitted_evidence_ref_count": 183,
+  "outcome": "recovered",
   "placeholders": {
     "install_freshness": "unknown",
     "recurrence": "unknown",
@@ -288,10 +286,10 @@
   ],
   "schema_version": 1,
   "source": {
-    "digest": "sha256:55c725572341c60f889b2f411baeb0fc138cfaf4606812617d48e24bee9ae287",
-    "last_seq": 256,
+    "digest": "sha256:3b7e9cef70338585541d809437fe26a01d3db796456344be0b30bfce52396c80",
+    "last_seq": 263,
     "projection": "incidents"
   },
-  "state": "github_sync.issue_published",
-  "summary_text": "inc-megaplan-native-parity-corrective: Published persistent problem problem-9eb61fd41e68 update to GitHub issue #177"
+  "state": "verified_recovered",
+  "summary_text": "inc-megaplan-native-parity-corrective: repair-data outcome=live_with_fresh_activity kind=chain workspace=/workspace/megaplan-native-parity-corrective/Arnold"
 }

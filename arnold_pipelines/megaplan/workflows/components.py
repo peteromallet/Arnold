@@ -125,6 +125,67 @@ _COMPATIBILITY_QUARANTINE = MappingProxyType(
 )
 
 
+def _declared_step_interface_quarantine(step_id: str, metadata: Mapping[str, Any]) -> Mapping[str, Any]:
+    preserved_fields = tuple(
+        field
+        for field in (
+            "handler_ref",
+            "route_bindings",
+            "policy_refs",
+            "capability_requirements",
+            "override_actions",
+        )
+        if field in metadata and metadata[field] not in ((), None)
+    )
+    if not preserved_fields:
+        return {}
+    return MappingProxyType(
+        {
+            "compatibility_quarantine": MappingProxyType(
+                {
+                    "kind": "declared_step_interface_bridge",
+                    "canonical_refs": (
+                        f"arnold_pipelines.megaplan.workflows.workflow.pypeline:{step_id}",
+                        f"arnold_pipelines.megaplan.workflows.planning:declared_step_interface({step_id})",
+                    ),
+                    "preserved_fields": preserved_fields,
+                }
+            )
+        }
+    )
+
+
+def _declared_workflow_topology_quarantine(
+    workflow_id: str,
+    metadata: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    preserved_fields = tuple(
+        field
+        for field in ("topology_contract", "fan_in_ref", "policy_refs")
+        if field in metadata and metadata[field] not in ((), None)
+    )
+    if not preserved_fields:
+        return {}
+    return MappingProxyType(
+        {
+            "compatibility_quarantine": MappingProxyType(
+                {
+                    "kind": "declared_topology_contract_bridge",
+                    "canonical_refs": (
+                        f"arnold_pipelines.megaplan.workflows.workflow.pypeline:{workflow_id}",
+                        "arnold_pipelines.megaplan.workflows.workflow.pypeline:DECLARED_WORKFLOW_TOPOLOGY_CONTRACTS",
+                        (
+                            "arnold_pipelines.megaplan.workflows.planning:"
+                            f"declared_workflow_topology_contract({workflow_id})"
+                        ),
+                    ),
+                    "preserved_fields": preserved_fields,
+                }
+            )
+        }
+    )
+
+
 def _adapter_metadata_quarantine(
     *,
     canonical_refs: tuple[str, ...],
@@ -137,6 +198,25 @@ def _adapter_metadata_quarantine(
                     "kind": "non_authoritative_adapter_metadata",
                     "canonical_refs": canonical_refs,
                     "preserved_fields": preserved_fields,
+                }
+            )
+        }
+    )
+
+
+def _pure_body_carrier_quarantine(
+    *,
+    canonical_refs: tuple[str, ...],
+    preserved_fields: tuple[str, ...],
+) -> Mapping[str, Any]:
+    return MappingProxyType(
+        {
+            "compatibility_quarantine": MappingProxyType(
+                {
+                    "kind": "pure_body_component_metadata_bridge",
+                    "canonical_refs": canonical_refs,
+                    "preserved_fields": preserved_fields,
+                    "sunset_condition": "typed_interfaces_replace_component_metadata",
                 }
             )
         }
@@ -248,6 +328,8 @@ def _step(
         component_metadata["runtime_branch_vocabulary"] = RUNTIME_BRANCH_VOCABULARY[step_id]
     if metadata:
         component_metadata.update(metadata)
+    if "compatibility_quarantine" not in component_metadata:
+        component_metadata.update(_declared_step_interface_quarantine(step_id, component_metadata))
     return StepComponent(
         id=f"megaplan:{step_id}",
         provenance=_provenance(export_name),
@@ -296,6 +378,8 @@ def _workflow(
     }
     if metadata:
         component_metadata.update(metadata)
+    if "compatibility_quarantine" not in component_metadata:
+        component_metadata.update(_declared_workflow_topology_quarantine(workflow_id, component_metadata))
     return ComponentContract(
         id=f"megaplan:{workflow_id}",
         kind=ComponentKind.WORKFLOW,
@@ -2290,6 +2374,14 @@ SOURCE_TIEBREAKER_RUN = _step(
     handler_ref=f"{HANDLER_MODULE}:handle_tiebreaker_run",
     inputs=({"name": "gate_payload", "value_ref": "gate.gate_payload"},),
     outputs=({"name": "tiebreaker_payload"},),
+    metadata=_pure_body_carrier_quarantine(
+        canonical_refs=(
+            "arnold_pipelines.megaplan.workflows.workflow.pypeline:tiebreaker_researcher",
+            "arnold_pipelines.megaplan.workflows.planning:declared_step_interface(tiebreaker_researcher)",
+            "arnold_pipelines.megaplan.workflows.planning:declared_workflow_topology_contract(tiebreaker_child)",
+        ),
+        preserved_fields=("handler_ref", "inputs", "outputs", "runtime_branch_vocabulary"),
+    ),
 )
 SOURCE_TIEBREAKER_DECIDE = _step(
     export_name="SOURCE_TIEBREAKER_DECIDE",
@@ -2299,6 +2391,20 @@ SOURCE_TIEBREAKER_DECIDE = _step(
     inputs=({"name": "tiebreaker_payload", "value_ref": "tiebreaker_run.tiebreaker_payload"},),
     outputs=({"name": "decision"},),
     capability_ids=("megaplan:planning",),
+    metadata=_pure_body_carrier_quarantine(
+        canonical_refs=(
+            "arnold_pipelines.megaplan.workflows.workflow.pypeline:tiebreaker_decision",
+            "arnold_pipelines.megaplan.workflows.planning:declared_step_interface(tiebreaker_decision)",
+            "TIEBREAKER_POLICY.metadata.route_surface",
+        ),
+        preserved_fields=(
+            "handler_ref",
+            "inputs",
+            "outputs",
+            "capability_requirements",
+            "runtime_branch_vocabulary",
+        ),
+    ),
 )
 SOURCE_FINALIZE = _step(
     export_name="SOURCE_FINALIZE",
@@ -2322,6 +2428,14 @@ SOURCE_EXECUTE = _step(
     handler_ref=f"{HANDLER_MODULE}:handle_execute",
     inputs=({"name": "finalize_payload", "value_ref": "finalize.finalize_payload"},),
     outputs=({"name": "execute_payload"},),
+    metadata=_pure_body_carrier_quarantine(
+        canonical_refs=(
+            "arnold_pipelines.megaplan.workflows.workflow.pypeline:execute",
+            "arnold_pipelines.megaplan.workflows.planning:declared_step_interface(execute)",
+            "EXECUTE_POLICY.metadata.route_surface",
+        ),
+        preserved_fields=("handler_ref", "inputs", "outputs", "runtime_branch_vocabulary"),
+    ),
 )
 SOURCE_REVIEW = _step(
     export_name="SOURCE_REVIEW",
@@ -2353,6 +2467,14 @@ SOURCE_OVERRIDE = _step(
     handler_ref=f"{HANDLER_MODULE}:handle_override",
     inputs=({"name": "gate_payload", "value_ref": "gate.gate_payload"},),
     outputs=({"name": "override_result"},),
+    metadata=_pure_body_carrier_quarantine(
+        canonical_refs=(
+            "arnold_pipelines.megaplan.workflows.workflow.pypeline:override",
+            "arnold_pipelines.megaplan.workflows.planning:declared_step_interface(override)",
+            "OVERRIDE_POLICY.metadata.route_surface",
+        ),
+        preserved_fields=("handler_ref", "inputs", "outputs", "runtime_branch_vocabulary"),
+    ),
 )
 
 SOURCE_CRITIQUE_PANEL_WORKFLOW = _workflow(
@@ -2506,6 +2628,7 @@ SOURCE_REVIEW_PANEL_WORKFLOW = _workflow(
                 "kind": "non_authoritative_adapter_metadata",
                 "canonical_refs": (
                     "arnold_pipelines.megaplan.workflows.workflow.pypeline:review-fan-in",
+                    "arnold_pipelines.megaplan.workflows.planning:declared_workflow_topology_contract(review_panel)",
                     "REVIEW_POLICY.metadata.route_surface",
                 ),
                 "preserved_fields": ("fan_in_ref", "topology_contract", "policy_refs"),
@@ -2738,30 +2861,6 @@ WORKFLOW_COMPONENTS = (
     SOURCE_REVIEW_PANEL_WORKFLOW,
 )
 
-LEGACY_ALIASES = MappingProxyType(
-    {
-        "profile:default_routing": "arnold_pipelines.megaplan.profiles:DEFAULT_AGENT_ROUTING",
-        "profile:loader": "arnold_pipelines.megaplan.profiles:load_profile_metadata",
-        "profile:robustness_levels": "arnold_pipelines.megaplan.profiles:ROBUSTNESS_LEVELS",
-        "profile:robustness_accepted": "arnold_pipelines.megaplan.profiles:ROBUSTNESS_ACCEPTED",
-        "profile:robustness_normalizer": "arnold_pipelines.megaplan.profiles:normalize_robustness",
-        "profile:phase_model_override": "state.config.phase_model",
-        "override:abort": "handler:override._override_abort",
-        "override:force_proceed": "handler:override._override_force_proceed",
-        "override:replan": "handler:override._override_replan",
-        "override:set_robustness": "handler:override._override_set_robustness",
-        "override:add_note": "handler:override._override_add_note",
-        "status:halt": "halt.status",
-        "status:terminal": "halt.status",
-        "cursor:suspension": "suspend.suspension",
-        "cursor:resume_contract": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
-        "cursor:reentry:gate": "gate:human",
-        "cursor:reentry:review": "review:human",
-        "cursor:reentry:revise_loop": "revise:loop",
-        "cursor:reentry:tiebreaker_loop": "tiebreaker:loop",
-    }
-)
-
 SCHEMA_COMPONENTS = (
     PREP_INPUT_SCHEMA,
     PREP_OUTPUT_SCHEMA,
@@ -2824,7 +2923,6 @@ __all__ = [
     "HALT",
     "HALT_OUTPUT_SCHEMA",
     "ARTIFACT_CONTRACT_POLICY",
-    "LEGACY_ALIASES",
     "M4_LOOP_MAX_ITERATIONS",
     "MODEL_ROUTING_POLICY",
     "OVERRIDE",

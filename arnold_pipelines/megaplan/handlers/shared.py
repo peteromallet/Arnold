@@ -56,7 +56,7 @@ from arnold_pipelines.megaplan._core.phase_runtime import (
     format_duration_hint,
 )
 from arnold_pipelines.megaplan.orchestration.plan_structure import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE, validate_plan_structure
-from arnold_pipelines.megaplan.route_dispatch import resolve_route_target_for_signal
+from arnold_pipelines.megaplan.workflows.planning import resolve_lowered_route_target_for_signal
 from arnold_pipelines.megaplan.workers import WorkerResult
 
 log = logging.getLogger("megaplan")
@@ -75,6 +75,11 @@ _FRONT_HALF_BOUNDARY_ID_BY_PHASE = {
     "critique": "critique_to_gate",
     "gate": "gate_to_revise",
     "revise": "revise_to_critique",
+}
+
+_ROUTE_SIGNAL_AUTHORITY_STEP_ALIASES = {
+    "tiebreaker_run": "tiebreaker_researcher",
+    "tiebreaker_decide": "tiebreaker_decision",
 }
 
 
@@ -767,7 +772,11 @@ def _finish_step(
     }
     if response_fields:
         response.update(response_fields)
-    route_target = resolve_route_target_for_signal(step, response.get("route_signal"))
+    route_signal = response.get("route_signal")
+    route_target = None
+    if isinstance(route_signal, str) and route_signal:
+        authority_step = _ROUTE_SIGNAL_AUTHORITY_STEP_ALIASES.get(step, step)
+        route_target = resolve_lowered_route_target_for_signal(authority_step, route_signal)
     if route_target is not None:
         response["next_step"] = route_target
     _attach_next_step_runtime(response)

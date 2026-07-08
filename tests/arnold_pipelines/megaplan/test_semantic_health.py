@@ -13,6 +13,10 @@ from arnold.workflow.boundary_evidence import (
     SemanticFinding,
 )
 from arnold.workflow.diagnostics import DiagnosticCode
+from arnold_pipelines.megaplan.orchestration.override_authority import (
+    OverrideAuthorityError,
+    build_override_authority_record,
+)
 from arnold_pipelines.megaplan.semantic_health import inspect_semantic_health
 from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     BOUNDARY_CONTRACTS,
@@ -22,6 +26,8 @@ from arnold_pipelines.megaplan.workflows.boundary_contracts import (
     finalize_artifacts,
     finalize_fallback,
     gate_to_revise,
+    override_abort_authority,
+    override_resume_clarify_authority,
     plan_to_critique,
     prep_to_plan,
     review_child_outputs,
@@ -487,6 +493,303 @@ def test_authority_not_required_no_finding(tmp_path: Path) -> None:
     findings = inspect_semantic_health(plan_dir)
     by_id = _findings_by_id(findings)
     assert "SH-plan_to_critique-authority-missing" not in by_id
+
+
+def test_override_authority_helper_builds_hash_bound_record(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    state = _make_state(current_state="aborted")
+    state["meta"]["overrides"] = [{"action": "abort", "timestamp": "2026-07-08T12:00:00Z"}]
+    _write_state(plan_dir, state)
+
+    record = build_override_authority_record(
+        "abort",
+        plan_dir=plan_dir,
+        actor="operator",
+        role="human.override",
+        freshness_token="inv-test",
+        expected_freshness_token="inv-test",
+    )
+
+    assert record.scope == "override.abort"
+    assert record.evidence_refs == ("state.json",)
+    assert record.details["authority_transition"] == "abort"
+    assert record.details["evidence_hashes"]["state.json"]
+
+
+def test_override_authority_helper_rejects_stale_input(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    _write_state(plan_dir, _make_state(current_state="gated"))
+
+    with pytest.raises(OverrideAuthorityError, match="stale override authority input"):
+        build_override_authority_record(
+            "force-proceed",
+            plan_dir=plan_dir,
+            actor="operator",
+            role="human.override",
+            freshness_token="old-token",
+            expected_freshness_token="inv-test",
+        )
+
+
+def test_active_override_without_receipt_generates_missing_authority_finding(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    state = _make_state(current_state="gated")
+    state["meta"]["overrides"] = [
+        {"action": "force-proceed", "timestamp": "2026-07-08T12:00:00Z"}
+    ]
+    _write_state(plan_dir, state)
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    fid = "SH-override_force_proceed_authority-receipt-missing"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+
+
+def test_override_authority_hash_mismatch_generates_stale_finding(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    state = _make_state(current_state="aborted")
+    state["meta"]["overrides"] = [{"action": "abort", "timestamp": "2026-07-08T12:00:00Z"}]
+    _write_state(plan_dir, state)
+    record = build_override_authority_record(
+        "abort",
+        plan_dir=plan_dir,
+        actor="operator",
+        role="human.override",
+        freshness_token="inv-test",
+        expected_freshness_token="inv-test",
+    )
+    record_payload = record.to_dict()
+    record_payload["conditions"] = []
+    _write_boundary_receipt(
+        plan_dir,
+        override_abort_authority.boundary_id,
+        row_id=override_abort_authority.row_id,
+        authority_records=[record_payload],
+    )
+
+    stale_state = _make_state(current_state="aborted", revision="mutated-after-receipt")
+    stale_state["meta"]["overrides"] = state["meta"]["overrides"]
+    _write_state(plan_dir, stale_state)
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+    fid = "SH-override_abort_authority-authority-evidence-hash-mismatch-0"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_STALE
+
+
+def test_active_override_with_invalid_authority_records_payload_generates_finding(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    state = _make_state(current_state="gated")
+    state["meta"]["overrides"] = [
+        {"action": "force-proceed", "timestamp": "2026-07-08T12:00:00Z"}
+    ]
+    _write_state(plan_dir, state)
+    _write_boundary_receipt(
+        plan_dir,
+        "override_force_proceed_authority",
+        row_id="s6.override_force_proceed_authority.1",
+        authority_records=[],
+    )
+
+    receipt_path = plan_dir / "boundary_receipts" / "override_force_proceed_authority.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["authority_records"] = {"actor": "operator"}
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    fid = "SH-override_force_proceed_authority-authority-records-invalid"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_MISSING
+
+
+def test_override_authority_stale_freshness_token_generates_finding(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    state = _make_state(current_state="aborted")
+    state["meta"]["overrides"] = [{"action": "abort", "timestamp": "2026-07-08T12:00:00Z"}]
+    _write_state(plan_dir, state)
+    record = build_override_authority_record(
+        "abort",
+        plan_dir=plan_dir,
+        actor="operator",
+        role="human.override",
+        freshness_token="inv-test",
+        expected_freshness_token="inv-test",
+    )
+    record_payload = record.to_dict()
+    record_payload["conditions"] = []
+    record_payload["details"]["freshness_token"] = "stale-token"
+    _write_boundary_receipt(
+        plan_dir,
+        override_abort_authority.boundary_id,
+        row_id=override_abort_authority.row_id,
+        authority_records=[record_payload],
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    fid = "SH-override_abort_authority-authority-freshness-token-stale-0"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_STALE
+
+
+def test_override_authority_out_of_scope_decision_generates_finding(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    state = _make_state(current_state="aborted")
+    state["meta"]["overrides"] = [{"action": "abort", "timestamp": "2026-07-08T12:00:00Z"}]
+    _write_state(plan_dir, state)
+    record = build_override_authority_record(
+        "abort",
+        plan_dir=plan_dir,
+        actor="operator",
+        role="human.override",
+        freshness_token="inv-test",
+        expected_freshness_token="inv-test",
+    )
+    record_payload = record.to_dict()
+    record_payload["conditions"] = []
+    record_payload["decision"] = "force-proceed"
+    _write_boundary_receipt(
+        plan_dir,
+        override_abort_authority.boundary_id,
+        row_id=override_abort_authority.row_id,
+        authority_records=[record_payload],
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    fid = "SH-override_abort_authority-authority-decision-out-of-scope-0"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_STALE
+
+
+def test_override_authority_scope_mismatch_generates_finding(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    state = _make_state(current_state="aborted")
+    state["meta"]["overrides"] = [{"action": "abort", "timestamp": "2026-07-08T12:00:00Z"}]
+    _write_state(plan_dir, state)
+    record = build_override_authority_record(
+        "abort",
+        plan_dir=plan_dir,
+        actor="operator",
+        role="human.override",
+        freshness_token="inv-test",
+        expected_freshness_token="inv-test",
+    )
+    record_payload = record.to_dict()
+    record_payload["conditions"] = []
+    record_payload["scope"] = "override.force_proceed"
+    _write_boundary_receipt(
+        plan_dir,
+        override_abort_authority.boundary_id,
+        row_id=override_abort_authority.row_id,
+        authority_records=[record_payload],
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    fid = "SH-override_abort_authority-authority-scope-mismatch-0"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_STALE
+
+
+def test_override_authority_rejects_smuggled_declared_target_ref(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    state = _make_state(current_state="awaiting_human")
+    state["meta"]["overrides"] = [{"action": "resume-clarify", "timestamp": "2026-07-08T12:00:00Z"}]
+    _write_state(plan_dir, state)
+    _write_artifact(plan_dir, "clarification_answers.json", "{}")
+    record = build_override_authority_record(
+        "resume-clarify",
+        plan_dir=plan_dir,
+        actor="operator",
+        role="human.override",
+        freshness_token="inv-test",
+        expected_freshness_token="inv-test",
+        details={
+            "declared_target_ref": "force-proceed",
+            "policy_route_ref": "megaplan.override.resume_clarify",
+            "route_signal": "resume_clarify",
+        },
+    )
+    record_payload = record.to_dict()
+    record_payload["conditions"] = []
+    _write_boundary_receipt(
+        plan_dir,
+        override_resume_clarify_authority.boundary_id,
+        row_id=override_resume_clarify_authority.row_id,
+        authority_records=[record_payload],
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    fid = "SH-override_resume_clarify_authority-authority-declared-target-ref-mismatch-0"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_STALE
+
+
+def test_override_authority_undeclared_evidence_ref_generates_finding(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    state = _make_state(current_state="aborted")
+    state["meta"]["overrides"] = [{"action": "abort", "timestamp": "2026-07-08T12:00:00Z"}]
+    _write_state(plan_dir, state)
+    _write_artifact(plan_dir, "rogue.json", '{"route":"unsafe"}')
+    record = build_override_authority_record(
+        "abort",
+        plan_dir=plan_dir,
+        actor="operator",
+        role="human.override",
+        freshness_token="inv-test",
+        expected_freshness_token="inv-test",
+        evidence_refs=("state.json", "rogue.json"),
+    )
+    record_payload = record.to_dict()
+    record_payload["conditions"] = []
+    _write_boundary_receipt(
+        plan_dir,
+        override_abort_authority.boundary_id,
+        row_id=override_abort_authority.row_id,
+        authority_records=[record_payload],
+    )
+
+    findings = inspect_semantic_health(plan_dir)
+    by_id = _findings_by_id(findings)
+
+    fid = "SH-override_abort_authority-authority-undeclared-evidence-refs-0"
+    assert fid in by_id
+    assert by_id[fid].severity == FindingSeverity.ERROR
+    assert by_id[fid].diagnostic_code == DiagnosticCode.BOUNDARY_EVIDENCE_STALE
 
 
 # ── read-only guarantee ─────────────────────────────────────────────────

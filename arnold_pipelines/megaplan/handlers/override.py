@@ -62,7 +62,10 @@ from arnold_pipelines.megaplan._core import (
 )
 from arnold_pipelines.megaplan._core import topology as _topology
 from arnold.control.interface import ControlTransition, RunStateView
-from arnold_pipelines.megaplan.control_interface import apply_transition
+from arnold_pipelines.megaplan.control_interface import (
+    apply_transition,
+    emit_override_authority_receipt,
+)
 from arnold_pipelines.megaplan.blocker_recovery import command_blocker_details, evaluate_blocker_recovery
 from arnold_pipelines.megaplan.orchestration.gate_checks import (
     build_gate_artifact,
@@ -117,6 +120,13 @@ def _route_signal_for_override_action(action: str) -> str | None:
     from arnold_pipelines.megaplan.workflows.override_matrix import ROUTE_SIGNAL_BY_ACTION
 
     return ROUTE_SIGNAL_BY_ACTION.get(action)
+
+
+def _override_response_owns_next_step(action: str) -> bool:
+    try:
+        return _override_action_entry(action).family != "terminal_route"
+    except KeyError:
+        return action not in _control_routed_override_actions()
 
 
 def _build_override_action_output(
@@ -251,12 +261,10 @@ def _build_override_action_output(
         reason = getattr(args, "reason", None) or getattr(args, "note", None) or "Re-entering planning loop"
         plan_file_raw = (artifacts or {}).get("plan_file")
         plan_file = Path(plan_file_raw) if isinstance(plan_file_raw, str) and plan_file_raw else latest_plan_path(plan_dir, state)
-        workflow_steps = workflow_next(state)
         return OverrideActionOutput(
             summary=f"Re-entered planning loop at iteration {state['iteration']}. Reason: {reason}",
             state=STATE_PLANNED,
             route_signal=route_signal,
-            next_step=workflow_steps[0] if workflow_steps else None,
             extras=(
                 ("plan_file", str(plan_file)),
                 ("message", f"Edit {plan_file.name} to incorporate your changes, then run the next step."),
@@ -331,14 +339,16 @@ def _routed_override_response(
         "step": "override",
         "override_action": action,
         "summary": action_output.summary,
-        "next_step": action_output.next_step,
         "state": action_output.state,
     }
+    if _override_response_owns_next_step(action) and action_output.next_step is not None:
+        response["next_step"] = action_output.next_step
     if action_output.route_signal is not None:
         response["route_signal"] = action_output.route_signal
     for key, value in action_output.extras:
         response[key] = value
-    _attach_next_step_runtime(response)
+    if "next_step" in response:
+        _attach_next_step_runtime(response)
     return response
 
 
@@ -489,6 +499,9 @@ def _normalize_override_response(action: str, response: StepResponse) -> StepRes
     route_signal = _route_signal_for_override_action(action)
     if route_signal is not None:
         normalized.setdefault("route_signal", route_signal)
+    if not _override_response_owns_next_step(action):
+        normalized.pop("next_step", None)
+        normalized.pop("next_step_runtime", None)
     return normalized
 
 
@@ -743,7 +756,6 @@ def _override_abort(
         "success": True,
         "step": "override",
         "summary": "Plan aborted.",
-        "next_step": None,
         "state": STATE_ABORTED,
     }
 
@@ -923,9 +935,7 @@ def _override_adopt_execution(
         ),
         "state": STATE_EXECUTED,
         "previous_state": previous_state,
-        "next_step": "review",
     }
-    _attach_next_step_runtime(response)
     return response
 
 
@@ -975,7 +985,6 @@ def _override_force_proceed(
             "success": True,
             "step": "override",
             "summary": "Force-proceeded past review into done state.",
-            "next_step": None,
             "state": STATE_DONE,
         }
     if state["current_state"] == STATE_BLOCKED:
@@ -1068,12 +1077,10 @@ def _override_force_proceed(
         "success": True,
         "step": "override",
         "summary": "Force-proceeded past gate judgment into gated state.",
-        "next_step": "finalize",
         "state": STATE_GATED,
         "orchestrator_guidance": gate["orchestrator_guidance"],
         "debt_entries_added": len(unresolved_flags),
     }
-    _attach_next_step_runtime(response)
     return response
 
 
@@ -1116,17 +1123,14 @@ def _override_replan(
             plan_dir=plan_dir,
             event_kind="override_applied",
         )
-    next_steps = workflow_next(state)
     response: StepResponse = {
         "success": True,
         "step": "override",
         "summary": f"Re-entered planning loop at iteration {state['iteration']}. Reason: {reason}",
-        "next_step": next_steps[0] if next_steps else None,
         "state": STATE_PLANNED,
         "plan_file": str(plan_file),
         "message": f"Edit {plan_file.name} to incorporate your changes, then run the next step.",
     }
-    _attach_next_step_runtime(response)
     return response
 
 
@@ -1349,7 +1353,6 @@ def _override_recover_blocked(
         },
     )
     save_state_merge_meta(plan_dir, state)
-    next_steps = infer_next_steps(state)
     response: StepResponse = {
         "success": True,
         "step": "override",
@@ -1361,11 +1364,9 @@ def _override_recover_blocked(
         "state": recovered_state,
         "previous_state": previous_state,
         "phase": phase,
-        "next_step": next_steps[0] if next_steps else None,
         "resume_cursor": resume_cursor,
         "blockers": blocker_details,
     }
-    _attach_next_step_runtime(response)
     return response
 
 
@@ -1895,17 +1896,14 @@ def _override_resume_clarify(
         emit(EventKind.OVERRIDE_APPLIED, plan_dir=plan_dir, payload={"action": "resume-clarify"})
     except Exception:
         pass
-    next_steps = infer_next_steps(state)
     response: StepResponse = {
         "success": True,
         "step": "override",
         "summary": "Prep clarification resolved; plan phase is now ready to run.",
-        "next_step": next_steps[0] if next_steps else None,
         "state": STATE_PREPPED,
     }
     if warnings:
         response["warnings"] = warnings
-    _attach_next_step_runtime(response)
     return response
 
 
@@ -1941,4 +1939,6 @@ def handle_override(root: Path, args: argparse.Namespace) -> StepResponse:
     handler = _OVERRIDE_ACTIONS.get(action)
     if handler is None:
         raise CliError("invalid_override", f"Unknown override action: {action}")
-    return _normalize_override_response(action, handler(root, plan_dir, state, args))
+    response = _normalize_override_response(action, handler(root, plan_dir, state, args))
+    emit_override_authority_receipt(plan_dir, state, action)
+    return response

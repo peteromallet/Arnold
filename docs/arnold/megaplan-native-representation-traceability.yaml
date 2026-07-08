@@ -146,9 +146,9 @@ rows:
     status: enabled
     owners: [native-composition-followup, native-platform-followup]
     milestones: [composition-m1, composition-m5, platform-m2, platform-m4, platform-m6]
-    proof_artifacts: [process_death_resume_test, rendered_suspension_points]
-    false_pass_guard: Status says waiting but resume coordinate is implicit state.
-    negative_invariant: Resume test starts from persisted path, not handler-local fields.
+    proof_artifacts: [process_death_resume_test, rendered_suspension_points, boundary_receipt_test]
+    false_pass_guard: Status or CLI says waiting, but the durable resume coordinate or suspension authority still lives only in runtime state.
+    negative_invariant: Implemented proof must start from canonical source plus boundary receipts; status/CLI hints and compatibility shells do not satisfy the row.
   - id: finalize-fallback-routes
     requirement: Finalize fallback routes
     status: enabled
@@ -170,9 +170,9 @@ rows:
     status: enabled
     owners: [native-composition-followup, native-platform-followup]
     milestones: [composition-m1, composition-m5, composition-m6, platform-m2, platform-m4, platform-m6]
-    proof_artifacts: [approval_tests, no_review_golden, deferred_human_golden]
-    false_pass_guard: Approval works through side effect but topology cannot show it.
-    negative_invariant: Source invariant requires protected actions to pass through declared gate.
+    proof_artifacts: [approval_tests, no_review_golden, deferred_human_golden, boundary_receipt_test]
+    false_pass_guard: Approval works through side effect, but topology cannot show it and a CLI or manifest bridge still supplies the route.
+    negative_invariant: Implemented proof must cite declared execute gates and boundary receipts; CLI handlers and manifest backend routing cannot satisfy the row.
   - id: execute-review-rework-loop
     requirement: Execute/review/rework loop
     status: enabled
@@ -194,17 +194,17 @@ rows:
     status: enabled
     owners: [native-composition-followup, native-platform-followup]
     milestones: [composition-m1, composition-m2, composition-m6, platform-m4, platform-m5, platform-m6]
-    proof_artifacts: [infra_retry_golden, repeated_failure_cap_golden, force_proceed_block_tests]
-    false_pass_guard: Rework cap is a handler threshold with no visible branch.
-    negative_invariant: Source invariant requires cap and outcome classifier outside retained handler.
+    proof_artifacts: [infra_retry_golden, repeated_failure_cap_golden, force_proceed_block_tests, authority_boundary_test]
+    false_pass_guard: Cap exhaustion force-proceeds or blocks through handler/control state while source and authority receipts stay silent.
+    negative_invariant: Implemented proof must cite review route policy and cap authority receipts; handler refs, auto next-step hints, and compatibility bridges cannot satisfy the row.
   - id: override-action-surface
     requirement: Override full action surface
     status: enabled
     owners: [native-composition-followup, native-platform-followup]
     milestones: [composition-m1, composition-m2, composition-m6, platform-m2, platform-m6]
-    proof_artifacts: [override_matrix, action_route_tests]
-    false_pass_guard: Only abort/replan are visible; other actions mutate config/state.
-    negative_invariant: No-generic-Megaplan-literal scan plus action-by-action route tests.
+    proof_artifacts: [override_matrix, action_route_tests, authority_boundary_test]
+    false_pass_guard: Only abort/replan are visible; other actions mutate config/state or still depend on components or route bindings.
+    negative_invariant: Implemented proof must cite the override matrix, canonical source, and authority receipts; components, handler refs, route bindings, manifest routing, CLI handlers, and compatibility bridges cannot satisfy the row.
   - id: timeout-deadline-policy
     requirement: Timeout/deadline policy
     status: enabled
@@ -250,9 +250,9 @@ rows:
     status: enabled
     owners: [native-python-pipelines-completion, native-composition-followup, native-platform-followup]
     milestones: [completion-m3-5, composition-m1, composition-m6, platform-m4, platform-m5, platform-m6]
-    proof_artifacts: [event_replay_test, liveness_policy_test, status_projection_parity]
-    false_pass_guard: Auto-drive keeps working but status is derived from hidden mutation.
-    negative_invariant: Replay from events reproduces the same visible workflow path.
+    proof_artifacts: [event_replay_test, liveness_policy_test, status_projection_parity, cursor_projection_test]
+    false_pass_guard: Auto-drive keeps working, but next-step authority still comes from state, status, or CLI projection instead of canonical workflow events.
+    negative_invariant: Implemented proof must cite source-derived workflow events and cursors; auto next-step derivation, CLI handlers, and projected native shells cannot satisfy the row.
   - id: path-addressed-checkpoints
     requirement: Path-addressed checkpoints
     status: enabled
@@ -290,9 +290,9 @@ rows:
     status: enabled
     owners: [native-python-pipelines-completion, native-composition-followup, native-platform-followup]
     milestones: [completion-m2, completion-m7, composition-m0, composition-m1, composition-m6, platform-m6]
-    proof_artifacts: [path_reconciliation_table, import_smoke_test]
-    false_pass_guard: Review inspects stale or future path and misses live source.
-    negative_invariant: Milestone cannot close without import/path inventory matching installed package and stale-path negative check.
+    proof_artifacts: [path_reconciliation_table, import_smoke_test, native_shell_negative_test]
+    false_pass_guard: Review inspects stale or future path while projected native shells hide that live execution no longer follows canonical source.
+    negative_invariant: Milestone cannot close unless installed package, canonical `.pypeline`, and the native-shell negative test agree; `Pipeline.native_program` and workflow.py shims are receipts, not proof.
   - id: behavior-parity
     requirement: Behavior parity with existing Megaplan
     status: enabled
